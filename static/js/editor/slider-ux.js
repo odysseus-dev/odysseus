@@ -74,6 +74,8 @@ export function wireSliderUx({ registerDocClickAway }) {
     sliderBubble.hidden = true;
     sliderBubbleSlider = null;
   }
+  window.__geHideSliderBubble = hideSliderBubble;
+  document.addEventListener('ge:hide-slider-bubble', hideSliderBubble);
 
   const slidingTimers = new WeakMap();
   // Desktop: only the layer-opacity slider gets the bubble (eraser-
@@ -85,7 +87,10 @@ export function wireSliderUx({ registerDocClickAway }) {
 
   container.addEventListener('pointerdown', (e) => {
     const slider = e.target.closest(SLIDER_SEL);
-    if (!slider) return;
+    if (!slider) {
+      hideSliderBubble();
+      return;
+    }
     const t = slidingTimers.get(slider);
     if (t) { clearTimeout(t); slidingTimers.delete(slider); }
     slider.classList.add('is-using');
@@ -115,6 +120,10 @@ export function wireSliderUx({ registerDocClickAway }) {
   }, true);
   document.addEventListener('pointermove', (e) => {
     if (!sliderBubbleSlider) return;
+    if (!sliderBubbleSlider.isConnected) {
+      hideSliderBubble();
+      return;
+    }
     bubblePos(sliderBubbleSlider, e.clientX);
     sliderBubble.textContent = bubbleText(sliderBubbleSlider);
   });
@@ -132,6 +141,11 @@ export function wireSliderUx({ registerDocClickAway }) {
     container.querySelectorAll('input[type="range"].is-using').forEach(scheduleSliderRelease);
     hideSliderBubble();
   });
+  document.addEventListener('pointercancel', hideSliderBubble);
+  document.addEventListener('touchcancel', hideSliderBubble, { passive: true });
+  window.addEventListener('blur', hideSliderBubble);
+  window.addEventListener('resize', hideSliderBubble);
+  window.addEventListener('orientationchange', hideSliderBubble);
 
   // ── Click value chip to type a number ──
   // Replaces the chip with a tiny inline input until blur/Enter,

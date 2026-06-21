@@ -6,11 +6,17 @@ INIT_JS = Path("static/js/init.js").read_text(encoding="utf-8")
 MODAL_MANAGER_JS = Path("static/js/modalManager.js").read_text(encoding="utf-8")
 TILE_MANAGER_JS = Path("static/js/tileManager.js").read_text(encoding="utf-8")
 EMAIL_LIBRARY_JS = Path("static/js/emailLibrary.js").read_text(encoding="utf-8")
+EMAIL_INBOX_JS = Path("static/js/emailInbox.js").read_text(encoding="utf-8")
 WINDOW_DRAG_JS = Path("static/js/windowDrag.js").read_text(encoding="utf-8")
 UI_JS = Path("static/js/ui.js").read_text(encoding="utf-8")
 MODAL_SNAP_JS = Path("static/js/modalSnap.js").read_text(encoding="utf-8")
 CALENDAR_JS = Path("static/js/calendar.js").read_text(encoding="utf-8")
 NOTES_JS = Path("static/js/notes.js").read_text(encoding="utf-8")
+SIDEBAR_LAYOUT_JS = Path("static/js/sidebar-layout.js").read_text(encoding="utf-8")
+GALLERY_EDITOR_JS = Path("static/js/galleryEditor.js").read_text(encoding="utf-8")
+RIGHT_PANEL_JS = Path("static/js/editor/build/right-panel.js").read_text(encoding="utf-8")
+TOPBAR_JS = Path("static/js/editor/wire-topbar.js").read_text(encoding="utf-8")
+TOPBAR_MENUS_JS = Path("static/js/editor/wire-topbar-menus.js").read_text(encoding="utf-8")
 
 
 def test_both_minimized_window_docks_clear_the_composer():
@@ -31,12 +37,17 @@ def test_composer_clearance_tracks_input_and_attachment_height():
     assert "const COMPOSER_DOCK_GAP = 4;" in INIT_JS
     assert "const COLLAPSED_OVERLAY_HISTORY_GAP = 4;" in INIT_JS
     assert "const TOUCH_DOCK_HISTORY_RATIO = 0.75;" in INIT_JS
+    assert "const _setRootPxIfChanged = (name, value) => {" in INIT_JS
+    assert "if (root.style.getPropertyValue(name) !== next)" in INIT_JS
+    assert "const _queueComposerClearanceSync = () => {" in INIT_JS
     assert "const _isTouchDockViewport = () => window.innerWidth <= 768" in INIT_JS
     assert "const touchDock = dock.id === 'minimized-dock' && _isTouchDockViewport();" in INIT_JS
     assert "const reserveHeight = touchDock ? rect.height * TOUCH_DOCK_HISTORY_RATIO : rect.height;" in INIT_JS
-    assert "root.style.setProperty('--composer-clearance', clearance + 'px');" in INIT_JS
-    assert "root.style.setProperty('--collapsed-overlay-space', collapsedOverlaySpace + 'px');" in INIT_JS
-    assert "document.body.classList.toggle('has-collapsed-overlays', collapsedOverlaySpace > 0);" in INIT_JS
+    assert "_setRootPxIfChanged('--composer-clearance', clearance);" in INIT_JS
+    assert "_setRootPxIfChanged('--collapsed-overlay-space', collapsedOverlaySpace);" in INIT_JS
+    assert "_toggleBodyClassIfChanged('has-collapsed-overlays', collapsedOverlaySpace > 0);" in INIT_JS
+    assert "new MutationObserver(_queueComposerClearanceSync).observe(dock, {\n        childList: true,\n      });" in INIT_JS
+    assert "subtree: true,\n        attributeFilter: ['class', 'style']," not in INIT_JS
 
 
 def test_minimized_dock_saved_position_is_orientation_scoped():
@@ -68,12 +79,14 @@ def test_minimized_dock_can_reset_to_default_home_position():
 
 def test_desktop_minimized_dock_uses_chatbar_width_and_side_scroll():
     assert "function _desktopChatbarDockRect(bounds = _dockWorkspaceBounds())" in MODAL_MANAGER_JS
-    assert "if (_isTouchInput() || _dockPos) return null;" in MODAL_MANAGER_JS
+    assert "if (_isTouchInput()) return null;" in MODAL_MANAGER_JS
     assert "const rect = _visibleRect(document.querySelector('.chat-input-bar'));" in MODAL_MANAGER_JS
     assert "return { left: Math.round(left), width };" in MODAL_MANAGER_JS
     assert "const desktopChatbarDock = !!_desktopChatbarDockRect(bounds);" in MODAL_MANAGER_JS
     assert "dock.classList.toggle('dock-chatbar-row', desktopChatbarDock);" in MODAL_MANAGER_JS
     assert "const chatbarDock = _desktopChatbarDockRect(bounds);" in MODAL_MANAGER_JS
+    assert "if (chatbarDock) {\n    if (_dockPos) {" in MODAL_MANAGER_JS
+    assert "_dockPos = null;\n      delete _dockPosByLayout[_dockLayout];\n      _saveDockState();" in MODAL_MANAGER_JS
     assert "dock.style.left = `${chatbarDock.left}px`;" in MODAL_MANAGER_JS
     assert "dock.style.width = `${chatbarDock.width}px`;" in MODAL_MANAGER_JS
     assert "dock.style.maxWidth = `${chatbarDock.width}px`;" in MODAL_MANAGER_JS
@@ -110,6 +123,88 @@ def test_touch_landscape_does_not_get_mobile_overlay_sheet_rules():
     assert "#research-overlay .modal-content," in block
     assert "max-height: 100dvh !important;" in block
     assert "height: 100dvh !important;" in block
+
+
+def test_touch_landscape_gallery_editor_splits_tools_and_canvas():
+    marker = "Touch landscape editor"
+    assert marker in CSS
+    block = CSS[CSS.index(marker): CSS.index("/* ── Group Chat", CSS.index(marker))]
+    editor_marker = '#gallery-modal #gallery-editor-container[style*="flex"] .ge-editor-body'
+    topbar_marker = '#gallery-modal #gallery-editor-container[style*="flex"] .ge-topbar'
+    panel_marker = '#gallery-modal #gallery-editor-container[style*="flex"] .ge-right-panel'
+    canvas_marker = '#gallery-modal #gallery-editor-container[style*="flex"] .ge-canvas-area'
+    docked_canvas_marker = '#gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) #gallery-editor-container[style*="flex"] .ge-canvas-area'
+    docked_panel_marker = '#gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) #gallery-editor-container[style*="flex"] .ge-right-panel'
+    assert "@media (orientation: landscape) and (hover: none)" in block
+    assert "(orientation: landscape) and (pointer: coarse)" in block
+    assert editor_marker in block
+    assert "flex-direction: row !important;" in block[block.index(editor_marker): block.index(panel_marker)]
+    topbar_block = block[block.index(topbar_marker): block.index('#gallery-modal #gallery-editor-container[style*="flex"] .ge-toolbar')]
+    assert "order: 0;" in topbar_block
+    assert "overflow-x: auto;" in topbar_block
+    assert "overflow-y: hidden;" in topbar_block
+    assert "flex-wrap: nowrap;" in topbar_block
+    assert "scrollbar-width: none;" in topbar_block
+    assert ".ge-topbar::-webkit-scrollbar" in topbar_block
+    assert ".ge-topbar-left" in topbar_block
+    assert "flex: 0 0 auto;" in topbar_block
+    panel_block = block[block.index(panel_marker): block.index('#gallery-modal #gallery-editor-container[style*="flex"] .ge-right-panel.expanded')]
+    assert "position: static !important;" in panel_block
+    assert "flex: 0 0 calc(50% - 26px) !important;" in panel_block
+    assert "max-width: calc(50% - 26px);" in panel_block
+    canvas_block = block[block.index(canvas_marker): block.index('#gallery-modal #gallery-editor-container[style*="flex"] .ge-panel-resize')]
+    assert "display: flex !important;" in canvas_block
+    assert "flex: 1 1 50% !important;" in canvas_block
+    assert "display: none" not in canvas_block
+    docked_canvas_block = block[block.index(docked_canvas_marker): block.index(docked_panel_marker)]
+    assert "display: none !important;" in docked_canvas_block
+    assert "flex: 0 0 0 !important;" in docked_canvas_block
+    assert "width: 0 !important;" in docked_canvas_block
+    docked_panel_block = block[block.index(docked_panel_marker):]
+    assert "flex: 1 1 0 !important;" in docked_panel_block
+    assert "display: flex !important;" in docked_panel_block
+    assert "overscroll-behavior: contain;" in docked_panel_block
+    assert "max-width: none !important;" in docked_panel_block
+    assert ".ge-topbar" in docked_panel_block
+    assert "overflow-x: auto;" in docked_panel_block
+    assert "scrollbar-width: none;" in docked_panel_block
+    assert ".ge-topbar-left" in docked_panel_block
+    assert "flex: 0 0 auto;" in docked_panel_block
+    assert ".ge-controls" in docked_panel_block
+    assert "padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px)) !important;" in docked_panel_block
+    assert ".ge-layers-list" in docked_panel_block
+    assert "padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)) !important;" in docked_panel_block
+    assert ".ge-control-row" in docked_panel_block
+    assert "flex-wrap: wrap;" in docked_panel_block
+    assert ".ge-image-menu" in docked_panel_block
+    assert ".ge-save-menu" in docked_panel_block
+    assert "max-height: min(72vh, 420px);" in docked_panel_block
+    assert "if (_isLandscapeEditorSplit()) return false;" in GALLERY_EDITOR_JS
+    assert "if (_isTouchLandscape() && _isDockedGalleryEditor()) return null;" in GALLERY_EDITOR_JS
+    assert "function _resetDockedOptionScroll()" in GALLERY_EDITOR_JS
+    assert "panel.scrollTop = 0;" in GALLERY_EDITOR_JS
+    assert "if (isTouchLandscape()) return false;" in RIGHT_PANEL_JS
+    assert "function isTouchLandscapeGalleryEditor()" in TOPBAR_MENUS_JS
+    assert "function positionLandscapeMenu(btn, menu, minWidth = 180)" in TOPBAR_MENUS_JS
+    assert "function editorMenuBounds(pad = 8)" in TOPBAR_MENUS_JS
+    assert "const bounds = editorMenuBounds(8);" in TOPBAR_MENUS_JS
+    assert "menu.style.position = 'fixed';" in TOPBAR_MENUS_JS
+    assert "menu.style.maxHeight =" in TOPBAR_MENUS_JS
+    assert "function topbarMenuBounds(pad = 8)" in TOPBAR_JS
+    assert "const bounds = topbarMenuBounds(8);" in TOPBAR_JS
+    assert "saveMenu.style.maxHeight =" in TOPBAR_JS
+
+
+def test_android_sidebar_explicit_open_survives_viewport_noise():
+    assert "let _mobileSidebarExplicitOpen = false;" in SIDEBAR_LAYOUT_JS
+    assert "const isMobileSidebarViewport = () => window.innerWidth < 768 || isTouchLandscape();" in SIDEBAR_LAYOUT_JS
+    assert "const markMobileSidebarOpen = () => {" in SIDEBAR_LAYOUT_JS
+    assert "if (_mobileSidebarExplicitOpen && !isHidden && isMobileSidebarViewport()) return;" in SIDEBAR_LAYOUT_JS
+    assert "const isVisualViewportEvent = e && window.visualViewport && e.currentTarget === window.visualViewport;" in SIDEBAR_LAYOUT_JS
+    assert "if (!isVisualViewportEvent) {" in SIDEBAR_LAYOUT_JS
+    assert "if (!isMobileSidebarViewport() || e?.type === 'orientationchange')" in SIDEBAR_LAYOUT_JS
+    assert "let restored = false;" in SIDEBAR_LAYOUT_JS
+    assert "if (restored) syncRailSide();" in SIDEBAR_LAYOUT_JS
 
 
 def test_touch_layouts_keep_modal_window_controls_visible():
@@ -219,6 +314,20 @@ def test_edge_docking_clears_the_opposite_side_first():
     assert "suspendDock(existing);" in MODAL_SNAP_JS
     assert "_clearOppositeDockedWindows(side, modal);" in MODAL_SNAP_JS
     assert "_requestDockReplacement(side, modal);" in MODAL_SNAP_JS
+
+
+def test_right_edge_tile_snap_delegates_to_reserved_edge_dock():
+    assert "import { applyEdgeDock } from './modalSnap.js';" in TILE_MANAGER_JS
+    assert "reserved right dock" in TILE_MANAGER_JS
+    assert "function _rightDockPreviewRect(safe)" in TILE_MANAGER_JS
+    assert "const MAX_DESKTOP_EDGE_DOCK_WIDTH = 720;" in TILE_MANAGER_JS
+    assert "const MAX_DESKTOP_EDGE_DOCK_RATIO = 0.44;" in TILE_MANAGER_JS
+    assert "return { name: 'right-half', rect: _rightDockPreviewRect(safe) };" in TILE_MANAGER_JS
+    assert "if (zoneName === 'right-half' && _modal) {" in TILE_MANAGER_JS
+    assert "const dockW = applyEdgeDock(_modal, 'right');" in TILE_MANAGER_JS
+    assert "if (dockW) {" in TILE_MANAGER_JS
+    assert "return;" in TILE_MANAGER_JS
+    assert "case 'right-half':     r = _rightDockPreviewRect(safe); break;" in TILE_MANAGER_JS
 
 
 def test_android_tool_opens_auto_dock_and_replace_existing_dock():
@@ -438,6 +547,43 @@ def test_android_touch_docking_is_landscape_only_without_enabling_resize():
     assert "if (zone.name === 'fullscreen' && _isTouchLandscape()) return;" not in TILE_MANAGER_JS
     assert "function _isTouchPortrait()" in TILE_MANAGER_JS
     assert "if (_isTouchPortrait()) {" in TILE_MANAGER_JS
+
+
+def test_desktop_modal_autowire_is_event_driven_but_android_keeps_dock_polling():
+    assert "function _wireAutoWireScanner()" in MODAL_MANAGER_JS
+    assert "if (_isOdysseusAndroidApp()) {\n    return setInterval(_scanAndWire, 1000);\n  }" in MODAL_MANAGER_JS
+    assert "const _scanTimer = _wireAutoWireScanner();" in MODAL_MANAGER_JS
+    assert "const _scanTimer = setInterval(_scanAndWire, 1000);" not in MODAL_MANAGER_JS
+    assert "new MutationObserver((mutations) =>" in MODAL_MANAGER_JS
+    assert "observe(document.body, { childList: true, subtree: true });" in MODAL_MANAGER_JS
+    assert "window.addEventListener('focus', _queueAutoWireScan);" in MODAL_MANAGER_JS
+    assert "document.addEventListener('visibilitychange'" in MODAL_MANAGER_JS
+
+
+def test_email_unread_refresh_stays_live_for_new_mail():
+    assert "_refreshUnreadCount();" in EMAIL_INBOX_JS
+    assert "setInterval(_refreshUnreadCount, 60000);" in EMAIL_INBOX_JS
+
+
+def test_pc_window_budget_minimizes_oldest_background_windows():
+    assert "const DESKTOP_VISIBLE_WINDOW_LIMIT = 4;" in MODAL_MANAGER_JS
+    assert "function _isDesktopWindowBudgetEnabled()" in MODAL_MANAGER_JS
+    assert "return !_isOdysseusAndroidApp() && window.innerWidth > 768 && !_isTouchInput();" in MODAL_MANAGER_JS
+    assert "function _enforceDesktopWindowBudget(activeId)" in MODAL_MANAGER_JS
+    assert "if (!_isFloatingBudgetWindow(modal) || !_isModalVisible(modal)) continue;" in MODAL_MANAGER_JS
+    assert "visible.length - DESKTOP_VISIBLE_WINDOW_LIMIT" in MODAL_MANAGER_JS
+    assert "if (victim.id === activeId) continue;" in MODAL_MANAGER_JS
+    assert "if (minimize(victim.id)) excess -= 1;" in MODAL_MANAGER_JS
+    assert "if (id) setTimeout(() => _enforceDesktopWindowBudget(id), 0);" in MODAL_MANAGER_JS
+
+
+def test_standalone_email_windows_are_modal_manager_windows():
+    assert "Modals.register(winId, {" in EMAIL_LIBRARY_JS
+    assert "label: 'Email'," in EMAIL_LIBRARY_JS
+    assert "icon: _EMAIL_ICON_PATH," in EMAIL_LIBRARY_JS
+    assert "closeFn: closeWindow," in EMAIL_LIBRARY_JS
+    assert "Modals.injectMinimizeButton(modal, winId)" in EMAIL_LIBRARY_JS
+    assert "Modals.close(winId);" in EMAIL_LIBRARY_JS
 
 
 def test_mobile_overlay_lists_have_nested_scrollers():

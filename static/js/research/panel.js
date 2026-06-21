@@ -44,6 +44,7 @@ let _markdownModule = null;
 let _sessionModule = null;
 let _settingsCollapsed = false;
 let _lastStartSubmitAt = 0;
+let _searchProviderStatus = new Map();
 const _SETTINGS_KEY = 'odysseus-research-settings';
 const _COLLAPSE_KEY = 'odysseus-research-settings-collapsed';
 
@@ -301,7 +302,7 @@ export function openPanel(focusJobId) {
   }
 
   _wireEvents(pane);
-  _loadEndpoints().then(_restoreSavedSettings);
+  Promise.all([_loadEndpoints(), _loadSearchProviders()]).then(_restoreSavedSettings);
   _clearBadge();
   _updateResearchCount();
 
@@ -448,6 +449,7 @@ function _buildPanelHTML() {
             <select id="research-model"><option value="">Default</option></select>
           </label>
         </div>
+        <div id="research-search-provider-warning" class="research-provider-warning" style="display:none"></div>
         <div class="research-controls-row">
           <button id="research-add-btn" class="research-add-btn"><span class="research-add-plus">+</span> Queue</button>
           <button id="research-start-btn" class="research-start-btn">${_playIcon} Start</button>
@@ -522,18 +524,64 @@ function _wireEvents(pane) {
 
   const endpointSelect = pane.querySelector('#research-endpoint');
   endpointSelect.addEventListener('change', () => _populateModels(endpointSelect.value));
+  const searchProviderSelect = pane.querySelector('#research-search-provider');
+  searchProviderSelect?.addEventListener('change', () => {
+    _syncSearchProviderWarning();
+    _saveSettingsToStorage();
+  });
 
   _renderJobs();
+}
+
+function _isSearchProviderUnavailable(provider) {
+  if (!provider) return false;
+  const meta = _searchProviderStatus.get(provider);
+  return !!meta && meta.available === false;
+}
+
+function _setSearchProviderWarning(message) {
+  const el = document.getElementById('research-search-provider-warning');
+  if (!el) return;
+  el.textContent = message || '';
+  el.style.display = message ? '' : 'none';
+}
+
+function _syncSearchProviderWarning() {
+  const sel = document.getElementById('research-search-provider');
+  const provider = sel?.value || '';
+  if (!provider || !_isSearchProviderUnavailable(provider)) {
+    _setSearchProviderWarning('');
+    return;
+  }
+  const meta = _searchProviderStatus.get(provider);
+  const reason = meta?.reason ? ` (${meta.reason})` : '';
+  _setSearchProviderWarning(`${meta?.label || provider} needs setup${reason}. Using Default search instead.`);
+  if (sel) sel.value = '';
+}
+
+function _applySearchProviderStatus() {
+  const sel = document.getElementById('research-search-provider');
+  if (!sel) return;
+  for (const opt of Array.from(sel.options || [])) {
+    if (!opt.value) continue;
+    const meta = _searchProviderStatus.get(opt.value);
+    if (!meta) continue;
+    opt.textContent = meta.available ? meta.label : `${meta.label} (setup needed)`;
+    opt.disabled = meta.available === false;
+    opt.title = meta.reason || '';
+  }
+  _syncSearchProviderWarning();
 }
 
 function _readSettings() {
   const activeCat = document.querySelector('.research-cat.active');
   const category = activeCat?.dataset.cat || undefined;
+  const searchProvider = document.getElementById('research-search-provider')?.value || undefined;
   const settings = {
     max_rounds: parseInt(document.getElementById('research-rounds')?.value || '0', 10),
     depth: document.getElementById('research-depth')?.value || undefined,
     report_layout: document.getElementById('research-report-layout')?.value || undefined,
-    search_provider: document.getElementById('research-search-provider')?.value || undefined,
+    search_provider: _isSearchProviderUnavailable(searchProvider) ? undefined : searchProvider,
     endpoint_id: document.getElementById('research-endpoint')?.value || undefined,
     model: document.getElementById('research-model')?.value || undefined,
     category: category || undefined,
@@ -582,6 +630,7 @@ function _editJob(job) {
   if (layoutEl && s.report_layout) layoutEl.value = s.report_layout;
   const spEl = document.getElementById('research-search-provider');
   if (spEl && s.search_provider) spEl.value = s.search_provider;
+  _syncSearchProviderWarning();
   const epEl = document.getElementById('research-endpoint');
   if (epEl && s.endpoint_id) epEl.value = s.endpoint_id;
   const mEl = document.getElementById('research-model');
@@ -663,7 +712,17 @@ function _restoreSavedSettings() {
   const layout = document.getElementById('research-report-layout');
   if (layout && saved.report_layout) layout.value = saved.report_layout;
   const search = document.getElementById('research-search-provider');
-  if (search && saved.search_provider !== undefined) search.value = saved.search_provider;
+  if (search && saved.search_provider !== undefined) {
+    if (saved.search_provider && _isSearchProviderUnavailable(saved.search_provider)) {
+      const meta = _searchProviderStatus.get(saved.search_provider);
+      const reason = meta?.reason ? ` (${meta.reason})` : '';
+      search.value = '';
+      _setSearchProviderWarning(`${meta?.label || saved.search_provider} needs setup${reason}. Using Default search instead.`);
+    } else {
+      search.value = saved.search_provider;
+      _syncSearchProviderWarning();
+    }
+  }
   const ep = document.getElementById('research-endpoint');
   if (ep && saved.endpoint_id) {
     ep.value = saved.endpoint_id;
@@ -690,6 +749,16 @@ async function _loadEndpoints() {
       opt.textContent = ep.name || ep.base_url;
       sel.appendChild(opt);
     });
+  } catch {}
+}
+
+async function _loadSearchProviders() {
+  try {
+    const res = await fetch(`${_apiBase}/api/search/providers`, { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const providers = await res.json();
+    _searchProviderStatus = new Map((providers || []).map(p => [p.id, p]));
+    _applySearchProviderStatus();
   } catch {}
 }
 
@@ -985,8 +1054,10 @@ function _buildJobCard(job) {
     const doneBadge = failed
       ? `<span class="research-cat-badge research-cat-failed">${_cancelIcon} no results</span>`
       : (job.category ? `<span class="research-cat-badge">${_esc(job.category)}</span>` : `<span class="research-cat-badge research-cat-standard">standard</span>`);
+    const failureMessage = failed ? (jobs.failureMessage(job)
+      || "Couldn't extract anything — try rephrasing the question, or switch the search engine in Settings.") : '';
     const failNote = failed
-      ? `<div class="research-job-failnote">Couldn't extract anything — try rephrasing the question, or switch the search engine in Settings.</div>`
+      ? `<div class="research-job-failnote">${_esc(failureMessage)}</div>`
       : '';
     card.innerHTML = `
       <div class="research-job-header">

@@ -86,7 +86,14 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
         """Enhanced version that includes directories"""
         files = [{"name": f["name"], "size": f["size"], "path": f.get("path", "")} for f in personal_docs_manager.index]
         directories = personal_docs_manager.get_indexed_directories() if hasattr(personal_docs_manager, "get_indexed_directories") else []
-        return {"files": files, "directories": directories}
+        base_directory = getattr(personal_docs_manager, "personal_dir", PERSONAL_DIR)
+        return {
+            "files": files,
+            "directories": directories,
+            "base_directory": base_directory,
+            "allowed_directory_root": PERSONAL_DIR,
+            "rag_available": bool(_rag()),
+        }
     
     @router.post("/reload")
     def api_personal_reload(owner: str = Depends(require_user), _admin: None = Depends(require_admin)):

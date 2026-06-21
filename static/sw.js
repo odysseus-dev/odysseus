@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v388';
+const CACHE_NAME = 'odysseus-v415';
 
 // Core shell precached on install so repeat opens are instant without any
 // network wait. Keep this list in sync with the <script type="module"> tags
@@ -48,6 +48,8 @@ const PRECACHE = [
   '/static/js/admin.js?v=20260615unload',
   '/static/js/init.js',
   '/static/js/slashCommands.js',
+  '/static/js/workspace.js',
+  '/static/js/workspaceEditor.js',
   '/static/js/emailInbox.js',
   '/static/js/emailLibrary/utils.js',
   '/static/js/emailLibrary/signatureFold.js',
@@ -113,9 +115,9 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // JS/CSS: network-first — always try the network so code/style edits show up
-  // on a normal reload; fall back to cache only when offline.
-  if (url.pathname.startsWith('/static/') && /\.(js|css)(\?|$)/.test(url.pathname + url.search)) {
+  // HTML/JS/CSS: network-first — always try the network so app-shell/code/style
+  // edits show up on a normal reload; fall back to cache only when offline.
+  if (url.pathname.startsWith('/static/') && /\.(html|js|css)(\?|$)/.test(url.pathname + url.search)) {
     e.respondWith(
       fetch(e.request).then(res => {
         if (res && res.ok) {

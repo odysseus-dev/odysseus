@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 import time
 import logging
 from datetime import datetime
@@ -46,7 +47,21 @@ logger = logging.getLogger(__name__)
 
 # Track active streams for partial-save safety net
 _active_streams: Dict[str, dict] = {}
-_IMAGE_MODEL_PREFIXES = ("gpt-image", "dall-e", "chatgpt-image")
+_IMAGE_MODEL_PREFIXES = (
+    "gpt-image",
+    "dall-e",
+    "chatgpt-image",
+    "flux",
+    "qwen-image",
+    "imagen",
+    "models/imagen",
+)
+_MEDIA_RESULT_KEYS = (
+    "media_url", "media_id", "media_type", "media_prompt", "media_model",
+    "media_size", "media_quality", "media_files",
+    "image_url", "image_id", "image_prompt", "image_model", "image_size",
+    "image_quality",
+)
 
 
 def _stream_set(session_id: str, **fields) -> None:
@@ -87,6 +102,34 @@ def _resolve_request_workspace(request, raw_value) -> tuple:
     from src.tool_execution import vet_workspace
     workspace = vet_workspace(requested) or ""
     return workspace, (requested if not workspace else "")
+
+
+_WORKSPACE_LOCAL_PATH_RE = re.compile(
+    r"(?:[A-Za-z]:[\\/][^\s`'\"<>]+|(?:\.{1,2}[\\/]|~[\\/]|/)[^\s`'\"<>]+)"
+)
+_WORKSPACE_FILE_ACTION_RE = re.compile(
+    r"\b(?:open|read|show|list|browse|inspect|check|search|find|edit|modify|"
+    r"change|write|save|create|delete|remove|rename|move|fix|update|refactor|"
+    r"build|run|test|look\s+(?:at|in|through)|work\s+on)\b",
+    re.I,
+)
+_WORKSPACE_FILE_TARGET_RE = re.compile(
+    r"\b(?:files?|folders?|director(?:y|ies)|repo|repository|project|workspace|"
+    r"codebase|source|tree|path)\b",
+    re.I,
+)
+
+
+def _message_mentions_workspace_files(message: Any) -> bool:
+    text = str(message or "")
+    if not text.strip():
+        return False
+    if _WORKSPACE_LOCAL_PATH_RE.search(text):
+        return True
+    return bool(
+        _WORKSPACE_FILE_ACTION_RE.search(text)
+        and _WORKSPACE_FILE_TARGET_RE.search(text)
+    )
 
 
 def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
@@ -162,7 +205,10 @@ def _is_image_generation_session(sess, owner: str | None = None) -> bool:
     models into the image-generation path.
     """
     model = (getattr(sess, "model", "") or "").strip()
+    model_l = model.lower()
     if any(model.lower().startswith(prefix) for prefix in _IMAGE_MODEL_PREFIXES):
+        return True
+    if "image" in model_l and any(term in model_l for term in ("gemini", "qwen", "flux", "imagen")):
         return True
 
     endpoint_url = (getattr(sess, "endpoint_url", "") or "").strip()
@@ -190,13 +236,157 @@ def _is_image_generation_session(sess, owner: str | None = None) -> bool:
     return False
 
 
+def _requested_media_generation_kind(message: str) -> str | None:
+    """Return the requested generated-media kind for explicit user asks.
+
+    This is intentionally conservative: it catches direct "make/generate an
+    image/video/song" requests while leaving analysis, prompts, SVG/code, and
+    troubleshooting turns in ordinary chat.
+    """
+    text = " ".join((message or "").lower().split())
+    if not text:
+        return None
+
+    if re.search(r"\binstead\s+of\s+(?:producing|generating|creating|making|rendering)\s+(?:an?\s+)?(?:image|picture|photo|video|song|music|audio)\b", text):
+        return None
+    if re.search(r"\b(?:why|how)\b.{0,60}\b(?:produce|produced|generat(?:e|ed|ing)|creat(?:e|ed|ing)|mak(?:e|ing)|render(?:ed|ing)?)\b", text):
+        return None
+    if re.search(r"\b(?:prompt\s+for|image\s+prompt|video\s+prompt|music\s+prompt|audio\s+prompt)\b", text):
+        return None
+    if re.search(r"\b(?:svg|html|css|javascript|react|code|markup|xml|mermaid)\b", text):
+        return None
+
+    direct = r"(?:generate|create|make|produce|render|draw|design|paint|illustrate|compose|write|record|animate)"
+    please = r"(?:i\s+want|i\s+need|give\s+me|please|can\s+you|could\s+you)"
+    image = r"(?:image|picture|pic|photo|photograph|illustration|artwork|poster|logo|icon|avatar|thumbnail|wallpaper|graphic|concept\s+art|visual)"
+    video = r"(?:video|movie|clip|animation|animated\s+clip|gif|b-roll|footage)"
+    music = r"(?:music|song|track|audio|soundtrack|beat|jingle|voiceover|voice\s+over|sound\s+effect|sfx)"
+
+    checks = (
+        ("video", (rf"\b{direct}\b.{{0,90}}\b{video}\b", rf"\b{please}\b.{{0,90}}\b{video}\b")),
+        ("music", (rf"\b{direct}\b.{{0,90}}\b{music}\b", rf"\b{please}\b.{{0,90}}\b{music}\b")),
+        ("image", (rf"\b{direct}\b.{{0,90}}\b{image}\b", rf"\b{please}\b.{{0,90}}\b{image}\b")),
+    )
+    for kind, patterns in checks:
+        if any(re.search(pattern, text) for pattern in patterns):
+            return kind
+    if re.search(r"\b(?:draw|paint|illustrate|sketch)\b\s+(?:me\s+)?(?:an?\s+|the\s+)?[a-z0-9]", text) and not re.search(r"\b(?:draw\s+(?:a\s+)?conclusion|draw\s+up|draw\s+me\s+a\s+bath)\b", text):
+        return "image"
+    return None
+
+
+def _message_content_text(item: Any) -> str:
+    if isinstance(item, dict):
+        content = item.get("content", "")
+    else:
+        content = getattr(item, "content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, dict):
+                text = part.get("text") or part.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+            elif isinstance(part, str):
+                parts.append(part)
+        return " ".join(parts)
+    return ""
+
+
+def _looks_like_missed_media_response(text: str) -> bool:
+    normalized = " ".join((text or "").lower().split())
+    if not normalized:
+        return False
+    miss_markers = (
+        r"\b(?:svg|html|code|markup)\b",
+        r"\bcopy\s+it\s+into\b",
+        r"\b(?:prompt|negative\s+prompt)\s*:",
+        r"\b(?:cannot|can't|don'?t)\s+(?:generate|create|render|run|invoke|access|have)\b",
+        r"\b(?:tool|skill|invocation|interface|backend)\s+(?:is\s+)?(?:not\s+)?(?:available|exposed|configured|installed|authenticated)\b",
+        r"\b(?:no|without)\s+(?:actual\s+)?(?:image|video|music|audio)?\s*(?:generation\s+)?(?:tool|backend|endpoint|model)\b",
+        r"\b(?:failed|error|setup|sign\s+in|login|log\s+in|runcomfy)\b",
+    )
+    return any(re.search(pattern, normalized) for pattern in miss_markers)
+
+
+def _requested_media_generation_from_context(message: str, messages: list | None) -> tuple[str, str] | None:
+    kind = _requested_media_generation_kind(message)
+    if kind:
+        return kind, message
+
+    text = " ".join((message or "").lower().split())
+    if not re.search(r"\b(?:try\s+again|do\s+it|run\s+it|make\s+it|generate\s+it|create\s+it|use\s+(?:the|that)\s+skill|use\s+(?:the|that)\s+tool)\b", text):
+        return None
+
+    last_user_text = ""
+    last_assistant_text = ""
+    skipped_current = False
+    for item in reversed(messages or []):
+        role = item.get("role", "") if isinstance(item, dict) else getattr(item, "role", "")
+        item_text = _message_content_text(item)
+        if role == "user" and not skipped_current and item_text.strip() == (message or "").strip():
+            skipped_current = True
+            continue
+        if role == "assistant" and not last_assistant_text:
+            last_assistant_text = item_text
+            continue
+        if role == "user":
+            last_user_text = item_text
+            break
+
+    if not last_user_text or not last_assistant_text:
+        return None
+    if not _looks_like_missed_media_response(last_assistant_text):
+        return None
+    kind = _requested_media_generation_kind(last_user_text)
+    return (kind, last_user_text) if kind else None
+
+
+def _requested_media_generation_kind_from_context(message: str, messages: list | None) -> str | None:
+    request = _requested_media_generation_from_context(message, messages)
+    return request[0] if request else None
+
+
+async def _generate_direct_media(kind: str, prompt: str, session_id: str, owner: str | None) -> dict:
+    if kind == "image":
+        from src.ai_interaction import do_generate_image
+        from src.runcomfy_media import generate_runcomfy_media, runcomfy_fallback_content, wants_runcomfy_media
+
+        if wants_runcomfy_media(prompt):
+            return await generate_runcomfy_media("image", prompt, owner=owner, session_id=session_id)
+        result = await do_generate_image(prompt, session_id, owner=owner)
+        if result.get("error"):
+            err_text = str(result.get("error", "")).lower()
+            if (prompt or "").strip() and "image prompt is required" not in err_text:
+                result = await generate_runcomfy_media(
+                    "image",
+                    runcomfy_fallback_content("image", prompt),
+                    owner=owner,
+                    session_id=session_id,
+                )
+        return result
+
+    from src.runcomfy_media import generate_runcomfy_media, runcomfy_fallback_content, wants_runcomfy_media
+    media_kind = "music" if kind == "audio" else kind
+    runcomfy_prompt = prompt if wants_runcomfy_media(prompt) else runcomfy_fallback_content(media_kind, prompt)
+
+    return await generate_runcomfy_media(
+        media_kind,
+        runcomfy_prompt,
+        owner=owner,
+        session_id=session_id,
+    )
+
+
 def _recover_empty_session_model(sess, session_id: str, owner: str | None = None) -> bool:
     """Re-populate sess.model from the matching endpoint's cached models.
 
     Covers the window between endpoint setup and the first chat send: the
     picker showed a model in the dropdown but the session record never got
     written (Issue #587 — UI uses the cached endpoint list, not s.model).
-    For ChatGPT Subscription, also repairs stale OpenAI API model names such as
+    For Codex Subscription, also repairs stale OpenAI API model names such as
     ``gpt-5`` that are not accepted by the Codex-backed ChatGPT account route.
     """
     current_model = (getattr(sess, "model", "") or "").strip()
@@ -261,7 +451,7 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
                             db.commit()
                 except Exception:
                     live_models = []
-            # ChatGPT Subscription recovery must use the live Codex catalog.
+            # Codex Subscription recovery must use the live Codex catalog.
             # Cached rows are only trusted above to avoid revalidating a model
             # that is already present in the visible picker list.
             cached = live_models
@@ -515,7 +705,13 @@ def setup_chat_routes(
         # shell disabled).
         auto_escalated = False
         _tool_intent = _classify_tool_intent(message) if isinstance(message, str) else None
-        if chat_mode == "chat" and _tool_intent and _tool_intent.needs_tools:
+        if chat_mode == "chat" and workspace and _message_mentions_workspace_files(message):
+            chat_mode = "agent"
+            logger.info(
+                "chat→agent workspace-file escalation: workspace=%s",
+                workspace,
+            )
+        elif chat_mode == "chat" and _tool_intent and _tool_intent.needs_tools:
             chat_mode = "agent"
             auto_escalated = True
             logger.info(
@@ -722,7 +918,7 @@ def setup_chat_routes(
             if not _privs.get("can_use_documents", True):
                 disabled_tools.update({"create_document", "edit_document", "update_document", "suggest_document"})
             if not _privs.get("can_generate_images", True):
-                disabled_tools.add("generate_image")
+                disabled_tools.update({"generate_image", "generate_video", "generate_music", "runcomfy_media"})
             if not _privs.get("can_manage_memory", True):
                 disabled_tools.update({"manage_memory", "manage_skills"})
             if not _privs.get("can_use_research", True):
@@ -741,7 +937,7 @@ def setup_chat_routes(
         # the heavy "do things on the computer" tools — otherwise the model
         # tries to shell out for a request that never needed it, then fails
         # (and looks broken when the shell is disabled).
-        if auto_escalated:
+        if auto_escalated and ((_tool_intent.category if _tool_intent else "") != "files"):
             disabled_tools.update({
                 "bash", "python", "read_file", "write_file", "builtin_browser",
             })
@@ -757,7 +953,7 @@ def setup_chat_routes(
                 "chat_with_model", "create_session", "list_sessions",
                 "send_to_session",
                 "pipeline", "manage_session", "manage_memory", "list_models",
-                "generate_image", "ui_control",
+                "generate_image", "generate_video", "generate_music", "runcomfy_media", "ui_control",
             }
             disabled_tools.update(_compare_strip)
             # In chat mode compare, disable ALL agent tools (no bash, python, file ops)
@@ -975,39 +1171,64 @@ def setup_chat_routes(
                 _model_info["character_name"] = ctx.preset.character_name
             yield f'data: {json.dumps(_model_info)}\n\n'
 
-            if _is_image_generation_session(sess, owner=_user):
+            _direct_media_request = (
+                ("image", message or "")
+                if _is_image_generation_session(sess, owner=_user)
+                else _requested_media_generation_from_context(message, messages)
+            )
+            _direct_media_kind = _direct_media_request[0] if _direct_media_request else None
+            if _direct_media_kind:
                 from src.settings import get_setting
-                if tool_policy.blocks("generate_image"):
-                    _blocked_msg = tool_policy.reason_for("generate_image")
+                _media_tool = {
+                    "image": "generate_image",
+                    "video": "generate_video",
+                    "music": "generate_music",
+                    "audio": "generate_music",
+                }.get(_direct_media_kind, "generate_image")
+                if tool_policy.blocks(_media_tool):
+                    _blocked_msg = tool_policy.reason_for(_media_tool)
                     yield f'data: {json.dumps({"delta": _blocked_msg})}\n\n'
                     yield "data: [DONE]\n\n"
                     _active_streams.pop(session, None)
                     return
-                if not get_setting("image_gen_enabled", True):
+                if _direct_media_kind == "image" and not get_setting("image_gen_enabled", True):
                     yield f'data: {json.dumps({"delta": "Image generation is disabled by the administrator."})}\n\n'
                     yield "data: [DONE]\n\n"
                     _active_streams.pop(session, None)
                     return
-                from src.ai_interaction import do_generate_image
                 _user_msg = message or ""
-                yield f'data: {json.dumps({"type": "tool_start", "tool": "generate_image", "command": _user_msg[:100]})}\n\n'
+                yield f'data: {json.dumps({"type": "tool_start", "tool": _media_tool, "command": _user_msg[:100]})}\n\n'
                 yield ": heartbeat\n\n"
-                _img_result = await do_generate_image(f"{_user_msg}\n{sess.model}", session, owner=_user)
-                _img_output = _img_result.get("results", _img_result.get("error", ""))
-                _img_tool_data = {"type": "tool_output", "tool": "generate_image", "command": _user_msg[:100], "output": _img_output, "exit_code": 0 if "error" not in _img_result else 1}
-                for _k in ("image_url", "image_id", "image_prompt", "image_model", "image_size", "image_quality"):
-                    if _k in _img_result:
-                        _img_tool_data[_k] = _img_result[_k]
-                yield f'data: {json.dumps(_img_tool_data)}\n\n'
-                _desc = _img_result.get("results", _img_result.get("error", "Image generation complete"))
+                _media_request_text = (_direct_media_request[1] if _direct_media_request else _user_msg) or _user_msg
+                if _media_request_text != _user_msg:
+                    _media_prompt = json.dumps({"prompt": _media_request_text})
+                elif _direct_media_kind == "image" and _is_image_generation_session(sess, owner=_user):
+                    _media_prompt = f"{_user_msg}\n{sess.model}"
+                else:
+                    _media_prompt = _user_msg
+                _media_result = await _generate_direct_media(_direct_media_kind, _media_prompt, session, _user)
+                _media_output = _media_result.get("results", _media_result.get("output", _media_result.get("error", "")))
+                _exit_code = 0 if "error" not in _media_result else 1
+                _media_tool_data = {
+                    "type": "tool_output",
+                    "tool": _media_tool,
+                    "command": _user_msg[:100],
+                    "output": _media_output,
+                    "exit_code": _exit_code,
+                }
+                for _k in _MEDIA_RESULT_KEYS:
+                    if _k in _media_result:
+                        _media_tool_data[_k] = _media_result[_k]
+                yield f'data: {json.dumps(_media_tool_data)}\n\n'
+                _desc = _media_result.get("results", _media_result.get("output", _media_result.get("error", f"{_direct_media_kind.title()} generation complete")))
                 full_response = _desc
                 yield f'data: {json.dumps({"delta": _desc})}\n\n'
                 # Save to session history
                 if not incognito:
-                    _ev = {"round": 1, "tool": "generate_image", "command": _user_msg[:100], "output": _img_output, "exit_code": 0 if "error" not in _img_result else 1}
-                    for _ek in ("image_url", "image_id", "image_prompt", "image_model", "image_size", "image_quality"):
-                        if _img_result.get(_ek):
-                            _ev[_ek] = _img_result[_ek]
+                    _ev = {"round": 1, "tool": _media_tool, "command": _user_msg[:100], "output": _media_output, "exit_code": _exit_code}
+                    for _ek in _MEDIA_RESULT_KEYS:
+                        if _media_result.get(_ek):
+                            _ev[_ek] = _media_result[_ek]
                     sess.add_message(ChatMessage("assistant", full_response, metadata={"tool_events": [_ev], "model": sess.model}))
                     session_manager.save_sessions()
                 yield f'data: {json.dumps({"type": "metrics", "data": {"total_time": 0}})}\n\n'

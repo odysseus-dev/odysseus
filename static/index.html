@@ -1283,7 +1283,7 @@
   </script>
 
   <!-- Rename Session Modal -->
-  <div id="rename-session-modal" class="modal hidden">
+  <div id="rename-session-modal" class="modal hidden" data-edge-dock="off" data-legacy-minimize="off">
     <div class="modal-content" role="dialog" aria-label="Rename session" style="width: 400px;">
       <div class="modal-header">
         <h4>Rename Session</h4>
@@ -2092,10 +2092,10 @@
                 <select id="adm-epProvider" style="display:none">
                   <option value="">Custom URL</option>
                   <option value="https://api.anthropic.com" data-logo="anthropic">Anthropic</option>
-                  <option value="https://api.deepseek.com/v1" data-logo="deepseek" selected>DeepSeek</option>
+                  <option value="https://api.deepseek.com" data-logo="deepseek" selected>DeepSeek</option>
                   <option value="https://api.openai.com/v1" data-logo="openai">OpenAI</option>
                   <option value="copilot" data-logo="github" data-auth-flow="copilot">GitHub Copilot</option>
-                  <option value="chatgpt-subscription" data-logo="openai" data-auth-flow="chatgpt-subscription">ChatGPT Subscription</option>
+                  <option value="chatgpt-subscription" data-logo="openai" data-auth-flow="chatgpt-subscription">Codex Subscription</option>
                   <option value="https://openrouter.ai/api/v1" data-logo="openrouter">OpenRouter</option>
                   <option value="https://ollama.com/api" data-logo="ollama">Ollama Cloud</option>
                   <option value="https://api.groq.com/openai/v1" data-logo="groq">Groq</option>
@@ -2148,6 +2148,9 @@
               <span style="flex:1"></span>
               <button class="admin-btn-sm" id="adm-epProbeAllBtn" title="Re-test every endpoint and refresh online status" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Probe
+              </button>
+              <button class="admin-btn-sm" id="adm-epUnloadAllBtn" title="Unload every currently loaded model from supported local runtimes" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;opacity:0.85;">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v10"/><path d="M18.4 6.6a8 8 0 1 1-12.8 0"/></svg>Unload all
               </button>
               <button class="admin-btn-sm" id="adm-epClearOfflineBtn" title="Remove all endpoints currently marked offline" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;opacity:0.85;">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Clear offline <span id="adm-epOfflineCount" style="opacity:0.6;margin-left:2px;"></span>

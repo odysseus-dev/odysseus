@@ -129,7 +129,7 @@ _API_AGENT_RULES = """\
 - "Create/add/write a note" / "notes" / "todos" / "remind me to X at <time>" → use `manage_notes`. Do NOT store notes in `manage_memory`; memory is for persistent facts/preferences about the user, not note content. For reminders, include a `due_date`; for todos, use `note_type=checklist` when appropriate. `manage_tasks` is for RECURRING background AI jobs, NOT for one-off user reminders.
 - "Disable/turn off/enable/turn on <tool>" (shell, search, research, browser, documents, incognito, etc.) → call `ui_control` with `toggle <name> <on|off>`. Aliases accepted: shell→bash, search→web, deepresearch→research, documents→document_editor. NEVER record this as a memory — the user wants the toggle flipped, not a note about preferring it.
 - "Research X" / "do research on X" / "look into Y" / "deep dive on Z" → call `trigger_research` with `topic`. This starts a live job that appears in the Deep Research sidebar (streams progress + final report). **Do NOT use `web_search` for these** — saw the agent do a plain web_search for "do research on X" when the user wanted the deep-research job. "research X" is a deep-research request, not a quick lookup. (web_search is only for a single quick fact mid-task.) Do NOT POST /api/research/start via app_api either — blocked. After starting, tell the user it's running in the Deep Research sidebar. Only if the user explicitly wants it inline/quick should you fall back to web_search.
-- "Open/show <panel>" (documents, library, gallery, email, inbox, sessions, brain/memories, skills, settings, notes, cookbook) → call `ui_control` with `open_panel <name>`. Panel aliases: library/doc/docs/document→documents, images→gallery, mail/inbox/emails→email, chats/history→sessions, memory/memories→brain, preferences→settings, models/serve/serving→cookbook. CRITICAL: "open memory/memories/brain" / "open skills" / "open notes" / "open documents" / "open cookbook" means OPEN THE PANEL — call `ui_control`, NOT a manage/list tool. The "manage_*" tools list contents in chat; `ui_control open_panel` opens the visual modal the user is asking for.
+- "Open/show <panel>" (documents, library, gallery, email, inbox, sessions, notes, calendar, tasks, research, workspace, brain/memories, skills, settings, cookbook) → call `ui_control` with `open_panel <name>`. Panel aliases: library/doc/docs/document→documents, images/photos→gallery, mail/inbox/emails→email, chats/history→sessions, calander/calender/agenda→calendar, automations→tasks, reports/deep-research→research, files/folders→workspace, memory/memories→brain, preferences→settings, models/serve/serving→cookbook. CRITICAL: "open memory/memories/brain" / "open skills" / "open notes" / "open calendar" / "open workspace" / "open documents" / "open cookbook" means OPEN THE PANEL — call `ui_control`, NOT a manage/list tool. The "manage_*" tools list contents in chat; `ui_control open_panel` opens the visual modal the user is asking for.
 - "Open/start a reply", "open a reply to <sender>", "draft a reply window" for email → find/read the email if needed, then call `ui_control` with `open_email_reply <uid> <folder> reply`. This opens the same email document compose window as clicking Reply in the Email UI. Do NOT call `reply_to_email` unless the user explicitly gave body text and wants to SEND immediately.
 - Bulk email actions ("delete all those", "archive these", "mark all read") require a real email tool call. Use `bulk_email` once with UIDs from the latest `list_emails` result and the same `account`; never claim success without the tool result.
 - Email UIDs are the values after `UID:` in tool output, not list row numbers. For example, row `1.` with `UID: 90186` must use `"90186"`, never `"1"`.
@@ -247,7 +247,7 @@ _DOMAIN_RULES = {
 - Recurring/automatic/scheduled requests create a `manage_tasks` task; do not just perform the action once.""",
     "ui": """\
 ## UI rules
-- "Open/show <panel>" uses `ui_control open_panel <name>`.
+- "Open/show/view/access <panel>" uses `ui_control open_panel <name>` for documents/library, gallery, email/inbox, sessions/chats, notes, calendar, tasks, research, workspace/files, memories/brain, skills, settings, and cookbook.
 - Tool toggles like "turn off shell/search/research" use `ui_control toggle <name> <on|off>`, not memory.""",
     "sessions": """\
 ## Chat/session rules
@@ -264,10 +264,23 @@ _DOMAIN_RULES = {
 - Use named tools over `app_api` when a named wrapper exists.
 - `app_api` is only for safe UI/API actions without a named tool; do not use it for shell, package installs, engine rebuilds, or sensitive auth/admin paths.""",
     "gallery": """\
-## Gallery rules
-- Use `manage_gallery` to list/search/get/describe saved Gallery images. Do not claim you cannot see the Gallery without trying this tool when it is available.
+## Media/Gallery rules
+- Use `generate_image`, `generate_video`, or `generate_music` when the user asks to create new media. Do not claim you cannot generate media when one of those tools is available; call the tool.
+- Never answer an image/video/music generation request with SVG, HTML, code, or a prompt-only workaround unless the user explicitly asks for SVG/code/prompt text.
+- Image generation tries the current/configured/mentioned image-capable model first, then falls back to RunComfy/ComfyUI when that model is unavailable or fails.
+- Video and music generation use RunComfy-backed skills unless a dedicated configured provider handles them in the future.
+- Use `runcomfy_media` when a viewed skill gives a specific RunComfy `model_id` and JSON schema that the narrower tools do not cover.
+- Use `manage_gallery` to list/search/get/describe saved Gallery images and videos. Do not claim you cannot see the Gallery without trying this tool when it is available.
 - Use `edit_image` to edit a Gallery image and save the edited copy back to Gallery. Use `manage_gallery` first if you need an image id.
 - Inpaint requires a mask or mask_image_id. For quick local edits, use sharpen. For visual understanding, use `manage_gallery` action `describe`.""",
+    "memory": """\
+## Memory rules
+- Use `manage_memory` for persistent user facts, preferences, and stored memories.
+- Use `ui_control open_panel memories` when the user asks to open/show the Memory or Brain panel.""",
+    "skills": """\
+## Skills rules
+- Use `manage_skills` to list, view, search, add, edit, publish, or delete skills.
+- Use `ui_control open_panel skills` when the user asks to open/show the Skills panel.""",
 }
 
 _DOMAIN_TOOL_MAP = {
@@ -280,7 +293,9 @@ _DOMAIN_TOOL_MAP = {
     "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
     "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls", "get_workspace"},
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
-    "gallery": {"manage_gallery", "edit_image"},
+    "gallery": {"generate_image", "generate_video", "generate_music", "runcomfy_media", "manage_gallery", "edit_image"},
+    "memory": {"manage_memory"},
+    "skills": {"manage_skills"},
 }
 
 def _domain_rules_for_tools(tool_names: set) -> list[str]:
@@ -292,6 +307,24 @@ def _domain_rules_for_tools(tool_names: set) -> list[str]:
     if names & {"create_session", "list_sessions", "manage_session", "manage_documents", "manage_notes", "manage_calendar", "manage_tasks", "manage_skills", "manage_research", "manage_gallery", "edit_image"}:
         rules.append(_LINK_RULES)
     return rules
+
+
+def _active_workspace_note(workspace: str) -> str:
+    """Trusted per-turn note for the vetted workspace bound by chat_routes."""
+    ws = json.dumps(str(workspace or ""))
+    return (
+        "\n\n## Active workspace\n"
+        f"- The user selected this real local PC workspace: {ws}.\n"
+        "- For file, folder, project, repo, or codebase requests about this workspace, use "
+        "`get_workspace`, `ls`, `glob`, `grep`, `read_file`, `edit_file`, or `write_file` "
+        "when those tools are listed for this turn.\n"
+        "- File tools are confined to this workspace. Prefer paths relative to it; absolute "
+        "paths are allowed only when they remain inside it.\n"
+        "- Do not ask the user to paste files from this workspace, and do not claim you lack "
+        "local filesystem access. If the request is about `the project`, `this folder`, "
+        "`the code`, or the selected path, inspect it with tools."
+    )
+
 
 # Each tool section is keyed by tool name(s) it covers.
 # Sections with multiple tools use a tuple key.
@@ -398,12 +431,27 @@ Suggest changes with explanations (for review/feedback requests).""",
 
     "generate_image": """\
 ```generate_image
-<prompt>
-<model>
-<size>
-<quality>
+{"prompt": "Editorial product photo of a matte black smart speaker on a walnut table, soft window light, premium home interior", "size": "1536x1024", "quality": "professional", "style": "high-end commercial photography"}
 ```
-Generate an image. Line 1 = description, line 2 = model name, line 3 = WxH (e.g. 1024x1024), line 4 = quality.""",
+Generate a professional image file and render it inline. Prefer structured JSON. Do not respond with SVG/HTML/code/prompt text for image creation unless the user explicitly asks for that format. Optional fields: `model`/`model_id`, `size`, `aspect_ratio`, `style`, `quality` (`draft`, `high`, `professional`, `premium`), `seed`, and `enhance_prompt`. Uses the current/configured/mentioned image-capable model first, then falls back to RunComfy/ComfyUI if needed.""",
+
+    "generate_video": """\
+```generate_video
+{"prompt": "A red kite tumbles across a windy beach at golden hour, kids chase it laughing, surf in the background. Audio: wind, gulls, distant laughter.", "duration": 8, "aspect_ratio": "16:9", "resolution": "1080p", "quality": "professional", "camera": "low tracking shot, slow push-in"}
+```
+Generate professional video with RunComfy/ComfyUI and render it inline. Optional fields: `model`/`model_id`, `duration`, `aspect_ratio`, `resolution`, `quality` (`draft`, `professional`, `premium`, `hero`, `4k`), `camera`, `image_url`, `audio_url`, `seed`, `enhance_prompt`, `input` for an exact RunComfy JSON body, and `timeout`. Auto-routes i2v when `image_url` is present, lip-sync when `audio_url` is present, and premium/4K requests toward higher tiers.""",
+
+    "generate_music": """\
+```generate_music
+{"tags": "indie pop, bright guitar, driving drums, female vocal, 120 BPM", "lyrics": "[Verse]\\nMorning on the ridge\\n[Chorus]\\nWe rise, we strike", "duration": 60, "quality": "professional"}
+```
+Generate professional music/audio with RunComfy/ComfyUI and render it inline. Optional fields: `model`/`model_id`, `quality` (`draft`, `professional`, `premium`, `commercial`, `broadcast`), `prompt`, `tags`, `lyrics`, `duration`, `bpm`, `mood`, `loop`, `force_instrumental`, `audio`, `start_time`, `end_time`, `extend_before_duration`, `extend_after_duration`, `enhance_prompt`, `input`, and `timeout`. Auto-routes professional music to ACE Step 1.5, premium/commercial music to ElevenLabs Music, and audio edits to ACE inpaint/outpaint.""",
+
+    "runcomfy_media": """\
+```runcomfy_media
+{"media_type": "image|video|music", "model_id": "vendor/model/endpoint", "input": {"prompt": "..."}, "timeout": 1800}
+```
+Run any RunComfy media endpoint from a skill's exact model id and JSON body. Use this for skills such as `ai-image-generation`, `ai-video-generation`, `image-to-video`, `video-edit`, `ai-avatar-video`, and `ai-music` when their schema is more specific than the narrow tools. The output file is saved under Odysseus generated media and rendered inline.""",
 
     "manage_gallery": """\
 ```manage_gallery
@@ -484,7 +532,7 @@ If the user asks for a reminder/alarm before the event, pass `reminder_minutes` 
     "send_to_session": "- ```send_to_session``` — Send a message to another session. Line 1 = session_id, rest = message. Use for orchestrating work across sessions.",
     "search_chats": "- ```search_chats``` — Search past session transcripts for direct conversation evidence. Use when user asks 'did we discuss X?', 'find the conversation about Y', or when prior chat context is more appropriate than persistent memory.",
     "pipeline": "- ```pipeline``` — Run a multi-step AI pipeline. Args (JSON) with ordered steps, each specifying a model and prompt. Use for complex workflows.",
-    "ui_control": "- ```ui_control``` — Control the UI: toggle tools on/off, OPEN PANELS, open email reply drafts, switch models, change themes. Commands: `toggle <name> on/off` (names: bash/shell, web/search, research, incognito, document_editor/documents), `open_panel <name>` (panels: documents, gallery, email, sessions, notes, memories/brain, skills, settings, cookbook), `open_email_reply <uid> <folder> <reply|reply-all|ai-reply>` (opens an email compose document, does NOT send), `set_mode agent/chat`, `switch_model <name>`, `set_theme <preset>`, `create_theme <name> <bg> <fg> <panel> <border> <accent>` (optional key=val for advanced colors AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false). \"open documents\" / \"open library\" / \"show gallery\" / \"open inbox\" / \"open notes\" / \"open cookbook\" all map to `open_panel <name>`. Built-in theme presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute. For any other vibe/name, use create_theme.",
+    "ui_control": "- ```ui_control``` — Control the UI: toggle tools on/off, OPEN PANELS, open email reply drafts, switch models, change themes. Commands: `toggle <name> on/off` (names: bash/shell, web/search, research, incognito, document_editor/documents), `open_panel <name>` (panels: documents/library, gallery, email/inbox, sessions/chats, notes, calendar, tasks, research, workspace, memories/brain, skills, settings, cookbook), `open_email_reply <uid> <folder> <reply|reply-all|ai-reply>` (opens an email compose document, does NOT send), `set_mode agent/chat`, `switch_model <name>`, `set_theme <preset>`, `create_theme <name> <bg> <fg> <panel> <border> <accent>` (optional key=val for advanced colors AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false). \"open documents\" / \"open library\" / \"show gallery\" / \"open inbox\" / \"open notes\" / \"open calendar\" / \"open tasks\" / \"open research\" / \"open workspace\" / \"open cookbook\" all map to `open_panel <name>`. Built-in theme presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute. For any other vibe/name, use create_theme.",
     "ask_user": "- ```ask_user``` — Ask the user a multiple-choice question when the task is genuinely ambiguous and the answer changes what you do next (pick an approach, confirm an assumption, choose a target). Args (JSON): {\"question\": \"...\", \"options\": [{\"label\": \"...\", \"description\": \"...\"?}, ...], \"multi\": false?}. 2-6 options. The user gets clickable buttons; calling this ENDS your turn and their choice comes back as your next message. Prefer sensible defaults — only ask when you truly can't proceed well without their input.",
     "update_plan": "- ```update_plan``` — While executing an approved plan, write the plan back: tick steps done or revise them. Args (JSON): {\"plan\": \"- [x] done step\\n- [ ] next step\"}. Always pass the COMPLETE checklist, not a diff. Call it after finishing each step (mark it `- [x]`) and whenever the user asks to change the plan. The user's docked plan window updates live. Does nothing if there's no active plan.",
     "list_served_models": "- ```list_served_models``` — Show what the Cookbook (LLM-serving subsystem) is currently running. NO args. Use this for ANY 'what's running' / 'what's serving' / 'show my cookbook' / 'is anything up' query. DO NOT shell out (`ps aux`, `docker ps`, etc.) — this tool is the source of truth. Failed serve tasks include recent logs plus diagnosis/retry suggestions; use those suggestions to call `serve_model` again with an adjusted command when appropriate.",
@@ -694,6 +742,8 @@ _ADMIN_KEYWORDS = [
     # agent flails (curl, bash) instead of using the right tool.
     "document", "documents", "doc", "docs", "library", "tidy",
     "note", "notes", "todo", "todos", "reminder", "reminders",
+    "calendar", "calander", "calender", "event", "events", "meeting", "meetings",
+    "gallery", "photos", "images", "research", "workspace", "file tree", "folder tree",
 ]
 
 def _detect_admin_intent(messages: List[Dict]) -> bool:
@@ -794,31 +844,77 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
     def has(*patterns: str) -> bool:
         return any(re.search(p, q) for p in patterns)
 
-    if has(r"\b(cookbook|serve|serving|served|launch|start|preset|vllm|sglang|llama\.?cpp|ollama|download|downloading|pull|cached models?|running models?|model servers?|models? (?:are )?running|what models?|model picker|gpu box|kierkegaard|odysseus|ajax|qwen|gemma|llama|mistral|minimax)\b"):
+    local_path_signal = has(r"(?:[a-z]:[\\/]|(?:\.{1,2}[\\/]|~[\\/]|/)[^\s`'\"<>]+)")
+    calendar_surface = r"\b(?:calendars?|calanders?|calenders?|agenda|events?|meetings?|appointments?|schedule)\b"
+    tasks_surface = r"\b(?:tasks?|scheduled\s+tasks?|automations?|automation\s+jobs?|cron|background\s+jobs?)\b"
+    notes_surface = r"\b(?:notes?|todos?|to-dos?|checklists?|reminders?|remind\s+me)\b"
+    documents_surface = r"\b(?:documents?|docs?|library)\b"
+    gallery_surface = r"\b(?:galleries?|gallery|images?|photos?|pictures?|camera\s+roll)\b"
+    email_surface = r"\b(?:emails?|mails?|gmail|inbox|messages?)\b"
+    sessions_surface = r"\b(?:sessions?|chats?|chat\s+history|conversation\s+history|history)\b"
+    workspace_surface = r"\b(?:workspaces?|file\s+tree|folder\s+tree|files?|folders?|directories?)\b"
+    project_surface = r"\b(?:repo|repository|project|codebase|source\s+tree)\b"
+    project_write_action = (
+        r"\b(?:edit|modify|change|write|save|create|delete|remove|rename|move|"
+        r"fix|update|refactor|build|run|test)\b"
+    )
+    research_surface = r"\b(?:research|deep\s+research|deep\s+dive|reports?)\b"
+    memory_surface = r"\b(?:memories|memory|brain)\b"
+    skills_surface = r"\bskills?\b"
+    settings_surface = r"\b(?:settings?|preferences?)\b"
+    cookbook_surface = r"\b(?:cookbook|models?|model\s+serving|serving|serve)\b"
+    panel_surface = (
+        rf"(?:{calendar_surface}|{tasks_surface}|{notes_surface}|{documents_surface}|"
+        rf"{gallery_surface}|{email_surface}|{sessions_surface}|{workspace_surface}|"
+        rf"{research_surface}|{memory_surface}|{skills_surface}|{settings_surface}|"
+        rf"{cookbook_surface})"
+    )
+    menu_action = has(
+        r"\b(?:open|show|bring\s+up|view|access|check|read|use|manage)\b",
+        r"\b(?:can|could|would|will|do)\s+you\b.{0,80}\b(?:see|access|view|open|check|read|use|manage|look\s+(?:at|into))\b",
+    )
+
+    if (
+        has(r"\b(cookbook|serve|serving|served|launch|start|preset|vllm|sglang|llama\.?cpp|ollama|download|downloading|pull|cached models?|running models?|model servers?|models? (?:are )?running|what models?|model picker|gpu box|qwen|gemma|llama|mistral|minimax)\b")
+        or (not local_path_signal and has(r"\b(kierkegaard|odysseus|ajax)\b"))
+    ):
         domains.add("cookbook")
-    if has(r"\b(emails?|mails?|gmail|inbox|reply|forward|cc|bcc|send email|compose email|draft email|message chris|message him|message her)\b"):
+    if has(email_surface, r"\b(reply|forward|cc|bcc|send email|compose email|draft email|message chris|message him|message her)\b"):
         domains.add("email")
-    if has(r"\b(note|todo|to-do|checklist|task list|remind me|reminder|buy|pickup|pick up)\b"):
+    if has(notes_surface, r"\b(task list|buy|pickup|pick up)\b"):
         domains.add("notes_calendar_tasks")
-    if has(r"\b(every day|every morning|every evening|recurring|automatically|cron|scheduled task|background task)\b"):
+    if has(tasks_surface, r"\b(every day|every morning|every evening|recurring|automatically|on a schedule)\b"):
         domains.add("notes_calendar_tasks")
-    if has(r"\b(calendar|event|meeting|appointment|schedule)\b"):
+    if has(calendar_surface):
         domains.add("notes_calendar_tasks")
-    if has(r"\b(documents?|docs?|draft|compose|poem|story|essay|outline|letter|edit|rewrite|proofread|suggest|feedback|review this|make a file)\b"):
+    if has(documents_surface, r"\b(draft|compose|poem|story|essay|outline|letter|edit|rewrite|proofread|suggest|feedback|review this|make a file)\b"):
         domains.add("documents")
     if "notes_calendar_tasks" not in domains and has(r"\bwrite\b"):
         domains.add("documents")
+    if has(gallery_surface):
+        domains.add("gallery")
     if has(r"\b(search|web|google|look up|latest|news|current|weather|forecast|stock price|price of|website|url|https?://|www\.)\b"):
         domains.add("web")
-    if has(r"\b(research|deep dive|investigate|look into)\b"):
+    if has(research_surface, r"\b(investigate|look into)\b"):
         domains.add("web")
-    if has(r"\b(open|show|toggle|turn on|turn off|disable|enable|switch model|change model|settings|theme|panel)\b"):
+    if has(memory_surface):
+        domains.add("memory")
+    if has(skills_surface):
+        domains.add("skills")
+    if (
+        has(r"\b(open|show|toggle|turn on|turn off|disable|enable|switch model|change model|settings|theme|panel)\b")
+        or (menu_action and has(panel_surface))
+    ):
         domains.add("ui")
-    if has(r"\b(session|chat history|rename chat|delete chat|archive chat|fork chat|list chats)\b"):
+    if has(sessions_surface, r"\b(rename chat|delete chat|archive chat|fork chat|list chats)\b"):
         domains.add("sessions")
-    if has(r"\b(file|folder|directory|repo|git|grep|find in files|read file|edit file|shell|terminal|bash|python)\b"):
+    if (
+        has(workspace_surface, r"\b(git|grep|find in files|read file|edit file|shell|terminal|bash|python)\b")
+        or (has(project_surface) and has(project_write_action))
+        or local_path_signal
+    ):
         domains.add("files")
-    if has(r"\b(endpoint|api token|mcp|webhook|preference|configure|config|setting)\b"):
+    if has(settings_surface, r"\b(endpoint|api token|mcp|webhook|configure|config)\b"):
         domains.add("settings")
 
     low_signal = not continuation and not domains
@@ -868,6 +964,7 @@ def _build_system_prompt(
     compact: bool = False,
     owner: Optional[str] = None,
     suppress_local_context: bool = False,
+    workspace: Optional[str] = None,
 ) -> List[Dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
     global _cached_base_prompt, _cached_base_prompt_key
@@ -1122,6 +1219,9 @@ def _build_system_prompt(
             'that open draft is the target: use update_document/edit_document on it instead of creating another document.'
         )
 
+    if workspace and not suppress_local_context:
+        agent_prompt += _active_workspace_note(workspace)
+
     # Inject relevant skills based on the user's last message. The
     # SkillsManager does a Jaccard token-match over published skills'
     # name + description + when_to_use + procedure, returning the top
@@ -1316,7 +1416,7 @@ def _build_base_prompt(
         if not needs_admin:
             # At least strip the management section
             mgmt_tools = set(TOOL_SECTIONS.keys()) - set(ALWAYS_AVAILABLE) - {
-                "generate_image", "suggest_document",
+                "generate_image", "generate_video", "generate_music", "runcomfy_media", "suggest_document",
                 "chat_with_model", "ask_teacher", "list_models",
             }
             agent_prompt = _assemble_prompt(
@@ -1990,6 +2090,7 @@ async def stream_agent_loop(
         compact=_is_api_model,
         owner=owner,
         suppress_local_context=guide_only,
+        workspace=workspace,
     )
     if plan_mode and not guide_only:
         # Steer the model to investigate-then-propose. Hard tool gating handles
@@ -2825,7 +2926,11 @@ async def stream_agent_loop(
                 for k in ("toggle_name", "state", "mode", "model", "endpoint_url", "theme_name", "colors"):
                     if k in result:
                         tool_output_data[k] = result[k]
-            # Forward image data from generate_image/edit_image tools
+            # Forward generated media data from image/video/music tools.
+            for k in ("media_url", "media_id", "media_type", "media_prompt", "media_model", "media_size", "media_quality"):
+                if k in result:
+                    tool_output_data[k] = result[k]
+            # Back-compat for generated image/edit-image bubbles.
             for k in ("image_url", "image_id", "image_prompt", "image_model", "image_size", "image_quality"):
                 if k in result:
                     tool_output_data[k] = result[k]
@@ -2884,6 +2989,10 @@ async def stream_agent_loop(
                 "output": output_text,
                 "exit_code": result.get("exit_code"),
             }
+            if result.get("media_url"):
+                for mk in ("media_url", "media_id", "media_type", "media_prompt", "media_model", "media_size", "media_quality"):
+                    if result.get(mk):
+                        tool_event[mk] = result[mk]
             if result.get("image_url"):
                 for ik in ("image_url", "image_id", "image_prompt", "image_model", "image_size", "image_quality"):
                     if result.get(ik):

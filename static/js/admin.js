@@ -17,6 +17,44 @@ let _recentlyAddedEpId = null;
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
 
+async function unloadAllLoadedModels(btn) {
+  const msg = 'Unload every currently loaded local model? Downloaded model files and endpoints will stay in place.';
+  if (uiModule?.styledConfirm) {
+    const ok = await uiModule.styledConfirm(msg, { confirmText: 'Unload all' });
+    if (!ok) return;
+  } else if (!confirm(msg)) {
+    return;
+  }
+
+  const original = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span style="opacity:0.7;">Unloading...</span>';
+  }
+  try {
+    const res = await fetch('/api/model-endpoints/unload-all', {
+      method: 'POST',
+      credentials: 'same-origin',
+    });
+    let data = {};
+    try { data = await res.json(); } catch (_) {}
+    if (!res.ok && !data.message) {
+      throw new Error(`Unload failed (${res.status})`);
+    }
+    const message = data.message || `Unloaded ${data.unloaded || 0} loaded model${data.unloaded === 1 ? '' : 's'}.`;
+    if (uiModule?.showToast) uiModule.showToast(message, data.failed ? 5200 : 2600);
+  } catch (err) {
+    if (uiModule?.showToast) {
+      uiModule.showToast(err && err.message ? err.message : 'Unload all failed', 5200);
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = original;
+    }
+  }
+}
+
 /* ═══════════════════════════════════════════
    USERS TAB
    ═══════════════════════════════════════════ */
@@ -780,7 +818,7 @@ function initEndpointForm() {
       urlInput.value = '';
       urlInput.placeholder = deviceAuthProvider === 'copilot'
         ? 'GitHub Copilot uses GitHub account sign-in'
-        : 'ChatGPT Subscription uses OpenAI account sign-in';
+        : `${deviceAuthConfig.label} uses OpenAI account sign-in`;
       urlInput.readOnly = true;
       if (apiKey) {
         apiKey.value = '';
@@ -916,13 +954,15 @@ function initEndpointForm() {
       const parsed = new URL(u);
       const host = parsed.hostname.toLowerCase();
       const knownOpenAiV1Hosts = new Set([
-        'api.deepseek.com',
         'api.openai.com',
         'api.x.ai',
         'api.mistral.ai',
         'api.together.xyz',
       ]);
-      if (knownOpenAiV1Hosts.has(host) && (!parsed.pathname || parsed.pathname === '/')) {
+      if (host === 'api.deepseek.com') {
+        parsed.pathname = '';
+        u = parsed.toString().replace(/\/+$/, '');
+      } else if (knownOpenAiV1Hosts.has(host) && (!parsed.pathname || parsed.pathname === '/')) {
         parsed.pathname = '/v1';
         u = parsed.toString().replace(/\/+$/, '');
       }
@@ -1048,6 +1088,8 @@ function initEndpointForm() {
         fd.append('endpoint_kind', _apiEndpointKind());
         fd.append('model_refresh_timeout', '30');
         if (apiKey) fd.append('api_key', apiKey);
+        const epType = el('adm-epType');
+        if (epType) fd.append('model_type', epType.value);
         const res = await fetch('/api/model-endpoints/test', {
           method: 'POST',
           body: fd,
@@ -1325,6 +1367,11 @@ function initEndpointForm() {
     });
   }
 
+  const unloadAllBtn = el('adm-epUnloadAllBtn');
+  if (unloadAllBtn) {
+    unloadAllBtn.addEventListener('click', () => unloadAllLoadedModels(unloadAllBtn));
+  }
+
   const clearOfflineBtn = el('adm-epClearOfflineBtn');
   if (clearOfflineBtn) {
     clearOfflineBtn.addEventListener('click', async () => {
@@ -1402,6 +1449,8 @@ function initEndpointForm() {
         const fd = new FormData();
         fd.append('base_url', url);
         if (apiKey) fd.append('api_key', apiKey);
+        const lt = el('adm-epLocalType');
+        if (lt) fd.append('model_type', lt.value);
         const res = await fetch('/api/model-endpoints/test', { method: 'POST', body: fd, credentials: 'same-origin' });
         const d = await res.json();
         _renderEndpointTestResult(msg, res, d);

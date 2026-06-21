@@ -4,14 +4,16 @@
  * Hooks into any modal whose `.modal-header` is dragged (each tool wires its
  * own drag; we just watch pointer moves). Shows a translucent ghost preview
  * when the cursor is near a snap zone. On release, snaps the modal-content
- * to fill that zone with a springy animation.
+ * to fill that zone with a springy animation. Right-edge snapping delegates
+ * to modalSnap's edge dock so the chat/composer reserve space and reflow
+ * instead of being covered by a fixed overlay tile.
  *
  * Snap zones (9):
  *   - top edge (10% strip)        → maximize
  *   - top-left corner             → top-left quarter
  *   - top-right corner            → top-right quarter
  *   - left edge                   → left half
- *   - right edge                  → right half
+ *   - right edge                  → reserved right dock
  *   - bottom-left corner          → bottom-left quarter
  *   - bottom-right corner         → bottom-right quarter
  *   - bottom edge                 → bottom half
@@ -23,9 +25,15 @@
  * the original size.
  */
 
+import { applyEdgeDock } from './modalSnap.js';
+
 const EDGE_THRESHOLD_PX = 24;     // how close to an edge counts as "near"
 const CORNER_THRESHOLD_PX = 64;   // corner box size
 const TOP_FULL_STRIP_PX = 8;      // top strip → maximize
+const MIN_CHAT_WIDTH = 380;
+const MIN_EDGE_DOCK_WIDTH = 360;
+const MAX_DESKTOP_EDGE_DOCK_WIDTH = 720;
+const MAX_DESKTOP_EDGE_DOCK_RATIO = 0.44;
 
 let _ghost = null;
 let _activeZone = null;
@@ -193,6 +201,24 @@ function _viewportSafeRect() {
   return _viewportWorkspaceRect(4);
 }
 
+function _rightDockPreviewRect(safe) {
+  const W = Math.max(0, safe.right - safe.left);
+  const H = Math.max(0, safe.bottom - safe.top);
+  const maxByChat = Math.max(MIN_EDGE_DOCK_WIDTH, W - MIN_CHAT_WIDTH);
+  const dockW = Math.min(
+    W,
+    Math.max(
+      MIN_EDGE_DOCK_WIDTH,
+      Math.min(
+        MAX_DESKTOP_EDGE_DOCK_WIDTH,
+        Math.round(W * MAX_DESKTOP_EDGE_DOCK_RATIO),
+        maxByChat,
+      ),
+    ),
+  );
+  return { left: safe.right - dockW, top: safe.top, width: dockW, height: H };
+}
+
 function _fullscreenRect() {
   if (_isTouchLandscape()) {
     const safe = _viewportWorkspaceRect(0);
@@ -223,10 +249,11 @@ function _zoneForPointer(x, y) {
   }
 
   // Corner quarter-snaps DISABLED (user request) — only the top strip
-  // (maximize) and the right/bottom half-snaps remain. The LEFT-half snap
-  // is also disabled (the sidebar lives there; docking over it is awkward).
+  // (maximize), reserved right dock, and bottom half-snap remain. The
+  // LEFT-half snap is also disabled (the sidebar lives there; docking over
+  // it is awkward).
   if (x >= safe.right - EDGE_THRESHOLD_PX)
-    return { name: 'right-half', rect: { left: safe.left + W / 2, top: safe.top, width: W / 2, height: H } };
+    return { name: 'right-half', rect: _rightDockPreviewRect(safe) };
   if (y >= safe.bottom - EDGE_THRESHOLD_PX)
     return { name: 'bottom-half', rect: { left: safe.left, top: safe.top + H / 2, width: W, height: H / 2 } };
 
@@ -297,6 +324,14 @@ function _applySnap(content, rect, zoneName) {
   // orphaned edge-dock state so only the tile-snap positions the window.
   const _modal = content.closest && content.closest('.modal, .research-overlay');
   const _fromRect = content.getBoundingClientRect();
+  if (zoneName === 'right-half' && _modal) {
+    const dockW = applyEdgeDock(_modal, 'right');
+    if (dockW) {
+      delete content.dataset._tilePreSnap;
+      delete content.dataset._tileZone;
+      return;
+    }
+  }
   _clearEdgeDockResidue(_modal, content);
   const snapRect = zoneName === 'fullscreen' ? _fullscreenRect() : rect;
 
@@ -445,7 +480,7 @@ function _reclampAll(animate = false) {
       case 'fullscreen':     r = _fullscreenRect(); break;
       case 'maximize':       r = { left: safe.left, top: safe.top, width: W, height: H }; break;
       case 'left-half':      r = { left: safe.left, top: safe.top, width: W/2, height: H }; break;
-      case 'right-half':     r = { left: safe.left + W/2, top: safe.top, width: W/2, height: H }; break;
+      case 'right-half':     r = _rightDockPreviewRect(safe); break;
       case 'bottom-half':    r = { left: safe.left, top: safe.top + H/2, width: W, height: H/2 }; break;
       case 'top-left':       r = { left: safe.left, top: safe.top, width: W/2, height: H/2 }; break;
       case 'top-right':      r = { left: safe.left + W/2, top: safe.top, width: W/2, height: H/2 }; break;

@@ -49,6 +49,7 @@ import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -503,7 +504,7 @@ public class MainActivity extends Activity {
         ensureStandaloneBackgroundService();
         try {
             String baseUrl = MobileBackendServer.getInstance().start(this);
-            loadUrl(baseUrl + "/static/index.html?mobile=standalone");
+            loadUrl(baseUrl + "/static/index.html?mobile=standalone&v=" + System.currentTimeMillis());
         } catch (Exception ex) {
             Toast.makeText(this, "Mobile backend failed: " + ex.getMessage(), Toast.LENGTH_LONG).show();
             showFallback();
@@ -706,6 +707,13 @@ public class MainActivity extends Activity {
         }
     }
 
+    private boolean isExternalAuthUrl(Uri uri) {
+        String host = uri == null ? "" : String.valueOf(uri.getHost()).toLowerCase(Locale.US);
+        String path = uri == null ? "" : String.valueOf(uri.getPath()).toLowerCase(Locale.US);
+        return "auth.openai.com".equals(host)
+                || ("github.com".equals(host) && path.startsWith("/login/device"));
+    }
+
     private class OdysseusAndroidBridge {
         @JavascriptInterface
         public void printReport(String title) {
@@ -734,6 +742,10 @@ public class MainActivity extends Activity {
             Uri uri = request.getUrl();
             String scheme = uri == null ? "" : uri.getScheme();
             if ("http".equals(scheme) || "https".equals(scheme)) {
+                if (request.isForMainFrame() && isExternalAuthUrl(uri)) {
+                    openExternalUri(uri);
+                    return true;
+                }
                 if (request.isForMainFrame() && isGoogleMapsUrl(uri)) {
                     openExternalUri(uri);
                     return true;

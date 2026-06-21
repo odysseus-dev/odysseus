@@ -30,16 +30,21 @@
  *   openCookbookForDependency:  (pkg: string) => void,
  *   composite:                  () => void,
  *   renderLayerPanel:           () => void,
+ *   revealLayerPanel?:          () => void,
  *   uiModule:                   object,
  * }} deps
  *
  * @returns {{ buildSelectionHintMask: () => string | null }}
  */
 import { state } from './state.js';
+import {
+  clearRembgSampleMask,
+  rembgSampleMaskToBase64,
+} from './rembg-sample-mask.js';
 
 export function wireRembgAndSharpen({
   applyImageTool, openCookbookForDependency,
-  composite, renderLayerPanel, uiModule,
+  composite, renderLayerPanel, revealLayerPanel, uiModule,
 }) {
   // ── Sharpen ──
   const sharpenPrev = document.getElementById('ge-sharpen-preview');
@@ -57,10 +62,51 @@ export function wireRembgAndSharpen({
   document.getElementById('ge-rembg-install-link')?.addEventListener('click', () => {
     openCookbookForDependency('rembg');
   });
+  const sampleVisBtn = document.getElementById('ge-rembg-sample-vis');
+  const pipelineSelect = document.getElementById('ge-rembg-pipeline');
+  if (pipelineSelect) {
+    try {
+      const savedPipeline = localStorage.getItem('ge-rembg-pipeline');
+      if (savedPipeline && [...pipelineSelect.options].some(o => o.value === savedPipeline)) {
+        pipelineSelect.value = savedPipeline;
+        state.rembgPipeline = savedPipeline;
+      }
+    } catch {}
+    pipelineSelect.addEventListener('change', () => {
+      state.rembgPipeline = rembgPipelineValue();
+      try { localStorage.setItem('ge-rembg-pipeline', state.rembgPipeline); } catch {}
+      window.dispatchEvent(new CustomEvent('ge:rembg-pipeline-changed'));
+    });
+  }
+  const syncSampleVisButton = () => {
+    if (!sampleVisBtn) return;
+    const visible = state.rembgSampleVisible !== false;
+    sampleVisBtn.classList.toggle('visible', visible);
+    sampleVisBtn.title = visible ? 'Hide background sample overlay' : 'Show background sample overlay';
+    sampleVisBtn.innerHTML = `${visible
+      ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'
+      : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>'}<span id="ge-rembg-sample-vis-label">${visible ? 'Hide' : 'Show'}</span>`;
+  };
+  sampleVisBtn?.addEventListener('click', () => {
+    state.rembgSampleVisible = state.rembgSampleVisible === false;
+    syncSampleVisButton();
+    composite();
+  });
+  document.getElementById('ge-rembg-sample-clear')?.addEventListener('click', () => {
+    clearRembgSampleMask();
+    state.rembgSampleVisible = true;
+    syncSampleVisButton();
+    composite();
+  });
+  syncSampleVisButton();
   document.getElementById('ge-rembg-run')?.addEventListener('click', async () => {
     const payload = {};
     const hint = buildSelectionHintMask();
     if (hint) payload.hint_mask = hint;
+    const backgroundMask = rembgSampleMaskToBase64();
+    if (backgroundMask) payload.background_mask = backgroundMask;
+    payload.strength = rembgStrengthValue();
+    payload.bg_remove_pipeline = rembgPipelineValue();
     // NB: edge_feather / edge_grow are applied CLIENT-side so the
     // sliders can re-tune the cutout without re-running the model.
     const btn = document.getElementById('ge-rembg-run');
@@ -80,6 +126,10 @@ export function wireRembgAndSharpen({
     if (state.layers.length > before) {
       const newLayer = state.layers[state.layers.length - 1];
       bindRembgLiveTuner(newLayer);
+      if (backgroundMask) {
+        state.rembgSampleVisible = false;
+        syncSampleVisButton();
+      }
       // Auto-hide underlying layers so the user sees just the
       // cutout — the eye toggles back on if they re-enable manually.
       for (const layer of state.layers) {
@@ -89,6 +139,7 @@ export function wireRembgAndSharpen({
       }
       composite();
       renderLayerPanel();
+      revealLayerPanel?.();
     }
     // Reset sliders so the new cutout starts clean.
     const f = document.getElementById('ge-rembg-feather');
@@ -167,8 +218,27 @@ export function wireRembgAndSharpen({
   }
 
   // ── Slider preview swatches + wiring ──
+  const rembgStrengthPrev = document.getElementById('ge-rembg-strength-preview');
   const rembgFeatherPrev = document.getElementById('ge-rembg-feather-preview');
   const rembgGrowPrev = document.getElementById('ge-rembg-grow-preview');
+  function rembgStrengthValue() {
+    const raw = parseInt(document.getElementById('ge-rembg-strength')?.value || '70', 10);
+    const pct = Number.isFinite(raw) ? Math.max(10, Math.min(100, raw)) : 70;
+    return +(pct / 100).toFixed(2);
+  }
+  function rembgPipelineValue() {
+    const value = document.getElementById('ge-rembg-pipeline')?.value || state.rembgPipeline || 'auto';
+    return ['auto', 'model', 'rembg', 'heuristic'].includes(value) ? value : 'auto';
+  }
+  function syncRembgStrength(v) {
+    const pct = Number.isFinite(v) ? Math.max(10, Math.min(100, v)) : 70;
+    const label = document.getElementById('ge-rembg-strength-label');
+    if (label) label.textContent = pct + '%';
+    if (rembgStrengthPrev) {
+      rembgStrengthPrev.style.opacity = (0.35 + pct / 155).toFixed(2);
+      rembgStrengthPrev.style.transform = `scale(${(0.82 + pct / 420).toFixed(3)})`;
+    }
+  }
   function syncRembgFeather(v) {
     if (!rembgFeatherPrev) return;
     const inner = Math.max(0, 50 - v * 2.5);
@@ -181,8 +251,12 @@ export function wireRembgAndSharpen({
     rembgGrowPrev.style.transform = `scale(${s})`;
     rembgGrowPrev.style.background = v < 0 ? 'color-mix(in srgb, var(--fg) 40%, transparent)' : 'var(--fg)';
   }
+  syncRembgStrength(parseInt(document.getElementById('ge-rembg-strength')?.value || '70', 10));
   syncRembgFeather(2);
   syncRembgGrow(0);
+  document.getElementById('ge-rembg-strength')?.addEventListener('input', (e) => {
+    syncRembgStrength(parseInt(e.target.value, 10));
+  });
   document.getElementById('ge-rembg-feather')?.addEventListener('input', (e) => {
     const v = parseInt(e.target.value, 10);
     document.getElementById('ge-rembg-feather-label').textContent = v + 'px';

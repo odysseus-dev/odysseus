@@ -112,6 +112,20 @@ def get_simple_signal_user_data_dir() -> Path | None:
         return None
     return Path(app_data) / "simple-signal-desktop"
 
+def get_odysseus_data_dir() -> Path:
+    configured = os.environ.get("ODYSSEUS_DATA_DIR")
+    if configured:
+        return Path(configured).expanduser().resolve()
+
+    app_data = os.environ.get("APPDATA")
+    if app_data:
+        return Path(app_data) / "odysseus" / "data"
+
+    return get_user_extensions_dir() / EXTENSION_ID / "data"
+
+def sqlite_url_for_data_dir(data_dir: Path) -> str:
+    return "sqlite:///" + str(data_dir / "app.db").replace("\\", "/")
+
 def get_source_dir() -> Path:
     if hasattr(sys, "_MEIPASS"):
         return Path(sys._MEIPASS)
@@ -246,6 +260,15 @@ ps1_path = os.path.join(install_dir, "launch-windows.ps1")
 lock_path = os.path.join(install_dir, ".odysseus-launch.lock")
 port = "__ODYSSEUS_EXTENSION_PORT__"
 
+def _persistent_data_dir():
+    configured = os.environ.get("ODYSSEUS_DATA_DIR")
+    if configured:
+        return configured
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        return os.path.join(appdata, "odysseus", "data")
+    return os.path.join(install_dir, "data")
+
 def _is_port_open(value):
     try:
         with socket.create_connection(("127.0.0.1", int(value)), timeout=0.35):
@@ -266,7 +289,11 @@ if os.path.exists(ps1_path) and not _is_port_open(port) and not _launch_lock_rec
     except OSError:
         pass
     env = os.environ.copy()
+    data_dir = _persistent_data_dir()
+    os.makedirs(data_dir, exist_ok=True)
     env["ODYSSEUS_ALLOW_EMBED"] = "1"
+    env["ODYSSEUS_DATA_DIR"] = data_dir
+    env["DATABASE_URL"] = "sqlite:///" + os.path.join(data_dir, "app.db").replace("\\\\", "/")
     env["APP_PORT"] = port
     env["ODYSSEUS_INTERNAL_BASE"] = "http://127.0.0.1:" + port
     subprocess.Popen(
@@ -353,9 +380,15 @@ def install_dependencies(extension_dir: Path, log_path: Path) -> None:
 
 def run_setup(extension_dir: Path) -> None:
     venv_python = get_venv_python(extension_dir)
+    data_dir = get_odysseus_data_dir()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env["ODYSSEUS_DATA_DIR"] = str(data_dir)
+    env["DATABASE_URL"] = sqlite_url_for_data_dir(data_dir)
     print("\n[3/4] Running First-Time Setup...")
+    print(f" -> Preserving user data in: {data_dir}")
     print(" -> You will be prompted to create an admin account.")
-    subprocess.run([str(venv_python), "setup.py"], check=True)
+    subprocess.run([str(venv_python), "setup.py"], check=True, env=env)
 
 def get_running_simple_signal_path(log_path: Path) -> Path | None:
     command = [

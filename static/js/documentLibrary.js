@@ -12,6 +12,7 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { langIcon } from './langIcons.js';
 import { registerMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 import * as Modals from './modalManager.js';
+import workspaceModule from './workspace.js';
 
 // ── Injected references from documentModule ──
 let API_BASE = '';
@@ -60,6 +61,10 @@ let _libraryActiveLanguage = null;
 let _librarySort = 'recent';
 let _librarySearch = '';
 let _librarySearchDebounce = null;
+let _libraryFolders = [];
+let _libraryFolderFiles = [];
+let _libraryFolderBase = '';
+let _libraryFolderBusy = false;
 
 // Highlight the active search terms inside a plain string. Escapes first,
 // then wraps each whitespace-separated term in <mark>. Multi-term, matching
@@ -993,6 +998,154 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     if (legacy) legacy.style.display = 'none';
   }
 
+  function libraryFolderPathValue(entry) {
+    if (!entry) return '';
+    return typeof entry === 'string' ? entry : (entry.path || entry.directory || entry.name || '');
+  }
+
+  function libraryFormatBytes(size) {
+    const n = Number(size || 0);
+    if (!Number.isFinite(n) || n <= 0) return '';
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function librarySetFolderStatus(text, isError) {
+    const el = document.getElementById('doclib-folder-status');
+    if (!el) return;
+    el.textContent = text || '';
+    el.classList.toggle('error', !!isError);
+  }
+
+  function libraryRenderFolders() {
+    const panel = document.getElementById('doclib-folder-panel');
+    if (!panel) return;
+    const baseEl = document.getElementById('doclib-folder-base');
+    const listEl = document.getElementById('doclib-folder-list');
+    const filesEl = document.getElementById('doclib-folder-files');
+    const countEl = document.getElementById('doclib-folder-count');
+    const fileCountEl = document.getElementById('doclib-folder-file-count');
+    if (baseEl) baseEl.textContent = _libraryFolderBase || 'Unavailable';
+    if (countEl) countEl.textContent = `${_libraryFolders.length} folder${_libraryFolders.length !== 1 ? 's' : ''}`;
+    if (fileCountEl) fileCountEl.textContent = `${_libraryFolderFiles.length} file${_libraryFolderFiles.length !== 1 ? 's' : ''}`;
+
+    if (listEl) {
+      if (!_libraryFolders.length) {
+        listEl.innerHTML = '<div class="doclib-folder-empty">No indexed folders yet.</div>';
+      } else {
+        listEl.innerHTML = _libraryFolders.map((entry) => {
+          const path = libraryFolderPathValue(entry);
+          return `<div class="doclib-folder-row">
+            <span class="doclib-folder-path" title="${_esc(path)}">${_esc(path)}</span>
+            <button class="memory-toolbar-btn doclib-folder-remove" data-doclib-folder="${_esc(path)}" title="Remove folder">Remove</button>
+          </div>`;
+        }).join('');
+        listEl.querySelectorAll('.doclib-folder-remove').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const path = btn.dataset.doclibFolder || '';
+            if (!path) return;
+            if (!await uiModule.styledConfirm(`Remove "${path}" from indexed folders?`, { confirmText: 'Remove', danger: true })) return;
+            btn.disabled = true;
+            try {
+              const res = await fetch(`${API_BASE}/api/personal/remove_directory?directory=${encodeURIComponent(path)}`, {
+                method: 'DELETE',
+                credentials: 'same-origin',
+              });
+              if (!res.ok) {
+                let msg = `HTTP ${res.status}`;
+                try { const data = await res.json(); msg = data.detail || data.error || msg; } catch {}
+                throw new Error(msg);
+              }
+              librarySetFolderStatus('Folder removed');
+              await libraryFetchFolders(true);
+            } catch (e) {
+              librarySetFolderStatus(e.message || 'Failed to remove folder', true);
+            } finally {
+              btn.disabled = false;
+            }
+          });
+        });
+      }
+    }
+
+    if (filesEl) {
+      if (!_libraryFolderFiles.length) {
+        filesEl.innerHTML = '<div class="doclib-folder-empty">No indexed files.</div>';
+      } else {
+        filesEl.innerHTML = _libraryFolderFiles.slice(0, 18).map(file => {
+          const path = file.path || file.name || '';
+          const size = libraryFormatBytes(file.size);
+          return `<div class="doclib-folder-file" title="${_esc(path)}">
+            <span>${_esc(file.name || path)}</span>
+            ${size ? `<small>${_esc(size)}</small>` : ''}
+          </div>`;
+        }).join('') + (_libraryFolderFiles.length > 18
+          ? `<div class="doclib-folder-empty">and ${_libraryFolderFiles.length - 18} more...</div>`
+          : '');
+      }
+    }
+  }
+
+  async function libraryFetchFolders(silent) {
+    if (_libraryFolderBusy) return;
+    _libraryFolderBusy = true;
+    if (!silent) librarySetFolderStatus('Loading folders...');
+    try {
+      const res = await fetch(`${API_BASE}/api/personal`, { credentials: 'same-origin' });
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try { const data = await res.json(); msg = data.detail || data.error || msg; } catch {}
+        throw new Error(msg);
+      }
+      const data = await res.json();
+      _libraryFolders = Array.isArray(data.directories) ? data.directories : [];
+      _libraryFolderFiles = Array.isArray(data.files) ? data.files : [];
+      _libraryFolderBase = data.base_directory || data.allowed_directory_root || '';
+      libraryRenderFolders();
+      if (!silent) librarySetFolderStatus('');
+    } catch (e) {
+      librarySetFolderStatus(e.message || 'Failed to load folders', true);
+      _libraryFolders = [];
+      _libraryFolderFiles = [];
+      libraryRenderFolders();
+    } finally {
+      _libraryFolderBusy = false;
+    }
+  }
+
+  async function libraryAddFolderFromInput() {
+    const input = document.getElementById('doclib-folder-path-input');
+    const btn = document.getElementById('doclib-folder-add-btn');
+    const directory = (input?.value || '').trim();
+    if (!directory) {
+      librarySetFolderStatus('Enter a folder path first', true);
+      return;
+    }
+    if (btn) btn.disabled = true;
+    librarySetFolderStatus('Indexing folder...');
+    try {
+      const res = await fetch(`${API_BASE}/api/personal/add_directory`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ directory }),
+      });
+      let data = {};
+      try { data = await res.json(); } catch {}
+      if (!res.ok || data.success === false) {
+        throw new Error(data.detail || data.error || data.message || `HTTP ${res.status}`);
+      }
+      if (input) input.value = '';
+      librarySetFolderStatus(data.message || 'Folder indexed');
+      await libraryFetchFolders(true);
+    } catch (e) {
+      librarySetFolderStatus(e.message || 'Failed to index folder', true);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
   async function libraryOpenDocument(doc) {
     closeLibrary();
     // Orphaned doc (session deleted) — just open in editor without switching session
@@ -1594,6 +1747,9 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     _librarySort = 'recent';
     _libraryOffset = 0;
     _libraryDocs = [];
+    _libraryFolders = [];
+    _libraryFolderFiles = [];
+    _libraryFolderBase = '';
 
     // Create modal
     const modal = document.createElement('div');
@@ -1701,10 +1857,30 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           <div data-doclib-panel="documents" class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
             <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">
               <h2 style="margin:0;padding:0;line-height:1;">Documents <span id="doclib-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
-              <button class="memory-toolbar-btn" id="doclib-import-file-btn" title="Import files from disk" style="margin-left:auto;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:2px;"><polyline points="7 10 12 5 17 10"/><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="21" x2="19" y2="21"/></svg> Import</button>
+              <button class="memory-toolbar-btn" id="doclib-folders-btn" title="Indexed folders" style="margin-left:auto;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg> Folders</button>
+              <button class="memory-toolbar-btn" id="doclib-workspace-btn" title="Choose or open the PC workspace folder"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M8 13h8"/><path d="M12 9v8"/></svg> Workspace</button>
+              <button class="memory-toolbar-btn" id="doclib-import-file-btn" title="Import files from disk"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:2px;"><polyline points="7 10 12 5 17 10"/><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="21" x2="19" y2="21"/></svg> Import</button>
               <button class="memory-toolbar-btn" id="doclib-create-btn" title="Create new blank document"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> Create</button>
             </div>
             <p class="memory-desc doclib-desc">Open documents in a session, clone to a new or import new files.</p>
+            <div id="doclib-folder-panel" class="doclib-folder-panel hidden">
+              <div class="doclib-folder-head">
+                <div>
+                  <strong>Folder Paths</strong>
+                  <span id="doclib-folder-count" class="memory-count">0 folders</span>
+                </div>
+                <button class="memory-toolbar-btn" id="doclib-folder-refresh-btn" title="Reload indexed folders"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M3 12a9 9 0 1 0 9-9"/><polyline points="3 4 3 9 8 9"/></svg>Reload</button>
+              </div>
+              <div class="doclib-folder-root"><span>Root</span><code id="doclib-folder-base"></code></div>
+              <div class="doclib-folder-add">
+                <input id="doclib-folder-path-input" class="memory-search-input" placeholder="Folder path" />
+                <button class="memory-toolbar-btn" id="doclib-folder-add-btn">Add</button>
+              </div>
+              <div id="doclib-folder-status" class="doclib-folder-status"></div>
+              <div id="doclib-folder-list" class="doclib-folder-list"></div>
+              <div class="doclib-folder-file-head"><span>Indexed files</span><span id="doclib-folder-file-count" class="memory-count">0 files</span></div>
+              <div id="doclib-folder-files" class="doclib-folder-files"></div>
+            </div>
             <div class="memory-toolbar">
               <div class="memory-category-filters">
                 <select class="memory-sort-select" id="doclib-sort">
@@ -1733,6 +1909,27 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       </div>
     `;
     document.body.appendChild(modal);
+    if (!document.getElementById('doclib-folder-styles')) {
+      const s = document.createElement('style');
+      s.id = 'doclib-folder-styles';
+      s.textContent = `
+        .doclib-folder-panel{border:1px solid var(--border);border-radius:6px;background:color-mix(in srgb,var(--bg) 94%,var(--fg) 6%);padding:10px;margin:2px 0 10px;display:flex;flex-direction:column;gap:8px;max-height:min(36vh,300px);overflow:auto}
+        .doclib-folder-panel.hidden{display:none}
+        .doclib-folder-head,.doclib-folder-add,.doclib-folder-root,.doclib-folder-file-head{display:flex;align-items:center;gap:8px;min-width:0}
+        .doclib-folder-head{justify-content:space-between}
+        .doclib-folder-root span,.doclib-folder-file-head span:first-child{font-size:11px;color:var(--fg-muted);flex:0 0 auto}
+        .doclib-folder-root code{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid var(--border);border-radius:4px;padding:2px 6px;color:var(--fg);background:var(--panel-bg,var(--bg))}
+        .doclib-folder-add input{flex:1;min-width:0;height:30px}
+        .doclib-folder-status{min-height:14px;font-size:11px;color:var(--fg-muted)}
+        .doclib-folder-status.error{color:var(--color-error,var(--red))}
+        .doclib-folder-list,.doclib-folder-files{display:flex;flex-direction:column;gap:5px}
+        .doclib-folder-row,.doclib-folder-file{display:flex;align-items:center;gap:8px;min-width:0;padding:5px 7px;border:1px solid color-mix(in srgb,var(--border) 72%,transparent);border-radius:5px;background:color-mix(in srgb,var(--bg) 88%,var(--fg) 12%)}
+        .doclib-folder-path,.doclib-folder-file span{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+        .doclib-folder-file small{font-size:10px;color:var(--fg-muted);flex:0 0 auto}
+        .doclib-folder-empty{font-size:12px;color:var(--fg-muted);font-style:italic;padding:4px 2px}
+      `;
+      document.head.appendChild(s);
+    }
     Modals.register('doclib-modal', {
       railBtnId: 'rail-archive',
       sidebarBtnId: 'tool-library-btn',
@@ -1876,7 +2073,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       _activeLibTab = tab;
       _tabBtns.forEach(b => b.classList.toggle('active', b.dataset.doclibTab === tab));
       _tabPanels.forEach(p => {
-        if (p.dataset.doclibPanel === tab) {
+        const active = p.dataset.doclibPanel === tab;
+        p.classList.toggle('active', active);
+        p.hidden = !active;
+        if (active) {
           p.style.display = 'flex';
         } else {
           p.style.display = 'none';
@@ -3204,6 +3404,38 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       if (typeof ResizeObserver !== 'undefined') {
         new ResizeObserver(() => libraryRenderLoadMore()).observe(grid);
       }
+    }
+
+    const foldersBtn = document.getElementById('doclib-folders-btn');
+    const folderPanel = document.getElementById('doclib-folder-panel');
+    const folderRefreshBtn = document.getElementById('doclib-folder-refresh-btn');
+    const folderAddBtn = document.getElementById('doclib-folder-add-btn');
+    const folderPathInput = document.getElementById('doclib-folder-path-input');
+    if (foldersBtn && folderPanel) {
+      foldersBtn.addEventListener('click', async () => {
+        const opening = folderPanel.classList.contains('hidden');
+        folderPanel.classList.toggle('hidden', !opening);
+        foldersBtn.classList.toggle('active', opening);
+        if (opening) await libraryFetchFolders(false);
+      });
+    }
+    document.getElementById('doclib-workspace-btn')?.addEventListener('click', () => {
+      closeLibrary();
+      setTimeout(() => workspaceModule.openWorkspaceBrowser(), 0);
+    });
+    if (folderRefreshBtn) {
+      folderRefreshBtn.addEventListener('click', () => libraryFetchFolders(false));
+    }
+    if (folderAddBtn) {
+      folderAddBtn.addEventListener('click', libraryAddFolderFromInput);
+    }
+    if (folderPathInput) {
+      folderPathInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          libraryAddFolderFromInput();
+        }
+      });
     }
 
     // Wire file import button

@@ -180,9 +180,21 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
   const chatContainer = document.getElementById('chat-container');
   const watchedDocks = typeof WeakSet !== 'undefined' ? new WeakSet() : null;
   let dockResizeObserver = null;
+  let composerClearanceRaf = 0;
   const COMPOSER_DOCK_GAP = 4;
   const COLLAPSED_OVERLAY_HISTORY_GAP = 4;
   const TOUCH_DOCK_HISTORY_RATIO = 0.75;
+  const _setRootPxIfChanged = (name, value) => {
+    const next = value + 'px';
+    if (root.style.getPropertyValue(name) !== next) {
+      root.style.setProperty(name, next);
+    }
+  };
+  const _toggleBodyClassIfChanged = (name, on) => {
+    if (document.body.classList.contains(name) !== !!on) {
+      document.body.classList.toggle(name, !!on);
+    }
+  };
   const _isTouchDockViewport = () => window.innerWidth <= 768
     || window.matchMedia('(pointer: coarse)').matches
     || window.matchMedia('(hover: none)').matches
@@ -203,17 +215,21 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
     if (watchedDocks) watchedDocks.add(dock);
     if (dockResizeObserver) dockResizeObserver.observe(dock);
     if (typeof MutationObserver !== 'undefined') {
-      new MutationObserver(_syncComposerClearance).observe(dock, {
-        attributes: true,
+      new MutationObserver(_queueComposerClearanceSync).observe(dock, {
         childList: true,
-        subtree: true,
-        attributeFilter: ['class', 'style'],
       });
     }
   };
   const _watchCurrentDocks = () => {
     _watchDock(document.getElementById('minimized-dock'));
     _watchDock(document.getElementById('modal-dock'));
+  };
+  const _queueComposerClearanceSync = () => {
+    if (composerClearanceRaf) return;
+    composerClearanceRaf = requestAnimationFrame(() => {
+      composerClearanceRaf = 0;
+      _syncComposerClearance();
+    });
   };
   const _syncComposerClearance = () => {
     _watchCurrentDocks();
@@ -224,39 +240,39 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
       if (rect.height > 0) top = Math.min(top, rect.top);
     }
     const clearance = Math.max(8, Math.ceil(window.innerHeight - top + COMPOSER_DOCK_GAP));
-    root.style.setProperty('--composer-clearance', clearance + 'px');
+    _setRootPxIfChanged('--composer-clearance', clearance);
     const collapsedOverlaySpace = Math.max(
       _visibleDockHeight(document.getElementById('minimized-dock')),
       _visibleDockHeight(document.getElementById('modal-dock')),
     );
-    root.style.setProperty('--collapsed-overlay-space', collapsedOverlaySpace + 'px');
-    document.body.classList.toggle('has-collapsed-overlays', collapsedOverlaySpace > 0);
+    _setRootPxIfChanged('--collapsed-overlay-space', collapsedOverlaySpace);
+    _toggleBodyClassIfChanged('has-collapsed-overlays', collapsedOverlaySpace > 0);
   };
-  requestAnimationFrame(_syncComposerClearance);
+  _queueComposerClearanceSync();
   if (typeof ResizeObserver !== 'undefined') {
-    const ro = new ResizeObserver(_syncComposerClearance);
+    const ro = new ResizeObserver(_queueComposerClearanceSync);
     if (chatBar) ro.observe(chatBar);
     if (attachStrip) ro.observe(attachStrip);
-    dockResizeObserver = new ResizeObserver(_syncComposerClearance);
+    dockResizeObserver = new ResizeObserver(_queueComposerClearanceSync);
     _watchCurrentDocks();
   }
   if (chatContainer && typeof MutationObserver !== 'undefined') {
-    new MutationObserver(_syncComposerClearance).observe(chatContainer, {
+    new MutationObserver(_queueComposerClearanceSync).observe(chatContainer, {
       attributes: true,
       attributeFilter: ['class'],
     });
   }
   if (typeof MutationObserver !== 'undefined') {
     _watchCurrentDocks();
-    new MutationObserver(_syncComposerClearance).observe(document.body, {
+    new MutationObserver(_queueComposerClearanceSync).observe(document.body, {
       childList: true,
       attributes: true,
       attributeFilter: ['class'],
     });
   }
-  if (chatBar) chatBar.addEventListener('transitionend', _syncComposerClearance);
-  window.addEventListener('odysseus:minimized-dock-rendered', _syncComposerClearance);
-  window.addEventListener('resize', _syncComposerClearance);
+  if (chatBar) chatBar.addEventListener('transitionend', _queueComposerClearanceSync);
+  window.addEventListener('odysseus:minimized-dock-rendered', _queueComposerClearanceSync);
+  window.addEventListener('resize', _queueComposerClearanceSync);
 }
 
 /* ---- Resizable sidebar — drag edge to resize, collapse if small, drag rail edge to expand ---- */

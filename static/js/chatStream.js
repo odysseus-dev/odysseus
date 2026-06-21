@@ -174,6 +174,26 @@ export function handleUIControl(uiData) {
           var fn = mod.openPanel || mod.openNotes || (mod.default && (mod.default.openPanel || mod.default.openNotes));
           if (fn) fn();
         }).catch(function(){});
+      } else if (panel === 'calendar') {
+        import('./calendar.js').then(function(mod) {
+          var fn = mod.openCalendar || (mod.default && mod.default.openCalendar);
+          if (fn) fn();
+        }).catch(function(){});
+      } else if (panel === 'tasks') {
+        import('./tasks.js').then(function(mod) {
+          var fn = mod.openTasks || (mod.default && mod.default.openTasks);
+          if (fn) fn();
+        }).catch(function(){});
+      } else if (panel === 'research') {
+        import('./research/panel.js').then(function(mod) {
+          var fn = mod.openPanel || (mod.default && mod.default.openPanel);
+          if (fn) fn();
+        }).catch(function(){});
+      } else if (panel === 'workspace') {
+        import('./workspace.js').then(function(mod) {
+          var fn = mod.openWorkspaceBrowser || (mod.default && mod.default.openWorkspaceBrowser);
+          if (fn) fn();
+        }).catch(function(){});
       } else if (panel === 'memories' || panel === 'skills' || panel === 'settings') {
         // These live in the sidebar / settings drawer — most just need
         // an existing button click.

@@ -113,6 +113,7 @@ body {
 @font-face { font-family: 'Fira Code'; font-weight: 300; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Light.woff2') format('woff2'); }
 @font-face { font-family: 'Fira Code'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Regular.woff2') format('woff2'); }
 @font-face { font-family: 'Fira Code'; font-weight: 600; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-SemiBold.woff2') format('woff2'); }
+@font-face { font-family: 'GohuFont'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/GohuFont.ttf') format('truetype'); }
 
 /* Code block baseline */
 pre, code, .hljs {
@@ -865,7 +866,7 @@ body.bg-pattern-sparkles {
       display: flex; gap: 6px; flex-wrap: wrap;
       max-width: calc(100vw - 24px);
       padding: 4px;
-      z-index: 100;
+      z-index: 950;
       pointer-events: none;
     }
     #minimized-dock.dock-single-row {
@@ -2482,7 +2483,8 @@ body.bg-pattern-sparkles {
       position: absolute;
       top: 0;
       right: 0;
-      z-index: 250;
+      /* Composer-local chrome: above the input, below mobile sidebar/modals. */
+      z-index: 60;
       transform-origin: top right;
       transition: opacity 0.22s ease, transform 0.22s ease;
       will-change: opacity, transform;
@@ -3004,7 +3006,7 @@ body.bg-pattern-sparkles {
       position: absolute;
       bottom: calc(100% + 16px);
       right: 0;
-      z-index: 250;
+      z-index: 1;
       min-width: 260px;
       max-width: 360px;
       background: var(--panel);
@@ -5384,6 +5386,48 @@ body.bg-pattern-sparkles {
     .modal-dock-close:hover { color:var(--red); opacity:1; }
     .modal-body { flex:1; overflow-y:auto; }
     .modal-body button { margin-top:6px; }
+
+    #rename-session-modal .modal-content {
+      background: var(--bg);
+      color: var(--fg);
+    }
+    #rename-session-modal .minimize-btn {
+      display: none !important;
+    }
+    #rename-session-modal input {
+      -webkit-appearance: none;
+      appearance: none;
+      background: var(--panel);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      caret-color: var(--fg);
+      outline: none;
+    }
+    #rename-session-modal input::placeholder {
+      color: color-mix(in srgb, var(--fg) 55%, var(--bg));
+      opacity: 1;
+    }
+    #rename-session-modal input:focus {
+      border-color: var(--accent, var(--red));
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, var(--red)) 26%, transparent);
+    }
+    #cancel-rename-session {
+      -webkit-appearance: none;
+      appearance: none;
+      background: var(--panel);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+    }
+    #save-session-name {
+      -webkit-appearance: none;
+      appearance: none;
+      background: var(--accent, var(--red)) !important;
+      color: var(--bg) !important;
+      border: 1px solid var(--accent, var(--red));
+      border-radius: 4px;
+    }
+
     /* Styled confirm dialog — keeps backdrop */
     #styled-confirm-overlay {
       background:rgba(0,0,0,0.5);
@@ -6052,7 +6096,7 @@ body.bg-pattern-sparkles {
       pointer-events: none;
     }
 
-    /* Generated images inside chat bubbles */
+    /* Generated media inside chat bubbles */
     .msg.generated-image-wrap .body { text-align: center; }
     .generated-image {
       max-width: 100%;
@@ -6064,6 +6108,17 @@ body.bg-pattern-sparkles {
       margin: 0 auto;
     }
     .generated-image:hover { transform: scale(1.02); }
+    video.generated-image {
+      width: 100%;
+      max-width: 720px;
+      background: #000;
+    }
+    video.generated-image:hover { transform: none; }
+    .generated-audio {
+      width: min(100%, 560px);
+      display: block;
+      margin: 0 auto;
+    }
     .generated-image-caption {
       font-size: 0.8rem;
       opacity: 0.5;
@@ -15200,12 +15255,13 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   flex-direction: column;
   overflow: hidden;
 }
-/* Fullscreen positioning — scoped to NOT apply when also right-docked.
+/* Legacy document-library fullscreen positioning — scoped to NOT apply when
+   the shared full-expand button owns the window, or when also right-docked.
    Without this exclusion, dragging a fullscreen doclib to the right snap
    zone keeps .doclib-fullscreen on the modal and these !important rules
    override the dock's inline styles, leaving the modal stuck fullscreen
    instead of becoming a side panel. */
-#doclib-modal.doclib-fullscreen:not(.modal-right-docked) .doclib-modal-content {
+#doclib-modal.doclib-fullscreen:not(.modal-full-expanded):not(.modal-right-docked) .doclib-modal-content {
   position: fixed !important;
   top: 0 !important;
   left: calc(var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)) !important;
@@ -15411,6 +15467,28 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
   body.right-dock-active .chat-container,
   body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
     margin-right: var(--right-dock-reserve-w, var(--right-dock-w, 0px));
+  }
+  #rename-session-modal {
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 12px !important;
+  }
+  #rename-session-modal .modal-content {
+    position: relative !important;
+    inset: auto !important;
+    width: min(400px, calc(100vw - 48px)) !important;
+    max-width: calc(100vw - 48px) !important;
+    height: auto !important;
+    max-height: calc(100dvh - 24px) !important;
+    margin: 0 auto !important;
+    transform: none !important;
+    border: 1px solid var(--border);
+    border-radius: 8px !important;
+    padding-top: 0 !important;
+    overflow: hidden;
+  }
+  #rename-session-modal .modal-content::before {
+    display: none !important;
   }
 }
 @media (orientation: portrait) and (hover: none),
@@ -15753,6 +15831,12 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
 /* Library tab panels — Chats / Archive / Research / Documents share the
    same toolbar dimensions so the sort dropdown + Select button line up
    identically across tabs. */
+#doclib-modal [data-doclib-panel]:not(.active) {
+  display: none !important;
+}
+#doclib-modal [data-doclib-panel].active {
+  display: flex !important;
+}
 #doclib-panel-chats .memory-sort-select,
 #doclib-panel-archive .memory-sort-select,
 #doclib-panel-research .memory-sort-select,
@@ -16066,6 +16150,24 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   max-height: 100vh !important;
   border-radius: 0 !important;
   transform: none !important;
+}
+#doclib-modal.modal-full-expanded.doclib-fullscreen:not(.modal-right-docked) .doclib-modal-content {
+  position: fixed !important;
+  top: 0 !important;
+  left: calc(var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)) !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: auto !important;
+  max-width: none !important;
+  height: 100vh !important;
+  max-height: 100vh !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  transform: none !important;
+}
+body.hamburger-right #doclib-modal.modal-full-expanded.doclib-fullscreen:not(.modal-right-docked) .doclib-modal-content {
+  left: 0 !important;
+  right: calc(var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)) !important;
 }
 body.hamburger-right:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.modal-right-docked) .modal-content {
   left: 0 !important;
@@ -24229,6 +24331,45 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 /* Narrow modal tab strips should stay on one row. Resized docked windows can
    be much narrower than the viewport, so this cannot live only in mobile media
    queries. */
+.cookbook-tabs-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 8px;
+}
+.cookbook-tabs-row .cookbook-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-bottom: 0;
+}
+.cookbook-unload-all-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.12s, border-color 0.12s, background 0.12s, opacity 0.12s;
+}
+.cookbook-unload-all-btn:hover {
+  color: var(--warn, #f0ad4e);
+  border-color: var(--warn, #f0ad4e);
+  background: color-mix(in srgb, var(--warn, #f0ad4e) 8%, transparent);
+}
+.cookbook-unload-all-btn:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
 .cookbook-tabs,
 .memory-tabs,
 .admin-tabs,
@@ -24747,6 +24888,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
      the canvas doesn't slide the whole page. */
   overscroll-behavior: contain;
   touch-action: pan-y;
+  --ge-bottom-gesture-reserve: 36px;
 }
 /* Pin the topbar to the top of the editor so its action buttons remain
    visible if the gallery modal body itself ends up scrolling. */
@@ -24852,6 +24994,15 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   height: 16px;
   background: var(--border);
   margin: 0 4px;
+}
+.ge-icon-only-btn {
+  width: 28px;
+  min-width: 28px;
+  padding-left: 0;
+  padding-right: 0;
+}
+.ge-icon-only-btn svg {
+  display: block;
 }
 
 /* Editor body (toolbar + canvas + panel) */
@@ -25542,6 +25693,156 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+.ge-inpaint-progress {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
+  z-index: 10020;
+  width: min(520px, calc(100vw - 28px));
+  transform: translateX(-50%);
+  padding: 10px 12px 11px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 48%, var(--border));
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--panel) 96%, var(--accent, var(--red)) 4%),
+      color-mix(in srgb, var(--bg) 94%, var(--panel)));
+  color: var(--fg);
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.45),
+    0 0 0 1px color-mix(in srgb, var(--bg) 76%, transparent);
+  pointer-events: auto;
+}
+.ge-inpaint-progress-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ge-inpaint-progress-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent, var(--red));
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent, var(--red)) 16%, transparent);
+  flex: 0 0 auto;
+  animation: geInpaintProgressPulse 1.1s ease-in-out infinite;
+}
+.ge-inpaint-progress-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.2;
+  color: color-mix(in srgb, var(--fg) 90%, var(--accent, var(--red)));
+}
+.ge-inpaint-progress-elapsed {
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.ge-inpaint-progress-status {
+  margin-top: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--accent, var(--red));
+}
+.ge-inpaint-progress-detail {
+  min-height: 14px;
+  margin-top: 2px;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ge-inpaint-progress-bar {
+  height: 4px;
+  margin-top: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.ge-inpaint-progress-fill {
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--accent, var(--red)) 72%, var(--fg)),
+    var(--accent, var(--red)));
+  transition: width 0.22s ease;
+}
+.ge-inpaint-progress-list {
+  max-height: 92px;
+  margin-top: 8px;
+  padding-right: 2px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--accent, var(--red)) 60%, transparent) transparent;
+}
+.ge-inpaint-progress-row {
+  display: grid;
+  grid-template-columns: minmax(92px, auto) minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+  border-top: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
+  font-size: 10px;
+  line-height: 1.25;
+}
+.ge-inpaint-progress-row:first-child { border-top: 0; }
+.ge-inpaint-progress-row-label {
+  color: color-mix(in srgb, var(--fg) 78%, var(--accent, var(--red)));
+  font-weight: 700;
+  white-space: nowrap;
+}
+.ge-inpaint-progress-row-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-muted);
+}
+.ge-inpaint-progress.is-complete .ge-inpaint-progress-dot {
+  animation: none;
+  background: color-mix(in srgb, var(--accent, var(--red)) 72%, #fff);
+}
+.ge-inpaint-progress.is-error {
+  border-color: color-mix(in srgb, var(--red) 72%, var(--border));
+}
+.ge-inpaint-progress.is-error .ge-inpaint-progress-dot {
+  background: var(--red);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--red) 16%, transparent);
+}
+.ge-inpaint-progress-row.is-error .ge-inpaint-progress-row-label {
+  color: var(--red);
+}
+@keyframes geInpaintProgressPulse {
+  0%, 100% { transform: scale(1); opacity: 0.72; }
+  50% { transform: scale(1.28); opacity: 1; }
+}
+@media (max-width: 700px) {
+  .ge-inpaint-progress {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+    width: min(460px, calc(100vw - 16px));
+    padding: 9px 10px;
+  }
+  .ge-inpaint-progress-list { max-height: 74px; }
+  .ge-inpaint-progress-row {
+    grid-template-columns: minmax(82px, auto) minmax(0, 1fr);
+    gap: 6px;
+  }
 }
 /* Hide the controls wrapper entirely when every tool section inside is
    hidden — otherwise the padding + border draws an empty band above the
@@ -26693,6 +26994,14 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   gap: 4px;
   flex-wrap: wrap;
 }
+.ge-rembg-sample-panel {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.ge-rembg-sample-actions .ge-btn {
+  min-width: 0;
+}
 .ge-btn {
   padding: 4px 8px;
   border: 1px solid var(--border);
@@ -27253,6 +27562,9 @@ button .spinner-whirlpool {
   border-bottom: 1px solid var(--border);
   position: relative;
 }
+.ge-layers.ge-layers-attention .ge-layers-header {
+  background: color-mix(in srgb, var(--red) 14%, transparent);
+}
 .ge-layers-title { flex: 1; }
 .ge-layers-grab { display: none; } /* mobile only */
 .ge-layers-merge-wrap { position: relative; display: inline-flex; }
@@ -27327,7 +27639,8 @@ button .spinner-whirlpool {
      rather than pushing the whole panel arbitrarily tall. */
   max-height: 320px;
   overflow-y: auto;
-  padding: 0;
+  padding: 0 0 var(--ge-bottom-gesture-reserve, 36px);
+  scroll-padding-bottom: var(--ge-bottom-gesture-reserve, 36px);
 }
 .ge-layer-item {
   display: flex;
@@ -27982,6 +28295,9 @@ button .spinner-whirlpool {
   .ge-editor-body {
     flex-direction: column;
   }
+  .gallery-editor {
+    --ge-bottom-gesture-reserve: calc(env(safe-area-inset-bottom, 0px) + 48px);
+  }
   /* Brush/Size-style rows: stack the label above its slider so the
      slider gets a full row instead of getting smashed against the
      panel's right edge. Doesn't touch .ge-eraser-row which has its own
@@ -28084,7 +28400,7 @@ button .spinner-whirlpool {
     /* Peek height grows with the layer count up to a cap. JS sets the
        `--peek-height` custom property from _renderLayerPanel(); default
        fallback is enough for the header + one row. */
-    transform: translateY(calc(100% - var(--peek-height, 110px)));
+    transform: translateY(calc(100% - (var(--peek-height, 110px) + var(--ge-bottom-gesture-reserve, 48px))));
     transition: transform 0.22s ease-out;
   }
   .ge-right-panel.expanded {
@@ -28093,7 +28409,7 @@ button .spinner-whirlpool {
   /* Minimized: panel slides almost fully off-screen — only a thin
      handle strip remains visible so the user can swipe back up. */
   .ge-right-panel.minimized {
-    transform: translateY(calc(100% - 24px));
+    transform: translateY(calc(100% - (72px + var(--ge-bottom-gesture-reserve, 48px))));
   }
   .ge-layers-grab {
     display: block !important;
@@ -28115,7 +28431,7 @@ button .spinner-whirlpool {
      the list to the visible peek area so it scrolls properly when there
      are more layers than the peek can show. */
   .ge-right-panel:not(.expanded) .ge-layers-list {
-    max-height: calc(var(--peek-height, 110px) - 52px);
+    max-height: calc(var(--peek-height, 110px) - 52px + var(--ge-bottom-gesture-reserve, 48px));
     -webkit-overflow-scrolling: touch;
   }
   /* Mobile layer-row buttons — bump hit targets up so fingers can
@@ -28503,10 +28819,14 @@ button .spinner-whirlpool {
     background: var(--panel);
     border-radius: 12px 12px 0 0;
     box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
-    max-height: 60vh;
+    max-height: min(60dvh, calc(100dvh - 118px));
     overflow-y: auto;
-    padding: 18px 16px 24px;
+    padding: 18px 16px calc(24px + env(safe-area-inset-bottom, 0px));
     gap: 12px;
+    box-sizing: border-box;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
     /* Slide-up entrance animation when the controls become visible. */
     animation: ge-controls-slide-up 0.18s ease-out;
   }
@@ -28533,6 +28853,276 @@ button .spinner-whirlpool {
     /* Smooth slide-out matching the slide-in duration. */
     animation: none;
     transition: transform 0.18s ease-in;
+  }
+}
+
+/* Touch landscape editor: use the short viewport as a real two-pane workspace.
+   The portrait mobile rules turn controls/layers into bottom sheets; in
+   landscape those sheets cover the canvas. Keep tools docked on one half and
+   the actual image on the other half. Docked landscape overrides below collapse
+   the preview side so the dock stays focused on tools. */
+@media (orientation: landscape) and (hover: none),
+       (orientation: landscape) and (pointer: coarse) {
+  #gallery-modal .gallery-modal-content:has(#gallery-editor-container[style*="flex"]) {
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    max-height: 100vh !important;
+    max-height: 100dvh !important;
+    overflow: hidden !important;
+  }
+
+  #gallery-modal .gallery-modal-content:has(#gallery-editor-container[style*="flex"]) .modal-header,
+  #gallery-modal .gallery-modal-content:has(#gallery-editor-container[style*="flex"]) .gallery-tabs {
+    flex: 0 0 auto;
+  }
+
+  #gallery-modal .gallery-modal-content:has(#gallery-editor-container[style*="flex"]) .modal-body {
+    flex: 1 1 0 !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    overscroll-behavior: contain;
+  }
+
+  #gallery-modal #gallery-editor-container[style*="flex"] {
+    flex: 1 1 0 !important;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  #gallery-modal #gallery-editor-container[style*="flex"].gallery-editor {
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden !important;
+    padding-bottom: 0 !important;
+    touch-action: manipulation;
+  }
+
+  #gallery-modal #gallery-editor-container[style*="flex"] .ge-editor-body {
+    order: 1;
+    display: flex;
+    flex: 1 1 0 !important;
+    flex-direction: row !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: hidden !important;
+    border-top: 1px solid var(--border);
+  }
+
+  #gallery-modal #gallery-editor-container[style*="flex"] .ge-topbar {
+    order: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  #gallery-modal #gallery-editor-container[style*="flex"] .ge-topbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  #gallery-modal #gallery-editor-container[style*="flex"] .ge-topbar-left,
+  #gallery-modal #gallery-editor-container[style*="flex"] .ge-topbar-right {
+    flex: 0 0 auto;
+  }
+
+  #gallery-modal #gallery-editor-container[style*="flex"] .ge-toolbar {
+    order: 0;
+    position: static;
+    flex: 0 0 52px;
+    width: 52px;
+    height: auto;
+    max-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    border-right: 1px solid var(--border);
+    border-bottom: 0;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  #gallery-modal #gallery-editor-container[style*="flex"] .ge-tool-sep {
+    border-top: 1px solid var(--border);
+    border-left: 0;
+    margin: 4px 0;
+    padding: 0;
+    width: auto;
+    height: 1px;
+  }
+
+  #gallery-modal #gallery-editor-container[style*="flex"] .ge-tool-btn {
+    width: 48px;
+  }
+
+  #gallery-modal #gallery-editor-container[style*="flex"] .ge-right-panel {
+    order: 1;
+    position: static !important;
+    inset: auto !important;
+    flex: 0 0 calc(50% - 26px) !important;
+    width: auto !important;
+    min-width: 148px;
+    max-width: calc(50% - 26px);
+    height: auto !important;
+    max-height: none !important;
+    min-height: 0;
+    transform: none !important;
+    transition: none !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    background: var(--panel);
+    border-left: 0 !important;
+    border-right: 1px solid var(--border);
+    border-top: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  #gallery-modal #gallery-editor-container[style*="flex"] .ge-right-panel.expanded,
+  #gallery-modal #gallery-editor-container[style*="flex"] .ge-right-panel.minimized {
+    transform: none !important;
+  }
+
+  #gallery-modal #gallery-editor-container[style*="flex"] .ge-controls {
+    position: static !important;
+    inset: auto !important;
+    width: auto !important;
+    max-height: none !important;
+    overflow: visible;
+    overscroll-behavior: auto;
+    -webkit-overflow-scrolling: auto;
+    touch-action: auto;
+    transform: none !important;
+    animation: none !important;
+    transition: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    border-top: 0 !important;
+    border-bottom: 1px solid var(--border);
+    padding: 8px 10px 10px !important;
+    gap: 8px;
+  }
+
+  #gallery-modal #gallery-editor-container[style*="flex"] .ge-controls::before {
+    content: none !important;
+  }
+
+  #gallery-modal #gallery-editor-container[style*="flex"] .ge-controls.dismissed {
+    transform: none !important;
+    pointer-events: auto !important;
+  }
+
+  #gallery-modal #gallery-editor-container[style*="flex"] .ge-layers-list {
+    max-height: none !important;
+    overflow: visible !important;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+
+  #gallery-modal #gallery-editor-container[style*="flex"] .ge-canvas-area {
+    order: 2;
+    display: flex !important;
+    flex: 1 1 50% !important;
+    min-width: 0;
+    min-height: 0 !important;
+    height: 100%;
+    max-height: none !important;
+    overflow: auto;
+    border-left: 0;
+  }
+
+  #gallery-modal #gallery-editor-container[style*="flex"] .ge-panel-resize,
+  #gallery-modal #gallery-editor-container[style*="flex"] .ge-layers-grab {
+    display: none !important;
+  }
+
+  #gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) #gallery-editor-container[style*="flex"] .ge-canvas-area {
+    display: none !important;
+    flex: 0 0 0 !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    border: 0 !important;
+  }
+
+  #gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) #gallery-editor-container[style*="flex"] .ge-right-panel {
+    flex: 1 1 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    overscroll-behavior: contain;
+    border-right: 0 !important;
+  }
+
+  #gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) #gallery-editor-container[style*="flex"] .ge-topbar {
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  #gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) #gallery-editor-container[style*="flex"] .ge-topbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  #gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) #gallery-editor-container[style*="flex"] .ge-topbar-left,
+  #gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) #gallery-editor-container[style*="flex"] .ge-topbar-right {
+    flex: 0 0 auto;
+  }
+
+  #gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) #gallery-editor-container[style*="flex"] .ge-controls {
+    flex: 0 0 auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    scroll-margin-top: 0;
+    padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  #gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) #gallery-editor-container[style*="flex"] .ge-layers {
+    flex: 0 0 auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+
+  #gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) #gallery-editor-container[style*="flex"] .ge-layers-list {
+    max-height: none !important;
+    overflow: visible !important;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  #gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) #gallery-editor-container[style*="flex"] .ge-control-row {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  #gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) #gallery-editor-container[style*="flex"] .ge-control-row input[type="range"],
+  #gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) #gallery-editor-container[style*="flex"] .ge-control-row input[type="text"],
+  #gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) #gallery-editor-container[style*="flex"] .ge-control-row select,
+  #gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) #gallery-editor-container[style*="flex"] .ge-inpaint-prompt {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  #gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) #gallery-editor-container[style*="flex"] .ge-actions {
+    flex-wrap: wrap;
+  }
+
+  #gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) #gallery-editor-container[style*="flex"] .ge-image-menu,
+  #gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) #gallery-editor-container[style*="flex"] .ge-filter-menu,
+  #gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) #gallery-editor-container[style*="flex"] .ge-save-menu {
+    max-width: min(320px, calc(100vw - 24px));
+    max-height: min(72vh, 420px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 }
 
@@ -30997,9 +31587,9 @@ body.notes-mobile-mode .note-card-done,
 body.notes-mobile-mode .note-card-actions,
 body.notes-mobile-mode .note-cl-quickadd,
 body.notes-mobile-mode .note-card .note-checkbox-rm,
-/* Panel-fullscreen toggle is redundant on mobile — the panel always
-   fills the viewport already. */
-body.notes-mobile-mode #notes-fullscreen-toggle {
+/* Panel-fullscreen toggle is redundant in portrait mobile sheet mode. Android
+   landscape dock mode must keep it visible, including after rotation. */
+body.notes-mobile-mode:not(.notes-android-dock-mode) #notes-fullscreen-toggle {
   display: none !important;
 }
 
@@ -31653,6 +32243,55 @@ body.notes-drag-mode .note-card-pin svg {
 .notes-pane-header .doc-action-icon-btn {
   flex-shrink: 0;
 }
+.notes-pane-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  flex: 0 0 auto;
+  margin-left: auto;
+  min-width: 0;
+}
+.notes-pane-header-actions .modal-minimize-btn,
+.notes-pane-header-actions .modal-expand-btn {
+  margin-right: 0;
+}
+.notes-pane-header-actions .notes-window-control {
+  width: 28px;
+  height: 28px;
+}
+.notes-close-window-btn:hover {
+  border-color: color-mix(in srgb, #ff5a5a 70%, var(--fg));
+  color: color-mix(in srgb, #ff5a5a 82%, var(--fg));
+}
+.notes-archive-letter {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+}
+.notes-pane.notes-header-tight .notes-header-btn-label,
+.notes-pane.modal-left-docked .notes-header-btn-label,
+.notes-pane.modal-right-docked .notes-header-btn-label {
+  display: none;
+}
+.notes-pane.notes-header-tight .notes-header-text-btn,
+.notes-pane.modal-left-docked .notes-header-text-btn,
+.notes-pane.modal-right-docked .notes-header-text-btn {
+  width: 30px !important;
+  padding: 0 !important;
+}
+.notes-pane.notes-header-tiny #notes-archive-toggle {
+  width: 28px !important;
+}
+.notes-pane.notes-header-tiny #notes-archive-toggle .notes-archive-icon {
+  display: none;
+}
+.notes-pane.notes-header-tiny #notes-archive-toggle .notes-archive-letter {
+  display: inline-flex;
+}
 .notes-pane-header .notes-pane-title {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -31717,6 +32356,7 @@ body.notes-drag-mode .note-card-pin svg {
   /* Mobile header is tight — keep Archive / Toggle View icon-only. */
   .notes-header-btn-label { display: none; }
   .notes-header-text-btn { width: 32px !important; padding: 0 !important; }
+  .notes-pane-header-actions { gap: 5px; }
 }
 .notes-header-btn-label {
   font-size: 11px;
@@ -33531,12 +34171,84 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   font-style: italic;
 }
 
+.note-card-detail {
+  margin-top: 6px;
+  border: 1px solid color-mix(in srgb, var(--fg) 10%, var(--border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--panel) 48%, transparent);
+  overflow: hidden;
+}
+.note-card-detail > summary.note-card-detail-summary {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  margin: 0;
+  border: 0;
+  border-bottom: 0;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  color: color-mix(in srgb, var(--fg) 66%, transparent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+.note-card-detail > summary.note-card-detail-summary::before,
+.note-card-detail > summary.note-card-detail-summary::-webkit-details-marker {
+  content: none !important;
+  display: none !important;
+}
+.note-card-detail > summary.note-card-detail-summary:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);
+  color: color-mix(in srgb, var(--fg) 82%, transparent);
+}
+.note-card-detail-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.note-card-detail-toggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: color-mix(in srgb, var(--accent, var(--red)) 78%, var(--fg));
+  font-size: 11px;
+  opacity: 0.8;
+}
+.note-card-detail-chevron {
+  transition: transform 0.16s ease;
+}
+.note-card-detail[open] .note-card-detail-chevron {
+  transform: rotate(180deg);
+}
+.note-card-detail-panel {
+  max-height: 280px;
+  overflow: auto;
+  padding: 9px 10px 10px;
+  border-top: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+  background: color-mix(in srgb, var(--bg) 16%, transparent);
+  -webkit-overflow-scrolling: touch;
+}
+.note-card-detail-panel .note-content-preview,
+.note-card-detail-panel .note-checklist-preview,
+.note-card-detail-panel .note-goal-desc {
+  max-height: none;
+}
+.note-card-detail-panel .note-content-preview {
+  cursor: pointer;
+}
+
 .note-content-preview {
   font-size: 12px;
   opacity: 0.6;
   line-height: 1.4;
-  /* Roomy preview: up to ~14 lines. Content is also sliced to 600 chars
-     client-side, so cards still stay reasonable in the list. */
   max-height: 240px;
   overflow: hidden;
   cursor: pointer;
@@ -34150,7 +34862,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   font-size: 12px;
   outline: none;
 }
-.note-rich-font { width: 98px; }
+.note-rich-font { width: 132px; }
 .note-rich-size { width: 88px; }
 .note-rich-color { width: 96px; }
 .note-rich-style:focus,
@@ -34309,10 +35021,49 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   background: color-mix(in srgb, var(--accent, var(--red)) 78%, #fff);
 }
 .note-rich-font-sans { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.note-rich-font-inter { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.note-rich-font-system { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+.note-rich-font-aptos { font-family: Aptos, "Aptos Display", "Segoe UI", Calibri, system-ui, sans-serif; }
+.note-rich-font-segoe { font-family: "Segoe UI", "Segoe UI Variable", system-ui, -apple-system, sans-serif; }
+.note-rich-font-arial { font-family: Arial, Helvetica, sans-serif; }
+.note-rich-font-helvetica { font-family: Helvetica, Arial, sans-serif; }
+.note-rich-font-roboto { font-family: Roboto, "Droid Sans", "Noto Sans", Arial, sans-serif; }
+.note-rich-font-verdana { font-family: Verdana, Geneva, sans-serif; }
+.note-rich-font-tahoma { font-family: Tahoma, Verdana, sans-serif; }
+.note-rich-font-trebuchet { font-family: "Trebuchet MS", "Lucida Grande", Arial, sans-serif; }
+.note-rich-font-lucida-sans { font-family: "Lucida Sans Unicode", "Lucida Grande", "Lucida Sans", Arial, sans-serif; }
+.note-rich-font-rounded { font-family: ui-rounded, "SF Pro Rounded", "Arial Rounded MT Bold", "Segoe UI", system-ui, sans-serif; }
 .note-rich-font-serif { font-family: Georgia, "Times New Roman", ui-serif, serif; }
+.note-rich-font-georgia { font-family: Georgia, "Times New Roman", ui-serif, serif; }
+.note-rich-font-times { font-family: "Times New Roman", Times, ui-serif, serif; }
+.note-rich-font-garamond { font-family: Garamond, "EB Garamond", "Adobe Garamond Pro", Georgia, serif; }
+.note-rich-font-palatino { font-family: Palatino, "Palatino Linotype", "Book Antiqua", Georgia, serif; }
+.note-rich-font-baskerville { font-family: Baskerville, "Libre Baskerville", Georgia, serif; }
+.note-rich-font-cambria { font-family: Cambria, Cochin, Georgia, "Times New Roman", serif; }
+.note-rich-font-didot { font-family: Didot, "Bodoni 72", "Bodoni MT", Georgia, serif; }
+.note-rich-font-bookman { font-family: "Bookman Old Style", Bookman, Georgia, serif; }
 .note-rich-font-mono { font-family: "Fira Code", "Cascadia Code", Consolas, ui-monospace, SFMono-Regular, monospace; }
+.note-rich-font-fira-code { font-family: "Fira Code", "Cascadia Code", Consolas, ui-monospace, SFMono-Regular, monospace; }
+.note-rich-font-cascadia { font-family: "Cascadia Code", "Cascadia Mono", "Fira Code", Consolas, ui-monospace, monospace; }
+.note-rich-font-consolas { font-family: Consolas, "Lucida Console", "Courier New", ui-monospace, monospace; }
+.note-rich-font-courier { font-family: "Courier New", Courier, ui-monospace, monospace; }
+.note-rich-font-sf-mono { font-family: "SF Mono", SFMono-Regular, ui-monospace, "Fira Code", monospace; }
+.note-rich-font-berkeley { font-family: "Berkeley Mono", "SF Mono", "Fira Code", ui-monospace, monospace; }
+.note-rich-font-gohu { font-family: GohuFont, "Fira Code", "Courier New", ui-monospace, monospace; }
 .note-rich-font-hand { font-family: "Comic Sans MS", "Segoe Print", "Bradley Hand", cursive; }
+.note-rich-font-comic { font-family: "Comic Sans MS", "Comic Sans", "Segoe Print", cursive; }
+.note-rich-font-segoe-print { font-family: "Segoe Print", "Comic Sans MS", cursive; }
+.note-rich-font-bradley { font-family: "Bradley Hand", "Bradley Hand ITC", "Segoe Print", cursive; }
+.note-rich-font-lucida-handwriting { font-family: "Lucida Handwriting", "Segoe Script", "Brush Script MT", cursive; }
+.note-rich-font-brush-script { font-family: "Brush Script MT", "Segoe Script", "Lucida Handwriting", cursive; }
 .note-rich-font-display { font-family: "Trebuchet MS", "Gill Sans", "Aptos Display", ui-sans-serif, system-ui, sans-serif; font-weight: 700; }
+.note-rich-font-impact { font-family: Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif; font-weight: 700; }
+.note-rich-font-copperplate { font-family: Copperplate, "Copperplate Gothic Light", "Copperplate Gothic Bold", fantasy; font-weight: 700; }
+.note-rich-font-futura { font-family: Futura, "Futura PT", "Avenir Next", Avenir, system-ui, sans-serif; }
+.note-rich-font-gill { font-family: "Gill Sans", "Gill Sans MT", Calibri, "Trebuchet MS", sans-serif; }
+.note-rich-font-optima { font-family: Optima, Candara, "Noto Sans", system-ui, sans-serif; }
+.note-rich-font-rockwell { font-family: Rockwell, "Rockwell Extra Bold", "Courier New", serif; font-weight: 700; }
+.note-rich-font-fantasy { font-family: fantasy, Impact, Copperplate, system-ui; font-weight: 700; }
 .note-rich-size-xs { font-size: 0.78em; }
 .note-rich-size-sm { font-size: 0.9em; }
 .note-rich-size-lg { font-size: 1.18em; }
@@ -34392,7 +35143,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 }
 .note-fullscreen-overlay .note-rich-font {
   height: 34px;
-  width: 104px;
+  width: 140px;
 }
 .note-fullscreen-overlay .note-rich-size {
   height: 34px;
@@ -34422,17 +35173,134 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 .note-rich-editor[data-rich-font="sans"] {
   --note-rich-editor-font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
+.note-rich-editor[data-rich-font="inter"] {
+  --note-rich-editor-font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.note-rich-editor[data-rich-font="system"] {
+  --note-rich-editor-font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.note-rich-editor[data-rich-font="aptos"] {
+  --note-rich-editor-font: Aptos, "Aptos Display", "Segoe UI", Calibri, system-ui, sans-serif;
+}
+.note-rich-editor[data-rich-font="segoe"] {
+  --note-rich-editor-font: "Segoe UI", "Segoe UI Variable", system-ui, -apple-system, sans-serif;
+}
+.note-rich-editor[data-rich-font="arial"] {
+  --note-rich-editor-font: Arial, Helvetica, sans-serif;
+}
+.note-rich-editor[data-rich-font="helvetica"] {
+  --note-rich-editor-font: Helvetica, Arial, sans-serif;
+}
+.note-rich-editor[data-rich-font="roboto"] {
+  --note-rich-editor-font: Roboto, "Droid Sans", "Noto Sans", Arial, sans-serif;
+}
+.note-rich-editor[data-rich-font="verdana"] {
+  --note-rich-editor-font: Verdana, Geneva, sans-serif;
+}
+.note-rich-editor[data-rich-font="tahoma"] {
+  --note-rich-editor-font: Tahoma, Verdana, sans-serif;
+}
+.note-rich-editor[data-rich-font="trebuchet"] {
+  --note-rich-editor-font: "Trebuchet MS", "Lucida Grande", Arial, sans-serif;
+}
+.note-rich-editor[data-rich-font="lucida-sans"] {
+  --note-rich-editor-font: "Lucida Sans Unicode", "Lucida Grande", "Lucida Sans", Arial, sans-serif;
+}
+.note-rich-editor[data-rich-font="rounded"] {
+  --note-rich-editor-font: ui-rounded, "SF Pro Rounded", "Arial Rounded MT Bold", "Segoe UI", system-ui, sans-serif;
+}
 .note-rich-editor[data-rich-font="serif"] {
   --note-rich-editor-font: Georgia, "Times New Roman", ui-serif, serif;
+}
+.note-rich-editor[data-rich-font="georgia"] {
+  --note-rich-editor-font: Georgia, "Times New Roman", ui-serif, serif;
+}
+.note-rich-editor[data-rich-font="times"] {
+  --note-rich-editor-font: "Times New Roman", Times, ui-serif, serif;
+}
+.note-rich-editor[data-rich-font="garamond"] {
+  --note-rich-editor-font: Garamond, "EB Garamond", "Adobe Garamond Pro", Georgia, serif;
+}
+.note-rich-editor[data-rich-font="palatino"] {
+  --note-rich-editor-font: Palatino, "Palatino Linotype", "Book Antiqua", Georgia, serif;
+}
+.note-rich-editor[data-rich-font="baskerville"] {
+  --note-rich-editor-font: Baskerville, "Libre Baskerville", Georgia, serif;
+}
+.note-rich-editor[data-rich-font="cambria"] {
+  --note-rich-editor-font: Cambria, Cochin, Georgia, "Times New Roman", serif;
+}
+.note-rich-editor[data-rich-font="didot"] {
+  --note-rich-editor-font: Didot, "Bodoni 72", "Bodoni MT", Georgia, serif;
+}
+.note-rich-editor[data-rich-font="bookman"] {
+  --note-rich-editor-font: "Bookman Old Style", Bookman, Georgia, serif;
 }
 .note-rich-editor[data-rich-font="mono"] {
   --note-rich-editor-font: "Fira Code", "Cascadia Code", Consolas, ui-monospace, SFMono-Regular, monospace;
 }
+.note-rich-editor[data-rich-font="fira-code"] {
+  --note-rich-editor-font: "Fira Code", "Cascadia Code", Consolas, ui-monospace, SFMono-Regular, monospace;
+}
+.note-rich-editor[data-rich-font="cascadia"] {
+  --note-rich-editor-font: "Cascadia Code", "Cascadia Mono", "Fira Code", Consolas, ui-monospace, monospace;
+}
+.note-rich-editor[data-rich-font="consolas"] {
+  --note-rich-editor-font: Consolas, "Lucida Console", "Courier New", ui-monospace, monospace;
+}
+.note-rich-editor[data-rich-font="courier"] {
+  --note-rich-editor-font: "Courier New", Courier, ui-monospace, monospace;
+}
+.note-rich-editor[data-rich-font="sf-mono"] {
+  --note-rich-editor-font: "SF Mono", SFMono-Regular, ui-monospace, "Fira Code", monospace;
+}
+.note-rich-editor[data-rich-font="berkeley"] {
+  --note-rich-editor-font: "Berkeley Mono", "SF Mono", "Fira Code", ui-monospace, monospace;
+}
+.note-rich-editor[data-rich-font="gohu"] {
+  --note-rich-editor-font: GohuFont, "Fira Code", "Courier New", ui-monospace, monospace;
+}
 .note-rich-editor[data-rich-font="hand"] {
   --note-rich-editor-font: "Comic Sans MS", "Segoe Print", "Bradley Hand", cursive;
 }
+.note-rich-editor[data-rich-font="comic"] {
+  --note-rich-editor-font: "Comic Sans MS", "Comic Sans", "Segoe Print", cursive;
+}
+.note-rich-editor[data-rich-font="segoe-print"] {
+  --note-rich-editor-font: "Segoe Print", "Comic Sans MS", cursive;
+}
+.note-rich-editor[data-rich-font="bradley"] {
+  --note-rich-editor-font: "Bradley Hand", "Bradley Hand ITC", "Segoe Print", cursive;
+}
+.note-rich-editor[data-rich-font="lucida-handwriting"] {
+  --note-rich-editor-font: "Lucida Handwriting", "Segoe Script", "Brush Script MT", cursive;
+}
+.note-rich-editor[data-rich-font="brush-script"] {
+  --note-rich-editor-font: "Brush Script MT", "Segoe Script", "Lucida Handwriting", cursive;
+}
 .note-rich-editor[data-rich-font="display"] {
   --note-rich-editor-font: "Trebuchet MS", "Gill Sans", "Aptos Display", ui-sans-serif, system-ui, sans-serif;
+}
+.note-rich-editor[data-rich-font="impact"] {
+  --note-rich-editor-font: Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
+}
+.note-rich-editor[data-rich-font="copperplate"] {
+  --note-rich-editor-font: Copperplate, "Copperplate Gothic Light", "Copperplate Gothic Bold", fantasy;
+}
+.note-rich-editor[data-rich-font="futura"] {
+  --note-rich-editor-font: Futura, "Futura PT", "Avenir Next", Avenir, system-ui, sans-serif;
+}
+.note-rich-editor[data-rich-font="gill"] {
+  --note-rich-editor-font: "Gill Sans", "Gill Sans MT", Calibri, "Trebuchet MS", sans-serif;
+}
+.note-rich-editor[data-rich-font="optima"] {
+  --note-rich-editor-font: Optima, Candara, "Noto Sans", system-ui, sans-serif;
+}
+.note-rich-editor[data-rich-font="rockwell"] {
+  --note-rich-editor-font: Rockwell, "Rockwell Extra Bold", "Courier New", serif;
+}
+.note-rich-editor[data-rich-font="fantasy"] {
+  --note-rich-editor-font: fantasy, Impact, Copperplate, system-ui;
 }
 .note-rich-editor[data-rich-size="xs"] { --note-rich-editor-scale: 0.78; }
 .note-rich-editor[data-rich-size="sm"] { --note-rich-editor-scale: 0.9; }
@@ -34460,7 +35328,19 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 }
 .note-rich-editor[data-rich-font="display"] .note-form-content,
 .note-rich-editor[data-rich-font="display"] .note-rich-preview,
-.note-rich-editor[data-rich-font="display"] .note-form-content-reader {
+.note-rich-editor[data-rich-font="display"] .note-form-content-reader,
+.note-rich-editor[data-rich-font="impact"] .note-form-content,
+.note-rich-editor[data-rich-font="impact"] .note-rich-preview,
+.note-rich-editor[data-rich-font="impact"] .note-form-content-reader,
+.note-rich-editor[data-rich-font="copperplate"] .note-form-content,
+.note-rich-editor[data-rich-font="copperplate"] .note-rich-preview,
+.note-rich-editor[data-rich-font="copperplate"] .note-form-content-reader,
+.note-rich-editor[data-rich-font="rockwell"] .note-form-content,
+.note-rich-editor[data-rich-font="rockwell"] .note-rich-preview,
+.note-rich-editor[data-rich-font="rockwell"] .note-form-content-reader,
+.note-rich-editor[data-rich-font="fantasy"] .note-form-content,
+.note-rich-editor[data-rich-font="fantasy"] .note-rich-preview,
+.note-rich-editor[data-rich-font="fantasy"] .note-form-content-reader {
   font-weight: 700;
 }
 @media (max-width: 520px) {
@@ -34476,7 +35356,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
     width: 112px;
   }
   .note-fullscreen-overlay .note-rich-font {
-    width: 96px;
+    width: 120px;
   }
   .note-fullscreen-overlay .note-rich-size {
     width: 84px;
@@ -38271,6 +39151,16 @@ body.theme-frosted .modal {
 .research-cat-badge.research-cat-failed { color: #f44336; display: inline-flex; align-items: center; gap: 3px; }
 .research-cat-badge.research-cat-failed svg { width: 10px; height: 10px; }
 .research-job-failnote { font-size: 11px; color: #f44336; opacity: 0.9; margin: 4px 0 6px; line-height: 1.35; }
+.research-provider-warning {
+  margin: -6px 0 12px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, #f44336 42%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, #f44336 10%, transparent);
+  color: color-mix(in srgb, #f44336 80%, var(--fg));
+  font-size: 12px;
+  line-height: 1.35;
+}
 
 /* Shared popup-menu row feedback. Many small menus use their own item class;
    keep the hover light and consistent instead of giving one action a special
@@ -38739,9 +39629,41 @@ body.theme-frosted .modal {
   align-self: stretch;
   width: auto;
   min-width: 0;
-  margin: 4px 0 8px;
+  margin: 4px 0 6px;
   font-family: var(--mono, monospace);
   font-size: 12px;
+}
+.workspace-shortcuts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0 0 8px;
+}
+.workspace-shortcut-btn {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg) 88%, var(--fg) 12%);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.workspace-shortcut-btn:hover,
+.workspace-shortcut-btn.active {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 62%, var(--border));
+  color: var(--accent, var(--red));
+}
+.workspace-shortcut-btn span {
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* flex/overflow inherited from base .modal-body; only the padding differs. */
 .workspace-body { padding: 6px 0; }
@@ -38764,11 +39686,386 @@ body.theme-frosted .modal {
 }
 .workspace-up { opacity: 0.7; }
 .workspace-empty { padding: 14px 18px; opacity: 0.5; font-size: 13px; }
+.workspace-status {
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.workspace-status-error {
+  color: color-mix(in srgb, var(--color-error, var(--red)) 78%, var(--fg));
+}
+.workspace-status-message {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.workspace-retry-btn {
+  min-height: 30px;
+  padding: 5px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 58%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg) 88%, var(--accent, var(--red)) 12%);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+.workspace-retry-btn:hover {
+  border-color: var(--accent, var(--red));
+  color: var(--accent, var(--red));
+}
 .workspace-footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  flex-wrap: wrap;
   padding: 10px 18px;
   border-top: 1px solid var(--border);
 }
+.workspace-footer .confirm-btn {
+  min-width: 0;
+}
 .workspace-note { margin: 0 0 8px; font-size: 11px; line-height: 1.4; }
+
+@media (max-width: 520px) {
+  .workspace-footer {
+    justify-content: stretch;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .workspace-footer .confirm-btn {
+    flex: 1 1 0;
+    padding-left: 8px;
+    padding-right: 8px;
+    white-space: normal;
+  }
+}
+
+/* Workspace file editor */
+.workspace-editor-content {
+  width: min(1120px, 96vw);
+  height: min(760px, 86vh);
+  max-height: 86vh;
+  overflow: hidden;
+  padding: 10px;
+}
+.workspace-editor-content .modal-header h4 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.workspace-editor-content .modal-header h4 svg { flex-shrink: 0; }
+.workspace-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 0 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+}
+.workspace-editor-toolbar .memory-toolbar-btn,
+.workspace-editor-actions .memory-toolbar-btn,
+.workspace-editor-file-actions .memory-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+}
+.workspace-editor-toolbar .memory-toolbar-btn svg,
+.workspace-editor-actions .memory-toolbar-btn svg,
+.workspace-editor-file-actions .memory-toolbar-btn svg {
+  flex-shrink: 0;
+}
+.workspace-editor-root {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+.workspace-editor-root code {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 5px;
+  padding: 3px 7px;
+  background: color-mix(in srgb, var(--bg) 88%, var(--fg) 12%);
+}
+.workspace-editor-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 310px) minmax(0, 1fr);
+  gap: 10px;
+  padding-top: 10px;
+}
+.workspace-editor-tree,
+.workspace-editor-panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 92%, var(--fg) 8%);
+  overflow: hidden;
+}
+.workspace-editor-tree {
+  gap: 8px;
+  padding: 9px;
+}
+.workspace-editor-pathbar {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 6px;
+  min-width: 0;
+}
+.workspace-editor-pathbar input {
+  min-width: 0;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  padding: 0 8px;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+}
+.workspace-editor-pathbar input:focus,
+.workspace-editor-filter:focus,
+.workspace-editor-textarea:focus {
+  outline: 1px solid color-mix(in srgb, var(--accent, var(--red)) 62%, transparent);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 72%, var(--border));
+}
+.workspace-editor-icon-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.workspace-editor-icon-btn:hover {
+  border-color: var(--fg);
+  color: var(--fg);
+}
+.workspace-editor-icon-btn.danger {
+  color: var(--color-error);
+  border-color: color-mix(in srgb, var(--color-error) 62%, var(--border));
+}
+.workspace-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.workspace-editor-actions .memory-toolbar-btn { flex: 1; }
+.workspace-editor-filter {
+  flex-shrink: 0;
+  width: 100%;
+  min-width: 0;
+}
+.workspace-editor-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 2px;
+}
+.workspace-file-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 4px 5px 4px 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--fg);
+  cursor: pointer;
+}
+.workspace-file-row:hover,
+.workspace-file-row.active {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 38%, var(--border));
+  background: color-mix(in srgb, var(--accent, var(--red)) 9%, transparent);
+}
+.workspace-file-row.is-dir {
+  color: color-mix(in srgb, var(--fg) 90%, var(--accent, var(--red)) 10%);
+}
+.workspace-file-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.78;
+}
+.workspace-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.workspace-file-meta {
+  color: var(--fg-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.workspace-file-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  opacity: 0.65;
+}
+.workspace-file-row:hover .workspace-file-row-actions,
+.workspace-file-row.active .workspace-file-row-actions {
+  opacity: 1;
+}
+.workspace-file-row-actions .workspace-editor-icon-btn {
+  width: 24px;
+  height: 24px;
+  border-color: color-mix(in srgb, var(--border) 70%, transparent);
+}
+.workspace-editor-empty {
+  padding: 18px 8px;
+  color: var(--fg-muted);
+  font-size: 12px;
+  font-style: italic;
+}
+.workspace-editor-filebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 9px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+}
+.workspace-editor-filetitle {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, auto) auto auto;
+  align-items: baseline;
+  gap: 8px;
+}
+.workspace-editor-filetitle strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.workspace-editor-filetitle span {
+  color: var(--fg-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+#workspace-editor-dirty {
+  color: var(--red);
+  border: 1px solid color-mix(in srgb, var(--red) 45%, transparent);
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 10px;
+}
+.workspace-editor-file-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.workspace-editor-textarea {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  resize: none;
+  border: 0;
+  background: var(--bg);
+  color: var(--fg);
+  padding: 12px;
+  font-family: var(--mono, 'Consolas', monospace);
+  font-size: 12px;
+  line-height: 1.55;
+  tab-size: 2;
+}
+.workspace-editor-textarea:disabled {
+  color: var(--fg-muted);
+  background: color-mix(in srgb, var(--bg) 94%, var(--fg) 6%);
+}
+.workspace-editor-footer {
+  flex-shrink: 0;
+  min-height: 22px;
+  display: flex;
+  align-items: center;
+  padding-top: 7px;
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+#workspace-editor-status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#workspace-editor-status.error { color: var(--color-error); }
+
+@media (max-width: 760px) {
+  .workspace-editor-content {
+    width: 96vw;
+    height: 92vh;
+    max-height: 92vh;
+  }
+  .workspace-editor-toolbar {
+    flex-wrap: wrap;
+  }
+  .workspace-editor-root {
+    flex-basis: 100%;
+  }
+  .workspace-editor-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(180px, 34vh) minmax(0, 1fr);
+  }
+  .workspace-editor-filebar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .workspace-editor-filetitle {
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .workspace-editor-filetitle #workspace-editor-file-meta {
+    grid-column: 1 / -1;
+  }
+  .workspace-editor-file-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .workspace-file-row {
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+  }
+  .workspace-file-meta {
+    display: none;
+  }
+  .workspace-file-row-actions {
+    opacity: 1;
+  }
+}

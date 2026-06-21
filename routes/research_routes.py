@@ -79,7 +79,7 @@ def _resolve_endpoint_runtime(ep, owner=None, model: Optional[str] = None):
     """Resolve a ModelEndpoint row into (chat_url, model, headers).
 
     Mirrors endpoint_resolver.resolve_endpoint's provider-auth handling for
-    panel-selected research endpoints. ChatGPT Subscription endpoints keep
+    panel-selected research endpoints. Codex Subscription endpoints keep
     OAuth tokens in ProviderAuthSession, so ep.api_key is intentionally empty.
     """
     from src.endpoint_resolver import (
@@ -105,6 +105,29 @@ def _resolve_endpoint_runtime(ep, owner=None, model: Optional[str] = None):
     if not ep_model:
         return None
     return build_chat_url(base), ep_model, build_headers(api_key, base)
+
+
+def _research_failure_summary(data: dict) -> str:
+    """Extract a short non-secret failure reason from a persisted report."""
+    if not isinstance(data, dict):
+        return ""
+    sources = data.get("sources") or []
+    if sources:
+        return ""
+    text = str(data.get("raw_report") or data.get("result") or "")
+    if not text:
+        return ""
+    match = re.search(
+        r"\*\*Search unavailable\*\*\s*[—-]\s*(.+?)(?:\n\s*\n|$)",
+        text,
+        flags=re.S,
+    )
+    if match:
+        detail = re.sub(r"\s+", " ", match.group(1)).strip()
+        return f"Search unavailable — {detail}"
+    if "No information could be gathered" in text:
+        return "No information could be gathered for this question."
+    return ""
 
 
 def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
@@ -307,7 +330,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                 if search and search.lower() not in query.lower():
                     continue
                 sources = d.get("sources", [])
-                items.append({
+                item = {
                     "id": p.stem,
                     "query": query,
                     "category": d.get("category") or "",
@@ -319,7 +342,11 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     "started_at": d.get("started_at", 0),
                     "completed_at": d.get("completed_at", 0),
                     "archived": bool(d.get("archived")),
-                })
+                }
+                err = _research_failure_summary(d)
+                if err:
+                    item["error_summary"] = err
+                items.append(item)
             except Exception:
                 continue
 
@@ -570,11 +597,22 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     "raw_findings": d.get("raw_findings", []),
                     "category": d.get("category") or "",
                     "report_layout": d.get("report_layout", "auto"),
+                    "error_summary": _research_failure_summary(d),
                 }
             raise HTTPException(404, "No research result available")
         sources = research_handler.get_sources(session_id) or []
         raw_findings = research_handler.get_raw_findings(session_id) or []
-        return {"result": result, "sources": sources, "raw_findings": raw_findings, "category": "", "report_layout": "auto"}
+        payload = {
+            "result": result,
+            "sources": sources,
+            "raw_findings": raw_findings,
+            "category": "",
+            "report_layout": "auto",
+        }
+        err = _research_failure_summary(payload)
+        if err:
+            payload["error_summary"] = err
+        return payload
 
     @router.post("/api/research/spinoff/{session_id}")
     async def research_spinoff(session_id: str, request: Request):

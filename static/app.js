@@ -2733,18 +2733,24 @@ function initializeEventListeners() {
           enableDock: false,
           enableResize: false,
         });
+        const resetDialogGeometry = () => {
+          m.classList.remove('modal-left-docked', 'modal-right-docked', 'email-snap-left', 'minimized', 'modal-minimized');
+          delete content.dataset._tileZone;
+          delete content.dataset._tilePreSnap;
+          [
+            'position', 'left', 'top', 'right', 'bottom', 'width', 'height',
+            'max-width', 'max-height', 'border-radius', 'transform', 'margin',
+          ].forEach((prop) => content.style.removeProperty(prop));
+          if (id === 'rename-session-modal') content.style.width = '400px';
+          m.querySelector('.minimize-btn')?.remove();
+        };
         // Re-center on open (these persist in the DOM). Guard on the
         // hidden→visible edge so it never fires mid-drag.
         let wasHidden = m.classList.contains('hidden');
         new MutationObserver(() => {
           const isHidden = m.classList.contains('hidden');
           if (wasHidden && !isHidden) {
-            content.style.position = '';
-            content.style.left = '';
-            content.style.top = '';
-            content.style.right = '';
-            content.style.bottom = '';
-            content.style.margin = '';
+            resetDialogGeometry();
           }
           wasHidden = isHidden;
         }).observe(m, { attributes: true, attributeFilter: ['class'] });
@@ -2761,7 +2767,7 @@ function initializeEventListeners() {
     // custom-preset-modal (the Prompt window) is handled by the new
     // modalManager dock (registered in _AUTO_WIRE), so the legacy dock must
     // not also inject a `_`/chip for it.
-    const SKIP_IDS = new Set(['styled-confirm-overlay', 'custom-preset-modal', 'gallery-modal']);
+    const SKIP_IDS = new Set(['styled-confirm-overlay', 'custom-preset-modal', 'rename-session-modal', 'gallery-modal']);
     const dockEntries = new Map(); // modal element -> dock entry element
 
     let dock = document.getElementById('modal-dock');
@@ -2872,6 +2878,7 @@ function initializeEventListeners() {
     function injectMinimizeButton(modal) {
       if (!modal || !modal.classList || !modal.classList.contains('modal')) return;
       if (modal.id && SKIP_IDS.has(modal.id)) return;
+      if (modal.dataset?.legacyMinimize === 'off') return;
       // Modals managed by the new modalManager (Modals.register) get their own
       // .modal-minimize-btn and chips via the .minimized-dock-chip system.
       // Skip them entirely so we don't double-up minimize buttons or chips.

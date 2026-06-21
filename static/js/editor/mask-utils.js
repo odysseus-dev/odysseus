@@ -54,10 +54,13 @@ export function dilateMask(src, px) {
  *
  * The layer must carry an `inpaintSource = { ai, mask }` cache from the
  * original inpaint call so we can re-shape the alpha cheaply (no
- * second model call required).
+ * second model call required). Large-image inpaint may cache only the
+ * edited crop as `{ ai, mask, x, y, w, h }`; this avoids keeping a
+ * second full-size AI canvas alive just for edge tuning.
  *
  * @param {{canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D,
- *          inpaintSource?: {ai: CanvasImageSource, mask: HTMLCanvasElement}}} layer
+ *          inpaintSource?: {ai: CanvasImageSource, mask: HTMLCanvasElement,
+ *            x?: number, y?: number, w?: number, h?: number}}} layer
  * @param {number} featherPx     Gaussian blur radius applied to the mask alpha.
  * @param {number} [edgeShiftPx] Dilate (+) or erode (-) the mask before blurring.
  */
@@ -66,26 +69,36 @@ export function applyInpaintFeather(layer, featherPx, edgeShiftPx = 0) {
   const { ai, mask } = layer.inpaintSource;
   const w = layer.canvas.width;
   const h = layer.canvas.height;
+  const hasCrop = Number.isFinite(layer.inpaintSource.x)
+    && Number.isFinite(layer.inpaintSource.y)
+    && Number.isFinite(layer.inpaintSource.w)
+    && Number.isFinite(layer.inpaintSource.h);
+  const dx = hasCrop ? layer.inpaintSource.x : 0;
+  const dy = hasCrop ? layer.inpaintSource.y : 0;
+  const dw = hasCrop ? layer.inpaintSource.w : w;
+  const dh = hasCrop ? layer.inpaintSource.h : h;
   // 1) Optional dilate/erode, then optional blur, into a fresh mask.
   let shaped = mask;
   if (edgeShiftPx !== 0) shaped = dilateMask(mask, edgeShiftPx);
   const softMask = document.createElement('canvas');
-  softMask.width = w; softMask.height = h;
+  softMask.width = dw; softMask.height = dh;
   const smCtx = softMask.getContext('2d');
   if (featherPx > 0) {
     smCtx.filter = `blur(${featherPx}px)`;
-    smCtx.drawImage(shaped, 0, 0, w, h);
+    smCtx.drawImage(shaped, 0, 0, dw, dh);
     smCtx.filter = 'none';
   } else {
-    smCtx.drawImage(shaped, 0, 0, w, h);
+    smCtx.drawImage(shaped, 0, 0, dw, dh);
   }
   // 2) Draw the AI image fresh, then multiply alpha by the soft mask.
   const ctx = layer.ctx;
   ctx.save();
   ctx.globalCompositeOperation = 'source-over';
   ctx.clearRect(0, 0, w, h);
-  ctx.drawImage(ai, 0, 0);
+  if (hasCrop) ctx.drawImage(ai, dx, dy, dw, dh);
+  else ctx.drawImage(ai, 0, 0);
   ctx.globalCompositeOperation = 'destination-in';
-  ctx.drawImage(softMask, 0, 0);
+  if (hasCrop) ctx.drawImage(softMask, dx, dy, dw, dh);
+  else ctx.drawImage(softMask, 0, 0);
   ctx.restore();
 }

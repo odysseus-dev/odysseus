@@ -321,7 +321,6 @@ _MCP_TOOL_MAP = {
     "write_file":     ("filesystem", "write_file"),
     "web_search":     ("web_search", "web_search"),
     "web_fetch":      ("web_fetch",  "web_fetch"),
-    "generate_image": ("image_gen",  "generate_image"),
 }
 
 
@@ -727,7 +726,78 @@ async def _execute_tool_block_impl(
     # Route MCP-extracted tools through the MCP manager. Forward
     # the progress callback so long-running subprocess tools
     # (bash, python) can stream `tool_progress` events to the UI.
-    if tool in _MCP_TOOL_MAP:
+    if tool == "generate_image":
+        from src.ai_interaction import do_generate_image
+        from src.runcomfy_media import generate_runcomfy_media, runcomfy_fallback_content, wants_runcomfy_media
+
+        desc = f"generate_image: {content.split(chr(10))[0][:80]}"
+        used_runcomfy = wants_runcomfy_media(content)
+        if used_runcomfy:
+            result = await generate_runcomfy_media(
+                "image",
+                content,
+                owner=owner,
+                session_id=session_id,
+            )
+        else:
+            result = await do_generate_image(content, session_id, owner=owner)
+        if result.get("error"):
+            err_text = str(result.get("error", "")).lower()
+            should_try_runcomfy = (
+                not used_runcomfy
+                and bool((content or "").strip())
+                and "image prompt is required" not in err_text
+            )
+            if should_try_runcomfy:
+                result = await generate_runcomfy_media(
+                    "image",
+                    runcomfy_fallback_content("image", content),
+                    owner=owner,
+                    session_id=session_id,
+                )
+        result.setdefault("exit_code", 0 if not result.get("error") else 1)
+    elif tool == "generate_video":
+        from src.runcomfy_media import generate_runcomfy_media, runcomfy_fallback_content, wants_runcomfy_media
+
+        desc = f"generate_video: {content.split(chr(10))[0][:80]}"
+        runcomfy_content = content if wants_runcomfy_media(content) else runcomfy_fallback_content("video", content)
+        result = await generate_runcomfy_media(
+            "video",
+            runcomfy_content,
+            owner=owner,
+            session_id=session_id,
+        )
+    elif tool == "generate_music":
+        from src.runcomfy_media import generate_runcomfy_media, runcomfy_fallback_content, wants_runcomfy_media
+
+        desc = f"generate_music: {content.split(chr(10))[0][:80]}"
+        runcomfy_content = content if wants_runcomfy_media(content) else runcomfy_fallback_content("music", content)
+        result = await generate_runcomfy_media(
+            "music",
+            runcomfy_content,
+            owner=owner,
+            session_id=session_id,
+        )
+    elif tool == "runcomfy_media":
+        from src.runcomfy_media import generate_runcomfy_media
+
+        desc = "runcomfy_media"
+        try:
+            _args = json.loads(content) if content.strip().startswith("{") else {}
+        except (json.JSONDecodeError, TypeError):
+            _args = {}
+        _kind = str(_args.get("media_type") or _args.get("kind") or "image").lower()
+        if _kind in {"audio", "song", "music"}:
+            _kind = "music"
+        elif _kind not in {"image", "video", "music"}:
+            _kind = "image"
+        result = await generate_runcomfy_media(
+            _kind,
+            content,
+            owner=owner,
+            session_id=session_id,
+        )
+    elif tool in _MCP_TOOL_MAP:
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
         result = await _call_mcp_tool(tool, content, progress_cb=progress_cb)
@@ -888,6 +958,7 @@ _FORMATTER_HANDLED_KEYS = {
     "response", "results", "session_id", "name", "model", "session_name",
     "success", "path", "action", "title", "doc_id", "version", "applied",
     "error", "output",
+    "media_url", "media_id", "media_type", "media_prompt", "media_model", "media_size", "media_quality", "media_files",
     "image_url", "image_id", "image_prompt", "image_model", "image_size", "image_quality",
     "item", "items", "total", "description", "vision_model",
 }

@@ -62,7 +62,7 @@ the phone install separate from the PC database, so the UI is a fresh slate.
 Supported now:
 
 ```text
-https://api.deepseek.com/v1
+https://api.deepseek.com
 https://api.openai.com/v1
 https://openrouter.ai/api/v1
 other OpenAI-compatible /v1 endpoints reachable by the phone

@@ -1,4 +1,4 @@
-"""ChatGPT Subscription device-flow setup routes."""
+"""Codex Subscription device-flow setup routes."""
 
 import json
 import logging
@@ -26,12 +26,12 @@ def _provision_endpoint(tokens: Dict, owner: Optional[str]) -> Dict:
     access_token = tokens.get("access_token")
     refresh_token = tokens.get("refresh_token")
     if not access_token or not refresh_token:
-        raise ValueError("ChatGPT token response was missing access_token or refresh_token")
+        raise ValueError("Codex token response was missing access_token or refresh_token")
 
     base = chatgpt_subscription.DEFAULT_CHATGPT_SUBSCRIPTION_BASE_URL
     models = chatgpt_subscription.fetch_available_models(access_token)
     if not models:
-        raise ValueError("ChatGPT Subscription connected, but no usable Codex models were discovered for this account.")
+        raise ValueError("Codex Subscription connected, but no usable Codex models were discovered for this account.")
     db = SessionLocal()
     try:
         auth = (
@@ -47,7 +47,7 @@ def _provision_endpoint(tokens: Dict, owner: Optional[str]) -> Dict:
                 id=str(uuid.uuid4())[:8],
                 provider=chatgpt_subscription.CHATGPT_SUBSCRIPTION_PROVIDER,
                 owner=owner,
-                label="ChatGPT Subscription",
+                label=chatgpt_subscription.CHATGPT_SUBSCRIPTION_LABEL,
                 base_url=base,
                 auth_mode="chatgpt",
             )
@@ -70,14 +70,14 @@ def _provision_endpoint(tokens: Dict, owner: Optional[str]) -> Dict:
         if ep is None:
             ep = ModelEndpoint(
                 id=str(uuid.uuid4())[:8],
-                name="ChatGPT Subscription",
+                name=chatgpt_subscription.CHATGPT_SUBSCRIPTION_LABEL,
                 base_url=base,
                 model_type="llm",
                 endpoint_kind="api",
                 owner=owner,
             )
             db.add(ep)
-        ep.name = "ChatGPT Subscription"
+        ep.name = chatgpt_subscription.CHATGPT_SUBSCRIPTION_LABEL
         ep.base_url = base
         ep.api_key = None
         ep.provider_auth_id = auth.id
@@ -115,7 +115,7 @@ def _start_device_flow(request: Request, _form) -> DeviceFlowStart:
     device_auth_id = data.get("device_auth_id")
     user_code = data.get("user_code")
     if not device_auth_id or not user_code:
-        raise HTTPException(502, "ChatGPT did not return a complete device code")
+        raise HTTPException(502, "Codex sign-in did not return a complete device code")
     verification_uri = data.get("verification_uri") or f"{chatgpt_subscription.CHATGPT_OAUTH_ISSUER}/codex/device"
     return DeviceFlowStart(
         pending={
@@ -136,7 +136,7 @@ def _poll_device_flow(_request: Request, pending: Dict) -> DeviceFlowPoll:
     try:
         data = chatgpt_subscription.poll_device_auth(pending["device_auth_id"], pending["user_code"])
     except Exception as exc:
-        logger.debug("ChatGPT device poll failed: %s", exc)
+        logger.debug("Codex device poll failed: %s", exc)
         return DeviceFlowPoll.pending(str(exc))
 
     authorization_code = data.get("authorization_code")
@@ -146,7 +146,7 @@ def _poll_device_flow(_request: Request, pending: Dict) -> DeviceFlowPoll:
             tokens = chatgpt_subscription.exchange_authorization_code(authorization_code, code_verifier)
             result = _provision_endpoint(tokens, pending["owner"])
         except Exception as exc:
-            logger.exception("ChatGPT Subscription endpoint provisioning failed")
+            logger.exception("Codex Subscription endpoint provisioning failed")
             raise chatgpt_subscription.to_http_exception(exc)
         return DeviceFlowPoll.authorized(result)
 

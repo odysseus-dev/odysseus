@@ -76,7 +76,7 @@ def test_normal_model_payload_keeps_temperature_above_one(monkeypatch):
 
 
 def test_chatgpt_subscription_payload_omits_max_output_tokens():
-    # ChatGPT Subscription Codex API does not support max_output_tokens —
+    # Codex Subscription API does not support max_output_tokens —
     # passing it returns HTTP 400 "Unsupported parameter: max_output_tokens".
     # The payload should NOT include max_output_tokens regardless of max_tokens.
     payload = llm_core._build_chatgpt_responses_payload(

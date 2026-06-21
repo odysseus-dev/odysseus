@@ -253,25 +253,64 @@ export function controlsHTML({ color, brushSize, wandTolerance }) {
         <label>Amount <span id="ge-sharpen-label">50%</span></label>
         <input type="range" id="ge-sharpen-amount" min="10" max="100" value="50" />
       </div>
+      <div class="ge-control-row ge-tool-model-row">
+        <label for="ge-ai-sharpen">Model</label>
+        <select class="ge-tool-model" id="ge-ai-sharpen" data-ge-tool-model="sharpen" title="Model for AI sharpen">
+          <option value="">Auto</option>
+        </select>
+      </div>
       <div class="ge-control-row ge-actions" style="margin-top:4px;">
         <button class="ge-btn ge-btn-primary" id="ge-sharpen-run">Sharpen</button>
       </div>
     </div>
     <div class="ge-rembg-section" id="ge-rembg-section" style="display:none;">
-      <div class="ge-section-title ge-section-title-with-help"><span>Background Remove</span><span class="ge-section-help" tabindex="0" role="img" aria-label="What this does" title="Runs an ML model that keeps whatever it learned to call the foreground (usually a person, product, or animal). If you have a Lasso or Wand selection active, it's used as a hint — the model only looks inside that region and anything outside is forced transparent.">?</span></div>
+      <div class="ge-section-title ge-section-title-with-help"><span>Background Remove</span><span class="ge-section-help" tabindex="0" role="img" aria-label="What this does" title="Runs an ML model that keeps whatever it learned to call the foreground (usually a person, product, or animal). Draw cyan sample strokes on background pixels to remove matching connected background areas. If you have a Lasso or Wand selection active, it's still used as a foreground keep hint.">?</span></div>
       <div class="ge-dep-notice" id="ge-rembg-dep-missing" style="display:none;">
         <div class="ge-dep-notice-text">
           <strong>rembg not installed.</strong>
-          Background Remove needs the <code>rembg</code> package on this
-          server. Click to install it from Cookbook → Dependencies.
+          Natural rembg needs the <code>rembg</code> package on this
+          server. You can still use an image model or heuristic sample mode.
         </div>
         <button type="button" class="ge-btn ge-btn-sm" id="ge-rembg-install-link">Install rembg</button>
+      </div>
+      <div class="ge-control-row ge-tool-model-row">
+        <label for="ge-rembg-pipeline">Pipeline</label>
+        <select id="ge-rembg-pipeline" title="Choose how background removal runs">
+          <option value="auto">Auto</option>
+          <option value="model">Local/API model</option>
+          <option value="rembg">Natural rembg</option>
+          <option value="heuristic">Heuristic sample</option>
+        </select>
+      </div>
+      <div class="ge-control-row ge-tool-model-row">
+        <label for="ge-ai-rembg">Model</label>
+        <select class="ge-tool-model" id="ge-ai-rembg" data-ge-tool-model="rembg" title="Model for background removal">
+          <option value="">Auto</option>
+        </select>
+      </div>
+      <div class="ge-control-row ge-eraser-row">
+        <span class="ge-eraser-preview" id="ge-rembg-strength-preview" aria-hidden="true"></span>
+        <label>Strength <span id="ge-rembg-strength-label">70%</span></label>
+        <input type="range" id="ge-rembg-strength" min="10" max="100" value="70" title="How aggressively cyan background samples expand into connected matching background areas." />
       </div>
       <div class="ge-control-row ge-actions" id="ge-rembg-run-row">
         <button class="ge-btn ge-btn-primary ge-btn-ai" id="ge-rembg-run">
           <span class="ge-btn-ai-mark" aria-hidden="true">✦</span>
           Bg Remove
         </button>
+      </div>
+      <div class="ge-rembg-sample-panel">
+        <div class="ge-section-title ge-section-title-with-help"><span>Sample BG</span><span class="ge-section-help" tabindex="0" role="img" aria-label="Background sample help" title="With Bg Remove selected, draw a short cyan line on the background. The remove pass uses that stroke as a background sample and removes matching connected pixels.">?</span></div>
+        <div class="ge-control-row ge-actions ge-rembg-sample-actions">
+          <button class="ge-btn ge-btn-sm ge-btn-iconlabel ge-mask-vis-btn visible" id="ge-rembg-sample-vis" title="Hide background sample overlay">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            <span id="ge-rembg-sample-vis-label">Hide</span>
+          </button>
+          <button class="ge-btn ge-btn-sm ge-btn-iconlabel" id="ge-rembg-sample-clear" title="Clear background sample strokes">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+            Clear
+          </button>
+        </div>
       </div>
       <hr class="ge-section-divider" />
       <div class="ge-section-title ge-section-title-with-help"><span>Edge cleanup</span><span class="ge-section-help" tabindex="0" role="img" aria-label="What this does" title="Live-applied to the last Bg Removed layer. Feather softens the edge; Edge nudges it inward (−) or outward (+).">?</span></div>

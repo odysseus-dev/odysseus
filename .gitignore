@@ -8,6 +8,7 @@ build/
 !static/js/editor/build/
 venv/
 .venv/
+.image-venv/
 *.egg
 
 # Environment
@@ -17,6 +18,7 @@ venv/
 
 # Data — all user data stays local
 data/
+models/
 !services/hwfit/data/
 !services/hwfit/data/hf_models.json
 logs/

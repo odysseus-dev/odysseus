@@ -9,11 +9,13 @@
  *     - Build a union mask from every visible mask sub-layer (across
  *       all parent layers) — the model sees the COMBINED region,
  *       not just the currently-active mask.
- *     - Dilate the mask ~padPx so the model fills a buffer zone the
- *       post-gen Feather/Edge slider can fade into.
- *     - POST flattened canvas + dilated mask to /api/image/inpaint.
- *     - Drop the result as a new layer, snapshot the AI image + hard
- *       mask on the layer for live edge tuning, hide every
+ *     - Crop around the mask plus context, then dilate the mask ~padPx
+ *       so the model fills a buffer zone the post-gen Feather/Edge
+ *       slider can fade into.
+ *     - POST the bounded working image + dilated mask to /api/image/inpaint.
+ *     - Drop the result as a new layer, cache the AI crop + hard mask
+ *       on the layer for live edge tuning, apply an automatic expanded
+ *       blend edge around the user's stroke, hide every
  *       contributing mask sub-layer, reveal the post-gen Feather +
  *       Edge Stroke sliders capped at ±padPx.
  *
@@ -42,6 +44,365 @@
  */
 import { state } from './state.js';
 
+const INPAINT_MAX_WORK_PIXELS = 1024 * 1024;
+const INPAINT_REQUEST_B64_BUDGET = 24 * 1024 * 1024;
+const INPAINT_HISTORY_BYTE_BUDGET = 220 * 1024 * 1024;
+
+function makeCanvas(w, h) {
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(w));
+  c.height = Math.max(1, Math.round(h));
+  return c;
+}
+
+function clamp(n, min, max) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function maskBoundsFromCanvas(maskCanvas) {
+  const w = maskCanvas?.width || 0;
+  const h = maskCanvas?.height || 0;
+  if (!w || !h) return null;
+  const ctx = maskCanvas.getContext('2d', { willReadFrequently: true });
+  let minX = w, minY = h, maxX = -1, maxY = -1;
+  const tileH = 128;
+  for (let y0 = 0; y0 < h; y0 += tileH) {
+    const th = Math.min(tileH, h - y0);
+    const data = ctx.getImageData(0, y0, w, th).data;
+    for (let y = 0; y < th; y++) {
+      const row = y * w * 4;
+      const absY = y0 + y;
+      for (let x = 0; x < w; x++) {
+        if (data[row + x * 4 + 3] <= 0) continue;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (absY < minY) minY = absY;
+        if (absY > maxY) maxY = absY;
+      }
+    }
+  }
+  if (maxX < minX || maxY < minY) return null;
+  return { minX, minY, maxX, maxY };
+}
+
+function expandBounds(bounds, pad, width, height) {
+  const x1 = clamp(Math.floor(bounds.minX - pad), 0, width - 1);
+  const y1 = clamp(Math.floor(bounds.minY - pad), 0, height - 1);
+  const x2 = clamp(Math.ceil(bounds.maxX + pad) + 1, x1 + 1, width);
+  const y2 = clamp(Math.ceil(bounds.maxY + pad) + 1, y1 + 1, height);
+  return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+}
+
+function chooseInitialInpaintBlend(maskBounds, padPx) {
+  const maskW = Math.max(1, maskBounds.maxX - maskBounds.minX + 1);
+  const maskH = Math.max(1, maskBounds.maxY - maskBounds.minY + 1);
+  const maskSpan = Math.max(maskW, maskH);
+  const imageMin = Math.max(1, Math.min(state.imgWidth || maskW, state.imgHeight || maskH));
+  const spanRatio = maskSpan / imageMin;
+  const edgeRatio = spanRatio < 0.14 ? 0.85 : (spanRatio < 0.35 ? 0.70 : 0.55);
+  const edgePx = clamp(Math.round(padPx * edgeRatio), 0, padPx);
+  const featherPx = clamp(Math.round(Math.max(6, edgePx * 0.45)), 0, padPx);
+  return { edgePx, featherPx };
+}
+
+function estimateUndoSnapshotBytes() {
+  let pixels = 0;
+  for (const layer of state.layers || []) {
+    if (layer?.canvas) pixels += layer.canvas.width * layer.canvas.height;
+    for (const mask of layer?.masks || []) {
+      if (mask?.canvas) pixels += mask.canvas.width * mask.canvas.height;
+    }
+  }
+  if (state.wandMask) pixels += state.wandMask.width * state.wandMask.height;
+  if (state.rembgSampleCanvas) pixels += state.rembgSampleCanvas.width * state.rembgSampleCanvas.height;
+  return pixels * 4;
+}
+
+function drawVisibleLayersToWorkCanvas(workCanvas, crop, scale) {
+  const ctx = workCanvas.getContext('2d');
+  ctx.save();
+  ctx.clearRect(0, 0, workCanvas.width, workCanvas.height);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.scale(scale, scale);
+  ctx.translate(-crop.x, -crop.y);
+  for (const layer of state.layers) {
+    if (!layer.visible) continue;
+    ctx.globalAlpha = layer.opacity;
+    const off = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
+    ctx.drawImage(layer.canvas, off.x, off.y);
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+function thresholdMaskCanvas(maskCanvas) {
+  const ctx = maskCanvas.getContext('2d');
+  const img = ctx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const v = img.data[i + 3] > 16 || img.data[i] > 16 || img.data[i + 1] > 16 || img.data[i + 2] > 16 ? 255 : 0;
+    img.data[i] = v;
+    img.data[i + 1] = v;
+    img.data[i + 2] = v;
+    img.data[i + 3] = v;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+function prepareInpaintWork({ mergedMask, maskBounds, padPx, dilateMask }) {
+  const minDim = Math.min(state.imgWidth, state.imgHeight);
+  const contextPx = Math.min(512, Math.max(128, padPx * 3, Math.round(minDim * 0.08)));
+  const crop = expandBounds(maskBounds, contextPx + padPx, state.imgWidth, state.imgHeight);
+  const cropPixels = crop.w * crop.h;
+  const scale = Math.min(1, Math.sqrt(INPAINT_MAX_WORK_PIXELS / Math.max(1, cropPixels)));
+  const workW = Math.max(1, Math.round(crop.w * scale));
+  const workH = Math.max(1, Math.round(crop.h * scale));
+
+  const imageCanvas = makeCanvas(workW, workH);
+  drawVisibleLayersToWorkCanvas(imageCanvas, crop, scale);
+
+  const hardMaskCanvas = makeCanvas(crop.w, crop.h);
+  hardMaskCanvas.getContext('2d').drawImage(
+    mergedMask,
+    crop.x, crop.y, crop.w, crop.h,
+    0, 0, crop.w, crop.h,
+  );
+
+  const dilatedMaskCrop = dilateMask(hardMaskCanvas, padPx);
+  const maskCanvas = makeCanvas(workW, workH);
+  const maskCtx = maskCanvas.getContext('2d');
+  maskCtx.imageSmoothingEnabled = true;
+  maskCtx.imageSmoothingQuality = 'high';
+  maskCtx.drawImage(dilatedMaskCrop, 0, 0, workW, workH);
+  thresholdMaskCanvas(maskCanvas);
+  try { dilatedMaskCrop.width = dilatedMaskCrop.height = 1; } catch (_) {}
+
+  return {
+    crop,
+    scale,
+    imageCanvas,
+    maskCanvas,
+    hardMaskCanvas,
+    downscaled: scale < 0.999,
+  };
+}
+
+function releaseRequestCanvases(work) {
+  try {
+    if (work?.imageCanvas) work.imageCanvas.width = work.imageCanvas.height = 1;
+    if (work?.maskCanvas) work.maskCanvas.width = work.maskCanvas.height = 1;
+  } catch (_) {}
+}
+
+function canvasToPngBase64(canvas) {
+  return new Promise((resolve, reject) => {
+    try {
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          reject(new Error('Could not encode inpaint canvas'));
+          return;
+        }
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('Could not read inpaint canvas'));
+        reader.onload = () => {
+          const value = String(reader.result || '');
+          const comma = value.indexOf(',');
+          resolve(comma >= 0 ? value.slice(comma + 1) : value);
+        };
+        reader.readAsDataURL(blob);
+      }, 'image/png');
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+function makeInpaintProgressId() {
+  try {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+      return window.crypto.randomUUID().replace(/-/g, '');
+    }
+  } catch (_) {}
+  return `inp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 14)}`;
+}
+
+function formatInpaintElapsed(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return minutes ? `${minutes}:${String(seconds).padStart(2, '0')}` : `${seconds}s`;
+}
+
+function phaseTitle(value) {
+  return String(value || 'working')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function appendInpaintProgressRow(listEl, label, detail, tone = '') {
+  if (!listEl) return;
+  const wasNearBottom = (listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight) < 18;
+  const row = document.createElement('div');
+  row.className = 'ge-inpaint-progress-row';
+  if (tone) row.classList.add(`is-${tone}`);
+  const rowLabel = document.createElement('span');
+  rowLabel.className = 'ge-inpaint-progress-row-label';
+  rowLabel.textContent = label || 'Working';
+  row.appendChild(rowLabel);
+  if (detail) {
+    const rowDetail = document.createElement('span');
+    rowDetail.className = 'ge-inpaint-progress-row-detail';
+    rowDetail.textContent = detail;
+    row.appendChild(rowDetail);
+  }
+  listEl.appendChild(row);
+  while (listEl.children.length > 7) listEl.removeChild(listEl.firstElementChild);
+  if (wasNearBottom) listEl.scrollTop = listEl.scrollHeight;
+}
+
+function createInpaintProgress({ title = 'Inpaint' } = {}) {
+  const id = makeInpaintProgressId();
+  const startedAt = Date.now();
+  let destroyed = false;
+  let waiting = false;
+  let waitDetail = '';
+  let closeTimer = null;
+  let source = null;
+
+  const root = document.createElement('div');
+  root.className = 'ge-inpaint-progress';
+  root.setAttribute('role', 'status');
+  root.setAttribute('aria-live', 'polite');
+
+  const head = document.createElement('div');
+  head.className = 'ge-inpaint-progress-head';
+  const dot = document.createElement('span');
+  dot.className = 'ge-inpaint-progress-dot';
+  dot.setAttribute('aria-hidden', 'true');
+  const titleEl = document.createElement('span');
+  titleEl.className = 'ge-inpaint-progress-title';
+  titleEl.textContent = title;
+  const elapsedEl = document.createElement('span');
+  elapsedEl.className = 'ge-inpaint-progress-elapsed';
+  head.append(dot, titleEl, elapsedEl);
+
+  const statusEl = document.createElement('div');
+  statusEl.className = 'ge-inpaint-progress-status';
+  const detailEl = document.createElement('div');
+  detailEl.className = 'ge-inpaint-progress-detail';
+
+  const bar = document.createElement('div');
+  bar.className = 'ge-inpaint-progress-bar';
+  const fill = document.createElement('div');
+  fill.className = 'ge-inpaint-progress-fill';
+  bar.appendChild(fill);
+
+  const listEl = document.createElement('div');
+  listEl.className = 'ge-inpaint-progress-list';
+
+  root.append(head, statusEl, detailEl, bar, listEl);
+  document.body.appendChild(root);
+
+  function tick() {
+    const elapsed = formatInpaintElapsed(Date.now() - startedAt);
+    elapsedEl.textContent = elapsed;
+    if (waiting && waitDetail) {
+      detailEl.textContent = `${waitDetail} · ${elapsed}`;
+    }
+  }
+
+  const interval = window.setInterval(tick, 1000);
+  tick();
+
+  function setPercent(percent) {
+    if (typeof percent !== 'number' || !Number.isFinite(percent)) return;
+    fill.style.width = `${clamp(percent, 0, 100)}%`;
+  }
+
+  function update(label, detail = '', percent = null, tone = '') {
+    if (destroyed) return;
+    window.clearTimeout(closeTimer);
+    root.classList.toggle('is-error', tone === 'error');
+    root.classList.toggle('is-complete', tone === 'complete');
+    statusEl.textContent = label || 'Working';
+    waitDetail = detail || '';
+    detailEl.textContent = waitDetail;
+    setPercent(percent);
+    appendInpaintProgressRow(listEl, label, detail, tone);
+    tick();
+  }
+
+  function closeSoon(ms = 6500) {
+    if (destroyed) return;
+    window.clearTimeout(closeTimer);
+    closeTimer = window.setTimeout(() => api.destroy(), ms);
+  }
+
+  const api = {
+    id,
+    step(label, detail = '', percent = null) {
+      waiting = false;
+      update(label, detail, percent);
+    },
+    wait(label, detail = '', percent = null) {
+      waiting = true;
+      update(label, detail, percent);
+    },
+    backend(event) {
+      if (!event || destroyed) return;
+      const label = phaseTitle(event.phase);
+      const detail = String(event.message || '');
+      if (event.error) {
+        waiting = false;
+        update(label || 'Backend failed', detail, event.percent ?? 100, 'error');
+        closeSoon(9000);
+        return;
+      }
+      waiting = event.phase === 'model_wait';
+      update(label, detail, event.percent ?? null, event.done ? 'complete' : '');
+    },
+    attachBackend() {
+      if (typeof window.EventSource !== 'function') return;
+      try {
+        source = new EventSource(`/api/image/inpaint/progress/${encodeURIComponent(id)}`);
+        source.onmessage = (evt) => {
+          try { api.backend(JSON.parse(evt.data || '{}')); } catch (_) {}
+        };
+        source.onerror = () => {
+          try { source.close(); } catch (_) {}
+          source = null;
+        };
+      } catch (_) {}
+    },
+    done(label = 'Inpaint complete', detail = '') {
+      waiting = false;
+      update(label, detail, 100, 'complete');
+      closeSoon();
+    },
+    fail(label = 'Inpaint failed', detail = '') {
+      waiting = false;
+      update(label, detail, 100, 'error');
+      closeSoon(9000);
+    },
+    destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      window.clearInterval(interval);
+      window.clearTimeout(closeTimer);
+      if (source) {
+        try { source.close(); } catch (_) {}
+        source = null;
+      }
+      try { root.remove(); } catch (_) {}
+    },
+  };
+
+  api.step('Preparing mask', 'Combining visible mask layers.', 8);
+  return api;
+}
+
 export function wireInpaintButtons({
   buildMergedMaskCanvas, dilateMask, applyInpaintFeather,
   getSelectedAIEndpoint, ensureActiveMaskLayer,
@@ -54,11 +415,8 @@ export function wireInpaintButtons({
     // at least one pixel is painted.
     const preMerged = buildMergedMaskCanvas();
     if (!preMerged) { if (uiModule) uiModule.showToast('Draw the area you want to inpaint first'); return; }
-    const pmCtx = preMerged.getContext('2d');
-    const maskData = pmCtx.getImageData(0, 0, preMerged.width, preMerged.height).data;
-    let hasMask = false;
-    for (let i = 3; i < maskData.length; i += 4) { if (maskData[i] > 0) { hasMask = true; break; } }
-    if (!hasMask) { if (uiModule) uiModule.showToast('Draw the area you want to inpaint first'); return; }
+    const maskBounds = maskBoundsFromCanvas(preMerged);
+    if (!maskBounds) { if (uiModule) uiModule.showToast('Draw the area you want to inpaint first'); return; }
     const btn = document.getElementById(btnId);
     const btnLabel = labelId ? document.getElementById(labelId) : null;
     btn.disabled = true;
@@ -80,23 +438,8 @@ export function wireInpaintButtons({
       const mainRect = state.mainCanvas.getBoundingClientRect();
       if (area && mainRect.width && mainRect.height) {
         // Find the mask's bbox so we can centre the whirlpool over it.
-        let cx = state.imgWidth / 2, cy = state.imgHeight / 2;
-        try {
-          const merged = buildMergedMaskCanvas();
-          if (merged) {
-            const d = merged.getContext('2d').getImageData(0, 0, merged.width, merged.height).data;
-            let minX = merged.width, maxX = 0, minY = merged.height, maxY = 0;
-            for (let y = 0; y < merged.height; y += 4) {
-              for (let x = 0; x < merged.width; x += 4) {
-                if (d[(y * merged.width + x) * 4 + 3] > 0) {
-                  if (x < minX) minX = x; if (x > maxX) maxX = x;
-                  if (y < minY) minY = y; if (y > maxY) maxY = y;
-                }
-              }
-            }
-            if (maxX >= minX) { cx = (minX + maxX) / 2; cy = (minY + maxY) / 2; }
-          }
-        } catch {}
+        const cx = (maskBounds.minX + maskBounds.maxX) / 2;
+        const cy = (maskBounds.minY + maskBounds.maxY) / 2;
         const scaleX = mainRect.width / state.mainCanvas.width;
         const scaleY = mainRect.height / state.mainCanvas.height;
         const vpX = mainRect.left + cx * scaleX;
@@ -108,42 +451,72 @@ export function wireInpaintButtons({
         canvasWp.start();
       }
     } catch (_) { /* overlay is decorative */ }
+    let work = null;
+    let progress = null;
     try {
-      // Flatten current image.
-      const flatCanvas = document.createElement('canvas');
-      flatCanvas.width = state.imgWidth; flatCanvas.height = state.imgHeight;
-      const flatCtx = flatCanvas.getContext('2d');
-      for (const layer of state.layers) {
-        if (!layer.visible) continue;
-        flatCtx.globalAlpha = layer.opacity;
-        const off = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
-        flatCtx.drawImage(layer.canvas, off.x, off.y);
-      }
-      flatCtx.globalAlpha = 1;
+      progress = createInpaintProgress({ title: idleLabel || 'Inpaint' });
+      progress.attachBackend();
+    } catch (_) { /* progress UI is optional */ }
+    try {
       // Dilate the user's brush mask before sending to the model.
-      // The AI fills a small buffer zone around the brush, so the
-      // post-gen Edge feather slider has AI content to fade INTO
-      // instead of fading straight to the original. The ORIGINAL
-      // (un-dilated) mask is cached on the layer — the feather blur
-      // expands outward from that boundary into the dilated AI region.
+      // The AI fills a buffer zone around the brush. The initial
+      // result now shows a dynamic part of that buffer by default so
+      // seams can resolve around the drawn area instead of stopping at
+      // the exact brush shape. The ORIGINAL (un-dilated) mask is still
+      // cached on the layer so the post-gen sliders can shrink back to
+      // the precise old edge or expand farther into the AI buffer.
       const padPx = Math.min(80, Math.max(20, Math.round(Math.min(state.imgWidth, state.imgHeight) * 0.04)));
-      // Merge every visible mask sub-layer (across all parent
-      // layers) into a single union mask before sending to the AI.
-      // This way, if the user built up the inpaint region across
-      // multiple masks, the final generation sees the combined
-      // region instead of just the currently-active mask.
-      const mergedMask = buildMergedMaskCanvas() || state.maskCanvas;
-      const dilatedMask = dilateMask(mergedMask, padPx);
-      const imageB64 = flatCanvas.toDataURL('image/png').split(',')[1];
-      const maskB64 = dilatedMask.toDataURL('image/png').split(',')[1];
+      const initialBlend = chooseInitialInpaintBlend(maskBounds, padPx);
+      // Build a bounded AI work area around the mask instead of
+      // serialising the whole photo. Full-resolution phone images can
+      // make Electron's renderer restart when inpaint keeps several
+      // huge canvases and base64 strings alive at once.
+      work = prepareInpaintWork({
+        mergedMask: preMerged,
+        maskBounds,
+        padPx,
+        dilateMask,
+      });
+      progress?.step(
+        'Preparing crop',
+        `${work.imageCanvas.width}x${work.imageCanvas.height} work area${work.downscaled ? ' (downscaled)' : ''}.`,
+        25,
+      );
+      try { preMerged.width = preMerged.height = 1; } catch (_) {}
+      progress?.step('Encoding request', 'Compressing image and mask PNGs.', 38);
+      let imageB64 = await canvasToPngBase64(work.imageCanvas);
+      let maskB64 = await canvasToPngBase64(work.maskCanvas);
+      if ((imageB64.length + maskB64.length) > INPAINT_REQUEST_B64_BUDGET) {
+        throw new Error('Inpaint request is too large. Try a smaller mask area or resize the canvas.');
+      }
+      const sel = getSelectedAIEndpoint('inpaint');
+      const endpointDetail = [sel.model, sel.endpoint].filter(Boolean).join(' · ') || 'Default image endpoint.';
+      progress?.step('Selecting endpoint', endpointDetail, 48);
+      const payload = {
+        image: imageB64,
+        mask: maskB64,
+        prompt,
+        width: work.imageCanvas.width,
+        height: work.imageCanvas.height,
+        strength,
+        feather: initialBlend.featherPx,
+        _endpoint: sel.endpoint,
+        _model: sel.model,
+        _progress_id: progress?.id || '',
+      };
+      imageB64 = null;
+      maskB64 = null;
+      let requestBody = JSON.stringify(payload);
+      payload.image = '';
+      payload.mask = '';
+      progress?.wait('Model running', 'Waiting for inpaint endpoint response.', 62);
       const res = await fetch('/api/image/inpaint', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify((() => {
-          const sel = getSelectedAIEndpoint('inpaint');
-          return { image: imageB64, mask: maskB64, prompt, width: state.imgWidth, height: state.imgHeight, strength, feather: 0, _endpoint: sel.endpoint, _model: sel.model };
-        })()),
+        body: requestBody,
       });
+      requestBody = null;
+      progress?.step('Reading response', `HTTP ${res.status}`, res.ok ? 78 : 100);
       if (!res.ok) {
         let errDetail = res.statusText;
         try { const errBody = await res.json(); errDetail = errBody.detail || errBody.error || errDetail; } catch {}
@@ -152,16 +525,32 @@ export function wireInpaintButtons({
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       if (!data.image) throw new Error('No image returned from inpaint endpoint');
-      // Load result as a new layer and clip with the user-drawn mask
-      // so only the inpainted region is visible. Cache the
-      // unfeathered (AI image + hard mask) on the layer so the live
-      // Feather slider can re-derive the alpha on each input event
-      // without re-running the model.
+      progress?.step(
+        'Receiving result',
+        data.elapsed ? `Backend completed in ${data.elapsed}s.` : 'Decoding model response.',
+        84,
+      );
+      releaseRequestCanvases(work);
+      // Load result as a new layer and clip with an automatically
+      // expanded, feathered version of the user-drawn mask so the
+      // model can repair/blend a context band around the stroke. Cache
+      // the unfeathered (AI image + hard mask) on the layer so the
+      // live Feather/Edge Stroke sliders can re-derive the alpha on
+      // each input event without re-running the model.
       const resultImg = new Image();
       resultImg.onload = () => {
-        if (!state.editorOpen) return; // user closed mid-decode
+        if (!state.editorOpen) {
+          progress?.done('Inpaint response received', 'Editor was closed before rendering.');
+          return;
+        } // user closed mid-decode
         try {
-          saveState('Inpaint result');
+          progress?.step('Rendering result', 'Compositing the returned image as a new layer.', 92);
+          const saveUndo = estimateUndoSnapshotBytes() <= INPAINT_HISTORY_BYTE_BUDGET;
+          if (saveUndo) {
+            saveState('Inpaint result');
+          } else {
+            console.warn('[inpaint] skipped undo snapshot for large canvas to avoid renderer memory pressure');
+          }
           // OpenAI returns at one of its allowed sizes (1024²,
           // 1024×1536, 1536×1024) which often differs from our
           // canvas. Scale to canvas size with smoothing so the
@@ -169,20 +558,23 @@ export function wireInpaintButtons({
           const shortPrompt = (prompt || '').trim().replace(/\s+/g, ' ').slice(0, 40);
           const layerName = shortPrompt ? `Inpaint: ${shortPrompt}` : 'Inpaint Result';
           const resultLayer = createLayer(layerName, state.imgWidth, state.imgHeight);
-          resultLayer.ctx.imageSmoothingEnabled = true;
-          resultLayer.ctx.imageSmoothingQuality = 'high';
-          resultLayer.ctx.drawImage(resultImg, 0, 0, state.imgWidth, state.imgHeight);
-          // Snapshot the AI result + hard mask used for this run.
-          const aiSnap = document.createElement('canvas');
-          aiSnap.width = state.imgWidth; aiSnap.height = state.imgHeight;
-          aiSnap.getContext('2d').drawImage(resultLayer.canvas, 0, 0);
-          const maskSnap = document.createElement('canvas');
-          maskSnap.width = state.maskCanvas.width;
-          maskSnap.height = state.maskCanvas.height;
-          maskSnap.getContext('2d').drawImage(state.maskCanvas, 0, 0);
-          resultLayer.inpaintSource = { ai: aiSnap, mask: maskSnap, padPx };
-          // Apply initial alpha = hard mask (no feather, no edge shift).
-          applyInpaintFeather(resultLayer, 0, 0);
+          const aiCrop = makeCanvas(work.crop.w, work.crop.h);
+          const aiCtx = aiCrop.getContext('2d');
+          aiCtx.imageSmoothingEnabled = true;
+          aiCtx.imageSmoothingQuality = 'high';
+          aiCtx.drawImage(resultImg, 0, 0, work.crop.w, work.crop.h);
+          resultLayer.inpaintSource = {
+            ai: aiCrop,
+            mask: work.hardMaskCanvas,
+            x: work.crop.x,
+            y: work.crop.y,
+            w: work.crop.w,
+            h: work.crop.h,
+            padPx,
+            autoBlendEdgePx: initialBlend.edgePx,
+            autoBlendFeatherPx: initialBlend.featherPx,
+          };
+          applyInpaintFeather(resultLayer, initialBlend.featherPx, initialBlend.edgePx);
           state.layers.push(resultLayer);
           state.activeLayerId = resultLayer.id;
           state.lastInpaintLayerId = resultLayer.id;
@@ -211,8 +603,13 @@ export function wireInpaintButtons({
           if (titleEl) titleEl.style.display = '';
           if (hintEl) hintEl.style.display = 'none';
           if (fRow) fRow.style.display = '';
-          if (fSlider) fSlider.value = '0';
-          if (fLabel) fLabel.textContent = '0px';
+          if (fSlider) fSlider.value = String(initialBlend.featherPx);
+          if (fLabel) fLabel.textContent = `${initialBlend.featherPx}px`;
+          const fPrev = document.getElementById('ge-feather-preview');
+          if (fPrev) {
+            const inner = Math.max(0, 50 - initialBlend.featherPx * 1.25);
+            fPrev.style.background = `radial-gradient(circle, var(--fg) 0%, var(--fg) ${inner}%, transparent 75%)`;
+          }
           const eRow = document.getElementById('ge-inpaint-edgestroke-row');
           const eSlider = document.getElementById('ge-edgestroke-slider');
           const eLabel = document.getElementById('ge-edgestroke-label');
@@ -220,21 +617,41 @@ export function wireInpaintButtons({
           if (eSlider) {
             eSlider.max = String(padPx);
             eSlider.min = String(-padPx);
-            eSlider.value = '0';
+            eSlider.value = String(initialBlend.edgePx);
           }
-          if (eLabel) eLabel.textContent = '0px';
-          if (uiModule) uiModule.showToast('Inpaint complete — drag Edge feather / Edge stroke to blend', 5000);
+          if (eLabel) eLabel.textContent = `+${initialBlend.edgePx}px`;
+          const ePrev = document.getElementById('ge-edgestroke-preview');
+          if (ePrev) {
+            ePrev.style.background = 'rgba(120,200,120,0.5)';
+            ePrev.style.opacity = Math.min(1, Math.abs(initialBlend.edgePx) / 80).toFixed(2);
+          }
+          if (uiModule) {
+            uiModule.showToast(
+              saveUndo
+                ? 'Inpaint complete — auto-expanded around the mask for blending'
+                : 'Inpaint complete. Large-image undo was skipped; delete the result layer to revert.',
+              5000,
+            );
+          }
+          progress?.done(
+            'Inpaint complete',
+            saveUndo ? 'Layer added with auto-expanded blend.' : 'Layer added; large-image undo was skipped.',
+          );
         } catch (renderErr) {
           console.error('[inpaint] render error', renderErr);
+          progress?.fail('Render failed', renderErr.message || String(renderErr));
           if (uiModule) uiModule.showToast('Inpaint render failed: ' + (renderErr.message || renderErr), 6000);
         }
       };
       resultImg.onerror = (e) => {
         console.error('[inpaint] base64 decode failed', e);
+        progress?.fail('Decode failed', 'The endpoint returned an unreadable image.');
         if (uiModule) uiModule.showToast('Inpaint result failed to decode', 6000);
       };
       resultImg.src = 'data:image/png;base64,' + data.image;
     } catch (e) {
+      releaseRequestCanvases(work);
+      progress?.fail('Inpaint failed', e.message || String(e));
       if (uiModule) uiModule.showToast('Inpaint failed: ' + e.message, 6000);
     } finally {
       btn.disabled = false;

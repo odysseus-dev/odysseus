@@ -177,7 +177,17 @@ Write-Step "Running first-time setup"
 & $venvPy setup.py
 if ($LASTEXITCODE -ne 0) { Fail "setup.py failed." }
 
-# 5. Friendly note about Git Bash (full Cookbook / agent-shell parity)
+# 5. Best-effort image sidecars (inpaint/edit models are optional and heavy)
+$sidecarLauncher = Join-Path $PSScriptRoot "scripts\autostart_image_sidecars.py"
+if (Test-Path $sidecarLauncher) {
+    Write-Step "Checking local image edit sidecars"
+    & $venvPy $sidecarLauncher --python $venvPy
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Image sidecar autostart returned a non-zero status; continuing with the main app." -ForegroundColor Yellow
+    }
+}
+
+# 6. Friendly note about Git Bash (full Cookbook / agent-shell parity)
 if (-not (Find-GitBash)) {
     Write-Host ""
     Write-Host "NOTE: Git Bash (bash.exe) was not found on PATH." -ForegroundColor Yellow
@@ -186,7 +196,7 @@ if (-not (Find-GitBash)) {
     Write-Host "      https://git-scm.com/download/win" -ForegroundColor Yellow
 }
 
-# 6. Start the server (use `python -m uvicorn` - bare `uvicorn` may not be on PATH)
+# 7. Start the server (use `python -m uvicorn` - bare `uvicorn` may not be on PATH)
 Write-Step ("Starting Odysseus at http://{0}:{1}" -f $BindHost, $Port)
 Write-Host "Press Ctrl+C to stop."
 Write-Host ""

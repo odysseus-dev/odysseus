@@ -17,6 +17,11 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
+        ndk {
+            // Keep native payloads phone-sized when native modules are enabled.
+            abiFilters "arm64-v8a"
+        }
+
         buildConfigField "String", "ODYSSEUS_DEFAULT_URL", "\"${odysseusDefaultUrl}\""
     }
 
@@ -35,7 +40,23 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
+    }
+
     packaging {
+        jniLibs {
+            // Compress native libraries when any are bundled into the APK.
+            useLegacyPackaging = true
+            // ONNX Runtime's Java bindings are small and must be dexed at build
+            // time, but its native libraries are installed later from Cookbook.
+            excludes += [
+                    "**/libonnxruntime.so",
+                    "**/libonnxruntime4j_jni.so",
+            ]
+        }
         resources {
             excludes += [
                     "META-INF/LICENSE.md",
@@ -48,4 +69,7 @@ android {
 dependencies {
     implementation "com.sun.mail:android-mail:1.6.7"
     implementation "com.sun.mail:android-activation:1.6.7"
+    // Classes-only ONNX Runtime jar with Android's forced System.loadLibrary
+    // branch patched out. Native libs are installed by Cookbook on demand.
+    implementation files("libs/onnxruntime-android-1.26.0-patched-loader.jar")
 }

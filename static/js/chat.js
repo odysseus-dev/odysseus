@@ -28,6 +28,16 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
+  const WORKSPACE_LOCAL_PATH_RE = /(?:[A-Za-z]:[\\/][^\s`'"<>]+|(?:\.{1,2}[\\/]|~[\\/]|\/)[^\s`'"<>]+)/;
+  const WORKSPACE_FILE_ACTION_RE = /\b(?:open|read|show|list|browse|inspect|check|search|find|edit|modify|change|write|save|create|delete|remove|rename|move|fix|update|refactor|build|run|test|look\s+(?:at|in|through)|work\s+on)\b/i;
+  const WORKSPACE_FILE_TARGET_RE = /\b(?:files?|folders?|director(?:y|ies)|repo|repository|project|workspace|codebase|source|tree|path)\b/i;
+
+  function _looksLikeWorkspaceFileRequest(text) {
+    const value = String(text || '');
+    if (!value.trim()) return false;
+    if (WORKSPACE_LOCAL_PATH_RE.test(value)) return true;
+    return WORKSPACE_FILE_ACTION_RE.test(value) && WORKSPACE_FILE_TARGET_RE.test(value);
+  }
 
   let API_BASE = '';
   let currentAbort = null;
@@ -123,8 +133,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   // Browser notifications now in chatStream.js
   var _notifyResearchComplete = chatStream.notifyResearchComplete;
 
-  // Model/image pricing, _buildImageBubble now in chatRenderer.js
+  // Model/image pricing, media bubble rendering now in chatRenderer.js
   var _buildImageBubble = chatRenderer.buildImageBubble;
+  var _buildMediaBubble = chatRenderer.buildMediaBubble || chatRenderer.buildImageBubble;
   var getModelCost = chatRenderer.getModelCost;
   var getImageCost = chatRenderer.getImageCost;
 
@@ -789,10 +800,14 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       }
       // Web toggle: pre-search in Chat mode, tool permission in Agent mode
       const toggleState = Storage.loadToggleState();
+      const _ws = (Storage.KEYS && Storage.get(Storage.KEYS.WORKSPACE, '')) || '';
       let isAgentMode = (toggleState.mode || 'chat') === 'agent';
       // Auto-escalate to agent mode when a document is open — the user expects
       // the AI to see the document and have tools to edit it
       if (!isAgentMode && documentModule && documentModule.isPanelOpen() && documentModule.getCurrentDocId()) {
+        isAgentMode = true;
+      }
+      if (!isAgentMode && _ws && _looksLikeWorkspaceFileRequest(_finalMsgWithInject)) {
         isAgentMode = true;
       }
       fd.append('mode', isAgentMode ? 'agent' : 'chat');
@@ -819,7 +834,6 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       if (incognitoChk && incognitoChk.checked) {
         fd.append('incognito', 'true');
       }
-      const _ws = (Storage.KEYS && Storage.get(Storage.KEYS.WORKSPACE, '')) || '';
       if (_ws) {
         fd.append('workspace', _ws);
       }
@@ -833,7 +847,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       currentAbort = abortCtrl;
 
       const _tState = Storage.loadToggleState();
-      const _isAgent = (_tState.mode || 'chat') === 'agent';
+      const _isAgent = String(fd.get('mode') || '').toLowerCase() === 'agent';
 
       // Timeout: 6 min for research and agent mode, 3 min otherwise
       const timeoutMs = el('research-toggle').checked || _isAgent ? RESEARCH_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
@@ -1098,6 +1112,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         'list_files': 'Browsing',
         'image_gen': 'Generating',
         'generate_image': 'Generating',
+        'generate_video': 'Generating video',
+        'generate_music': 'Generating music',
+        'runcomfy_media': 'Generating media',
         'manage_memory': 'Remembering',
         'save_memory': 'Remembering',
         'search_memory': 'Recalling',
@@ -1498,7 +1515,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   if (_thinkLen < 20) {
                     const _afterClose = roundText.replace(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>([\s\S]*?)<\/(?:think(?:ing)?|thought)>/i, '').trim();
                     // Only keep waiting if there's trailing text that looks like thinking (not tool calls)
-                    const _hasToolCall = /```(?:bash|python|web_search|read_file|write_file|create_document|edit_document|manage_|generate_image)/i.test(_afterClose);
+                    const _hasToolCall = /```(?:bash|python|web_search|read_file|write_file|create_document|edit_document|manage_|generate_image|generate_video|generate_music|runcomfy_media)/i.test(_afterClose);
                     const _hasOrphanClose = /<\/(?:think(?:ing)?|thought)>/i.test(_afterClose);
                     if (!_hasToolCall && (_hasOrphanClose || (Date.now() - thinkingStartTime) < 500)) {
                       hasUnclosedThink = true; // keep waiting for real </think>
@@ -2193,13 +2210,25 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   _lastToolName = '';
                   uiModule.scrollHistory();
                 }
-                // --- Render generated images inline ---
-                if (json.image_url) {
+                // --- Render generated media inline ---
+                const _mediaUrl = json.media_url || json.image_url;
+                if (_mediaUrl) {
+                  const _mediaType = json.media_type || (json.image_url ? 'image' : '');
                   const chatBox = document.getElementById('chat-history');
-                  chatBox.appendChild(_buildImageBubble(json.image_url, json.image_prompt, json.image_model, json.image_size, json.image_quality, json.image_id));
+                  chatBox.appendChild(_buildMediaBubble(
+                    _mediaUrl,
+                    json.media_prompt || json.image_prompt,
+                    json.media_model || json.image_model,
+                    json.media_size || json.image_size,
+                    json.media_quality || json.image_quality,
+                    json.media_id || json.image_id,
+                    _mediaType
+                  ));
                   uiModule.scrollHistory();
                   // Notify gallery to refresh if open
-                  window.dispatchEvent(new CustomEvent('gallery-refresh'));
+                  if (_mediaType !== 'audio' && _mediaType !== 'music') {
+                    window.dispatchEvent(new CustomEvent('gallery-refresh'));
+                  }
                 }
                 // --- Render browser screenshots in tool output ---
                 if (json.screenshot && currentToolBubble) {

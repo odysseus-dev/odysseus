@@ -5,7 +5,9 @@ import android.content.SharedPreferences;
 import android.content.res.AssetManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.os.Environment;
 import android.util.Base64;
+import android.util.Log;
 import android.webkit.MimeTypeMap;
 
 import org.json.JSONArray;
@@ -42,6 +44,7 @@ import java.util.TimeZone;
 import java.util.UUID;
 
 public class MobileBackendServer {
+    private static final String TAG = "OdysseusMobileBackend";
     private static final String PREFS_NAME = "odysseus_mobile_backend";
     private static final String PREF_ENDPOINTS = "endpoints";
     private static final String PREF_SESSIONS = "sessions";
@@ -53,10 +56,41 @@ public class MobileBackendServer {
     private static final String PREF_CALENDAR_EVENTS = "calendar_events";
     private static final String PREF_COOKBOOK_STATE = "cookbook_state";
     private static final String PREF_RESEARCH_ITEMS = "research_items";
+    private static final String PREF_PERSONAL_DIRECTORIES = "personal_directories";
     private static final String PREF_SETTINGS = "settings";
     private static final String PREF_DEFAULT_ENDPOINT = "default_endpoint_id";
+    private static final String LOCAL_REMBG_MODEL_ASSET = "models/u2netp.onnx";
+    private static final String LOCAL_REMBG_MODEL_URL = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx";
+    private static final String U2NETP_REMBG_MODEL = "u2netp";
+    private static final String SILUETA_REMBG_MODEL = "silueta";
+    private static final String ISNET_REMBG_MODEL = "isnet-general-use";
+    private static final String U2NETP_REMBG_FILENAME = "u2netp.onnx";
+    private static final String SILUETA_REMBG_FILENAME = "silueta.onnx";
+    private static final String ISNET_REMBG_FILENAME = "isnet-general-use.onnx";
+    private static final String SILUETA_REMBG_MODEL_URL = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/silueta.onnx";
+    private static final String ISNET_REMBG_MODEL_URL = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/isnet-general-use.onnx";
+    private static final long SILUETA_REMBG_EXPECTED_BYTES = 44173029L;
+    private static final long ISNET_REMBG_EXPECTED_BYTES = 178648008L;
     private static final int FIRST_PORT = 7019;
     private static final int LAST_PORT = 7039;
+    private static final int MASK_OPACITY_THRESHOLD = 12;
+    private static final int MAX_IMAGE_TOOL_BODY_BYTES = 32 * 1024 * 1024;
+    private static final int MAX_MOBILE_WORKSPACE_DIRS = 500;
+    private static final int DEFAULT_MOBILE_WORKSPACE_FILE_ENTRIES = 250;
+    private static final int MAX_MOBILE_WORKSPACE_FILE_ENTRIES = 500;
+    private static final int MAX_MOBILE_WORKSPACE_TEXT_BYTES = 1024 * 1024;
+    private static final String MOBILE_PUBLIC_WORKSPACE_ACCESS_DETAIL =
+            "Android cannot read this public folder yet. Grant Odysseus All files access in Android settings, or choose App Workspace.";
+    private static final String MOBILE_DEPRECATED_PRIVATE_WORKSPACE_DETAIL =
+            "The old private Android Documents/Downloads workspace folder is no longer used. Choose Documents, Downloads, App Workspace, or Scratch.";
+    private static final String CHATGPT_SUBSCRIPTION_PROVIDER = "chatgpt-subscription";
+    private static final String CHATGPT_SUBSCRIPTION_LABEL = "Codex Subscription";
+    private static final String CHATGPT_SUBSCRIPTION_BASE_URL = "https://chatgpt.com/backend-api/codex";
+    private static final String CHATGPT_OAUTH_ISSUER = "https://auth.openai.com";
+    private static final String CHATGPT_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+    private static final String CHATGPT_OAUTH_REDIRECT_URI = CHATGPT_OAUTH_ISSUER + "/deviceauth/callback";
+    private static final String CHATGPT_OAUTH_TOKEN_URL = CHATGPT_OAUTH_ISSUER + "/oauth/token";
+    private static final int CHATGPT_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 120;
 
     private static MobileBackendServer instance;
 
@@ -64,6 +98,12 @@ public class MobileBackendServer {
     private ServerSocket serverSocket;
     private Thread serverThread;
     private int port;
+    private final Object rembgSessionLock = new Object();
+    private DynamicOnnxRuntime rembgRuntime;
+    private String lastBgRemoveSource = "";
+    private String lastBgRemoveError = "";
+    private final Object chatGptDeviceFlowLock = new Object();
+    private final Map<String, JSONObject> chatGptDeviceFlows = new HashMap<>();
 
     public static synchronized MobileBackendServer getInstance() {
         if (instance == null) {
@@ -107,6 +147,12 @@ public class MobileBackendServer {
         if (serverThread != null) {
             serverThread.interrupt();
             serverThread = null;
+        }
+        synchronized (rembgSessionLock) {
+            if (rembgRuntime != null) {
+                rembgRuntime.close();
+                rembgRuntime = null;
+            }
         }
         port = 0;
     }
@@ -172,6 +218,11 @@ public class MobileBackendServer {
         }
         int contentLength = parseInt(request.headers.get("content-length"), 0);
         if (contentLength > 0) {
+            if (request.path.startsWith("/api/image/") && contentLength > MAX_IMAGE_TOOL_BODY_BYTES) {
+                request.bodyTooLarge = true;
+                request.body = new byte[0];
+                return request;
+            }
             request.body = readExact(in, contentLength);
         } else {
             request.body = new byte[0];
@@ -274,6 +325,10 @@ public class MobileBackendServer {
             sendJson(out, 200, createDocument(parseForm(request)));
             return;
         }
+        if ("GET".equals(request.method) && "/api/documents/library".equals(path)) {
+            sendJson(out, 200, documentsLibrary(request));
+            return;
+        }
         if ("GET".equals(request.method) && path.startsWith("/api/documents/")) {
             sendJson(out, 200, listDocumentsForSession(path.substring("/api/documents/".length())));
             return;
@@ -316,6 +371,22 @@ public class MobileBackendServer {
         }
         if ("POST".equals(request.method) && "/api/model-endpoints/test".equals(path)) {
             sendJson(out, 200, testEndpoint(parseForm(request)));
+            return;
+        }
+        if ("POST".equals(request.method) && "/api/model-endpoints/unload-all".equals(path)) {
+            sendJson(out, 200, unloadAllModels());
+            return;
+        }
+        if ("POST".equals(request.method) && "/api/chatgpt-subscription/device/start".equals(path)) {
+            sendJson(out, 200, startChatGptSubscriptionDeviceFlow());
+            return;
+        }
+        if ("POST".equals(request.method) && "/api/chatgpt-subscription/device/poll".equals(path)) {
+            sendJson(out, 200, pollChatGptSubscriptionDeviceFlow(parseForm(request)));
+            return;
+        }
+        if ("POST".equals(request.method) && "/api/chatgpt-subscription/device/cancel".equals(path)) {
+            sendJson(out, 200, cancelChatGptSubscriptionDeviceFlow(parseForm(request)));
             return;
         }
         if ("GET".equals(request.method) && "/api/model-endpoints/probe-local".equals(path)) {
@@ -367,11 +438,23 @@ public class MobileBackendServer {
             return;
         }
         if ("GET".equals(request.method) && "/api/mcp/servers".equals(path)) {
-            sendJson(out, 200, new JSONObject().put("servers", new JSONArray()));
+            sendJson(out, 200, mobileMcpServers());
             return;
         }
-        if ("GET".equals(request.method) && "/api/personal".equals(path)) {
-            sendJson(out, 200, new JSONObject().put("directories", new JSONArray()).put("files", new JSONArray()));
+        if ("GET".equals(request.method) && "/api/mcp/tools".equals(path)) {
+            sendJson(out, 200, mobileMcpTools());
+            return;
+        }
+        if ("GET".equals(request.method) && "/api/mcp/servers/android_rag/tools".equals(path)) {
+            sendJson(out, 200, mobileMcpTools());
+            return;
+        }
+        if (path.equals("/api/personal") || path.startsWith("/api/personal/")) {
+            routePersonal(request, out, path.substring("/api/personal".length()));
+            return;
+        }
+        if (path.equals("/api/workspace") || path.startsWith("/api/workspace/")) {
+            routeWorkspace(request, out, path.substring("/api/workspace".length()));
             return;
         }
         if (path.equals("/api/search") || path.startsWith("/api/search/")) {
@@ -1037,9 +1120,17 @@ public class MobileBackendServer {
         }
         if ("GET".equals(request.method) && "packages".equals(tail)) {
             sendJson(out, 200, new JSONObject()
-                    .put("packages", new JSONArray())
+                    .put("packages", mobileRembgModelPackages())
                     .put("mobile_standalone", true)
-                    .put("note", "Dependency checks run on the PC backend."));
+                    .put("note", "Android standalone dependencies are limited to local phone assets. PC/server dependencies still run on the PC backend."));
+            return;
+        }
+        if ("POST".equals(request.method) && "rembg-models/install".equals(tail)) {
+            sendJson(out, 200, installMobileRembgModel(requestJson(request)));
+            return;
+        }
+        if ("POST".equals(request.method) && "android-runtime/install".equals(tail)) {
+            sendJson(out, 200, installMobileOnnxRuntime());
             return;
         }
         if ("GET".equals(request.method) && "gpus".equals(tail)) {
@@ -1063,6 +1154,104 @@ public class MobileBackendServer {
             return;
         }
         sendJson(out, 404, new JSONObject().put("detail", "Mobile cookbook route not implemented"));
+    }
+
+    private JSONArray mobileRembgModelPackages() throws Exception {
+        JSONArray packages = new JSONArray();
+        packages.put(mobileOnnxRuntimePackage());
+        packages.put(mobileRembgModelPackage(
+                "rembg-silueta",
+                SILUETA_REMBG_MODEL,
+                SILUETA_REMBG_FILENAME,
+                SILUETA_REMBG_MODEL_URL,
+                SILUETA_REMBG_EXPECTED_BYTES,
+                "Higher-quality rembg background-removal model. Better than u2netp, smaller than ISNet."
+        ));
+        packages.put(mobileRembgModelPackage(
+                "rembg-isnet-general-use",
+                ISNET_REMBG_MODEL,
+                ISNET_REMBG_FILENAME,
+                ISNET_REMBG_MODEL_URL,
+                ISNET_REMBG_EXPECTED_BYTES,
+                "High-quality general rembg background-removal model. Best quality, larger download."
+        ));
+        return packages;
+    }
+
+    private JSONObject mobileOnnxRuntimePackage() throws Exception {
+        boolean installed = DynamicOnnxRuntime.isInstalled(appContext);
+        return new JSONObject()
+                .put("name", "onnxruntime-android")
+                .put("pip", "")
+                .put("desc", "Installable ONNX Runtime engine for local Android background removal.")
+                .put("category", "Image")
+                .put("target", "local")
+                .put("kind", "file")
+                .put("model", "onnxruntime-android")
+                .put("url", DynamicOnnxRuntime.AAR_URL)
+                .put("install_endpoint", "/api/cookbook/android-runtime/install")
+                .put("installed", installed)
+                .put("status_note", DynamicOnnxRuntime.statusNote(appContext))
+                .put("mobile_standalone", true);
+    }
+
+    private JSONObject installMobileOnnxRuntime() throws Exception {
+        JSONObject result = DynamicOnnxRuntime.install(appContext);
+        synchronized (rembgSessionLock) {
+            if (rembgRuntime != null) {
+                rembgRuntime.close();
+                rembgRuntime = null;
+            }
+        }
+        return result;
+    }
+
+    private JSONObject mobileRembgModelPackage(String name, String model, String filename, String url,
+                                               long expectedBytes, String desc) throws Exception {
+        File file = new File(new File(appContext.getFilesDir(), "models"), filename);
+        boolean installed = file.exists() && file.isFile() && file.length() >= Math.max(1L, expectedBytes / 2L);
+        String status = installed
+                ? file.getAbsolutePath() + " (" + String.format(Locale.US, "%.1f MB", file.length() / 1048576.0) + ")"
+                : "Downloads " + String.format(Locale.US, "%.1f MB", expectedBytes / 1048576.0) + " to the phone cache.";
+        return new JSONObject()
+                .put("name", name)
+                .put("pip", "")
+                .put("desc", desc)
+                .put("category", "Image")
+                .put("target", "local")
+                .put("kind", "file")
+                .put("model", model)
+                .put("url", url)
+                .put("installed", installed)
+                .put("status_note", status)
+                .put("mobile_standalone", true);
+    }
+
+    private JSONObject installMobileRembgModel(JSONObject body) throws Exception {
+        String model = jsonString(body, "model", "").trim();
+        String filename;
+        String url;
+        if (SILUETA_REMBG_MODEL.equals(model)) {
+            filename = SILUETA_REMBG_FILENAME;
+            url = SILUETA_REMBG_MODEL_URL;
+        } else if (ISNET_REMBG_MODEL.equals(model)) {
+            filename = ISNET_REMBG_FILENAME;
+            url = ISNET_REMBG_MODEL_URL;
+        } else {
+            return new JSONObject().put("ok", false).put("error", "Unknown rembg model: " + model);
+        }
+        File dir = new File(appContext.getFilesDir(), "models");
+        if (!dir.exists() && !dir.mkdirs()) {
+            return new JSONObject().put("ok", false).put("error", "Could not create model cache directory.");
+        }
+        File out = new File(dir, filename);
+        boolean ok = downloadModelFile(url, out);
+        return new JSONObject()
+                .put("ok", ok)
+                .put("model", model)
+                .put("path", out.getAbsolutePath())
+                .put("bytes", ok && out.exists() ? out.length() : 0)
+                .put("error", ok ? "" : "Model download failed.");
     }
 
     private void routeSession(Request request, OutputStream out, String tail) throws Exception {
@@ -1133,6 +1322,32 @@ public class MobileBackendServer {
             return;
         }
         sendJson(out, 404, new JSONObject().put("detail", "Mobile document route not implemented"));
+    }
+
+    private void routePersonal(Request request, OutputStream out, String tail) throws Exception {
+        if (tail == null) tail = "";
+        if (tail.startsWith("/")) tail = tail.substring(1);
+
+        if (tail.isEmpty() && "GET".equals(request.method)) {
+            sendJson(out, 200, mobilePersonalList());
+            return;
+        }
+        if ("reload".equals(tail) && "POST".equals(request.method)) {
+            sendJson(out, 200, new JSONObject()
+                    .put("ok", true)
+                    .put("count", loadArray(PREF_PERSONAL_DIRECTORIES).length())
+                    .put("mobile_standalone", true));
+            return;
+        }
+        if ("add_directory".equals(tail) && "POST".equals(request.method)) {
+            sendJson(out, 200, mobileAddPersonalDirectory(request));
+            return;
+        }
+        if ("remove_directory".equals(tail) && "DELETE".equals(request.method)) {
+            sendJson(out, 200, mobileRemovePersonalDirectory(valueOr(request.query.get("directory"), "")));
+            return;
+        }
+        sendJson(out, 404, new JSONObject().put("detail", "Mobile personal route not implemented"));
     }
 
     private void routeNotes(Request request, OutputStream out, String tail) throws Exception {
@@ -2889,36 +3104,137 @@ public class MobileBackendServer {
             sendJson(out, 405, new JSONObject().put("detail", "Method not allowed"));
             return;
         }
-
-        JSONObject body = requestJson(request);
-        Bitmap source = decodeJsonBitmap(body);
-        if (source == null) {
-            sendJson(out, 400, new JSONObject().put("error", "No image provided"));
+        if (request.bodyTooLarge) {
+            sendJson(out, 413, new JSONObject()
+                    .put("error", "This inpaint request is too large for the app backend. Try a smaller mask area or resize the canvas."));
             return;
         }
 
         Bitmap edited;
-        if ("sharpen".equals(action)) {
-            edited = sharpenBitmap(source, jsonInt(body, "amount", 50));
-        } else if ("denoise".equals(action)) {
-            edited = denoiseBitmap(source, jsonInt(body, "amount", 35));
-        } else if ("upscale-local".equals(action) || "upscale".equals(action)) {
-            edited = upscaleBitmap(source, jsonInt(body, "scale", 2));
-        } else {
-            sendJson(out, 501, new JSONObject()
-                    .put("error", "This Android standalone edit is not available locally. Use sharpen, denoise, or upscale, or connect Android to the PC backend for full image tools."));
+        try {
+            JSONObject body = requestJson(request);
+            lastBgRemoveSource = "";
+            lastBgRemoveError = "";
+            Bitmap source = decodeJsonBitmap(body, "image");
+            if (source == null) {
+                sendJson(out, 400, new JSONObject().put("error", "No image provided"));
+                return;
+            }
+
+            if ("inpaint".equals(action)) {
+                Bitmap mask = decodeJsonBitmap(body, "mask");
+                if (mask == null) {
+                    sendJson(out, 400, new JSONObject().put("error", "Inpaint requires a mask"));
+                    return;
+                }
+                JSONObject provider = null;
+                try {
+                    provider = runProviderInpaint(source, mask, body);
+                } catch (Exception ex) {
+                    if (hasExplicitImageProvider(body)) {
+                        sendJson(out, 502, new JSONObject().put("error", "AI inpaint failed: " + truncateError(ex.getMessage(), 260)));
+                        return;
+                    }
+                }
+                if (provider != null && !provider.optString("image", "").isEmpty()) {
+                    sendJson(out, 200, provider);
+                    return;
+                }
+                sendJson(out, 400, new JSONObject()
+                        .put("error", "Inpaint needs an image-edit model, not only an image-generation or vision model. Select or add gpt-image-1, dall-e-2, SDXL inpaint, Flux fill, or another endpoint that supports image+mask edits."));
+                return;
+            } else if ("remove-bg".equals(action) || "remove_bg".equals(action) || "rembg".equals(action) || "bgremove".equals(action)) {
+                Bitmap hint = decodeJsonBitmap(body, "hint_mask");
+                if (hint == null) hint = decodeJsonBitmap(body, "mask");
+                Bitmap backgroundHint = decodeJsonBitmap(body, "background_mask");
+                if (backgroundHint == null) backgroundHint = decodeJsonBitmap(body, "bg_hint_mask");
+                if (backgroundHint == null) backgroundHint = decodeJsonBitmap(body, "background_hint_mask");
+                double bgRemoveStrength = body.has("strength")
+                        ? normalizedStrength(body, "strength", 0.7)
+                        : normalizedStrength(body, "bg_strength", 0.7);
+                String rembgModel = requestedRembgModel(body);
+                String bgRemovePipeline = requestedBgRemovePipeline(body);
+                JSONObject provider = null;
+                boolean constrainedBgRemove = hint != null || backgroundHint != null;
+                boolean forceProviderBgRemove = "model".equals(bgRemovePipeline);
+                boolean forceRembg = "rembg".equals(bgRemovePipeline);
+                boolean forceHeuristic = "heuristic".equals(bgRemovePipeline);
+                if (!forceHeuristic && (forceProviderBgRemove || (!forceRembg && !constrainedBgRemove && rembgModel.isEmpty()))) {
+                    try {
+                        provider = runProviderBackgroundRemove(source, hint, backgroundHint, body);
+                    } catch (Exception ex) {
+                        if (forceProviderBgRemove) {
+                            sendJson(out, 502, new JSONObject().put("error", "Selected image model failed: "
+                                    + truncateError(ex.getMessage(), 260)));
+                            return;
+                        }
+                        provider = null;
+                    }
+                }
+                if (provider != null && providerResultHasMeaningfulTransparency(provider)) {
+                    provider.put("source", "provider");
+                    sendJson(out, 200, provider);
+                    return;
+                }
+                if (forceProviderBgRemove) {
+                    sendJson(out, 400, new JSONObject().put("error", "Selected image model did not return a transparent background."));
+                    return;
+                }
+                edited = removeBackgroundBitmap(source, hint, backgroundHint, bgRemoveStrength, rembgModel, bgRemovePipeline);
+                if (forceRembg && !lastBgRemoveSource.startsWith("onnx:")) {
+                    String detail = lastBgRemoveError.isEmpty()
+                            ? "Local rembg ONNX model is not available."
+                            : lastBgRemoveError;
+                    sendJson(out, 400, new JSONObject().put("error", detail));
+                    return;
+                }
+            } else if ("sharpen".equals(action)) {
+                JSONObject provider = null;
+                try {
+                    provider = runProviderSharpen(source, body);
+                } catch (Exception ignored) {
+                    provider = null;
+                }
+                if (provider != null && !provider.optString("image", "").isEmpty()) {
+                    sendJson(out, 200, provider);
+                    return;
+                }
+                edited = sharpenBitmap(source, jsonInt(body, "amount", 50));
+            } else if ("denoise".equals(action)) {
+                edited = denoiseBitmap(source, jsonInt(body, "amount", 35));
+            } else if ("upscale-local".equals(action) || "upscale".equals(action)) {
+                edited = upscaleBitmap(source, jsonInt(body, "scale", 2));
+            } else {
+                sendJson(out, 501, new JSONObject()
+                        .put("error", "Android standalone does not support this image edit yet."));
+                return;
+            }
+        } catch (OutOfMemoryError oom) {
+            sendJson(out, 413, new JSONObject()
+                    .put("error", "This image is too large for Android standalone editing. Try a smaller canvas or connect Android to the PC backend."));
+            return;
+        } catch (Exception ex) {
+            sendJson(out, 500, new JSONObject()
+                    .put("error", "Android image edit failed: " + truncateError(ex.getMessage(), 220)));
             return;
         }
 
-        sendJson(out, 200, new JSONObject()
+        JSONObject response = new JSONObject()
                 .put("image", encodeBitmapPng(edited))
                 .put("width", edited.getWidth())
-                .put("height", edited.getHeight()));
+                .put("height", edited.getHeight());
+        if (!lastBgRemoveSource.isEmpty()) response.put("source", lastBgRemoveSource);
+        if (!lastBgRemoveError.isEmpty()) response.put("warning", lastBgRemoveError);
+        sendJson(out, 200, response);
     }
 
     private Bitmap decodeJsonBitmap(JSONObject body) {
+        return decodeJsonBitmap(body, "image");
+    }
+
+    private Bitmap decodeJsonBitmap(JSONObject body, String key) {
         try {
-            String raw = jsonString(body, "image", "").trim();
+            String raw = jsonString(body, key, "").trim();
             if (raw.isEmpty()) return null;
             int comma = raw.indexOf(',');
             if (comma >= 0) raw = raw.substring(comma + 1);
@@ -2949,8 +3265,1930 @@ public class MobileBackendServer {
         return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
     }
 
+    private byte[] encodeBitmapPngBytes(Bitmap bitmap) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        bitmap.compress(Bitmap.CompressFormat.PNG, 100, baos);
+        return baos.toByteArray();
+    }
+
+    private JSONObject runProviderInpaint(Bitmap source, Bitmap mask, JSONObject body) throws Exception {
+        JSONObject choice = resolveImageEndpoint(body);
+        if (choice == null) return null;
+        String prompt = jsonString(body, "prompt", "").trim();
+        prompt = detailedInpaintPrompt(prompt);
+        if (isOpenAIBase(choice.optString("base_url"))) {
+            return postOpenAiImageEdit(choice, source, mask, prompt, true, null);
+        }
+        JSONObject payload = new JSONObject()
+                .put("image", encodeBitmapPng(source))
+                .put("mask", encodeBitmapPng(ensureBitmapSize(mask, source.getWidth(), source.getHeight())))
+                .put("prompt", prompt)
+                .put("width", source.getWidth())
+                .put("height", source.getHeight());
+        if (!choice.optString("model", "").isEmpty()) payload.put("model", choice.optString("model"));
+        return postJsonImageEndpoint(choice, new String[]{"/images/inpaint", "/images/edits", "/images/edit", "/api/image/inpaint"}, payload, 240000);
+    }
+
+    private String detailedInpaintPrompt(String userPrompt) {
+        String request = valueOr(userPrompt, "").trim();
+        if (request.isEmpty()) request = "Fill the masked area naturally.";
+        return "Use the provided image as the source of truth. Edit only the masked area. "
+                + "Look at the surrounding pixels and continue the same subject, perspective, lighting, shadows, colors, texture, grain, and fine detail. "
+                + "Blend the boundary cleanly with no black fill, no flat paint, no obvious patch, and no changes outside the mask. "
+                + "User edit request: " + request;
+    }
+
+    private JSONObject runProviderBackgroundRemove(Bitmap source, Bitmap hint, Bitmap backgroundHint, JSONObject body) throws Exception {
+        JSONObject choice = resolveImageEndpoint(body);
+        if (choice == null) return null;
+        String model = choice.optString("model", "").trim();
+        boolean openAiHosted = isOpenAIBase(choice.optString("base_url"));
+        if (openAiHosted || isImageEditModel(model)) {
+            Bitmap fullMask = solidMask(source.getWidth(), source.getHeight(), 255);
+            String prompt = jsonString(body, "prompt", "").trim();
+            if (prompt.isEmpty()) {
+                prompt = "Remove the background from this image. Preserve the foreground subject exactly, including people, faces, bodies, hair strands, clothing edges, clean edges, and return a transparent PNG.";
+            }
+            Bitmap openAiSource = source;
+            if (backgroundHint != null) {
+                prompt += " Cyan strokes on the image mark background samples. Remove the connected background regions matching those cyan-marked pixels. Preserve any person, face, body, hair, and fine hair edges unless the cyan mark directly crosses them; do not keep or redraw the cyan guide marks.";
+                openAiSource = overlayBackgroundHint(source, backgroundHint);
+            }
+            try {
+                return postOpenAiImageEdit(choice, openAiSource, fullMask, prompt, false, hint);
+            } catch (Exception ex) {
+                if (openAiHosted) throw ex;
+                Log.w(TAG, "OpenAI-style background remove route failed", ex);
+                throw ex;
+            }
+        }
+        JSONObject payload = new JSONObject().put("image", encodeBitmapPng(source));
+        if (hint != null) payload.put("hint_mask", encodeBitmapPng(ensureBitmapSize(hint, source.getWidth(), source.getHeight())));
+        if (backgroundHint != null) payload.put("background_mask", encodeBitmapPng(ensureBitmapSize(backgroundHint, source.getWidth(), source.getHeight())));
+        if (body.has("strength") || body.has("bg_strength")) {
+            payload.put("strength", body.has("strength")
+                    ? normalizedStrength(body, "strength", 0.7)
+                    : normalizedStrength(body, "bg_strength", 0.7));
+        }
+        if (!choice.optString("model", "").isEmpty()) payload.put("model", choice.optString("model"));
+        return postJsonImageEndpoint(choice, new String[]{"/images/remove-bg", "/images/background-remove", "/images/rembg"}, payload, 180000);
+    }
+
+    private JSONObject runProviderSharpen(Bitmap source, JSONObject body) throws Exception {
+        JSONObject choice = resolveImageEndpoint(body);
+        if (choice == null) return null;
+        int amount = jsonInt(body, "amount", 50);
+        if (isOpenAIBase(choice.optString("base_url"))) {
+            Bitmap fullMask = solidMask(source.getWidth(), source.getHeight(), 255);
+            String prompt = "Sharpen and clarify this image while preserving the exact composition, colors, text, and subject identity. "
+                    + "Remove blur and improve fine detail without adding new objects. Strength: " + amount + "%.";
+            return postOpenAiImageEdit(choice, source, fullMask, prompt, false, null);
+        }
+        JSONObject payload = new JSONObject()
+                .put("image", encodeBitmapPng(source))
+                .put("amount", amount);
+        if (!choice.optString("model", "").isEmpty()) payload.put("model", choice.optString("model"));
+        return postJsonImageEndpoint(choice, new String[]{"/images/sharpen", "/images/enhance", "/images/img2img"}, payload, 180000);
+    }
+
+    private JSONObject resolveImageEndpoint(JSONObject body) throws Exception {
+        String requestedBase = jsonString(body, "_endpoint", "").trim();
+        String requestedModel = jsonString(body, "_model", "").trim();
+        JSONObject ep;
+        if (!requestedBase.isEmpty()) {
+            ep = findEndpointForBase(requestedBase);
+            if (ep == null) {
+                ep = new JSONObject()
+                        .put("id", "")
+                        .put("name", hostLabel(requestedBase))
+                        .put("base_url", normalizeBase(requestedBase))
+                        .put("api_key", "")
+                        .put("model_type", "image")
+                        .put("models", new JSONArray());
+            }
+        } else {
+            ep = firstEnabledImageEndpoint();
+        }
+        if (ep == null) return null;
+        String model = requestedModel.isEmpty() ? firstImageEditModel(ep) : requestedModel;
+        String base = normalizeBase(ep.optString("base_url"));
+        if (isOpenAIBase(base) && model.isEmpty()) model = "gpt-image-1";
+        return new JSONObject(ep.toString())
+                .put("base_url", base)
+                .put("model", model);
+    }
+
+    private boolean hasExplicitImageProvider(JSONObject body) {
+        String model = jsonString(body, "_model", "").trim();
+        return !jsonString(body, "_endpoint", "").trim().isEmpty()
+                || (!model.isEmpty() && !isKnownRembgModel(model));
+    }
+
+    private JSONObject firstEnabledImageEndpoint() throws Exception {
+        JSONArray endpoints = loadArray(PREF_ENDPOINTS);
+        for (int i = 0; i < endpoints.length(); i++) {
+            JSONObject ep = endpoints.optJSONObject(i);
+            if (ep == null || !ep.optBoolean("is_enabled", true)) continue;
+            if (looksLikeImageEndpoint(ep)) return ep;
+        }
+        return null;
+    }
+
+    private JSONObject findEndpointForBase(String baseUrl) throws Exception {
+        String target = comparableBase(baseUrl);
+        JSONArray endpoints = loadArray(PREF_ENDPOINTS);
+        for (int i = 0; i < endpoints.length(); i++) {
+            JSONObject ep = endpoints.optJSONObject(i);
+            if (ep != null && target.equals(comparableBase(ep.optString("base_url")))) return ep;
+        }
+        return null;
+    }
+
+    private boolean looksLikeImageEndpoint(JSONObject ep) {
+        String type = ep.optString("model_type", "").toLowerCase(Locale.US);
+        if ("image".equals(type)) return true;
+        String base = ep.optString("base_url", "").toLowerCase(Locale.US);
+        if (base.contains("api.openai.com")) return true;
+        String name = ep.optString("name", "").toLowerCase(Locale.US);
+        if (name.contains("image") || name.contains("diffusion") || name.contains("inpaint") || name.contains("flux") || name.contains("sdxl") || name.contains("kontext")) return true;
+        JSONArray models = ep.optJSONArray("models");
+        if (models != null) {
+            for (int i = 0; i < models.length(); i++) {
+                if (isImageEditModel(models.optString(i, ""))) return true;
+            }
+        }
+        return false;
+    }
+
+    private String firstImageEditModel(JSONObject ep) {
+        JSONArray models = ep.optJSONArray("models");
+        if (models != null) {
+            for (int i = 0; i < models.length(); i++) {
+                String model = models.optString(i, "").trim();
+                if (isImageEditModel(model)) return model;
+            }
+            if ("image".equals(ep.optString("model_type", "").toLowerCase(Locale.US)) && models.length() > 0) {
+                return models.optString(0, "").trim();
+            }
+        }
+        if (isOpenAIBase(ep.optString("base_url"))) return "gpt-image-1";
+        return "";
+    }
+
+    private boolean isImageEditModel(String model) {
+        String m = valueOr(model, "").toLowerCase(Locale.US);
+        if (m.contains("dall-e-3")) return false;
+        boolean editCue = m.contains("edit")
+                || m.contains("inpaint")
+                || m.contains("outpaint")
+                || m.contains("fill")
+                || m.contains("kontext")
+                || m.contains("img2img")
+                || m.contains("image-to-image")
+                || m.contains("image2image")
+                || m.contains("i2i")
+                || m.contains("mask")
+                || m.contains("paint-by-example")
+                || m.contains("pix2pix")
+                || m.contains("variation");
+        return m.contains("gpt-image")
+                || m.contains("chatgpt-image")
+                || m.contains("dall-e-2")
+                || (m.contains("qwen") && m.contains("image")
+                    && editCue)
+                || (m.contains("seedream")
+                    && editCue)
+                || editCue;
+    }
+
+    private boolean isOpenAIBase(String baseUrl) {
+        return valueOr(baseUrl, "").toLowerCase(Locale.US).contains("api.openai.com");
+    }
+
+    private String comparableBase(String raw) {
+        String base = normalizeBase(raw).trim();
+        while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
+        if (base.endsWith("/v1")) base = base.substring(0, base.length() - 3);
+        return base.toLowerCase(Locale.US);
+    }
+
+    private JSONObject postJsonImageEndpoint(JSONObject choice, String[] paths, JSONObject payload, int readTimeoutMs) throws Exception {
+        String base = normalizeBase(choice.optString("base_url"));
+        while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
+        String baseRoot = base.endsWith("/v1") ? base.substring(0, base.length() - 3) : base;
+        while (baseRoot.endsWith("/")) baseRoot = baseRoot.substring(0, baseRoot.length() - 1);
+        if (!base.endsWith("/v1")) base += "/v1";
+        String apiKey = choice.optString("api_key", "");
+        IOException last = null;
+        for (String path : paths) {
+            HttpURLConnection conn = null;
+            try {
+                String target = path.startsWith("/api/") ? baseRoot + path : base + path;
+                conn = (HttpURLConnection) new URL(target).openConnection();
+                conn.setRequestMethod("POST");
+                conn.setConnectTimeout(15000);
+                conn.setReadTimeout(readTimeoutMs);
+                conn.setDoOutput(true);
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setRequestProperty("Accept", "application/json");
+                if (!apiKey.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+                byte[] data = payload.toString().getBytes(StandardCharsets.UTF_8);
+                conn.setFixedLengthStreamingMode(data.length);
+                try (OutputStream body = conn.getOutputStream()) {
+                    body.write(data);
+                }
+                int status = conn.getResponseCode();
+                String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
+                if (status < 200 || status >= 300) {
+                    last = new IOException(path + ": " + formatProviderError(status, response));
+                    continue;
+                }
+                JSONObject normalized = normalizeImageResponse(response);
+                if (!normalized.optString("image", "").isEmpty()) return normalized;
+                last = new IOException(path + ": " + providerNoImageDetail(response));
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }
+        throw last == null ? new IOException("No compatible image edit route found") : last;
+    }
+
+    private JSONObject postOpenAiImageEdit(JSONObject choice, Bitmap source, Bitmap editMask, String prompt,
+                                          boolean compositeToMask, Bitmap alphaHint) throws Exception {
+        String base = normalizeBase(choice.optString("base_url"));
+        while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
+        if (!base.endsWith("/v1")) base += "/v1";
+        String apiKey = choice.optString("api_key", "");
+        if (apiKey.isEmpty() && isOpenAIBase(base)) throw new IOException("OpenAI endpoint has no API key stored in Settings.");
+        String model = choice.optString("model", "gpt-image-1").trim();
+        if (model.isEmpty()) model = "gpt-image-1";
+        if (model.toLowerCase(Locale.US).contains("dall-e-3")) {
+            throw new IOException("dall-e-3 does not support image edits. Pick gpt-image-1, dall-e-2, SDXL inpaint, or Flux fill.");
+        }
+
+        Bitmap src = source.getConfig() == Bitmap.Config.ARGB_8888 ? source : source.copy(Bitmap.Config.ARGB_8888, true);
+        Bitmap mask = ensureBitmapSize(editMask, src.getWidth(), src.getHeight());
+        Bitmap openAiMask = openAiEditMask(mask, src.getWidth(), src.getHeight());
+        String boundary = "----OdysseusAndroid" + UUID.randomUUID().toString().replace("-", "");
+
+        HttpURLConnection conn = (HttpURLConnection) new URL(base + "/images/edits").openConnection();
+        conn.setRequestMethod("POST");
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(240000);
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Accept", "application/json");
+        if (!apiKey.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+        conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+        conn.setChunkedStreamingMode(0);
+        try (OutputStream os = conn.getOutputStream()) {
+            writeMultipartField(os, boundary, "model", model);
+            writeMultipartField(os, boundary, "prompt", prompt);
+            writeMultipartField(os, boundary, "size", openAiEditSize(src.getWidth(), src.getHeight()));
+            writeMultipartField(os, boundary, "n", "1");
+            writeMultipartFile(os, boundary, "image", "source.png", "image/png", encodeBitmapPngBytes(src));
+            writeMultipartFile(os, boundary, "mask", "mask.png", "image/png", encodeBitmapPngBytes(openAiMask));
+            os.write(("--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+        }
+        int status = conn.getResponseCode();
+        String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
+        conn.disconnect();
+        boolean openAiHosted = isOpenAIBase(base);
+        if (status < 200 || status >= 300) {
+            if (!openAiHosted && shouldRetryJsonImageEdit(status, response)) {
+                try {
+                    return postJsonOpenAiImageEdit(choice, src, openAiMask, mask, prompt, compositeToMask, alphaHint);
+                } catch (Exception jsonEx) {
+                    Log.w(TAG, "JSON image edit retry failed; trying chat-completions image edit", jsonEx);
+                    return postChatImageEdit(choice, src, mask, prompt, compositeToMask, alphaHint, jsonEx.getMessage());
+                }
+            }
+            throw new IOException("Image edit failed at /v1/images/edits: " + formatProviderError(status, response));
+        }
+
+        try {
+            return finishImageEditResponse(response, src, mask, compositeToMask, alphaHint, "OpenAI returned no image");
+        } catch (Exception ex) {
+            if (!openAiHosted) {
+                Log.w(TAG, "Multipart image edit returned no image; trying chat-completions image edit", ex);
+                return postChatImageEdit(choice, src, mask, prompt, compositeToMask, alphaHint, ex.getMessage());
+            }
+            throw ex;
+        }
+    }
+
+    private JSONObject postJsonOpenAiImageEdit(JSONObject choice, Bitmap src, Bitmap openAiMask, Bitmap editMask,
+                                              String prompt, boolean compositeToMask, Bitmap alphaHint) throws Exception {
+        String base = normalizeBase(choice.optString("base_url"));
+        while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
+        if (!base.endsWith("/v1")) base += "/v1";
+        String apiKey = choice.optString("api_key", "");
+        String model = choice.optString("model", "gpt-image-1").trim();
+        if (model.isEmpty()) model = "gpt-image-1";
+        String imageB64 = encodeBitmapPng(src);
+        String maskB64 = encodeBitmapPng(openAiMask);
+
+        JSONObject payload = new JSONObject()
+                .put("model", model)
+                .put("prompt", prompt)
+                .put("image", imageB64)
+                .put("mask_image", maskB64)
+                .put("size", openAiEditSize(src.getWidth(), src.getHeight()))
+                .put("n", 1)
+                .put("response_format", "b64_json")
+                .put("output_format", "png");
+
+        HttpURLConnection conn = (HttpURLConnection) new URL(base + "/images/edits").openConnection();
+        conn.setRequestMethod("POST");
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(240000);
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("Accept", "application/json");
+        if (!apiKey.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+        byte[] data = payload.toString().getBytes(StandardCharsets.UTF_8);
+        conn.setFixedLengthStreamingMode(data.length);
+        try (OutputStream body = conn.getOutputStream()) {
+            body.write(data);
+        }
+        int status = conn.getResponseCode();
+        String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
+        conn.disconnect();
+        if (status < 200 || status >= 300) {
+            throw new IOException("Image edit JSON retry failed at /v1/images/edits: " + formatProviderError(status, response));
+        }
+
+        return finishImageEditResponse(response, src, editMask, compositeToMask, alphaHint, "Image edit JSON retry returned no image");
+    }
+
+    private JSONObject postChatImageEdit(JSONObject choice, Bitmap src, Bitmap editMask, String prompt,
+                                         boolean compositeToMask, Bitmap alphaHint, String previousError) throws Exception {
+        String base = normalizeBase(choice.optString("base_url"));
+        while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
+        if (!base.endsWith("/v1")) base += "/v1";
+        String apiKey = choice.optString("api_key", "");
+        String model = choice.optString("model", "").trim();
+
+        JSONArray content = new JSONArray()
+                .put(new JSONObject()
+                        .put("type", "text")
+                        .put("text", prompt))
+                .put(new JSONObject()
+                        .put("type", "image_url")
+                        .put("image_url", new JSONObject()
+                                .put("url", "data:image/png;base64," + encodeBitmapPng(src))));
+        JSONObject payload = new JSONObject()
+                .put("messages", new JSONArray()
+                        .put(new JSONObject()
+                                .put("role", "user")
+                                .put("content", content)))
+                .put("stream", false)
+                .put("extra_body", new JSONObject()
+                        .put("num_inference_steps", 50)
+                        .put("guidance_scale", 1)
+                        .put("size", openAiEditSize(src.getWidth(), src.getHeight()))
+                        .put("output_format", "png"));
+        if (!model.isEmpty()) payload.put("model", model);
+
+        HttpURLConnection conn = (HttpURLConnection) new URL(base + "/chat/completions").openConnection();
+        conn.setRequestMethod("POST");
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(240000);
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("Accept", "application/json");
+        if (!apiKey.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+        byte[] data = payload.toString().getBytes(StandardCharsets.UTF_8);
+        conn.setFixedLengthStreamingMode(data.length);
+        try (OutputStream body = conn.getOutputStream()) {
+            body.write(data);
+        }
+        int status = conn.getResponseCode();
+        String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
+        conn.disconnect();
+        if (status < 200 || status >= 300) {
+            String prefix = valueOr(previousError, "").isEmpty() ? "" : " Previous /v1/images/edits error: " + truncateError(previousError, 160);
+            throw new IOException("Image edit chat fallback failed at /v1/chat/completions: " + formatProviderError(status, response) + prefix);
+        }
+        try {
+            return finishImageEditResponse(response, src, editMask, compositeToMask, alphaHint, "Image edit chat fallback returned no image");
+        } catch (Exception ex) {
+            String prefix = valueOr(previousError, "").isEmpty() ? "" : " Previous /v1/images/edits error: " + truncateError(previousError, 160);
+            throw new IOException(ex.getMessage() + prefix);
+        }
+    }
+
+    private JSONObject finishImageEditResponse(String response, Bitmap src, Bitmap mask, boolean compositeToMask,
+                                               Bitmap alphaHint, String noImageMessage) throws Exception {
+        JSONObject normalized;
+        try {
+            normalized = normalizeImageResponse(response);
+        } catch (Exception parseEx) {
+            throw new IOException(noImageMessage + ": invalid JSON response: " + truncateError(response, 220));
+        }
+        Bitmap generated = decodeBase64Bitmap(normalized.optString("image", ""));
+        if (generated == null) {
+            String detail = providerNoImageDetail(response);
+            throw new IOException(noImageMessage + (detail.isEmpty() ? "" : ": " + detail));
+        }
+        generated = ensureBitmapSize(generated, src.getWidth(), src.getHeight());
+        Bitmap result = compositeToMask ? compositeWithMask(src, generated, mask) : generated;
+        if (alphaHint != null) result = applyAlphaHint(result, ensureBitmapSize(alphaHint, result.getWidth(), result.getHeight()));
+        return new JSONObject()
+                .put("image", encodeBitmapPng(result))
+                .put("width", result.getWidth())
+                .put("height", result.getHeight())
+                .put("method", "image-edit");
+    }
+
+    private boolean shouldRetryJsonImageEdit(int status, String response) {
+        String text = valueOr(response, "").toLowerCase(Locale.US);
+        return status == 415
+                || (text.contains("unsupported media type") && text.contains("application/json"))
+                || text.contains("post requests must use 'application/json'")
+                || text.contains("post requests must use application/json");
+    }
+
+    private JSONObject normalizeImageResponse(String response) throws Exception {
+        JSONObject json = new JSONObject(valueOr(response, "{}"));
+        String image = firstProviderImageValue(json, 0);
+        if (!image.isEmpty()) return new JSONObject().put("image", providerImageValueToBase64(image));
+        return new JSONObject();
+    }
+
+    private String firstProviderImageValue(Object node, int depth) {
+        if (node == null || node == JSONObject.NULL || depth > 5) return "";
+        if (node instanceof String) {
+            String value = ((String) node).trim();
+            if (looksLikeProviderImageValue(value)) return value;
+            String embedded = providerImageValueFromText(value);
+            if (!embedded.isEmpty()) return embedded;
+            if ((value.startsWith("{") && value.endsWith("}")) || (value.startsWith("[") && value.endsWith("]"))) {
+                try {
+                    Object parsed = value.startsWith("{") ? new JSONObject(value) : new JSONArray(value);
+                    return firstProviderImageValue(parsed, depth + 1);
+                } catch (Exception ignored) {
+                }
+            }
+            return "";
+        }
+        if (node instanceof JSONArray) {
+            JSONArray arr = (JSONArray) node;
+            for (int i = 0; i < arr.length(); i++) {
+                String found = firstProviderImageValue(arr.opt(i), depth + 1);
+                if (!found.isEmpty()) return found;
+            }
+            return "";
+        }
+        if (!(node instanceof JSONObject)) return "";
+
+        JSONObject json = (JSONObject) node;
+        String[] preferred = new String[]{
+                "image", "b64_json", "base64", "image_base64", "imageBase64",
+                "url", "image_url", "imageUrl", "data", "images",
+                "content", "message", "choices", "output", "outputs", "result", "results", "artifact", "artifacts"
+        };
+        for (String key : preferred) {
+            if (!json.has(key) || json.isNull(key)) continue;
+            String found = firstProviderImageValue(json.opt(key), depth + 1);
+            if (!found.isEmpty()) return found;
+        }
+        java.util.Iterator<String> keys = json.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            String found = firstProviderImageValue(json.opt(key), depth + 1);
+            if (!found.isEmpty()) return found;
+        }
+        return "";
+    }
+
+    private String providerImageValueFromText(String raw) {
+        String text = valueOr(raw, "");
+        java.util.regex.Matcher dataUri = java.util.regex.Pattern
+                .compile("data:image/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=\\r\\n]+", java.util.regex.Pattern.CASE_INSENSITIVE)
+                .matcher(text);
+        if (dataUri.find()) return dataUri.group();
+        java.util.regex.Matcher jsonImage = java.util.regex.Pattern
+                .compile("\\\"(?:b64_json|image|base64|image_base64|url)\\\"\\s*:\\s*\\\"([^\\\"]{128,})\\\"", java.util.regex.Pattern.CASE_INSENSITIVE)
+                .matcher(text);
+        if (jsonImage.find()) {
+            String candidate = jsonImage.group(1)
+                    .replace("\\/", "/")
+                    .replace("\\n", "")
+                    .replace("\\r", "");
+            return looksLikeProviderImageValue(candidate) ? candidate : "";
+        }
+        return "";
+    }
+
+    private boolean looksLikeProviderImageValue(String raw) {
+        String value = valueOr(raw, "").trim();
+        if (value.isEmpty()) return false;
+        String lower = value.toLowerCase(Locale.US);
+        if (lower.startsWith("data:image/")) return true;
+        if (lower.startsWith("http://") || lower.startsWith("https://")) return true;
+        String b64 = stripDataUrl(value);
+        if (b64.startsWith("iVBOR") || b64.startsWith("/9j/") || b64.startsWith("UklGR")) return true;
+        if (b64.length() < 128) return false;
+        try {
+            byte[] bytes = Base64.decode(b64, Base64.DEFAULT);
+            Bitmap decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+            return decoded != null;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private String providerImageValueToBase64(String raw) throws Exception {
+        String value = valueOr(raw, "").trim();
+        String lower = value.toLowerCase(Locale.US);
+        if (lower.startsWith("http://") || lower.startsWith("https://")) {
+            return downloadImageAsBase64(value);
+        }
+        return stripDataUrl(value);
+    }
+
+    private String providerNoImageDetail(String response) {
+        try {
+            JSONObject json = new JSONObject(valueOr(response, "{}"));
+            String err = providerErrorText(json, 0);
+            if (!err.isEmpty()) return err;
+            StringBuilder keys = new StringBuilder();
+            java.util.Iterator<String> it = json.keys();
+            while (it.hasNext() && keys.length() < 180) {
+                if (keys.length() > 0) keys.append(", ");
+                keys.append(it.next());
+            }
+            return keys.length() > 0
+                    ? "server returned no image (keys: " + keys + ")"
+                    : "server returned no image";
+        } catch (Exception ignored) {
+            String body = truncateError(response, 180);
+            return body.isEmpty() ? "server returned no image" : "server returned no image: " + body;
+        }
+    }
+
+    private String providerErrorText(Object node, int depth) {
+        if (node == null || node == JSONObject.NULL || depth > 4) return "";
+        if (node instanceof String) {
+            String text = valueOr((String) node, "").replace('\n', ' ').trim();
+            return looksLikeProviderImageValue(text) ? "" : truncateError(text, 220);
+        }
+        if (node instanceof JSONArray) {
+            JSONArray arr = (JSONArray) node;
+            for (int i = 0; i < arr.length(); i++) {
+                String found = providerErrorText(arr.opt(i), depth + 1);
+                if (!found.isEmpty()) return found;
+            }
+            return "";
+        }
+        if (!(node instanceof JSONObject)) return "";
+        JSONObject json = (JSONObject) node;
+        for (String key : new String[]{"error", "detail", "message", "reason", "status_message"}) {
+            if (!json.has(key) || json.isNull(key)) continue;
+            String found = providerErrorText(json.opt(key), depth + 1);
+            if (!found.isEmpty()) return found;
+        }
+        return "";
+    }
+
+    private String stripDataUrl(String raw) {
+        String value = valueOr(raw, "").trim();
+        int comma = value.indexOf(',');
+        return comma >= 0 ? value.substring(comma + 1) : value;
+    }
+
+    private String downloadImageAsBase64(String imageUrl) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(imageUrl).openConnection();
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(60000);
+        conn.setRequestProperty("Accept", "image/png,image/*,*/*");
+        int status = conn.getResponseCode();
+        if (status < 200 || status >= 300) throw new IOException("Image download failed: HTTP " + status);
+        byte[] data = readBytes(conn.getInputStream());
+        conn.disconnect();
+        return Base64.encodeToString(data, Base64.NO_WRAP);
+    }
+
+    private void writeMultipartField(OutputStream os, String boundary, String name, String value) throws IOException {
+        os.write(("--" + boundary + "\r\n").getBytes(StandardCharsets.UTF_8));
+        os.write(("Content-Disposition: form-data; name=\"" + name + "\"\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+        os.write(valueOr(value, "").getBytes(StandardCharsets.UTF_8));
+        os.write("\r\n".getBytes(StandardCharsets.UTF_8));
+    }
+
+    private void writeMultipartFile(OutputStream os, String boundary, String name, String filename,
+                                    String contentType, byte[] data) throws IOException {
+        os.write(("--" + boundary + "\r\n").getBytes(StandardCharsets.UTF_8));
+        os.write(("Content-Disposition: form-data; name=\"" + name + "\"; filename=\"" + filename + "\"\r\n").getBytes(StandardCharsets.UTF_8));
+        os.write(("Content-Type: " + contentType + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+        os.write(data);
+        os.write("\r\n".getBytes(StandardCharsets.UTF_8));
+    }
+
+    private String openAiEditSize(int width, int height) {
+        if (width > height * 1.15f) return "1536x1024";
+        if (height > width * 1.15f) return "1024x1536";
+        return "1024x1024";
+    }
+
+    private Bitmap decodeBase64Bitmap(String raw) {
+        try {
+            String b64 = stripDataUrl(raw);
+            byte[] bytes = Base64.decode(b64, Base64.DEFAULT);
+            Bitmap decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+            return decoded == null ? null : decoded.copy(Bitmap.Config.ARGB_8888, true);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private boolean providerResultHasMeaningfulTransparency(JSONObject provider) {
+        Bitmap bitmap = decodeBase64Bitmap(provider == null ? "" : provider.optString("image", ""));
+        if (bitmap == null) return false;
+        int w = bitmap.getWidth();
+        int h = bitmap.getHeight();
+        int count = w * h;
+        if (count <= 0) return false;
+        int[] pixels = new int[count];
+        bitmap.getPixels(pixels, 0, w, 0, 0, w, h);
+        int transparentish = 0;
+        int minAlpha = 255;
+        for (int p : pixels) {
+            int alpha = (p >>> 24) & 0xff;
+            if (alpha < minAlpha) minAlpha = alpha;
+            if (alpha < 245) transparentish++;
+        }
+        return minAlpha < 245 && transparentish >= Math.max(16, count / 1000);
+    }
+
+    private Bitmap solidMask(int width, int height, int value) {
+        int v = Math.max(0, Math.min(255, value));
+        int color = 0xff000000 | (v << 16) | (v << 8) | v;
+        Bitmap mask = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        int[] pixels = new int[width * height];
+        Arrays.fill(pixels, color);
+        mask.setPixels(pixels, 0, width, 0, 0, width, height);
+        return mask;
+    }
+
+    private Bitmap openAiEditMask(Bitmap editMask, int width, int height) {
+        Bitmap mask = ensureBitmapSize(editMask, width, height);
+        int[] src = new int[width * height];
+        int[] dst = new int[width * height];
+        mask.getPixels(src, 0, width, 0, 0, width, height);
+        for (int i = 0; i < src.length; i++) {
+            int regenerate = maskOpacity(src[i]);
+            int keepAlpha = 255 - regenerate;
+            dst[i] = (keepAlpha << 24) | 0x00ffffff;
+        }
+        Bitmap out = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        out.setPixels(dst, 0, width, 0, 0, width, height);
+        return out;
+    }
+
+    private Bitmap compositeWithMask(Bitmap original, Bitmap generated, Bitmap mask) {
+        int w = original.getWidth();
+        int h = original.getHeight();
+        Bitmap gen = ensureBitmapSize(generated, w, h);
+        Bitmap m = ensureBitmapSize(mask, w, h);
+        int[] src = new int[w * h];
+        int[] ai = new int[w * h];
+        int[] mp = new int[w * h];
+        int[] out = new int[w * h];
+        original.getPixels(src, 0, w, 0, 0, w, h);
+        gen.getPixels(ai, 0, w, 0, 0, w, h);
+        m.getPixels(mp, 0, w, 0, 0, w, h);
+        for (int i = 0; i < out.length; i++) {
+            float t = maskOpacity(mp[i]) / 255f;
+            out[i] = blendArgb(src[i], ai[i], t);
+        }
+        Bitmap result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        result.setPixels(out, 0, w, 0, 0, w, h);
+        return result;
+    }
+
+    private Bitmap applyAlphaHint(Bitmap source, Bitmap hint) {
+        int w = source.getWidth();
+        int h = source.getHeight();
+        Bitmap mask = ensureBitmapSize(hint, w, h);
+        int[] src = new int[w * h];
+        int[] hp = new int[w * h];
+        source.getPixels(src, 0, w, 0, 0, w, h);
+        mask.getPixels(hp, 0, w, 0, 0, w, h);
+        for (int i = 0; i < src.length; i++) {
+            int a = (src[i] >>> 24) & 0xff;
+            int hintA = maskOpacity(hp[i]);
+            int outA = Math.round(a * (hintA / 255f));
+            src[i] = (src[i] & 0x00ffffff) | (outA << 24);
+        }
+        Bitmap result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        result.setPixels(src, 0, w, 0, 0, w, h);
+        return result;
+    }
+
+    private Bitmap overlayBackgroundHint(Bitmap source, Bitmap backgroundHint) {
+        int w = source.getWidth();
+        int h = source.getHeight();
+        Bitmap hint = ensureBitmapSize(backgroundHint, w, h);
+        if (hint == null) return source;
+        int[] src = new int[w * h];
+        int[] hp = new int[w * h];
+        source.getPixels(src, 0, w, 0, 0, w, h);
+        hint.getPixels(hp, 0, w, 0, 0, w, h);
+        for (int i = 0; i < src.length; i++) {
+            if (maskOpacity(hp[i]) <= MASK_OPACITY_THRESHOLD) continue;
+            src[i] = blendArgb(src[i], 0xff00d2ff, 0.82f);
+        }
+        Bitmap result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        result.setPixels(src, 0, w, 0, 0, w, h);
+        return result;
+    }
+
+    private int blendArgb(int from, int to, float t) {
+        if (t <= 0f) return from;
+        if (t >= 1f) return to;
+        int fa = (from >>> 24) & 0xff;
+        int fr = (from >> 16) & 0xff;
+        int fg = (from >> 8) & 0xff;
+        int fb = from & 0xff;
+        int ta = (to >>> 24) & 0xff;
+        int tr = (to >> 16) & 0xff;
+        int tg = (to >> 8) & 0xff;
+        int tb = to & 0xff;
+        int a = clampColor(fa + (ta - fa) * t);
+        int r = clampColor(fr + (tr - fr) * t);
+        int g = clampColor(fg + (tg - fg) * t);
+        int b = clampColor(fb + (tb - fb) * t);
+        return (a << 24) | (r << 16) | (g << 8) | b;
+    }
+
+    private Bitmap ensureBitmapSize(Bitmap bitmap, int width, int height) {
+        if (bitmap == null) return null;
+        if (bitmap.getWidth() == width && bitmap.getHeight() == height) return bitmap;
+        return Bitmap.createScaledBitmap(bitmap, width, height, false);
+    }
+
+    private Bitmap runLocalRembgModel(Bitmap source, Bitmap hintMask, String requestedModel) {
+        try {
+            if (appContext == null || !DynamicOnnxRuntime.isInstalled(appContext)) {
+                lastBgRemoveError = "ONNX Runtime Android is not installed.";
+                return null;
+            }
+            RembgModelChoice choice = resolveLocalRembgModel(requestedModel);
+            if (choice == null) {
+                lastBgRemoveError = "No rembg ONNX model is available.";
+                return null;
+            }
+            File model = cachedModelFile(choice.assetName, choice.url, choice.filename);
+            if (model == null || !model.exists() || model.length() <= 0) {
+                lastBgRemoveError = "Could not load rembg model file: " + choice.model;
+                return null;
+            }
+
+            int inputSize = Math.max(64, choice.inputSize);
+            Bitmap src = source.getConfig() == Bitmap.Config.ARGB_8888
+                    ? source
+                    : source.copy(Bitmap.Config.ARGB_8888, false);
+            Bitmap scaled = Bitmap.createScaledBitmap(src, inputSize, inputSize, true);
+            int[] scaledPixels = new int[inputSize * inputSize];
+            scaled.getPixels(scaledPixels, 0, inputSize, 0, 0, inputSize, inputSize);
+
+            float[] input = new float[3 * inputSize * inputSize];
+            int plane = inputSize * inputSize;
+            for (int i = 0; i < scaledPixels.length; i++) {
+                int p = scaledPixels[i];
+                float r = ((p >> 16) & 0xff) / 255f;
+                float g = ((p >> 8) & 0xff) / 255f;
+                float b = (p & 0xff) / 255f;
+                input[i] = (r - 0.485f) / 0.229f;
+                input[plane + i] = (g - 0.456f) / 0.224f;
+                input[plane * 2 + i] = (b - 0.406f) / 0.225f;
+            }
+
+            float[] mask;
+            synchronized (rembgSessionLock) {
+                if (rembgRuntime == null) rembgRuntime = new DynamicOnnxRuntime();
+                mask = rembgRuntime.runMask(appContext, model, input, inputSize);
+            }
+            if (mask == null) {
+                lastBgRemoveError = "ONNX model returned no mask: " + choice.model;
+                return null;
+            }
+
+            Bitmap alphaMask = softMaskBitmap(mask, inputSize, inputSize);
+            Bitmap fullMask = ensureBitmapSize(alphaMask, source.getWidth(), source.getHeight());
+            int w = source.getWidth();
+            int h = source.getHeight();
+            int[] srcPixels = new int[w * h];
+            int[] maskPixels = new int[w * h];
+            source.getPixels(srcPixels, 0, w, 0, 0, w, h);
+            fullMask.getPixels(maskPixels, 0, w, 0, 0, w, h);
+            int transparentish = 0;
+            for (int i = 0; i < srcPixels.length; i++) {
+                int srcAlpha = (srcPixels[i] >>> 24) & 0xff;
+                int matte = maskOpacity(maskPixels[i]);
+                if (matte < 245) transparentish++;
+                srcPixels[i] = (srcPixels[i] & 0x00ffffff) | (Math.min(srcAlpha, matte) << 24);
+            }
+            if (transparentish < Math.max(16, srcPixels.length / 1000)) {
+                lastBgRemoveError = "ONNX model returned an opaque mask: " + choice.model;
+                return null;
+            }
+            Bitmap result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            result.setPixels(srcPixels, 0, w, 0, 0, w, h);
+            if (hintMask != null) result = applyAlphaHint(result, hintMask);
+            lastBgRemoveSource = "onnx:" + choice.model;
+            lastBgRemoveError = "";
+            return result;
+        } catch (Throwable ex) {
+            lastBgRemoveError = "ONNX background removal failed: " + truncateError(ex.getMessage(), 180);
+            Log.w(TAG, lastBgRemoveError, ex);
+            return null;
+        }
+    }
+
+    private static class RembgModelChoice {
+        final String model;
+        final String filename;
+        final String url;
+        final String assetName;
+        final long expectedBytes;
+        final int inputSize;
+
+        RembgModelChoice(String model, String filename, String url, String assetName, long expectedBytes, int inputSize) {
+            this.model = model;
+            this.filename = filename;
+            this.url = url;
+            this.assetName = assetName;
+            this.expectedBytes = expectedBytes;
+            this.inputSize = inputSize;
+        }
+    }
+
+    private RembgModelChoice resolveLocalRembgModel(String requestedModel) {
+        String requested = valueOr(requestedModel, "").trim();
+        if (ISNET_REMBG_MODEL.equals(requested)) {
+            return new RembgModelChoice(ISNET_REMBG_MODEL, ISNET_REMBG_FILENAME, ISNET_REMBG_MODEL_URL, "", ISNET_REMBG_EXPECTED_BYTES, 1024);
+        }
+        if (SILUETA_REMBG_MODEL.equals(requested)) {
+            return new RembgModelChoice(SILUETA_REMBG_MODEL, SILUETA_REMBG_FILENAME, SILUETA_REMBG_MODEL_URL, "", SILUETA_REMBG_EXPECTED_BYTES, 320);
+        }
+        if (U2NETP_REMBG_MODEL.equals(requested)) {
+            return new RembgModelChoice(U2NETP_REMBG_MODEL, U2NETP_REMBG_FILENAME, LOCAL_REMBG_MODEL_URL, LOCAL_REMBG_MODEL_ASSET, 0L, 320);
+        }
+        if (installedRembgModel(ISNET_REMBG_FILENAME, ISNET_REMBG_EXPECTED_BYTES)) {
+            return new RembgModelChoice(ISNET_REMBG_MODEL, ISNET_REMBG_FILENAME, ISNET_REMBG_MODEL_URL, "", ISNET_REMBG_EXPECTED_BYTES, 1024);
+        }
+        if (installedRembgModel(SILUETA_REMBG_FILENAME, SILUETA_REMBG_EXPECTED_BYTES)) {
+            return new RembgModelChoice(SILUETA_REMBG_MODEL, SILUETA_REMBG_FILENAME, SILUETA_REMBG_MODEL_URL, "", SILUETA_REMBG_EXPECTED_BYTES, 320);
+        }
+        return new RembgModelChoice(U2NETP_REMBG_MODEL, U2NETP_REMBG_FILENAME, LOCAL_REMBG_MODEL_URL, LOCAL_REMBG_MODEL_ASSET, 0L, 320);
+    }
+
+    private boolean installedRembgModel(String filename, long expectedBytes) {
+        File file = new File(new File(appContext.getFilesDir(), "models"), filename);
+        return file.exists()
+                && file.isFile()
+                && file.length() >= Math.max(1L, expectedBytes / 2L);
+    }
+
+    private File cachedModelFile(String assetName, String modelUrl, String filename) throws IOException {
+        File dir = new File(appContext.getFilesDir(), "models");
+        if (!dir.exists() && !dir.mkdirs()) return null;
+        File out = new File(dir, filename);
+        if (out.exists() && out.length() > 0) return out;
+        if (!valueOr(assetName, "").isEmpty() && copyAssetIfAvailable(assetName, out)) return out;
+        return downloadModelFile(modelUrl, out) ? out : null;
+    }
+
+    private boolean copyAssetIfAvailable(String assetName, File out) {
+        AssetManager assets = appContext.getAssets();
+        try (InputStream input = assets.open(assetName);
+             FileOutputStream output = new FileOutputStream(out)) {
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = input.read(buf)) >= 0) {
+                output.write(buf, 0, n);
+            }
+            return out.exists() && out.length() > 0;
+        } catch (Exception ignored) {
+            if (out.exists() && out.length() == 0) {
+                try {
+                    //noinspection ResultOfMethodCallIgnored
+                    out.delete();
+                } catch (Exception ignoredDelete) {
+                }
+            }
+            return false;
+        }
+    }
+
+    private boolean downloadModelFile(String modelUrl, File out) {
+        File tmp = new File(out.getParentFile(), out.getName() + ".download");
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(modelUrl).openConnection();
+            conn.setConnectTimeout(20000);
+            conn.setReadTimeout(300000);
+            conn.setRequestProperty("Accept", "application/octet-stream,*/*");
+            int status = conn.getResponseCode();
+            if (status < 200 || status >= 300) return false;
+            try (InputStream input = conn.getInputStream();
+                 FileOutputStream output = new FileOutputStream(tmp)) {
+                byte[] buf = new byte[32768];
+                int n;
+                while ((n = input.read(buf)) >= 0) {
+                    output.write(buf, 0, n);
+                }
+            }
+            if (!tmp.exists() || tmp.length() <= 0) return false;
+            if (out.exists() && !out.delete()) return false;
+            return tmp.renameTo(out);
+        } catch (Exception ignored) {
+            return false;
+        } finally {
+            if (conn != null) conn.disconnect();
+            if (tmp.exists()) {
+                //noinspection ResultOfMethodCallIgnored
+                tmp.delete();
+            }
+        }
+    }
+
+    private Bitmap softMaskBitmap(float[] values, int width, int height) {
+        float min = Float.POSITIVE_INFINITY;
+        float max = Float.NEGATIVE_INFINITY;
+        for (float v : values) {
+            if (Float.isNaN(v) || Float.isInfinite(v)) continue;
+            if (v < min) min = v;
+            if (v > max) max = v;
+        }
+        float range = Math.max(0.0001f, max - min);
+        int[] pixels = new int[width * height];
+        for (int i = 0; i < values.length; i++) {
+            float v = values[i];
+            if (Float.isNaN(v) || Float.isInfinite(v)) v = min;
+            int a = clampColor(((v - min) / range) * 255f);
+            pixels[i] = 0xff000000 | (a << 16) | (a << 8) | a;
+        }
+        Bitmap out = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        out.setPixels(pixels, 0, width, 0, 0, width, height);
+        return out;
+    }
+
+    private Bitmap removeBackgroundBitmap(Bitmap source, Bitmap hintMask, Bitmap backgroundHint, double strength) {
+        return removeBackgroundBitmap(source, hintMask, backgroundHint, strength, "");
+    }
+
+    private Bitmap removeBackgroundBitmap(Bitmap source, Bitmap hintMask, Bitmap backgroundHint, double strength, String requestedModel) {
+        return removeBackgroundBitmap(source, hintMask, backgroundHint, strength, requestedModel, "auto");
+    }
+
+    private Bitmap removeBackgroundBitmap(Bitmap source, Bitmap hintMask, Bitmap backgroundHint, double strength, String requestedModel, String pipeline) {
+        String mode = valueOr(pipeline, "auto").trim().toLowerCase(Locale.US);
+        boolean forceHeuristic = "heuristic".equals(mode);
+        boolean forceRembg = "rembg".equals(mode);
+        if (!forceHeuristic) {
+            Bitmap modelCutout = runLocalRembgModel(source, hintMask, requestedModel);
+            if (modelCutout != null) {
+                Bitmap sampledCutout = applyBackgroundSampleToRembgResult(
+                        source, modelCutout, hintMask, backgroundHint, strength);
+                if (sampledCutout != null) return sampledCutout;
+                return modelCutout;
+            }
+            if (forceRembg) return source.copy(Bitmap.Config.ARGB_8888, true);
+        }
+
+        int w = source.getWidth();
+        int h = source.getHeight();
+        int count = w * h;
+        int[] pixels = new int[count];
+        source.getPixels(pixels, 0, w, 0, 0, w, h);
+
+        Bitmap sizedHint = ensureBitmapSize(hintMask, w, h);
+        boolean onnxInstalled = appContext != null && DynamicOnnxRuntime.isInstalled(appContext);
+        Bitmap sizedBackgroundHint = forceHeuristic || !onnxInstalled ? ensureBitmapSize(backgroundHint, w, h) : null;
+        boolean usedBackgroundSample = sizedBackgroundHint != null
+                && applySampledBackgroundCutout(pixels, w, h, sizedBackgroundHint, sizedHint, strength);
+        if (sizedHint != null) {
+            int[] mask = new int[count];
+            sizedHint.getPixels(mask, 0, w, 0, 0, w, h);
+            for (int i = 0; i < count; i++) {
+                int alpha = (pixels[i] >>> 24) & 0xff;
+                int matte = maskOpacity(mask[i]);
+                pixels[i] = (pixels[i] & 0x00ffffff) | (Math.min(alpha, matte) << 24);
+            }
+        } else if (!usedBackgroundSample) {
+            applyHeuristicBackgroundCutout(pixels, w, h, strength);
+        }
+        if (lastBgRemoveSource.isEmpty()) {
+            lastBgRemoveSource = usedBackgroundSample ? "fallback:sampled-background" : "fallback:portrait-heuristic";
+        }
+
+        Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        out.setPixels(pixels, 0, w, 0, 0, w, h);
+        return out;
+    }
+
+    private Bitmap applyBackgroundSampleToRembgResult(Bitmap source, Bitmap modelCutout, Bitmap hintMask,
+                                                     Bitmap backgroundHint, double strength) {
+        if (source == null || modelCutout == null || backgroundHint == null) return null;
+        int w = source.getWidth();
+        int h = source.getHeight();
+        Bitmap sizedBackgroundHint = ensureBitmapSize(backgroundHint, w, h);
+        if (sizedBackgroundHint == null) return null;
+
+        int count = w * h;
+        int[] pixels = new int[count];
+        source.getPixels(pixels, 0, w, 0, 0, w, h);
+        Bitmap keepMask = ensureBitmapSize(modelCutout, w, h);
+        Bitmap sizedHint = ensureBitmapSize(hintMask, w, h);
+        String modelSource = lastBgRemoveSource;
+        boolean changed = applySampledBackgroundCutout(pixels, w, h, sizedBackgroundHint, keepMask, strength);
+        if (!changed) return null;
+
+        Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        out.setPixels(pixels, 0, w, 0, 0, w, h);
+        if (sizedHint != null) out = applyAlphaHint(out, sizedHint);
+        lastBgRemoveSource = (modelSource == null || modelSource.isEmpty() ? "onnx" : modelSource) + "+sampled-background";
+        lastBgRemoveError = "";
+        return out;
+    }
+
+    private boolean applySampledBackgroundCutout(int[] pixels, int w, int h, Bitmap backgroundHint, Bitmap keepHint, double strength) {
+        int count = w * h;
+        int[] hintPixels = new int[count];
+        backgroundHint.getPixels(hintPixels, 0, w, 0, 0, w, h);
+
+        double s = clampStrength(strength);
+        long sumR = 0, sumG = 0, sumB = 0;
+        int minR = 255, minG = 255, minB = 255;
+        int maxR = 0, maxG = 0, maxB = 0;
+        int samples = 0;
+        byte[] sampleSeed = new byte[count];
+        for (int i = 0; i < count; i++) {
+            if (maskOpacity(hintPixels[i]) <= MASK_OPACITY_THRESHOLD) continue;
+            int p = pixels[i];
+            if (((p >>> 24) & 0xff) <= 8) continue;
+            sampleSeed[i] = 1;
+            int r = (p >> 16) & 0xff;
+            int g = (p >> 8) & 0xff;
+            int b = p & 0xff;
+            sumR += r;
+            sumG += g;
+            sumB += b;
+            minR = Math.min(minR, r);
+            minG = Math.min(minG, g);
+            minB = Math.min(minB, b);
+            maxR = Math.max(maxR, r);
+            maxG = Math.max(maxG, g);
+            maxB = Math.max(maxB, b);
+            samples++;
+        }
+        if (samples == 0) return false;
+
+        int bgR = (int) (sumR / samples);
+        int bgG = (int) (sumG / samples);
+        int bgB = (int) (sumB / samples);
+        double distSum = 0;
+        for (int i = 0; i < count; i++) {
+            if (maskOpacity(hintPixels[i]) <= MASK_OPACITY_THRESHOLD) continue;
+            int p = pixels[i];
+            if (((p >>> 24) & 0xff) <= 8) continue;
+            distSum += colorDistance(p, bgR, bgG, bgB);
+        }
+        double meanDistance = distSum / Math.max(1, samples);
+        int meanThreshold = (int) Math.max(28, Math.min(220, meanDistance * (1.35 + s * 1.65) + 26 + 92 * s));
+        int localThreshold = (int) Math.round(18 + 70 * s);
+        int rangeMargin = (int) Math.max(22, Math.min(150, meanDistance * 0.55 + 18 + 82 * s));
+        int loR = Math.max(0, minR - rangeMargin);
+        int loG = Math.max(0, minG - rangeMargin);
+        int loB = Math.max(0, minB - rangeMargin);
+        int hiR = Math.min(255, maxR + rangeMargin);
+        int hiG = Math.min(255, maxG + rangeMargin);
+        int hiB = Math.min(255, maxB + rangeMargin);
+        byte[] workArea = buildEnclosedStrokeRegion(hintPixels, w, h);
+        byte[] subjectKeep = buildPortraitProtectionMask(pixels, hintPixels, w, h);
+        byte[] edgeWall = dilateByteMask(buildEdgeWallMask(pixels, w, h, (int) Math.round(44 + 36 * s)), w, h, 1);
+        byte[] expandedSeed = expandSampledBackgroundSeed(
+                pixels, sampleSeed, w, h, bgR, bgG, bgB, meanThreshold, loR, loG, loB, hiR, hiG, hiB);
+        clearMaskWhere(edgeWall, expandedSeed);
+
+        int[] keep = null;
+        if (keepHint != null) {
+            keep = new int[count];
+            keepHint.getPixels(keep, 0, w, 0, 0, w, h);
+        }
+        byte[] background = new byte[count];
+        int[] queue = new int[count];
+        int head = 0, tail = 0;
+        for (int i = 0; i < count; i++) {
+            if (expandedSeed[i] == 0) continue;
+            if (background[i] != 0) continue;
+            background[i] = 1;
+            queue[tail++] = i;
+        }
+
+        while (head < tail) {
+            int idx = queue[head++];
+            int x = idx % w;
+            int y = idx / w;
+            if (x > 0) tail = enqueueSampledBackgroundCandidate(pixels, background, keep, subjectKeep, hintPixels, workArea, edgeWall, queue, tail, idx - 1, idx, bgR, bgG, bgB, meanThreshold, localThreshold, loR, loG, loB, hiR, hiG, hiB);
+            if (x < w - 1) tail = enqueueSampledBackgroundCandidate(pixels, background, keep, subjectKeep, hintPixels, workArea, edgeWall, queue, tail, idx + 1, idx, bgR, bgG, bgB, meanThreshold, localThreshold, loR, loG, loB, hiR, hiG, hiB);
+            if (y > 0) tail = enqueueSampledBackgroundCandidate(pixels, background, keep, subjectKeep, hintPixels, workArea, edgeWall, queue, tail, idx - w, idx, bgR, bgG, bgB, meanThreshold, localThreshold, loR, loG, loB, hiR, hiG, hiB);
+            if (y < h - 1) tail = enqueueSampledBackgroundCandidate(pixels, background, keep, subjectKeep, hintPixels, workArea, edgeWall, queue, tail, idx + w, idx, bgR, bgG, bgB, meanThreshold, localThreshold, loR, loG, loB, hiR, hiG, hiB);
+        }
+
+        background = recoverSampledBackgroundIslands(
+                pixels, background, keep, subjectKeep, hintPixels, workArea, edgeWall,
+                w, h, bgR, bgG, bgB, meanThreshold, loR, loG, loB, hiR, hiG, hiB);
+
+        int growIterations = s < 0.55 ? 0 : (s < 0.85 ? 1 : 2);
+        if (growIterations > 0) background = dilateByteMask(background, w, h, growIterations);
+
+        boolean changed = false;
+        for (int i = 0; i < count; i++) {
+            if (background[i] == 0) continue;
+            boolean directlySampled = maskOpacity(hintPixels[i]) > MASK_OPACITY_THRESHOLD;
+            if (!directlySampled && keep != null && maskOpacity(keep[i]) > MASK_OPACITY_THRESHOLD) continue;
+            if (!directlySampled && subjectKeep != null && protectedSubjectBlocksRemoval(pixels[i], subjectKeep[i], bgR, bgG, bgB, meanThreshold, loR, loG, loB, hiR, hiG, hiB)) continue;
+            if (((pixels[i] >>> 24) & 0xff) == 0) continue;
+            pixels[i] &= 0x00ffffff;
+            changed = true;
+        }
+        return changed;
+    }
+
+    private byte[] expandSampledBackgroundSeed(int[] pixels, byte[] sampleSeed,
+                                               int w, int h, int bgR, int bgG, int bgB,
+                                               int meanThreshold,
+                                               int loR, int loG, int loB, int hiR, int hiG, int hiB) {
+        byte[] footprint = dilateByteMask(sampleSeed, w, h, 3);
+        byte[] expanded = sampleSeed.clone();
+        for (int i = 0; i < pixels.length; i++) {
+            if (footprint[i] == 0 || expanded[i] != 0) continue;
+            if (((pixels[i] >>> 24) & 0xff) <= 8) continue;
+            if (!isGloballySampledBackgroundCandidate(pixels[i], bgR, bgG, bgB, meanThreshold, loR, loG, loB, hiR, hiG, hiB)) continue;
+            expanded[i] = 1;
+        }
+        return expanded;
+    }
+
+    private void clearMaskWhere(byte[] mask, byte[] clear) {
+        if (mask == null || clear == null) return;
+        int count = Math.min(mask.length, clear.length);
+        for (int i = 0; i < count; i++) {
+            if (clear[i] != 0) mask[i] = 0;
+        }
+    }
+
+    private byte[] recoverSampledBackgroundIslands(int[] pixels, byte[] background,
+                                                   int[] keep, byte[] subjectKeep, int[] hintPixels,
+                                                   byte[] workArea, byte[] edgeWall,
+                                                   int w, int h, int bgR, int bgG, int bgB,
+                                                   int meanThreshold,
+                                                   int loR, int loG, int loB, int hiR, int hiG, int hiB) {
+        int count = w * h;
+        byte[] eligible = new byte[count];
+        byte[] strict = new byte[count];
+        for (int i = 0; i < count; i++) {
+            if (background[i] != 0) continue;
+            boolean directlySampled = hintPixels != null && maskOpacity(hintPixels[i]) > MASK_OPACITY_THRESHOLD;
+            if (!directlySampled && keep != null && maskOpacity(keep[i]) > MASK_OPACITY_THRESHOLD) continue;
+            if (!directlySampled && subjectKeep != null && protectedSubjectBlocksRemoval(pixels[i], subjectKeep[i], bgR, bgG, bgB, meanThreshold, loR, loG, loB, hiR, hiG, hiB)) continue;
+            if (!directlySampled && edgeWall != null && edgeWall[i] != 0) continue;
+            if (!directlySampled && workArea != null && workArea[i] == 0) continue;
+            if (!isGloballySampledBackgroundCandidate(pixels[i], bgR, bgG, bgB, meanThreshold, loR, loG, loB, hiR, hiG, hiB)) continue;
+            eligible[i] = 1;
+            if (stronglyMatchesSampledBackground(pixels[i], bgR, bgG, bgB, meanThreshold, loR, loG, loB, hiR, hiG, hiB)) {
+                strict[i] = 1;
+            }
+        }
+
+        byte[] recovered = background.clone();
+        byte[] visited = new byte[count];
+        int[] queue = new int[count];
+        int[] component = new int[count];
+        int minIslandArea = Math.max(64, Math.round(count * 0.0012f));
+        for (int i = 0; i < count; i++) {
+            if (eligible[i] == 0 || visited[i] != 0) continue;
+
+            int head = 0;
+            int tail = 0;
+            int compCount = 0;
+            int strictCount = 0;
+            boolean touchesBackground = false;
+            boolean touchesEdge = false;
+            visited[i] = 1;
+            queue[tail++] = i;
+
+            while (head < tail) {
+                int idx = queue[head++];
+                component[compCount++] = idx;
+                int x = idx % w;
+                int y = idx / w;
+                if (x == 0 || y == 0 || x == w - 1 || y == h - 1) touchesEdge = true;
+                if (strict[idx] != 0) strictCount++;
+
+                if (x > 0) {
+                    int ni = idx - 1;
+                    if (recovered[ni] != 0) touchesBackground = true;
+                    else if (eligible[ni] != 0 && visited[ni] == 0) {
+                        visited[ni] = 1;
+                        queue[tail++] = ni;
+                    }
+                }
+                if (x < w - 1) {
+                    int ni = idx + 1;
+                    if (recovered[ni] != 0) touchesBackground = true;
+                    else if (eligible[ni] != 0 && visited[ni] == 0) {
+                        visited[ni] = 1;
+                        queue[tail++] = ni;
+                    }
+                }
+                if (y > 0) {
+                    int ni = idx - w;
+                    if (recovered[ni] != 0) touchesBackground = true;
+                    else if (eligible[ni] != 0 && visited[ni] == 0) {
+                        visited[ni] = 1;
+                        queue[tail++] = ni;
+                    }
+                }
+                if (y < h - 1) {
+                    int ni = idx + w;
+                    if (recovered[ni] != 0) touchesBackground = true;
+                    else if (eligible[ni] != 0 && visited[ni] == 0) {
+                        visited[ni] = 1;
+                        queue[tail++] = ni;
+                    }
+                }
+            }
+
+            boolean stronglySameIsland = compCount >= minIslandArea
+                    && strictCount >= Math.round(compCount * 0.82f);
+            if (!touchesBackground && !touchesEdge && !stronglySameIsland) continue;
+            for (int c = 0; c < compCount; c++) {
+                recovered[component[c]] = 1;
+            }
+        }
+        return recovered;
+    }
+
+    private byte[] buildEnclosedStrokeRegion(int[] hintPixels, int w, int h) {
+        int count = w * h;
+        byte[] stroke = new byte[count];
+        int strokeCount = 0;
+        for (int i = 0; i < count; i++) {
+            if (maskOpacity(hintPixels[i]) <= MASK_OPACITY_THRESHOLD) continue;
+            stroke[i] = 1;
+            strokeCount++;
+        }
+        if (strokeCount < 16) return null;
+
+        byte[] barrier = dilateByteMask(stroke, w, h, 4);
+        byte[] outside = new byte[count];
+        int[] queue = new int[count];
+        int head = 0, tail = 0;
+        for (int x = 0; x < w; x++) {
+            tail = enqueueOutsideStrokeFill(barrier, outside, queue, tail, x);
+            tail = enqueueOutsideStrokeFill(barrier, outside, queue, tail, (h - 1) * w + x);
+        }
+        for (int y = 0; y < h; y++) {
+            tail = enqueueOutsideStrokeFill(barrier, outside, queue, tail, y * w);
+            tail = enqueueOutsideStrokeFill(barrier, outside, queue, tail, y * w + w - 1);
+        }
+        while (head < tail) {
+            int idx = queue[head++];
+            int x = idx % w;
+            int y = idx / w;
+            if (x > 0) tail = enqueueOutsideStrokeFill(barrier, outside, queue, tail, idx - 1);
+            if (x < w - 1) tail = enqueueOutsideStrokeFill(barrier, outside, queue, tail, idx + 1);
+            if (y > 0) tail = enqueueOutsideStrokeFill(barrier, outside, queue, tail, idx - w);
+            if (y < h - 1) tail = enqueueOutsideStrokeFill(barrier, outside, queue, tail, idx + w);
+        }
+
+        byte[] enclosed = new byte[count];
+        int enclosedCount = 0;
+        for (int i = 0; i < count; i++) {
+            if (outside[i] != 0 || barrier[i] != 0) continue;
+            enclosed[i] = 1;
+            enclosedCount++;
+        }
+        if (enclosedCount < Math.max(64, strokeCount * 2)) return null;
+        if (enclosedCount > (int) (count * 0.96)) return null;
+        for (int i = 0; i < count; i++) {
+            if (stroke[i] != 0) enclosed[i] = 1;
+        }
+        return enclosed;
+    }
+
+    private int enqueueOutsideStrokeFill(byte[] barrier, byte[] outside, int[] queue, int tail, int idx) {
+        if (idx < 0 || idx >= barrier.length) return tail;
+        if (barrier[idx] != 0 || outside[idx] != 0) return tail;
+        outside[idx] = 1;
+        queue[tail++] = idx;
+        return tail;
+    }
+
+    private byte[] buildEdgeWallMask(int[] pixels, int w, int h, int threshold) {
+        int count = w * h;
+        byte[] wall = new byte[count];
+        for (int y = 0; y < h; y++) {
+            int row = y * w;
+            for (int x = 0; x < w; x++) {
+                int idx = row + x;
+                if (x < w - 1 && colorDistance(pixels[idx], pixels[idx + 1]) > threshold) {
+                    wall[idx] = 1;
+                    wall[idx + 1] = 1;
+                }
+                if (y < h - 1 && colorDistance(pixels[idx], pixels[idx + w]) > threshold) {
+                    wall[idx] = 1;
+                    wall[idx + w] = 1;
+                }
+            }
+        }
+        return wall;
+    }
+
+    private byte[] buildPortraitProtectionMask(int[] pixels, int[] sampleMask, int w, int h) {
+        int count = w * h;
+        byte[] protect = new byte[count];
+        byte[] skin = new byte[count];
+        for (int i = 0; i < count; i++) {
+            if (maskOpacity(sampleMask[i]) > MASK_OPACITY_THRESHOLD) continue;
+            if (!looksLikeSkinPixel(pixels[i])) continue;
+            skin[i] = 1;
+        }
+
+        byte[] visited = new byte[count];
+        int[] queue = new int[count];
+        int[] component = new int[count];
+        int[] bestComponent = null;
+        int bestCount = 0;
+        int minX = w, minY = h, maxX = -1, maxY = -1;
+        double bestScore = 0;
+
+        for (int i = 0; i < count; i++) {
+            if (skin[i] == 0 || visited[i] != 0) continue;
+            int head = 0, tail = 0, compCount = 0;
+            int cMinX = w, cMinY = h, cMaxX = -1, cMaxY = -1;
+            visited[i] = 1;
+            queue[tail++] = i;
+            while (head < tail) {
+                int idx = queue[head++];
+                component[compCount++] = idx;
+                int x = idx % w;
+                int y = idx / w;
+                if (x < cMinX) cMinX = x;
+                if (x > cMaxX) cMaxX = x;
+                if (y < cMinY) cMinY = y;
+                if (y > cMaxY) cMaxY = y;
+                for (int dy = -1; dy <= 1; dy++) {
+                    int ny = y + dy;
+                    if (ny < 0 || ny >= h) continue;
+                    for (int dx = -1; dx <= 1; dx++) {
+                        if (dx == 0 && dy == 0) continue;
+                        int nx = x + dx;
+                        if (nx < 0 || nx >= w) continue;
+                        int ni = ny * w + nx;
+                        if (skin[ni] == 0 || visited[ni] != 0) continue;
+                        visited[ni] = 1;
+                        queue[tail++] = ni;
+                    }
+                }
+            }
+            if (compCount < 24) continue;
+            int compW = Math.max(1, cMaxX - cMinX + 1);
+            int compH = Math.max(1, cMaxY - cMinY + 1);
+            boolean touchesEdge = cMinX <= 1 || cMaxX >= w - 2 || cMinY <= 1 || cMaxY >= h - 2;
+            double score = compCount;
+            if (touchesEdge) score *= 0.08;
+            if (compW > w * 0.58 || compH > h * 0.72) score *= 0.18;
+            if ((double) compW * compH > count * 0.32) score *= 0.15;
+            double cx = (cMinX + cMaxX) / 2.0;
+            double centerFavor = 1.0 - Math.min(1.0, Math.abs(cx - w / 2.0) / Math.max(1.0, w / 2.0));
+            score *= 0.55 + centerFavor * 0.45;
+            if (score > bestScore) {
+                bestScore = score;
+                bestCount = compCount;
+                bestComponent = Arrays.copyOf(component, compCount);
+                minX = cMinX;
+                minY = cMinY;
+                maxX = cMaxX;
+                maxY = cMaxY;
+            }
+        }
+
+        int skinCount = bestCount;
+        if (skinCount < 24) return null;
+        for (int idx : bestComponent) protect[idx] = 2;
+
+        int skinW = Math.max(1, maxX - minX + 1);
+        int skinH = Math.max(1, maxY - minY + 1);
+        int padX = Math.max(12, Math.round(skinW * 0.80f));
+        int padTop = Math.max(16, Math.round(skinH * 1.10f));
+        int padBottom = Math.max(12, Math.round(skinH * 1.15f));
+        int roiLeft = Math.max(0, minX - padX);
+        int roiRight = Math.min(w - 1, maxX + padX);
+        int roiTop = Math.max(0, minY - padTop);
+        int roiBottom = Math.min(h - 1, maxY + padBottom);
+
+        int protectedCount = skinCount;
+        int maxProtectedCount = skinCount + Math.max(256, Math.round(skinCount * 5.0f));
+        int[] hairQueue = new int[count];
+        int head = 0, tail = 0;
+        for (int i = 0; i < count; i++) {
+            if (protect[i] != 0) hairQueue[tail++] = i;
+        }
+        while (head < tail) {
+            int idx = hairQueue[head++];
+            int x = idx % w;
+            int y = idx / w;
+            for (int dy = -1; dy <= 1; dy++) {
+                if (protectedCount >= maxProtectedCount) break;
+                int ny = y + dy;
+                if (ny < roiTop || ny > roiBottom) continue;
+                for (int dx = -1; dx <= 1; dx++) {
+                    if (protectedCount >= maxProtectedCount) break;
+                    if (dx == 0 && dy == 0) continue;
+                    int nx = x + dx;
+                    if (nx < roiLeft || nx > roiRight) continue;
+                    int ni = ny * w + nx;
+                    if (protect[ni] != 0) continue;
+                    if (maskOpacity(sampleMask[ni]) > MASK_OPACITY_THRESHOLD) continue;
+                    if (!looksLikeHairPixel(pixels[ni])) continue;
+                    protect[ni] = 2;
+                    hairQueue[tail++] = ni;
+                    protectedCount++;
+                }
+            }
+        }
+        int bodyTop = Math.max(0, maxY - Math.round(skinH * 0.10f));
+        int bodyBottom = Math.min(h - 1, maxY + Math.max(Math.round(skinH * 5.0f), Math.round(h * 0.35f)));
+        float centerX = (minX + maxX) / 2.0f;
+        int bodyCap = protectedCount + Math.max(384, Math.round(skinCount * 4.5f));
+        for (int y = bodyTop; y <= bodyBottom && protectedCount < bodyCap; y++) {
+            float t = bodyBottom == bodyTop ? 0f : (y - bodyTop) / (float) Math.max(1, bodyBottom - bodyTop);
+            int halfWidth = Math.max(Math.round(skinW * 0.90f), Math.round(skinW * (0.95f + 1.35f * t)));
+            int left = Math.max(0, Math.round(centerX - halfWidth));
+            int right = Math.min(w - 1, Math.round(centerX + halfWidth));
+            for (int x = left; x <= right && protectedCount < bodyCap; x++) {
+                int idx = y * w + x;
+                if (protect[idx] != 0) continue;
+                if (maskOpacity(sampleMask[idx]) > MASK_OPACITY_THRESHOLD) continue;
+                if (!looksLikePortraitBodyPixel(pixels[idx])) continue;
+                protect[idx] = 1;
+                protectedCount++;
+            }
+        }
+        if (protectedCount < 24) return null;
+        return protect;
+    }
+
+    private byte[] dilateByteMask(byte[] mask, int w, int h, int iterations) {
+        byte[] cur = mask;
+        for (int iter = 0; iter < iterations; iter++) {
+            byte[] next = cur.clone();
+            for (int y = 0; y < h; y++) {
+                int row = y * w;
+                for (int x = 0; x < w; x++) {
+                    int idx = row + x;
+                    if (cur[idx] != 0) continue;
+                    boolean near = false;
+                    for (int dy = -1; dy <= 1 && !near; dy++) {
+                        int ny = y + dy;
+                        if (ny < 0 || ny >= h) continue;
+                        for (int dx = -1; dx <= 1; dx++) {
+                            int nx = x + dx;
+                            if (nx < 0 || nx >= w) continue;
+                            if (cur[ny * w + nx] != 0) {
+                                near = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (near) next[idx] = 1;
+                }
+            }
+            cur = next;
+        }
+        return cur;
+    }
+
+    private boolean looksLikeSkinPixel(int p) {
+        int alpha = (p >>> 24) & 0xff;
+        if (alpha <= 8) return false;
+        int r = (p >> 16) & 0xff;
+        int g = (p >> 8) & 0xff;
+        int b = p & 0xff;
+        int max = Math.max(r, Math.max(g, b));
+        int min = Math.min(r, Math.min(g, b));
+        return r > 55 && g > 35 && b > 18
+                && (max - min) > 12
+                && r > b
+                && (r - g) > -8;
+    }
+
+    private boolean looksLikeHairPixel(int p) {
+        int alpha = (p >>> 24) & 0xff;
+        if (alpha <= 8) return false;
+        int r = (p >> 16) & 0xff;
+        int g = (p >> 8) & 0xff;
+        int b = p & 0xff;
+        int max = Math.max(r, Math.max(g, b));
+        int min = Math.min(r, Math.min(g, b));
+        int chroma = max - min;
+        int brightness = (r + g + b) / 3;
+        boolean darkHair = brightness < 95 && chroma < 70;
+        boolean brownHair = r >= g - 12 && g >= b - 18 && brightness >= 45 && brightness < 150 && chroma > 12;
+        boolean blondHair = r > 115 && g > 90 && b < 135 && r >= g - 22;
+        return darkHair || brownHair || blondHair;
+    }
+
+    private boolean looksLikePortraitBodyPixel(int p) {
+        int alpha = (p >>> 24) & 0xff;
+        if (alpha <= 8) return false;
+        if (looksLikeSkinPixel(p) || looksLikeHairPixel(p)) return true;
+        int r = (p >> 16) & 0xff;
+        int g = (p >> 8) & 0xff;
+        int b = p & 0xff;
+        int max = Math.max(r, Math.max(g, b));
+        int min = Math.min(r, Math.min(g, b));
+        int chroma = max - min;
+        int brightness = (r + g + b) / 3;
+        boolean lightClothing = brightness > 135 && chroma < 95;
+        boolean darkClothing = brightness < 92 && chroma < 88;
+        boolean coloredClothing = brightness > 35 && brightness < 230 && chroma > 18;
+        return lightClothing || darkClothing || coloredClothing;
+    }
+
+    private int enqueueSampledBackgroundCandidate(int[] pixels, byte[] background,
+                                                  int[] keep, byte[] subjectKeep, int[] hintPixels, byte[] workArea, byte[] edgeWall,
+                                                  int[] queue, int tail,
+                                                  int idx, int parentIdx, int bgR, int bgG, int bgB,
+                                                  int meanThreshold, int localThreshold,
+                                                  int loR, int loG, int loB, int hiR, int hiG, int hiB) {
+        if (idx < 0 || idx >= pixels.length || background[idx] != 0) return tail;
+        boolean directlySampled = hintPixels != null && maskOpacity(hintPixels[idx]) > MASK_OPACITY_THRESHOLD;
+        if (!directlySampled && keep != null && maskOpacity(keep[idx]) > MASK_OPACITY_THRESHOLD) return tail;
+        if (!directlySampled && subjectKeep != null && protectedSubjectBlocksRemoval(pixels[idx], subjectKeep[idx], bgR, bgG, bgB, meanThreshold, loR, loG, loB, hiR, hiG, hiB)) return tail;
+        if (!directlySampled && edgeWall != null && edgeWall[idx] != 0) return tail;
+        if (!directlySampled && workArea != null && workArea[idx] == 0) return tail;
+        if (isSampledBackgroundCandidate(pixels[idx], pixels[parentIdx], bgR, bgG, bgB,
+                meanThreshold, localThreshold, loR, loG, loB, hiR, hiG, hiB)) {
+            background[idx] = 1;
+            queue[tail++] = idx;
+        }
+        return tail;
+    }
+
+    private boolean protectedSubjectBlocksRemoval(int pixel, byte subjectFlag, int bgR, int bgG, int bgB,
+                                                  int meanThreshold,
+                                                  int loR, int loG, int loB, int hiR, int hiG, int hiB) {
+        if (subjectFlag == 0) return false;
+        return true;
+    }
+
+    private boolean stronglyMatchesSampledBackground(int pixel, int bgR, int bgG, int bgB, int meanThreshold,
+                                                     int loR, int loG, int loB, int hiR, int hiG, int hiB) {
+        int alpha = (pixel >>> 24) & 0xff;
+        if (alpha <= 8) return true;
+        int r = (pixel >> 16) & 0xff;
+        int g = (pixel >> 8) & 0xff;
+        int b = pixel & 0xff;
+        if (r >= loR && r <= hiR && g >= loG && g <= hiG && b >= loB && b <= hiB) return true;
+        return colorDistance(pixel, bgR, bgG, bgB) <= Math.max(32, meanThreshold * 0.72);
+    }
+
+    private boolean isGloballySampledBackgroundCandidate(int pixel, int bgR, int bgG, int bgB,
+                                                         int meanThreshold,
+                                                         int loR, int loG, int loB, int hiR, int hiG, int hiB) {
+        int alpha = (pixel >>> 24) & 0xff;
+        if (alpha <= 8) return true;
+        int r = (pixel >> 16) & 0xff;
+        int g = (pixel >> 8) & 0xff;
+        int b = pixel & 0xff;
+        if (r >= loR && r <= hiR && g >= loG && g <= hiG && b >= loB && b <= hiB) return true;
+        return colorDistance(pixel, bgR, bgG, bgB) <= meanThreshold;
+    }
+
+    private boolean isSampledBackgroundCandidate(int pixel, int parentPixel, int bgR, int bgG, int bgB,
+                                                 int meanThreshold, int localThreshold,
+                                                 int loR, int loG, int loB, int hiR, int hiG, int hiB) {
+        int alpha = (pixel >>> 24) & 0xff;
+        if (alpha <= 8) return true;
+        int r = (pixel >> 16) & 0xff;
+        int g = (pixel >> 8) & 0xff;
+        int b = pixel & 0xff;
+        if (r >= loR && r <= hiR && g >= loG && g <= hiG && b >= loB && b <= hiB) return true;
+        if (colorDistance(pixel, bgR, bgG, bgB) <= meanThreshold) return true;
+        int pr = (parentPixel >> 16) & 0xff;
+        int pg = (parentPixel >> 8) & 0xff;
+        int pb = parentPixel & 0xff;
+        return colorDistance(pixel, pr, pg, pb) <= localThreshold;
+    }
+
+    private void applyHeuristicBackgroundCutout(int[] pixels, int w, int h, double strength) {
+        int count = w * h;
+        if (count == 0) return;
+        double s = clampStrength(strength);
+
+        long sumR = 0, sumG = 0, sumB = 0;
+        int samples = 0;
+        for (int x = 0; x < w; x++) {
+            int top = pixels[x];
+            int bottom = pixels[(h - 1) * w + x];
+            if (((top >>> 24) & 0xff) > 8) {
+                sumR += (top >> 16) & 0xff;
+                sumG += (top >> 8) & 0xff;
+                sumB += top & 0xff;
+                samples++;
+            }
+            if (((bottom >>> 24) & 0xff) > 8) {
+                sumR += (bottom >> 16) & 0xff;
+                sumG += (bottom >> 8) & 0xff;
+                sumB += bottom & 0xff;
+                samples++;
+            }
+        }
+        for (int y = 1; y < h - 1; y++) {
+            int left = pixels[y * w];
+            int right = pixels[y * w + w - 1];
+            if (((left >>> 24) & 0xff) > 8) {
+                sumR += (left >> 16) & 0xff;
+                sumG += (left >> 8) & 0xff;
+                sumB += left & 0xff;
+                samples++;
+            }
+            if (((right >>> 24) & 0xff) > 8) {
+                sumR += (right >> 16) & 0xff;
+                sumG += (right >> 8) & 0xff;
+                sumB += right & 0xff;
+                samples++;
+            }
+        }
+        if (samples == 0) return;
+
+        int bgR = (int) (sumR / samples);
+        int bgG = (int) (sumG / samples);
+        int bgB = (int) (sumB / samples);
+        int stepX = Math.max(1, w / 512);
+        int stepY = Math.max(1, h / 512);
+        double distSum = 0;
+        int distSamples = 0;
+        for (int x = 0; x < w; x += stepX) {
+            distSum += colorDistance(pixels[x], bgR, bgG, bgB);
+            distSum += colorDistance(pixels[(h - 1) * w + x], bgR, bgG, bgB);
+            distSamples += 2;
+        }
+        for (int y = 0; y < h; y += stepY) {
+            distSum += colorDistance(pixels[y * w], bgR, bgG, bgB);
+            distSum += colorDistance(pixels[y * w + w - 1], bgR, bgG, bgB);
+            distSamples += 2;
+        }
+        double meanBorderDistance = distSamples == 0 ? 0 : distSum / distSamples;
+        int threshold = (int) Math.max(28, Math.min(150, meanBorderDistance * (1.6 + s * 1.2) + 18 + 42 * s));
+        int[] protectSampleMask = new int[count];
+        byte[] subjectKeep = buildPortraitProtectionMask(pixels, protectSampleMask, w, h);
+        byte[] edgeWall = dilateByteMask(
+                buildEdgeWallMask(pixels, w, h, (int) Math.max(44, Math.min(110, threshold * 0.85))),
+                w,
+                h,
+                1);
+
+        byte[] background = new byte[count];
+        int[] queue = new int[count];
+        int head = 0, tail = 0;
+        for (int x = 0; x < w; x++) {
+            tail = enqueueBackgroundCandidate(pixels, background, subjectKeep, edgeWall, queue, tail, x, bgR, bgG, bgB, threshold);
+            tail = enqueueBackgroundCandidate(pixels, background, subjectKeep, edgeWall, queue, tail, (h - 1) * w + x, bgR, bgG, bgB, threshold);
+        }
+        for (int y = 1; y < h - 1; y++) {
+            tail = enqueueBackgroundCandidate(pixels, background, subjectKeep, edgeWall, queue, tail, y * w, bgR, bgG, bgB, threshold);
+            tail = enqueueBackgroundCandidate(pixels, background, subjectKeep, edgeWall, queue, tail, y * w + w - 1, bgR, bgG, bgB, threshold);
+        }
+
+        while (head < tail) {
+            int idx = queue[head++];
+            int x = idx % w;
+            int y = idx / w;
+            if (x > 0) tail = enqueueBackgroundCandidate(pixels, background, subjectKeep, edgeWall, queue, tail, idx - 1, bgR, bgG, bgB, threshold);
+            if (x < w - 1) tail = enqueueBackgroundCandidate(pixels, background, subjectKeep, edgeWall, queue, tail, idx + 1, bgR, bgG, bgB, threshold);
+            if (y > 0) tail = enqueueBackgroundCandidate(pixels, background, subjectKeep, edgeWall, queue, tail, idx - w, bgR, bgG, bgB, threshold);
+            if (y < h - 1) tail = enqueueBackgroundCandidate(pixels, background, subjectKeep, edgeWall, queue, tail, idx + w, bgR, bgG, bgB, threshold);
+        }
+
+        for (int i = 0; i < count; i++) {
+            if (background[i] != 0) pixels[i] &= 0x00ffffff;
+        }
+    }
+
+    private int enqueueBackgroundCandidate(int[] pixels, byte[] background, byte[] subjectKeep, byte[] edgeWall,
+                                           int[] queue, int tail,
+                                           int idx, int bgR, int bgG, int bgB, int threshold) {
+        if (idx < 0 || idx >= pixels.length || background[idx] != 0) return tail;
+        if (subjectKeep != null && subjectKeep[idx] != 0) return tail;
+        if (edgeWall != null && edgeWall[idx] != 0) return tail;
+        int p = pixels[idx];
+        int alpha = (p >>> 24) & 0xff;
+        if (alpha <= 8 || colorDistance(p, bgR, bgG, bgB) <= threshold) {
+            background[idx] = 1;
+            queue[tail++] = idx;
+        }
+        return tail;
+    }
+
+    private Bitmap inpaintBitmap(Bitmap source, Bitmap maskBitmap) {
+        int w = source.getWidth();
+        int h = source.getHeight();
+        int count = w * h;
+        int[] pixels = new int[count];
+        source.getPixels(pixels, 0, w, 0, 0, w, h);
+
+        Bitmap sizedMask = ensureBitmapSize(maskBitmap, w, h);
+        int[] maskPixels = new int[count];
+        sizedMask.getPixels(maskPixels, 0, w, 0, 0, w, h);
+
+        byte[] masked = new byte[count];
+        byte[] known = new byte[count];
+        byte[] queued = new byte[count];
+        int maskCount = 0;
+        long sumA = 0, sumR = 0, sumG = 0, sumB = 0;
+        int knownCount = 0;
+        for (int i = 0; i < count; i++) {
+            if (maskOpacity(maskPixels[i]) > MASK_OPACITY_THRESHOLD) {
+                masked[i] = 1;
+                maskCount++;
+            } else {
+                known[i] = 1;
+                int p = pixels[i];
+                int alpha = (p >>> 24) & 0xff;
+                if (alpha > 8) {
+                    sumA += alpha;
+                    sumR += (p >> 16) & 0xff;
+                    sumG += (p >> 8) & 0xff;
+                    sumB += p & 0xff;
+                    knownCount++;
+                }
+            }
+        }
+        if (maskCount == 0) return source.copy(Bitmap.Config.ARGB_8888, true);
+
+        int fallback = knownCount > 0
+                ? (((int) (sumA / knownCount)) << 24)
+                    | (((int) (sumR / knownCount)) << 16)
+                    | (((int) (sumG / knownCount)) << 8)
+                    | ((int) (sumB / knownCount))
+                : 0xff202020;
+
+        int[] queue = new int[maskCount];
+        int head = 0, tail = 0;
+        for (int i = 0; i < count; i++) {
+            if (masked[i] == 0 || !hasKnownNeighbor(known, w, h, i)) continue;
+            queued[i] = 1;
+            queue[tail++] = i;
+        }
+
+        if (tail == 0) {
+            for (int i = 0; i < count; i++) {
+                if (masked[i] != 0) pixels[i] = fallback;
+            }
+        } else {
+            while (head < tail) {
+                int idx = queue[head++];
+                if (known[idx] != 0) continue;
+                int x = idx % w;
+                int y = idx / w;
+                pixels[idx] = averageKnownPixel(pixels, known, w, h, x, y, fallback);
+                known[idx] = 1;
+                for (int dy = -1; dy <= 1; dy++) {
+                    int ny = y + dy;
+                    if (ny < 0 || ny >= h) continue;
+                    for (int dx = -1; dx <= 1; dx++) {
+                        if (dx == 0 && dy == 0) continue;
+                        int nx = x + dx;
+                        if (nx < 0 || nx >= w) continue;
+                        int ni = ny * w + nx;
+                        if (masked[ni] == 0 || known[ni] != 0 || queued[ni] != 0) continue;
+                        queued[ni] = 1;
+                        queue[tail++] = ni;
+                    }
+                }
+            }
+            for (int i = 0; i < count; i++) {
+                if (masked[i] != 0 && known[i] == 0) pixels[i] = fallback;
+            }
+        }
+
+        addSubtleInpaintDetail(pixels, masked, w, h);
+        Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        out.setPixels(pixels, 0, w, 0, 0, w, h);
+        return out;
+    }
+
+    private boolean hasKnownNeighbor(byte[] known, int w, int h, int idx) {
+        int x = idx % w;
+        int y = idx / w;
+        for (int dy = -1; dy <= 1; dy++) {
+            int ny = y + dy;
+            if (ny < 0 || ny >= h) continue;
+            for (int dx = -1; dx <= 1; dx++) {
+                if (dx == 0 && dy == 0) continue;
+                int nx = x + dx;
+                if (nx < 0 || nx >= w) continue;
+                if (known[ny * w + nx] != 0) return true;
+            }
+        }
+        return false;
+    }
+
+    private int averageKnownPixel(int[] pixels, byte[] known, int w, int h, int x, int y, int fallback) {
+        float total = 0f;
+        float a = 0f, r = 0f, g = 0f, b = 0f;
+        for (int radius = 1; radius <= 4 && total <= 0f; radius++) {
+            for (int dy = -radius; dy <= radius; dy++) {
+                int ny = y + dy;
+                if (ny < 0 || ny >= h) continue;
+                for (int dx = -radius; dx <= radius; dx++) {
+                    if (dx == 0 && dy == 0) continue;
+                    int nx = x + dx;
+                    if (nx < 0 || nx >= w) continue;
+                    int ni = ny * w + nx;
+                    if (known[ni] == 0) continue;
+                    int p = pixels[ni];
+                    int alpha = (p >>> 24) & 0xff;
+                    float weight = (alpha <= 8 ? 0.25f : 1f) / (1f + Math.abs(dx) + Math.abs(dy));
+                    total += weight;
+                    a += alpha * weight;
+                    r += ((p >> 16) & 0xff) * weight;
+                    g += ((p >> 8) & 0xff) * weight;
+                    b += (p & 0xff) * weight;
+                }
+            }
+        }
+        if (total <= 0f) return fallback;
+        return (clampColor(a / total) << 24)
+                | (clampColor(r / total) << 16)
+                | (clampColor(g / total) << 8)
+                | clampColor(b / total);
+    }
+
+    private void addSubtleInpaintDetail(int[] pixels, byte[] masked, int w, int h) {
+        int[] copy = pixels.clone();
+        for (int y = 1; y < h - 1; y++) {
+            for (int x = 1; x < w - 1; x++) {
+                int idx = y * w + x;
+                if (masked[idx] == 0) continue;
+                int c = copy[idx];
+                int blurR = 0, blurG = 0, blurB = 0, n = 0;
+                for (int dy = -1; dy <= 1; dy++) {
+                    for (int dx = -1; dx <= 1; dx++) {
+                        int p = copy[(y + dy) * w + x + dx];
+                        blurR += (p >> 16) & 0xff;
+                        blurG += (p >> 8) & 0xff;
+                        blurB += p & 0xff;
+                        n++;
+                    }
+                }
+                int alpha = (c >>> 24) & 0xff;
+                int r = (c >> 16) & 0xff;
+                int g = (c >> 8) & 0xff;
+                int b = c & 0xff;
+                int nr = clampColor(r + (r - blurR / (float) n) * 0.35f);
+                int ng = clampColor(g + (g - blurG / (float) n) * 0.35f);
+                int nb = clampColor(b + (b - blurB / (float) n) * 0.35f);
+                pixels[idx] = (alpha << 24) | (nr << 16) | (ng << 8) | nb;
+            }
+        }
+    }
+
+    private int maskOpacity(int pixel) {
+        int alpha = (pixel >>> 24) & 0xff;
+        if (alpha <= 4) return 0;
+        int r = (pixel >> 16) & 0xff;
+        int g = (pixel >> 8) & 0xff;
+        int b = pixel & 0xff;
+        if (r > 120 && r > g * 1.35f && r > b * 1.35f) return alpha;
+        int lum = (r * 299 + g * 587 + b * 114) / 1000;
+        return Math.max(0, Math.min(255, Math.round(lum * (alpha / 255f))));
+    }
+
+    private double colorDistance(int pixel, int r, int g, int b) {
+        int dr = ((pixel >> 16) & 0xff) - r;
+        int dg = ((pixel >> 8) & 0xff) - g;
+        int db = (pixel & 0xff) - b;
+        return Math.sqrt(dr * dr + dg * dg + db * db);
+    }
+
+    private double colorDistance(int a, int b) {
+        int dr = ((a >> 16) & 0xff) - ((b >> 16) & 0xff);
+        int dg = ((a >> 8) & 0xff) - ((b >> 8) & 0xff);
+        int db = (a & 0xff) - (b & 0xff);
+        return Math.sqrt(dr * dr + dg * dg + db * db);
+    }
+
     private Bitmap sharpenBitmap(Bitmap source, int amount) {
-        float strength = Math.max(0f, Math.min(2f, amount / 100f));
+        float strength = Math.max(0f, Math.min(1.75f, amount / 100f * 1.35f));
         int w = source.getWidth();
         int h = source.getHeight();
         int[] src = new int[w * h];
@@ -2961,21 +5199,30 @@ public class MobileBackendServer {
             for (int x = 1; x < w - 1; x++) {
                 int idx = y * w + x;
                 int c = src[idx];
-                int sumR = 0, sumG = 0, sumB = 0;
-                for (int dy = -1; dy <= 1; dy++) {
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int p = src[(y + dy) * w + (x + dx)];
-                        sumR += (p >> 16) & 0xff;
-                        sumG += (p >> 8) & 0xff;
-                        sumB += p & 0xff;
-                    }
-                }
+                if (((c >>> 24) & 0xff) == 0) continue;
+                int p00 = src[(y - 1) * w + x - 1];
+                int p01 = src[(y - 1) * w + x];
+                int p02 = src[(y - 1) * w + x + 1];
+                int p10 = src[y * w + x - 1];
+                int p12 = src[y * w + x + 1];
+                int p20 = src[(y + 1) * w + x - 1];
+                int p21 = src[(y + 1) * w + x];
+                int p22 = src[(y + 1) * w + x + 1];
+                int blurR = (((p00 >> 16) & 0xff) + (((p01 >> 16) & 0xff) * 2) + ((p02 >> 16) & 0xff)
+                        + (((p10 >> 16) & 0xff) * 2) + (((c >> 16) & 0xff) * 4) + (((p12 >> 16) & 0xff) * 2)
+                        + ((p20 >> 16) & 0xff) + (((p21 >> 16) & 0xff) * 2) + ((p22 >> 16) & 0xff)) / 16;
+                int blurG = (((p00 >> 8) & 0xff) + (((p01 >> 8) & 0xff) * 2) + ((p02 >> 8) & 0xff)
+                        + (((p10 >> 8) & 0xff) * 2) + (((c >> 8) & 0xff) * 4) + (((p12 >> 8) & 0xff) * 2)
+                        + ((p20 >> 8) & 0xff) + (((p21 >> 8) & 0xff) * 2) + ((p22 >> 8) & 0xff)) / 16;
+                int blurB = ((p00 & 0xff) + ((p01 & 0xff) * 2) + (p02 & 0xff)
+                        + ((p10 & 0xff) * 2) + ((c & 0xff) * 4) + ((p12 & 0xff) * 2)
+                        + (p20 & 0xff) + ((p21 & 0xff) * 2) + (p22 & 0xff)) / 16;
                 int r = (c >> 16) & 0xff;
                 int g = (c >> 8) & 0xff;
                 int b = c & 0xff;
-                int nr = clampColor(Math.round(r + strength * (r - (sumR / 9f))));
-                int ng = clampColor(Math.round(g + strength * (g - (sumG / 9f))));
-                int nb = clampColor(Math.round(b + strength * (b - (sumB / 9f))));
+                int nr = clampColor(r + strength * (r - blurR));
+                int ng = clampColor(g + strength * (g - blurG));
+                int nb = clampColor(b + strength * (b - blurB));
                 dst[idx] = (c & 0xff000000) | (nr << 16) | (ng << 8) | nb;
             }
         }
@@ -3028,6 +5275,11 @@ public class MobileBackendServer {
         if (value < 0) return 0;
         if (value > 255) return 255;
         return Math.round(value);
+    }
+
+    private double clampStrength(double value) {
+        if (Double.isNaN(value) || Double.isInfinite(value)) return 0.7;
+        return Math.max(0.1, Math.min(1.0, value));
     }
 
     private void routeGalleryAlbum(Request request, OutputStream out, String tail) throws Exception {
@@ -3637,6 +5889,715 @@ public class MobileBackendServer {
                 .put("id", sid)
                 .put("name", "New Chat")
                 .put("history", new JSONArray());
+    }
+
+    private JSONObject documentsLibrary(Request request) throws Exception {
+        String sort = valueOr(request.query.get("sort"), "recent").trim().toLowerCase(Locale.US);
+        String search = valueOr(request.query.get("search"), "").trim().toLowerCase(Locale.US);
+        String language = valueOr(request.query.get("language"), "").trim().toLowerCase(Locale.US);
+        boolean archived = "true".equalsIgnoreCase(valueOr(request.query.get("archived"), "false"))
+                || "1".equals(valueOr(request.query.get("archived"), "false"));
+        int offset = Math.max(0, parseInt(request.query.get("offset"), 0));
+        int limit = Math.max(1, Math.min(50, parseInt(valueOr(request.query.get("limit"), "50"), 50)));
+
+        JSONArray documents = loadArray(PREF_DOCUMENTS);
+        JSONArray sessions = loadArray(PREF_SESSIONS);
+        List<JSONObject> filtered = new ArrayList<>();
+        JSONObject languages = new JSONObject();
+        List<String> sessionIds = new ArrayList<>();
+
+        for (int i = 0; i < documents.length(); i++) {
+            JSONObject doc = documents.optJSONObject(i);
+            if (doc == null) continue;
+            if (!doc.optBoolean("is_active", true)) continue;
+            if (doc.optBoolean("archived", false) != archived) continue;
+            String docLanguage = doc.optString("language", "text");
+            if (!language.isEmpty() && !language.equals(docLanguage.toLowerCase(Locale.US))) continue;
+            if (!search.isEmpty()) {
+                String haystack = (doc.optString("title", "") + "\n" + doc.optString("current_content", "")).toLowerCase(Locale.US);
+                boolean matches = true;
+                for (String token : search.split("\\s+")) {
+                    if (!token.isEmpty() && !haystack.contains(token)) {
+                        matches = false;
+                        break;
+                    }
+                }
+                if (!matches) continue;
+            }
+            filtered.add(documentLibrarySummary(doc, sessions));
+            languages.put(docLanguage, languages.optInt(docLanguage, 0) + 1);
+            String sid = doc.optString("session_id", "");
+            if (!sid.isEmpty() && !sessionIds.contains(sid)) sessionIds.add(sid);
+        }
+
+        Collections.sort(filtered, (a, b) -> {
+            if ("oldest".equals(sort)) return Long.compare(documentTimestamp(a, "updated_at"), documentTimestamp(b, "updated_at"));
+            if ("edits".equals(sort)) return Integer.compare(b.optInt("version_count", 1), a.optInt("version_count", 1));
+            if ("alpha".equals(sort)) return a.optString("title", "").compareToIgnoreCase(b.optString("title", ""));
+            return Long.compare(documentTimestamp(b, "updated_at"), documentTimestamp(a, "updated_at"));
+        });
+
+        JSONArray out = new JSONArray();
+        int end = Math.min(filtered.size(), offset + limit);
+        for (int i = offset; i < end; i++) out.put(filtered.get(i));
+        return new JSONObject()
+                .put("documents", out)
+                .put("total", filtered.size())
+                .put("offset", offset)
+                .put("limit", limit)
+                .put("languages", languages)
+                .put("session_count", sessionIds.size())
+                .put("mobile_standalone", true);
+    }
+
+    private JSONObject documentLibrarySummary(JSONObject doc, JSONArray sessions) throws Exception {
+        String content = doc.optString("current_content", "");
+        String preview = content.length() > 320 ? content.substring(0, 320) : content;
+        String sid = doc.optString("session_id", "");
+        return new JSONObject()
+                .put("id", doc.optString("id"))
+                .put("session_id", sid.isEmpty() ? JSONObject.NULL : sid)
+                .put("session_name", mobileSessionName(sessions, sid))
+                .put("title", doc.optString("title", "Untitled"))
+                .put("language", doc.optString("language", "text"))
+                .put("preview", preview)
+                .put("version_count", doc.optInt("version_count", 1))
+                .put("created_at", doc.optString("created_at", ""))
+                .put("updated_at", doc.optString("updated_at", ""))
+                .put("archived", doc.optBoolean("archived", false));
+    }
+
+    private String mobileSessionName(JSONArray sessions, String sid) {
+        if (sid == null || sid.isEmpty()) return "";
+        for (int i = 0; i < sessions.length(); i++) {
+            JSONObject s = sessions.optJSONObject(i);
+            if (s != null && sid.equals(s.optString("id"))) return s.optString("name", "");
+        }
+        return "";
+    }
+
+    private long documentTimestamp(JSONObject doc, String field) {
+        Object rawValue = doc == null ? null : doc.opt(field);
+        if (rawValue instanceof Number) return ((Number) rawValue).longValue();
+        String raw = String.valueOf(rawValue == null || rawValue == JSONObject.NULL ? "" : rawValue);
+        long numeric = parseLong(raw, Long.MIN_VALUE);
+        if (numeric != Long.MIN_VALUE) return numeric;
+        try {
+            SimpleDateFormat fmt = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
+            fmt.setTimeZone(TimeZone.getTimeZone("UTC"));
+            Date parsed = fmt.parse(raw);
+            return parsed == null ? 0L : parsed.getTime();
+        } catch (Exception ignored) {
+            return 0L;
+        }
+    }
+
+    private JSONObject mobilePersonalList() throws Exception {
+        JSONArray dirs = loadArray(PREF_PERSONAL_DIRECTORIES);
+        return new JSONObject()
+                .put("directories", dirs)
+                .put("files", new JSONArray())
+                .put("base_directory", appContext == null ? "" : appContext.getFilesDir().getAbsolutePath())
+                .put("allowed_directory_root", "Connect to PC for PC filesystem folders")
+                .put("rag_available", false)
+                .put("mcp_available", true)
+                .put("message", "Android standalone stores folder paths locally. Connect to the PC backend to index PC folder contents.")
+                .put("mobile_standalone", true);
+    }
+
+    private JSONObject mobileAddPersonalDirectory(Request request) throws Exception {
+        Map<String, String> form = parseForm(request);
+        String directory = valueOr(form.get("directory"), jsonString(requestJson(request), "directory", "")).trim();
+        if (directory.isEmpty()) {
+            return new JSONObject().put("success", false).put("detail", "Directory path is required").put("mobile_standalone", true);
+        }
+        if (directory.length() > 500) directory = directory.substring(0, 500);
+        JSONArray dirs = loadArray(PREF_PERSONAL_DIRECTORIES);
+        for (int i = 0; i < dirs.length(); i++) {
+            if (directory.equals(dirs.optString(i))) {
+                return new JSONObject()
+                        .put("success", true)
+                        .put("indexed_count", 0)
+                        .put("directory", directory)
+                        .put("message", "Folder path already saved on Android. Connect to PC for RAG indexing.")
+                        .put("mobile_standalone", true);
+            }
+        }
+        dirs.put(directory);
+        saveArray(PREF_PERSONAL_DIRECTORIES, dirs);
+        return new JSONObject()
+                .put("success", true)
+                .put("indexed_count", 0)
+                .put("directory", directory)
+                .put("message", "Folder path saved on Android. Connect to PC for RAG indexing.")
+                .put("mobile_standalone", true);
+    }
+
+    private JSONObject mobileRemovePersonalDirectory(String directory) throws Exception {
+        String target = valueOr(directory, "").trim();
+        JSONArray dirs = loadArray(PREF_PERSONAL_DIRECTORIES);
+        JSONArray kept = new JSONArray();
+        boolean removed = false;
+        for (int i = 0; i < dirs.length(); i++) {
+            String path = dirs.optString(i);
+            if (!removed && path.equals(target)) {
+                removed = true;
+                continue;
+            }
+            kept.put(path);
+        }
+        saveArray(PREF_PERSONAL_DIRECTORIES, kept);
+        return new JSONObject()
+                .put("success", true)
+                .put("removed", removed)
+                .put("directory", target)
+                .put("message", removed ? "Folder path removed" : "Folder path was not saved")
+                .put("mobile_standalone", true);
+    }
+
+    private void routeWorkspace(Request request, OutputStream out, String tail) throws Exception {
+        if (tail == null) tail = "";
+        if (tail.startsWith("/")) tail = tail.substring(1);
+        try {
+            if ("roots".equals(tail) && "GET".equals(request.method)) {
+                sendJson(out, 200, mobileWorkspaceRoots());
+                return;
+            }
+            if ("browse".equals(tail) && "GET".equals(request.method)) {
+                sendJson(out, 200, mobileWorkspaceBrowse(valueOr(request.query.get("path"), "")));
+                return;
+            }
+            if ("vet".equals(tail) && "GET".equals(request.method)) {
+                File resolved = mobileVetWorkspace(valueOr(request.query.get("path"), ""));
+                sendJson(out, 200, new JSONObject()
+                        .put("ok", resolved != null)
+                        .put("path", resolved == null ? JSONObject.NULL : resolved.getCanonicalPath())
+                        .put("mobile_standalone", true));
+                return;
+            }
+            if ("files/list".equals(tail) && "GET".equals(request.method)) {
+                sendJson(out, 200, mobileWorkspaceListFiles(request));
+                return;
+            }
+            if ("files/read".equals(tail) && "GET".equals(request.method)) {
+                sendJson(out, 200, mobileWorkspaceReadFile(request));
+                return;
+            }
+            if ("files/write".equals(tail) && "POST".equals(request.method)) {
+                sendJson(out, 200, mobileWorkspaceWriteFile(requestJson(request)));
+                return;
+            }
+            if ("files/mkdir".equals(tail) && "POST".equals(request.method)) {
+                sendJson(out, 200, mobileWorkspaceMkdir(requestJson(request)));
+                return;
+            }
+            if ("files/rename".equals(tail) && "POST".equals(request.method)) {
+                sendJson(out, 200, mobileWorkspaceRename(requestJson(request)));
+                return;
+            }
+            if ("files/delete".equals(tail) && "DELETE".equals(request.method)) {
+                sendJson(out, 200, mobileWorkspaceDelete(request));
+                return;
+            }
+            sendJson(out, 404, new JSONObject().put("detail", "Mobile workspace route not implemented"));
+        } catch (MobileHttpException ex) {
+            sendJson(out, ex.status, new JSONObject()
+                    .put("detail", ex.getMessage())
+                    .put("mobile_standalone", true));
+        }
+    }
+
+    private JSONObject mobileWorkspaceRoots() throws Exception {
+        File documents = mobilePublicWorkspaceDir(Environment.DIRECTORY_DOCUMENTS);
+        File downloads = mobilePublicWorkspaceDir(Environment.DIRECTORY_DOWNLOADS);
+        File base = mobileWorkspaceBaseDir();
+        JSONArray roots = new JSONArray();
+        if (documents != null) roots.put(mobileWorkspaceRootEntry("documents", "Documents", documents));
+        if (downloads != null) roots.put(mobileWorkspaceRootEntry("downloads", "Downloads", downloads));
+        roots.put(mobileWorkspaceRootEntry("workspace", "App Workspace", base));
+        roots.put(mobileWorkspaceRootEntry("scratch", "Scratch", mobileWorkspaceChildDir("Scratch")));
+        return new JSONObject()
+                .put("default_path", mobileDefaultWorkspaceRoot().getCanonicalPath())
+                .put("roots", roots)
+                .put("mobile_standalone", true);
+    }
+
+    private JSONObject mobileWorkspaceRootEntry(String key, String label, File dir) throws Exception {
+        return new JSONObject()
+                .put("key", key)
+                .put("label", label)
+                .put("path", dir.getCanonicalPath())
+                .put("selectable", true)
+                .put("public_android_storage", mobileIsPublicExternalWorkspace(dir))
+                .put("mobile_standalone", true);
+    }
+
+    private JSONObject mobileWorkspaceBrowse(String rawPath) throws Exception {
+        File target = mobileResolveAllowedWorkspacePath(rawPath, true);
+        if (!target.isDirectory()) target = mobileDefaultWorkspaceRoot();
+
+        JSONArray dirs = new JSONArray();
+        boolean truncated = false;
+        File[] children = target.listFiles();
+        if (children == null) throw mobileUnreadableWorkspace(target);
+        if (children != null) {
+            List<File> sorted = new ArrayList<>(Arrays.asList(children));
+            Collections.sort(sorted, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+            for (File child : sorted) {
+                if (dirs.length() >= MAX_MOBILE_WORKSPACE_DIRS) {
+                    truncated = true;
+                    break;
+                }
+                if (!child.isDirectory() || child.getName().startsWith(".")) continue;
+                if (mobileIsDeprecatedPrivateWorkspaceFolder(child)) continue;
+                dirs.put(new JSONObject()
+                        .put("name", child.getName())
+                        .put("path", child.getCanonicalPath()));
+            }
+        }
+
+        File containingRoot = mobileContainingWorkspaceRoot(target);
+        File parent = target.getParentFile();
+        String parentPath = null;
+        if (containingRoot != null
+                && parent != null
+                && mobileIsInside(containingRoot, parent)
+                && !target.getCanonicalPath().equals(containingRoot.getCanonicalPath())) {
+            parentPath = parent.getCanonicalPath();
+        }
+        return new JSONObject()
+                .put("path", target.getCanonicalPath())
+                .put("parent", parentPath == null ? JSONObject.NULL : parentPath)
+                .put("dirs", dirs)
+                .put("truncated", truncated)
+                .put("selectable", true)
+                .put("mobile_standalone", true);
+    }
+
+    private JSONObject mobileWorkspaceListFiles(Request request) throws Exception {
+        File root = mobileWorkspaceRootOrThrow(valueOr(request.query.get("workspace"), ""));
+        String rawPath = valueOr(request.query.get("path"), "");
+        int limit = Math.max(1, Math.min(MAX_MOBILE_WORKSPACE_FILE_ENTRIES,
+                parseInt(valueOr(request.query.get("limit"), String.valueOf(DEFAULT_MOBILE_WORKSPACE_FILE_ENTRIES)),
+                        DEFAULT_MOBILE_WORKSPACE_FILE_ENTRIES)));
+        File target = mobileResolveInside(root, rawPath, true);
+        if (!target.isDirectory()) throw mobileHttp(400, "Path is not a folder");
+
+        JSONArray entries = new JSONArray();
+        boolean truncated = false;
+        File[] children = target.listFiles();
+        if (children == null) throw mobileUnreadableWorkspace(target);
+        if (children != null) {
+            List<File> sorted = new ArrayList<>(Arrays.asList(children));
+            Collections.sort(sorted, (a, b) -> {
+                if (a.isDirectory() != b.isDirectory()) return a.isDirectory() ? -1 : 1;
+                return a.getName().compareToIgnoreCase(b.getName());
+            });
+            for (File child : sorted) {
+                if (entries.length() >= limit) {
+                    truncated = true;
+                    break;
+                }
+                if (child.getName().startsWith(".")) continue;
+                if (mobileIsDeprecatedPrivateWorkspaceFolder(child)) continue;
+                entries.put(mobileWorkspaceEntryInfo(root, child));
+            }
+        }
+
+        String parent = "";
+        if (!target.getCanonicalPath().equals(root.getCanonicalPath())) {
+            File parentFile = target.getParentFile();
+            if (parentFile != null && mobileIsInside(root, parentFile)) {
+                parent = mobileWorkspaceRelPath(root, parentFile);
+            }
+        }
+        return new JSONObject()
+                .put("workspace", root.getCanonicalPath())
+                .put("path", mobileWorkspaceRelPath(root, target))
+                .put("parent", parent)
+                .put("entries", entries)
+                .put("truncated", truncated)
+                .put("max_entries", limit)
+                .put("mobile_standalone", true);
+    }
+
+    private JSONObject mobileWorkspaceReadFile(Request request) throws Exception {
+        File root = mobileWorkspaceRootOrThrow(valueOr(request.query.get("workspace"), ""));
+        File target = mobileResolveInside(root, valueOr(request.query.get("path"), ""), false);
+        if (!target.isFile()) throw mobileHttp(400, "Path is not a file");
+        if (target.length() > MAX_MOBILE_WORKSPACE_TEXT_BYTES) {
+            throw mobileHttp(413, "File is larger than " + MAX_MOBILE_WORKSPACE_TEXT_BYTES + " bytes");
+        }
+        if (!mobileWorkspaceEditableText(target)) {
+            throw mobileHttp(415, "File is not an editable text file");
+        }
+        byte[] data;
+        try (InputStream in = new FileInputStream(target)) {
+            data = readBytes(in);
+        }
+        return new JSONObject()
+                .put("workspace", root.getCanonicalPath())
+                .put("path", mobileWorkspaceRelPath(root, target))
+                .put("name", target.getName())
+                .put("content", new String(data, StandardCharsets.UTF_8))
+                .put("size", target.length())
+                .put("modified", mobileWorkspaceModifiedSeconds(target))
+                .put("truncated", false)
+                .put("mobile_standalone", true);
+    }
+
+    private JSONObject mobileWorkspaceWriteFile(JSONObject body) throws Exception {
+        File root = mobileWorkspaceRootOrThrow(jsonString(body, "workspace", ""));
+        File target = mobileResolveInside(root, jsonString(body, "path", ""), false);
+        if (target.isDirectory()) throw mobileHttp(400, "Path is a folder");
+
+        String content = jsonString(body, "content", "");
+        byte[] encoded = content.getBytes(StandardCharsets.UTF_8);
+        if (encoded.length > MAX_MOBILE_WORKSPACE_TEXT_BYTES) {
+            throw mobileHttp(413, "Content is larger than " + MAX_MOBILE_WORKSPACE_TEXT_BYTES + " bytes");
+        }
+        File parent = target.getParentFile();
+        if (parent == null || !mobileIsInside(root, parent)) throw mobileHttp(400, "Parent folder is outside the workspace");
+        if (!parent.isDirectory()) {
+            if (jsonBoolean(body, "create_parents", false)) {
+                if (!parent.mkdirs() && !parent.isDirectory()) throw mobileHttp(400, "Could not create parent folder");
+            } else {
+                throw mobileHttp(400, "Parent folder does not exist");
+            }
+        }
+        if (body.has("previous_mtime") && !body.isNull("previous_mtime") && target.exists()) {
+            double previous = body.optDouble("previous_mtime", -1);
+            if (previous >= 0 && Math.abs(mobileWorkspaceModifiedSeconds(target) - previous) > 0.01) {
+                throw mobileHttp(409, "File changed on disk; reload before saving");
+            }
+        }
+        try (FileOutputStream fos = new FileOutputStream(target)) {
+            fos.write(encoded);
+        }
+        return new JSONObject()
+                .put("ok", true)
+                .put("workspace", root.getCanonicalPath())
+                .put("path", mobileWorkspaceRelPath(root, target))
+                .put("name", target.getName())
+                .put("size", target.length())
+                .put("modified", mobileWorkspaceModifiedSeconds(target))
+                .put("mobile_standalone", true);
+    }
+
+    private JSONObject mobileWorkspaceMkdir(JSONObject body) throws Exception {
+        File root = mobileWorkspaceRootOrThrow(jsonString(body, "workspace", ""));
+        File target = mobileResolveInside(root, jsonString(body, "path", ""), false);
+        if (target.exists() && !target.isDirectory()) throw mobileHttp(400, "A file already exists at that path");
+        if (!target.mkdirs() && !target.isDirectory()) throw mobileHttp(400, "Could not create folder");
+        return new JSONObject()
+                .put("ok", true)
+                .put("workspace", root.getCanonicalPath())
+                .put("path", mobileWorkspaceRelPath(root, target))
+                .put("mobile_standalone", true);
+    }
+
+    private JSONObject mobileWorkspaceRename(JSONObject body) throws Exception {
+        File root = mobileWorkspaceRootOrThrow(jsonString(body, "workspace", ""));
+        File source = mobileResolveInside(root, jsonString(body, "path", ""), false);
+        File target = mobileResolveInside(root, jsonString(body, "new_path", ""), false);
+        if (!source.exists()) throw mobileHttp(404, "Path not found");
+        if (source.getCanonicalPath().equals(root.getCanonicalPath())) throw mobileHttp(400, "Cannot rename the workspace root");
+        if (target.exists()) throw mobileHttp(409, "Target already exists");
+        File parent = target.getParentFile();
+        if (parent == null || !parent.isDirectory()) throw mobileHttp(400, "Target parent folder does not exist");
+        if (!source.renameTo(target)) throw mobileHttp(400, "Could not rename path");
+        return new JSONObject()
+                .put("ok", true)
+                .put("workspace", root.getCanonicalPath())
+                .put("path", mobileWorkspaceRelPath(root, target))
+                .put("mobile_standalone", true);
+    }
+
+    private JSONObject mobileWorkspaceDelete(Request request) throws Exception {
+        File root = mobileWorkspaceRootOrThrow(valueOr(request.query.get("workspace"), ""));
+        File target = mobileResolveInside(root, valueOr(request.query.get("path"), ""), false);
+        if (target.getCanonicalPath().equals(root.getCanonicalPath())) throw mobileHttp(400, "Cannot delete the workspace root");
+        if (!target.exists()) throw mobileHttp(404, "Path not found");
+        boolean recursive = "true".equalsIgnoreCase(valueOr(request.query.get("recursive"), ""))
+                || "1".equals(valueOr(request.query.get("recursive"), ""));
+        if (target.isDirectory() && !recursive) {
+            String[] children = target.list();
+            if (children != null && children.length > 0) throw mobileHttp(400, "Folder is not empty");
+        }
+        mobileDeleteRecursively(target);
+        return new JSONObject()
+                .put("ok", true)
+                .put("workspace", root.getCanonicalPath())
+                .put("path", mobileWorkspaceRelPath(root, target))
+                .put("mobile_standalone", true);
+    }
+
+    private File mobileWorkspaceBaseDir() throws Exception {
+        File dir = new File(appContext.getFilesDir(), "workspace").getCanonicalFile();
+        if (!dir.exists() && !dir.mkdirs()) throw mobileHttp(500, "Could not create Android workspace folder");
+        mobileWorkspaceChildDir("Scratch");
+        return dir;
+    }
+
+    private File mobileWorkspaceChildDir(String name) throws Exception {
+        File dir = new File(new File(appContext.getFilesDir(), "workspace"), name).getCanonicalFile();
+        if (!dir.exists() && !dir.mkdirs()) throw mobileHttp(500, "Could not create Android workspace folder: " + name);
+        return dir;
+    }
+
+    private File mobilePrivateWorkspaceChildPath(String name) throws Exception {
+        return new File(new File(appContext.getFilesDir(), "workspace"), name).getCanonicalFile();
+    }
+
+    private File mobilePublicWorkspaceDir(String type) throws Exception {
+        File dir = Environment.getExternalStoragePublicDirectory(type);
+        if (dir == null) return null;
+        File resolved = dir.getCanonicalFile();
+        if (!resolved.exists()) {
+            resolved.mkdirs();
+        }
+        return resolved.isDirectory() ? resolved : null;
+    }
+
+    private File mobileDefaultWorkspaceRoot() throws Exception {
+        File documents = mobilePublicWorkspaceDir(Environment.DIRECTORY_DOCUMENTS);
+        return documents != null ? documents : mobileWorkspaceBaseDir();
+    }
+
+    private List<File> mobileAllowedWorkspaceRoots() throws Exception {
+        List<File> roots = new ArrayList<>();
+        mobileAddAllowedWorkspaceRoot(roots, mobilePublicWorkspaceDir(Environment.DIRECTORY_DOCUMENTS));
+        mobileAddAllowedWorkspaceRoot(roots, mobilePublicWorkspaceDir(Environment.DIRECTORY_DOWNLOADS));
+        mobileAddAllowedWorkspaceRoot(roots, mobileWorkspaceBaseDir());
+        mobileAddAllowedWorkspaceRoot(roots, mobileWorkspaceChildDir("Scratch"));
+        return roots;
+    }
+
+    private void mobileAddAllowedWorkspaceRoot(List<File> roots, File root) throws IOException {
+        if (root == null || !root.isDirectory()) return;
+        File resolved = root.getCanonicalFile();
+        for (File existing : roots) {
+            if (existing.getCanonicalPath().equals(resolved.getCanonicalPath())) return;
+        }
+        roots.add(resolved);
+    }
+
+    private File mobileResolveAllowedWorkspacePath(String rawPath, boolean allowDefaultRoot) throws Exception {
+        String raw = valueOr(rawPath, "").trim();
+        if (raw.isEmpty()) {
+            if (allowDefaultRoot) return mobileDefaultWorkspaceRoot();
+            throw mobileHttp(400, "Path is required");
+        }
+        raw = raw.replace('\\', File.separatorChar);
+        File candidate = new File(raw);
+        if (!candidate.isAbsolute()) candidate = new File(mobileDefaultWorkspaceRoot(), raw);
+        File resolved = candidate.getCanonicalFile();
+        if (mobileIsDeprecatedPrivateWorkspaceFolder(resolved)) {
+            throw mobileHttp(410, MOBILE_DEPRECATED_PRIVATE_WORKSPACE_DETAIL);
+        }
+        if (mobileContainingWorkspaceRoot(resolved) == null) throw mobileHttp(403, "Path is outside the Android workspace");
+        return resolved;
+    }
+
+    private File mobileContainingWorkspaceRoot(File target) throws Exception {
+        if (target == null) return null;
+        File resolved = target.getCanonicalFile();
+        File best = null;
+        for (File root : mobileAllowedWorkspaceRoots()) {
+            if (!mobileIsInside(root, resolved)) continue;
+            if (best == null || root.getCanonicalPath().length() > best.getCanonicalPath().length()) {
+                best = root;
+            }
+        }
+        return best;
+    }
+
+    private boolean mobileIsDeprecatedPrivateWorkspaceFolder(File target) {
+        try {
+            if (target == null) return false;
+            File documents = mobilePrivateWorkspaceChildPath("Documents");
+            File downloads = mobilePrivateWorkspaceChildPath("Downloads");
+            return mobileIsInside(documents, target) || mobileIsInside(downloads, target);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private boolean mobileIsPublicExternalWorkspace(File target) {
+        try {
+            if (target == null) return false;
+            File external = Environment.getExternalStorageDirectory();
+            if (external == null) return false;
+            File externalRoot = external.getCanonicalFile();
+            File appExternal = appContext.getExternalFilesDir(null);
+            File resolved = target.getCanonicalFile();
+            if (!mobileIsInside(externalRoot, resolved)) return false;
+            return appExternal == null || !mobileIsInside(appExternal.getCanonicalFile(), resolved);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private MobileHttpException mobileUnreadableWorkspace(File target) {
+        if (mobileIsPublicExternalWorkspace(target)) return mobileHttp(403, MOBILE_PUBLIC_WORKSPACE_ACCESS_DETAIL);
+        return mobileHttp(403, "Android cannot read this workspace folder.");
+    }
+
+    private File mobileVetWorkspace(String rawPath) throws Exception {
+        String raw = valueOr(rawPath, "").trim();
+        if (raw.isEmpty()) return null;
+        File target = mobileResolveAllowedWorkspacePath(raw, false);
+        return target.isDirectory() ? target.getCanonicalFile() : null;
+    }
+
+    private File mobileWorkspaceRootOrThrow(String rawWorkspace) throws Exception {
+        File root = mobileVetWorkspace(rawWorkspace);
+        if (root == null) throw mobileHttp(400, "Workspace is not usable");
+        return root;
+    }
+
+    private File mobileResolveInside(File root, String rawPath, boolean allowRoot) throws Exception {
+        String raw = valueOr(rawPath, "").trim();
+        if (raw.isEmpty()) {
+            if (allowRoot) return root.getCanonicalFile();
+            throw mobileHttp(400, "Path is required");
+        }
+        raw = raw.replace('\\', File.separatorChar);
+        File candidate = new File(raw);
+        if (!candidate.isAbsolute()) candidate = new File(root, raw);
+        File resolved = candidate.getCanonicalFile();
+        if (!mobileIsInside(root, resolved)) throw mobileHttp(403, "Path is outside the Android workspace");
+        if (mobileIsDeprecatedPrivateWorkspaceFolder(resolved)) throw mobileHttp(410, MOBILE_DEPRECATED_PRIVATE_WORKSPACE_DETAIL);
+        return resolved;
+    }
+
+    private boolean mobileIsInside(File root, File target) throws IOException {
+        String rootPath = root.getCanonicalFile().getPath();
+        String targetPath = target.getCanonicalFile().getPath();
+        return targetPath.equals(rootPath) || targetPath.startsWith(rootPath + File.separator);
+    }
+
+    private String mobileWorkspaceRelPath(File root, File target) throws IOException {
+        String rootPath = root.getCanonicalFile().getPath();
+        String targetPath = target.getCanonicalFile().getPath();
+        if (targetPath.equals(rootPath)) return "";
+        if (!targetPath.startsWith(rootPath + File.separator)) return "";
+        return targetPath.substring(rootPath.length() + 1).replace(File.separatorChar, '/');
+    }
+
+    private JSONObject mobileWorkspaceEntryInfo(File root, File target) throws Exception {
+        boolean isDir = target.isDirectory();
+        boolean isFile = target.isFile();
+        long size = isDir ? 0 : target.length();
+        return new JSONObject()
+                .put("name", target.getName())
+                .put("path", mobileWorkspaceRelPath(root, target))
+                .put("type", isDir ? "directory" : isFile ? "file" : "other")
+                .put("size", size)
+                .put("modified", mobileWorkspaceModifiedSeconds(target))
+                .put("editable", isFile && size <= MAX_MOBILE_WORKSPACE_TEXT_BYTES && mobileWorkspaceTextName(target.getName()))
+                .put("text_hint", isFile && mobileWorkspaceTextName(target.getName()));
+    }
+
+    private double mobileWorkspaceModifiedSeconds(File file) {
+        return file.lastModified() / 1000.0;
+    }
+
+    private boolean mobileWorkspaceTextName(String rawName) {
+        String name = valueOr(rawName, "").toLowerCase(Locale.US);
+        if (name.equals("dockerfile") || name.equals("makefile") || name.equals("license")
+                || name.equals("readme") || name.equals("requirements")) return true;
+        String[] exts = {
+                ".bat", ".c", ".cfg", ".conf", ".cpp", ".cs", ".css", ".csv", ".env.example",
+                ".go", ".h", ".hpp", ".htm", ".html", ".ini", ".java", ".js", ".json",
+                ".jsx", ".kt", ".kts", ".log", ".lua", ".md", ".mjs", ".ps1", ".py",
+                ".rb", ".rs", ".sh", ".sql", ".svelte", ".toml", ".ts", ".tsx", ".txt",
+                ".vue", ".xml", ".yaml", ".yml"
+        };
+        for (String ext : exts) {
+            if (name.endsWith(ext)) return true;
+        }
+        return false;
+    }
+
+    private boolean mobileWorkspaceEditableText(File file) throws IOException {
+        if (!file.isFile() || file.length() > MAX_MOBILE_WORKSPACE_TEXT_BYTES) return false;
+        if (mobileWorkspaceIsProbablyBinary(file)) return false;
+        return true;
+    }
+
+    private boolean mobileWorkspaceIsProbablyBinary(File file) throws IOException {
+        byte[] sample = new byte[(int) Math.min(4096, Math.max(0, file.length()))];
+        if (sample.length == 0) return false;
+        int read;
+        try (InputStream in = new FileInputStream(file)) {
+            read = in.read(sample);
+        }
+        if (read <= 0) return false;
+        int control = 0;
+        for (int i = 0; i < read; i++) {
+            int b = sample[i] & 0xff;
+            if (b == 0) return true;
+            if (b < 32 && b != 9 && b != 10 && b != 12 && b != 13) control++;
+        }
+        return control / Math.max(1.0, read) > 0.08;
+    }
+
+    private void mobileDeleteRecursively(File target) throws Exception {
+        if (target.isDirectory()) {
+            File[] children = target.listFiles();
+            if (children != null) {
+                for (File child : children) mobileDeleteRecursively(child);
+            }
+        }
+        if (!target.delete() && target.exists()) throw mobileHttp(400, "Could not delete path");
+    }
+
+    private MobileHttpException mobileHttp(int status, String detail) {
+        return new MobileHttpException(status, detail);
+    }
+
+    private JSONArray mobileMcpServers() throws Exception {
+        JSONObject server = new JSONObject()
+                .put("id", "android_rag")
+                .put("name", "Android Folders")
+                .put("transport", "android")
+                .put("command", "")
+                .put("args", new JSONArray())
+                .put("env", new JSONObject())
+                .put("url", "")
+                .put("is_enabled", true)
+                .put("status", "connected")
+                .put("tool_count", 1)
+                .put("disabled_tool_count", 0)
+                .put("enabled_tool_count", 1)
+                .put("error", JSONObject.NULL)
+                .put("auth_url", JSONObject.NULL)
+                .put("has_oauth", false)
+                .put("needs_oauth", false)
+                .put("mobile_standalone", true);
+        return new JSONArray().put(server);
+    }
+
+    private JSONArray mobileMcpTools() throws Exception {
+        JSONObject inputSchema = new JSONObject()
+                .put("type", "object")
+                .put("properties", new JSONObject()
+                        .put("action", new JSONObject()
+                                .put("type", "string")
+                                .put("enum", new JSONArray().put("list").put("add_directory").put("remove_directory")))
+                        .put("directory", new JSONObject().put("type", "string")))
+                .put("required", new JSONArray().put("action"));
+        JSONObject tool = new JSONObject()
+                .put("server_id", "android_rag")
+                .put("server_name", "Android Folders")
+                .put("name", "manage_rag")
+                .put("qualified_name", "mcp__android_rag__manage_rag")
+                .put("description", "List, save, and remove folder paths in Android standalone. Connect to PC for actual PC folder indexing.")
+                .put("input_schema", inputSchema)
+                .put("is_disabled", false)
+                .put("mobile_standalone", true);
+        return new JSONArray().put(tool);
     }
 
     private JSONObject createDocument(Map<String, String> form) throws Exception {
@@ -4848,7 +7809,9 @@ public class MobileBackendServer {
                 .put("models", models == null ? new JSONArray() : models)
                 .put("cached_models", models == null ? new JSONArray() : models)
                 .put("model_count", models == null ? 0 : models.length())
-                .put("has_api_key", !ep.optString("api_key").isEmpty())
+                .put("has_api_key", !ep.optString("api_key").isEmpty()
+                        || !ep.optString("access_token").isEmpty()
+                        || !ep.optString("refresh_token").isEmpty())
                 .put("online", true)
                 .put("status", models != null && models.length() > 0 ? "ok" : "empty");
     }
@@ -4890,6 +7853,295 @@ public class MobileBackendServer {
                 .put("status", models.length() > 0 ? "ok" : "empty")
                 .put("models", models)
                 .put("count", models.length());
+    }
+
+    private JSONObject startChatGptSubscriptionDeviceFlow() throws Exception {
+        Map<String, String> headers = new HashMap<>();
+        headers.put("Content-Type", "application/json");
+        JSONObject data = httpPostJson(
+                CHATGPT_OAUTH_ISSUER + "/api/accounts/deviceauth/usercode",
+                headers,
+                new JSONObject().put("client_id", CHATGPT_OAUTH_CLIENT_ID));
+
+        String deviceAuthId = data.optString("device_auth_id", "").trim();
+        String userCode = data.optString("user_code", "").trim();
+        if (deviceAuthId.isEmpty() || userCode.isEmpty()) {
+            throw new IOException("ChatGPT did not return a complete device code.");
+        }
+
+        int interval = Math.max(1, data.optInt("interval", 5));
+        int expiresIn = Math.max(1, data.optInt("expires_in", 900));
+        String pollId = UUID.randomUUID().toString().replace("-", "");
+        long now = System.currentTimeMillis();
+        synchronized (chatGptDeviceFlowLock) {
+            pruneExpiredChatGptDeviceFlowsLocked(now);
+            chatGptDeviceFlows.put(pollId, new JSONObject()
+                    .put("device_auth_id", deviceAuthId)
+                    .put("user_code", userCode)
+                    .put("interval", interval)
+                    .put("expires_at", now + expiresIn * 1000L)
+                    .put("next_poll_at", 0L));
+        }
+
+        return new JSONObject()
+                .put("poll_id", pollId)
+                .put("user_code", userCode)
+                .put("verification_uri", data.optString("verification_uri", CHATGPT_OAUTH_ISSUER + "/codex/device"))
+                .put("interval", interval)
+                .put("expires_in", expiresIn);
+    }
+
+    private JSONObject pollChatGptSubscriptionDeviceFlow(Map<String, String> form) throws Exception {
+        String pollId = valueOr(form.get("poll_id"), "").trim();
+        if (pollId.isEmpty()) {
+            return new JSONObject().put("status", "failed").put("error", "missing_poll_id");
+        }
+
+        JSONObject pending;
+        long now = System.currentTimeMillis();
+        synchronized (chatGptDeviceFlowLock) {
+            pruneExpiredChatGptDeviceFlowsLocked(now);
+            pending = chatGptDeviceFlows.get(pollId);
+            if (pending == null) {
+                return new JSONObject().put("status", "failed").put("error", "expired");
+            }
+            if (now < pending.optLong("next_poll_at", 0L)) {
+                return new JSONObject().put("status", "pending");
+            }
+        }
+
+        JSONObject data = pollChatGptDeviceAuth(
+                pending.optString("device_auth_id", ""),
+                pending.optString("user_code", ""));
+        String authorizationCode = data.optString("authorization_code", "").trim();
+        String codeVerifier = data.optString("code_verifier", "").trim();
+        if (!authorizationCode.isEmpty() && !codeVerifier.isEmpty()) {
+            JSONObject tokens = exchangeChatGptAuthorizationCode(authorizationCode, codeVerifier);
+            JSONObject endpoint = provisionChatGptSubscriptionEndpoint(tokens);
+            synchronized (chatGptDeviceFlowLock) {
+                chatGptDeviceFlows.remove(pollId);
+            }
+            return new JSONObject().put("status", "authorized").put("endpoint", endpoint);
+        }
+
+        String err = data.optString("error", data.optString("status", "pending"));
+        if ("slow_down".equals(err)) {
+            int interval = Math.max(1, data.optInt("interval", pending.optInt("interval", 5) + 5));
+            synchronized (chatGptDeviceFlowLock) {
+                JSONObject current = chatGptDeviceFlows.get(pollId);
+                if (current != null) {
+                    current.put("interval", interval);
+                    current.put("next_poll_at", System.currentTimeMillis() + interval * 1000L);
+                }
+            }
+            return new JSONObject().put("status", "pending").put("interval", interval);
+        }
+        if ("expired_token".equals(err) || "access_denied".equals(err) || "denied".equals(err)) {
+            synchronized (chatGptDeviceFlowLock) {
+                chatGptDeviceFlows.remove(pollId);
+            }
+            return new JSONObject().put("status", "failed").put("error", err);
+        }
+
+        scheduleNextChatGptDevicePoll(pollId);
+        return new JSONObject().put("status", "pending");
+    }
+
+    private JSONObject cancelChatGptSubscriptionDeviceFlow(Map<String, String> form) throws Exception {
+        String pollId = valueOr(form.get("poll_id"), "").trim();
+        synchronized (chatGptDeviceFlowLock) {
+            if (!pollId.isEmpty()) chatGptDeviceFlows.remove(pollId);
+        }
+        return new JSONObject().put("status", "cancelled");
+    }
+
+    private void pruneExpiredChatGptDeviceFlowsLocked(long now) {
+        List<String> expired = new ArrayList<>();
+        for (Map.Entry<String, JSONObject> entry : chatGptDeviceFlows.entrySet()) {
+            if (entry.getValue().optLong("expires_at", 0L) < now) expired.add(entry.getKey());
+        }
+        for (String key : expired) chatGptDeviceFlows.remove(key);
+    }
+
+    private void scheduleNextChatGptDevicePoll(String pollId) throws Exception {
+        synchronized (chatGptDeviceFlowLock) {
+            JSONObject current = chatGptDeviceFlows.get(pollId);
+            if (current != null) {
+                int interval = Math.max(1, current.optInt("interval", 5));
+                current.put("next_poll_at", System.currentTimeMillis() + interval * 1000L);
+            }
+        }
+    }
+
+    private JSONObject pollChatGptDeviceAuth(String deviceAuthId, String userCode) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(
+                CHATGPT_OAUTH_ISSUER + "/api/accounts/deviceauth/token").openConnection();
+        conn.setRequestMethod("POST");
+        conn.setConnectTimeout(12000);
+        conn.setReadTimeout(20000);
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Accept", "application/json");
+        conn.setRequestProperty("Content-Type", "application/json");
+        byte[] bytes = new JSONObject()
+                .put("device_auth_id", deviceAuthId)
+                .put("user_code", userCode)
+                .toString()
+                .getBytes(StandardCharsets.UTF_8);
+        conn.setFixedLengthStreamingMode(bytes.length);
+        try (OutputStream body = conn.getOutputStream()) {
+            body.write(bytes);
+        }
+        int status = conn.getResponseCode();
+        String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
+        if (status == 403 || status == 404) {
+            return new JSONObject().put("status", "pending").put("error", "authorization_pending");
+        }
+        if (status < 200 || status >= 300) {
+            throw new IOException("ChatGPT device poll failed: " + formatProviderError(status, response));
+        }
+        return new JSONObject(response);
+    }
+
+    private JSONObject exchangeChatGptAuthorizationCode(String authorizationCode, String codeVerifier) throws Exception {
+        Map<String, String> form = new HashMap<>();
+        form.put("grant_type", "authorization_code");
+        form.put("code", authorizationCode);
+        form.put("redirect_uri", CHATGPT_OAUTH_REDIRECT_URI);
+        form.put("client_id", CHATGPT_OAUTH_CLIENT_ID);
+        form.put("code_verifier", codeVerifier);
+        JSONObject tokens = httpPostFormJson(CHATGPT_OAUTH_TOKEN_URL, form);
+        if (tokens.optString("access_token", "").isEmpty()) {
+            throw new IOException("Codex token exchange did not return an access token.");
+        }
+        return tokens;
+    }
+
+    private JSONObject provisionChatGptSubscriptionEndpoint(JSONObject tokens) throws Exception {
+        String accessToken = tokens.optString("access_token", "").trim();
+        String refreshToken = tokens.optString("refresh_token", "").trim();
+        if (accessToken.isEmpty() || refreshToken.isEmpty()) {
+            throw new IOException("Codex token response was missing access_token or refresh_token.");
+        }
+
+        JSONArray models = fetchChatGptSubscriptionModels(accessToken);
+        if (models.length() == 0) {
+            throw new IOException(CHATGPT_SUBSCRIPTION_LABEL + " connected, but no usable Codex models were discovered for this account.");
+        }
+
+        JSONArray endpoints = loadArray(PREF_ENDPOINTS);
+        JSONObject ep = null;
+        int epIndex = -1;
+        for (int i = 0; i < endpoints.length(); i++) {
+            JSONObject candidate = endpoints.optJSONObject(i);
+            if (candidate == null) continue;
+            if (CHATGPT_SUBSCRIPTION_PROVIDER.equals(candidate.optString("provider"))
+                    || isChatGptSubscriptionBase(candidate.optString("base_url"))) {
+                ep = candidate;
+                epIndex = i;
+                break;
+            }
+        }
+        if (ep == null) {
+            ep = new JSONObject().put("id", shortId());
+        }
+        ep.put("name", CHATGPT_SUBSCRIPTION_LABEL)
+                .put("base_url", CHATGPT_SUBSCRIPTION_BASE_URL)
+                .put("api_key", "")
+                .put("access_token", accessToken)
+                .put("refresh_token", refreshToken)
+                .put("provider", CHATGPT_SUBSCRIPTION_PROVIDER)
+                .put("auth_mode", "chatgpt")
+                .put("endpoint_kind", "api")
+                .put("model_type", "llm")
+                .put("is_enabled", true)
+                .put("supports_tools", false)
+                .put("model_refresh_mode", "manual")
+                .put("last_refresh", String.valueOf(System.currentTimeMillis()))
+                .put("models", models);
+
+        if (epIndex >= 0) endpoints.put(epIndex, ep);
+        else endpoints.put(ep);
+        saveArray(PREF_ENDPOINTS, endpoints);
+        if (prefs().getString(PREF_DEFAULT_ENDPOINT, "").isEmpty()) {
+            prefs().edit().putString(PREF_DEFAULT_ENDPOINT, ep.optString("id")).apply();
+        }
+
+        JSONObject result = publicEndpoint(ep);
+        result.put("endpoint_id", ep.optString("id"));
+        result.put("endpoint_url", chatUrl(CHATGPT_SUBSCRIPTION_BASE_URL));
+        return result;
+    }
+
+    private JSONArray fetchChatGptSubscriptionModels(String accessToken) throws Exception {
+        JSONObject json = httpGetJson(
+                CHATGPT_SUBSCRIPTION_BASE_URL + "/models?client_version=1.0.0",
+                chatGptSubscriptionHeaders(accessToken));
+        JSONArray entries = json.optJSONArray("models");
+        JSONArray out = new JSONArray();
+        if (entries == null) return out;
+
+        List<JSONObject> sortable = new ArrayList<>();
+        for (int i = 0; i < entries.length(); i++) {
+            JSONObject item = entries.optJSONObject(i);
+            if (item == null) continue;
+            String slug = item.optString("slug", "").trim();
+            if (slug.isEmpty()) continue;
+            String visibility = item.optString("visibility", "").trim().toLowerCase(Locale.US);
+            if ("hide".equals(visibility) || "hidden".equals(visibility)) continue;
+            sortable.add(item);
+        }
+        Collections.sort(sortable, (a, b) -> {
+            int rank = Integer.compare(a.optInt("priority", 10000), b.optInt("priority", 10000));
+            if (rank != 0) return rank;
+            return a.optString("slug", "").compareTo(b.optString("slug", ""));
+        });
+        List<String> seen = new ArrayList<>();
+        for (JSONObject item : sortable) {
+            String slug = item.optString("slug", "").trim();
+            if (!slug.isEmpty() && !seen.contains(slug)) {
+                out.put(slug);
+                seen.add(slug);
+            }
+        }
+        return out;
+    }
+
+    private Map<String, String> chatGptSubscriptionHeaders(String accessToken) {
+        Map<String, String> headers = new HashMap<>();
+        headers.put("Accept", "application/json, text/event-stream");
+        headers.put("Origin", "https://chatgpt.com");
+        headers.put("Referer", "https://chatgpt.com/codex");
+        headers.put("User-Agent", "Odysseus Codex Subscription");
+        if (!valueOr(accessToken, "").trim().isEmpty()) {
+            headers.put("Authorization", "Bearer " + accessToken.trim());
+        }
+        return headers;
+    }
+
+    private JSONObject httpPostFormJson(String url, Map<String, String> form) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        conn.setRequestMethod("POST");
+        conn.setConnectTimeout(12000);
+        conn.setReadTimeout(20000);
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Accept", "application/json");
+        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+        StringBuilder encoded = new StringBuilder();
+        for (Map.Entry<String, String> entry : form.entrySet()) {
+            if (encoded.length() > 0) encoded.append('&');
+            encoded.append(urlEncode(entry.getKey())).append('=').append(urlEncode(entry.getValue()));
+        }
+        byte[] bytes = encoded.toString().getBytes(StandardCharsets.UTF_8);
+        conn.setFixedLengthStreamingMode(bytes.length);
+        try (OutputStream body = conn.getOutputStream()) {
+            body.write(bytes);
+        }
+        int status = conn.getResponseCode();
+        String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
+        if (status < 200 || status >= 300) {
+            throw new IOException("HTTP " + status + ": " + truncateError(response, 180));
+        }
+        return new JSONObject(response);
     }
 
     private JSONObject probeSelected(Request request) throws Exception {
@@ -5012,6 +8264,93 @@ public class MobileBackendServer {
         }
     }
 
+    private JSONObject unloadAllModels() throws Exception {
+        int supportedEndpoints = 0;
+        int skippedEndpoints = 0;
+        int requested = 0;
+        int unloaded = 0;
+        int failed = 0;
+        JSONArray results = new JSONArray();
+        JSONArray errors = new JSONArray();
+        boolean androidRuntimeAvailable = appContext != null && DynamicOnnxRuntime.isInstalled(appContext);
+
+        synchronized (rembgSessionLock) {
+            if (rembgRuntime != null) {
+                rembgRuntime.close();
+                rembgRuntime = null;
+                unloaded++;
+                results.put(new JSONObject()
+                        .put("provider", "android-onnx")
+                        .put("model", valueOr(lastBgRemoveSource, "rembg"))
+                        .put("message", "Android ONNX runtime released"));
+            }
+            lastBgRemoveSource = "";
+            lastBgRemoveError = "";
+        }
+
+        JSONArray endpoints = loadArray(PREF_ENDPOINTS);
+        for (int i = 0; i < endpoints.length(); i++) {
+            JSONObject ep = endpoints.optJSONObject(i);
+            if (ep == null) continue;
+            String baseUrl = ep.optString("base_url", "");
+            if (!isOllamaUnloadSupported(baseUrl)) {
+                skippedEndpoints++;
+                continue;
+            }
+            supportedEndpoints++;
+            JSONArray models = ep.optJSONArray("models");
+            if (models == null) continue;
+            for (int j = 0; j < models.length(); j++) {
+                String model = models.optString(j, "").trim();
+                if (model.isEmpty()) continue;
+                requested++;
+                JSONObject result = postOllamaUnload(baseUrl, ep.optString("api_key"), model);
+                if (result.optBoolean("ok")) {
+                    unloaded++;
+                    results.put(new JSONObject()
+                            .put("endpoint_id", ep.optString("id", ""))
+                            .put("endpoint", ep.optString("name", ep.optString("id", baseUrl)))
+                            .put("provider", "ollama")
+                            .put("model", model));
+                } else {
+                    failed++;
+                    errors.put(new JSONObject()
+                            .put("endpoint_id", ep.optString("id", ""))
+                            .put("endpoint", ep.optString("name", ep.optString("id", baseUrl)))
+                            .put("model", model)
+                            .put("detail", result.optString("detail", "Unload failed")));
+                }
+            }
+        }
+
+        String message;
+        if (unloaded > 0 && failed > 0) {
+            message = "Unloaded " + unloaded + " loaded model" + (unloaded == 1 ? "" : "s") + "; " + failed + " failed.";
+        } else if (unloaded > 0) {
+            message = "Unloaded " + unloaded + " loaded model" + (unloaded == 1 ? "" : "s") + ".";
+        } else if (failed > 0) {
+            message = "Unload failed for " + failed + " runtime/model request" + (failed == 1 ? "" : "s") + ".";
+        } else if (supportedEndpoints > 0 || androidRuntimeAvailable) {
+            message = "No loaded Android or Ollama models found.";
+        } else {
+            message = "No supported local model runtimes found.";
+        }
+
+        return new JSONObject()
+                .put("ok", failed == 0)
+                .put("supported", supportedEndpoints > 0 || androidRuntimeAvailable || results.length() > 0)
+                .put("platform", "android")
+                .put("requested", requested)
+                .put("unloaded", unloaded)
+                .put("failed", failed)
+                .put("supported_endpoints", supportedEndpoints)
+                .put("skipped_endpoints", skippedEndpoints)
+                .put("results", results)
+                .put("errors", errors)
+                .put("message", message)
+                .put("mobile_standalone", true);
+    }
+
     private boolean isOllamaUnloadSupported(String baseUrl) {
         try {
             URL parsed = new URL(normalizeBase(baseUrl));
@@ -5079,60 +8418,45 @@ public class MobileBackendServer {
         Map<String, String> form = parseForm(request);
         String sid = form.get("session");
         String userText = valueOr(form.get("message"), "");
+        String rawWorkspace = valueOr(form.get("workspace"), "").trim();
+        File activeWorkspace = null;
+        String workspaceRejected = "";
+        if (!rawWorkspace.isEmpty()) {
+            try {
+                activeWorkspace = mobileWorkspaceRootOrThrow(rawWorkspace);
+            } catch (Exception ex) {
+                workspaceRejected = rawWorkspace;
+            }
+        }
         JSONObject session = getSessionById(sid);
         String model = session.optString("model");
         JSONArray history = history(session);
         if (!userText.isEmpty()) {
             history.put(new JSONObject().put("role", "user").put("content", userText));
         }
+        String localWorkspaceReply = tryHandleMobileWorkspaceRequest(userText, activeWorkspace, workspaceRejected);
+        if (!localWorkspaceReply.isEmpty()) {
+            streamMobileImmediateReply(out, sid, history, "mobile-workspace", localWorkspaceReply, workspaceRejected);
+            return;
+        }
         String localDateTimeReply = tryHandleMobileDateTimeRequest(userText);
         if (!localDateTimeReply.isEmpty()) {
-            history.put(new JSONObject()
-                    .put("role", "assistant")
-                    .put("content", localDateTimeReply)
-                    .put("metadata", new JSONObject().put("model", "mobile-date")));
-            saveSessionHistory(sid, history);
-            writeHeaders(out, 200, "text/event-stream; charset=utf-8", -1);
-            writeSse(out, new JSONObject().put("type", "model_info").put("model", "mobile-date"));
-            writeSse(out, new JSONObject().put("delta", localDateTimeReply));
-            writeSse(out, new JSONObject().put("type", "metrics").put("data", new JSONObject().put("total_time", 0).put("model", "mobile-date")));
-            out.write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
-            out.flush();
+            streamMobileImmediateReply(out, sid, history, "mobile-date", localDateTimeReply, workspaceRejected);
             return;
         }
         String localGalleryReply = tryHandleMobileGalleryEditRequest(userText);
         if (!localGalleryReply.isEmpty()) {
-            history.put(new JSONObject()
-                    .put("role", "assistant")
-                    .put("content", localGalleryReply)
-                    .put("metadata", new JSONObject().put("model", "mobile-gallery")));
-            saveSessionHistory(sid, history);
-            writeHeaders(out, 200, "text/event-stream; charset=utf-8", -1);
-            writeSse(out, new JSONObject().put("type", "model_info").put("model", "mobile-gallery"));
-            writeSse(out, new JSONObject().put("delta", localGalleryReply));
-            writeSse(out, new JSONObject().put("type", "metrics").put("data", new JSONObject().put("total_time", 0).put("model", "mobile-gallery")));
-            out.write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
-            out.flush();
+            streamMobileImmediateReply(out, sid, history, "mobile-gallery", localGalleryReply, workspaceRejected);
             return;
         }
         String localCalendarReply = tryHandleMobileCalendarReadRequest(userText);
         if (!localCalendarReply.isEmpty()) {
-            history.put(new JSONObject()
-                    .put("role", "assistant")
-                    .put("content", localCalendarReply)
-                    .put("metadata", new JSONObject().put("model", "mobile-calendar")));
-            saveSessionHistory(sid, history);
-            writeHeaders(out, 200, "text/event-stream; charset=utf-8", -1);
-            writeSse(out, new JSONObject().put("type", "model_info").put("model", "mobile-calendar"));
-            writeSse(out, new JSONObject().put("delta", localCalendarReply));
-            writeSse(out, new JSONObject().put("type", "metrics").put("data", new JSONObject().put("total_time", 0).put("model", "mobile-calendar")));
-            out.write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
-            out.flush();
+            streamMobileImmediateReply(out, sid, history, "mobile-calendar", localCalendarReply, workspaceRejected);
             return;
         }
         JSONObject endpoint = endpointForSession(session);
         JSONArray modelMessages = history;
-        String appContext = mobileAppContextForPrompt(userText);
+        String appContext = mobileAppContextForPrompt(userText, activeWorkspace, workspaceRejected);
         if (!appContext.isEmpty()) {
             modelMessages = new JSONArray();
             modelMessages.put(new JSONObject()
@@ -5144,13 +8468,14 @@ public class MobileBackendServer {
         }
 
         writeHeaders(out, 200, "text/event-stream; charset=utf-8", -1);
+        if (!workspaceRejected.isEmpty()) writeSse(out, workspaceRejectedEvent(workspaceRejected));
         writeSse(out, new JSONObject().put("type", "model_info").put("model", model));
         String reply;
         try {
             reply = callChat(endpoint, model, modelMessages);
             if (reply.trim().isEmpty()) reply = "The model returned an empty response.";
         } catch (Exception ex) {
-            reply = "Mobile backend request failed: " + ex.getMessage();
+            reply = "Mobile backend request failed (" + mobileProviderLabel(endpoint, model) + "): " + ex.getMessage();
         }
         history.put(new JSONObject().put("role", "assistant").put("content", reply).put("metadata", new JSONObject().put("model", model)));
         saveSessionHistory(sid, history);
@@ -5160,9 +8485,35 @@ public class MobileBackendServer {
         out.flush();
     }
 
-    private String mobileAppContextForPrompt(String userText) throws Exception {
+    private void streamMobileImmediateReply(OutputStream out, String sid, JSONArray history,
+                                            String modelName, String reply, String workspaceRejected) throws Exception {
+        history.put(new JSONObject()
+                .put("role", "assistant")
+                .put("content", reply)
+                .put("metadata", new JSONObject().put("model", modelName)));
+        saveSessionHistory(sid, history);
+        writeHeaders(out, 200, "text/event-stream; charset=utf-8", -1);
+        if (!workspaceRejected.isEmpty()) writeSse(out, workspaceRejectedEvent(workspaceRejected));
+        writeSse(out, new JSONObject().put("type", "model_info").put("model", modelName));
+        writeSse(out, new JSONObject().put("delta", reply));
+        writeSse(out, new JSONObject().put("type", "metrics").put("data", new JSONObject().put("total_time", 0).put("model", modelName)));
+        out.write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
+        out.flush();
+    }
+
+    private JSONObject workspaceRejectedEvent(String path) throws Exception {
+        return new JSONObject()
+                .put("type", "workspace_rejected")
+                .put("data", new JSONObject().put("path", path));
+    }
+
+    private String mobileAppContextForPrompt(String userText, File activeWorkspace, String workspaceRejected) throws Exception {
         List<String> contexts = new ArrayList<>();
         contexts.add(mobileCurrentDateContext());
+        String workspaceContext = mobileWorkspaceContextForPrompt(userText, activeWorkspace, workspaceRejected);
+        if (!workspaceContext.isEmpty()) contexts.add(workspaceContext);
+        String personalContext = mobilePersonalContextForPrompt(userText);
+        if (!personalContext.isEmpty()) contexts.add(personalContext);
         String galleryContext = mobileGalleryContextForPrompt(userText);
         if (!galleryContext.isEmpty()) contexts.add(galleryContext);
         String calendarContext = mobileCalendarContextForPrompt(userText);
@@ -5204,6 +8555,143 @@ public class MobileBackendServer {
             return "The current Android local time is " + mobileCurrentTimeLabel() + " on " + mobileCurrentDateLabel() + ".";
         }
         return "Today is " + mobileCurrentDateLabel() + ".";
+    }
+
+    private String tryHandleMobileWorkspaceRequest(String userText, File activeWorkspace, String workspaceRejected) throws Exception {
+        if (!mobileMentionsWorkspace(userText)) return "";
+        StringBuilder sb = new StringBuilder();
+        sb.append("Android standalone workspace check:\n");
+        if (!workspaceRejected.isEmpty()) {
+            sb.append("- The previously saved workspace path `").append(workspaceRejected).append("` is not usable in Android standalone and has been cleared. ");
+            sb.append("That looks like a PC or saved Folders/RAG path, not an Android-local workspace.\n");
+        }
+        if (activeWorkspace == null) {
+            sb.append("- No active Android workspace is selected right now.\n");
+            sb.append("- Open the Workspace picker and choose one of the Android-local roots: Documents, Downloads, App Workspace, or Scratch.\n");
+        } else {
+            sb.append("- Active Android workspace: `").append(activeWorkspace.getCanonicalPath()).append("`.\n");
+            sb.append("- This is local to this Android device, not your PC filesystem.\n");
+            sb.append("- Current contents: ").append(mobileWorkspaceOneLineSummary(activeWorkspace, 10)).append("\n");
+        }
+        JSONArray dirs = loadArray(PREF_PERSONAL_DIRECTORIES);
+        if (dirs.length() > 0) {
+            sb.append("- Saved Folders/RAG entries are separate from Workspace. They are saved reference paths in standalone mode, not the active Android workspace. ");
+            sb.append("Saved entry examples: ");
+            int max = Math.min(dirs.length(), 3);
+            for (int i = 0; i < max; i++) {
+                if (i > 0) sb.append(", ");
+                sb.append("`").append(dirs.optString(i)).append("`");
+            }
+            if (dirs.length() > max) sb.append(", ...");
+            sb.append(".");
+        }
+        return sb.toString().trim();
+    }
+
+    private String mobileWorkspaceContextForPrompt(String userText, File activeWorkspace, String workspaceRejected) throws Exception {
+        if (!mobileMentionsWorkspaceOrFiles(userText) && activeWorkspace == null && workspaceRejected.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        sb.append("You are running inside Odysseus Android standalone. ");
+        sb.append("Workspace is Android-local device storage, separate from saved Folders/RAG path entries. ");
+        sb.append("Do not say Android standalone needs Connect to PC for the active Android workspace.\n");
+        if (!workspaceRejected.isEmpty()) {
+            sb.append("A posted workspace path was rejected and will be cleared client-side: ").append(workspaceRejected).append(". ");
+            sb.append("Treat it as stale or PC-only, not active.\n");
+        }
+        if (activeWorkspace == null) {
+            sb.append("Active Android workspace: none selected. The user can select Documents, Downloads, App Workspace, or Scratch from the Workspace picker.");
+            return sb.toString();
+        }
+        sb.append("Active Android workspace: ").append(activeWorkspace.getCanonicalPath()).append("\n");
+        sb.append("Workspace summary: ").append(mobileWorkspaceOneLineSummary(activeWorkspace, 14)).append("\n");
+        sb.append("If asked about saved Folders/RAG entries such as PC paths, explain that those are separate from the active Android workspace.");
+        return sb.toString();
+    }
+
+    private boolean mobileMentionsWorkspace(String userText) {
+        String q = valueOr(userText, "").toLowerCase(Locale.US);
+        return q.contains("workspace")
+                || q.contains("work space")
+                || q.contains("active folder")
+                || q.contains("selected folder")
+                || q.contains("check workspace")
+                || q.contains("use this folder");
+    }
+
+    private boolean mobileMentionsWorkspaceOrFiles(String userText) {
+        String q = valueOr(userText, "").toLowerCase(Locale.US);
+        return mobileMentionsWorkspace(userText)
+                || q.contains("folder")
+                || q.contains("folders")
+                || q.contains("file")
+                || q.contains("files")
+                || q.contains("document")
+                || q.contains("documents")
+                || q.contains("path")
+                || q.contains("paths");
+    }
+
+    private String mobileWorkspaceOneLineSummary(File root, int maxEntries) throws Exception {
+        if (root == null || !root.isDirectory()) return "workspace folder is not available";
+        File[] children = root.listFiles();
+        if (children == null) {
+            return mobileIsPublicExternalWorkspace(root)
+                    ? MOBILE_PUBLIC_WORKSPACE_ACCESS_DETAIL
+                    : "workspace folder is not readable";
+        }
+        if (children.length == 0) return "empty";
+        List<File> sorted = new ArrayList<>(Arrays.asList(children));
+        Collections.sort(sorted, (a, b) -> {
+            if (a.isDirectory() != b.isDirectory()) return a.isDirectory() ? -1 : 1;
+            return a.getName().compareToIgnoreCase(b.getName());
+        });
+        StringBuilder sb = new StringBuilder();
+        int shown = 0;
+        for (File child : sorted) {
+            if (child.getName().startsWith(".")) continue;
+            if (shown >= maxEntries) break;
+            if (shown > 0) sb.append(", ");
+            sb.append(child.isDirectory() ? "[folder] " : "[file] ").append(child.getName());
+            shown++;
+        }
+        if (shown == 0) return "empty";
+        int hidden = sorted.size() - shown;
+        if (hidden > 0) sb.append(", ... ").append(hidden).append(" more");
+        return sb.toString();
+    }
+
+    private String mobilePersonalContextForPrompt(String userText) throws Exception {
+        String q = valueOr(userText, "").toLowerCase(Locale.US);
+        boolean wantsPersonalDocs = q.contains("rag")
+                || q.contains("mcp")
+                || q.contains("saved folder")
+                || q.contains("saved folders")
+                || q.contains("indexed folder")
+                || q.contains("indexed folders")
+                || (!mobileMentionsWorkspace(userText) && (
+                        q.contains("folder")
+                        || q.contains("folders")
+                        || q.contains("document")
+                        || q.contains("documents")));
+        if (!wantsPersonalDocs) return "";
+
+        JSONArray dirs = loadArray(PREF_PERSONAL_DIRECTORIES);
+        StringBuilder sb = new StringBuilder();
+        sb.append("You are running inside Odysseus Android standalone. ");
+        sb.append("Saved Folders/RAG path entries are separate from the active Android Workspace picker. ");
+        sb.append("They may include PC paths such as D:/, but those are reference/indexing entries in standalone mode and are not the active Android workspace. ");
+        sb.append("For PC folder content indexing, use Connect to PC so the Python backend and RAG MCP server run on the computer.\n");
+        if (dirs.length() == 0) {
+            sb.append("Saved Folders/RAG entries: none.");
+            return sb.toString();
+        }
+        sb.append("Saved Folders/RAG entries:\n");
+        int max = Math.min(dirs.length(), 12);
+        for (int i = 0; i < max; i++) {
+            sb.append("- ").append(dirs.optString(i)).append("\n");
+        }
+        if (dirs.length() > max) sb.append("... ").append(dirs.length() - max).append(" more folder paths not shown.");
+        return sb.toString().trim();
     }
 
     private String mobileCurrentDateTimeLabel() {
@@ -5527,16 +9015,20 @@ public class MobileBackendServer {
             action = "denoise";
         } else if (q.contains("upscale") || q.contains("enlarge") || q.contains("increase resolution")) {
             action = "upscale";
+        } else if (q.contains("remove background")
+                || q.contains("background remove")
+                || q.contains("remove bg")
+                || q.contains("bg remove")
+                || q.contains("rembg")
+                || q.contains("bgremove")) {
+            action = "remove-bg";
         }
         if (action.isEmpty()) {
-            boolean unsupportedEdit = q.contains("remove background")
-                    || q.contains("background remove")
-                    || q.contains("rembg")
-                    || q.contains("inpaint")
+            boolean unsupportedEdit = q.contains("inpaint")
                     || q.contains("outpaint")
                     || q.contains("harmonize");
             if (unsupportedEdit) {
-                return "Android standalone can edit Gallery images locally with sharpen, denoise, and upscale. Background removal, inpaint, outpaint, and harmonize need the PC backend image tools.";
+                return "Android standalone can edit Gallery images locally with sharpen, denoise, upscale, and background removal. Inpaint and outpaint need a drawn mask in the Gallery editor.";
             }
             return "";
         }
@@ -5555,6 +9047,8 @@ public class MobileBackendServer {
             edited = sharpenBitmap(bitmap, 65);
         } else if ("denoise".equals(action)) {
             edited = denoiseBitmap(bitmap, 35);
+        } else if ("remove-bg".equals(action)) {
+            edited = removeBackgroundBitmap(bitmap, null, null, 0.7);
         } else {
             edited = upscaleBitmap(bitmap, q.contains("4x") || q.contains("4 x") ? 4 : 2);
         }
@@ -5626,42 +9120,154 @@ public class MobileBackendServer {
     private String galleryActionLabel(String action) {
         if ("denoise".equals(action)) return "Denoised";
         if ("upscale".equals(action)) return "Upscaled";
+        if ("remove-bg".equals(action)) return "Background Removed";
         return "Sharpened";
     }
 
     private String galleryActionPastTense(String action) {
         if ("denoise".equals(action)) return "denoised";
         if ("upscale".equals(action)) return "upscaled";
+        if ("remove-bg".equals(action)) return "removed the background from";
         return "sharpened";
     }
 
     private JSONObject endpointForSession(JSONObject session) throws Exception {
+        String model = session.optString("model", "").trim();
         String endpointId = session.optString("endpoint_id");
         JSONObject ep = findEndpoint(endpointId);
-        if (ep != null) return ep;
+        if (ep != null && (model.isEmpty() || endpointHasModel(ep, model))) return ep;
         String endpointUrl = session.optString("endpoint_url");
+        JSONObject urlMatch = endpointForChatUrl(endpointUrl);
+        if (urlMatch != null && (model.isEmpty() || endpointCanServeModel(urlMatch, model))) {
+            repairSessionEndpoint(session, urlMatch);
+            return urlMatch;
+        }
+        JSONObject modelMatch = model.isEmpty() ? null : endpointForModel(model);
+        if (modelMatch != null) {
+            repairSessionEndpoint(session, modelMatch);
+            return modelMatch;
+        }
+        if (ep != null) return ep;
+        if (urlMatch != null) return urlMatch;
+        throw new IOException("No endpoint configured for this session");
+    }
+
+    private JSONObject endpointForChatUrl(String endpointUrl) throws Exception {
+        if (endpointUrl == null || endpointUrl.trim().isEmpty()) return null;
+        String normalized = comparableBase(endpointUrl);
         JSONArray endpoints = loadArray(PREF_ENDPOINTS);
         for (int i = 0; i < endpoints.length(); i++) {
             JSONObject cand = endpoints.getJSONObject(i);
-            if (chatUrl(cand.optString("base_url")).equals(endpointUrl)) return cand;
+            if (normalized.equals(comparableBase(cand.optString("base_url")))
+                    || chatUrl(cand.optString("base_url")).equals(endpointUrl)) return cand;
         }
-        throw new IOException("No endpoint configured for this session");
+        return null;
+    }
+
+    private JSONObject endpointForModel(String model) throws Exception {
+        JSONArray endpoints = loadArray(PREF_ENDPOINTS);
+        for (int i = 0; i < endpoints.length(); i++) {
+            JSONObject cand = endpoints.getJSONObject(i);
+            if (!cand.optBoolean("is_enabled", true)) continue;
+            if (endpointHasModel(cand, model)) return cand;
+        }
+        return null;
+    }
+
+    private boolean endpointCanServeModel(JSONObject endpoint, String model) {
+        JSONArray models = endpoint == null ? null : endpoint.optJSONArray("models");
+        return models == null || models.length() == 0 || endpointHasModel(endpoint, model);
+    }
+
+    private boolean endpointHasModel(JSONObject endpoint, String model) {
+        if (endpoint == null) return false;
+        String requested = valueOr(model, "").trim();
+        if (requested.isEmpty()) return true;
+        String providerRequested = providerModelId(endpoint, requested);
+        JSONArray models = endpoint.optJSONArray("models");
+        for (int i = 0; models != null && i < models.length(); i++) {
+            String candidate = models.optString(i, "").trim();
+            if (candidate.equals(requested) || candidate.equals(providerRequested)) return true;
+            if (providerModelId(endpoint, candidate).equals(providerRequested)) return true;
+        }
+        return false;
+    }
+
+    private void repairSessionEndpoint(JSONObject session, JSONObject endpoint) throws Exception {
+        if (session == null || endpoint == null) return;
+        String sid = session.optString("id", "");
+        String endpointId = endpoint.optString("id", "");
+        String endpointUrl = chatUrl(endpoint.optString("base_url"));
+        session.put("endpoint_id", endpointId);
+        session.put("endpoint_url", endpointUrl);
+        if (sid.isEmpty()) return;
+        JSONArray sessions = loadArray(PREF_SESSIONS);
+        for (int i = 0; i < sessions.length(); i++) {
+            JSONObject s = sessions.optJSONObject(i);
+            if (s == null || !sid.equals(s.optString("id"))) continue;
+            s.put("endpoint_id", endpointId);
+            s.put("endpoint_url", endpointUrl);
+            sessions.put(i, s);
+            saveArray(PREF_SESSIONS, sessions);
+            return;
+        }
     }
 
     private JSONObject endpointForProbe(String endpointId, String endpointUrl) throws Exception {
         JSONObject ep = findEndpoint(endpointId);
         if (ep != null) return ep;
         if (endpointUrl == null || endpointUrl.trim().isEmpty()) return null;
-        String normalized = chatUrl(endpointUrl);
-        JSONArray endpoints = loadArray(PREF_ENDPOINTS);
-        for (int i = 0; i < endpoints.length(); i++) {
-            JSONObject cand = endpoints.getJSONObject(i);
-            if (chatUrl(cand.optString("base_url")).equals(normalized)) return cand;
+        return endpointForChatUrl(endpointUrl);
+    }
+
+    private String providerModelId(JSONObject endpoint, String model) {
+        String out = valueOr(model, "").trim();
+        if (out.isEmpty()) return out;
+        String host = "";
+        try {
+            host = new URL(normalizeBase(endpoint == null ? "" : endpoint.optString("base_url"))).getHost().toLowerCase(Locale.US);
+        } catch (Exception ignored) {
         }
-        return null;
+        int at = out.lastIndexOf('@');
+        if (at > 0 && !host.isEmpty()) {
+            String suffix = out.substring(at + 1).trim().toLowerCase(Locale.US);
+            if (suffix.equals(host) || suffix.endsWith("." + host) || host.endsWith("." + suffix)) {
+                out = out.substring(0, at).trim();
+            }
+        }
+        return out;
+    }
+
+    private boolean isDeepSeekV4(JSONObject endpoint, String model) {
+        try {
+            String host = new URL(normalizeBase(endpoint == null ? "" : endpoint.optString("base_url"))).getHost().toLowerCase(Locale.US);
+            return "api.deepseek.com".equals(host)
+                    && valueOr(model, "").toLowerCase(Locale.US).startsWith("deepseek-v4-");
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private String mobileProviderLabel(JSONObject endpoint, String model) {
+        String host = "unknown endpoint";
+        try {
+            host = new URL(normalizeBase(endpoint == null ? "" : endpoint.optString("base_url"))).getHost();
+        } catch (Exception ignored) {
+        }
+        String providerModel = providerModelId(endpoint, model);
+        return host + (providerModel.isEmpty() ? "" : " / " + providerModel);
     }
 
     private void probeChat(JSONObject endpoint, String model) throws Exception {
+        String providerModel = providerModelId(endpoint, model);
+        if (isChatGptSubscriptionEndpoint(endpoint)) {
+            JSONArray messages = new JSONArray()
+                    .put(new JSONObject().put("role", "system").put("content", "You are a helpful assistant."))
+                    .put(new JSONObject().put("role", "user").put("content", "Say OK"));
+            String reply = callChatGptSubscription(endpoint, providerModel, messages, 0);
+            if (reply.trim().isEmpty()) throw new IOException(CHATGPT_SUBSCRIPTION_LABEL + " returned an empty response.");
+            return;
+        }
         String baseUrl = endpoint.optString("base_url");
         String apiKey = endpoint.optString("api_key");
         URL url = new URL(chatUrl(baseUrl));
@@ -5677,12 +9283,14 @@ public class MobileBackendServer {
         JSONArray messages = new JSONArray()
                 .put(new JSONObject().put("role", "system").put("content", "You are a helpful assistant."))
                 .put(new JSONObject().put("role", "user").put("content", "Say OK"));
-        byte[] data = new JSONObject()
-                .put("model", model)
+        JSONObject payload = new JSONObject()
+                .put("model", providerModel)
                 .put("messages", messages)
-                .put("stream", false)
-                .toString()
-                .getBytes(StandardCharsets.UTF_8);
+                .put("stream", false);
+        if (isDeepSeekV4(endpoint, providerModel)) {
+            payload.put("thinking", new JSONObject().put("type", "disabled"));
+        }
+        byte[] data = payload.toString().getBytes(StandardCharsets.UTF_8);
 
         conn.setFixedLengthStreamingMode(data.length);
         try (OutputStream body = conn.getOutputStream()) {
@@ -5692,7 +9300,7 @@ public class MobileBackendServer {
         int status = conn.getResponseCode();
         String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
         if (status < 200 || status >= 300) {
-            throw new IOException(formatProviderError(status, response));
+            throw new IOException(formatProviderError(status, response) + " | " + mobileRequestSummary(endpoint, providerModel, messages));
         }
     }
 
@@ -5701,6 +9309,11 @@ public class MobileBackendServer {
     }
 
     private String callChat(JSONObject endpoint, String model, JSONArray messages, int maxTokens) throws Exception {
+        JSONArray providerMessages = sanitizeProviderMessages(messages);
+        String providerModel = providerModelId(endpoint, model);
+        if (isChatGptSubscriptionEndpoint(endpoint)) {
+            return callChatGptSubscription(endpoint, providerModel, providerMessages, maxTokens);
+        }
         String baseUrl = endpoint.optString("base_url");
         String apiKey = endpoint.optString("api_key");
         URL url = new URL(chatUrl(baseUrl));
@@ -5713,10 +9326,14 @@ public class MobileBackendServer {
         conn.setRequestProperty("Accept", "application/json");
         if (!apiKey.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + apiKey);
         JSONObject payload = new JSONObject()
-                .put("model", model)
-                .put("messages", messages)
-                .put("stream", false)
-                .put("temperature", 0.7);
+                .put("model", providerModel)
+                .put("messages", providerMessages)
+                .put("stream", false);
+        if (isDeepSeekV4(endpoint, providerModel)) {
+            payload.put("thinking", new JSONObject().put("type", "disabled"));
+        } else {
+            payload.put("temperature", 0.7);
+        }
         if (maxTokens > 0) payload.put("max_tokens", maxTokens);
         byte[] data = payload.toString().getBytes(StandardCharsets.UTF_8);
         conn.setFixedLengthStreamingMode(data.length);
@@ -5726,7 +9343,7 @@ public class MobileBackendServer {
         int status = conn.getResponseCode();
         String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
         if (status < 200 || status >= 300) {
-            throw new IOException(formatProviderError(status, response));
+            throw new IOException(formatProviderError(status, response) + " | " + mobileRequestSummary(endpoint, providerModel, providerMessages));
         }
         JSONObject json = new JSONObject(response);
         JSONArray choices = json.optJSONArray("choices");
@@ -5738,7 +9355,300 @@ public class MobileBackendServer {
         return choice.optString("text", "");
     }
 
+    private String mobileRequestSummary(JSONObject endpoint, String model, JSONArray messages) {
+        String host = "unknown endpoint";
+        try {
+            host = new URL(normalizeBase(endpoint == null ? "" : endpoint.optString("base_url"))).getHost();
+        } catch (Exception ignored) {
+        }
+        return "sent host=" + host + ", model=" + valueOr(model, "") + ", messages=" + (messages == null ? 0 : messages.length());
+    }
+
+    private JSONArray sanitizeProviderMessages(JSONArray messages) throws Exception {
+        JSONArray cleaned = new JSONArray();
+        for (int i = 0; messages != null && i < messages.length(); i++) {
+            JSONObject msg = messages.optJSONObject(i);
+            if (msg == null) continue;
+            String role = msg.optString("role", "").trim();
+            if (role.isEmpty()) continue;
+
+            JSONObject item = new JSONObject().put("role", role);
+            if (msg.has("name") && !msg.isNull("name")) item.put("name", msg.get("name"));
+            if (msg.has("content")) item.put("content", msg.isNull("content") ? JSONObject.NULL : msg.get("content"));
+
+            if ("assistant".equals(role)) {
+                if (msg.has("tool_calls") && !msg.isNull("tool_calls")) item.put("tool_calls", msg.get("tool_calls"));
+                if (msg.has("function_call") && !msg.isNull("function_call")) item.put("function_call", msg.get("function_call"));
+                if (item.has("content") || item.has("tool_calls") || item.has("function_call")) {
+                    cleaned.put(item);
+                }
+                continue;
+            }
+
+            if ("tool".equals(role)) {
+                if (item.has("content") && msg.has("tool_call_id") && !msg.isNull("tool_call_id")) {
+                    item.put("tool_call_id", msg.get("tool_call_id"));
+                    cleaned.put(item);
+                }
+                continue;
+            }
+
+            if (item.has("content")) cleaned.put(item);
+        }
+        return cleaned;
+    }
+
+    private String callChatGptSubscription(JSONObject endpoint, String model, JSONArray messages, int maxTokens) throws Exception {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            String accessToken = ensureChatGptAccessToken(endpoint, attempt > 0);
+            URL url = new URL(chatUrl(endpoint.optString("base_url", CHATGPT_SUBSCRIPTION_BASE_URL)));
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(maxTokens > 0 ? 240000 : 120000);
+            conn.setDoOutput(true);
+            conn.setRequestProperty("Content-Type", "application/json");
+            for (Map.Entry<String, String> header : chatGptSubscriptionHeaders(accessToken).entrySet()) {
+                conn.setRequestProperty(header.getKey(), header.getValue());
+            }
+
+            JSONObject payload = buildChatGptResponsesPayload(model, messages);
+            byte[] data = payload.toString().getBytes(StandardCharsets.UTF_8);
+            conn.setFixedLengthStreamingMode(data.length);
+            try (OutputStream body = conn.getOutputStream()) {
+                body.write(data);
+            }
+            int status = conn.getResponseCode();
+            String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
+            if ((status == 401 || status == 403) && attempt == 0 && !endpoint.optString("refresh_token", "").isEmpty()) {
+                refreshChatGptEndpointTokens(endpoint);
+                continue;
+            }
+            if (status < 200 || status >= 300) {
+                throw new IOException(formatChatGptSubscriptionError(status, response));
+            }
+            return parseChatGptSubscriptionResponse(response);
+        }
+        throw new IOException(CHATGPT_SUBSCRIPTION_LABEL + " credentials expired or were rejected. Reconnect the provider.");
+    }
+
+    private JSONObject buildChatGptResponsesPayload(String model, JSONArray messages) throws Exception {
+        JSONObject payload = new JSONObject()
+                .put("model", model)
+                .put("instructions", chatGptInstructions(messages))
+                .put("input", buildChatGptResponsesInput(messages))
+                .put("stream", true)
+                .put("store", false);
+        if (!modelRestrictsTemperature(model)) {
+            payload.put("temperature", 0.7);
+        }
+        return payload;
+    }
+
+    private boolean modelRestrictsTemperature(String model) {
+        String m = valueOr(model, "").toLowerCase(Locale.US);
+        return m.startsWith("o1") || m.contains("/o1")
+                || m.startsWith("o3") || m.contains("/o3")
+                || m.startsWith("o4") || m.contains("/o4")
+                || m.startsWith("gpt-5") || m.contains("/gpt-5");
+    }
+
+    private String chatGptInstructions(JSONArray messages) throws Exception {
+        List<String> parts = new ArrayList<>();
+        for (int i = 0; messages != null && i < messages.length(); i++) {
+            JSONObject msg = messages.optJSONObject(i);
+            if (msg == null || !"system".equals(msg.optString("role"))) continue;
+            String text = messageContentText(msg.opt("content")).trim();
+            if (!text.isEmpty()) parts.add(text);
+        }
+        return parts.isEmpty() ? "You are a helpful AI assistant." : String.join("\n\n", parts);
+    }
+
+    private JSONArray buildChatGptResponsesInput(JSONArray messages) throws Exception {
+        JSONArray input = new JSONArray();
+        for (int i = 0; messages != null && i < messages.length(); i++) {
+            JSONObject msg = messages.optJSONObject(i);
+            if (msg == null || "system".equals(msg.optString("role"))) continue;
+            String role = msg.optString("role", "user");
+            if ("tool".equals(role)) role = "user";
+            String type = "assistant".equals(role) ? "output_text" : "input_text";
+            input.put(new JSONObject()
+                    .put("role", role)
+                    .put("content", new JSONArray().put(new JSONObject()
+                            .put("type", type)
+                            .put("text", messageContentText(msg.opt("content"))))));
+        }
+        return input;
+    }
+
+    private String messageContentText(Object content) {
+        if (content == null || content == JSONObject.NULL) return "";
+        if (content instanceof JSONArray) {
+            JSONArray arr = (JSONArray) content;
+            List<String> parts = new ArrayList<>();
+            for (int i = 0; i < arr.length(); i++) {
+                Object part = arr.opt(i);
+                if (part instanceof JSONObject) {
+                    JSONObject obj = (JSONObject) part;
+                    String text = obj.optString("text", obj.optString("content", ""));
+                    if (!text.isEmpty()) parts.add(text);
+                } else if (part != null && part != JSONObject.NULL) {
+                    String text = String.valueOf(part);
+                    if (!text.isEmpty()) parts.add(text);
+                }
+            }
+            return String.join("\n", parts);
+        }
+        if (content instanceof JSONObject) {
+            JSONObject obj = (JSONObject) content;
+            return obj.optString("text", obj.optString("content", obj.toString()));
+        }
+        return String.valueOf(content);
+    }
+
+    private String ensureChatGptAccessToken(JSONObject endpoint, boolean forceRefresh) throws Exception {
+        String accessToken = endpoint.optString("access_token", endpoint.optString("api_key", "")).trim();
+        if (forceRefresh || chatGptAccessTokenExpiring(accessToken)) {
+            accessToken = refreshChatGptEndpointTokens(endpoint);
+        }
+        if (accessToken.isEmpty()) {
+            throw new IOException(CHATGPT_SUBSCRIPTION_LABEL + " is missing an access token. Reconnect the provider.");
+        }
+        return accessToken;
+    }
+
+    private String refreshChatGptEndpointTokens(JSONObject endpoint) throws Exception {
+        String refreshToken = endpoint.optString("refresh_token", "").trim();
+        if (refreshToken.isEmpty()) {
+            throw new IOException(CHATGPT_SUBSCRIPTION_LABEL + " is missing a refresh token. Reconnect the provider.");
+        }
+        Map<String, String> form = new HashMap<>();
+        form.put("grant_type", "refresh_token");
+        form.put("refresh_token", refreshToken);
+        form.put("client_id", CHATGPT_OAUTH_CLIENT_ID);
+        JSONObject refreshed = httpPostFormJson(CHATGPT_OAUTH_TOKEN_URL, form);
+        String accessToken = refreshed.optString("access_token", "").trim();
+        if (accessToken.isEmpty()) {
+            throw new IOException("ChatGPT token refresh did not return an access token.");
+        }
+        endpoint.put("access_token", accessToken);
+        endpoint.put("api_key", "");
+        if (!refreshed.optString("refresh_token", "").trim().isEmpty()) {
+            endpoint.put("refresh_token", refreshed.optString("refresh_token", "").trim());
+        }
+        endpoint.put("last_refresh", String.valueOf(System.currentTimeMillis()));
+        saveEndpointRecord(endpoint);
+        return accessToken;
+    }
+
+    private boolean chatGptAccessTokenExpiring(String token) {
+        try {
+            String[] parts = valueOr(token, "").split("\\.");
+            if (parts.length < 2) return true;
+            String payload = parts[1];
+            while (payload.length() % 4 != 0) payload += "=";
+            byte[] decoded = Base64.decode(payload, Base64.URL_SAFE | Base64.NO_WRAP);
+            JSONObject json = new JSONObject(new String(decoded, StandardCharsets.UTF_8));
+            long exp = json.optLong("exp", 0L);
+            long now = System.currentTimeMillis() / 1000L;
+            return exp <= now + CHATGPT_ACCESS_TOKEN_REFRESH_SKEW_SECONDS;
+        } catch (Exception ignored) {
+            return true;
+        }
+    }
+
+    private void saveEndpointRecord(JSONObject updated) throws Exception {
+        String id = updated.optString("id", "");
+        JSONArray endpoints = loadArray(PREF_ENDPOINTS);
+        for (int i = 0; i < endpoints.length(); i++) {
+            JSONObject candidate = endpoints.optJSONObject(i);
+            if (candidate == null) continue;
+            if ((!id.isEmpty() && id.equals(candidate.optString("id")))
+                    || (id.isEmpty() && isChatGptSubscriptionEndpoint(candidate))) {
+                endpoints.put(i, updated);
+                saveArray(PREF_ENDPOINTS, endpoints);
+                return;
+            }
+        }
+    }
+
+    private String parseChatGptSubscriptionResponse(String raw) throws Exception {
+        String text = valueOr(raw, "").trim();
+        if (text.startsWith("{")) {
+            JSONObject json = new JSONObject(text);
+            return chatGptResponseText(json.optJSONObject("response") == null ? json : json.optJSONObject("response"));
+        }
+        StringBuilder out = new StringBuilder();
+        String eventName = "";
+        String[] lines = valueOr(raw, "").split("\\r?\\n");
+        for (String line : lines) {
+            if (line.startsWith("event:")) {
+                eventName = line.substring(6).trim();
+                continue;
+            }
+            if (!line.startsWith("data:")) continue;
+            String dataText = line.substring(5).trim();
+            if (dataText.isEmpty()) continue;
+            if ("[DONE]".equals(dataText)) return out.toString();
+            JSONObject data;
+            try {
+                data = new JSONObject(dataText);
+            } catch (Exception ignored) {
+                continue;
+            }
+            String type = data.optString("type", eventName);
+            if ("response.output_text.delta".equals(type)) {
+                out.append(data.optString("delta", ""));
+            } else if ("response.completed".equals(type)) {
+                if (out.length() == 0) out.append(chatGptResponseText(data.optJSONObject("response")));
+                return out.toString();
+            } else if ("response.failed".equals(type) || "error".equals(type)) {
+                JSONObject err = data.optJSONObject("error");
+                if (err == null) {
+                    JSONObject response = data.optJSONObject("response");
+                    err = response == null ? null : response.optJSONObject("error");
+                }
+                String message = err == null ? data.optString("message", CHATGPT_SUBSCRIPTION_LABEL + " request failed") : err.optString("message", CHATGPT_SUBSCRIPTION_LABEL + " request failed");
+                throw new IOException(message);
+            }
+        }
+        return out.toString();
+    }
+
+    private String chatGptResponseText(JSONObject response) {
+        if (response == null) return "";
+        String outputText = response.optString("output_text", "");
+        if (!outputText.isEmpty()) return outputText;
+        StringBuilder out = new StringBuilder();
+        JSONArray output = response.optJSONArray("output");
+        for (int i = 0; output != null && i < output.length(); i++) {
+            JSONObject item = output.optJSONObject(i);
+            if (item == null) continue;
+            JSONArray content = item.optJSONArray("content");
+            for (int j = 0; content != null && j < content.length(); j++) {
+                JSONObject part = content.optJSONObject(j);
+                if (part == null) continue;
+                String text = part.optString("text", "");
+                if (!text.isEmpty()) out.append(text);
+            }
+        }
+        return out.toString();
+    }
+
+    private String formatChatGptSubscriptionError(int status, String body) {
+        if (status == 401 || status == 403) {
+            return CHATGPT_SUBSCRIPTION_LABEL + " credentials expired or were rejected. Reconnect the provider.";
+        }
+        if (status == 429) {
+            return CHATGPT_SUBSCRIPTION_LABEL + " quota or rate limit was reached. Retry after the upstream limit resets.";
+        }
+        return formatProviderError(status, body);
+    }
+
     private JSONArray fetchModels(String baseUrl, String apiKey) throws Exception {
+        if (isChatGptSubscriptionBase(baseUrl)) {
+            return fetchChatGptSubscriptionModels(apiKey);
+        }
         URL url = new URL(modelsUrl(baseUrl));
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("GET");
@@ -5756,7 +9666,7 @@ public class MobileBackendServer {
             for (int i = 0; i < data.length(); i++) {
                 JSONObject item = data.optJSONObject(i);
                 String id = item == null ? data.optString(i) : item.optString("id", item.optString("name"));
-                if (!id.isEmpty() && isChatModel(id)) out.put(id);
+                if (!id.isEmpty() && (isChatModel(id) || isImageEditModel(id))) out.put(id);
             }
         }
         JSONArray models = json.optJSONArray("models");
@@ -5764,7 +9674,7 @@ public class MobileBackendServer {
             for (int i = 0; i < models.length(); i++) {
                 JSONObject item = models.optJSONObject(i);
                 String id = item == null ? models.optString(i) : item.optString("name", item.optString("model"));
-                if (!id.isEmpty() && isChatModel(id)) out.put(id);
+                if (!id.isEmpty() && (isChatModel(id) || isImageEditModel(id))) out.put(id);
             }
         }
         return out;
@@ -5824,13 +9734,16 @@ public class MobileBackendServer {
         url = url.replace('\\', '/');
         if (!url.startsWith("http://") && !url.startsWith("https://")) url = "https://" + url;
         while (url.endsWith("/")) url = url.substring(0, url.length() - 1);
+        if (isChatGptSubscriptionBase(url)) return CHATGPT_SUBSCRIPTION_BASE_URL;
         String[] suffixes = {"/chat/completions", "/completions", "/models"};
         for (String suffix : suffixes) {
             if (url.endsWith(suffix)) return url.substring(0, url.length() - suffix.length());
         }
         String lower = url.toLowerCase(Locale.US);
-        if ("https://api.deepseek.com".equals(lower)
-                || "https://api.openai.com".equals(lower)
+        if ("https://api.deepseek.com".equals(lower) || "https://api.deepseek.com/v1".equals(lower)) {
+            return "https://api.deepseek.com";
+        }
+        if ("https://api.openai.com".equals(lower)
                 || "https://api.x.ai".equals(lower)
                 || "https://api.mistral.ai".equals(lower)
                 || "https://api.together.xyz".equals(lower)) {
@@ -5841,14 +9754,38 @@ public class MobileBackendServer {
 
     private String chatUrl(String baseUrl) {
         String base = normalizeBase(baseUrl);
+        if (isChatGptSubscriptionBase(base)) return CHATGPT_SUBSCRIPTION_BASE_URL + "/responses";
         if (base.endsWith("/api")) return base + "/chat";
         return base + "/chat/completions";
     }
 
     private String modelsUrl(String baseUrl) {
         String base = normalizeBase(baseUrl);
+        if (isChatGptSubscriptionBase(base)) return CHATGPT_SUBSCRIPTION_BASE_URL + "/models?client_version=1.0.0";
         if (base.endsWith("/api")) return base + "/tags";
         return base + "/models";
+    }
+
+    private boolean isChatGptSubscriptionEndpoint(JSONObject endpoint) {
+        return endpoint != null
+                && (CHATGPT_SUBSCRIPTION_PROVIDER.equals(endpoint.optString("provider"))
+                || isChatGptSubscriptionBase(endpoint.optString("base_url")));
+    }
+
+    private boolean isChatGptSubscriptionBase(String raw) {
+        String url = valueOr(raw, "").trim().replace('\\', '/');
+        if (url.isEmpty()) return false;
+        if (!url.startsWith("http://") && !url.startsWith("https://")) url = "https://" + url;
+        try {
+            URL parsed = new URL(url);
+            String host = valueOr(parsed.getHost(), "").toLowerCase(Locale.US);
+            String path = valueOr(parsed.getPath(), "");
+            while (path.endsWith("/") && path.length() > 1) path = path.substring(0, path.length() - 1);
+            return "chatgpt.com".equals(host)
+                    && ("/backend-api/codex".equals(path) || path.startsWith("/backend-api/codex/"));
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private String formatProviderError(int status, String body) {
@@ -5880,6 +9817,46 @@ public class MobileBackendServer {
         return body.optString(key, fallback);
     }
 
+    private String requestedRembgModel(JSONObject body) {
+        String explicit = jsonString(body, "_rembg_model", "").trim();
+        if (isKnownRembgModel(explicit)) return explicit;
+        explicit = jsonString(body, "rembg_model", "").trim();
+        if (isKnownRembgModel(explicit)) return explicit;
+        explicit = jsonString(body, "_model", "").trim();
+        return isKnownRembgModel(explicit) ? explicit : "";
+    }
+
+    private String requestedBgRemovePipeline(JSONObject body) {
+        String explicit = jsonString(body, "bg_remove_pipeline", "").trim();
+        if (explicit.isEmpty()) explicit = jsonString(body, "bgremove_pipeline", "").trim();
+        if (explicit.isEmpty()) explicit = jsonString(body, "pipeline", "").trim();
+        if (explicit.isEmpty()) explicit = jsonString(body, "_pipeline", "").trim();
+        String mode = explicit.toLowerCase(Locale.US).replace('_', '-');
+        if (mode.equals("provider") || mode.equals("api") || mode.equals("local")
+                || mode.equals("local-model") || mode.equals("local-models")
+                || mode.equals("image-model") || mode.equals("image-models")
+                || mode.equals("model")) {
+            return "model";
+        }
+        if (mode.equals("natural") || mode.equals("native") || mode.equals("ml")
+                || mode.equals("rembg") || mode.equals("rembg-natural")) {
+            return "rembg";
+        }
+        if (mode.equals("heuristic") || mode.equals("sample") || mode.equals("sampled")
+                || mode.equals("sampled-background") || mode.equals("color")
+                || mode.equals("colour") || mode.equals("color-match")
+                || mode.equals("colour-match")) {
+            return "heuristic";
+        }
+        return "auto";
+    }
+
+    private boolean isKnownRembgModel(String model) {
+        return U2NETP_REMBG_MODEL.equals(model)
+                || SILUETA_REMBG_MODEL.equals(model)
+                || ISNET_REMBG_MODEL.equals(model);
+    }
+
     private boolean jsonBoolean(JSONObject body, String key, boolean fallback) {
         if (body == null || !body.has(key) || body.isNull(key)) return fallback;
         return body.optBoolean(key, fallback);
@@ -5888,6 +9865,14 @@ public class MobileBackendServer {
     private int jsonInt(JSONObject body, String key, int fallback) {
         if (body == null || !body.has(key) || body.isNull(key)) return fallback;
         return body.optInt(key, fallback);
+    }
+
+    private double normalizedStrength(JSONObject body, String key, double fallback) {
+        if (body == null || !body.has(key) || body.isNull(key)) return clampStrength(fallback);
+        double value = body.optDouble(key, fallback);
+        if (Double.isNaN(value) || Double.isInfinite(value)) value = fallback;
+        if (value > 1.0) value = value / 100.0;
+        return clampStrength(value);
     }
 
     private Object nullableJsonValue(JSONObject body, String key) throws Exception {
@@ -6406,6 +10391,15 @@ public class MobileBackendServer {
         byte[] data;
     }
 
+    private static class MobileHttpException extends Exception {
+        final int status;
+
+        MobileHttpException(int status, String detail) {
+            super(detail);
+            this.status = status;
+        }
+    }
+
     private static class Request {
         String method;
         String rawPath;
@@ -6413,5 +10407,6 @@ public class MobileBackendServer {
         Map<String, String> query = new HashMap<>();
         Map<String, String> headers = new HashMap<>();
         byte[] body = new byte[0];
+        boolean bodyTooLarge = false;
     }
 }

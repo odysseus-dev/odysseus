@@ -32,12 +32,13 @@
 import { state } from '../state.js';
 import { canvasCoords } from '../canvas-coords.js';
 
-const STROKE_TOOLS = new Set(['brush', 'eraser', 'inpaint']);
+const STROKE_TOOLS = new Set(['brush', 'eraser', 'inpaint', 'rembg']);
 
 function strokeLabel(tool) {
   if (tool === 'brush') return 'Brush stroke';
   if (tool === 'eraser') return 'Eraser stroke';
   if (tool === 'inpaint') return state.inpaintEraseStroke ? 'Erase mask' : 'Paint mask';
+  if (tool === 'rembg') return 'Background sample stroke';
   return 'Stroke';
 }
 

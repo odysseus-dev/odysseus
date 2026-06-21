@@ -1,6 +1,6 @@
-"""resolve_session_auth must not persist the ChatGPT Subscription bearer.
+"""resolve_session_auth must not persist the Codex Subscription bearer.
 
-The ChatGPT Subscription access token is a short-lived OAuth bearer re-resolved
+The Codex Subscription access token is a short-lived OAuth bearer re-resolved
 (and refreshed) on every request. resolve_session_auth() may set it on the
 in-memory session for the current request, but it must never write it back into
 the sessions table — otherwise the live token sits at rest as
@@ -34,7 +34,7 @@ def test_chatgpt_subscription_auth_is_not_written_to_sessions_table(monkeypatch)
     db = TestSessionLocal()
     try:
         db.add(ModelEndpoint(
-            id="ep1", name="ChatGPT Subscription", base_url=_CODEX_BASE,
+            id="ep1", name="Codex Subscription", base_url=_CODEX_BASE,
             provider_auth_id="auth1", owner="alice", is_enabled=True, api_key=None,
         ))
         db.add(DbSession(
@@ -74,7 +74,7 @@ def test_chatgpt_subscription_auth_is_not_written_to_sessions_table(monkeypatch)
 
 
 def test_non_subscription_auth_is_still_persisted_to_sessions_table(monkeypatch):
-    """The early-return must be scoped to ChatGPT Subscription only.
+    """The early-return must be scoped to Codex Subscription only.
 
     Ordinary endpoints rely on resolve_session_auth() persisting the resolved
     headers into the sessions table so they aren't re-resolved on every request.
@@ -128,7 +128,7 @@ def test_chatgpt_subscription_clears_previously_persisted_bearer(monkeypatch):
     db = TestSessionLocal()
     try:
         db.add(ModelEndpoint(
-            id="ep1", name="ChatGPT Subscription", base_url=_CODEX_BASE,
+            id="ep1", name="Codex Subscription", base_url=_CODEX_BASE,
             provider_auth_id="auth1", owner="alice", is_enabled=True, api_key=None,
         ))
         # Simulate the leak: a stale bearer already sitting in the sessions table.
@@ -171,7 +171,7 @@ def test_chatgpt_subscription_fallback_auth_is_not_written_to_sessions_table(mon
     db = TestSessionLocal()
     try:
         db.add(ModelEndpoint(
-            id="ep1", name="ChatGPT Subscription", base_url=_CODEX_BASE,
+            id="ep1", name="Codex Subscription", base_url=_CODEX_BASE,
             provider_auth_id="auth1", owner="alice", is_enabled=True, api_key=None,
             cached_models='["gpt-5.1-codex"]',
         ))
@@ -198,7 +198,7 @@ def test_chatgpt_subscription_fallback_auth_is_not_written_to_sessions_table(mon
     assert result == {
         "model": "gpt-5.1-codex",
         "endpoint_url": _CODEX_BASE + "/responses",
-        "endpoint_name": "ChatGPT Subscription",
+        "endpoint_name": "Codex Subscription",
     }
     assert sess.headers["Authorization"] == "Bearer live-access-token"
 
@@ -209,7 +209,7 @@ def test_chatgpt_subscription_fallback_auth_is_not_written_to_sessions_table(mon
         assert row.endpoint_url == _CODEX_BASE + "/responses"
         stored = row.headers or {}
         assert not any(k.lower() == "authorization" for k in stored), (
-            f"ChatGPT fallback bearer leaked into sessions table: {stored}"
+            f"Codex fallback bearer leaked into sessions table: {stored}"
         )
     finally:
         db.close()

@@ -138,8 +138,15 @@ export const state = {
   // cleanup sliders can live-rebuild alpha without re-running rembg.
   rembgLiveLayer: null,
   rembgLiveSnap: null,
+  // User-painted background sample strokes. The remove-bg request sends
+  // this as a separate mask so the backend can remove matching pixels.
+  rembgPipeline: 'auto',
+  rembgSampleCanvas: null,
+  rembgSampleCtx: null,
+  rembgSampleVisible: true,
   // Memoised "is rembg installed on the server?" probe.
   rembgInstalledCache: null,
+  rembgAvailabilityListenerWired: false,
 
   // ── Stroke drag state ──
   // Generic in-progress-stroke flags shared by brush/eraser/clone/
@@ -219,6 +226,9 @@ export const state = {
   // session. Tracked so closeEditor can detach them all cleanly.
   // Mutated in place (push / length = 0); the reference never changes.
   editorDocClickHandlers: [],
+  // Generic per-editor cleanup callbacks for window/viewport listeners
+  // installed by submodules during the current openEditor() session.
+  editorCleanupHandlers: [],
 
   // ── Undo / redo ──
   undoStack: [],

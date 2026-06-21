@@ -38,10 +38,12 @@ def _classify(ip: ipaddress._BaseAddress, *, block_private: bool) -> Optional[st
         ip = ip.ipv4_mapped
     if ip.is_link_local:
         return f"link-local address blocked (SSRF metadata risk): {ip}"
-    if ip.is_multicast or ip.is_reserved or ip.is_unspecified:
-        return f"disallowed address: {ip}"
     if block_private and (ip.is_private or ip.is_loopback):
         return f"private/loopback address blocked: {ip}"
+    if ip.is_private or ip.is_loopback:
+        return None
+    if ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+        return f"disallowed address: {ip}"
     return None
 
 

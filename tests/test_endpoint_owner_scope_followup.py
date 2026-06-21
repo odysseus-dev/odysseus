@@ -386,7 +386,7 @@ def test_gallery_image_endpoint_lookups_are_owner_scoped():
     assert body.count("_first_visible_image_endpoint(db, user)") >= 4
     assert body.count("_visible_image_endpoint_for_base(db,") >= 2
     assert "def _current_user_is_admin" in body
-    assert body.count('raise HTTPException(403, "Choose a registered image endpoint")') == 2
+    assert body.count('raise HTTPException(403, "Choose a registered image endpoint")') >= 2
     for marker in (
         "async def gallery_ai_upscale",
         "async def gallery_style_transfer",

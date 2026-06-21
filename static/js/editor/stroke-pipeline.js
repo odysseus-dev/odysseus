@@ -19,6 +19,7 @@
  * }} deps
  */
 import { state } from './state.js';
+import { ensureRembgSampleCanvas } from './rembg-sample-mask.js';
 
 export function createStrokePipeline({ activeLayer, getActiveMaskLayer, composite }) {
   function cloneStrokeTo(x, y, layer) {
@@ -74,7 +75,28 @@ export function createStrokePipeline({ activeLayer, getActiveMaskLayer, composit
     composite();
   }
 
+  function rembgSampleStrokeTo(x, y) {
+    const c = ensureRembgSampleCanvas();
+    const ctx = state.rembgSampleCtx || c.getContext('2d');
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = state.brushSize;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = 'rgba(255,255,255,1)';
+    ctx.beginPath();
+    ctx.moveTo(state.lastX, state.lastY);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    ctx.restore();
+    state.lastX = x;
+    state.lastY = y;
+    composite();
+  }
+
   function strokeTo(x, y) {
+    if (state.tool === 'rembg') return rembgSampleStrokeTo(x, y);
     const layer = activeLayer();
     if (!layer) return;
     // Clone uses a stamp-based paint loop, not the line-stroke

@@ -9,6 +9,7 @@ import pytest
 
 _REPO = Path(__file__).resolve().parent.parent
 _HELPER = _REPO / "static" / "js" / "providerDeviceFlow.js"
+_HELPER_URL = _HELPER.as_uri()
 pytestmark = pytest.mark.skipif(not shutil.which("node"), reason="node not on PATH")
 
 
@@ -27,7 +28,7 @@ def _run_node(script: str):
 
 def test_copilot_success_uses_complete_verification_uri():
     js = f"""
-      import {{ runProviderDeviceFlow }} from '{_HELPER.as_posix()}';
+      import {{ runProviderDeviceFlow }} from '{_HELPER_URL}';
       const calls = [];
       const opened = [];
       let polls = 0;
@@ -67,7 +68,7 @@ def test_copilot_success_uses_complete_verification_uri():
 
 def test_chatgpt_success_uses_plain_verification_uri():
     js = f"""
-      import {{ runProviderDeviceFlow }} from '{_HELPER.as_posix()}';
+      import {{ runProviderDeviceFlow }} from '{_HELPER_URL}';
       const opened = [];
       const response = (ok, status, payload) => ({{ ok, status, async json() {{ return payload; }} }});
       const fetchImpl = async (url) => {{
@@ -97,7 +98,7 @@ def test_chatgpt_success_uses_plain_verification_uri():
 
 def test_start_errors_surface_backend_detail():
     js = f"""
-      import {{ runProviderDeviceFlow }} from '{_HELPER.as_posix()}';
+      import {{ runProviderDeviceFlow }} from '{_HELPER_URL}';
       const response = (ok, status, payload) => ({{ ok, status, async json() {{ return payload; }} }});
       try {{
         await runProviderDeviceFlow('copilot', {{
@@ -116,7 +117,7 @@ def test_start_errors_surface_backend_detail():
 
 def test_thrown_fetch_errors_are_preserved():
     js = f"""
-      import {{ runProviderDeviceFlow }} from '{_HELPER.as_posix()}';
+      import {{ runProviderDeviceFlow }} from '{_HELPER_URL}';
       try {{
         await runProviderDeviceFlow('chatgpt-subscription', {{
           fetchImpl: async () => {{ throw new Error('network offline'); }},
@@ -134,7 +135,7 @@ def test_thrown_fetch_errors_are_preserved():
 
 def test_expired_flow_returns_expired_status():
     js = f"""
-      import {{ runProviderDeviceFlow }} from '{_HELPER.as_posix()}';
+      import {{ runProviderDeviceFlow }} from '{_HELPER_URL}';
       let currentTime = 0;
       const response = (ok, status, payload) => ({{ ok, status, async json() {{ return payload; }} }});
       const result = await runProviderDeviceFlow('copilot', {{

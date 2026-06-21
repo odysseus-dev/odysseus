@@ -27,6 +27,8 @@ const EDGE_DOCK_WIDTH_KEY_PREFIX = 'odysseus-edge-dock-width';
 const MIN_EDGE_DOCK_WIDTH = 360;
 const MIN_COMPACT_EDGE_DOCK_WIDTH = 280;
 const COMPACT_EDGE_DOCK_RATIO = 0.84;
+const MAX_DESKTOP_EDGE_DOCK_WIDTH = 720;
+const MAX_DESKTOP_EDGE_DOCK_RATIO = 0.44;
 const MOBILE_DOCK_BREAKPOINT = 768;
 const TOUCH_LANDSCAPE_SPLIT_ADJUST_PX = 96;
 const TOUCH_LANDSCAPE_SPLIT_HIT_PX = 18;
@@ -101,8 +103,11 @@ function _defaultDockWidth() {
 }
 
 function _dockWidthStorageKey(modal, content, side) {
-  const id = modal?.id || content?.id || content?.dataset?.modalId || '';
-  return id ? `${EDGE_DOCK_WIDTH_KEY_PREFIX}:${side}:${id}` : null;
+  if (side !== 'left' && side !== 'right') return null;
+  // Use one desktop split width per side. The previous per-modal keys made
+  // every tool reopen with a different saved dock width, so the chat appeared
+  // to shrink to a different size depending on which modal was active.
+  return `${EDGE_DOCK_WIDTH_KEY_PREFIX}:${side}:shared`;
 }
 
 function _storedDockWidth(modal, content, side) {
@@ -161,6 +166,21 @@ function _isTouchLandscape() {
 
 export function canUseEdgeDock() {
   return !_isTouchInput() || _isTouchLandscape();
+}
+
+function _edgeDockDisabledForModal(modal) {
+  const data = modal?.dataset || {};
+  return data.edgeDock === 'off'
+    || data.noEdgeDock === 'true'
+    || modal?.classList?.contains('no-edge-dock');
+}
+
+function _clearDisabledEdgeDock(modal, dockClass = null) {
+  if (!modal) return;
+  const hadRight = modal.classList?.contains('modal-right-docked');
+  const hadLeft = modal.classList?.contains('modal-left-docked');
+  if (!hadRight && !hadLeft) return;
+  _onDockedModalGone(modal, dockClass || (hadLeft ? 'modal-left-docked' : 'modal-right-docked'));
 }
 
 function _isLeftAnchoredRect(rect) {
@@ -265,7 +285,11 @@ function _clampRightDockWidth(width) {
   const navRight = _leftNavRight();
   const leftDockW = _activeDockWidth('left');
   const maxByChat = window.innerWidth - rightNav - navRight - leftDockW - MIN_CHAT_WIDTH;
-  const max = Math.min(Math.round(available * 0.82), maxByChat);
+  const desktopMax = Math.max(
+    min,
+    Math.min(MAX_DESKTOP_EDGE_DOCK_WIDTH, Math.round(available * MAX_DESKTOP_EDGE_DOCK_RATIO)),
+  );
+  const max = Math.min(desktopMax, maxByChat);
   return _clampDockWidthToSpace(width, min, max);
 }
 
@@ -275,7 +299,11 @@ function _clampLeftDockWidth(width, left = _leftNavRight()) {
   const available = Math.max(0, window.innerWidth - left - rightDockW);
   const min = _minEdgeDockWidth(available);
   if (_compactDockViewport()) return _clampDockWidthToSpace(width, min, available);
-  const max = Math.min(Math.round(available * 0.82), available - MIN_CHAT_WIDTH);
+  const desktopMax = Math.max(
+    min,
+    Math.min(MAX_DESKTOP_EDGE_DOCK_WIDTH, Math.round(available * MAX_DESKTOP_EDGE_DOCK_RATIO)),
+  );
+  const max = Math.min(desktopMax, available - MIN_CHAT_WIDTH);
   return _clampDockWidthToSpace(width, min, max);
 }
 
@@ -664,6 +692,10 @@ function _applyDockInternal(modal, side, dockClass) {
   if (!nodes) return 0;
   const content = nodes.content;
   if (!content) return 0;
+  if (_edgeDockDisabledForModal(modal)) {
+    _clearDisabledEdgeDock(modal, dockClass);
+    return 0;
+  }
   if (!canUseEdgeDock()) {
     _clearDocksForDisabledViewport();
     return 0;
@@ -1102,7 +1134,8 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
   };
   return {
     onMove(cx, cy) {
-      if (!canUseEdgeDock()) {
+      if (!canUseEdgeDock() || _edgeDockDisabledForModal(modal)) {
+        _clearDisabledEdgeDock(modal, dockClass);
         _showSnapHint(false, side);
         _hoveringSnap = false;
         return false;
@@ -1126,7 +1159,10 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
     commit() {
       _showSnapHint(false, side);
       _hoveringSnap = false;
-      if (!canUseEdgeDock()) return 0;
+      if (!canUseEdgeDock() || _edgeDockDisabledForModal(modal)) {
+        _clearDisabledEdgeDock(modal, dockClass);
+        return 0;
+      }
       return _applyDockInternal(modal, side, dockClass);
     },
     release() {

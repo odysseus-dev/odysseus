@@ -1,4 +1,4 @@
-"""DB-backed ChatGPT Subscription endpoint provisioning tests."""
+"""DB-backed Codex Subscription endpoint provisioning tests."""
 
 import json
 
@@ -27,7 +27,7 @@ def test_provision_creates_owner_scoped_auth_session_and_endpoint(monkeypatch):
 
     res = csr._provision_endpoint({"access_token": "AT", "refresh_token": "RT"}, "alice")
 
-    assert res["name"] == "ChatGPT Subscription"
+    assert res["name"] == "Codex Subscription"
     assert res["base_url"] == csr.chatgpt_subscription.DEFAULT_CHATGPT_SUBSCRIPTION_BASE_URL
     assert res["models"] == ["gpt-5.5", "o4-mini"]
 
@@ -96,7 +96,7 @@ def _add_auth_and_endpoints(db, *, auth_id="auth1", ep_ids=("ep1",)):
     ))
     for ep_id in ep_ids:
         db.add(ModelEndpoint(
-            id=ep_id, name="ChatGPT Subscription",
+            id=ep_id, name="Codex Subscription",
             base_url="https://chatgpt.com/backend-api/codex",
             provider_auth_id=auth_id, owner="alice",
         ))
@@ -173,7 +173,7 @@ def test_delete_orphaned_provider_auth_noop_when_auth_row_missing(monkeypatch):
     try:
         # Endpoint points at an auth_id whose ProviderAuthSession is already gone.
         db.add(ModelEndpoint(
-            id="ep1", name="ChatGPT Subscription",
+            id="ep1", name="Codex Subscription",
             base_url="https://chatgpt.com/backend-api/codex",
             provider_auth_id="ghost", owner="alice",
         ))

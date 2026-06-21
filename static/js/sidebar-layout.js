@@ -177,6 +177,15 @@ export function initSidebarLayout(Storage, opts) {
   // Shift-click swaps sidebar side
   let _userToggledSidebar = false;
   let _wasAutoCollapsed = false;
+  let _mobileSidebarExplicitOpen = false;
+  const isMobileSidebarViewport = () => window.innerWidth < 768 || isTouchLandscape();
+  const markMobileSidebarOpen = () => {
+    _userToggledSidebar = true;
+    if (isMobileSidebarViewport()) _mobileSidebarExplicitOpen = true;
+  };
+  const markMobileSidebarClosed = () => {
+    if (isMobileSidebarViewport()) _mobileSidebarExplicitOpen = false;
+  };
 
   // Deliberate "open the sidebar" used by the mobile swipe gesture (wired at
   // module scope). It MUST set _userToggledSidebar so the auto-collapse
@@ -191,7 +200,7 @@ export function initSidebarLayout(Storage, opts) {
     // were popping it open. Blocking the open helper covers every path.
     const cc = document.getElementById('chat-container');
     if (window.innerWidth < 768 && cc && cc.classList.contains('compare-active')) return;
-    _userToggledSidebar = true;
+    markMobileSidebarOpen();
     // Optionally place the sidebar on a specific edge (the swipe gesture passes
     // the direction). Persist it + re-anchor the doc panel, same as a
     // shift-click on the hamburger.
@@ -241,9 +250,11 @@ export function initSidebarLayout(Storage, opts) {
 
         if (isSidebarVisible) {
           // Closing sidebar
+          markMobileSidebarClosed();
           sidebar.classList.add('hidden');
           if (backdrop) backdrop.classList.remove('visible');
         } else {
+          markMobileSidebarOpen();
           // Mobile portrait keeps the sidebar on the right. Touch landscape
           // uses the side opposite the camera cutout.
           const wantRight = isTouchLandscape() ? landscapeSidebarSide() === 'right' : true;
@@ -305,10 +316,11 @@ export function initSidebarLayout(Storage, opts) {
   const MIN_CHAT_WIDTH = 380; // collapse sidebar if chat gets narrower than this
 
   function checkSidebarAutoCollapse() {
-    if (_userToggledSidebar) return;
     const sidebar = document.getElementById('sidebar');
     if (!sidebar) return;
     const isHidden = sidebar.classList.contains('hidden');
+    if (_mobileSidebarExplicitOpen && !isHidden && isMobileSidebarViewport()) return;
+    if (_userToggledSidebar) return;
 
     // Check if chat area is too narrow (e.g. sidebar + doc panel both open).
     // BUT — if a tile-snapped modal exists, IT is what's making chat narrow,
@@ -336,8 +348,14 @@ export function initSidebarLayout(Storage, opts) {
     }
   }
 
-  function handleViewportSideChange() {
-    _userToggledSidebar = false; // allow auto-collapse on actual resize
+  function handleViewportSideChange(e) {
+    const isVisualViewportEvent = e && window.visualViewport && e.currentTarget === window.visualViewport;
+    if (!isVisualViewportEvent) {
+      _userToggledSidebar = false; // allow auto-collapse on actual resize
+      if (!isMobileSidebarViewport() || e?.type === 'orientationchange') {
+        _mobileSidebarExplicitOpen = false;
+      }
+    }
     syncLandscapeSidebarSide(document.getElementById('sidebar'));
     syncRailSide();
     requestAnimationFrame(checkSidebarAutoCollapse);
@@ -360,6 +378,7 @@ export function initSidebarLayout(Storage, opts) {
   if (window.innerWidth < AUTO_COLLAPSE_WIDTH) {
     const sidebar = document.getElementById('sidebar');
     if (sidebar && !sidebar.classList.contains('hidden')) {
+      markMobileSidebarClosed();
       sidebar.classList.add('hidden');
       _wasAutoCollapsed = true;
       syncRailSide();
@@ -399,6 +418,7 @@ export function initSidebarLayout(Storage, opts) {
     }
     const sb = document.getElementById('sidebar');
     if (sb && !sb.classList.contains('hidden')) {
+      markMobileSidebarClosed();
       sb.classList.add('hidden');
     }
     mobileBackdrop.classList.remove('visible');
@@ -430,6 +450,7 @@ export function initSidebarLayout(Storage, opts) {
         _swSwiping = false;
         const _backdrop = document.getElementById('sidebar-backdrop');
         if (_backdrop) _backdrop.classList.remove('visible');
+        markMobileSidebarClosed();
         sidebar.classList.add('hidden');
         syncRailSide();
       }
@@ -457,6 +478,7 @@ export function initSidebarLayout(Storage, opts) {
     if (sb && !sb.classList.contains('hidden')) {
       const backdrop = document.getElementById('sidebar-backdrop');
       if (backdrop) backdrop.classList.remove('visible');
+      markMobileSidebarClosed();
       sb.classList.add('hidden');
       syncRailSide();
       return;
@@ -491,6 +513,7 @@ export function initSidebarLayout(Storage, opts) {
       let changed = false;
       if (sb && !sb.classList.contains('hidden')) {
         _sidebarWasOpenBeforeTool = true;
+        markMobileSidebarClosed();
         sb.classList.add('hidden');
         changed = true;
       }
@@ -543,16 +566,20 @@ export function initSidebarLayout(Storage, opts) {
         _railWasOpenBeforeTool = false;
         return;
       }
+      let restored = false;
       if (_sidebarWasOpenBeforeTool && sb && sb.classList.contains('hidden')) {
+        markMobileSidebarOpen();
         sb.classList.remove('hidden');
         if (backdrop) backdrop.classList.add('visible');
+        restored = true;
       }
       if (_railWasOpenBeforeTool && rail && !rail.classList.contains('mobile-mini')) {
         rail.classList.add('mobile-mini');
+        restored = true;
       }
       _sidebarWasOpenBeforeTool = false;
       _railWasOpenBeforeTool = false;
-      if (_sidebarWasOpenBeforeTool || _railWasOpenBeforeTool) syncRailSide();
+      if (restored) syncRailSide();
     };
     const _modalObs = new MutationObserver((muts) => {
       let triggered = false;

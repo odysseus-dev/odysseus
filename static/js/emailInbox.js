@@ -89,6 +89,9 @@ let _docModule = null;
 let _listSpinner = null;
 let _senderFilter = null;       // email address (lowercased) to filter by, or null
 let _senderFilterLabel = null;  // display label for the active filter chip
+let _emailEventsBound = false;
+let _unreadRefreshTimer = null;
+let _refreshUnreadInFlight = false;
 
 export function init(documentModule) {
   _docModule = documentModule;
@@ -178,7 +181,8 @@ function _bindEvents() {
   // (except the compose button which has its own handler)
   const section = document.getElementById('email-section');
   const header = section?.querySelector('.section-header-flex');
-  if (header) {
+  if (header && header.dataset.emailInboxHeaderBound !== '1') {
+    header.dataset.emailInboxHeaderBound = '1';
     header.style.cursor = 'pointer';
     header.addEventListener('click', (e) => {
       if (e.target.closest('#email-compose-btn')) return;
@@ -189,16 +193,20 @@ function _bindEvents() {
 
   // Compose button creates a new email document
   const composeBtn = document.getElementById('email-compose-btn');
-  if (composeBtn) {
+  if (composeBtn && composeBtn.dataset.emailInboxComposeBound !== '1') {
+    composeBtn.dataset.emailInboxComposeBound = '1';
     composeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       _composeNew();
     });
   }
 
+  if (_emailEventsBound) return;
+  _emailEventsBound = true;
+
   // Initial unread count check, refresh every 60s
   _refreshUnreadCount();
-  setInterval(_refreshUnreadCount, 60000);
+  if (!_unreadRefreshTimer) _unreadRefreshTimer = setInterval(_refreshUnreadCount, 60000);
   const compactEmailView = _isCompactEmailViewport();
   prewarmEmailLibrary({
     delay: compactEmailView ? 12000 : 3000,
@@ -230,6 +238,8 @@ function _urgencyColor(score) {
 }
 
 async function _refreshUnreadCount() {
+  if (_refreshUnreadInFlight) return;
+  _refreshUnreadInFlight = true;
   // Default the dot to hidden — only the verified "new mail above threshold"
   // path below should turn it on. Without this, a fetch error or a backend
   // returning malformed data left a stale dot from a previous account/session.
@@ -275,6 +285,8 @@ async function _refreshUnreadCount() {
   } catch (e) {
     // Network/parse error — keep the dot hidden (default at the top).
     if (dot) dot.style.display = 'none';
+  } finally {
+    _refreshUnreadInFlight = false;
   }
 }
 

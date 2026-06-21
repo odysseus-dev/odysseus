@@ -25,6 +25,7 @@ import base64
 import io
 import json
 import logging
+import math
 import time
 from pathlib import Path
 
@@ -42,6 +43,7 @@ logger = logging.getLogger("diffusion_server")
 
 _pipe = None
 _model_id = ""
+_pipe_backend = "diffusers"
 DTYPE_MAP = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}
 _args = None
 
@@ -142,12 +144,140 @@ def _fix_meta_tensors(pipe, dtype):
             logger.info(f"  Fixed {fixed} meta tensors in {name}")
 
 
+def _is_onnx_model_path(model_path: str) -> bool:
+    p = Path(model_path)
+    return p.is_dir() and (
+        (p / "unet" / "model.onnx").exists()
+        or (p / "transformer" / "model.onnx").exists()
+        or (p / "vae_decoder" / "model.onnx").exists()
+    )
+
+
+def _wants_onnx_backend(model_path: str) -> bool:
+    backend = (_args.backend or "auto").lower()
+    if backend == "onnx":
+        return True
+    if backend == "diffusers":
+        return False
+    return _is_onnx_model_path(model_path) or "onnx" in str(model_path).lower()
+
+
+def _gguf_model_files(model_path: str) -> list[Path]:
+    path = Path(model_path)
+    if path.is_file() and path.suffix.lower() == ".gguf":
+        return [path]
+    if path.is_dir() and not (path / "model_index.json").exists() and not _is_onnx_model_path(model_path):
+        return sorted(path.glob("*.gguf"))[:3]
+    return []
+
+
+def _reject_unsupported_gguf_image_model(model_path: str) -> None:
+    gguf_files = _gguf_model_files(model_path)
+    if not gguf_files:
+        return
+    first = gguf_files[0]
+    raise RuntimeError(
+        "This image server cannot load LM Studio/GGUF diffusion checkpoints for inpaint. "
+        f"Found GGUF file: {first}. "
+        "LM Studio exposes OpenAI-compatible chat/text endpoints, not the image+mask "
+        "Diffusers/ONNX API that Odysseus uses for Gallery inpaint. "
+        "Serve a Diffusers folder, Hugging Face diffusion repo, .safetensors/.ckpt checkpoint, "
+        "or ONNX inpaint model instead. For SD3.5 Medium, use a Diffusers-compatible "
+        "stable-diffusion-3.5-medium model rather than the LM Studio .gguf download."
+    )
+
+
+def _select_ort_provider() -> str:
+    import onnxruntime as ort
+
+    available = ort.get_available_providers()
+    requested = (_args.provider or "auto").strip()
+    if requested.lower() == "auto":
+        if "DmlExecutionProvider" in available:
+            requested = "DmlExecutionProvider"
+        elif "CUDAExecutionProvider" in available:
+            requested = "CUDAExecutionProvider"
+        else:
+            requested = "CPUExecutionProvider"
+    if requested not in available:
+        raise RuntimeError(
+            f"ONNX provider {requested} is not available. "
+            f"Available providers: {available}. "
+            "For AMD GPU on Windows install onnxruntime-directml."
+        )
+    return requested
+
+
+def _load_onnx_model(model_path: str) -> bool:
+    """Load an ONNX Runtime diffusion pipeline, preferring DirectML on Windows."""
+    global _pipe, _model_id, _pipe_backend
+
+    provider = _select_ort_provider()
+    logger.info(f"Loading ONNX diffusion model from {model_path} with provider={provider}...")
+    try:
+        from optimum.onnxruntime import (
+            ORTDiffusionPipeline,
+            ORTStableDiffusionInpaintPipeline,
+        )
+    except Exception as e:
+        raise RuntimeError(
+            "ONNX diffusion serving requires optimum-onnx, diffusers, transformers, "
+            "torch, and onnxruntime-directml for AMD GPU on Windows."
+        ) from e
+
+    model_text = str(model_path).lower()
+    model_index = Path(model_path) / "model_index.json"
+    if model_index.exists():
+        try:
+            model_text += " " + model_index.read_text(encoding="utf-8").lower()
+        except Exception:
+            pass
+    cls = ORTStableDiffusionInpaintPipeline if "inpaint" in model_text else ORTDiffusionPipeline
+
+    provider_options = None
+    if provider == "DmlExecutionProvider" and _args.device_id is not None:
+        provider_options = {"device_id": int(_args.device_id)}
+
+    kwargs = {
+        "provider": provider,
+        "use_io_binding": False,
+    }
+    if provider_options:
+        kwargs["provider_options"] = provider_options
+
+    # Prefer disabling the safety checker for local editor tools. It saves a
+    # large extra ONNX session and avoids black-frame false positives.
+    try:
+        _pipe = cls.from_pretrained(
+            model_path,
+            safety_checker=None,
+            feature_extractor=None,
+            **kwargs,
+        )
+    except TypeError:
+        _pipe = cls.from_pretrained(model_path, **kwargs)
+
+    _model_id = Path(model_path).name if Path(model_path).exists() else model_path.split("/")[-1]
+    _pipe_backend = "onnx"
+    logger.info(f"ONNX model loaded: {_model_id} ({type(_pipe).__name__}, provider={provider})")
+    return True
+
+
 def load_model():
-    global _pipe, _model_id
-    import diffusers
+    global _pipe, _model_id, _pipe_backend
 
     model_path = _args.model
     _model_id = Path(model_path).name
+
+    _reject_unsupported_gguf_image_model(model_path)
+
+    if _wants_onnx_backend(model_path):
+        if _load_onnx_model(model_path):
+            return
+
+    _pipe_backend = "diffusers"
+    import diffusers
+
     dtype_map = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}
     torch_dtype = dtype_map.get(_args.dtype, torch.bfloat16)
     use_offload = _args.cpu_offload
@@ -561,12 +691,17 @@ def _get_inpaint_pipe():
     if _img2img_pipe:
         return _img2img_pipe, 'img2img'
 
+    pipe_cls_name = type(_pipe).__name__
+    if _pipe_backend == "onnx" and 'inpaint' in pipe_cls_name.lower():
+        _inpaint_pipe = _pipe
+        logger.info(f"Main ONNX pipeline is already inpaint: {pipe_cls_name}")
+        return _inpaint_pipe, 'inpaint'
+
     import diffusers
     model_path = _args.model
     torch_dtype = DTYPE_MAP.get(_args.dtype, torch.bfloat16)
 
     # Check if the main pipeline IS already an inpaint pipeline
-    pipe_cls_name = type(_pipe).__name__
     if 'inpaint' in pipe_cls_name.lower():
         _inpaint_pipe = _pipe
         logger.info(f"Main pipeline is already inpaint: {pipe_cls_name}")
@@ -665,18 +800,38 @@ def inpaint_image(req: InpaintRequest):
     start = time.time()
 
     strength = max(0.1, min(1.0, req.strength))
+    min_steps_for_strength = max(1, math.ceil(1.0 / strength))
+    if steps < min_steps_for_strength:
+        logger.info(
+            "Adjusted inpaint steps from %s to %s so strength %.2f keeps at least one denoise step",
+            steps,
+            min_steps_for_strength,
+            strength,
+        )
+        steps = min_steps_for_strength
 
     # Try to get a dedicated inpaint or img2img pipeline
     alt_pipe, alt_type = _get_inpaint_pipe()
 
-    # SDXL inpaint expects ~1024 on the short side. Running at canvas
-    # native resolution can produce grey / muted output when the model's
-    # latent grid is far larger than what it was trained on. Cap to a
-    # model-friendly box (multiples of 8), inpaint there, upscale back.
-    max_side = 1024
-    scale = min(max_side / max(width, height), 1.0)
-    work_w = max(64, ((int(width  * scale) + 7) // 8) * 8)
-    work_h = max(64, ((int(height * scale) + 7) // 8) * 8)
+    # Diffusers SDXL likes ~1024, but legacy ONNX SD1.5 inpaint exports are
+    # usually static 512x512 graphs. Normalize ONNX work images to 512 unless
+    # the operator explicitly supplied --width/--height.
+    if _pipe_backend == "onnx":
+        target_w = int(_args.width or 512)
+        target_h = int(_args.height or target_w)
+        if target_w == 1024 and target_h == 1024:
+            target_w = target_h = 512
+        work_w = max(64, ((target_w + 7) // 8) * 8)
+        work_h = max(64, ((target_h + 7) // 8) * 8)
+    else:
+        # SDXL inpaint expects ~1024 on the short side. Running at canvas
+        # native resolution can produce grey / muted output when the model's
+        # latent grid is far larger than what it was trained on. Cap to a
+        # model-friendly box (multiples of 8), inpaint there, upscale back.
+        max_side = 1024
+        scale = min(max_side / max(width, height), 1.0)
+        work_w = max(64, ((int(width  * scale) + 7) // 8) * 8)
+        work_h = max(64, ((int(height * scale) + 7) // 8) * 8)
     work_init = init_image.resize((work_w, work_h), PILImage.LANCZOS)
     work_mask = mask_image.resize((work_w, work_h), PILImage.BILINEAR)
     logger.info(f"Inpaint working size: {work_w}x{work_h} (from {width}x{height})")
@@ -1133,6 +1288,9 @@ def health():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True, help="Path to diffusers model")
+    parser.add_argument("--backend", default="auto", choices=["auto", "diffusers", "onnx"], help="Inference backend")
+    parser.add_argument("--provider", default="auto", help="ONNX Runtime provider (auto, DmlExecutionProvider, CUDAExecutionProvider, CPUExecutionProvider)")
+    parser.add_argument("--device-id", type=int, default=None, help="DirectML/CUDA provider device id")
     parser.add_argument("--lora", type=str, default=None, help="Path to LoRA weights (.safetensors). Can specify multiple comma-separated.")
     parser.add_argument("--lora-scale", type=float, default=1.0, help="LoRA weight scale (0.0-2.0)")
     parser.add_argument("--port", type=int, default=8100)

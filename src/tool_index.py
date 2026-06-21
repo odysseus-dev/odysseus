@@ -82,7 +82,10 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "edit_document": "Preferred tool for editing an existing document — targeted find-and-replace. Use for any small change: add a function, fix a bug, tweak a section, rename things.",
     "update_document": "Replace the entire active document content. ONLY for full rewrites (>50% changed). Do not use for small edits — use edit_document instead.",
     "suggest_document": "Suggest changes to the active document with explanations. For code review, proofreading, feedback requests.",
-    "generate_image": "Generate an AI image from a text prompt. Specify model, size, and quality. Art, illustrations, photos.",
+    "generate_image": "Generate a professional AI image file from a text prompt and render it inline. Use for image creation requests; do not substitute SVG/HTML/code/prompt text unless the user explicitly asks for that format. Tries the current/configured/mentioned image-capable model first, then falls back to RunComfy/ComfyUI. Supports size, aspect ratio, style, quality, seed, product shots, posters, ads, portraits, concept art.",
+    "generate_video": "Generate a professional AI video from a prompt using RunComfy/ComfyUI and render it inline. Supports cinematic camera direction, social clips, ad creative, animations, image-to-video, lip-sync/audio-driven clips, and premium tiers.",
+    "generate_music": "Generate professional AI music or audio using RunComfy/ComfyUI and render it inline. Supports songs, instrumentals, jingles, background music, seamless loops, vocals, lyrics, BPM, polished mix/master.",
+    "runcomfy_media": "Run any exact RunComfy media endpoint from a skill model_id and input body. Use for advanced image, video, music, avatar, lip-sync, edit, inpaint, outpaint, or model-specific schemas.",
     "chat_with_model": "Send a message to a different AI model. Compare responses, get specialized help, delegate tasks.",
     "ask_teacher": "Ask a more capable model for help with a difficult problem. Escalate complex tasks.",
     "pipeline": "Run a multi-step AI pipeline with multiple models. Chain tasks together in sequence.",
@@ -104,7 +107,7 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "search_chats": "Search past session transcripts across chats.",
     "ask_user": "Ask the user a multiple-choice question to get a decision or clarification. Use this when the task is genuinely ambiguous and the answer changes what you do next — pick between approaches, confirm an assumption, choose among options — instead of guessing. Provide a clear `question` and 2-6 `options` (each with a short `label`, optional `description`). Calling this ENDS your turn: the user sees clickable buttons and their choice arrives as your next message. Don't use it for things you can decide from context or sensible defaults, or for irreversible-action confirmation if a dedicated flow exists.",
     "update_plan": "Write back to the ACTIVE PLAN while executing an approved plan: mark steps done or revise them. After finishing a step call this with the full checklist and that step marked done; when the user asks to change the plan call it with the revised checklist. Always pass the COMPLETE markdown checklist (`- [ ]` / `- [x]`), not a diff. The user's docked plan window updates live. No effect when there is no active plan.",
-    "ui_control": "Control the UI and toggle tools on/off. Use this to turn off / turn on / disable / enable individual tools and features: shell (bash), search (web), research, browser, documents, incognito. Open panels (documents library, gallery, email inbox, sessions, notes, memories/brain, skills, settings, cookbook) via `open_panel <name>`. Use `open_email_reply <uid> <folder> reply` to open an email reply draft document without sending. Also switches between chat/agent modes, changes the current model, and applies/creates themes.",
+    "ui_control": "Control the UI and toggle tools on/off. Use this to turn off / turn on / disable / enable individual tools and features: shell (bash), search (web), research, browser, documents, incognito. Open panels (documents library, gallery, email inbox, sessions, notes, calendar, tasks, research, workspace, memories/brain, skills, settings, cookbook) via `open_panel <name>`. Use `open_email_reply <uid> <folder> reply` to open an email reply draft document without sending. Also switches between chat/agent modes, changes the current model, and applies/creates themes.",
     "list_email_accounts": "List configured email accounts and default status. Use before reading or sending mail when the user mentions Gmail, work mail, custom domain mail, another mailbox, or asks to compare/check multiple inboxes.",
     "list_emails": "List emails for a folder/account, newest first, including read messages by default. Shows subject, sender, date, UID, account, and AI summary. Check inbox, find emails needing replies. Supports account from list_email_accounts for Gmail/work/custom mailboxes. For last/latest/newest email, use max_results=1 and unread_only=false.",
     "read_email": "Read the full content of a specific email by UID or Message-ID. View email body, check details. Supports account from list_email_accounts when the UID belongs to a non-default mailbox.",
@@ -347,8 +350,12 @@ class ToolIndex:
         # believed it had only email tools and refused web/other tasks (#1707).
         frozenset({"email", "emails", "mail", "mails", "gmail", "googlemail", "message", "messages", "send", "reply", "replies", "inbox", "unread"}):
             {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read", "resolve_contact", "ui_control"},
-        frozenset({"calendar", "event", "meeting", "schedule", "appointment"}):
-            {"manage_calendar"},
+        frozenset({"calendar", "calendars", "calander", "calanders", "calender",
+                   "calenders", "my calendar", "my calander", "agenda", "event",
+                   "events", "meeting", "meetings", "schedule", "appointment",
+                   "appointments", "open calendar", "show calendar",
+                   "can you see my calendar", "can you see my calander"}):
+            {"manage_calendar", "ui_control"},
         frozenset({"note", "todo", "reminder", "remind", "checklist", "remember to"}):
             {"manage_notes"},
         # Chat/session management. "rename" alone maps to documents below, so a
@@ -367,8 +374,10 @@ class ToolIndex:
                    "daily task", "background task", "scheduled task", "schedule a",
                    "automatically", "auto-summarize", "auto summarize",
                    "cron", "periodically", "on a schedule", "set up a task",
-                   "create a task", "summarize my inbox every", "remind me every"}):
-            {"manage_tasks"},
+                   "create a task", "summarize my inbox every", "remind me every",
+                   "tasks", "my tasks", "open tasks", "show tasks", "automations",
+                   "open automations", "can you see my tasks"}):
+            {"manage_tasks", "ui_control"},
         frozenset({"contact", "address", "phone", "who is"}):
             {"resolve_contact", "manage_contact"},
         frozenset({"save contact", "add contact", "new contact", "update contact",
@@ -404,8 +413,32 @@ class ToolIndex:
                    "read research", "find research", "delete research",
                    "remove research", "list research", "my reports", "the report",
                    "saved research", "research library", "past research",
-                   "research i did", "research about"}):
-            {"manage_research", "trigger_research"},
+                   "research i did", "research about", "show research",
+                   "can you see my research"}):
+            {"manage_research", "trigger_research", "ui_control"},
+        # New media generation.
+        frozenset({"generate image", "make image", "create image", "draw",
+                   "render image", "text to image", "image gen", "picture of",
+                   "photo of", "make me an image", "make a picture",
+                   "professional image", "pro image", "premium image",
+                   "product shot", "hero image", "ad image", "poster"}):
+            {"generate_image", "manage_gallery"},
+        frozenset({"generate video", "make video", "create video", "text to video",
+                   "image to video", "video gen", "animate this", "make a clip",
+                   "cinematic clip", "music video", "professional video",
+                   "pro video", "premium video", "4k video", "hero shot",
+                   "commercial video", "ad creative"}):
+            {"generate_video", "runcomfy_media", "manage_gallery"},
+        frozenset({"generate music", "make music", "create music", "make a song",
+                   "compose", "jingle", "instrumental", "background music",
+                   "music gen", "song with lyrics", "audio track", "game loop",
+                   "professional music", "pro audio", "premium music",
+                   "commercial music", "broadcast audio", "seamless loop",
+                   "theme song", "soundtrack"}):
+            {"generate_music", "runcomfy_media"},
+        frozenset({"runcomfy", "run comfy", "skills.sh media", "ai video generation",
+                   "ai image generation", "ai music", "lip sync", "avatar video"}):
+            {"runcomfy_media", "generate_image", "generate_video", "generate_music"},
         # Gallery / saved photo access and edits.
         frozenset({"gallery", "my gallery", "photo", "photos", "image", "images",
                    "picture", "pictures", "camera roll", "uploaded photo",
@@ -413,7 +446,7 @@ class ToolIndex:
                    "see my photos", "describe this photo", "describe my photo",
                    "edit photo", "edit image", "remove background", "upscale image",
                    "sharpen image", "enhance face", "inpaint"}):
-            {"manage_gallery", "edit_image", "ui_control"},
+            {"generate_image", "manage_gallery", "edit_image", "ui_control"},
         # Document edit/update intent
         frozenset({"edit", "change", "fix", "rewrite", "update",
                    "replace", "add a", "tweak", "modify", "rename", "paragraph",
@@ -429,7 +462,19 @@ class ToolIndex:
                    "find my", "find document", "read the", "read my", "show me the",
                    "show my", "the file", "my file", "the report", "the write-up",
                    "the writeup", "saved document", "in my library", "in the library"}):
-            {"manage_documents", "edit_document"},
+            {"manage_documents", "edit_document", "ui_control"},
+        frozenset({"workspace", "workspaces", "open workspace", "show workspace",
+                   "browse workspace", "my workspace", "file tree", "folder tree",
+                   "project files", "open files", "show files", "open folders",
+                   "show folders", "can you see my workspace"}):
+            {"get_workspace", "ls", "glob", "grep", "read_file", "write_file", "edit_file", "ui_control"},
+        frozenset({"skills", "skill", "my skills", "open skills", "show skills",
+                   "can you see my skills"}):
+            {"manage_skills", "ui_control"},
+        frozenset({"memory", "memories", "brain", "my memory", "my memories",
+                   "open memory", "open memories", "show memory", "show memories",
+                   "can you see my memory", "can you see my memories"}):
+            {"manage_memory", "ui_control"},
         # Theme / UI control intent
         frozenset({"theme", "color scheme", "colors of the ui", "make it dark",
                    "make it light", "make the ui", "switch theme", "change theme",
@@ -472,9 +517,12 @@ class ToolIndex:
                    "research off", "research on", "incognito",
                    "switch model", "change model", "set mode", "agent mode", "chat mode",
                    "open library", "open documents", "open gallery", "open email",
-                   "open inbox", "open settings", "open memories", "open memory",
+                   "open inbox", "open calendar", "open calander", "open calender",
+                   "open tasks", "open automations", "open research", "open workspace",
+                   "open settings", "open memories", "open memory",
                    "open skills", "open notes", "open chats", "open sessions",
                    "show library", "show gallery", "show inbox", "show settings",
+                   "show calendar", "show tasks", "show research", "show workspace",
                    "show memory", "show memories", "show skills", "show notes",
                    "show chats", "show sessions", "show documents"}):
             {"ui_control"},

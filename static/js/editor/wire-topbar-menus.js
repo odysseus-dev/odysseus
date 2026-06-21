@@ -37,6 +37,74 @@
  */
 import { state } from './state.js';
 
+function isTouchLandscape() {
+  try {
+    return window.matchMedia('(orientation: landscape) and (hover: none)').matches ||
+      window.matchMedia('(orientation: landscape) and (pointer: coarse)').matches;
+  } catch {
+    return false;
+  }
+}
+
+function isTouchLandscapeGalleryEditor() {
+  const modal = state.container?.closest?.('#gallery-modal');
+  return !!modal && isTouchLandscape();
+}
+
+function clearLandscapeMenuPosition(menu) {
+  if (!menu || menu.dataset.geLandscapePositioned !== '1') return;
+  delete menu.dataset.geLandscapePositioned;
+  for (const prop of ['position', 'top', 'right', 'bottom', 'left', 'maxWidth', 'maxHeight', 'overflowY', 'zIndex']) {
+    menu.style[prop] = '';
+  }
+}
+
+function editorMenuBounds(pad = 8) {
+  const viewport = {
+    left: pad,
+    top: pad,
+    right: Math.max(pad, (window.innerWidth || 0) - pad),
+    bottom: Math.max(pad, (window.innerHeight || 0) - pad),
+  };
+  const surface = state.container?.closest?.('.gallery-modal-content, .modal-content')
+    || state.container?.closest?.('.gallery-editor')
+    || state.container;
+  const rect = surface?.getBoundingClientRect?.();
+  if (!rect || rect.width < 120 || rect.height < 120) return viewport;
+  const bounds = {
+    left: Math.max(viewport.left, rect.left + pad),
+    top: Math.max(viewport.top, rect.top + pad),
+    right: Math.min(viewport.right, rect.right - pad),
+    bottom: Math.min(viewport.bottom, rect.bottom - pad),
+  };
+  if (bounds.right - bounds.left < 140 || bounds.bottom - bounds.top < 120) return viewport;
+  return bounds;
+}
+
+function positionLandscapeMenu(btn, menu, minWidth = 180) {
+  if (!btn || !menu) return;
+  if (!isTouchLandscapeGalleryEditor()) {
+    clearLandscapeMenuPosition(menu);
+    return;
+  }
+  const rect = btn.getBoundingClientRect();
+  const bounds = editorMenuBounds(8);
+  const width = Math.min(Math.max(minWidth, rect.width), Math.max(140, bounds.right - bounds.left));
+  const left = Math.max(bounds.left, Math.min(rect.left, Math.max(bounds.left, bounds.right - width)));
+  const top = Math.max(bounds.top, rect.bottom + 4);
+  const maxHeight = Math.max(96, Math.min(420, bounds.bottom - top));
+  menu.dataset.geLandscapePositioned = '1';
+  menu.style.position = 'fixed';
+  menu.style.top = `${Math.round(top)}px`;
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.right = 'auto';
+  menu.style.bottom = 'auto';
+  menu.style.maxWidth = `${Math.round(bounds.right - left)}px`;
+  menu.style.maxHeight = `${Math.round(maxHeight)}px`;
+  menu.style.overflowY = 'auto';
+  menu.style.zIndex = '10020';
+}
+
 export function wireTopbarMenus({
   closeOtherTopbarMenus, registerDocClickAway,
   saveState, composite, fitZoom,
@@ -98,11 +166,14 @@ export function wireTopbarMenus({
         const willOpen = menu.hidden;
         if (willOpen) closeOtherTopbarMenus('ge-image-menu');
         menu.hidden = !menu.hidden;
+        if (!menu.hidden) positionLandscapeMenu(btn, menu, 180);
+        else clearLandscapeMenuPosition(menu);
       });
       menu.addEventListener('click', (e) => {
         const item = e.target.closest('[data-image-action]');
         if (!item || item.disabled) return;
         menu.hidden = true;
+        clearLandscapeMenuPosition(menu);
         const action = item.dataset.imageAction;
         if (action === 'resize') resizeCustomPrompt();
         else if (action === 'selection') document.getElementById('ge-edge-menu-btn')?.click();
@@ -113,7 +184,10 @@ export function wireTopbarMenus({
         else if (action === 'flip-v') flipAllLayers('v');
       });
       registerDocClickAway((e) => {
-        if (!menu.hidden && !menu.contains(e.target) && e.target !== btn) menu.hidden = true;
+        if (!menu.hidden && !menu.contains(e.target) && e.target !== btn) {
+          menu.hidden = true;
+          clearLandscapeMenuPosition(menu);
+        }
       });
     }
   }
@@ -128,17 +202,23 @@ export function wireTopbarMenus({
         const willOpen = menu.hidden;
         if (willOpen) closeOtherTopbarMenus('ge-filter-menu');
         menu.hidden = !menu.hidden;
+        if (!menu.hidden) positionLandscapeMenu(btn, menu, 180);
+        else clearLandscapeMenuPosition(menu);
       });
       menu.addEventListener('click', (e) => {
         const item = e.target.closest('[data-filter-action]');
         if (!item) return;
         menu.hidden = true;
+        clearLandscapeMenuPosition(menu);
         const action = item.dataset.filterAction;
         if (action === 'blur-gaussian') applyGaussianBlur();
         else if (action === 'blur-zoom') applyZoomBlur();
       });
       registerDocClickAway((e) => {
-        if (!menu.hidden && !menu.contains(e.target) && e.target !== btn) menu.hidden = true;
+        if (!menu.hidden && !menu.contains(e.target) && e.target !== btn) {
+          menu.hidden = true;
+          clearLandscapeMenuPosition(menu);
+        }
       });
     }
   }
@@ -153,19 +233,26 @@ export function wireTopbarMenus({
         const willOpen = menu.hidden;
         if (willOpen) closeOtherTopbarMenus('ge-resize-menu');
         menu.hidden = !menu.hidden;
+        if (!menu.hidden) positionLandscapeMenu(btn, menu, 200);
+        else clearLandscapeMenuPosition(menu);
       });
       menu.querySelectorAll('[data-resize-w]').forEach(item => {
         item.addEventListener('click', () => {
           menu.hidden = true;
+          clearLandscapeMenuPosition(menu);
           applyResize(parseInt(item.dataset.resizeW, 10), parseInt(item.dataset.resizeH, 10));
         });
       });
       menu.querySelector('[data-resize-custom]')?.addEventListener('click', () => {
         menu.hidden = true;
+        clearLandscapeMenuPosition(menu);
         resizeCustomPrompt();
       });
       registerDocClickAway((e) => {
-        if (!menu.hidden && !menu.contains(e.target) && e.target !== btn) menu.hidden = true;
+        if (!menu.hidden && !menu.contains(e.target) && e.target !== btn) {
+          menu.hidden = true;
+          clearLandscapeMenuPosition(menu);
+        }
       });
     }
   }

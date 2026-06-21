@@ -9,9 +9,35 @@ import time
 
 from services.search import get_search_config, comprehensive_web_search, PROVIDER_INFO
 from services.search.core import _call_provider
-from services.search.providers import _get_provider_key, _get_search_instance
+from services.search.providers import _get_provider_key, _get_search_instance, _get_search_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _provider_status(pid: str) -> Dict[str, Any]:
+    """Return non-secret availability metadata for one search provider."""
+    label, needs_key, needs_url = PROVIDER_INFO[pid]
+    available = True
+    reasons = []
+    if needs_key and not _get_provider_key(pid):
+        available = False
+        reasons.append("API key missing")
+    if pid == "google_pse":
+        settings = _get_search_settings()
+        if not (settings.get("google_pse_cx") or "").strip():
+            available = False
+            reasons.append("Programmable Search Engine CX ID missing")
+    if needs_url and pid == "searxng" and not _get_search_instance():
+        available = False
+        reasons.append("search URL missing")
+    status = {
+        "id": pid,
+        "label": label,
+        "available": available,
+    }
+    if reasons:
+        status["reason"] = "; ".join(reasons)
+    return status
 
 
 async def _request_values(request: Request) -> Dict[str, Any]:
@@ -69,19 +95,10 @@ def setup_search_routes(config) -> APIRouter:
     async def list_search_providers():
         """Return available search providers with config status."""
         providers = []
-        for pid, (label, needs_key, needs_url) in PROVIDER_INFO.items():
+        for pid in PROVIDER_INFO:
             if pid == "disabled":
                 continue
-            available = True
-            if needs_key and not _get_provider_key(pid):
-                available = False
-            if needs_url and pid == "searxng" and not _get_search_instance():
-                available = False
-            providers.append({
-                "id": pid,
-                "label": label,
-                "available": available,
-            })
+            providers.append(_provider_status(pid))
         return providers
 
     @router.post("/api/search/query")

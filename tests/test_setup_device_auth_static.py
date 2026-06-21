@@ -21,15 +21,16 @@ def test_setup_guide_lists_account_sign_in_providers():
     assert "'copilot'" in _SLASH
     assert "'chatgpt-subscription'" in _SLASH
     assert "/setup copilot" in _SLASH
-    assert "/setup chatgpt-subscription" in _SLASH
+    assert "/setup codex-subscription" in _SLASH
 
 
 def test_clicking_account_sign_in_provider_prefills_setup_command_not_api_key():
     click_block = _between(_SLASH, "const providerEl = e.target.closest('.setup-clickable-provider')", "// 3. Check")
 
     assert "providerEl.dataset.setupProvider" in click_block
+    assert "providerEl.dataset.setupCommand" in click_block
     assert "providerEl.dataset.setupKind === 'device-auth'" in click_block
-    assert "'/setup ' + providerKey" in click_block
+    assert "providerEl.dataset.setupCommand || ('/setup ' + providerKey)" in click_block
 
 
 def test_setup_chatgpt_subscription_prints_auth_url_without_auto_opening_tab():

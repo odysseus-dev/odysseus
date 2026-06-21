@@ -124,6 +124,93 @@ DockerRowStatus = namedtuple("DockerRowStatus", ["applicable", "install_hint"])
 PackageUpdateStatus = namedtuple("PackageUpdateStatus", ["available", "note"])
 
 
+REMBG_MODEL_DEPENDENCIES = {
+    "silueta": {
+        "filename": "silueta.onnx",
+        "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/silueta.onnx",
+        "bytes": 44173029,
+        "desc": "Higher-quality rembg background-removal model. Better than u2netp, smaller than ISNet.",
+    },
+    "isnet-general-use": {
+        "filename": "isnet-general-use.onnx",
+        "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/isnet-general-use.onnx",
+        "bytes": 178648008,
+        "desc": "High-quality general rembg background-removal model. Best quality, larger download.",
+    },
+}
+
+
+def _rembg_model_home() -> Path:
+    """Return the model cache directory used by rembg/pooch."""
+    configured = os.environ.get("U2NET_HOME")
+    if configured:
+        return Path(configured).expanduser()
+    xdg = os.environ.get("XDG_DATA_HOME")
+    if xdg:
+        return Path(xdg).expanduser() / ".u2net"
+    return Path.home() / ".u2net"
+
+
+def _rembg_model_path(model_key: str) -> Path | None:
+    spec = REMBG_MODEL_DEPENDENCIES.get(model_key)
+    if not spec:
+        return None
+    return _rembg_model_home() / spec["filename"]
+
+
+def _rembg_model_status(model_key: str) -> tuple[bool, str]:
+    path = _rembg_model_path(model_key)
+    spec = REMBG_MODEL_DEPENDENCIES.get(model_key) or {}
+    if not path:
+        return False, ""
+    expected = int(spec.get("bytes") or 0)
+    if path.exists() and path.is_file() and path.stat().st_size > 0:
+        size_mb = path.stat().st_size / (1024 * 1024)
+        if expected and path.stat().st_size < max(1, expected // 2):
+            return False, f"Partial file at {path} ({size_mb:.1f} MB). Reinstall to repair."
+        return True, f"{path} ({size_mb:.1f} MB)"
+    size_note = f"{expected / (1024 * 1024):.1f} MB" if expected else "model file"
+    return False, f"Downloads {size_note} to {path}."
+
+
+def _download_rembg_model(model_key: str) -> dict:
+    import urllib.request
+
+    spec = REMBG_MODEL_DEPENDENCIES.get(model_key)
+    if not spec:
+        raise HTTPException(400, "Unknown rembg model")
+    dest = _rembg_model_path(model_key)
+    if dest is None:
+        raise HTTPException(400, "Unknown rembg model")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".download")
+    try:
+        req = urllib.request.Request(
+            spec["url"],
+            headers={"User-Agent": "odysseus-cookbook/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=120) as response, tmp.open("wb") as fh:
+            shutil.copyfileobj(response, fh)
+        if tmp.stat().st_size <= 0:
+            raise RuntimeError("downloaded file is empty")
+        expected = int(spec.get("bytes") or 0)
+        if expected and tmp.stat().st_size < max(1, expected // 2):
+            raise RuntimeError("downloaded file is incomplete")
+        tmp.replace(dest)
+        return {
+            "ok": True,
+            "model": model_key,
+            "path": str(dest),
+            "bytes": dest.stat().st_size,
+        }
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
+
+
 def _docker_row_status(*, on_remote, in_container, installed, default_hint):
     local_docker_unavailable = not on_remote and in_container and not installed
     if local_docker_unavailable:
@@ -149,6 +236,13 @@ def _pip_dist_name(pkg: dict) -> str:
     return (pkg.get("name") or "").replace("_", "-")
 
 
+def _pip_dist_names(pkg: dict) -> list[str]:
+    names = pkg.get("dist_names")
+    if isinstance(names, list) and names:
+        return [str(name) for name in names if str(name).strip()]
+    return [_pip_dist_name(pkg)]
+
+
 def _package_installed_from_probe(name: str, probe: dict) -> bool:
     """Return whether an optional dependency is usable by Cookbook.
 
@@ -170,6 +264,29 @@ def _package_installed_from_probe(name: str, probe: dict) -> bool:
         return bool(
             (dists.get("diffusers") or modules.get("diffusers", {}).get("real_module"))
             and (dists.get("torch") or modules.get("torch", {}).get("real_module"))
+        )
+    if name == "onnxruntime":
+        return bool(
+            modules.get("onnxruntime", {}).get("real_module")
+            and (
+                dists.get("onnxruntime")
+                or dists.get("onnxruntime-directml")
+                or dists.get("onnxruntime-gpu")
+            )
+        )
+    if name == "onnxruntime-directml":
+        providers = probe.get("providers") if isinstance(probe.get("providers"), list) else []
+        return bool(
+            dists.get("onnxruntime-directml")
+            and modules.get("onnxruntime", {}).get("real_module")
+            and "DmlExecutionProvider" in providers
+        )
+    if name == "onnxruntime-gpu":
+        providers = probe.get("providers") if isinstance(probe.get("providers"), list) else []
+        return bool(
+            dists.get("onnxruntime-gpu")
+            and modules.get("onnxruntime", {}).get("real_module")
+            and "CUDAExecutionProvider" in providers
         )
     if name == "hf_transfer":
         return bool(
@@ -212,6 +329,23 @@ def _package_status_note(name: str, probe: dict) -> str:
         if _package_installed_from_probe(name, probe):
             return f"diffusers {dists.get('diffusers', 'available')} with torch {dists.get('torch', 'available')}"
         return "Diffusers serving needs both diffusers and torch."
+    if name in {"onnxruntime", "onnxruntime-directml", "onnxruntime-gpu"}:
+        providers = probe.get("providers") if isinstance(probe.get("providers"), list) else []
+        provider_note = f"; providers: {', '.join(providers)}" if providers else ""
+        if name == "onnxruntime-directml":
+            if _package_installed_from_probe(name, probe):
+                return f"onnxruntime-directml {dists.get('onnxruntime-directml', 'available')}{provider_note}"
+            return "DirectML provider not available. Install onnxruntime-directml in the selected environment."
+        if name == "onnxruntime-gpu":
+            if _package_installed_from_probe(name, probe):
+                return f"onnxruntime-gpu {dists.get('onnxruntime-gpu', 'available')}{provider_note}"
+            return "CUDA provider not available. Install onnxruntime-gpu on an NVIDIA/CUDA environment."
+        versions = [
+            f"{dist} {version}"
+            for dist, version in dists.items()
+            if dist in {"onnxruntime", "onnxruntime-directml", "onnxruntime-gpu"}
+        ]
+        return ("; ".join(versions) if versions else "ONNX Runtime not found") + provider_note
     if name in dists:
         return f"{name} {dists[name]}"
     return ""
@@ -311,6 +445,13 @@ dist_names={{
     'sglang':['sglang'],
     'diffusers':['diffusers','torch'],
     'hf_transfer':['hf-transfer','hf_transfer'],
+    'onnxruntime':['onnxruntime','onnxruntime-directml','onnxruntime-gpu'],
+    'onnxruntime-directml':['onnxruntime-directml'],
+    'onnxruntime-gpu':['onnxruntime-gpu'],
+}}
+import_names={{
+    'onnxruntime-directml':['onnxruntime'],
+    'onnxruntime-gpu':['onnxruntime'],
 }}
 bin_names={{
     'vllm':['vllm'],
@@ -355,13 +496,24 @@ def dist_status(ds):
             pass
     return out
 
+def ort_providers(n, mods):
+    if n not in ('onnxruntime', 'onnxruntime-directml', 'onnxruntime-gpu'):
+        return []
+    if not mods.get('onnxruntime', {{}}).get('real_module'):
+        return []
+    try:
+        import onnxruntime as ort
+        return list(ort.get_available_providers())
+    except Exception:
+        return []
+
 def probe(n):
-    mods = {{n: mod_status(n)}}
+    mods = {{m: mod_status(m) for m in import_names.get(n, [n])}}
     if n == 'diffusers':
         mods['torch'] = mod_status('torch')
     dists = dist_status(dist_names.get(n, [n]))
     bins = {{b: shutil.which(b) for b in bin_names.get(n, [])}}
-    return {{'modules': mods, 'dists': dists, 'binaries': bins}}
+    return {{'modules': mods, 'dists': dists, 'binaries': bins, 'providers': ort_providers(n, mods)}}
 
 print(json.dumps({{n: probe(n) for n in names}}))
 """
@@ -1059,10 +1211,46 @@ def setup_shell_routes() -> APIRouter:
             },
             {
                 "name": "rembg",
-                "pip": "rembg[gpu]",
-                "desc": "AI background removal for image editor",
+                "pip": "rembg",
+                "desc": "AI background removal for image editor. Uses the app's separate ONNX Runtime dependency.",
                 "category": "Image",
                 "target": "local",
+            },
+            {
+                "name": "onnxruntime",
+                "pip": "onnxruntime",
+                "desc": "CPU ONNX inference runtime used by rembg and ONNX-backed image tools",
+                "category": "Image",
+                "target": "local",
+                "import_name": "onnxruntime",
+                "dist_names": ["onnxruntime", "onnxruntime-directml", "onnxruntime-gpu"],
+            },
+            {
+                "name": "onnxruntime-directml",
+                "pip": "onnxruntime-directml",
+                "desc": "GPU ONNX Runtime via DirectML for Windows/AMD ONNX-backed image and inpaint tools",
+                "category": "Image",
+                "target": "remote",
+                "import_name": "onnxruntime",
+                "dist_names": ["onnxruntime-directml"],
+            },
+            {
+                "name": "rembg-silueta",
+                "pip": "",
+                "desc": REMBG_MODEL_DEPENDENCIES["silueta"]["desc"],
+                "category": "Image",
+                "target": "local",
+                "kind": "file",
+                "model": "silueta",
+            },
+            {
+                "name": "rembg-isnet-general-use",
+                "pip": "",
+                "desc": REMBG_MODEL_DEPENDENCIES["isnet-general-use"]["desc"],
+                "category": "Image",
+                "target": "local",
+                "kind": "file",
+                "model": "isnet-general-use",
             },
             {
                 "name": "realesrgan",
@@ -1178,6 +1366,11 @@ def setup_shell_routes() -> APIRouter:
                     )
                 else:
                     pkg["installed"] = shutil.which(pkg["name"]) is not None
+            elif pkg.get("kind") == "file":
+                installed, status_note = _rembg_model_status(pkg.get("model") or "")
+                pkg["installed"] = installed
+                if status_note:
+                    pkg["status_note"] = status_note
             elif pkg["name"] == "llama_cpp" and shutil.which("llama-server"):
                 pkg["installed"] = True
                 pkg["status_note"] = (
@@ -1200,10 +1393,47 @@ def setup_shell_routes() -> APIRouter:
                         "dists": {"vllm": _vllm_version} if _vllm_version else {},
                     }
                     pkg["status_note"] = _package_status_note("vllm", probe)
+            elif pkg["name"] in {"onnxruntime", "onnxruntime-directml", "onnxruntime-gpu"}:
+                try:
+                    ort = importlib.import_module("onnxruntime")
+                    providers = []
+                    try:
+                        providers = list(ort.get_available_providers())
+                    except Exception:
+                        providers = []
+                    dists = {}
+                    for dist_name in _pip_dist_names(pkg):
+                        try:
+                            dists[dist_name] = importlib_metadata.version(dist_name)
+                        except importlib_metadata.PackageNotFoundError:
+                            pass
+                    probe = {
+                        "modules": {"onnxruntime": {"found": True, "real_module": True}},
+                        "dists": dists,
+                        "providers": providers,
+                        "binaries": {},
+                    }
+                    pkg["installed"] = _package_installed_from_probe(pkg["name"], probe)
+                    note = _package_status_note(pkg["name"], probe)
+                    if note:
+                        pkg["status_note"] = note
+                except ImportError:
+                    pkg["installed"] = False
+                except Exception:
+                    pkg["installed"] = False
             else:
                 try:
-                    importlib.import_module(pkg["name"])
-                    importlib_metadata.version(_pip_dist_name(pkg))
+                    importlib.import_module(pkg.get("import_name") or pkg["name"])
+                    found_dist = False
+                    for dist_name in _pip_dist_names(pkg):
+                        try:
+                            importlib_metadata.version(dist_name)
+                            found_dist = True
+                            break
+                        except importlib_metadata.PackageNotFoundError:
+                            pass
+                    if not found_dist:
+                        raise importlib_metadata.PackageNotFoundError
                     pkg["installed"] = True
                 except ImportError:
                     pkg["installed"] = False
@@ -1245,6 +1475,7 @@ def setup_shell_routes() -> APIRouter:
             return {"ok": False, "error": "No package specified"}
         # Validate against known packages to prevent arbitrary pip install
         known = {
+            "rembg",
             "rembg[gpu]",
             "hf_transfer",
             "llama-cpp-python[server]",
@@ -1258,6 +1489,7 @@ def setup_shell_routes() -> APIRouter:
             "realesrgan",
             "gfpgan",
             "insightface",
+            "onnxruntime-directml",
             "onnxruntime-gpu",
             "onnxruntime",
             "hdbscan",
@@ -1273,6 +1505,20 @@ def setup_shell_routes() -> APIRouter:
         if proc.returncode == 0:
             return {"ok": True, "output": stdout.decode()[-200:]}
         return {"ok": False, "error": stderr.decode()[-300:]}
+
+    @router.post("/api/cookbook/rembg-models/install")
+    async def install_rembg_model(request: Request):
+        """Download an allow-listed rembg ONNX model into rembg's model cache."""
+        _require_admin(request)
+        _reject_cross_site(request)
+        body = await request.json()
+        model = str(body.get("model") or "").strip()
+        if model not in REMBG_MODEL_DEPENDENCIES:
+            return {"ok": False, "error": f"Unknown rembg model: {model}"}
+        try:
+            return await asyncio.to_thread(_download_rembg_model, model)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)[-300:]}
 
     @router.post("/api/cookbook/rebuild-engine")
     async def rebuild_engine(request: Request):

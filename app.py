@@ -444,6 +444,8 @@ async def serve_generated_image(filename: str, request: Request):
         "webp": "image/webp", "gif": "image/gif",
         "mp4": "video/mp4", "mov": "video/quicktime", "webm": "video/webm",
         "mkv": "video/x-matroska", "m4v": "video/mp4",
+        "mp3": "audio/mpeg", "wav": "audio/wav", "ogg": "audio/ogg",
+        "m4a": "audio/mp4", "flac": "audio/flac", "aac": "audio/aac",
     }.get(ext, "application/octet-stream")
     # Generated-image filenames are content hashes → the bytes for a given
     # filename never change. Cache them hard so the gallery doesn't
@@ -620,7 +622,7 @@ app.include_router(setup_model_routes(model_discovery))
 from routes.copilot_routes import setup_copilot_routes
 app.include_router(setup_copilot_routes())
 
-# ChatGPT Subscription device-flow login
+# Codex Subscription device-flow login
 from routes.chatgpt_subscription_routes import setup_chatgpt_subscription_routes
 app.include_router(setup_chatgpt_subscription_routes())
 

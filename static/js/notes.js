@@ -8,7 +8,6 @@ import { spawnConfetti } from './compare/vote.js';
 import * as Modals from './modalManager.js';
 import { attachColorPicker } from './colorPicker.js';
 import { makeWindowDraggable } from './windowDrag.js';
-import { snapModalToZone } from './tileManager.js';
 import { applyEdgeDock, clearDockSide, preferredEdgeDockSide } from './modalSnap.js';
 import markdownModule from './markdown.js';
 
@@ -35,6 +34,10 @@ let _notesKeydownHandler = null;
 // Capture-phase "Esc cancels select mode" listener on document — tracked so it
 // is removed on close instead of leaking +1 per panel open/close cycle.
 let _notesSelectEscHandler = null;
+let _notesHeaderResizeObserver = null;
+let _notesFullscreenGeometryCleanup = null;
+let _notesFullscreenSettleTimers = [];
+let _expandedNoteDetailIds = new Set();
 const REMINDER_FIRED_KEY = 'odysseus-notes-reminder-fired';
 // Note IDs already shown with the entry-glow once. Re-set when the user
 // reschedules the reminder so the new firing glows again on next open.
@@ -66,7 +69,8 @@ function _forceCloseNotesPanel() {
     clearInterval(_reminderTimer);
     _reminderTimer = null;
   }
-  document.body.classList.remove('notes-view', 'notes-mobile-mode', 'notes-drag-mode');
+  _cleanupNotesWindowObservers();
+  document.body.classList.remove('notes-view', 'notes-mobile-mode', 'notes-android-dock-mode', 'notes-drag-mode');
   document.getElementById('tool-notes-btn')?.classList.remove('active');
   try { Modals.unregister('notes-panel'); } catch {}
   try { document.getElementById('notes-pane')?.remove(); } catch {}
@@ -152,6 +156,237 @@ function _notesFullscreenSafeRect() {
   return { left, top: 0, width: right - left, height: vh };
 }
 
+function _cleanupNotesWindowObservers() {
+  if (_notesHeaderResizeObserver) {
+    try { _notesHeaderResizeObserver.disconnect(); } catch {}
+    _notesHeaderResizeObserver = null;
+  }
+  if (_notesFullscreenGeometryCleanup) {
+    try { _notesFullscreenGeometryCleanup(); } catch {}
+    _notesFullscreenGeometryCleanup = null;
+  }
+  if (_notesFullscreenSettleTimers.length) {
+    _notesFullscreenSettleTimers.forEach((timerId) => clearTimeout(timerId));
+    _notesFullscreenSettleTimers = [];
+  }
+}
+
+function _applyNotesMobileSheetStyles(pane) {
+  if (!pane?.style) return;
+  pane.dataset.notesMobileSheet = '1';
+  pane.style.position = 'fixed';
+  pane.style.inset = '0';
+  pane.style.width = '100%';
+  pane.style.maxWidth = '100%';
+  pane.style.height = '100dvh';
+  pane.style.maxHeight = '100dvh';
+  pane.style.overflow = 'hidden';
+  pane.style.zIndex = '170';
+  pane.style.borderBottom = 'none';
+  pane.style.borderRadius = '14px 14px 0 0';
+  pane.style.animation = 'sheet-enter 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) both';
+  pane.style.transformOrigin = 'bottom center';
+}
+
+function _clearNotesMobileSheetStyles(pane) {
+  if (!pane?.style) return;
+  delete pane.dataset.notesMobileSheet;
+  ['inset', 'z-index', 'animation', 'transform-origin'].forEach((prop) => {
+    pane.style.removeProperty(prop);
+  });
+}
+
+function _applyNotesFullscreenRect(pane) {
+  if (!pane?.style) return;
+  const rect = _notesFullscreenSafeRect();
+  pane.style.setProperty('position', 'fixed', 'important');
+  pane.style.setProperty('left', `${Math.round(rect.left)}px`, 'important');
+  pane.style.setProperty('top', `${Math.round(rect.top)}px`, 'important');
+  pane.style.setProperty('right', 'auto', 'important');
+  pane.style.setProperty('bottom', 'auto', 'important');
+  pane.style.setProperty('width', `${Math.round(rect.width)}px`, 'important');
+  pane.style.setProperty('max-width', 'none', 'important');
+  pane.style.setProperty('height', `${Math.round(rect.height)}px`, 'important');
+  pane.style.setProperty('max-height', `${Math.round(rect.height)}px`, 'important');
+  pane.style.setProperty('margin', '0', 'important');
+  pane.style.setProperty('transform', 'none', 'important');
+  pane.style.setProperty('border-radius', '0', 'important');
+  pane.dataset._tileZone = 'fullscreen';
+}
+
+function _captureNotesFullscreenReturnState(pane) {
+  if (!pane?.getBoundingClientRect) return null;
+  const side = pane._dockSide
+    || (pane.classList.contains('modal-left-docked') ? 'left'
+      : pane.classList.contains('modal-right-docked') ? 'right'
+        : null);
+  if (side === 'left' || side === 'right') {
+    return {
+      mode: 'dock',
+      side,
+      touchLandscapeDockWidth: pane._touchLandscapeDockWidth || null,
+      userDockWidth: pane._userDockWidth || null,
+    };
+  }
+  const rect = pane.getBoundingClientRect();
+  return {
+    mode: 'rect',
+    rect: {
+      left: Math.round(rect.left),
+      top: Math.round(rect.top),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    },
+  };
+}
+
+function _restoreNotesFullscreenReturnState(pane) {
+  const state = pane?._notesFullscreenReturnState || null;
+  if (pane) delete pane._notesFullscreenReturnState;
+  if (!pane) return;
+  _clearNotesSnapStyles(pane);
+  if (!pane.isConnected) return;
+  if (state?.mode === 'dock' && (state.side === 'left' || state.side === 'right')) {
+    if (state.touchLandscapeDockWidth) pane._touchLandscapeDockWidth = state.touchLandscapeDockWidth;
+    if (state.userDockWidth) pane._userDockWidth = state.userDockWidth;
+    try {
+      applyEdgeDock(pane, state.side);
+      return;
+    } catch {}
+  }
+  if (state?.mode === 'rect' && state.rect) {
+    const { left, top, width, height } = state.rect;
+    pane.style.position = 'fixed';
+    pane.style.left = `${Math.max(0, left)}px`;
+    pane.style.top = `${Math.max(0, top)}px`;
+    pane.style.right = '';
+    pane.style.bottom = '';
+    pane.style.width = `${Math.max(280, width)}px`;
+    pane.style.maxWidth = `${Math.max(280, width)}px`;
+    pane.style.height = `${Math.max(260, height)}px`;
+    pane.style.maxHeight = `${Math.max(260, height)}px`;
+    pane.style.margin = '0';
+    pane.style.transform = 'none';
+    return;
+  }
+  _restoreNotesSidebarDock(pane);
+}
+
+function _syncNotesFullscreenButton(pane) {
+  const btn = document.getElementById('notes-fullscreen-toggle');
+  if (!btn) return;
+  const active = !!pane?.classList?.contains('notes-window-fullscreen');
+  btn.classList.toggle('active', active);
+  btn.title = active ? 'Restore' : 'Full screen';
+  btn.setAttribute('aria-label', active ? 'Restore notes' : 'Full screen notes');
+}
+
+function _scheduleNotesFullscreenGeometry(pane) {
+  if (_notesFullscreenSettleTimers.length) {
+    _notesFullscreenSettleTimers.forEach((timerId) => clearTimeout(timerId));
+    _notesFullscreenSettleTimers = [];
+  }
+  const run = () => {
+    if (!pane?.isConnected || !pane.classList.contains('notes-window-fullscreen')) return;
+    _applyNotesFullscreenRect(pane);
+    _syncNotesFullscreenButton(pane);
+  };
+  requestAnimationFrame(run);
+  [80, 220, 520, 900].forEach((delay) => {
+    _notesFullscreenSettleTimers.push(setTimeout(run, delay));
+  });
+}
+
+function _enterNotesFullscreen(pane, opts = {}) {
+  if (!pane) return;
+  if (opts.captureReturn !== false) {
+    pane._notesFullscreenReturnState = _captureNotesFullscreenReturnState(pane);
+  }
+  _clearNotesSnapStyles(pane);
+  pane.classList.add('notes-window-fullscreen');
+  _applyNotesFullscreenRect(pane);
+  _syncNotesFullscreenButton(pane);
+  _scheduleNotesFullscreenGeometry(pane);
+}
+
+function _exitNotesFullscreen(pane) {
+  if (!pane) return;
+  _restoreNotesFullscreenReturnState(pane);
+  _syncNotesFullscreenButton(pane);
+}
+
+function _toggleNotesFullscreen(pane) {
+  if (!pane) return;
+  if (pane.classList.contains('notes-window-fullscreen')) _exitNotesFullscreen(pane);
+  else _enterNotesFullscreen(pane);
+}
+
+function _wireNotesFullscreenGeometry(pane) {
+  if (_notesFullscreenGeometryCleanup) {
+    try { _notesFullscreenGeometryCleanup(); } catch {}
+    _notesFullscreenGeometryCleanup = null;
+  }
+  if (!pane) return;
+  const settle = () => _scheduleNotesFullscreenGeometry(pane);
+  const syncViewport = () => _syncNotesViewportMode(pane);
+  window.addEventListener('resize', syncViewport);
+  window.addEventListener('orientationchange', syncViewport);
+  let observer = null;
+  if (typeof MutationObserver !== 'undefined') {
+    observer = new MutationObserver(settle);
+    [document.body, document.getElementById('sidebar'), document.getElementById('icon-rail'), document.getElementById('hamburger-btn')]
+      .filter(Boolean)
+      .forEach((el) => observer.observe(el, { attributes: true, attributeFilter: ['class', 'style'] }));
+  }
+  _notesFullscreenGeometryCleanup = () => {
+    window.removeEventListener('resize', syncViewport);
+    window.removeEventListener('orientationchange', syncViewport);
+    if (observer) observer.disconnect();
+  };
+}
+
+function _syncNotesViewportMode(pane) {
+  if (!pane?.isConnected) return;
+  const mobileMode = _isNotesMobileMode();
+  const androidDockMode = _isNotesAndroidDockMode();
+  document.body.classList.toggle('notes-mobile-mode', mobileMode);
+  document.body.classList.toggle('notes-android-dock-mode', androidDockMode);
+  if (mobileMode) {
+    _clearNotesSnapStyles(pane);
+    _applyNotesMobileSheetStyles(pane);
+    _syncNotesFullscreenButton(pane);
+    return;
+  }
+  const wasMobileSheet = pane.dataset.notesMobileSheet === '1';
+  _clearNotesMobileSheetStyles(pane);
+  if (pane.classList.contains('notes-window-fullscreen')) {
+    _scheduleNotesFullscreenGeometry(pane);
+  } else if (wasMobileSheet || androidDockMode) {
+    _restoreNotesSidebarDock(pane);
+  }
+  _syncNotesFullscreenButton(pane);
+}
+
+function _wireNotesHeaderDynamics(pane) {
+  if (_notesHeaderResizeObserver) {
+    try { _notesHeaderResizeObserver.disconnect(); } catch {}
+    _notesHeaderResizeObserver = null;
+  }
+  if (!pane?.getBoundingClientRect) return;
+  const apply = () => {
+    const width = pane.getBoundingClientRect().width || 0;
+    pane.classList.toggle('notes-header-tight', width > 0 && width < 430);
+    pane.classList.toggle('notes-header-tiny', width > 0 && width < 340);
+  };
+  apply();
+  if (typeof ResizeObserver !== 'undefined') {
+    _notesHeaderResizeObserver = new ResizeObserver(apply);
+    _notesHeaderResizeObserver.observe(pane);
+  } else {
+    requestAnimationFrame(apply);
+  }
+}
+
 function _wireNotesWindow(pane) {
   if (!pane || pane.dataset.windowDragWired === '1') return;
   const header = pane.querySelector('.notes-pane-header');
@@ -162,18 +397,13 @@ function _wireNotesWindow(pane) {
     header,
     fsClass: 'notes-window-fullscreen',
     skipSelector: 'button, input, select, textarea, label, .notes-mobile-grabber',
-    mobileSkip: _isNotesMobileMode() ? 9999 : 768,
     enableDock: true,
     enableLeftDock: true,
     onEnterFullscreen: () => {
-      pane.classList.add('notes-window-fullscreen');
-      snapModalToZone(pane, {
-        name: 'fullscreen',
-        rect: _notesFullscreenSafeRect(),
-      });
+      _enterNotesFullscreen(pane);
     },
     onExitFullscreen: () => {
-      _restoreNotesSidebarDock(pane);
+      _exitNotesFullscreen(pane);
     },
   });
 }
@@ -491,6 +721,95 @@ function _linkify(s) {
 }
 function _uid() { return Math.random().toString(36).slice(2, 10); }
 
+const NOTE_RICH_FONT_GROUPS = Object.freeze([
+  {
+    label: 'Core',
+    options: [
+      { value: 'default', label: 'Default' },
+      { value: 'sans', label: 'Sans' },
+      { value: 'inter', label: 'Inter' },
+      { value: 'system', label: 'System UI' },
+      { value: 'serif', label: 'Serif' },
+      { value: 'mono', label: 'Mono' },
+    ],
+  },
+  {
+    label: 'Sans',
+    options: [
+      { value: 'aptos', label: 'Aptos' },
+      { value: 'segoe', label: 'Segoe UI' },
+      { value: 'arial', label: 'Arial' },
+      { value: 'helvetica', label: 'Helvetica' },
+      { value: 'roboto', label: 'Roboto' },
+      { value: 'verdana', label: 'Verdana' },
+      { value: 'tahoma', label: 'Tahoma' },
+      { value: 'trebuchet', label: 'Trebuchet' },
+      { value: 'lucida-sans', label: 'Lucida Sans' },
+      { value: 'rounded', label: 'Rounded' },
+    ],
+  },
+  {
+    label: 'Serif',
+    options: [
+      { value: 'georgia', label: 'Georgia' },
+      { value: 'times', label: 'Times' },
+      { value: 'garamond', label: 'Garamond' },
+      { value: 'palatino', label: 'Palatino' },
+      { value: 'baskerville', label: 'Baskerville' },
+      { value: 'cambria', label: 'Cambria' },
+      { value: 'didot', label: 'Didot' },
+      { value: 'bookman', label: 'Bookman' },
+    ],
+  },
+  {
+    label: 'Mono',
+    options: [
+      { value: 'fira-code', label: 'Fira Code' },
+      { value: 'cascadia', label: 'Cascadia' },
+      { value: 'consolas', label: 'Consolas' },
+      { value: 'courier', label: 'Courier' },
+      { value: 'sf-mono', label: 'SF Mono' },
+      { value: 'berkeley', label: 'Berkeley Mono' },
+      { value: 'gohu', label: 'Gohu' },
+    ],
+  },
+  {
+    label: 'Hand',
+    options: [
+      { value: 'hand', label: 'Hand' },
+      { value: 'comic', label: 'Comic Sans' },
+      { value: 'segoe-print', label: 'Segoe Print' },
+      { value: 'bradley', label: 'Bradley Hand' },
+      { value: 'lucida-handwriting', label: 'Lucida Hand' },
+      { value: 'brush-script', label: 'Brush Script' },
+    ],
+  },
+  {
+    label: 'Display',
+    options: [
+      { value: 'display', label: 'Display' },
+      { value: 'impact', label: 'Impact' },
+      { value: 'copperplate', label: 'Copperplate' },
+      { value: 'futura', label: 'Futura' },
+      { value: 'gill', label: 'Gill Sans' },
+      { value: 'optima', label: 'Optima' },
+      { value: 'rockwell', label: 'Rockwell' },
+      { value: 'fantasy', label: 'Fantasy' },
+    ],
+  },
+]);
+const NOTE_RICH_FONT_VALUES = new Set(NOTE_RICH_FONT_GROUPS.flatMap(group => group.options.map(option => option.value)));
+const NOTE_RICH_FONT_PATTERN = [...NOTE_RICH_FONT_VALUES]
+  .map(value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  .join('|');
+
+function _noteRichFontOptionsHtml() {
+  return '<option value="">Font</option>' + NOTE_RICH_FONT_GROUPS.map(group => `
+        <optgroup label="${_attrEsc(group.label)}">
+          ${group.options.map(option => `<option value="${_attrEsc(option.value)}">${_esc(option.label)}</option>`).join('')}
+        </optgroup>`).join('');
+}
+
 function _renderNoteMarkdown(s) {
   const text = String(s || '');
   if (!text.trim()) return '';
@@ -503,7 +822,7 @@ function _renderNoteMarkdown(s) {
   // Notes get a couple of lightweight editor-only marks that the shared
   // markdown renderer does not support natively.
   return String(html || '')
-    .replace(/\{\{font:(default|sans|serif|mono|hand|display)\}\}([\s\S]*?)\{\{\/font\}\}/g, (_m, font, inner) => {
+    .replace(new RegExp(`\\{\\{font:(${NOTE_RICH_FONT_PATTERN})\\}\\}([\\s\\S]*?)\\{\\{/font\\}\\}`, 'g'), (_m, font, inner) => {
       return font === 'default' ? inner : `<span class="note-rich-font-${font}">${inner}</span>`;
     })
     .replace(/\{\{size:(xs|sm|md|lg|xl|xxl)\}\}([\s\S]*?)\{\{\/size\}\}/g, (_m, size, inner) => {
@@ -530,7 +849,7 @@ const NOTE_RICH_DEFAULT_FORMAT = Object.freeze({
 
 function _noteRichStripVisualMarkers(text) {
   return String(text || '')
-    .replace(/\{\{font:(?:default|sans|serif|mono|hand|display)\}\}/g, '')
+    .replace(new RegExp(`\\{\\{font:(?:${NOTE_RICH_FONT_PATTERN})\\}\\}`, 'g'), '')
     .replace(/\{\{\/font\}\}/g, '')
     .replace(/\{\{size:(?:xs|sm|md|lg|xl|xxl)\}\}/g, '')
     .replace(/\{\{\/size\}\}/g, '')
@@ -544,7 +863,7 @@ function _noteRichExtractFormat(content = '') {
   let text = String(content || '');
   const format = { ...NOTE_RICH_DEFAULT_FORMAT };
   const wrappers = [
-    ['font', /^\{\{font:(default|sans|serif|mono|hand|display)\}\}([\s\S]*)\{\{\/font\}\}$/],
+    ['font', new RegExp(`^\\{\\{font:(${NOTE_RICH_FONT_PATTERN})\\}\\}([\\s\\S]*)\\{\\{/font\\}\\}$`)],
     ['size', /^\{\{size:(xs|sm|md|lg|xl|xxl)\}\}([\s\S]*)\{\{\/size\}\}$/],
     ['color', /^\{\{color:(default|accent|red|orange|yellow|green|blue|purple|muted)\}\}([\s\S]*)\{\{\/color\}\}$/],
     ['align', /^\{\{align:(left|center|right|justify)\}\}([\s\S]*)\{\{\/align\}\}$/],
@@ -612,6 +931,54 @@ function _renderNoteRichPreview(content = '', maxChars = 600) {
   return preview.trim() ? _renderNoteMarkdown(preview) : '';
 }
 
+function _noteCardSummaryText(content = '', maxChars = 150) {
+  const text = _noteRichPlainText(content)
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/```[\s\S]*?```/g, ' code block ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/^\s*#{1,6}\s+/gm, '')
+    .replace(/^\s*>\s?/gm, '')
+    .replace(/^\s*(?:[-*]|\d+\.)\s+(?:\[[ xX]\]\s+)?/gm, '')
+    .replace(/\*\*([^*\n]+)\*\*/g, '$1')
+    .replace(/\*([^*\n]+)\*/g, '$1')
+    .replace(/~~([^~\n]+)~~/g, '$1')
+    .replace(/==([^=\n]+)==/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (text.length <= maxChars) return text;
+  return text.slice(0, maxChars).replace(/\s+\S*$/, '').trim() + '...';
+}
+
+function _noteChecklistSummary(note, maxItems = 2) {
+  const items = Array.isArray(note?.items) ? note.items : [];
+  if (!items.length) return '';
+  const done = items.filter(item => item.done).length;
+  const preview = items
+    .slice(0, maxItems)
+    .map(item => `${item.done ? 'Done' : 'Todo'}: ${String(item.text || '').trim()}`)
+    .filter(Boolean)
+    .join(' · ');
+  const count = `${done}/${items.length} done`;
+  return preview ? `${count} · ${preview}` : count;
+}
+
+function _noteCardDetailHtml(note, summaryText, detailHtml, kind = 'content') {
+  if (!detailHtml) return '';
+  const open = _expandedNoteDetailIds.has(note.id) ? ' open' : '';
+  const summary = summaryText || 'Details';
+  return `<details class="note-card-detail note-card-detail-${_attrEsc(kind)}" data-note-id="${_attrEsc(note.id)}"${open}>
+    <summary class="note-card-detail-summary" aria-label="Toggle note details">
+      <span class="note-card-detail-text">${_esc(summary)}</span>
+      <span class="note-card-detail-toggle" aria-hidden="true">
+        <span>Details</span>
+        <svg class="note-card-detail-chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </span>
+    </summary>
+    <div class="note-card-detail-panel">${detailHtml}</div>
+  </details>`;
+}
+
 function _noteRichSerializeEditor(editor) {
   const ta = editor?.querySelector('.note-form-content');
   if (!ta) return '';
@@ -621,18 +988,19 @@ function _noteRichSerializeEditor(editor) {
 function _noteRichSetFormat(editor, key, value, opts = {}) {
   if (!editor || !key) return;
   const allowed = {
-    font: new Set(['default', 'sans', 'serif', 'mono', 'hand', 'display']),
+    font: NOTE_RICH_FONT_VALUES,
     size: new Set(['xs', 'sm', 'md', 'lg', 'xl', 'xxl']),
     color: new Set(['default', 'accent', 'red', 'orange', 'yellow', 'green', 'blue', 'purple', 'muted']),
     align: new Set(['left', 'center', 'right', 'justify']),
   }[key];
-  if (!allowed || !allowed.has(value)) return;
+  const normalized = value || NOTE_RICH_DEFAULT_FORMAT[key];
+  if (!allowed || !allowed.has(normalized)) return;
   const dataKey = 'rich' + key.charAt(0).toUpperCase() + key.slice(1);
-  editor.dataset[dataKey] = value;
+  editor.dataset[dataKey] = normalized;
   const select = editor.querySelector(`[data-rich-${key}]`);
-  if (select) select.value = value;
+  if (select) select.value = normalized;
   const ta = editor.querySelector('.note-form-content');
-  if (ta) ta.dataset[dataKey] = value;
+  if (ta) ta.dataset[dataKey] = normalized;
   if (ta && !opts.silent) ta.dispatchEvent(new Event('input', { bubbles: true }));
   _noteRichRefreshPreview(editor);
 }
@@ -692,13 +1060,7 @@ function _buildRichNoteToolbarHtml() {
         <option value="codeblock">Code block</option>
       </select>
       <select class="note-rich-font" data-rich-font aria-label="Font" title="Font">
-        <option value="">Font</option>
-        <option value="default">Default</option>
-        <option value="sans">Sans</option>
-        <option value="serif">Serif</option>
-        <option value="mono">Mono</option>
-        <option value="hand">Hand</option>
-        <option value="display">Display</option>
+        ${_noteRichFontOptionsHtml()}
       </select>
       <select class="note-rich-size" data-rich-size aria-label="Font size" title="Font size">
         <option value="">Size</option>
@@ -853,7 +1215,7 @@ function _noteRichInsertBlock(ta, block) {
 
 function _noteRichClearFormatting(line) {
   return String(line || '')
-    .replace(/\{\{font:(?:default|sans|serif|mono|hand|display)\}\}/g, '')
+    .replace(new RegExp(`\\{\\{font:(?:${NOTE_RICH_FONT_PATTERN})\\}\\}`, 'g'), '')
     .replace(/\{\{\/font\}\}/g, '')
     .replace(/\{\{size:(?:xs|sm|md|lg|xl|xxl)\}\}/g, '')
     .replace(/\{\{\/size\}\}/g, '')
@@ -1022,7 +1384,7 @@ function _noteRichApplyInlineToken(ta, kind, value, placeholder) {
     return;
   }
   const allowedByKind = {
-    font: new Set(['default', 'sans', 'serif', 'mono', 'hand', 'display']),
+    font: NOTE_RICH_FONT_VALUES,
     size: new Set(['xs', 'sm', 'md', 'lg', 'xl', 'xxl']),
     color: new Set(['default', 'accent', 'red', 'orange', 'yellow', 'green', 'blue', 'purple', 'muted']),
     align: new Set(['left', 'center', 'right', 'justify']),
@@ -1035,7 +1397,7 @@ function _noteRichApplyInlineToken(ta, kind, value, placeholder) {
     (kind === 'color' && value === 'default') ||
     (kind === 'align' && value === 'left');
   const openReByKind = {
-    font: /\{\{font:(?:default|sans|serif|mono|hand|display)\}\}/g,
+    font: new RegExp(`\\{\\{font:(?:${NOTE_RICH_FONT_PATTERN})\\}\\}`, 'g'),
     size: /\{\{size:(?:xs|sm|md|lg|xl|xxl)\}\}/g,
     color: /\{\{color:(?:default|accent|red|orange|yellow|green|blue|purple|muted)\}\}/g,
     align: /\{\{align:(?:left|center|right|justify)\}\}/g,
@@ -1806,7 +2168,8 @@ export function openPanel() {
   // edit / archive / etc.), tap opens a fullscreen edit overlay,
   // long-press enters drag-to-reorder mode. See _bindCardEvents +
   // .notes-mobile-mode CSS rules.
-  if (_isNotesMobileMode()) document.body.classList.add('notes-mobile-mode');
+  document.body.classList.toggle('notes-mobile-mode', _isNotesMobileMode());
+  document.body.classList.toggle('notes-android-dock-mode', _isNotesAndroidDockMode());
 
   // Toggle button state
   const btn = document.getElementById('tool-notes-btn');
@@ -1820,16 +2183,20 @@ export function openPanel() {
     <div class="notes-mobile-grabber" id="notes-mobile-grabber" aria-hidden="true"></div>
     <div class="notes-pane-header">
       <h4 class="notes-pane-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2.5px;margin-right:6px"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/><path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/></svg>Notes</h4>
-      <span style="flex:1"></span>
-      <button id="notes-archive-toggle" class="doc-action-icon-btn notes-header-text-btn" title="View archive" style="opacity:0.8;gap:5px;">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 002 2h12a2 2 0 002-2V8"/><path d="M10 12h4"/></svg>
-        <span class="notes-header-btn-label">Archive</span>
-      </button>
-      <button id="notes-view-toggle" class="doc-action-icon-btn notes-header-text-btn" title="Toggle view" style="opacity:0.8;gap:5px;">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-        <span class="notes-header-btn-label">Toggle</span>
-      </button>
-      <button id="notes-minimize-btn" class="modal-minimize-btn" title="Minimize" aria-label="Minimize notes" style="position:relative;left:2px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="18" x2="18" y2="18"/></svg></button>
+      <div class="notes-pane-header-actions">
+        <button id="notes-archive-toggle" class="doc-action-icon-btn notes-header-text-btn" title="View archive" style="opacity:0.8;gap:5px;">
+          <svg class="notes-archive-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 002 2h12a2 2 0 002-2V8"/><path d="M10 12h4"/></svg>
+          <span class="notes-archive-letter" aria-hidden="true">A</span>
+          <span class="notes-header-btn-label">Archive</span>
+        </button>
+        <button id="notes-view-toggle" class="doc-action-icon-btn notes-header-text-btn" title="Toggle view" style="opacity:0.8;gap:5px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+          <span class="notes-header-btn-label">Toggle</span>
+        </button>
+        <button id="notes-minimize-btn" class="modal-minimize-btn notes-window-control" type="button" title="Minimize" aria-label="Minimize notes"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="18" x2="18" y2="18"/></svg></button>
+        <button id="notes-fullscreen-toggle" class="modal-expand-btn notes-window-control" type="button" title="Full screen" aria-label="Full screen notes"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5"/><path d="M16 3h5v5"/><path d="M21 16v5h-5"/><path d="M3 16v5h5"/></svg></button>
+        <button id="notes-close-btn" class="modal-minimize-btn notes-window-control notes-close-window-btn" type="button" title="Close" aria-label="Close notes"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button>
+      </div>
     </div>
     <div class="notes-search-bar">
       <input type="text" id="notes-search" class="memory-search-input" placeholder="Search notes…" autocomplete="off" />
@@ -1854,18 +2221,7 @@ export function openPanel() {
   // of cascade specifics (the CSS @media override wasn't reliably applying,
   // which left it as a side panel squeezing the chat).
   if (mobileLayout) {
-    pane.style.position = 'fixed';
-    pane.style.inset = '0';
-    pane.style.width = '100%';
-    pane.style.maxWidth = '100%';
-    pane.style.height = '100dvh';
-    pane.style.maxHeight = '100dvh';
-    pane.style.overflow = 'hidden';
-    pane.style.zIndex = '170';
-    pane.style.borderBottom = 'none';
-    pane.style.borderRadius = '14px 14px 0 0';
-    pane.style.animation = 'sheet-enter 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) both';
-    pane.style.transformOrigin = 'bottom center';
+    _applyNotesMobileSheetStyles(pane);
   }
 
   // Mount on body so Notes can behave like the other draggable windows. On
@@ -1879,7 +2235,10 @@ export function openPanel() {
   backdrop.appendChild(pane);
   document.body.appendChild(backdrop);
   _wireNotesWindow(pane);
-  _restoreNotesSidebarDock(pane);
+  _wireNotesHeaderDynamics(pane);
+  _wireNotesFullscreenGeometry(pane);
+  _syncNotesViewportMode(pane);
+  _syncNotesFullscreenButton(pane);
 
   // Events
   // (Close chevron removed — swipe down on mobile, tool-rail toggle on desktop.)
@@ -1896,6 +2255,18 @@ export function openPanel() {
     e.stopPropagation();
     closePanel('down');
   });
+  const fullBtn = document.getElementById('notes-fullscreen-toggle');
+  if (fullBtn) fullBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    _toggleNotesFullscreen(pane);
+  });
+  const closeBtn = document.getElementById('notes-close-btn');
+  if (closeBtn) closeBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    closePanel();
+  });
   // Search
   const searchEl = document.getElementById('notes-search');
   if (searchEl) {
@@ -1908,8 +2279,8 @@ export function openPanel() {
   // View toggle
   const archiveBtn = document.getElementById('notes-archive-toggle');
   if (archiveBtn) {
-    const ARCHIVE_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 002 2h12a2 2 0 002-2V8"/><path d="M10 12h4"/></svg><span class="notes-header-btn-label">Archive</span>';
-    const CLOSE_ICON   = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg><span class="notes-header-btn-label">Archive</span>';
+    const ARCHIVE_ICON = '<svg class="notes-archive-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 002 2h12a2 2 0 002-2V8"/><path d="M10 12h4"/></svg><span class="notes-archive-letter" aria-hidden="true">A</span><span class="notes-header-btn-label">Archive</span>';
+    const CLOSE_ICON   = '<svg class="notes-archive-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg><span class="notes-archive-letter" aria-hidden="true">A</span><span class="notes-header-btn-label">Archive</span>';
     const syncArchiveBtn = () => {
       archiveBtn.classList.toggle('active', _showingArchived);
       archiveBtn.title = _showingArchived ? 'Exit archive' : 'View archive';
@@ -2290,9 +2661,11 @@ export function closePanel(direction) {
     clearInterval(_reminderTimer);
     _reminderTimer = null;
   }
+  _cleanupNotesWindowObservers();
 
   document.body.classList.remove('notes-view');
   document.body.classList.remove('notes-mobile-mode');
+  document.body.classList.remove('notes-android-dock-mode');
   document.body.classList.remove('notes-drag-mode');
   // Closing the panel should PRESERVE in-progress edits, not drop them.
   // Commit any open in-place editor, and close the mobile fullscreen
@@ -2474,18 +2847,23 @@ function _renderNotes() {
     if (_hasItems(note) && Array.isArray(note.items)) {
       // Goal notes can carry a free-form description above the step list —
       // todos rarely do, but the same render works for both.
+      let detailHtml = '';
+      const summaryParts = [];
       if (note.note_type === 'goal' && (note.content || '').trim()) {
-        const previewHtml = _renderNoteRichPreview(note.content || '', 300);
-        if (previewHtml) contentHtml += `<div class="note-goal-desc">${previewHtml}</div>`;
+        const fullGoalHtml = _renderNoteMarkdown(note.content || '');
+        if (fullGoalHtml) detailHtml += `<div class="note-goal-desc">${fullGoalHtml}</div>`;
+        const goalSummary = _noteCardSummaryText(note.content || '', 120);
+        if (goalSummary) summaryParts.push(goalSummary);
       }
-      contentHtml += '<div class="note-checklist-preview">';
+      summaryParts.push(_noteChecklistSummary(note));
+      detailHtml += '<div class="note-checklist-preview">';
       // Show ALL items — the preview container is scrollable (CSS caps
       // its max-height + overflow-y:auto), so there's no need to truncate.
       for (let i = 0; i < note.items.length; i++) {
         const item = note.items[i];
         const doneClass = item.done ? ' done' : '';
         const indent = Math.min(item.indent || 0, 3);
-        contentHtml += `<div class="note-checkbox${doneClass}" data-note-id="${note.id}" data-idx="${i}" style="padding-left:${indent * 16}px">
+        detailHtml += `<div class="note-checkbox${doneClass}" data-note-id="${note.id}" data-idx="${i}" style="padding-left:${indent * 16}px">
           <span class="note-check-dot" title="Mark done"></span>
           <span class="note-check-text">${_linkify(item.text)}</span>
           <button class="note-checkbox-rm" data-note-id="${note.id}" data-idx="${i}" title="Delete item">
@@ -2493,10 +2871,14 @@ function _renderNotes() {
           </button>
         </div>`;
       }
-      contentHtml += '</div>';
+      detailHtml += '</div>';
+      contentHtml = _noteCardDetailHtml(note, summaryParts.filter(Boolean).join(' · '), detailHtml, 'checklist');
     } else {
-      const previewHtml = _renderNoteRichPreview(note.content || '', 600);
-      contentHtml = previewHtml ? `<div class="note-content-preview">${previewHtml}</div>` : '';
+      const fullHtml = _renderNoteMarkdown(note.content || '');
+      const summaryText = _noteCardSummaryText(note.content || '', 170);
+      contentHtml = fullHtml
+        ? _noteCardDetailHtml(note, summaryText, `<div class="note-content-preview">${fullHtml}</div>`, 'content')
+        : '';
     }
 
     const isBg = _isBgImage(note.color);
@@ -2829,6 +3211,16 @@ function _bindCardEvents(body) {
   body.querySelectorAll('.note-card-title[data-action="edit"]').forEach(el => {
     el.addEventListener('click', (e) => { e.stopPropagation(); tapToEditOrSelect(el.closest('.note-card')); });
   });
+  body.querySelectorAll('.note-card-detail').forEach(details => {
+    details.addEventListener('toggle', () => {
+      if (details.open) _expandedNoteDetailIds.add(details.dataset.noteId);
+      else _expandedNoteDetailIds.delete(details.dataset.noteId);
+      requestAnimationFrame(() => _applyMasonry(body));
+    });
+  });
+  body.querySelectorAll('.note-card-detail-summary').forEach(el => {
+    el.addEventListener('click', (e) => e.stopPropagation());
+  });
   // Click content — edit, or toggle select in select mode
   body.querySelectorAll('.note-content-preview').forEach(el => {
     el.addEventListener('click', (e) => { e.stopPropagation(); tapToEditOrSelect(el.closest('.note-card')); });
@@ -2862,7 +3254,7 @@ function _bindCardEvents(body) {
   // title / content preview triggered edit, so padding + empty gutters were
   // dead zones that felt broken on mobile.
   if (_isNotesMobileMode() && !_selectMode) {
-    const _INTERACTIVE = 'button, a, input, label, .note-card-color-dot, .note-checkbox, .note-checkbox-rm, .note-cl-quickadd, .note-agent-tag, .note-card-pin, .note-card-corner-trash, .note-card-corner-menu, .note-card-corner-unarchive, .note-card-edit-corner, .note-card-reminder, .note-card-cb';
+    const _INTERACTIVE = 'button, a, input, label, summary, .note-card-detail, .note-card-detail-summary, .note-card-color-dot, .note-checkbox, .note-checkbox-rm, .note-cl-quickadd, .note-agent-tag, .note-card-pin, .note-card-corner-trash, .note-card-corner-menu, .note-card-corner-unarchive, .note-card-edit-corner, .note-card-reminder, .note-card-cb';
     body.querySelectorAll('.note-card').forEach(card => {
       card.addEventListener('click', (e) => {
         if (e.target.closest(_INTERACTIVE)) return;
@@ -3318,7 +3710,7 @@ function _bindCardEvents(body) {
     let startX = 0, startY = 0;
     const LONG_PRESS_MS = 350;
     const MOVE_THRESHOLD_PX = 8;
-    const _selectorSkip = '.note-checkbox, .note-card-x, .note-card-select, .note-card-pin, .note-card-action, .note-card-color-dot, .note-card-title, .note-card-edit, .note-card-edit-corner, .note-card-done, .note-card-corner-menu, .note-agent-tag, .note-card-label-chip, input, textarea, button, a';
+    const _selectorSkip = '.note-checkbox, .note-card-x, .note-card-select, .note-card-pin, .note-card-action, .note-card-color-dot, .note-card-title, .note-card-edit, .note-card-edit-corner, .note-card-done, .note-card-corner-menu, .note-agent-tag, .note-card-label-chip, .note-card-detail, summary, input, textarea, button, a';
 
     // Anchor for the finger-follow transform. Recomputed after every swap so
     // the card stays under the finger across reorderings.

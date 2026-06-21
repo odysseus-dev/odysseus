@@ -22,8 +22,8 @@
  *     the canvas + transform overlay + UI elements above them. Sets
  *     canvasArea.dataset.panX/Y + CSS transform on both canvases.
  *
- *   Exposes `canvasArea._resetPan()` so the zoom/fit reset can clear
- *   the pan offset.
+ *   Exposes `canvasArea._resetPan(x, y)` so the zoom/fit reset can clear
+ *   or re-center the pan offset.
  *
  * @param {{
  *   canvasArea:        HTMLDivElement,
@@ -52,7 +52,7 @@ export function wireCanvasEvents({ canvasArea, beginDraw, continueDraw, endDraw,
     beginDraw(e);
   });
   state.mainCanvas.addEventListener('mouseenter', (e) => {
-    if (['brush', 'eraser', 'inpaint', 'lasso', 'clone'].includes(state.tool)) updateBrushCursor(e);
+    if (['brush', 'eraser', 'inpaint', 'lasso', 'clone', 'rembg'].includes(state.tool)) updateBrushCursor(e);
   });
   state.mainCanvas.addEventListener('mouseleave', () => {
     // Only hide the brush-cursor overlay on leave — DO NOT end the
@@ -192,6 +192,7 @@ export function wireCanvasEvents({ canvasArea, beginDraw, continueDraw, endDraw,
   };
   canvasArea.addEventListener('pointerup', endPan);
   canvasArea.addEventListener('pointercancel', endPan);
-  // Reset offset whenever zoom/fit changes the canvas size.
-  canvasArea._resetPan = () => applyOffset(0, 0);
+  // Reset offset whenever zoom/fit changes the canvas size. Fit can pass
+  // a small offset so mobile bottom sheets don't cover the fitted image.
+  canvasArea._resetPan = (x = 0, y = 0) => applyOffset(x, y);
 }

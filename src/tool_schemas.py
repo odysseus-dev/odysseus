@@ -10,12 +10,124 @@ tool parsing / execution logic.
 
 import json
 import logging
+from collections import namedtuple
 from typing import Optional
 
-from src.agent_tools import ToolBlock, TOOL_TAGS
-from src.tool_parsing import _TOOL_NAME_MAP
-
 logger = logging.getLogger(__name__)
+ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
+
+_TOOL_NAME_MAP = {
+    "shell": "bash",
+    "bash": "bash",
+    "terminal": "bash",
+    "command": "bash",
+    "execute": "bash",
+    "run": "bash",
+    "python": "python",
+    "code": "python",
+    "search": "web_search",
+    "web_search": "web_search",
+    "websearch": "web_search",
+    "google_search": "web_search",
+    "google_search_retrieval": "web_search",
+    "google_search_grounding": "web_search",
+    "web_fetch": "web_fetch",
+    "webfetch": "web_fetch",
+    "fetch_url": "web_fetch",
+    "fetch": "web_fetch",
+    "read": "read_file",
+    "read_file": "read_file",
+    "cat": "read_file",
+    "write": "write_file",
+    "write_file": "write_file",
+    "save": "write_file",
+    "document": "update_document",
+    "update_document": "update_document",
+    "create_document": "create_document",
+    "edit": "edit_document",
+    "edit_document": "edit_document",
+    "search_chats": "search_chats",
+    "search_conversations": "search_chats",
+    "find_chat": "search_chats",
+    "chat_with_model": "chat_with_model",
+    "ask_model": "chat_with_model",
+    "chat_model": "chat_with_model",
+    "create_session": "create_session",
+    "new_session": "create_session",
+    "list_sessions": "list_sessions",
+    "send_to_session": "send_to_session",
+    "message_session": "send_to_session",
+    "pipeline": "pipeline",
+    "chain": "pipeline",
+    "manage_session": "manage_session",
+    "session_control": "manage_session",
+    "manage_memory": "manage_memory",
+    "memory": "manage_memory",
+    "manage_tasks": "manage_tasks",
+    "tasks": "manage_tasks",
+    "schedule": "manage_tasks",
+    "manage_calendar": "manage_calendar",
+    "calendar": "manage_calendar",
+    "calander": "manage_calendar",
+    "calender": "manage_calendar",
+    "events": "manage_calendar",
+    "list_models": "list_models",
+    "models": "list_models",
+    "available_models": "list_models",
+    "ui_control": "ui_control",
+    "ui": "ui_control",
+    "control": "ui_control",
+    "api_call": "api_call",
+    "api": "api_call",
+    "integration": "api_call",
+    "ask_teacher": "ask_teacher",
+    "teacher": "ask_teacher",
+    "manage_skills": "manage_skills",
+    "skills": "manage_skills",
+    "skill": "manage_skills",
+    "suggest_document": "suggest_document",
+    "suggest": "suggest_document",
+    "review_document": "suggest_document",
+    "manage_endpoints": "manage_endpoints",
+    "endpoints": "manage_endpoints",
+    "manage_mcp": "manage_mcp",
+    "mcp_servers": "manage_mcp",
+    "manage_webhooks": "manage_webhooks",
+    "webhooks": "manage_webhooks",
+    "manage_tokens": "manage_tokens",
+    "tokens": "manage_tokens",
+    "manage_documents": "manage_documents",
+    "documents": "manage_documents",
+    "manage_gallery": "manage_gallery",
+    "gallery": "manage_gallery",
+    "manage_research": "manage_research",
+    "list_research": "manage_research",
+    "read_research": "manage_research",
+    "open_research": "manage_research",
+    "delete_research": "manage_research",
+    "manage_settings": "manage_settings",
+    "settings": "manage_settings",
+    "preferences": "manage_settings",
+    "manage_notes": "manage_notes",
+    "notes": "manage_notes",
+    "todo": "manage_notes",
+    "todos": "manage_notes",
+}
+
+
+def _known_tool_tags() -> set[str]:
+    try:
+        from src.agent_tools import TOOL_TAGS as tags
+
+        return set(tags)
+    except Exception:
+        names = {
+            schema.get("function", {}).get("name", "")
+            for schema in FUNCTION_TOOL_SCHEMAS
+            if isinstance(schema, dict)
+        }
+        names.update(_TOOL_NAME_MAP.values())
+        return {name for name in names if name}
 
 # ---------------------------------------------------------------------------
 # OpenAI-compatible function tool schemas
@@ -414,13 +526,13 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "ui_control",
-            "description": "Control the user interface. Actions: toggle (turn tools on/off), open_panel (open a modal: documents/library, gallery, email, sessions, notes, memories/brain, skills, settings, cookbook), open_email_reply (open an email reply draft document; does NOT send), set_mode, switch_model, set_theme (built-in presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute), create_theme (CREATE any custom theme with a name + colors object — pick distinctive, evocative hex colors that match the requested aesthetic, NOT generic defaults. The theme auto-applies after creation). When a user asks for ANY theme not in the built-in preset list, ALWAYS use create_theme.",
+            "description": "Control the user interface. Actions: toggle (turn tools on/off), open_panel (open a modal: documents/library, gallery, email, sessions, notes, calendar, tasks, research, workspace, memories/brain, skills, settings, cookbook), open_email_reply (open an email reply draft document; does NOT send), set_mode, switch_model, set_theme (built-in presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute), create_theme (CREATE any custom theme with a name + colors object — pick distinctive, evocative hex colors that match the requested aesthetic, NOT generic defaults. The theme auto-applies after creation). When a user asks for ANY theme not in the built-in preset list, ALWAYS use create_theme.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {"type": "string", "enum": ["toggle", "open_panel", "open_email_reply", "set_mode", "switch_model", "set_theme", "create_theme", "get_toggles"],
                                "description": "The UI action. Use set_theme for presets, create_theme to build a custom theme with any hex colors"},
-                    "name": {"type": "string", "description": "For toggle: web, bash, research, incognito, document_editor (aliases: shell, search, deepresearch, documents). For open_panel: documents, gallery, email, sessions, notes, brain/memories, skills, settings, cookbook. For open_email_reply: email UID. For set_theme: a preset theme name. For create_theme: the custom theme name."},
+                    "name": {"type": "string", "description": "For toggle: web, bash, research, incognito, document_editor (aliases: shell, search, deepresearch, documents). For open_panel: documents, gallery, email, sessions, notes, calendar, tasks, research, workspace, brain/memories, skills, settings, cookbook. For open_email_reply: email UID. For set_theme: a preset theme name. For create_theme: the custom theme name."},
                     "value": {"type": "string", "description": "Value: on/off for toggle, agent/chat for set_mode, model name for switch_model, theme name for set_theme, or folder for open_email_reply"},
                     "uid": {"type": "string", "description": "Email UID for open_email_reply"},
                     "folder": {"type": "string", "description": "Email folder for open_email_reply (default INBOX)"},
@@ -997,6 +1109,27 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "generate_image",
+            "description": "Generate a professional AI image file from a text prompt, save it to Odysseus generated media/Gallery, and render it inline. Do not answer image creation requests with SVG, HTML, code, or prompt-only workarounds unless the user explicitly asks for that format. Tries the current/configured/mentioned image-capable model first, then falls back to RunComfy/ComfyUI.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "Subject-first image prompt. Include composition, use case, visual style, lighting, and any exact text in quotes."},
+                    "model": {"type": "string", "description": "Optional image model or RunComfy model id. Leave blank for auto: GPT Image 2 for typography/text, FLUX 2 Klein 9B for general professional imagery."},
+                    "size": {"type": "string", "description": "Size such as 1024x1024, 1024x1536, 1536x1024, or 1536x864"},
+                    "aspect_ratio": {"type": "string", "description": "Optional aspect such as 16:9, 9:16, 1:1, 3:2, or 2:3 when size is omitted"},
+                    "style": {"type": "string", "description": "Optional concise art direction, e.g. editorial product photography, premium SaaS ad, cinematic concept art"},
+                    "quality": {"type": "string", "enum": ["draft", "low", "medium", "high", "auto", "professional", "premium"], "description": "Image quality/tier. Use professional or high for normal final work; premium for brand/hero assets."},
+                    "enhance_prompt": {"type": "boolean", "description": "Default true. Adds professional composition/lighting/production cues without changing the subject."},
+                    "seed": {"type": "integer", "description": "Optional seed for reproducibility"}
+                },
+                "required": ["prompt"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "edit_image",
             "description": "Edit a saved Gallery image and save the edited copy back to Gallery. Use manage_gallery first when you need an image_id. Inpaint requires a mask or mask_image_id; harmonize needs a configured diffusion/img2img endpoint; sharpen works locally.",
             "parameters": {
@@ -1013,6 +1146,83 @@ FUNCTION_TOOL_SCHEMAS = [
                     "name": {"type": "string", "description": "Optional name for the edited copy saved to Gallery"}
                 },
                 "required": ["image_id", "action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_video",
+            "description": "Generate a professional AI video with RunComfy/ComfyUI, save the downloaded file to Odysseus generated media/Gallery, and render it inline. Auto-selects text-to-video, image-to-video, lip-sync, or premium tiers based on inputs and quality.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "Subject-first video direction. Include one main action, scene, motion verbs, camera movement, lighting, and audio notes when relevant."},
+                    "model": {"type": "string", "description": "Optional RunComfy model id. Leave blank for auto: HappyHorse for general pro video, HappyHorse/Veo for i2v, Wan for audio lip-sync, Kling 4K for premium 4K."},
+                    "duration": {"type": "integer", "description": "Duration in seconds"},
+                    "aspect_ratio": {"type": "string", "description": "Aspect ratio such as 16:9, 9:16, 1:1, or 21:9"},
+                    "resolution": {"type": "string", "description": "Resolution such as 720p, 1080p, or 4k when supported"},
+                    "quality": {"type": "string", "enum": ["draft", "professional", "premium", "hero", "4k"], "description": "Video tier. professional is the default; premium/hero/4k may pick higher-cost models."},
+                    "camera": {"type": "string", "description": "Optional camera direction, e.g. slow push-in, locked tripod, handheld tracking shot, drone pullback"},
+                    "image_url": {"type": "string", "description": "Optional source image URL for image-to-video models"},
+                    "audio_url": {"type": "string", "description": "Optional source audio URL for lip-sync/audio-driven models"},
+                    "seed": {"type": "integer", "description": "Optional seed"},
+                    "enhance_prompt": {"type": "boolean", "description": "Default true. Adds professional camera, lighting, audio, and color-grade cues."},
+                    "input": {"type": "object", "description": "Exact RunComfy JSON input body; overrides generated defaults"},
+                    "timeout": {"type": "integer", "description": "Timeout in seconds"}
+                },
+                "required": ["prompt"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_music",
+            "description": "Generate professional AI music/audio with RunComfy/ComfyUI, save it to Odysseus generated media, and render it inline. Auto-selects ACE Step 1.5 for polished defaults, ElevenLabs for premium commercial music, and ACE edit endpoints for inpaint/outpaint.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "Style brief or full ElevenLabs prompt. Include genre, mood, instrumentation, vocal type, BPM, arrangement, and use case."},
+                    "model": {"type": "string", "description": "Optional RunComfy model id. Leave blank for auto: ACE Step 1.5 for professional, ElevenLabs for premium/commercial, ACE Step base for drafts/batches."},
+                    "quality": {"type": "string", "enum": ["draft", "professional", "premium", "commercial", "broadcast"], "description": "Audio tier. professional defaults to ACE Step 1.5; premium/commercial defaults to ElevenLabs Music."},
+                    "tags": {"type": "string", "description": "ACE Step style tags, e.g. indie pop, driving drums, female vocal, 120 BPM, polished mix"},
+                    "lyrics": {"type": "string", "description": "Lyrics with section markers, or [inst] for instrumental"},
+                    "duration": {"type": "integer", "description": "Duration in seconds"},
+                    "bpm": {"type": "integer", "description": "Optional tempo"},
+                    "mood": {"type": "string", "description": "Optional mood/energy direction"},
+                    "loop": {"type": "boolean", "description": "Make the track loop-friendly when true"},
+                    "force_instrumental": {"type": "boolean", "description": "When true and lyrics are omitted, generate instrumental audio"},
+                    "audio": {"type": "string", "description": "Optional source audio URL for inpaint/outpaint endpoints"},
+                    "start_time": {"type": "number", "description": "Audio edit start time"},
+                    "end_time": {"type": "number", "description": "Audio edit end time"},
+                    "extend_before_duration": {"type": "number", "description": "Seconds to add before source audio"},
+                    "extend_after_duration": {"type": "number", "description": "Seconds to add after source audio"},
+                    "enhance_prompt": {"type": "boolean", "description": "Default true. Adds professional arrangement/mix/master cues."},
+                    "input": {"type": "object", "description": "Exact RunComfy JSON input body; overrides generated defaults"},
+                    "timeout": {"type": "integer", "description": "Timeout in seconds"}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "runcomfy_media",
+            "description": "Run any RunComfy media endpoint using an exact model_id and input body from a viewed skill. Use for image/video/music/edit/avatar/lip-sync endpoints whose schema is more specific than the narrow wrappers.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "media_type": {"type": "string", "enum": ["image", "video", "music", "audio"], "description": "Output family"},
+                    "model_id": {"type": "string", "description": "RunComfy model id, e.g. blackforestlabs/flux-2-klein/9b/text-to-image"},
+                    "input": {"type": "object", "description": "Exact RunComfy JSON request body"},
+                    "prompt": {"type": "string", "description": "Optional prompt if input is omitted"},
+                    "quality": {"type": "string", "description": "Optional tier hint such as professional, premium, draft, commercial, hero, or 4k"},
+                    "enhance_prompt": {"type": "boolean", "description": "Default true when input is omitted; ignored for exact input bodies"},
+                    "timeout": {"type": "integer", "description": "Timeout in seconds"}
+                },
+                "required": ["media_type", "model_id"]
             }
         }
     },
@@ -1249,7 +1459,7 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
                             "archive_email", "delete_email", "mark_email_read", "bulk_email", "download_attachment"}
     if name in _BUILTIN_EMAIL_TOOLS:
         return ToolBlock(f"mcp__email__{name}", json.dumps(args) if args else "{}")
-    if tool_type not in TOOL_TAGS:
+    if tool_type not in _known_tool_tags():
         logger.warning(f"Unknown function call: {name}")
         return None
 
@@ -1366,6 +1576,10 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
             content = action
     elif tool_type == "list_models":
         content = args.get("filter", "")
+    elif tool_type == "generate_image":
+        content = json.dumps(args)
+    elif tool_type in ("generate_video", "generate_music", "runcomfy_media"):
+        content = json.dumps(args)
     elif tool_type == "ui_control":
         action = args.get("action", "")
         name = args.get("name", "")

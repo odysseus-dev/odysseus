@@ -110,6 +110,42 @@ function _setCookbookOpening(on) {
   });
 }
 
+async function _unloadAllLoadedModels(btn) {
+  const msg = 'Unload every currently loaded local model? Downloaded model files and endpoints will stay in place.';
+  if (window.styledConfirm) {
+    const ok = await window.styledConfirm(msg, { confirmText: 'Unload all' });
+    if (!ok) return;
+  } else if (!confirm(msg)) {
+    return;
+  }
+
+  const original = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span>Unloading...</span>';
+  }
+  try {
+    const res = await fetch('/api/model-endpoints/unload-all', {
+      method: 'POST',
+      credentials: 'same-origin',
+    });
+    let data = {};
+    try { data = await res.json(); } catch (_) {}
+    if (!res.ok && !data.message) {
+      throw new Error(`Unload failed (${res.status})`);
+    }
+    const message = data.message || `Unloaded ${data.unloaded || 0} loaded model${data.unloaded === 1 ? '' : 's'}.`;
+    uiModule.showToast(message, data.failed ? 5200 : 2600);
+  } catch (err) {
+    uiModule.showToast(err && err.message ? err.message : 'Unload all failed', 5200);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = original;
+    }
+  }
+}
+
 /** Build server <option> HTML from _envState.servers. excludeLocal skips local-only entries. */
 // True for the local server entry (empty / "local" / "localhost" host).
 function _isLocalEntry(s) { return !s || !s.host || s.host === 'local' || s.host.toLowerCase() === 'localhost'; }
@@ -597,7 +633,15 @@ export function _buildServeCmd(f, modelName, backend) {
   } else if (backend === 'diffusers') {
     const gpuStr = f.gpus?.trim();
     if (gpuStr) cmd += `CUDA_VISIBLE_DEVICES=${gpuStr} `;
-    cmd += `python3 scripts/diffusion_server.py --model ${modelName} --port ${f.port || '8100'}`;
+    const py = _isWindows() ? 'python' : 'python3';
+    const isOnnxModel = /onnx/i.test(`${modelName || ''} ${f.path || ''} ${f.repo_id || ''}`);
+    cmd += `${py} scripts/diffusion_server.py --model ${modelName} --port ${f.port || '8100'}`;
+    if (isOnnxModel) {
+      cmd += ' --backend onnx';
+      if (_isWindows()) cmd += ' --provider DmlExecutionProvider';
+      if (!f.diff_width) cmd += ' --width 512';
+      if (!f.diff_height) cmd += ' --height 512';
+    }
     if (f.diff_dtype && f.diff_dtype !== 'bfloat16') cmd += ` --dtype ${f.diff_dtype}`;
     if (f.diff_device_map && f.diff_device_map !== 'balanced') cmd += ` --device-map ${f.diff_device_map}`;
     if (f.diff_steps) cmd += ` --steps ${f.diff_steps}`;
@@ -718,11 +762,12 @@ async function _fetchDependencies() {
     const data = await resp.json();
     const pkgs = data.packages || [];
     if (!pkgs.length) { list.innerHTML = '<div class="hwfit-loading">No packages found</div>'; return; }
-    const _winUnsupported = new Set(['diffusers', 'hf_transfer', 'vllm', 'rembg', 'gfpgan']);
+    const _winUnsupported = new Set(['hf_transfer', 'vllm', 'rembg', 'gfpgan']);
 
-    const _statusTag = (pkg, isLocal, isSystemDep, winBlocked) => {
+    const _statusTag = (pkg, isLocal, isSystemDep, isFileDep, winBlocked) => {
       if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
       if (pkg.installed && isSystemDep) return `<span class="cookbook-dep-tag cookbook-dep-installed" title="Found on selected server">Installed</span>`;
+      if (pkg.installed && isFileDep) return `<span class="cookbook-dep-tag cookbook-dep-installed" title="${esc(pkg.status_note || 'Downloaded')}">Installed</span>`;
       if (pkg.installed && pkg.pip_update_available === false) {
         const tip = esc(pkg.update_note || pkg.status_note || 'Found externally; update outside Odysseus.');
         return `<span class="cookbook-dep-tag cookbook-dep-installed" title="${tip}">Installed</span>`;
@@ -733,12 +778,16 @@ async function _fetchDependencies() {
         const depLabel = pkg.applicable === false ? 'N/A ?' : 'Missing';
         return `<span class="cookbook-dep-tag cookbook-dep-na" title="${depTip}">${depLabel}</span>`;
       }
+      if (isFileDep) {
+        return `<button class="cookbook-dep-tag cookbook-dep-install" data-dep-model="${esc(pkg.model || '')}" data-dep-endpoint="${esc(pkg.install_endpoint || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}">Download</button>`;
+      }
       return `<button class="cookbook-dep-tag cookbook-dep-install" data-dep-pip="${esc(pkg.pip)}" data-dep-target="${isLocal ? 'local' : 'remote'}">Install</button>`;
     };
 
     const _depRow = (pkg) => {
       const isLocal = pkg.target === 'local';
       const isSystemDep = pkg.kind === 'system';
+      const isFileDep = pkg.kind === 'file';
       const winBlocked = !isLocal && _isWindows() && _winUnsupported.has(pkg.name);
       const note = pkg.status_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.65;margin-top:3px;">${esc(pkg.status_note)}</div>` : '';
       const updateNote = pkg.installed && pkg.pip_update_available === false && pkg.update_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.55;margin-top:3px;">${esc(pkg.update_note)}</div>` : '';
@@ -765,7 +814,7 @@ async function _fetchDependencies() {
         + `</div>`
         + _rebuildBtn
         + `<span class="cookbook-dep-tag cookbook-dep-cat">${esc(pkg.category)}</span>`
-        + _statusTag(pkg, isLocal, isSystemDep, winBlocked)
+        + _statusTag(pkg, isLocal, isSystemDep, isFileDep, winBlocked)
         + `</div>`;
     };
 
@@ -782,6 +831,44 @@ async function _fetchDependencies() {
       _viewingRemote ? '' : _section('Odysseus app', 'Run inside the Odysseus app itself.', _appDeps),
       _section('Server', 'Run on the server chosen above (Local, or a remote box over SSH).', _serverDeps),
     ].join('');
+
+    async function _installModelDep(modelName, pkgName, statusEl, endpoint) {
+      if (!modelName) {
+        uiModule.showToast('Install failed: missing model id');
+        return;
+      }
+      const oldText = statusEl ? statusEl.textContent : '';
+      if (statusEl) {
+        statusEl.textContent = 'Downloading...';
+        statusEl.disabled = true;
+      }
+      try {
+        const res = await fetch(endpoint || '/api/cookbook/rembg-models/install', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: modelName, name: pkgName }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          const reason = data.detail || data.error || `HTTP ${res.status}`;
+          uiModule.showToast('Download failed: ' + String(reason).slice(0, 200));
+          if (statusEl) {
+            statusEl.textContent = oldText || 'Download';
+            statusEl.disabled = false;
+          }
+          return;
+        }
+        const mb = data.bytes ? (data.bytes / 1048576).toFixed(1) + ' MB' : 'model';
+        uiModule.showToast(`${pkgName} downloaded (${mb})`);
+        _fetchDependencies();
+      } catch (err) {
+        uiModule.showToast('Download failed: ' + err.message);
+        if (statusEl) {
+          statusEl.textContent = oldText || 'Download';
+          statusEl.disabled = false;
+        }
+      }
+    }
 
     // Shared install/update routine — used by the Install button and the
     // "Update" item in an installed package's ⋮ menu. `upgrade` adds pip -U;
@@ -868,8 +955,14 @@ async function _fetchDependencies() {
     list.querySelectorAll('.cookbook-dep-install').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
+        const modelName = btn.dataset.depModel || '';
+        const endpoint = btn.dataset.depEndpoint || '';
         const pipName = btn.dataset.depPip;
         const pkgName = btn.closest('.cookbook-dep-row')?.querySelector('.memory-item-title')?.textContent || pipName;
+        if (modelName) {
+          await _installModelDep(modelName, pkgName || modelName, btn, endpoint);
+          return;
+        }
         await _installDep(pipName, pkgName, btn.dataset.depTarget === 'local', !!btn.dataset.upgrade, btn);
       });
     });
@@ -1772,11 +1865,14 @@ function _renderRecipes() {
   let html = '';
 
   // Tabs
+  html += '<div class="cookbook-tabs-row">';
   html += '<div class="cookbook-tabs">';
   html += '<button class="cookbook-tab active" data-backend="Search"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="7 14 12 19 17 14"/><line x1="12" y1="19" x2="12" y2="5"/><line x1="5" y1="21" x2="19" y2="21"/></svg>Download</button>';
   html += '<button class="cookbook-tab" data-backend="Serve"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:3px;"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>Serve</button>';
   html += '<button class="cookbook-tab" data-backend="Dependencies"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:3px;"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>Dependencies</button>';
   html += '<button class="cookbook-tab" data-backend="Settings"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:3px;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</button>';
+  html += '</div>';
+  html += '<button type="button" class="cookbook-unload-all-btn" id="cookbook-unload-all-btn" title="Unload every currently loaded model from supported local runtimes"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v10"/><path d="M18.4 6.6a8 8 0 1 1-12.8 0"/></svg><span>Unload all</span></button>';
   html += '</div>';
 
   // Search group
@@ -2049,6 +2145,11 @@ function _renderRecipes() {
 
   body.innerHTML = html;
   _wireTabEvents(body);
+  body.querySelector('#cookbook-unload-all-btn')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    _unloadAllLoadedModels(e.currentTarget);
+  });
 
   // Auto-init What Fits
   _hwfitInit();

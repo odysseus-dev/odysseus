@@ -106,7 +106,7 @@ async function _loadRecentCompleted() {
           elapsed, result: null, sources: null, findings: null,
           sourceCount: item.source_count || 0,
           category: item.category || '',
-          errorMsg: null, avgDuration: null, modelName: null,
+          errorMsg: item.error_summary || null, avgDuration: null, modelName: null,
           settings: { max_rounds: item.rounds || 8, report_layout: item.report_layout || 'auto' },
           _es: null, _timerInterval: null, _fromLibrary: true,
         });
@@ -223,6 +223,23 @@ export function formatPhase(progress, maxRounds) {
     case 'writing': return `Writing report -- ${p.total_sources || 0} sources`;
     default: return p.phase;
   }
+}
+
+function _researchFailureMessage(text) {
+  const raw = String(text || '');
+  if (!raw) return '';
+  const match = raw.match(/\*\*Search unavailable\*\*\s*[—-]\s*([\s\S]*?)(?:\n\s*\n|$)/);
+  if (match && match[1]) {
+    return `Search unavailable — ${match[1].replace(/\s+/g, ' ').trim()}`;
+  }
+  if (raw.includes('No information could be gathered')) {
+    return 'No information could be gathered for this question.';
+  }
+  return '';
+}
+
+export function failureMessage(job) {
+  return job?.errorMsg || _researchFailureMessage(job?.result) || '';
 }
 
 function _makeJob(query, settings) {
@@ -386,6 +403,7 @@ async function _fetchResult(job) {
     job.result = d.result;
     job.sources = d.sources;
     job.findings = d.raw_findings;
+    job.errorMsg = d.error_summary || _researchFailureMessage(d.result) || job.errorMsg;
     if (d.category && !job.category) job.category = d.category;
     if (d.report_layout) {
       job.settings = { ...(job.settings || {}), report_layout: d.report_layout };

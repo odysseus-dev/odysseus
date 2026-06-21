@@ -1482,11 +1482,23 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('fi')
             elif "scripts/diffusion_server.py" in req.cmd or ".diffusion_server.py" in req.cmd:
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
-                runner_lines.append('if ! ODYSSEUS_DIFFUSION_IMPORT_ERROR="$(python3 -c "import torch, diffusers" 2>&1)"; then')
-                runner_lines.append('  echo "ERROR: Diffusion serving requires PyTorch + diffusers."')
-                runner_lines.append('  printf "%s\\n" "$ODYSSEUS_DIFFUSION_IMPORT_ERROR"')
-                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
-                runner_lines.append('fi')
+                if "--backend onnx" in req.cmd or "DmlExecutionProvider" in req.cmd:
+                    runner_lines.append('if ! ODYSSEUS_DIFFUSION_IMPORT_ERROR="$(python3 -c "import torch, diffusers, onnxruntime; from optimum.onnxruntime import ORTDiffusionPipeline" 2>&1)"; then')
+                    runner_lines.append('  echo "ERROR: ONNX/DirectML diffusion serving requires PyTorch + diffusers + optimum-onnx + onnxruntime-directml."')
+                    runner_lines.append('  printf "%s\\n" "$ODYSSEUS_DIFFUSION_IMPORT_ERROR"')
+                    runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
+                    runner_lines.append('elif python3 -c "import onnxruntime as ort; raise SystemExit(0 if \\"DmlExecutionProvider\\" in ort.get_available_providers() else 1)" 2>/dev/null; then')
+                    runner_lines.append('  echo "[odysseus] ONNX Runtime DirectML provider: available"')
+                    runner_lines.append('else')
+                    runner_lines.append('  echo "ERROR: DmlExecutionProvider is not available. Install onnxruntime-directml in the selected environment."')
+                    runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
+                    runner_lines.append('fi')
+                else:
+                    runner_lines.append('if ! ODYSSEUS_DIFFUSION_IMPORT_ERROR="$(python3 -c "import torch, diffusers" 2>&1)"; then')
+                    runner_lines.append('  echo "ERROR: Diffusion serving requires PyTorch + diffusers."')
+                    runner_lines.append('  printf "%s\\n" "$ODYSSEUS_DIFFUSION_IMPORT_ERROR"')
+                    runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
+                    runner_lines.append('fi')
 
             handled_ollama_sidecar_probe = False
             if (not handled_ollama_serve

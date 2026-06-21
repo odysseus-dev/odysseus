@@ -92,6 +92,9 @@ export function buildTopbar() {
       <button class="ge-btn ge-btn-sm" id="ge-shortcuts-btn" title="Keyboard shortcuts (?)" aria-label="Shortcuts">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position:relative;top:2px;"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>
       </button>
+      <button class="ge-btn ge-btn-sm ge-icon-only-btn" id="ge-open-layers" title="Layers" aria-label="Open layers panel">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg>
+      </button>
       <button class="ge-btn ge-btn-sm" id="ge-import-topbar" title="Import image as layer">+ Import</button>
       <div class="ge-save-wrap">
         <button class="ge-btn ge-btn-primary" id="ge-save-menu-btn" title="Save options" style="display:inline-flex;align-items:center;gap:4px;">Save

@@ -1,6 +1,6 @@
 {
     "name":  "odysseus",
-    "version":  "1.0.0",
+    "version":  "1.0.1",
     "main":  "main.js",
     "scripts":  {
                     "start":  "electron .",
@@ -26,6 +26,7 @@
                                   },
                   "files":  [
                                 "main.js",
+                                "startup-preload.js",
                                 "package.json",
                                 "node_modules/**/*"
                             ],

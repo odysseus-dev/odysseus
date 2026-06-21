@@ -16,6 +16,7 @@ def _resolver(mapping):
 
 PUBLIC = _resolver({"example.com": ["93.184.216.34"]})
 LOOPBACK = _resolver({"localhost": ["127.0.0.1"]})
+IPV6_LOOPBACK = _resolver({"localhost6": ["::1"]})
 LAN = _resolver({"nas.local": ["192.168.1.50"]})
 METADATA = _resolver({"evil.example": ["169.254.169.254"]})
 MAPPED_METADATA = _resolver({"evil6.example": ["::ffff:169.254.169.254"]})
@@ -54,11 +55,14 @@ def test_ipv4_mapped_metadata_blocked():
 def test_loopback_and_lan_allowed_by_default_local_first():
     # Local-first: a localhost / LAN embedding server is a legitimate target.
     assert check_outbound_url("http://localhost:8080/v1", resolver=LOOPBACK)[0] is True
+    assert check_outbound_url("http://localhost6:1234/v1", resolver=IPV6_LOOPBACK)[0] is True
     assert check_outbound_url("http://nas.local:1234/v1", resolver=LAN)[0] is True
 
 
 def test_strict_mode_blocks_private_and_loopback():
     ok, reason = check_outbound_url("http://localhost:8080", block_private=True, resolver=LOOPBACK)
+    assert ok is False and "private" in reason
+    ok, reason = check_outbound_url("http://localhost6:1234", block_private=True, resolver=IPV6_LOOPBACK)
     assert ok is False and "private" in reason
     ok, reason = check_outbound_url("http://nas.local", block_private=True, resolver=LAN)
     assert ok is False and "private" in reason

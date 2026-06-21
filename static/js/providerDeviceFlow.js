@@ -10,7 +10,7 @@ export const PROVIDER_DEVICE_FLOWS = {
     },
   },
   'chatgpt-subscription': {
-    label: 'ChatGPT Subscription',
+    label: 'Codex Subscription',
     startUrl: '/api/chatgpt-subscription/device/start',
     pollUrl: '/api/chatgpt-subscription/device/poll',
     authUrl(start) {

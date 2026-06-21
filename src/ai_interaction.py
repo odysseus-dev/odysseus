@@ -10,6 +10,7 @@ through the standard agent_tools.py pipeline.
 
 import json
 import logging
+import re
 import uuid
 import time
 from typing import Dict, Optional, Tuple
@@ -138,7 +139,16 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
                     else:
                         model_ids = json.loads(ep.cached_models or "[]")
                 except Exception:
-                    model_ids = []
+                    try:
+                        model_ids = json.loads(ep.cached_models or "[]")
+                    except Exception:
+                        model_ids = []
+                if not model_ids:
+                    try:
+                        model_ids = json.loads(ep.cached_models or "[]")
+                    except Exception:
+                        model_ids = []
+                model_ids = [str(mid) for mid in model_ids if str(mid or "").strip()]
 
                 # Exact match first
                 for mid in model_ids:
@@ -153,6 +163,111 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
         raise ValueError(f"Model '{spec}' not found on any configured endpoint")
     finally:
         db.close()
+
+
+def _cached_models_for_hint(owner: Optional[str] = None) -> list[tuple[object, list[str]]]:
+    from src.database import SessionLocal, ModelEndpoint
+    from src.auth_helpers import owner_filter
+
+    db = SessionLocal()
+    try:
+        query = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+        if owner:
+            query = owner_filter(query, ModelEndpoint, owner)
+        rows: list[tuple[object, list[str]]] = []
+        for ep in query.all():
+            try:
+                models = json.loads(ep.cached_models or "[]") or []
+            except Exception:
+                models = []
+            rows.append((ep, [str(model) for model in models if str(model or "").strip()]))
+        return rows
+    finally:
+        db.close()
+
+
+def _best_cached_model(
+    rows: list[tuple[object, list[str]]],
+    *,
+    endpoint_terms: tuple[str, ...] = (),
+    include_terms: tuple[str, ...] = (),
+    prefer_terms: tuple[str, ...] = (),
+    avoid_terms: tuple[str, ...] = (),
+) -> str:
+    best: tuple[int, str] | None = None
+    endpoint_terms_l = tuple(term.lower() for term in endpoint_terms)
+    include_terms_l = tuple(term.lower() for term in include_terms)
+    prefer_terms_l = tuple(term.lower() for term in prefer_terms)
+    avoid_terms_l = tuple(term.lower() for term in avoid_terms)
+
+    for ep, models in rows:
+        endpoint_text = f"{getattr(ep, 'name', '')} {getattr(ep, 'base_url', '')}".lower()
+        if endpoint_terms_l and not any(term in endpoint_text for term in endpoint_terms_l):
+            continue
+        for model in models:
+            model_l = model.lower()
+            if include_terms_l and not any(term in model_l for term in include_terms_l):
+                continue
+            score = 10
+            score += sum(5 for term in prefer_terms_l if term in model_l)
+            score -= sum(4 for term in avoid_terms_l if term in model_l)
+            if "latest" in model_l:
+                score += 2
+            if "preview" in model_l:
+                score -= 1
+            candidate = (score, model)
+            if best is None or candidate[0] > best[0]:
+                best = candidate
+    return best[1] if best else ""
+
+
+def _image_model_hint_from_prompt(prompt: str, owner: Optional[str] = None) -> str:
+    text = f" {prompt or ''} ".lower()
+    rows = _cached_models_for_hint(owner=owner)
+
+    if re.search(r"\b(?:gemini|google)\b", text):
+        model = _best_cached_model(
+            rows,
+            endpoint_terms=("google", "gemini", "generativelanguage.googleapis.com"),
+            include_terms=("image", "imagen"),
+            prefer_terms=("gemini", "flash", "imagen"),
+            avoid_terms=("audio", "embedding", "robotics", "live"),
+        )
+        if model:
+            return model
+
+    if re.search(r"\b(?:imagen)\b", text):
+        model = _best_cached_model(
+            rows,
+            endpoint_terms=("google", "gemini", "generativelanguage.googleapis.com"),
+            include_terms=("imagen",),
+            prefer_terms=("generate", "ultra", "fast"),
+            avoid_terms=("embedding",),
+        )
+        if model:
+            return model
+
+    if re.search(r"\b(?:chatgpt|openai|gpt)\b", text):
+        model = _best_cached_model(
+            rows,
+            endpoint_terms=("openai", "api.openai.com"),
+            include_terms=("gpt-image", "dall-e"),
+            prefer_terms=("gpt-image",),
+        )
+        if model:
+            return model
+
+    if re.search(r"\b(?:flux|black\s*forest)\b", text):
+        model = _best_cached_model(rows, include_terms=("flux",), prefer_terms=("dev", "schnell"))
+        if model:
+            return model
+
+    if re.search(r"\b(?:qwen\s*image|qwen-image)\b", text):
+        model = _best_cached_model(rows, include_terms=("qwen-image",), prefer_terms=("edit",))
+        if model:
+            return model
+
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -1292,7 +1407,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
       switch_model <model>    — Change the model for the current session
       set_theme <preset>      — Apply a built-in theme preset (dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute)
       create_theme <name> <bg> <fg> <panel> <border> <accent> [key=val ...] — Create custom theme. Optional key=val: advanced color overrides AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false
-      open_panel <name>       — Open a panel (documents, gallery, email, sessions, notes, memories, skills, settings, cookbook)
+      open_panel <name>       — Open a panel (documents, gallery, email, sessions, notes, calendar, tasks, research, workspace, memories, skills, settings, cookbook)
       open_email_reply <uid> [folder] [reply|reply-all|ai-reply] — Open a reply draft document for an email; does not send
       get_toggles             — Return current toggle states (server-side knowledge)
     """
@@ -1493,7 +1608,8 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
 
     elif action == "open_panel":
         # Open a top-level panel/modal: documents/library, gallery,
-        # email, sessions, notes, memories, skills, settings, cookbook.
+        # email, sessions, notes, calendar, tasks, research, workspace,
+        # memories, skills, settings, cookbook.
         panel = parts[1].lower() if len(parts) > 1 else ""
         _panel_aliases = {
             "documents": "documents",
@@ -1515,6 +1631,33 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
             "note": "notes",
             "todo": "notes",
             "todos": "notes",
+            "calendar": "calendar",
+            "calendars": "calendar",
+            "calander": "calendar",
+            "calanders": "calendar",
+            "calender": "calendar",
+            "calenders": "calendar",
+            "agenda": "calendar",
+            "events": "calendar",
+            "tasks": "tasks",
+            "task": "tasks",
+            "automations": "tasks",
+            "automation": "tasks",
+            "scheduled": "tasks",
+            "research": "research",
+            "deep": "research",
+            "deepresearch": "research",
+            "deep-research": "research",
+            "reports": "research",
+            "report": "research",
+            "workspace": "workspace",
+            "workspaces": "workspace",
+            "filetree": "workspace",
+            "file-tree": "workspace",
+            "foldertree": "workspace",
+            "folder-tree": "workspace",
+            "files": "workspace",
+            "folders": "workspace",
             "memories": "memories",
             "memory": "memories",
             "brain": "memories",
@@ -1529,7 +1672,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
         }
         target = _panel_aliases.get(panel)
         if not target:
-            return {"error": f"Unknown panel '{panel}'. Valid: documents, gallery, email, sessions, notes, memories, skills, settings, cookbook."}
+            return {"error": f"Unknown panel '{panel}'. Valid: documents, gallery, email, sessions, notes, calendar, tasks, research, workspace, memories, skills, settings, cookbook."}
         return {
             "ui_event": "open_panel",
             "panel": target,
@@ -1583,11 +1726,35 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     import httpx
     from pathlib import Path
 
-    lines = content.strip().split("\n")
-    prompt = lines[0].strip() if lines else ""
-    model_spec = lines[1].strip() if len(lines) > 1 and lines[1].strip() else ""
-    size = lines[2].strip() if len(lines) > 2 and lines[2].strip() else "1024x1024"
-    quality = lines[3].strip() if len(lines) > 3 and lines[3].strip() else "medium"
+    raw_content = (content or "").strip()
+    image_args = {}
+    if raw_content.startswith("{"):
+        try:
+            parsed = json.loads(raw_content)
+            image_args = parsed if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            image_args = {}
+    if image_args:
+        prompt = str(image_args.get("prompt") or image_args.get("description") or "").strip()
+        style = str(image_args.get("style") or "").strip()
+        if style and style.lower() not in prompt.lower():
+            prompt = (prompt.rstrip(" .") + ". " + style).strip()
+        model_spec = str(image_args.get("model") or image_args.get("model_id") or "").strip()
+        size = str(image_args.get("size") or "1024x1024").replace("_", "x")
+        quality = str(image_args.get("quality") or "").strip().lower()
+    else:
+        lines = raw_content.split("\n")
+        prompt = lines[0].strip() if lines else ""
+        model_spec = lines[1].strip() if len(lines) > 1 and lines[1].strip() else ""
+        size = lines[2].strip() if len(lines) > 2 and lines[2].strip() else "1024x1024"
+        quality = lines[3].strip() if len(lines) > 3 and lines[3].strip() else ""
+
+    if quality in {"professional", "premium", "hero", "commercial"}:
+        quality = "high"
+    elif quality in {"draft", "fast", "cheap"}:
+        quality = "low"
+    elif not quality:
+        quality = "high"
 
     if not prompt:
         return {"error": "Image prompt is required (line 1)"}
@@ -1601,8 +1768,8 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
 
     # Use admin-configured model/quality if not specified by the tool call
     if not model_spec:
-        model_spec = _settings.get("image_model", "")
-    if quality == "medium" and _settings.get("image_quality"):
+        model_spec = _image_model_hint_from_prompt(prompt, owner=owner) or _settings.get("image_model", "")
+    if (not image_args and len(raw_content.split("\n")) <= 3 or image_args and not image_args.get("quality")) and _settings.get("image_quality"):
         quality = _settings["image_quality"]
 
     # Auto-detect best available image model if still not set

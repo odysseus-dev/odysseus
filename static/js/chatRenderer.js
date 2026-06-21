@@ -1142,36 +1142,84 @@ document.addEventListener('click', function(e) {
   }
 });
 
+function inferGeneratedMediaType(mediaUrl, explicitType) {
+  const type = String(explicitType || '').trim().toLowerCase();
+  if (type === 'music' || type === 'audio') return 'audio';
+  if (type === 'video' || type === 'image') return type;
+  try {
+    const path = new URL(String(mediaUrl || ''), window.location.origin).pathname.toLowerCase();
+    if (/\.(mp4|mov|webm|mkv|m4v)$/.test(path)) return 'video';
+    if (/\.(mp3|wav|ogg|m4a|flac|aac)$/.test(path)) return 'audio';
+  } catch (_) {}
+  return 'image';
+}
+
+function extensionForMedia(mediaUrl, mediaType) {
+  try {
+    const path = new URL(String(mediaUrl || ''), window.location.origin).pathname;
+    const match = path.match(/\.([a-z0-9]+)$/i);
+    if (match) return match[1].toLowerCase();
+  } catch (_) {}
+  if (mediaType === 'video') return 'mp4';
+  if (mediaType === 'audio') return 'mp3';
+  return 'png';
+}
+
+function downloadStem(prompt, mediaType) {
+  const base = (prompt || mediaType || 'media').slice(0, 40).replace(/[^a-zA-Z0-9 ]/g, '').trim();
+  return base || mediaType || 'media';
+}
+
 /**
- * Build a generated-image bubble element.
+ * Build a generated media bubble element.
  */
-export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId) {
+export function buildMediaBubble(mediaUrl, prompt, model, size, quality, mediaId, mediaType) {
   var esc = uiModule.esc;
+  const inferredType = inferGeneratedMediaType(mediaUrl, mediaType);
   const wrap = document.createElement('div');
-  wrap.className = 'msg msg-ai generated-image-wrap';
+  wrap.className = 'msg msg-ai generated-image-wrap generated-media-wrap';
 
   const role = document.createElement('div');
   role.className = 'role';
-  role.textContent = (model || 'image').split('/').pop();
+  role.textContent = (model || inferredType).split('/').pop();
   wrap.appendChild(role);
 
   const body = document.createElement('div');
   body.className = 'body';
 
-  const safeImageUrl = safeDisplayImageSrc(imageUrl);
-  if (!safeImageUrl) {
-    body.textContent = '[Image unavailable]';
+  const safeMediaUrl = safeDisplayImageSrc(mediaUrl);
+  if (!safeMediaUrl) {
+    body.textContent = '[Media unavailable]';
     wrap.appendChild(body);
     return wrap;
   }
 
-  const img = document.createElement('img');
-  img.className = 'generated-image';
-  img.alt = prompt || 'Generated image';
-  img.title = prompt || 'Generated image';
-  img.src = safeImageUrl;
-  img.addEventListener('click', () => { window.open(safeImageUrl, '_blank', 'noopener,noreferrer'); });
-  body.appendChild(img);
+  if (inferredType === 'video') {
+    const video = document.createElement('video');
+    video.className = 'generated-image generated-video';
+    video.title = prompt || 'Generated video';
+    video.src = safeMediaUrl;
+    video.controls = true;
+    video.preload = 'metadata';
+    video.playsInline = true;
+    body.appendChild(video);
+  } else if (inferredType === 'audio') {
+    const audio = document.createElement('audio');
+    audio.className = 'generated-audio generated-media-player';
+    audio.title = prompt || 'Generated audio';
+    audio.src = safeMediaUrl;
+    audio.controls = true;
+    audio.preload = 'metadata';
+    body.appendChild(audio);
+  } else {
+    const img = document.createElement('img');
+    img.className = 'generated-image';
+    img.alt = prompt || 'Generated image';
+    img.title = prompt || 'Generated image';
+    img.src = safeMediaUrl;
+    img.addEventListener('click', () => { window.open(safeMediaUrl, '_blank', 'noopener,noreferrer'); });
+    body.appendChild(img);
+  }
 
   if (prompt) {
     const caption = document.createElement('div');
@@ -1204,16 +1252,16 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
   const dlBtn = document.createElement('button');
   dlBtn.className = 'footer-copy-btn';
   dlBtn.type = 'button';
-  dlBtn.title = 'Download image';
+  dlBtn.title = `Download ${inferredType}`;
   dlBtn.textContent = '\u2913';
   dlBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
     try {
-      const resp = await fetch(imageUrl);
+      const resp = await fetch(mediaUrl);
       const blob = await resp.blob();
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = (prompt || 'image').slice(0, 40).replace(/[^a-zA-Z0-9 ]/g, '') + '.png';
+      a.download = `${downloadStem(prompt, inferredType)}.${extensionForMedia(mediaUrl, inferredType)}`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -1224,48 +1272,50 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
   });
   actions.appendChild(dlBtn);
 
-  const editBtn = document.createElement('button');
-  editBtn.className = 'footer-copy-btn';
-  editBtn.type = 'button';
-  editBtn.title = 'Edit in image editor';
-  editBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
-  editBtn.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    try {
-      const [galleryMod, editorMod] = await Promise.all([
-        import('./gallery.js'),
-        import('./galleryEditor.js'),
-      ]);
-      // Ensure the Gallery modal is open so the editor has a container
-      // to render into; switch its tabs to the Edit tab.
-      galleryMod.default.openGallery();
-      const modal = document.getElementById('gallery-modal');
-      if (modal) {
-        modal.querySelectorAll('.gallery-tab').forEach(t => t.classList.remove('active'));
-        modal.querySelector('.gallery-tab[data-tab="editor"]')?.classList.add('active');
+  if (inferredType === 'image') {
+    const editBtn = document.createElement('button');
+    editBtn.className = 'footer-copy-btn';
+    editBtn.type = 'button';
+    editBtn.title = 'Edit in image editor';
+    editBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
+    editBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        const [galleryMod, editorMod] = await Promise.all([
+          import('./gallery.js'),
+          import('./galleryEditor.js'),
+        ]);
+        // Ensure the Gallery modal is open so the editor has a container
+        // to render into; switch its tabs to the Edit tab.
+        galleryMod.default.openGallery();
+        const modal = document.getElementById('gallery-modal');
+        if (modal) {
+          modal.querySelectorAll('.gallery-tab').forEach(t => t.classList.remove('active'));
+          modal.querySelector('.gallery-tab[data-tab="editor"]')?.classList.add('active');
+        }
+        const imagesContainer = document.getElementById('gallery-images-container');
+        const albumsContainer = document.getElementById('gallery-albums-container');
+        if (imagesContainer) imagesContainer.style.display = 'none';
+        if (albumsContainer) albumsContainer.style.display = 'none';
+        const editorContainer = document.getElementById('gallery-editor-container');
+        if (editorContainer) editorContainer.style.display = 'flex';
+        const label = (prompt || '').trim().slice(0, 60) || 'Generated image';
+        editorMod.openEditor(mediaUrl, null, null, label);
+      } catch (err) {
+        console.error('[chat] open in editor failed', err);
       }
-      const imagesContainer = document.getElementById('gallery-images-container');
-      const albumsContainer = document.getElementById('gallery-albums-container');
-      if (imagesContainer) imagesContainer.style.display = 'none';
-      if (albumsContainer) albumsContainer.style.display = 'none';
-      const editorContainer = document.getElementById('gallery-editor-container');
-      if (editorContainer) editorContainer.style.display = 'flex';
-      const label = (prompt || '').trim().slice(0, 60) || 'Generated image';
-      editorMod.openEditor(imageUrl, null, null, label);
-    } catch (err) {
-      console.error('[chat] open in editor failed', err);
-    }
-  });
-  actions.appendChild(editBtn);
+    });
+    actions.appendChild(editBtn);
+  }
 
   const delBtn = document.createElement('button');
   delBtn.className = 'footer-copy-btn footer-delete-btn';
   delBtn.type = 'button';
-  delBtn.title = 'Delete image';
+  delBtn.title = `Delete ${inferredType}`;
   delBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
   delBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
-    const ok = await uiModule.styledConfirm('Delete this image?', {
+    const ok = await uiModule.styledConfirm(`Delete this ${inferredType}?`, {
       confirmText: 'Delete',
       cancelText: 'Cancel',
       danger: true,
@@ -1273,9 +1323,9 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
     if (!ok) return;
     // If we have a gallery id, delete server-side; otherwise just remove
     // the bubble from chat (e.g. external DALL-E url that wasn't saved).
-    if (imageId) {
+    if (mediaId) {
       try {
-        const res = await fetch(`/api/gallery/${encodeURIComponent(imageId)}`, {
+        const res = await fetch(`/api/gallery/${encodeURIComponent(mediaId)}`, {
           method: 'DELETE', credentials: 'same-origin',
         });
         if (!res.ok && res.status !== 404) {
@@ -1300,13 +1350,20 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
   if (model) parts.push(model.split('/').pop());
   if (size) parts.push(size);
   if (quality) parts.push(quality);
-  const cost = getImageCost(model, quality, size);
+  const cost = inferredType === 'image' ? getImageCost(model, quality, size) : null;
   if (cost !== null) parts.push('$' + (cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)));
   metrics.textContent = parts.join(' \u00B7 ');
   footer.appendChild(metrics);
 
   wrap.appendChild(footer);
   return wrap;
+}
+
+/**
+ * Backward-compatible wrapper for existing image-only call sites.
+ */
+export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId) {
+  return buildMediaBubble(imageUrl, prompt, model, size, quality, imageId, 'image');
 }
 
 export function hideWelcomeScreen() {
@@ -2111,8 +2168,17 @@ export function addMessage(role, content, modelName, metadata) {
           lastWrap = threadWrap;
 
           for (const ev of roundTools) {
-            if (ev.image_url) {
-              box.appendChild(buildImageBubble(ev.image_url, ev.image_prompt, ev.image_model, ev.image_size, ev.image_quality, ev.image_id));
+            const mediaUrl = ev.media_url || ev.image_url;
+            if (mediaUrl) {
+              box.appendChild(buildMediaBubble(
+                mediaUrl,
+                ev.media_prompt || ev.image_prompt,
+                ev.media_model || ev.image_model,
+                ev.media_size || ev.image_size,
+                ev.media_quality || ev.image_quality,
+                ev.media_id || ev.image_id,
+                ev.media_type || (ev.image_url ? 'image' : '')
+              ));
             }
           }
         }
@@ -2464,6 +2530,7 @@ const chatRenderer = {
   buildSourcesBox,
   buildFindingsBox,
   appendReportButton,
+  buildMediaBubble,
   buildImageBubble,
   hideWelcomeScreen,
   showWelcomeScreen,

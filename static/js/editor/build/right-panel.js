@@ -26,9 +26,33 @@
  */
 import { state } from '../state.js';
 
+function isTouchLandscape() {
+  try {
+    return window.matchMedia('(orientation: landscape) and (hover: none)').matches ||
+      window.matchMedia('(orientation: landscape) and (pointer: coarse)').matches;
+  } catch {
+    return false;
+  }
+}
+
+function isCompactEditorViewport() {
+  const shell = state.container?.closest?.('.gallery-modal-content, .modal-content');
+  const shellWidth = shell?.getBoundingClientRect?.().width || window.innerWidth || 0;
+  if (isTouchLandscape()) return false;
+  return window.innerWidth <= 700 ||
+    shellWidth <= 700;
+}
+
 export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
   const rightPanel = document.createElement('div');
   rightPanel.className = 'ge-right-panel';
+  const hideSliderBubble = () => {
+    try { document.dispatchEvent(new CustomEvent('ge:hide-slider-bubble')); } catch {}
+    try { window.__geHideSliderBubble?.(); } catch {}
+  };
+  function revealLayerPeek() {
+    rightPanel.classList.remove('expanded', 'minimized');
+  }
 
   // Controls section.
   const controls = document.createElement('div');
@@ -39,7 +63,7 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
   {
     let sy = 0, dragging = false;
     controls.addEventListener('touchstart', (e) => {
-      if (window.innerWidth > 700) return;
+      if (!isCompactEditorViewport()) return;
       const rect = controls.getBoundingClientRect();
       const t = e.touches[0];
       // Only engage if touch starts in the top grab zone.
@@ -59,7 +83,11 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
       const dy = e.changedTouches[0].clientY - sy;
       controls.style.transition = '';
       controls.style.transform = '';
-      if (dy > 60) controls.classList.add('dismissed');
+      if (dy > 60) {
+        controls.classList.add('dismissed');
+        revealLayerPeek();
+        hideSliderBubble();
+      }
     });
   }
   controls.innerHTML = controlsHTML({
@@ -68,16 +96,6 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
     wandTolerance: state.wandTolerance,
   });
   rightPanel.appendChild(controls);
-  // Mobile only (≤ 700 px — matches the .ge-editor-body column-stack
-  // breakpoint): the right panel becomes a transformed bottom-sheet,
-  // so any position:fixed descendant gets trapped by the transform
-  // and rides along with the panel. Re-parent the controls panel to
-  // the editor root so it can truly fix to the viewport bottom
-  // regardless of the layers-sheet state. On desktop, controls stay
-  // docked inside the right panel above the layers list.
-  if (window.innerWidth <= 700 && state.container) {
-    state.container.appendChild(controls);
-  }
 
   // Move every slider-row's value chip out of its <label> and place
   // it AFTER the slider, so the value sits on the right edge of the
@@ -96,6 +114,95 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
   layerPanel.className = 'ge-layers';
   layerPanel.innerHTML = layerPanelHTML();
   rightPanel.appendChild(layerPanel);
+
+  function restoreInpaintPanelToControls() {
+    const inpaintPanel = document.getElementById('ge-inpaint-section');
+    if (!inpaintPanel || inpaintPanel.parentElement === controls) return;
+    const anchor = controls.querySelector('#ge-clone-section')
+      || controls.querySelector('#ge-brush-section')
+      || null;
+    controls.insertBefore(inpaintPanel, anchor);
+    inpaintPanel.classList.remove('ge-inpaint-popover', 'ge-inpaint-popover-dragging');
+    delete inpaintPanel.dataset.portaled;
+    inpaintPanel.style.left = '';
+    inpaintPanel.style.top = '';
+    inpaintPanel.style.maxHeight = '';
+  }
+
+  function clearSheetDragState() {
+    controls.style.transition = '';
+    controls.style.transform = '';
+  }
+
+  function syncControlsPlacement() {
+    if (!state.container || !rightPanel.isConnected || !controls.isConnected) return;
+    const compact = isCompactEditorViewport();
+    const touchLandscape = isTouchLandscape();
+    const editorBody = state.container.querySelector('.ge-editor-body');
+
+    if (compact) {
+      // Portrait/narrow: the right panel is itself transformed into a
+      // layers bottom sheet. position:fixed descendants are trapped by
+      // transformed ancestors on mobile WebViews, so controls must live
+      // directly under the editor root to scroll as a real bottom sheet.
+      if (controls.parentElement !== state.container) {
+        state.container.insertBefore(controls, editorBody);
+      } else if (editorBody && controls.nextElementSibling !== editorBody) {
+        state.container.insertBefore(controls, editorBody);
+      }
+    } else {
+      // Landscape/wide: controls belong back inside the side panel so
+      // the panel owns one coherent vertical scroll area.
+      if (controls.parentElement !== rightPanel) {
+        rightPanel.insertBefore(controls, layerPanel);
+      }
+      clearSheetDragState();
+      controls.classList.remove('dismissed');
+      restoreInpaintPanelToControls();
+    }
+
+    if (touchLandscape) {
+      rightPanel.classList.remove('expanded', 'minimized');
+      controls.classList.remove('dismissed', 'ge-inpaint-popover-host');
+      clearSheetDragState();
+      restoreInpaintPanelToControls();
+    }
+  }
+
+  let placementRaf = 0;
+  let placementCleaned = false;
+  function cleanupPlacementSync() {
+    if (placementCleaned) return;
+    placementCleaned = true;
+    if (placementRaf) cancelAnimationFrame(placementRaf);
+    window.removeEventListener('resize', scheduleControlsPlacementSync);
+    window.removeEventListener('orientationchange', scheduleControlsPlacementSync);
+    try { window.visualViewport?.removeEventListener('resize', scheduleControlsPlacementSync); } catch {}
+    try { window.visualViewport?.removeEventListener('scroll', scheduleControlsPlacementSync); } catch {}
+    try { screen.orientation?.removeEventListener?.('change', scheduleControlsPlacementSync); } catch {}
+  }
+
+  function scheduleControlsPlacementSync() {
+    if (placementCleaned) return;
+    if (!rightPanel.isConnected && !controls.isConnected) {
+      cleanupPlacementSync();
+      return;
+    }
+    if (placementRaf) return;
+    placementRaf = requestAnimationFrame(() => {
+      placementRaf = 0;
+      syncControlsPlacement();
+    });
+  }
+
+  syncControlsPlacement();
+  window.addEventListener('resize', scheduleControlsPlacementSync, { passive: true });
+  window.addEventListener('orientationchange', scheduleControlsPlacementSync, { passive: true });
+  try { window.visualViewport?.addEventListener('resize', scheduleControlsPlacementSync, { passive: true }); } catch {}
+  try { window.visualViewport?.addEventListener('scroll', scheduleControlsPlacementSync, { passive: true }); } catch {}
+  try { screen.orientation?.addEventListener?.('change', scheduleControlsPlacementSync); } catch {}
+  state.editorCleanupHandlers.push(cleanupPlacementSync);
+
   // Mobile: tap the header grab handle or swipe up/down to toggle
   // the layers sheet between peek and expanded. The peek state
   // always shows the active layer so users never lose access to it.
@@ -104,8 +211,9 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
     if (header) {
       let sy = 0, sx = 0, dragging = false, didSwipe = false;
       header.addEventListener('touchstart', (e) => {
-        if (window.innerWidth > 700) return;
+        if (!isCompactEditorViewport()) return;
         if (e.target.closest('button')) return;
+        hideSliderBubble();
         sy = e.touches[0].clientY;
         sx = e.touches[0].clientX;
         dragging = true;
@@ -123,6 +231,7 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
           didSwipe = true;
           const isExpanded = rightPanel.classList.contains('expanded');
           const isMinimized = rightPanel.classList.contains('minimized');
+          hideSliderBubble();
           if (dy < 0) {
             if (isMinimized) {
               rightPanel.classList.remove('minimized');
@@ -140,9 +249,10 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
         }
       });
       header.addEventListener('click', (e) => {
-        if (window.innerWidth > 700) return;
+        if (!isCompactEditorViewport()) return;
         if (e.target.closest('button')) return;
         if (didSwipe) { didSwipe = false; return; }
+        hideSliderBubble();
         // Click cycles between peek and expanded; minimized comes
         // back to peek (so a tap on the handle always reveals at
         // least the active layer row).

@@ -29,35 +29,78 @@ import { sortModelIds } from '../modelSort.js';
 
 const SERVE_IMAGE_MODEL_VALUE = '__serve_cookbook__';
 
+function imageEditCueText(...parts) {
+  return parts.map(part => String(part || '').toLowerCase()).join(' ');
+}
+
+function hasImageEditCue(text) {
+  return /gpt-image|chatgpt-image|dall-e-2|kontext|inpaint|outpaint|img2img|image[-_\s]*to[-_\s]*image|image2image|i2i|edit|edits|fill|mask|masked|paint[-_\s]*by[-_\s]*example|pix2pix|instruct[-_\s]*pix2pix|variation|variations/i.test(text || '');
+}
+
+function hasEndpointInpaintSurfaceCue(text) {
+  return /diffusion|stable[-_\s]*diffusion|sdxl|sd[-_\s]*webui|automatic1111|a1111|forge|comfy|fooocus|invoke|swarm|inpaint|img2img|image[-_\s]*edit|local[-/_\s]*api|flux|kontext/i.test(text || '');
+}
+
+function hasModernImageEditCue(modelId, endpointName = '') {
+  const id = (modelId || '').toLowerCase();
+  const text = imageEditCueText(id, endpointName);
+  if (/dall-e-3/.test(id)) return false;
+  return /gpt-image|chatgpt-image|dall-e-2|kontext/i.test(text)
+    || hasImageEditCue(text)
+    || (/qwen/i.test(text) && /image/i.test(text) && /edit|inpaint|fill|mask/i.test(text))
+    || (/seedream/i.test(text) && /edit|inpaint|fill|mask/i.test(text));
+}
+
+function isPreferredInpaintModel(modelId, endpointName = '', endpoint = {}) {
+  const id = (modelId || '').toLowerCase();
+  const name = imageEditCueText(endpointName, endpoint?.base_url, endpoint?.endpoint_kind, endpoint?.category);
+  return !modelId
+    || hasModernImageEditCue(id, name)
+    || hasImageEditCue(id)
+    || hasEndpointInpaintSurfaceCue(name)
+    || /rembg|remove-?bg|background[-\s]*remove/i.test(name);
+}
+
 // Heuristic classifier on a model id + endpoint name. A model can be:
 //   - gen: text-to-image generation
 //   - inpaint: image+mask edit (inpaint / img2img)
 // Some models do only one (e.g. dall-e-3 = gen-only, no edits API).
-function modelCaps(modelId, endpointName, endpointType) {
+function modelCaps(modelId, endpointName, endpointType, endpoint = {}) {
   const id = (modelId || '').toLowerCase();
   const name = (endpointName || '').toLowerCase();
   const type = (endpointType || '').toLowerCase();
+  const endpointText = imageEditCueText(
+    endpointName,
+    endpoint?.base_url,
+    endpoint?.endpoint_kind,
+    endpoint?.category,
+  );
+  const combined = imageEditCueText(id, endpointText);
+  const editCue = hasImageEditCue(combined);
+  const endpointCanSurfaceInpaint = type === 'image' && hasEndpointInpaintSurfaceCue(endpointText);
   // Reject anything obviously text-only.
   const textOnly = /(?:^|[/\-_:])(gpt-?[345]|gpt-oss|claude|llama|qwen[^-]*chat|chat$|instruct$|coder)/i;
-  if (textOnly.test(id) && !/image/i.test(id)) return { gen: false, inpaint: false };
+  if (textOnly.test(id) && !/image|vision|edit|inpaint|fill|kontext/i.test(id)) return { gen: false, inpaint: false };
   // OpenAI image family.
   if (/dall-e-3/.test(id))    return { gen: true,  inpaint: false };
   if (/dall-e-2/.test(id))    return { gen: true,  inpaint: true  };
   if (/gpt-image/.test(id))   return { gen: true,  inpaint: true  };
-  // Diffusion families — most generic SD/SDXL/Flux base models
-  // support both via diffusers.
-  if (/(?:^|[/\-_])(?:sd-?xl|sdxl|sd3|sd-|stable[\s-]*diffusion|flux|playground|pixart|kandinsky)/i.test(id)) {
-    const isInpaintModel = /inpaint|edit|fill/i.test(id) || /inpaint|edit|fill/i.test(name);
-    return { gen: !isInpaintModel || /base/i.test(id), inpaint: true };
+  if (hasModernImageEditCue(id, name)) return { gen: true, inpaint: true };
+  // Diffusion families: base models are generation-only unless the
+  // model/endpoint explicitly advertises an edit, fill, or inpaint path.
+  if (/(?:^|[/\-_])(?:sd-?xl|sdxl|sd3|sd-|stable[\s-]*diffusion|flux|playground|pixart|kandinsky|controlnet)/i.test(id)) {
+    const isInpaintModel = editCue || endpointCanSurfaceInpaint;
+    return { gen: !isInpaintModel || /base/i.test(id), inpaint: isInpaintModel };
   }
   // Self-hosted diffusion server: model id often matches the repo
   // name; trust the endpoint name hint.
   if (type === 'image') {
-    if (/inpaint|edit|fill/i.test(name)) return { gen: false, inpaint: true };
-    return { gen: true, inpaint: true };
+    if (!String(modelId || '').trim()) return { gen: !endpointCanSurfaceInpaint, inpaint: endpointCanSurfaceInpaint || editCue };
+    if (editCue || endpointCanSurfaceInpaint) return { gen: !/inpaint|fill|mask|rembg|remove-?bg|background[-\s]*remove/i.test(combined), inpaint: true };
+    return { gen: true, inpaint: false };
   }
-  if (/inpaint|edit|fill/i.test(name)) return { gen: false, inpaint: true };
-  if (/diffus|flux|sd|image/i.test(name)) return { gen: true, inpaint: true };
+  if (editCue || hasEndpointInpaintSurfaceCue(name)) return { gen: false, inpaint: true };
+  if (/diffus|flux|sd|image/i.test(name)) return { gen: true, inpaint: false };
   // Editor image tools should be conservative. Unknown LLM/chat models
   // do not belong in image generation or inpaint pickers.
   return { gen: false, inpaint: false };
@@ -72,8 +115,17 @@ function pickerHostFromValue(value) {
 function inpaintModelCount(select) {
   if (!select) return 0;
   return Array.from(select.options).filter(opt =>
-    opt.value && opt.value !== SERVE_IMAGE_MODEL_VALUE && !opt.disabled
+    !isInpaintPickerSeparatorOption(opt) &&
+    opt.value &&
+    opt.value !== SERVE_IMAGE_MODEL_VALUE &&
+    !opt.disabled
   ).length;
+}
+
+function isInpaintPickerSeparatorOption(opt) {
+  const value = opt?.value || '';
+  const text = (opt?.textContent || '').trim();
+  return !value && (opt?.disabled || /^[\s─-]+$/.test(text));
 }
 
 function describeInpaintOption(opt, select) {
@@ -83,23 +135,25 @@ function describeInpaintOption(opt, select) {
     const count = inpaintModelCount(select);
     return {
       label: 'Auto',
-      meta: count ? `${count} image-edit model${count === 1 ? '' : 's'} available` : 'Use the first available image-edit model',
+      meta: count ? `${count} image-edit model${count === 1 ? '' : 's'} available` : 'No image-edit endpoints found. LM Studio/GGUF downloads need a Diffusers or ONNX image endpoint.',
       kind: 'auto',
     };
   }
   if (value === SERVE_IMAGE_MODEL_VALUE) {
     return {
       label: 'Serve image model',
-      meta: 'Open Cookbook to add or start an inpaint-capable endpoint',
+      meta: 'Open Cookbook to add or start a Diffusers/ONNX inpaint-capable endpoint',
       kind: 'action',
     };
   }
   const offline = /\(offline\)$/i.test(text) || !!opt?.disabled;
   const cleanText = text.replace(/\s+\(offline\)$/i, '');
-  const parts = cleanText.split(' · ').map(p => p.trim()).filter(Boolean);
   const idx = value.indexOf('::');
   const modelId = idx >= 0 ? value.slice(idx + 2) : '';
   const fallback = modelId ? modelId.split('/').pop() : 'Image edit model';
+  const parts = /^[\s─-]+$/.test(cleanText)
+    ? []
+    : cleanText.split(' · ').map(p => p.trim()).filter(Boolean);
   const label = parts.shift() || fallback;
   const host = pickerHostFromValue(value);
   const meta = [
@@ -117,7 +171,10 @@ function describeInpaintOption(opt, select) {
 
 function pickerOptions(select) {
   if (!select) return [];
-  return Array.from(select.options).filter(opt => opt.value || !opt.disabled);
+  return Array.from(select.options).filter(opt =>
+    !isInpaintPickerSeparatorOption(opt) &&
+    (opt.value || !opt.disabled)
+  );
 }
 
 function wireInpaintModelPicker({ select, container, openCookbookForImg2img, refreshModels }) {
@@ -278,44 +335,71 @@ function wireInpaintModelPicker({ select, container, openCookbookForImg2img, ref
     if (!list.children.length) {
       const empty = document.createElement('div');
       empty.className = 'ge-inpaint-model-picker-empty';
-      empty.textContent = 'No matching image edit models.';
+      empty.textContent = 'No matching image edit models. LM Studio GGUF models need a Diffusers or ONNX image endpoint for inpaint.';
       list.appendChild(empty);
     }
     focusActive();
+  }
+
+  function visiblePickerBounds(pad = 8) {
+    const viewport = {
+      left: pad,
+      top: pad,
+      right: Math.max(pad, (window.innerWidth || document.documentElement.clientWidth || 0) - pad),
+      bottom: Math.max(pad, (window.innerHeight || document.documentElement.clientHeight || 0) - pad),
+    };
+    const surface = container?.closest?.('.gallery-editor')
+      || container?.closest?.('.gallery-modal-content, .modal-content')
+      || container;
+    const rect = surface?.getBoundingClientRect?.();
+    if (!rect || rect.width < 80 || rect.height < 80) return viewport;
+    const bounds = {
+      left: Math.max(viewport.left, rect.left + pad),
+      top: Math.max(viewport.top, rect.top + pad),
+      right: Math.min(viewport.right, rect.right - pad),
+      bottom: Math.min(viewport.bottom, rect.bottom - pad),
+    };
+    if (bounds.right - bounds.left < 160 || bounds.bottom - bounds.top < 120) return viewport;
+    return bounds;
   }
 
   function placeMenu() {
     if (menu.hidden) return;
     const rect = btn.getBoundingClientRect();
     const vw = window.innerWidth || document.documentElement.clientWidth || 0;
-    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
     if (vw <= 700) {
       menu.style.left = '';
       menu.style.right = '';
       menu.style.top = '';
       menu.style.bottom = '';
       menu.style.width = '';
+      menu.style.minWidth = '';
+      menu.style.maxWidth = '';
       menu.style.maxHeight = '';
       return;
     }
-    const width = Math.min(Math.max(rect.width, 320), Math.max(260, vw - 16));
+    const bounds = visiblePickerBounds(8);
+    const availableWidth = Math.max(180, bounds.right - bounds.left);
+    const width = Math.min(Math.max(rect.width, 320), availableWidth);
     let left = rect.left;
-    if (left + width > vw - 8) left = vw - 8 - width;
-    if (left < 8) left = 8;
-    const below = vh - rect.bottom;
-    const above = rect.top;
+    if (left + width > bounds.right) left = bounds.right - width;
+    if (left < bounds.left) left = bounds.left;
+    const below = bounds.bottom - rect.bottom;
+    const above = rect.top - bounds.top;
     const flipUp = below < 260 && above > below;
     menu.style.left = `${Math.round(left)}px`;
     menu.style.right = 'auto';
     menu.style.width = `${Math.round(width)}px`;
+    menu.style.minWidth = `${Math.round(Math.min(260, width))}px`;
+    menu.style.maxWidth = `${Math.round(availableWidth)}px`;
     if (flipUp) {
       menu.style.top = 'auto';
-      menu.style.bottom = `${Math.round(vh - rect.top + 6)}px`;
-      menu.style.maxHeight = `${Math.max(180, Math.min(420, above - 16))}px`;
+      menu.style.bottom = `${Math.round((window.innerHeight || document.documentElement.clientHeight || bounds.bottom) - Math.min(rect.top, bounds.bottom) + 6)}px`;
+      menu.style.maxHeight = `${Math.max(80, Math.min(420, above - 8))}px`;
     } else {
       menu.style.bottom = 'auto';
-      menu.style.top = `${Math.round(rect.bottom + 6)}px`;
-      menu.style.maxHeight = `${Math.max(180, Math.min(420, below - 16))}px`;
+      menu.style.top = `${Math.round(Math.max(bounds.top, rect.bottom + 6))}px`;
+      menu.style.maxHeight = `${Math.max(80, Math.min(420, below - 8))}px`;
     }
   }
 
@@ -480,7 +564,7 @@ export function wireAIModelSelectors({ container, apiBase, openCookbookForImg2im
         // Cookbook model as "(offline)" in the editor picker.
         const epUsable = !!ep.online || isImageEndpoint;
         for (const modelId of models) {
-          const caps = modelCaps(modelId || ep.name, ep.name, ep.model_type);
+          const caps = modelCaps(modelId, ep.name, ep.model_type, ep);
           if (!caps.gen && !caps.inpaint) continue;
           // Encode "<base_url>::<model_id>" so the value carries both pieces.
           const value = `${ep.base_url}::${modelId}`;
@@ -504,7 +588,7 @@ export function wireAIModelSelectors({ container, apiBase, openCookbookForImg2im
             aiInpaintSelect.appendChild(opt);
             if (epUsable && selectBaseUrl && ep.base_url === selectBaseUrl && !selectedInpaint) selectedInpaint = value;
             // Prefer dedicated inpaint/edit models for default selection.
-            if (epUsable && !firstInpaint && (!modelId || /inpaint|edit|fill|gpt-image/i.test(modelId) || /inpaint|edit|fill/i.test(ep.name || ''))) {
+            if (epUsable && !firstInpaint && isPreferredInpaintModel(modelId, ep.name || '', ep)) {
               firstInpaint = value;
             }
           }
@@ -513,6 +597,7 @@ export function wireAIModelSelectors({ container, apiBase, openCookbookForImg2im
           // style / upscale (anything that can do img2img).
           if (caps.inpaint || caps.gen) {
             for (const ts of perToolSelects) {
+              if (ts.dataset.geToolModel === 'rembg' && !caps.inpaint) continue;
               const opt = document.createElement('option');
               opt.value = value;
               opt.textContent = label;
@@ -535,6 +620,24 @@ export function wireAIModelSelectors({ container, apiBase, openCookbookForImg2im
       }
       // Append the "Serve a model in Cookbook…" sentinel at the
       // bottom of every model dropdown.
+      const appendLocalRembgOptions = (sel) => {
+        if (!sel || sel.dataset.geToolModel !== 'rembg') return;
+        const sep = document.createElement('option');
+        sep.disabled = true;
+        sep.textContent = '── Local rembg ──';
+        sel.appendChild(sep);
+        [
+          ['::isnet-general-use', 'ISNet general use · best local'],
+          ['::silueta', 'Silueta · balanced local'],
+          ['::u2netp', 'u2netp · fast fallback'],
+        ].forEach(([value, label]) => {
+          const opt = document.createElement('option');
+          opt.value = value;
+          opt.textContent = label;
+          sel.appendChild(opt);
+        });
+      };
+      for (const ts of perToolSelects) appendLocalRembgOptions(ts);
       const appendServeSentinel = (sel) => {
         const sep = document.createElement('option');
         sep.disabled = true;

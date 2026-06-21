@@ -47,7 +47,7 @@ const PROVIDER_PATTERNS = [
   { re: /^nvapi-/,           name: 'NVIDIA',     url: 'https://integrate.api.nvidia.com/v1' },
 ];
 const SETUP_PROVIDER_URLS = {
-  deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com/v1' },
+  deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com' },
   openai: { name: 'OpenAI', url: 'https://api.openai.com/v1' },
   openrouter: { name: 'OpenRouter', url: 'https://openrouter.ai/api/v1' },
   ollama: { name: 'Ollama Cloud', url: 'https://ollama.com/api' },
@@ -63,7 +63,7 @@ const SETUP_PROVIDER_URLS = {
 const SETUP_PROVIDER_NAMES = ['deepseek', 'openai', 'openrouter', 'ollama', 'xai', 'anthropic', 'groq', 'gemini', 'opencode-zen', 'opencode-go', 'nvidia'];
 const SETUP_DEVICE_AUTH_PROVIDERS = [
   { key: 'copilot', name: 'GitHub Copilot', aliases: ['github'], command: '/setup copilot' },
-  { key: 'chatgpt-subscription', name: 'ChatGPT Subscription', aliases: ['chatgptsubscription', 'chatgpt-sub', 'codex'], command: '/setup chatgpt-subscription' },
+  { key: 'chatgpt-subscription', name: 'Codex Subscription', aliases: ['codex', 'codexsubscription', 'codex-subscription', 'chatgptsubscription', 'chatgpt-sub'], command: '/setup codex-subscription' },
 ];
 const SETUP_PROVIDER_HINT_NAMES = SETUP_PROVIDER_NAMES.concat(SETUP_DEVICE_AUTH_PROVIDERS.map(provider => provider.key));
 const SETUP_PROVIDER_HINT = SETUP_PROVIDER_HINT_NAMES.slice(0, -1).join(', ') + ', or ' + SETUP_PROVIDER_HINT_NAMES[SETUP_PROVIDER_HINT_NAMES.length - 1];
@@ -79,7 +79,7 @@ function _setupApiProviderChips() {
 
 function _setupDeviceAuthProviderChips() {
   return SETUP_DEVICE_AUTH_PROVIDERS.map(provider =>
-    '<span class="setup-clickable-provider" data-setup-kind="device-auth" data-setup-provider="' + provider.key + '" style="cursor:pointer;text-decoration:underline;margin-right:8px;" title="Run ' + provider.command + '">' + provider.name + '</span>'
+    '<span class="setup-clickable-provider" data-setup-kind="device-auth" data-setup-provider="' + provider.key + '" data-setup-command="' + provider.command + '" style="cursor:pointer;text-decoration:underline;margin-right:8px;" title="Run ' + provider.command + '">' + provider.name + '</span>'
   ).join(' ');
 }
 
@@ -5833,7 +5833,7 @@ const COMMANDS = {
     category: 'Getting started',
     help: 'Add local or API model endpoints',
     handler: _cmdSetup,
-    usage: '/setup local URL  ·  /setup groq KEY  ·  /setup copilot  ·  /setup chatgpt-subscription',
+    usage: '/setup local URL  ·  /setup groq KEY  ·  /setup copilot  ·  /setup codex-subscription',
     // Provider subs so the autocomplete popup surfaces "/setup deepseek",
     // "/setup openai", etc. when the user types "/setup de". Each sub's
     // handler is a thin wrapper that re-prepends the sub name and
@@ -5851,7 +5851,7 @@ const COMMANDS = {
       xai:        { help: 'xAI (Grok)',    alias: ['grok'],   usage: '/setup xai xai-...',   handler: (a, c) => _cmdSetup(['xai',    ...a], c) },
       ollama:     { help: 'Ollama Cloud',  usage: '/setup ollama KEY',          handler: (a, c) => _cmdSetup(['ollama',     ...a], c) },
       copilot:    { help: 'GitHub Copilot', usage: '/setup copilot',            handler: (a, c) => _cmdSetup(['copilot',    ...a], c) },
-      'chatgpt-subscription': { help: 'ChatGPT Subscription', alias: ['codex'], usage: '/setup chatgpt-subscription', handler: (a, c) => _cmdSetup(['chatgpt-subscription', ...a], c) },
+      'codex-subscription': { help: 'Codex Subscription', alias: ['codex', 'chatgpt-subscription'], usage: '/setup codex-subscription', handler: (a, c) => _cmdSetup(['chatgpt-subscription', ...a], c) },
       local:      { help: 'Local model server (vLLM / LM Studio / llama.cpp / Ollama)',
                     usage: '/setup local http://localhost:8000/v1',
                     handler: (a, c) => _cmdSetup(['local', ...a], c) },
@@ -6425,7 +6425,7 @@ export function initSlashCommands(deps) {
       const messageInput = document.getElementById('message');
       if (messageInput) {
         const text = providerEl.dataset.setupKind === 'device-auth'
-          ? '/setup ' + providerKey
+          ? (providerEl.dataset.setupCommand || ('/setup ' + providerKey))
           : providerName + ' sk-';
         messageInput.value = text;
         messageInput.dispatchEvent(new Event('input', { bubbles: true }));

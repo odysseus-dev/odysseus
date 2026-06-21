@@ -107,6 +107,7 @@ import { wireInpaintControls } from './editor/wire-inpaint-controls.js';
 import { wireTopbar, closeOtherTopbarMenus as _closeOtherTopbarMenus } from './editor/wire-topbar.js';
 import { wireTopbarOverflow } from './editor/wire-topbar-overflow.js';
 import { wireTopbarMenus } from './editor/wire-topbar-menus.js';
+import { hasRembgSampleMask } from './editor/rembg-sample-mask.js';
 
 const API_BASE = window.location.origin;
 // ── State ──
@@ -126,8 +127,166 @@ function _syncTransformOverlay() { _syncTransformOverlayImpl(_TRANSFORM_OVERLAY_
 // the slider to this value (without touching other tools).
 const _INPAINT_DEFAULT_BRUSH = 100;
 
+function _isTouchLandscape() {
+  try {
+    return window.matchMedia('(orientation: landscape) and (hover: none)').matches ||
+      window.matchMedia('(orientation: landscape) and (pointer: coarse)').matches;
+  } catch {
+    return false;
+  }
+}
+
+function _isDockedGalleryEditor() {
+  return !!state.container?.closest?.('#gallery-modal.modal-left-docked, #gallery-modal.modal-right-docked');
+}
+
+function _isLandscapeEditorSplit() {
+  return _isTouchLandscape();
+}
+
+function _isCompactEditorLayout() {
+  const shell = state.container?.closest?.('.gallery-modal-content, .modal-content');
+  const shellWidth = shell?.getBoundingClientRect?.().width || window.innerWidth || 0;
+  if (_isLandscapeEditorSplit()) return false;
+  return window.innerWidth <= 820 ||
+    shellWidth <= 700;
+}
+
+function _viewportFloatingBounds(pad = 12) {
+  return {
+    left: pad,
+    top: pad,
+    right: Math.max(pad, (window.innerWidth || 0) - pad),
+    bottom: Math.max(pad, (window.innerHeight || 0) - pad),
+  };
+}
+
+function _galleryEditorFloatingBounds(pad = 12, options = {}) {
+  const viewport = _viewportFloatingBounds(pad);
+  if (options.viewportOnly) return viewport;
+  // Initial auto-placement should feel connected to the gallery editor, but
+  // user-dragged child windows are allowed to leave the gallery bounds.
+  const surface = state.container?.closest?.('.gallery-modal-content, .modal-content')
+    || state.container?.closest?.('.gallery-editor')
+    || state.container;
+  const rect = surface?.getBoundingClientRect?.();
+  if (!rect || rect.width < 120 || rect.height < 120) return viewport;
+  const bounds = {
+    left: Math.max(viewport.left, rect.left + pad),
+    top: Math.max(viewport.top, rect.top + pad),
+    right: Math.min(viewport.right, rect.right - pad),
+    bottom: Math.min(viewport.bottom, rect.bottom - pad),
+  };
+  if (bounds.right - bounds.left < 160 || bounds.bottom - bounds.top < 160) return viewport;
+  return bounds;
+}
+
+function _clampInpaintPanelToFloatingBounds(panel, pad = 12, options = {}) {
+  if (!panel) return;
+  const bounds = _galleryEditorFloatingBounds(pad, options);
+  const rect = panel.getBoundingClientRect();
+  const w = panel.offsetWidth || rect.width || 330;
+  const h = Math.min(panel.offsetHeight || rect.height || 520, Math.max(160, bounds.bottom - bounds.top));
+  const left = Math.max(bounds.left, Math.min(Math.max(bounds.left, bounds.right - w), rect.left));
+  const top = Math.max(bounds.top, Math.min(Math.max(bounds.top, bounds.bottom - h), rect.top));
+  _setInpaintPanelViewportPosition(panel, left, top);
+  panel.style.maxHeight = `${Math.round(Math.max(160, bounds.bottom - bounds.top))}px`;
+}
+
+function _setInpaintPanelViewportPosition(panel, left, top) {
+  panel.style.left = `${Math.round(left)}px`;
+  panel.style.top = `${Math.round(top)}px`;
+}
+
+function _inpaintControlsHost() {
+  return state.container?.querySelector?.('.ge-controls')
+    || document.querySelector('#gallery-editor-container .ge-controls')
+    || document.querySelector('.ge-controls');
+}
+
+function _restoreInpaintPanelHost(panel) {
+  const controls = _inpaintControlsHost();
+  if (!panel || !controls || panel.parentElement === controls) return;
+  const anchor = controls.querySelector('#ge-clone-section')
+    || controls.querySelector('#ge-brush-section')
+    || null;
+  controls.insertBefore(panel, anchor);
+  delete panel.dataset.portaled;
+  panel.style.left = '';
+  panel.style.top = '';
+  panel.style.maxHeight = '';
+}
+
+function _portalInpaintPanel(panel) {
+  if (!panel || panel.parentElement === document.body) return;
+  const rect = panel.getBoundingClientRect();
+  document.body.appendChild(panel);
+  panel.dataset.portaled = '1';
+  _setInpaintPanelViewportPosition(panel, rect.left || 0, rect.top || 0);
+}
+
+function _resetDockedOptionScroll() {
+  if (!_isTouchLandscape() || !_isDockedGalleryEditor()) return;
+  const panel = state.container?.querySelector?.('.ge-right-panel');
+  if (!panel) return;
+  requestAnimationFrame(() => {
+    panel.scrollTop = 0;
+  });
+}
+
 function _galleryEditMounted() {
   return !!document.querySelector('#gallery-editor-container .gallery-editor');
+}
+
+function _refreshEditorViewportLayout() {
+  if (!state.editorOpen || !state.container) return;
+  try { document.dispatchEvent(new CustomEvent('ge:hide-slider-bubble')); } catch {}
+  _resetDockedOptionScroll();
+  const inpaintPanel = document.getElementById('ge-inpaint-section');
+  if (state.tool === 'inpaint' && inpaintPanel && inpaintPanel.style.display !== 'none') {
+    inpaintPanel.classList.remove('ge-inpaint-popover-dragging');
+    _positionInpaintPanel();
+  }
+  _fitZoom();
+  try { _syncTransformOverlay(); } catch {}
+  if (state.transformActive) {
+    try { _drawTransformHandles(); } catch {}
+  }
+}
+
+function _installEditorViewportLayoutSync() {
+  let raf = 0;
+  let settleTimer = 0;
+  const run = () => {
+    raf = 0;
+    _refreshEditorViewportLayout();
+  };
+  const schedule = () => {
+    if (raf) cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(run);
+    window.clearTimeout(settleTimer);
+    // Android WebView often publishes the final visual viewport one tick
+    // after orientationchange, so run a second layout pass after it settles.
+    settleTimer = window.setTimeout(() => {
+      if (state.editorOpen) _refreshEditorViewportLayout();
+    }, 160);
+  };
+  const cleanup = () => {
+    if (raf) cancelAnimationFrame(raf);
+    window.clearTimeout(settleTimer);
+    window.removeEventListener('resize', schedule);
+    window.removeEventListener('orientationchange', schedule);
+    try { window.visualViewport?.removeEventListener('resize', schedule); } catch {}
+    try { window.visualViewport?.removeEventListener('scroll', schedule); } catch {}
+    try { screen.orientation?.removeEventListener?.('change', schedule); } catch {}
+  };
+  window.addEventListener('resize', schedule, { passive: true });
+  window.addEventListener('orientationchange', schedule, { passive: true });
+  try { window.visualViewport?.addEventListener('resize', schedule, { passive: true }); } catch {}
+  try { window.visualViewport?.addEventListener('scroll', schedule, { passive: true }); } catch {}
+  try { screen.orientation?.addEventListener?.('change', schedule); } catch {}
+  state.editorCleanupHandlers.push(cleanup);
+  schedule();
 }
 
 if (!window.__galleryEditEscHardGuardInstalled) {
@@ -597,11 +756,29 @@ function composite() {
   if (state.activeSnapGuides && state.activeSnapGuides.length) _drawSnapGuides();
   // Magic-wand selection overlay (translucent red tint of the mask).
   if (state.wandMask && state.wandLayerId && state.wandMaskVisible) _drawWandOverlay();
+  if (state.rembgSampleVisible !== false && hasRembgSampleMask()) _drawRembgSampleOverlay();
   // Keep the per-tool clear-X badges in sync. Cheap: two classList
   // toggles. Composite runs on every visible state change, so this
   // catches every lasso/wand mutation site without each one having to
   // remember to call the sync helper.
   _syncToolClearIndicators();
+}
+
+function _drawRembgSampleOverlay() {
+  if (!state.rembgSampleCanvas || !state.mainCtx) return;
+  const tint = document.createElement('canvas');
+  tint.width = state.rembgSampleCanvas.width;
+  tint.height = state.rembgSampleCanvas.height;
+  const tctx = tint.getContext('2d');
+  tctx.drawImage(state.rembgSampleCanvas, 0, 0);
+  tctx.globalCompositeOperation = 'source-in';
+  tctx.fillStyle = 'rgba(0, 210, 255, 1)';
+  tctx.fillRect(0, 0, tint.width, tint.height);
+  tctx.globalCompositeOperation = 'source-over';
+  state.mainCtx.save();
+  state.mainCtx.globalAlpha = 0.72;
+  state.mainCtx.drawImage(tint, 0, 0);
+  state.mainCtx.restore();
 }
 
 function _drawSnapGuides() {
@@ -671,10 +848,23 @@ function _snapshotState() {
       };
     } catch {}
   }
+  let rembgSample = null;
+  if (state.rembgSampleCanvas) {
+    try {
+      const rctx = state.rembgSampleCanvas.getContext('2d');
+      rembgSample = {
+        w: state.rembgSampleCanvas.width,
+        h: state.rembgSampleCanvas.height,
+        visible: state.rembgSampleVisible !== false,
+        imageData: rctx.getImageData(0, 0, state.rembgSampleCanvas.width, state.rembgSampleCanvas.height),
+      };
+    } catch {}
+  }
   return {
     imgWidth: state.imgWidth,
     imgHeight: state.imgHeight,
     wand,
+    rembgSample,
     layers: state.layers.map(l => {
       // getImageData throws on a 0-sized canvas — guard so a single
       // broken layer/mask can't take down the whole snapshot (which
@@ -1029,6 +1219,20 @@ function _restoreState(snap) {
     state.wandLayerId = null;
     state.wandLastSeed = null;
   }
+  if (snap.rembgSample && snap.rembgSample.imageData) {
+    const rc = document.createElement('canvas');
+    rc.width = snap.rembgSample.w || state.imgWidth;
+    rc.height = snap.rembgSample.h || state.imgHeight;
+    const rctx = rc.getContext('2d');
+    try { rctx.putImageData(snap.rembgSample.imageData, 0, 0); } catch {}
+    state.rembgSampleCanvas = rc;
+    state.rembgSampleCtx = rctx;
+    state.rembgSampleVisible = snap.rembgSample.visible !== false;
+  } else {
+    state.rembgSampleCanvas = null;
+    state.rembgSampleCtx = null;
+    state.rembgSampleVisible = true;
+  }
   composite();
   _renderLayerPanel();
   _syncToolClearIndicators();
@@ -1092,9 +1296,9 @@ function _beginDraw(e) {
   // it doesn't mutate the layer until an action (Erase/Copy) is taken.
   // Full implementation in editor/tools/wand.js.
   if (state.tool === 'wand') return _wandTool.click(e);
-  // Inpaint can create its own layer + mask on the fly, so skip the
-  // "no active layer → bail" gate for it specifically.
-  if (state.tool !== 'inpaint' && (!layer || layer.locked)) return;
+  // Inpaint can create its own layer + mask on the fly, and bg-remove
+  // sample strokes paint an auxiliary hint mask instead of layer pixels.
+  if (state.tool !== 'inpaint' && state.tool !== 'rembg' && (!layer || layer.locked)) return;
   // Keep activeLayerId in sync so downstream lookups resolve.
   if (layer && state.activeLayerId !== layer.id) state.activeLayerId = layer.id;
   if (state.tool === 'move') return _beginMove(e);
@@ -1115,7 +1319,7 @@ function _continueDraw(e) {
   // the canvas. The brush-cursor overlay should only follow the cursor
   // when it's actually over the canvas, otherwise hide it.
   const overCanvas = state.mainCanvas && e.target === state.mainCanvas;
-  if (['eraser', 'inpaint', 'lasso', 'brush'].includes(state.tool) && state.mainCanvas) {
+  if (['eraser', 'inpaint', 'lasso', 'brush', 'rembg'].includes(state.tool) && state.mainCanvas) {
     if (overCanvas) _updateBrushCursor(e);
     else if (state.cursorEl) state.cursorEl.style.display = 'none';
   }
@@ -1227,6 +1431,10 @@ function _updateBrushCursor(e) {
   } else if (state.tool === 'lasso') {
     state.cursorEl.style.borderColor = 'rgba(255,255,255,0.85)';
     state.cursorEl.style.background = 'rgba(0,0,0,0.15)';
+    state.cursorEl.style.borderStyle = 'solid';
+  } else if (state.tool === 'rembg') {
+    state.cursorEl.style.borderColor = 'rgba(0,210,255,0.9)';
+    state.cursorEl.style.background = 'rgba(0,210,255,0.12)';
     state.cursorEl.style.borderStyle = 'solid';
   } else {
     state.cursorEl.style.borderColor = state.tool === 'eraser' ? 'rgba(255,255,255,0.6)' : state.color;
@@ -2204,22 +2412,49 @@ function _applyEdgeFeather(layer, width, hardDelete) {
 // ── Zoom ──
 
 function _fitZoom() {
-  const fit = _getFitZoom();
+  const fit = _getCanvasFitMetrics();
   if (!fit) return;
-  state.zoom = fit;
-  _applyZoom();
+  state.zoom = fit.zoom;
+  _applyZoom({ panX: fit.panX, panY: fit.panY });
 }
 
 function _getFitZoom() {
-  const area = state.container.querySelector('.ge-canvas-area');
-  if (!area || !state.imgWidth) return null;
-  const pad = 20;
-  const maxW = area.clientWidth - pad * 2;
-  const maxH = area.clientHeight - pad * 2;
-  return Math.min(1, maxW / state.imgWidth, maxH / state.imgHeight);
+  return _getCanvasFitMetrics()?.zoom ?? null;
 }
 
-function _applyZoom() {
+function _getCanvasFitMetrics() {
+  if (_isTouchLandscape() && _isDockedGalleryEditor()) return null;
+  const area = state.container.querySelector('.ge-canvas-area');
+  if (!area || !state.imgWidth || !state.imgHeight) return null;
+  const pad = 20;
+  let maxW = Math.max(1, area.clientWidth - pad * 2);
+  let maxH = Math.max(1, area.clientHeight - pad * 2);
+  let panY = 0;
+
+  if (_isCompactEditorLayout()) {
+    const areaRect = area.getBoundingClientRect();
+    const layerSheet = state.container.querySelector('.ge-right-panel');
+    const sheetRect = layerSheet?.getBoundingClientRect?.();
+    if (sheetRect) {
+      const viewportBottom = Math.min(window.innerHeight || areaRect.bottom, areaRect.bottom);
+      const overlapTop = Math.max(areaRect.top, sheetRect.top);
+      const overlapBottom = Math.min(areaRect.bottom, viewportBottom, sheetRect.bottom);
+      const overlap = Math.max(0, overlapBottom - overlapTop);
+      if (overlap > 0 && overlap < areaRect.height) {
+        maxH = Math.max(1, maxH - overlap);
+        panY = -overlap / 2;
+      }
+    }
+  }
+
+  return {
+    zoom: Math.min(1, maxW / state.imgWidth, maxH / state.imgHeight),
+    panX: 0,
+    panY,
+  };
+}
+
+function _applyZoom(panOffset) {
   if (!state.mainCanvas) return;
   state.mainCanvas.style.width = (state.imgWidth * state.zoom) + 'px';
   state.mainCanvas.style.height = (state.imgHeight * state.zoom) + 'px';
@@ -2227,7 +2462,7 @@ function _applyZoom() {
   if (label) label.textContent = Math.round(state.zoom * 100) + '%';
   _syncZoomControls();
   const area = state.container && state.container.querySelector('.ge-canvas-area');
-  if (area && area._resetPan) area._resetPan();
+  if (area && area._resetPan) area._resetPan(panOffset?.panX || 0, panOffset?.panY || 0);
 }
 
 function _syncZoomControls() {
@@ -2248,12 +2483,20 @@ function _syncZoomControls() {
 
 function _positionInpaintPanel(anchorBtn) {
   const panel = document.getElementById('ge-inpaint-section');
-  if (!panel || window.innerWidth <= 820) return;
+  if (!panel) return;
+  if (_isCompactEditorLayout() || _isLandscapeEditorSplit()) {
+    _restoreInpaintPanelHost(panel);
+    panel.classList.remove('ge-inpaint-popover');
+    return;
+  }
   if (panel.dataset.userMoved === '1') {
     panel.classList.add('ge-inpaint-popover');
+    _portalInpaintPanel(panel);
+    requestAnimationFrame(() => _clampInpaintPanelToFloatingBounds(panel, 8, { viewportOnly: true }));
     return;
   }
   panel.classList.add('ge-inpaint-popover');
+  _portalInpaintPanel(panel);
   // Anchor to the Layers header on the right panel so the popover
   // appears to slide out from there. The toolbar button on the left
   // shifts around as controls reflow, which was causing the popover
@@ -2271,10 +2514,11 @@ function _positionInpaintPanel(anchorBtn) {
     requestAnimationFrame(() => {
       const panelW = panel.offsetWidth || 320;
       const panelH = panel.offsetHeight || 520;
-      const left = Math.min(window.innerWidth - panelW - 12, Math.max(12, r.right + 10));
-      const top = Math.min(window.innerHeight - panelH - 12, Math.max(12, r.top));
-      panel.style.left = `${left}px`;
-      panel.style.top = `${top}px`;
+      const bounds = _galleryEditorFloatingBounds(12);
+      const left = Math.max(bounds.left, Math.min(Math.max(bounds.left, bounds.right - panelW), r.right + 10));
+      const top = Math.max(bounds.top, Math.min(Math.max(bounds.top, bounds.bottom - panelH), r.top));
+      _setInpaintPanelViewportPosition(panel, left, top);
+      panel.style.maxHeight = `${Math.round(Math.max(160, bounds.bottom - bounds.top))}px`;
     });
     return;
   }
@@ -2282,16 +2526,18 @@ function _positionInpaintPanel(anchorBtn) {
     const refRect = ref.getBoundingClientRect();
     const panelW = panel.offsetWidth || 320;
     const panelH = panel.offsetHeight || 520;
+    const bounds = _galleryEditorFloatingBounds(12);
     // Sit immediately to the left of the right panel, top-aligned with
     // the Layers header. 10px gap so it's clearly a separate window
     // and not visually fused with the panel.
     let left = refRect.left - panelW - 10;
     let top = refRect.top;
-    // Clamp into the viewport so the popover never leaves the screen.
-    left = Math.max(12, Math.min(window.innerWidth - panelW - 12, left));
-    top = Math.max(12, Math.min(window.innerHeight - panelH - 12, top));
-    panel.style.left = `${left}px`;
-    panel.style.top = `${top}px`;
+    // Clamp into the visible editor/modal bounds so the popover never
+    // leaves the active window, even when the gallery is docked.
+    left = Math.max(bounds.left, Math.min(Math.max(bounds.left, bounds.right - panelW), left));
+    top = Math.max(bounds.top, Math.min(Math.max(bounds.top, bounds.bottom - panelH), top));
+    _setInpaintPanelViewportPosition(panel, left, top);
+    panel.style.maxHeight = `${Math.round(Math.max(160, bounds.bottom - bounds.top))}px`;
   });
 }
 
@@ -2305,37 +2551,47 @@ function _wireInpaintPopoverWindow() {
     e.stopPropagation();
     panel.classList.add('dismissed');
     panel.style.display = 'none';
-    document.getElementById('ge-controls')?.classList.remove('ge-inpaint-popover-host');
+    _inpaintControlsHost()?.classList.remove('ge-inpaint-popover-host');
   });
   const head = panel.querySelector('[data-inpaint-drag]');
   if (!head) return;
   head.addEventListener('pointerdown', (e) => {
-    if (window.innerWidth <= 820 || e.target.closest('button')) return;
+    if (_isCompactEditorLayout() || _isLandscapeEditorSplit() || e.target.closest('button') || e.isPrimary === false) return;
     e.preventDefault();
     e.stopPropagation();
     panel.classList.add('ge-inpaint-popover');
+    _portalInpaintPanel(panel);
     const startX = e.clientX;
     const startY = e.clientY;
     const r0 = panel.getBoundingClientRect();
-    head.setPointerCapture(e.pointerId);
+    try { head.setPointerCapture(e.pointerId); } catch {}
     head.style.cursor = 'grabbing';
+    panel.classList.add('ge-inpaint-popover-dragging');
+    const prevUserSelect = document.body.style.userSelect;
+    document.body.style.userSelect = 'none';
     const onMove = (ev) => {
+      ev.preventDefault();
       const w = panel.offsetWidth || r0.width;
       const h = panel.offsetHeight || r0.height;
-      const nx = Math.max(8, Math.min(window.innerWidth - w - 8, r0.left + ev.clientX - startX));
-      const ny = Math.max(8, Math.min(window.innerHeight - h - 8, r0.top + ev.clientY - startY));
+      const bounds = _galleryEditorFloatingBounds(8, { viewportOnly: true });
+      const nx = Math.max(bounds.left, Math.min(Math.max(bounds.left, bounds.right - w), r0.left + ev.clientX - startX));
+      const ny = Math.max(bounds.top, Math.min(Math.max(bounds.top, bounds.bottom - h), r0.top + ev.clientY - startY));
       panel.dataset.userMoved = '1';
-      panel.style.left = `${nx}px`;
-      panel.style.top = `${ny}px`;
+      _setInpaintPanelViewportPosition(panel, nx, ny);
+      panel.style.maxHeight = `${Math.round(Math.max(160, bounds.bottom - bounds.top))}px`;
     };
     const onUp = () => {
       try { head.releasePointerCapture(e.pointerId); } catch {}
       head.style.cursor = '';
-      head.removeEventListener('pointermove', onMove);
-      head.removeEventListener('pointerup', onUp);
+      panel.classList.remove('ge-inpaint-popover-dragging');
+      document.body.style.userSelect = prevUserSelect;
+      document.removeEventListener('pointermove', onMove, true);
+      document.removeEventListener('pointerup', onUp, true);
+      document.removeEventListener('pointercancel', onUp, true);
     };
-    head.addEventListener('pointermove', onMove);
-    head.addEventListener('pointerup', onUp);
+    document.addEventListener('pointermove', onMove, true);
+    document.addEventListener('pointerup', onUp, true);
+    document.addEventListener('pointercancel', onUp, true);
   });
 }
 
@@ -2376,14 +2632,18 @@ function _buildEditor(container) {
       // On mobile, picking a tool that's about to SHOW its controls
       // panel auto-minimises the layers sheet so the controls aren't
       // covered. Swiping the layers handle back up restores it.
-      const isMobile = window.innerWidth <= 820;
-      const hasToolControls = ['brush', 'eraser', 'clone', 'inpaint'].includes(toolId);
+      const isMobile = _isCompactEditorLayout();
+      const hasToolControls = ['brush', 'eraser', 'clone', 'inpaint', 'rembg'].includes(toolId);
       const controlsVisible = controls && !controls.classList.contains('dismissed');
-      if (isMobile && hasToolControls && controlsVisible) {
+      if (isMobile && hasToolControls) {
         const rp = document.querySelector('.ge-right-panel');
         if (rp) {
-          rp.classList.remove('expanded');
-          rp.classList.add('minimized');
+          if (controlsVisible) {
+            rp.classList.remove('expanded');
+            rp.classList.add('minimized');
+          } else {
+            rp.classList.remove('expanded', 'minimized');
+          }
         }
       }
       toolbarEl.querySelectorAll('.ge-tool-btn').forEach(b => b.classList.toggle('active', b.dataset.tool === state.tool));
@@ -2392,16 +2652,16 @@ function _buildEditor(container) {
       // Show/hide brush controls. Brush, Eraser AND Clone use the
       // shared size+color row; Inpaint has its OWN size slider.
       const brushControls = document.getElementById('ge-brush-controls');
-      const needsBrush = ['brush', 'eraser', 'clone'].includes(toolId);
+      const needsBrush = ['brush', 'eraser', 'clone', 'rembg'].includes(toolId);
       if (brushControls) brushControls.style.display = needsBrush ? '' : 'none';
       // Eraser and Clone don't care about color — hide the color row.
       const colorRow = document.getElementById('ge-color-row');
-      if (colorRow) colorRow.style.display = (toolId === 'eraser' || toolId === 'clone') ? 'none' : '';
+      if (colorRow) colorRow.style.display = (toolId === 'eraser' || toolId === 'clone' || toolId === 'rembg') ? 'none' : '';
       const colorLabel = colorRow?.querySelector('label');
       if (colorLabel) colorLabel.textContent = 'Color';
       const sizeLabelEl = brushControls?.querySelector('.ge-size-slider')?.parentElement?.querySelector('label');
       if (sizeLabelEl && sizeLabelEl.firstChild && sizeLabelEl.firstChild.nodeType === Node.TEXT_NODE) {
-        sizeLabelEl.firstChild.nodeValue = (toolId === 'eraser') ? 'Brush Size ' : 'Size ';
+        sizeLabelEl.firstChild.nodeValue = (toolId === 'eraser' || toolId === 'rembg') ? 'Brush Size ' : 'Size ';
       }
       // Per-tool stroke-modifier sections (opacity / flow / softness).
       const brushSection = document.getElementById('ge-brush-section');
@@ -2419,7 +2679,7 @@ function _buildEditor(container) {
           else inpaintSection.classList.remove('dismissed');
           inpaintSection.style.display = inpaintSection.classList.contains('dismissed') ? 'none' : '';
           const inpaintOpen = !inpaintSection.classList.contains('dismissed');
-          controls?.classList.toggle('ge-inpaint-popover-host', inpaintOpen && window.innerWidth > 820);
+          controls?.classList.toggle('ge-inpaint-popover-host', inpaintOpen && !_isCompactEditorLayout() && !_isLandscapeEditorSplit());
           if (inpaintOpen) _positionInpaintPanel(_btn);
         } else {
           controls?.classList.remove('ge-inpaint-popover-host');
@@ -2493,10 +2753,11 @@ function _buildEditor(container) {
       if (upscaleSection) upscaleSection.style.display = state.tool === 'upscale' ? '' : 'none';
       const styleSection = document.getElementById('ge-style-section');
       if (styleSection) styleSection.style.display = state.tool === 'style' ? '' : 'none';
+      _resetDockedOptionScroll();
       // Toggle cursor — hide native cursor for tools that draw via our
       // own circle overlay (brush/eraser/inpaint/lasso); for other tools
       // pick a cursor that matches the tool's affordance.
-      const useCircle = state.tool === 'brush' || state.tool === 'eraser' || state.tool === 'inpaint' || state.tool === 'lasso' || state.tool === 'clone';
+      const useCircle = state.tool === 'brush' || state.tool === 'eraser' || state.tool === 'inpaint' || state.tool === 'lasso' || state.tool === 'clone' || state.tool === 'rembg';
       if (state.mainCanvas) {
         // Custom SVG cursor for the Move tool — white fill with black
         // stroke so it reads on both light and dark canvases.
@@ -2517,6 +2778,7 @@ function _buildEditor(container) {
   // handlers below wire to the IDs baked into the markup.
   const topBar = _buildTopbar();
   container.appendChild(topBar);
+  document.getElementById('ge-open-layers')?.addEventListener('click', () => _revealLayerPanel());
 
   // Editor body (toolbar + canvas + panel)
   const editorBody = document.createElement('div');
@@ -2579,6 +2841,11 @@ function _buildEditor(container) {
   });
   editorBody.appendChild(rightPanel);
   container.appendChild(editorBody);
+  if (_isTouchLandscape() && _isDockedGalleryEditor() && _isCompactEditorLayout()) {
+    // Keep the docked-landscape preview row focused on toolbar + canvas;
+    // controls are already lifted to the editor root by buildRightPanel().
+    container.appendChild(rightPanel);
+  }
   _wireInpaintPopoverWindow();
 
   // Slider UX (expand-while-using, floating bubble, click-to-type) —
@@ -2827,6 +3094,7 @@ function _buildEditor(container) {
     openCookbookForDependency: (pkg) => _openCookbookForDependency(pkg),
     composite,
     renderLayerPanel: () => _renderLayerPanel(),
+    revealLayerPanel: () => _revealLayerPanel(),
     uiModule,
   });
 
@@ -2993,6 +3261,12 @@ function _revealLayerPanel() {
     if (!panel) return;
     panel.classList.remove('minimized');
     panel.classList.add('expanded');
+    try { panel.scrollTo({ top: panel.scrollHeight, behavior: 'smooth' }); } catch {}
+    const layers = panel.querySelector('.ge-layers');
+    if (layers) {
+      layers.classList.add('ge-layers-attention');
+      setTimeout(() => layers.classList.remove('ge-layers-attention'), 900);
+    }
   });
 }
 
@@ -3196,10 +3470,19 @@ async function _checkRembgInstalled() {
   const noticeEl = document.getElementById('ge-rembg-dep-missing');
   const runRow = document.getElementById('ge-rembg-run-row');
   if (!noticeEl || !runRow) return;
+  const syncAvailability = () => {
+    const pipeline = document.getElementById('ge-rembg-pipeline')?.value || state.rembgPipeline || 'auto';
+    const missingNaturalRembg = state.rembgInstalledCache === false && (pipeline === 'auto' || pipeline === 'rembg');
+    noticeEl.style.display = missingNaturalRembg ? '' : 'none';
+    runRow.style.display = '';
+  };
+  if (!state.rembgAvailabilityListenerWired) {
+    window.addEventListener('ge:rembg-pipeline-changed', syncAvailability);
+    state.rembgAvailabilityListenerWired = true;
+  }
   // Use cached result if we already checked this editor session.
   if (state.rembgInstalledCache !== null) {
-    noticeEl.style.display = state.rembgInstalledCache ? 'none' : '';
-    runRow.style.display = state.rembgInstalledCache ? '' : 'none';
+    syncAvailability();
     return;
   }
   try {
@@ -3211,13 +3494,7 @@ async function _checkRembgInstalled() {
   } catch (e) {
     state.rembgInstalledCache = null; // unknown — fall back to silent
   }
-  if (state.rembgInstalledCache === false) {
-    noticeEl.style.display = '';
-    runRow.style.display = 'none';
-  } else {
-    noticeEl.style.display = 'none';
-    runRow.style.display = '';
-  }
+  syncAvailability();
 }
 
 function _openCookbookForImg2img() {
@@ -3502,6 +3779,9 @@ export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) 
   state.cropRect = null;
   state.lassoPoints = [];
   state.lassoActive = false;
+  state.rembgSampleCanvas = null;
+  state.rembgSampleCtx = null;
+  state.rembgSampleVisible = true;
   window.__galleryEditLive = true;
   if (state.persistTimer) { clearTimeout(state.persistTimer); state.persistTimer = null; }
   state.persistDirty = false;
@@ -3516,6 +3796,7 @@ export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) 
 
   try {
     _buildEditor(state.container);
+    _installEditorViewportLayoutSync();
   } catch (e) {
     console.error('[openEditor] _buildEditor threw:', e);
     if (uiModule) uiModule.showError('Editor failed to build: ' + (e?.message || 'unknown'));
@@ -3727,6 +4008,10 @@ export function closeEditor() {
     const h = state.editorDocClickHandlers.pop();
     try { document.removeEventListener('click', h); } catch {}
   }
+  while (state.editorCleanupHandlers.length) {
+    const cleanup = state.editorCleanupHandlers.pop();
+    try { cleanup(); } catch {}
+  }
   if (state.cursorEl) { state.cursorEl.remove(); state.cursorEl = null; }
   // Tear down all floating popups + the dock so closing the editor
   // doesn't leave stale chips/panels behind on top of the gallery.
@@ -3738,7 +4023,7 @@ export function closeEditor() {
     if (dock) dock.remove();
   } catch {}
   try {
-    document.querySelectorAll('.ge-inpaint-popup, .ge-fx-popup, .ge-adj-popup').forEach(el => {
+    document.querySelectorAll('.ge-inpaint-popup, .ge-fx-popup, .ge-adj-popup, .ge-inpaint-section[data-portaled="1"]').forEach(el => {
       if (el._escHandler) {
         document.removeEventListener('keydown', el._escHandler, true);
       }
@@ -3776,6 +4061,9 @@ export function closeEditor() {
   state.mainCtx = null;
   state.maskCanvas = null;
   state.maskCtx = null;
+  state.rembgSampleCanvas = null;
+  state.rembgSampleCtx = null;
+  state.rembgSampleVisible = true;
   state.imageId = null;
   state.container = null;
   window.__galleryEditLive = false;

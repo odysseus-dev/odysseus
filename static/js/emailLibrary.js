@@ -26,12 +26,17 @@ import { state } from './emailLibrary/state.js';
 const API_BASE = window.location.origin;
 const _EMAIL_DESKTOP_PAGE_LIMIT = 100;
 const _EMAIL_MOBILE_PAGE_LIMIT = 40;
+const _EMAIL_DESKTOP_READER_DOM_LIMIT = 6;
+const _EMAIL_READER_BUDGET_DELAY_MS = 450;
 let _emailUnreadChipClickWired = false;
 let _libLoadSeq = 0;
 let _libFolderSeq = 0;
 let _libSearchSeq = 0;
 let _libSearchHadResults = false;
 let _activeEmailReaderForSelectAll = null;
+let _emailReaderDomSerial = 0;
+let _emailReaderBudgetTimer = null;
+let _emailReaderBudgetWatcherWired = false;
 
 function _isCompactEmailViewport() {
   try {
@@ -44,6 +49,78 @@ function _isCompactEmailViewport() {
 function _isOdysseusAndroidApp() {
   const ua = navigator.userAgent || '';
   return /\bOdysseusAndroid\b/i.test(ua) || !!window.OdysseusAndroid;
+}
+
+function _isDesktopEmailReaderBudgetEnabled() {
+  return !_isOdysseusAndroidApp() && window.innerWidth > 768;
+}
+
+function _isEmailReaderModalId(id) {
+  return !!id && (id.startsWith('email-reader-') || id.startsWith('email-window-'));
+}
+
+function _stampEmailReaderModal(modal) {
+  if (!modal) return;
+  _emailReaderDomSerial += 1;
+  modal.dataset.emailReaderOpenedAt = String(_emailReaderDomSerial);
+}
+
+function _isHiddenEmailReaderModal(modal, id) {
+  if (!modal) return false;
+  return modal.classList.contains('hidden')
+    || modal.classList.contains('modal-minimized')
+    || modal.style.display === 'none'
+    || (id && Modals.isRegistered(id) && Modals.isMinimized(id));
+}
+
+function _closeEmailReaderModalForBudget(id) {
+  if (!id) return;
+  try {
+    if (Modals.isRegistered(id)) {
+      Modals.close(id);
+      return;
+    }
+  } catch (_) {}
+  document.getElementById(id)?.remove();
+}
+
+function _enforceEmailReaderDomBudget(activeId = '') {
+  if (!_isDesktopEmailReaderBudgetEnabled()) return;
+  const readers = Array.from(document.querySelectorAll('.modal[id^="email-reader-"], .modal[id^="email-window-"]'))
+    .filter(modal => modal?.isConnected)
+    .map(modal => ({
+      id: modal.id,
+      hidden: _isHiddenEmailReaderModal(modal, modal.id),
+      openedAt: Number(modal.dataset.emailReaderOpenedAt || '0') || 0,
+    }))
+    .sort((a, b) => a.openedAt - b.openedAt);
+  if (readers.length <= _EMAIL_DESKTOP_READER_DOM_LIMIT) return;
+
+  let overflow = readers.length - _EMAIL_DESKTOP_READER_DOM_LIMIT;
+  for (const victim of readers) {
+    if (overflow <= 0) break;
+    if (victim.id === activeId || !victim.hidden) continue;
+    _closeEmailReaderModalForBudget(victim.id);
+    overflow -= 1;
+  }
+}
+
+function _scheduleEmailReaderDomBudget(activeId = '') {
+  if (!_isDesktopEmailReaderBudgetEnabled()) return;
+  if (_emailReaderBudgetTimer) clearTimeout(_emailReaderBudgetTimer);
+  _emailReaderBudgetTimer = setTimeout(() => {
+    _emailReaderBudgetTimer = null;
+    _enforceEmailReaderDomBudget(activeId);
+  }, _EMAIL_READER_BUDGET_DELAY_MS);
+}
+
+function _ensureEmailReaderDomBudgetWatcher() {
+  if (_emailReaderBudgetWatcherWired) return;
+  _emailReaderBudgetWatcherWired = true;
+  window.addEventListener('odysseus:modal-opened', (event) => {
+    const id = event?.detail?.id || '';
+    if (_isEmailReaderModalId(id)) _scheduleEmailReaderDomBudget(id);
+  });
 }
 
 function _clampEmailLimit(value, fallback) {
@@ -932,10 +1009,7 @@ export function openEmailLibrary(opts = {}) {
     Modals.register('email-lib-modal', {
       label: 'Email',
       icon: 'M2 4h20v16H2zM22 7l-9.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7',
-      closeFn: () => {
-        const m = document.getElementById('email-lib-modal');
-        if (m) m.classList.add('hidden');
-      },
+      closeFn: () => closeEmailLibrary(),
       restoreFn: () => {
         // Reopened last → bring the email windows in front of any open doc.
         document.body.classList.add('email-front');
@@ -956,6 +1030,7 @@ export function openEmailLibrary(opts = {}) {
     });
   } catch (_) {}
   _wireUnreadTabClick();
+  _ensureEmailTabObserver();
   const unreadBadge = document.getElementById('email-lib-unread-badge');
   unreadBadge?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1392,6 +1467,10 @@ function _renderAccountsStrip() {
 export function closeEmailLibrary() {
   const modal = document.getElementById('email-lib-modal');
   if (modal) modal.remove();
+  try {
+    if (Modals.isRegistered('email-lib-modal')) Modals.unregister('email-lib-modal');
+  } catch (_) {}
+  _disconnectEmailGridTabObserver();
   _clearEmailDocumentSplit();
   if (state._libEscHandler) {
     document.removeEventListener('keydown', state._libEscHandler, true);
@@ -3814,39 +3893,66 @@ function _syncEmailTabBadge() {
 }
 let _emailTabObserverWired = false;
 let _badgeSyncScheduled = false;
+let _emailTabDockObserver = null;
+let _emailTabGridObserver = null;
+let _emailTabObservedGrid = null;
+let _emailTabGridRetryTimer = null;
+
+function _scheduleEmailTabBadgeSync() {
+  if (_badgeSyncScheduled) return;
+  _badgeSyncScheduled = true;
+  requestAnimationFrame(() => {
+    _badgeSyncScheduled = false;
+    _syncEmailTabBadge();
+  });
+}
+
+function _disconnectEmailGridTabObserver() {
+  if (_emailTabGridRetryTimer) {
+    clearTimeout(_emailTabGridRetryTimer);
+    _emailTabGridRetryTimer = null;
+  }
+  if (_emailTabGridObserver) {
+    try { _emailTabGridObserver.disconnect(); } catch (_) {}
+    _emailTabGridObserver = null;
+  }
+  _emailTabObservedGrid = null;
+}
+
+function _wireEmailGridTabObserver() {
+  const grid = document.getElementById('email-lib-grid');
+  if (!grid) {
+    _disconnectEmailGridTabObserver();
+    if (document.getElementById('email-lib-modal')) {
+      _emailTabGridRetryTimer = setTimeout(_wireEmailGridTabObserver, 500);
+    }
+    return;
+  }
+  if (_emailTabObservedGrid === grid && _emailTabGridObserver) return;
+  _disconnectEmailGridTabObserver();
+  _emailTabObservedGrid = grid;
+  _emailTabGridObserver = new MutationObserver(_scheduleEmailTabBadgeSync);
+  _emailTabGridObserver.observe(grid, { subtree: true, attributes: true, attributeFilter: ['class'] });
+}
+
 function _ensureEmailTabObserver() {
-  if (_emailTabObserverWired) return;
-  _emailTabObserverWired = true;
-  // Debounce so a burst of mutations (e.g. _renderDock rebuilding the
-  // whole dock in one pass) collapses to a single sync per animation
-  // frame. Without this the chip badge could flicker as the observer
-  // fires repeatedly during dock rerenders.
-  const handler = () => {
-    if (_badgeSyncScheduled) return;
-    _badgeSyncScheduled = true;
-    requestAnimationFrame(() => {
-      _badgeSyncScheduled = false;
-      _syncEmailTabBadge();
-    });
-  };
-  const tryWire = () => {
-    const dock = document.getElementById('minimized-dock');
-    if (!dock) { setTimeout(tryWire, 200); return; }
-    // Only watch what we care about: chip add/remove in the dock.
-    const obs = new MutationObserver(handler);
-    obs.observe(dock, { childList: true });
-    // Watch the library grid so toggling a card expanded/collapsed
-    // updates the lib chip's "has-expanded" badge in real time.
-    const wireGridObs = () => {
-      const grid = document.getElementById('email-lib-grid');
-      if (!grid) { setTimeout(wireGridObs, 500); return; }
-      const gridObs = new MutationObserver(handler);
-      gridObs.observe(grid, { subtree: true, attributes: true, attributeFilter: ['class'] });
+  if (!_emailTabObserverWired) {
+    _emailTabObserverWired = true;
+    const tryWireDock = () => {
+      const dock = document.getElementById('minimized-dock');
+      if (!dock) { setTimeout(tryWireDock, 200); return; }
+      if (!_emailTabDockObserver) {
+        _emailTabDockObserver = new MutationObserver(_scheduleEmailTabBadgeSync);
+        _emailTabDockObserver.observe(dock, { childList: true });
+      }
+      _scheduleEmailTabBadgeSync();
     };
-    wireGridObs();
-    handler();
-  };
-  tryWire();
+    tryWireDock();
+  }
+  // The email library grid is destroyed/recreated when the modal closes.
+  // Rewire this observer to the current grid instead of retaining old DOM.
+  _wireEmailGridTabObserver();
+  _scheduleEmailTabBadgeSync();
 }
 // Hybrid model:
 //   - email-lib-modal (the inbox library) is unique. Its chip just
@@ -3885,6 +3991,8 @@ async function _openEmailAsTab(em, folder) {
     </div>
   `;
   document.body.appendChild(modal);
+  _stampEmailReaderModal(modal);
+  _ensureEmailReaderDomBudgetWatcher();
   // Inherit display from .modal (flex-center). z-index above the library
   // (which uses default .modal z-index 250) so the new tab sits on top.
   modal.style.zIndex = '270';
@@ -3992,6 +4100,7 @@ async function _openEmailAsTab(em, folder) {
   }
   _ensureEmailTabObserver();
   _syncEmailTabBadge();
+  _scheduleEmailReaderDomBudget(modalId);
 
   // Fetch + render the email body using the exact same template as
   // _toggleCardPreview so the visuals match perfectly.
@@ -4117,7 +4226,24 @@ async function _openEmailWindow(em, folder) {
     </div>
   `;
   document.body.appendChild(modal);
+  _stampEmailReaderModal(modal);
+  _ensureEmailReaderDomBudgetWatcher();
   modal.style.display = 'block';
+  let windowClosed = false;
+  const closeWindow = () => {
+    if (windowClosed) return;
+    windowClosed = true;
+    modal.remove();
+  };
+  Modals.register(winId, {
+    label: 'Email',
+    icon: _EMAIL_ICON_PATH,
+    closeFn: closeWindow,
+    restoreFn: () => {
+      document.body.classList.add('email-front');
+    },
+  });
+  try { Modals.injectMinimizeButton(modal, winId); } catch {}
   const content = modal.querySelector('.modal-content');
   // Position offset from screen center so successive windows cascade.
   const isMobile = window.innerWidth <= 768;
@@ -4138,8 +4264,12 @@ async function _openEmailWindow(em, folder) {
       content.style.top  = Math.max(20, (window.innerHeight - h) / 3 + off) + 'px';
     });
   }
-  modal.querySelector('.close-btn')?.addEventListener('click', () => modal.remove());
+  modal.querySelector('.close-btn')?.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    Modals.close(winId);
+  });
   try { _makeDraggable(content, modal, 'email-window-fullscreen'); } catch {}
+  _scheduleEmailReaderDomBudget(winId);
 
   // Load + render
   const bodyEl = modal.querySelector('.email-window-body');

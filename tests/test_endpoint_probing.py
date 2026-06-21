@@ -121,6 +121,22 @@ class TestProbeEndpointParsing:
         )
         assert _probe_endpoint("https://api.example.com/v1") == []
 
+    def test_image_endpoint_probe_keeps_non_chat_image_models(self, monkeypatch):
+        _patch_resolve(monkeypatch)
+        monkeypatch.setattr(
+            model_routes.httpx, "get",
+            lambda url, headers=None, timeout=None, verify=None, **kwargs: _resp(
+                200,
+                json={"data": [{"id": "gpt-image-1"}, {"id": "gpt-4o"}]},
+            ),
+        )
+
+        assert _probe_endpoint("https://api.example.com/v1") == ["gpt-4o"]
+        assert _probe_endpoint(
+            "https://api.example.com/v1",
+            include_non_chat=True,
+        ) == ["gpt-image-1", "gpt-4o"]
+
     def test_chatgpt_subscription_probe_uses_discovery_only(self, monkeypatch):
         _patch_resolve(monkeypatch)
         calls = []
@@ -214,6 +230,24 @@ class TestPingEndpoint:
         assert _ping_endpoint("http://localhost:11434/v1") == {
             "reachable": True, "status_code": 200, "error": None,
         }
+
+    def test_local_diffusion_root_uses_health_fallback(self, monkeypatch):
+        _patch_resolve(monkeypatch)
+        seen = []
+
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
+            seen.append(url)
+            if url == "http://127.0.0.1:8102/health":
+                return _resp(200, url=url)
+            return _resp(404, url=url)
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+
+        assert _ping_endpoint("http://127.0.0.1:8102") == {
+            "reachable": True, "status_code": 200, "error": None,
+        }
+        assert seen[0] == "http://127.0.0.1:8102"
+        assert seen[-1] == "http://127.0.0.1:8102/health"
 
 
 # ── Docker loopback rewrite ──

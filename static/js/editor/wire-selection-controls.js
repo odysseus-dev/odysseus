@@ -160,7 +160,9 @@ export function wireSelectionControls({
     const btn = document.getElementById('ge-wand-rembg');
     const hint = buildSelectionHintMask();
     if (!hint) { if (uiModule) uiModule.showToast('Click to make a wand selection first'); return; }
-    await applyImageTool('/api/image/remove-bg', { hint_mask: hint }, 'BG Removed', btn);
+    const rawStrength = parseInt(document.getElementById('ge-rembg-strength')?.value || '70', 10);
+    const pct = Number.isFinite(rawStrength) ? Math.max(10, Math.min(100, rawStrength)) : 70;
+    await applyImageTool('/api/image/remove-bg', { hint_mask: hint, strength: +(pct / 100).toFixed(2) }, 'BG Removed', btn);
     wandClear();
   });
 

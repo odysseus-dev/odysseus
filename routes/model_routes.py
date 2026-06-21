@@ -249,6 +249,7 @@ _PROVIDER_CURATED = {
         "glm-5.1", "glm-5v-turbo", "glm-5-turbo", "glm-4.7", "glm-4.5-air",
     ],
     "deepseek": [
+        "deepseek-v4-flash", "deepseek-v4-pro",
         "deepseek-chat", "deepseek-reasoner",
     ],
     "groq": [
@@ -599,6 +600,48 @@ def _ollama_generate_url_for_unload(base_url: str) -> str:
     return base + "/api/generate"
 
 
+def _ollama_root_url_for_unload(base_url: str) -> str:
+    """Map an Ollama /v1 or /api base to the native Ollama server root."""
+    from src.endpoint_resolver import resolve_url
+
+    base = resolve_url(_normalize_base(base_url)).rstrip("/")
+    for suffix in ("/api/generate", "/api/chat", "/api/tags", "/api/ps", "/v1", "/api"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)].rstrip("/")
+            break
+    return base
+
+
+def _ollama_loaded_models(base_url: str, api_key: Optional[str]) -> List[str]:
+    """Return models currently resident in an Ollama runtime.
+
+    Bulk unload must target loaded models, not every installed model, because
+    unloading via /api/generate needs a model name and should not wake cold
+    models just to unload them again.
+    """
+    target_url = _ollama_root_url_for_unload(base_url) + "/api/ps"
+    headers = _safe_build_headers(api_key, base_url)
+    try:
+        response = httpx.get(target_url, headers=headers, timeout=8, verify=llm_verify())
+        response.raise_for_status()
+        data = response.json()
+    except httpx.TimeoutException:
+        raise HTTPException(504, "Timed out asking Ollama which models are loaded")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"Could not list loaded Ollama models: {str(exc)[:180]}")
+
+    models = []
+    for item in data.get("models") or []:
+        if not isinstance(item, dict):
+            continue
+        model = item.get("model") or item.get("name")
+        if isinstance(model, str) and model.strip():
+            models.append(model.strip())
+    return _normalize_model_ids(models)
+
+
 def _ollama_unload_model(base_url: str, api_key: Optional[str], model: str) -> Dict[str, Any]:
     target_url = _ollama_generate_url_for_unload(base_url)
     headers = _safe_build_headers(api_key, base_url)
@@ -769,7 +812,16 @@ def _effective_endpoint_kind(ep: Any, base_url: str) -> str:
 
 
 
-def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> List[str]:
+def _filter_probed_models(models: List[str], include_non_chat: bool = False) -> List[str]:
+    return list(models or []) if include_non_chat else [m for m in (models or []) if _is_chat_model(m)]
+
+
+def _probe_endpoint(
+    base_url: str,
+    api_key: str = None,
+    timeout: int = 5,
+    include_non_chat: bool = False,
+) -> List[str]:
     """Probe a base URL's /models endpoint and return list of model IDs.
     For Anthropic, queries their /v1/models API, falling back to hardcoded list."""
     from src.endpoint_resolver import resolve_url
@@ -824,7 +876,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
                 for _e in _PROVIDER_CURATED.get(_ck, []):
                     if _e not in set(models) and not any(m.startswith(_e) for m in models):
                         models.append(_e)
-            return [m for m in models if _is_chat_model(m)]
+            return _filter_probed_models(models, include_non_chat)
     except httpx.HTTPStatusError as e:
         if api_key:
             status = e.response.status_code if e.response is not None else "unknown"
@@ -848,7 +900,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
             data = r.json()
             models = [m.get("name") or m.get("model") for m in (data.get("models") or []) if m.get("name") or m.get("model")]
             if models:
-                return [m for m in models if _is_chat_model(m)]
+                return _filter_probed_models(models, include_non_chat)
     except Exception as e:
         logger.debug(f"Ollama /api/tags probe failed for {base}: {e}")
     # Fall back to curated list if the provider has a URL-based match (e.g. z.ai has no /models endpoint)
@@ -858,6 +910,40 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         logger.info(f"Using curated fallback for {curated_key}: {fallback}")
         return list(fallback)
     return []
+
+
+def _probe_endpoint_for_model_type(
+    base_url: str,
+    api_key: str = None,
+    timeout: int = 5,
+    model_type: str = "llm",
+) -> List[str]:
+    if str(model_type or "").strip().lower() == "image":
+        return _probe_endpoint(base_url, api_key, timeout=timeout, include_non_chat=True)
+    return _probe_endpoint(base_url, api_key, timeout=timeout)
+
+
+def _local_health_probe_urls(base: str, models_url: Optional[str]) -> List[str]:
+    """Extra cheap probes for local image/diffusion servers.
+
+    Some local OpenAI-compatible image sidecars expose `/health` at the server
+    root and `/v1/models`, while a user may register the root URL. The generic
+    chat probe checks `<base>/models`; this fills the common diffusion gap
+    without changing cloud/API probe behaviour.
+    """
+    if _classify_endpoint(base, "auto") != "local":
+        return []
+    root = (base or "").rstrip("/")
+    if root.endswith("/v1"):
+        root = root[:-3].rstrip("/")
+    candidates = [f"{root}/health", f"{root}/v1/models"]
+    seen = {(base or "").rstrip("/"), (models_url or "").rstrip("/")}
+    out = []
+    for url in candidates:
+        key = url.rstrip("/")
+        if key and key not in seen and key not in out:
+            out.append(url)
+    return out
 
 
 def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> Dict[str, Any]:
@@ -929,11 +1015,31 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
                     return result2
             except Exception:
                 pass
+            for probe_url in _local_health_probe_urls(base, models_url):
+                try:
+                    r3 = httpx.get(probe_url, headers=headers, timeout=timeout, verify=llm_verify())
+                    result3 = _result_from_response(r3)
+                    if result3["reachable"]:
+                        return result3
+                    last_error = result3.get("error") or last_error
+                except Exception as e:
+                    last_error = str(e)[:120]
         if sc:
             return result
         last_error = result.get("error") or last_error
     except Exception as e:
         last_error = str(e)[:120]
+
+    models_url = _safe_build_models_url(base)
+    for probe_url in _local_health_probe_urls(base, models_url):
+        try:
+            r = httpx.get(probe_url, headers=headers, timeout=timeout, verify=llm_verify())
+            result = _result_from_response(r)
+            if result["reachable"]:
+                return result
+            last_error = result.get("error") or last_error
+        except Exception as e:
+            last_error = str(e)[:120]
 
     return {"reachable": False, "status_code": None, "error": last_error}
 
@@ -1088,6 +1194,7 @@ def setup_model_routes(model_discovery):
             "id": getattr(ep, "id", ""),
             "base": base,
             "api_key": getattr(ep, "api_key", None),
+            "model_type": getattr(ep, "model_type", None) or "llm",
             "kind": kind,
             "category": category,
             "mode": mode,
@@ -1139,6 +1246,7 @@ def setup_model_routes(model_discovery):
                         groups.setdefault(info["key"], {
                             "base": info["base"],
                             "api_key": info["api_key"],
+                            "model_type": info["model_type"],
                             "timeout": info["timeout"],
                             "endpoint_ids": [],
                         })["endpoint_ids"].append(info["id"])
@@ -1150,7 +1258,12 @@ def setup_model_routes(model_discovery):
 
                     def _probe_one(key: str, data: Dict[str, Any]):
                         try:
-                            ids = _probe_endpoint(data["base"], data.get("api_key"), timeout=data.get("timeout") or 2)
+                            ids = _probe_endpoint_for_model_type(
+                                data["base"],
+                                data.get("api_key"),
+                                timeout=data.get("timeout") or 2,
+                                model_type=data.get("model_type") or "llm",
+                            )
                             return key, data["endpoint_ids"], ids, None
                         except Exception as e:
                             return key, data["endpoint_ids"], None, e
@@ -1599,7 +1712,12 @@ def setup_model_routes(model_discovery):
                         # "empty" status, and the existing background refresh
                         # path will eventually fill it in too.
                         try:
-                            probed = _probe_endpoint(r.base_url, r.api_key, timeout=5)
+                            probed = _probe_endpoint_for_model_type(
+                                r.base_url,
+                                r.api_key,
+                                timeout=5,
+                                model_type=getattr(r, "model_type", None) or "llm",
+                            )
                             if probed:
                                 r.cached_models = json.dumps(probed)
                                 db.commit()
@@ -1737,11 +1855,17 @@ def setup_model_routes(model_discovery):
                 if api_key.strip() and not existing.api_key:
                     existing.api_key = api_key.strip()
                     changed = True
+                incoming_model_type = (model_type or "").strip()
+                existing_model_type = incoming_model_type or getattr(existing, "model_type", None) or "llm"
+                if incoming_model_type and getattr(existing, "model_type", None) != incoming_model_type:
+                    existing.model_type = incoming_model_type
+                    changed = True
                 if should_probe:
-                    probed_models = _probe_endpoint(
+                    probed_models = _probe_endpoint_for_model_type(
                         base_url,
                         (api_key.strip() or existing.api_key or None),
                         timeout=_explicit_model_list_timeout(base_url, existing_kind_for_probe, refresh_timeout),
+                        model_type=existing_model_type,
                     )
                     if probed_models:
                         existing.cached_models = json.dumps(probed_models)
@@ -1774,7 +1898,16 @@ def setup_model_routes(model_discovery):
         finally:
             _db_dedup.close()
 
-        model_ids = _probe_endpoint(base_url, api_key.strip() or None, timeout=explicit_timeout) if should_probe else []
+        requested_model_type = model_type.strip() if model_type else "llm"
+        model_ids = (
+            _probe_endpoint_for_model_type(
+                base_url,
+                api_key.strip() or None,
+                timeout=explicit_timeout,
+                model_type=requested_model_type,
+            )
+            if should_probe else []
+        )
         ping = {"reachable": False, "error": None}
         if (should_probe or requested_kind in ("api", "proxy")) and not model_ids:
             ping = _ping_endpoint(base_url, api_key.strip() or None, timeout=min(explicit_timeout, 2.0))
@@ -1800,7 +1933,7 @@ def setup_model_routes(model_discovery):
                 base_url=base_url,
                 api_key=api_key.strip() or None,
                 is_enabled=True,
-                model_type=model_type.strip() if model_type else "llm",
+                model_type=requested_model_type,
                 endpoint_kind=requested_kind,
                 model_refresh_mode=refresh_mode,
                 model_refresh_interval=refresh_interval,
@@ -1856,6 +1989,7 @@ def setup_model_routes(model_discovery):
         base_url: str = Form(...),
         api_key: str = Form(""),
         endpoint_kind: str = Form("auto"),
+        model_type: str = Form("llm"),
         model_refresh_timeout: str = Form(""),
     ):
         require_admin(request)
@@ -1868,7 +2002,12 @@ def setup_model_routes(model_discovery):
         requested_kind = _normalize_endpoint_kind(endpoint_kind)
         configured_timeout = _parse_positive_int(model_refresh_timeout, minimum=1, maximum=60)
         probe_timeout = _explicit_model_list_timeout(base_url, requested_kind, configured_timeout)
-        models = _probe_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
+        models = _probe_endpoint_for_model_type(
+            base_url,
+            api_key.strip() or None,
+            timeout=probe_timeout,
+            model_type=model_type,
+        )
         ping = {"reachable": True, "error": None} if models else _ping_endpoint(base_url, api_key.strip() or None, timeout=min(probe_timeout, 2.0))
         return {
             "base_url": base_url,
@@ -1890,12 +2029,22 @@ def setup_model_routes(model_discovery):
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
             if not ep:
                 raise HTTPException(404, "Endpoint not found")
-            ep_data = {"id": ep.id, "name": ep.name, "base_url": ep.base_url, "api_key": ep.api_key}
+            ep_data = {
+                "id": ep.id,
+                "name": ep.name,
+                "base_url": ep.base_url,
+                "api_key": ep.api_key,
+                "model_type": getattr(ep, "model_type", None) or "llm",
+            }
         finally:
             db.close()
 
         base = _normalize_base(ep_data["base_url"])
-        all_models = _probe_endpoint(base, ep_data["api_key"])
+        all_models = _probe_endpoint_for_model_type(
+            base,
+            ep_data["api_key"],
+            model_type=ep_data.get("model_type") or "llm",
+        )
         chat_models = [m for m in all_models if _is_chat_model(m)]
         skipped = len(all_models) - len(chat_models)
 
@@ -1954,7 +2103,12 @@ def setup_model_routes(model_discovery):
                 category = _classify_endpoint(base, kind)
                 timeout = _manual_refresh_timeout(ep, category, refresh_timeout)
                 try:
-                    probed = _probe_endpoint(base, ep.api_key, timeout=timeout)
+                    probed = _probe_endpoint_for_model_type(
+                        base,
+                        ep.api_key,
+                        timeout=timeout,
+                        model_type=getattr(ep, "model_type", None) or "llm",
+                    )
                 except Exception as exc:
                     logger.warning("Manual model refresh failed for endpoint %s at %s: %s", ep_id, base, exc)
                     probed = []
@@ -2331,6 +2485,95 @@ def setup_model_routes(model_discovery):
             }
 
         return _ollama_unload_model(base_url, api_key, model)
+
+    @router.post("/model-endpoints/unload-all")
+    async def unload_all_endpoint_models(request: Request, response: Response):
+        """Ask every supported local runtime to unload all currently loaded models."""
+        require_admin(request)
+        db = SessionLocal()
+        try:
+            endpoints = db.query(ModelEndpoint).all()
+        finally:
+            db.close()
+
+        supported_endpoints = 0
+        skipped_endpoints = 0
+        requested = 0
+        unloaded = 0
+        results = []
+        errors = []
+
+        for ep in endpoints:
+            try:
+                from src.endpoint_resolver import resolve_endpoint_runtime
+                base_url, api_key = resolve_endpoint_runtime(ep, owner=getattr(ep, "owner", None))
+            except Exception:
+                base_url = _normalize_base(getattr(ep, "base_url", "") or "")
+                api_key = getattr(ep, "api_key", None)
+
+            if not _supports_ollama_unload(base_url):
+                skipped_endpoints += 1
+                continue
+
+            supported_endpoints += 1
+            ep_label = getattr(ep, "name", None) or getattr(ep, "id", None) or base_url
+            try:
+                loaded_models = _ollama_loaded_models(base_url, api_key)
+            except HTTPException as exc:
+                errors.append({
+                    "endpoint_id": getattr(ep, "id", None),
+                    "endpoint": ep_label,
+                    "detail": exc.detail,
+                })
+                continue
+
+            for model in loaded_models:
+                requested += 1
+                try:
+                    data = _ollama_unload_model(base_url, api_key, model)
+                    unloaded += 1
+                    results.append({
+                        "endpoint_id": getattr(ep, "id", None),
+                        "endpoint": ep_label,
+                        "model": model,
+                        "provider": data.get("provider", "ollama"),
+                    })
+                except HTTPException as exc:
+                    errors.append({
+                        "endpoint_id": getattr(ep, "id", None),
+                        "endpoint": ep_label,
+                        "model": model,
+                        "detail": exc.detail,
+                    })
+
+        failed = len(errors)
+        if failed:
+            response.status_code = 207 if unloaded else 502
+
+        if unloaded and failed:
+            message = f"Unloaded {unloaded} loaded model{'' if unloaded == 1 else 's'}; {failed} failed."
+        elif unloaded:
+            message = f"Unloaded {unloaded} loaded model{'' if unloaded == 1 else 's'}."
+        elif failed:
+            message = f"Unload failed for {failed} runtime/model request{'' if failed == 1 else 's'}."
+        elif supported_endpoints:
+            message = "No loaded Ollama models found."
+        else:
+            message = "No supported local model runtimes found."
+
+        return {
+            "ok": failed == 0,
+            "supported": supported_endpoints > 0,
+            "provider": "ollama",
+            "requested": requested,
+            "unloaded": unloaded,
+            "failed": failed,
+            "supported_endpoints": supported_endpoints,
+            "skipped_endpoints": skipped_endpoints,
+            "results": results,
+            "errors": errors[:10],
+            "message": message,
+        }
 
     @router.delete("/model-endpoints/{ep_id}")
     def delete_model_endpoint(ep_id: str, request: Request):

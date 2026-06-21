@@ -252,10 +252,24 @@ function _syncAllExpandButtons() {
   });
 }
 
+function _fullViewportRect() {
+  return {
+    left: 0,
+    top: 0,
+    width: window.innerWidth || document.documentElement.clientWidth || 0,
+    height: window.innerHeight || document.documentElement.clientHeight || 0,
+  };
+}
+
+function _fullExpandTargetRect(modal) {
+  if (_isTouchLandscape()) return fullscreenWorkspaceRect();
+  return modal?.getBoundingClientRect ? modal.getBoundingClientRect() : _fullViewportRect();
+}
+
 function _fitFullExpandedContentToModalFrame(modal) {
   const content = _modalWindowContent(modal);
   if (!modal?.getBoundingClientRect || !content?.style) return;
-  const rect = _isTouchLandscape() ? fullscreenWorkspaceRect() : modal.getBoundingClientRect();
+  const rect = _fullExpandTargetRect(modal);
   if (!rect || rect.width <= 1 || rect.height <= 1) return;
   content.style.setProperty('position', 'fixed', 'important');
   content.style.setProperty('left', `${Math.round(rect.left)}px`, 'important');
@@ -267,6 +281,26 @@ function _fitFullExpandedContentToModalFrame(modal) {
   content.style.setProperty('margin', '0', 'important');
   content.style.setProperty('transform', 'none', 'important');
   content.dataset._tileZone = 'fullscreen';
+}
+
+function _forEachFullExpandedModal(fn) {
+  document.querySelectorAll('.modal, .research-overlay, .notes-pane-backdrop').forEach((modal) => {
+    if (!modal.isConnected || modal.classList.contains('hidden') || !_isFullExpanded(modal)) return;
+    fn(modal);
+  });
+}
+
+let _fullExpandRefitTimer = 0;
+let _fullExpandFrameObserver = null;
+
+function _scheduleFullExpandRefitAll() {
+  if (_fullExpandRefitTimer) clearTimeout(_fullExpandRefitTimer);
+  const run = () => _forEachFullExpandedModal(_fitFullExpandedContentToModalFrame);
+  requestAnimationFrame(run);
+  _fullExpandRefitTimer = setTimeout(() => {
+    _fullExpandRefitTimer = 0;
+    run();
+  }, 140);
 }
 
 function _scheduleFullExpandGeometrySettle(modal) {
@@ -309,15 +343,11 @@ export function toggleFullExpand(id) {
     modal.classList.add('modal-full-expanded');
     const fsClass = _fullscreenClassFor(modal);
     if (fsClass !== 'modal-full-expanded') modal.classList.add(fsClass);
+    const rect = _isTouchLandscape() ? fullscreenWorkspaceRect() : _fullViewportRect();
     snapModalToZone(modal, {
       name: 'fullscreen',
       force: true,
-      rect: {
-        left: 0,
-        top: 0,
-        width: window.innerWidth || document.documentElement.clientWidth || 0,
-        height: window.innerHeight || document.documentElement.clientHeight || 0,
-      },
+      rect,
     });
     _scheduleFullExpandGeometrySettle(modal);
   }
@@ -332,8 +362,56 @@ export function toggleFullExpand(id) {
 // it BEHIND an already-open tool with a higher static z-index. Start above
 // those statics and bump on every bring-to-front.
 let _modalTopZ = 300;
+const DESKTOP_VISIBLE_WINDOW_LIMIT = 4;
+let _desktopWindowBudgetEnforcing = false;
+
+function _isDesktopWindowBudgetEnabled() {
+  return !_isOdysseusAndroidApp() && window.innerWidth > 768 && !_isTouchInput();
+}
+
+function _isFloatingBudgetWindow(modal) {
+  if (!modal || _isFullExpanded(modal)) return false;
+  return !(modal.classList?.contains('modal-left-docked')
+    || modal.classList?.contains('modal-right-docked')
+    || modal.classList?.contains('email-snap-left'));
+}
+
+function _enforceDesktopWindowBudget(activeId) {
+  if (_desktopWindowBudgetEnforcing || !_isDesktopWindowBudgetEnabled()) return;
+  const visible = [];
+  for (const [id, state] of _state.entries()) {
+    if (state?.isMinimized) continue;
+    const modal = document.getElementById(id);
+    if (!_isFloatingBudgetWindow(modal) || !_isModalVisible(modal)) continue;
+    visible.push({ id, activeAt: state.lastActiveAt || 0 });
+  }
+  if (visible.length <= DESKTOP_VISIBLE_WINDOW_LIMIT) return;
+
+  _desktopWindowBudgetEnforcing = true;
+  try {
+    visible.sort((a, b) => a.activeAt - b.activeAt);
+    let excess = visible.length - DESKTOP_VISIBLE_WINDOW_LIMIT;
+    for (const victim of visible) {
+      if (excess <= 0) break;
+      if (victim.id === activeId) continue;
+      try {
+        if (minimize(victim.id)) excess -= 1;
+      } catch (e) {
+        console.warn('desktop window budget minimize failed', victim.id, e);
+      }
+    }
+  } finally {
+    _desktopWindowBudgetEnforcing = false;
+  }
+}
+
 function _bringToFront(modal) {
-  if (modal) modal.style.setProperty('z-index', String(++_modalTopZ), 'important');
+  if (!modal) return;
+  modal.style.setProperty('z-index', String(++_modalTopZ), 'important');
+  const id = modal.id || '';
+  const state = id ? _state.get(id) : null;
+  if (state) state.lastActiveAt = _modalTopZ;
+  if (id) setTimeout(() => _enforceDesktopWindowBudget(id), 0);
 }
 
 function _emitModalOpened(id, modal) {
@@ -660,7 +738,7 @@ function _aboveComposerTop(height) {
 }
 
 function _desktopChatbarDockRect(bounds = _dockWorkspaceBounds()) {
-  if (_isTouchInput() || _dockPos) return null;
+  if (_isTouchInput()) return null;
   const rect = _visibleRect(document.querySelector('.chat-input-bar'));
   if (!rect) return null;
   const left = Math.max(bounds.left + 8, rect.left);
@@ -936,18 +1014,26 @@ function _applyDockPos(dock) {
   _syncDockLayout();
   const bounds = _dockWorkspaceBounds();
   _syncDockRowMode(dock, bounds);
-  if (!_dockPos) {
-    const chatbarDock = _desktopChatbarDockRect(bounds);
-    if (chatbarDock) {
-      dock.style.left = `${chatbarDock.left}px`;
-      dock.style.width = `${chatbarDock.width}px`;
-      dock.style.maxWidth = `${chatbarDock.width}px`;
-      dock.style.transform = 'none';
-    } else {
-      dock.style.left = `${Math.round((bounds.left + bounds.right) / 2)}px`;
-      dock.style.removeProperty('width');
-      dock.style.transform = 'translateX(-50%)';
+  const chatbarDock = _desktopChatbarDockRect(bounds);
+  if (chatbarDock) {
+    if (_dockPos) {
+      _dockPos = null;
+      delete _dockPosByLayout[_dockLayout];
+      _saveDockState();
     }
+    dock.style.left = `${chatbarDock.left}px`;
+    dock.style.width = `${chatbarDock.width}px`;
+    dock.style.maxWidth = `${chatbarDock.width}px`;
+    dock.style.transform = 'none';
+    dock.style.right = 'auto';
+    dock.style.removeProperty('top');
+    dock.style.bottom = '';
+    return;
+  }
+  if (!_dockPos) {
+    dock.style.left = `${Math.round((bounds.left + bounds.right) / 2)}px`;
+    dock.style.removeProperty('width');
+    dock.style.transform = 'translateX(-50%)';
     dock.style.right = 'auto';
     dock.style.removeProperty('top');
     dock.style.bottom = '';
@@ -2047,6 +2133,7 @@ export function register(id, { restoreFn, closeFn, railBtnId, sidebarBtnId, labe
     btnIds,
     isMinimized: false,
     restoreMinHeight: '',
+    lastActiveAt: 0,
   });
   // Auto-stack: whichever modal becomes visible last sits on top of any
   // already-open modals. The various tool open() functions (gallery,
@@ -2417,13 +2504,78 @@ function _scanAndWire() {
     if (_isModalVisible(modal)) _scheduleAndroidDefaultDock(id, modal);
   }
 }
-const _scanTimer = setInterval(_scanAndWire, 1000);
-// First scan after DOM ready
-if (document.readyState !== 'loading') {
-  setTimeout(_scanAndWire, 100);
-} else {
-  document.addEventListener('DOMContentLoaded', () => setTimeout(_scanAndWire, 100));
+
+let _autoWireScanQueued = false;
+let _autoWireObserver = null;
+
+function _queueAutoWireScan() {
+  if (_autoWireScanQueued) return;
+  _autoWireScanQueued = true;
+  requestAnimationFrame(() => {
+    _autoWireScanQueued = false;
+    _scanAndWire();
+  });
 }
+
+function _nodeMayContainAutoWireModal(node) {
+  if (!node || node.nodeType !== 1) return false;
+  if (_AUTO_WIRE[node.id]) return true;
+  const classes = node.classList;
+  if (classes && (
+    classes.contains('modal')
+    || classes.contains('research-overlay')
+    || classes.contains('notes-pane')
+    || classes.contains('notes-pane-backdrop')
+  )) {
+    return true;
+  }
+  if (!node.querySelector) return false;
+  return !!node.querySelector('.modal, .research-overlay, .notes-pane, .notes-pane-backdrop');
+}
+
+function _wireAutoWireScanner() {
+  // First scan after DOM ready catches the built-in hidden modals. After that,
+  // desktop uses mutation/focus resyncs so many open windows do not force a
+  // full document scan every second. Android keeps the interval because the
+  // landscape dock needs to react to WebView timing quirks after tool opens.
+  const runFirstScan = () => setTimeout(_scanAndWire, 100);
+  if (document.readyState !== 'loading') {
+    runFirstScan();
+  } else {
+    document.addEventListener('DOMContentLoaded', runFirstScan, { once: true });
+  }
+
+  if (_isOdysseusAndroidApp()) {
+    return setInterval(_scanAndWire, 1000);
+  }
+
+  if (typeof MutationObserver !== 'undefined') {
+    _autoWireObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes || []) {
+          if (_nodeMayContainAutoWireModal(node)) {
+            _queueAutoWireScan();
+            return;
+          }
+        }
+      }
+    });
+    const observeBody = () => {
+      if (document.body) {
+        _autoWireObserver.observe(document.body, { childList: true, subtree: true });
+      }
+    };
+    if (document.body) observeBody();
+    else document.addEventListener('DOMContentLoaded', observeBody, { once: true });
+  }
+
+  window.addEventListener('focus', _queueAutoWireScan);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) _queueAutoWireScan();
+  });
+  return null;
+}
+const _scanTimer = _wireAutoWireScanner();
 
 // Tools that survive a swipe-down as a dock chip. Anything else falls
 // through to the legacy close handler and goes away entirely.
@@ -2519,14 +2671,44 @@ document.addEventListener('click', (e) => {
   }
 }, true);
 
-window.addEventListener('resize', _syncAllExpandButtons);
-window.addEventListener('orientationchange', _syncAllExpandButtons);
-window.addEventListener('odysseus:cutoutchange', _syncAllExpandButtons);
+function _syncFullExpandViewportState() {
+  _syncAllExpandButtons();
+  _scheduleFullExpandRefitAll();
+}
+
+function _observeFullExpandFrameChanges() {
+  if (typeof MutationObserver === 'undefined') return;
+  const targets = [
+    document.documentElement,
+    document.body,
+    document.getElementById('sidebar'),
+    document.getElementById('icon-rail'),
+    document.getElementById('chat-container'),
+  ].filter(Boolean);
+  if (!targets.length) return;
+  if (_fullExpandFrameObserver) _fullExpandFrameObserver.disconnect();
+  _fullExpandFrameObserver = new MutationObserver(_scheduleFullExpandRefitAll);
+  targets.forEach((target) => {
+    _fullExpandFrameObserver.observe(target, {
+      attributes: true,
+      attributeFilter: ['class', 'style', 'data-side', 'data-state', 'aria-expanded'],
+    });
+  });
+}
+
+window.addEventListener('resize', _syncFullExpandViewportState);
+window.addEventListener('orientationchange', _syncFullExpandViewportState);
+window.addEventListener('odysseus:cutoutchange', _syncFullExpandViewportState);
 if (window.visualViewport) {
-  window.visualViewport.addEventListener('resize', _syncAllExpandButtons);
+  window.visualViewport.addEventListener('resize', _syncFullExpandViewportState);
 }
 if (screen.orientation && screen.orientation.addEventListener) {
-  screen.orientation.addEventListener('change', _syncAllExpandButtons);
+  screen.orientation.addEventListener('change', _syncFullExpandViewportState);
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', _observeFullExpandFrameChanges, { once: true });
+} else {
+  _observeFullExpandFrameChanges();
 }
 
 const modalManagerApi = { register, unregister, isRegistered, isMinimized, minimize, restore, toggle, close, toggleFullExpand, injectMinimizeButton };

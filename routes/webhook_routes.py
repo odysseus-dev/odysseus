@@ -187,7 +187,7 @@ def setup_webhook_routes(
 
     # Known provider base URLs — auto-resolved from api_key prefix or model name
     KNOWN_PROVIDERS = {
-        "deepseek": "https://api.deepseek.com/v1",
+        "deepseek": "https://api.deepseek.com",
         "openai": "https://api.openai.com/v1",
         "mistral": "https://api.mistral.ai/v1",
         "groq": "https://api.groq.com/openai/v1",
@@ -291,7 +291,7 @@ def setup_webhook_routes(
                 base_url = _resolve_base_url(model, body.provider)
             if not base_url:
                 raise HTTPException(400,
-                    "Could not auto-detect provider. Pass base_url (e.g. 'https://api.deepseek.com/v1') "
+                    "Could not auto-detect provider. Pass base_url (e.g. 'https://api.deepseek.com') "
                     "or provider ('deepseek', 'openai', 'groq', etc.)")
             base_url = normalize_base(base_url)
             endpoint_url = build_chat_url(base_url)

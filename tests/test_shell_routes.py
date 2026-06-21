@@ -356,6 +356,36 @@ class TestPackageProbeStatus:
         assert _package_installed_from_probe("diffusers", missing_torch) is False
         assert _package_installed_from_probe("diffusers", ready) is True
 
+    def test_onnxruntime_directml_requires_directml_provider(self):
+        missing_provider = {
+            "modules": {"onnxruntime": {"found": True, "real_module": True}},
+            "dists": {"onnxruntime-directml": "1.23.2"},
+            "binaries": {},
+            "providers": ["CPUExecutionProvider"],
+        }
+        ready = {
+            "modules": {"onnxruntime": {"found": True, "real_module": True}},
+            "dists": {"onnxruntime-directml": "1.23.2"},
+            "binaries": {},
+            "providers": ["DmlExecutionProvider", "CPUExecutionProvider"],
+        }
+
+        assert _package_installed_from_probe("onnxruntime-directml", missing_provider) is False
+        assert _package_installed_from_probe("onnxruntime-directml", ready) is True
+        assert "DirectML provider not available" in _package_status_note("onnxruntime-directml", missing_provider)
+        assert "onnxruntime-directml 1.23.2" in _package_status_note("onnxruntime-directml", ready)
+
+    def test_onnxruntime_cpu_row_accepts_gpu_runtime_distribution(self):
+        probe = {
+            "modules": {"onnxruntime": {"found": True, "real_module": True}},
+            "dists": {"onnxruntime-directml": "1.23.2"},
+            "binaries": {},
+            "providers": ["DmlExecutionProvider", "CPUExecutionProvider"],
+        }
+
+        assert _package_installed_from_probe("onnxruntime", probe) is True
+        assert "onnxruntime-directml 1.23.2" in _package_status_note("onnxruntime", probe)
+
     def test_local_user_install_bin_is_added_to_path(self, monkeypatch, tmp_path):
         user_base = tmp_path / "user-base"
         monkeypatch.setattr("site.USER_BASE", str(user_base))
@@ -375,6 +405,13 @@ class TestPackageProbeStatus:
         assert "os.path.expanduser('~/.local/bin')" in script
         assert "add_user_install_bins_to_path()" in script
         assert "shutil.which(b)" in script
+
+    def test_remote_package_probe_checks_onnxruntime_providers(self):
+        script = _package_probe_script(["onnxruntime-directml"])
+
+        assert "'onnxruntime-directml':['onnxruntime-directml']" in script
+        assert "'onnxruntime-directml':['onnxruntime']" in script
+        assert "ort.get_available_providers()" in script
 
 
 class TestSshBaseArgv:

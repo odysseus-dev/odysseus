@@ -39,6 +39,28 @@ import { state } from './state.js';
 const TOPBAR_MENU_IDS = ['ge-image-menu', 'ge-filter-menu', 'ge-resize-menu', 'ge-save-menu'];
 const TOPBAR_TRIGGER_IDS = ['ge-image-menu-btn', 'ge-filter-menu-btn', 'ge-resize-menu-btn', 'ge-save-menu-btn'];
 
+function topbarMenuBounds(pad = 8) {
+  const viewport = {
+    left: pad,
+    top: pad,
+    right: Math.max(pad, (window.innerWidth || 0) - pad),
+    bottom: Math.max(pad, (window.innerHeight || 0) - pad),
+  };
+  const surface = state.container?.closest?.('.gallery-modal-content, .modal-content')
+    || state.container?.closest?.('.gallery-editor')
+    || state.container;
+  const rect = surface?.getBoundingClientRect?.();
+  if (!rect || rect.width < 120 || rect.height < 120) return viewport;
+  const bounds = {
+    left: Math.max(viewport.left, rect.left + pad),
+    top: Math.max(viewport.top, rect.top + pad),
+    right: Math.min(viewport.right, rect.right - pad),
+    bottom: Math.min(viewport.bottom, rect.bottom - pad),
+  };
+  if (bounds.right - bounds.left < 140 || bounds.bottom - bounds.top < 120) return viewport;
+  return bounds;
+}
+
 /**
  * Close every topbar dropdown except an optional "keep open" one.
  * Exported so the Image / Filter / Resize menus (wired elsewhere)
@@ -92,9 +114,16 @@ export function wireTopbar(deps) {
       };
       const positionSaveMenu = () => {
         const r = saveBtn.getBoundingClientRect();
-        saveMenu.style.top = `${r.bottom + 2}px`;
-        saveMenu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
-        saveMenu.style.left = 'auto';
+        const bounds = topbarMenuBounds(8);
+        const width = Math.min(saveMenu.offsetWidth || 180, Math.max(140, bounds.right - bounds.left));
+        const left = Math.max(bounds.left, Math.min(Math.max(bounds.left, bounds.right - width), r.right - width));
+        const top = Math.max(bounds.top, r.bottom + 2);
+        saveMenu.style.top = `${Math.round(top)}px`;
+        saveMenu.style.left = `${Math.round(left)}px`;
+        saveMenu.style.right = 'auto';
+        saveMenu.style.maxWidth = `${Math.round(bounds.right - left)}px`;
+        saveMenu.style.maxHeight = `${Math.round(Math.max(96, Math.min(420, bounds.bottom - top)))}px`;
+        saveMenu.style.overflowY = 'auto';
       };
       saveBtn.addEventListener('click', (e) => {
         e.stopPropagation();

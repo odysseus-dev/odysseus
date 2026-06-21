@@ -5,11 +5,14 @@ Creates data directories, initializes the database, and sets up an
 initial admin user. Safe to re-run (skips what already exists).
 """
 
+import json
 import os
 import platform
 import shutil
+import sqlite3
 import subprocess
 import sys
+import time
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
@@ -34,10 +37,17 @@ DIRS = [
 ]
 
 
+def _display_path(path: str) -> str:
+    try:
+        return os.path.relpath(path, BASE_DIR)
+    except ValueError:
+        return path
+
+
 def create_dirs():
     for d in DIRS:
         os.makedirs(d, exist_ok=True)
-        print(f"  [ok] {os.path.relpath(d, BASE_DIR)}/")
+        print(f"  [ok] {_display_path(d)}/")
 
 
 def init_database():
@@ -77,16 +87,97 @@ def _prompt_admin_credentials():
     return username, password
 
 
+def _defer_admin_setup_enabled() -> bool:
+    return os.getenv("ODYSSEUS_DEFER_ADMIN_SETUP", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_minimal_setup_admin(auth_path: str) -> bool:
+    """True for setup.py's legacy/generated one-admin auth file."""
+    try:
+        with open(auth_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        users = data.get("users")
+        if not isinstance(users, dict) or set(users.keys()) != {"admin"}:
+            return False
+        admin = users.get("admin")
+        if not isinstance(admin, dict):
+            return False
+        if not isinstance(admin.get("password_hash"), str):
+            return False
+        if admin.get("is_admin") is not True and admin.get("role") != "admin":
+            return False
+        # Accounts created through the web UI include richer metadata. Do not
+        # reset those, even in Electron-deferred mode.
+        return "created" not in admin and "privileges" not in admin
+    except Exception:
+        return False
+
+
+def _has_user_content(data_dir: str) -> bool:
+    """Detect real user-created content; ignore bootstrap/default rows."""
+    db_path = os.path.join(data_dir, "app.db")
+    if not os.path.exists(db_path):
+        return False
+
+    content_tables = (
+        "chat_messages",
+        "documents",
+        "memories",
+        "notes",
+        "gallery_images",
+        "email_accounts",
+        "calendar_events",
+        "contacts",
+    )
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        for table in content_tables:
+            try:
+                count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            except sqlite3.Error:
+                continue
+            if count:
+                return True
+    except Exception:
+        # If the DB cannot be inspected, fail closed and keep auth.json.
+        return True
+    finally:
+        if conn is not None:
+            conn.close()
+    return False
+
+
+def _defer_minimal_setup_admin_if_safe(auth_path: str) -> bool:
+    if not _defer_admin_setup_enabled():
+        return False
+    if not _is_minimal_setup_admin(auth_path):
+        return False
+    data_dir = os.path.dirname(auth_path)
+    if _has_user_content(data_dir):
+        return False
+
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    backup_path = f"{auth_path}.deferred-setup-backup-{stamp}"
+    os.replace(auth_path, backup_path)
+    print(f"  [skip] Existing generated admin auth backed up to {os.path.basename(backup_path)}")
+    return True
+
+
 def create_default_admin():
     """Create an initial admin user if none exists."""
     auth_path = AUTH_FILE
     if os.path.exists(auth_path):
+        if _defer_minimal_setup_admin_if_safe(auth_path):
+            return "deferred"
         print("  [skip] auth.json already exists")
         return "exists"
+    if _defer_admin_setup_enabled():
+        print("  [skip] Admin account setup deferred to the web login screen")
+        return "deferred"
 
     try:
         import bcrypt
-        import json
 
         # Priority: env vars > interactive prompt > random password
         username = os.getenv("ODYSSEUS_ADMIN_USER", "").strip().lower()
@@ -270,6 +361,8 @@ def main():
         print("Login with your existing admin credentials.\n")
     elif admin_status == "skipped":
         print("Admin creation did not happen: dependencies are missing.\nRun 'pip install bcrypt' and rerun setup.\n")
+    elif admin_status == "deferred":
+        print("Open the web UI and create your admin account on the login screen.\n")
     elif admin_status == "failed":
         print("Admin creation did not happen: a system or file error occurred.\nCheck write permissions for the 'data' directory and rerun setup.\n")
     else:  # handling "failed" or any unhandled edge case

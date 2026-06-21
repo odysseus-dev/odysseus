@@ -532,8 +532,8 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "opencode.ai/zen/go"): return "OpenCode Go"
     if _host_match(url, "opencode.ai/zen"): return "OpenCode Zen"
     if _host_match(url, "groq.com"): return "Groq"
-    from src.chatgpt_subscription import is_chatgpt_subscription_base
-    if is_chatgpt_subscription_base(url): return "ChatGPT Subscription"
+    from src.chatgpt_subscription import CHATGPT_SUBSCRIPTION_LABEL, is_chatgpt_subscription_base
+    if is_chatgpt_subscription_base(url): return CHATGPT_SUBSCRIPTION_LABEL
     from src.copilot import is_copilot_base
     if is_copilot_base(url): return "GitHub Copilot"
     if _host_match(url, "mistral.ai"): return "Mistral"
@@ -610,7 +610,7 @@ def _build_chatgpt_responses_payload(
     }
     if not _restricts_temperature(model):
         payload["temperature"] = temperature
-    # ChatGPT Subscription Codex API does not support max_output_tokens —
+    # Codex Subscription API does not support max_output_tokens —
     # passing it returns HTTP 400 "Unsupported parameter: max_output_tokens".
     # Do not include it in the payload.
     return payload
@@ -618,9 +618,9 @@ def _build_chatgpt_responses_payload(
 
 def _format_chatgpt_subscription_error(status_code: int, text: str) -> str:
     if status_code in (401, 403):
-        return "ChatGPT Subscription credentials expired or were rejected. Reconnect the provider."
+        return "Codex Subscription credentials expired or were rejected. Reconnect the provider."
     if status_code == 429:
-        return "ChatGPT Subscription quota or rate limit was reached. Retry after the upstream limit resets."
+        return "Codex Subscription quota or rate limit was reached. Retry after the upstream limit resets."
     return _format_upstream_error(status_code, text, "https://chatgpt.com/backend-api/codex")
 
 
@@ -1367,7 +1367,7 @@ async def llm_call_async(
         return cached_response
 
     if provider == "chatgpt-subscription":
-        # ChatGPT/Codex requires streamed Responses requests even for callers
+        # Codex Subscription requires streamed Responses requests even for callers
         # that want a plain string (auto-title, memory extraction, etc.).
         # Reuse stream_llm's validated Codex SSE path and collect deltas.
         parts: List[str] = []
@@ -1400,7 +1400,7 @@ async def llm_call_async(
                     continue
                 if event_is_error or data.get("error") or (data.get("status") and data.get("text")):
                     status = int(data.get("status") or 502)
-                    text = data.get("text") or data.get("error") or "ChatGPT Subscription request failed"
+                    text = data.get("text") or data.get("error") or "Codex Subscription request failed"
                     raise HTTPException(status, text)
                 delta = data.get("delta")
                 if isinstance(delta, str):
@@ -1579,7 +1579,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         return
     note_model_activity(target_url, model)
 
-    # ── ChatGPT Subscription / Codex Responses streaming ──
+    # ── Codex Subscription Responses streaming ──
     if provider == "chatgpt-subscription":
         event_name = ""
         input_tokens = 0
@@ -1623,21 +1623,21 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                         return
                     elif evt in ("response.failed", "error"):
                         err = data.get("error") or (data.get("response") or {}).get("error") or {}
-                        text = err.get("message") if isinstance(err, dict) else str(err or "ChatGPT Subscription request failed")
+                        text = err.get("message") if isinstance(err, dict) else str(err or "Codex Subscription request failed")
                         yield f'event: error\ndata: {json.dumps({"status": 502, "text": text})}\n\n'
                         return
                 yield "data: [DONE]\n\n"
         except (httpx.ConnectError, httpx.ConnectTimeout) as e:
             _cooled = _mark_host_dead(target_url)
             _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
-            logger.warning(f"ChatGPT Subscription stream connect to {target_url} failed: {e}{_tail}")
+            logger.warning(f"Codex Subscription stream connect to {target_url} failed: {e}{_tail}")
             yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
         except httpx.ReadTimeout:
             yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
         except httpx.NetworkError:
             yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502})}\n\n'
         except Exception as e:
-            logger.error(f"ChatGPT Subscription stream error: {e}")
+            logger.error(f"Codex Subscription stream error: {e}")
             yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
         return
 

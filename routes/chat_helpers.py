@@ -473,7 +473,7 @@ def resolve_session_auth(sess, session_id: str, owner: Optional[str] = None):
                     logger.warning("Failed to resolve provider auth for session %s: %s", session_id, e)
                     return
                 if not api_key:
-                    # No usable key (e.g. ChatGPT Subscription needs re-auth).
+                    # No usable key (e.g. Codex Subscription needs re-auth).
                     return
                 sess.headers = build_headers(api_key, base)
                 if is_chatgpt_subscription:
@@ -488,8 +488,8 @@ def resolve_session_auth(sess, session_id: str, owner: Optional[str] = None):
                     if stored is not None and _has_auth_keys(stored.headers):
                         stale_q.update({"headers": {}})
                         db.commit()
-                        logger.info(f"Cleared persisted ChatGPT Subscription bearer from session {session_id}")
-                    logger.debug(f"Resolved request-local ChatGPT Subscription auth for session {session_id}")
+                        logger.info(f"Cleared persisted Codex Subscription bearer from session {session_id}")
+                    logger.debug(f"Resolved request-local Codex Subscription auth for session {session_id}")
                     return
                 update_q = db.query(DBSession).filter(DBSession.id == session_id)
                 if owner:

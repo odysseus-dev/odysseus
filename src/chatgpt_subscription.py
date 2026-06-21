@@ -1,4 +1,4 @@
-"""ChatGPT subscription / Codex backend OAuth helpers.
+"""Codex subscription OAuth helpers backed by the ChatGPT account sign-in.
 
 This provider is intentionally separate from OpenAI API-key endpoints. It uses
 OpenAI account OAuth device authorization, stores refresh tokens server-side,
@@ -21,6 +21,10 @@ DEFAULT_CHATGPT_SUBSCRIPTION_BASE_URL = (
     os.getenv("CHATGPT_SUBSCRIPTION_BASE_URL", "").strip().rstrip("/")
     or "https://chatgpt.com/backend-api/codex"
 )
+# Keep the legacy provider key so existing saved endpoints/auth sessions keep
+# working. The user-facing label is Codex Subscription because this route calls
+# the Codex backend, not normal ChatGPT chat.
+CHATGPT_SUBSCRIPTION_LABEL = "Codex Subscription"
 CHATGPT_SUBSCRIPTION_PROVIDER = "chatgpt-subscription"
 CHATGPT_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CHATGPT_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
@@ -80,7 +84,7 @@ def chatgpt_headers(access_token: Optional[str]) -> Dict[str, str]:
         "Accept": "application/json, text/event-stream",
         "Origin": "https://chatgpt.com",
         "Referer": "https://chatgpt.com/codex",
-        "User-Agent": "Odysseus ChatGPT Subscription",
+        "User-Agent": "Odysseus Codex Subscription",
     }
     if access_token:
         headers["Authorization"] = f"Bearer {access_token}"
@@ -129,7 +133,7 @@ def _raise_for_oauth_response(response: httpx.Response, action: str) -> None:
     if response.status_code < 400:
         return
     code = ""
-    message = f"ChatGPT Subscription {action} failed with HTTP {response.status_code}."
+    message = f"{CHATGPT_SUBSCRIPTION_LABEL} {action} failed with HTTP {response.status_code}."
     try:
         payload = response.json()
         err = payload.get("error") if isinstance(payload, dict) else None
@@ -137,17 +141,17 @@ def _raise_for_oauth_response(response: httpx.Response, action: str) -> None:
             code = str(err.get("code") or err.get("type") or "").strip()
             msg = err.get("message")
             if msg:
-                message = f"ChatGPT Subscription {action} failed: {msg}"
+                message = f"{CHATGPT_SUBSCRIPTION_LABEL} {action} failed: {msg}"
         elif isinstance(err, str):
             code = err.strip()
             desc = payload.get("error_description") or payload.get("message")
             if desc:
-                message = f"ChatGPT Subscription {action} failed: {desc}"
+                message = f"{CHATGPT_SUBSCRIPTION_LABEL} {action} failed: {desc}"
     except Exception:
         pass
     if response.status_code == 429:
         raise ChatGPTSubscriptionRateLimited(
-            "ChatGPT Subscription quota or rate limit was reached. Credentials are still valid."
+            f"{CHATGPT_SUBSCRIPTION_LABEL} quota or rate limit was reached. Credentials are still valid."
         )
     if response.status_code in (401, 403) or code in {"invalid_grant", "invalid_token", "invalid_request", "refresh_token_reused"}:
         raise ChatGPTSubscriptionReauthRequired(message)
@@ -159,9 +163,9 @@ def _json_or_error(response: httpx.Response, action: str) -> Dict[str, Any]:
     try:
         data = response.json()
     except Exception as exc:
-        raise ChatGPTSubscriptionError(f"ChatGPT Subscription {action} returned invalid JSON.") from exc
+        raise ChatGPTSubscriptionError(f"{CHATGPT_SUBSCRIPTION_LABEL} {action} returned invalid JSON.") from exc
     if not isinstance(data, dict):
-        raise ChatGPTSubscriptionError(f"ChatGPT Subscription {action} returned an unexpected response.")
+        raise ChatGPTSubscriptionError(f"{CHATGPT_SUBSCRIPTION_LABEL} {action} returned an unexpected response.")
     return data
 
 
@@ -215,7 +219,7 @@ def exchange_authorization_code(authorization_code: str, code_verifier: str, tim
 def refresh_oauth_tokens(access_token: str, refresh_token: str, timeout: float = 20.0) -> Dict[str, Any]:
     del access_token
     if not refresh_token:
-        raise ChatGPTSubscriptionReauthRequired("ChatGPT Subscription is missing a refresh token. Reconnect the provider.")
+        raise ChatGPTSubscriptionReauthRequired(f"{CHATGPT_SUBSCRIPTION_LABEL} is missing a refresh token. Reconnect the provider.")
     response = httpx.post(
         CHATGPT_OAUTH_TOKEN_URL,
         headers={"Content-Type": "application/x-www-form-urlencoded"},
@@ -263,7 +267,7 @@ def resolve_runtime_credentials(auth_id: str, owner: Optional[str] = None, *, fo
             q = q.filter(ProviderAuthSession.owner == owner)
         row = q.first()
         if row is None:
-            raise ChatGPTSubscriptionAuthNotFound("ChatGPT Subscription credentials were not found for this user.")
+            raise ChatGPTSubscriptionAuthNotFound(f"{CHATGPT_SUBSCRIPTION_LABEL} credentials were not found for this user.")
 
         access_token = row.access_token or ""
         if force_refresh or access_token_is_expiring(access_token):

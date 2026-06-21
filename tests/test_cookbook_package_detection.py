@@ -11,7 +11,7 @@ package's declared pip spec instead.
 
 from pathlib import Path
 
-from routes.shell_routes import _pip_dist_name
+from routes.shell_routes import _pip_dist_name, _pip_dist_names
 
 
 def test_llama_cpp_maps_to_llama_cpp_python_distribution():
@@ -35,6 +35,16 @@ def test_plain_names_pass_through():
     assert _pip_dist_name({"name": "hf_transfer", "pip": "hf_transfer"}) == "hf_transfer"
 
 
+def test_explicit_distribution_candidates_pass_through():
+    pkg = {
+        "name": "onnxruntime",
+        "pip": "onnxruntime",
+        "dist_names": ["onnxruntime", "onnxruntime-directml", "onnxruntime-gpu"],
+    }
+
+    assert _pip_dist_names(pkg) == ["onnxruntime", "onnxruntime-directml", "onnxruntime-gpu"]
+
+
 def test_falls_back_to_import_name_when_no_pip_spec():
     # System rows (tmux/docker) declare no pip spec; fall back to the munged name.
     assert _pip_dist_name({"name": "some_mod", "pip": ""}) == "some-mod"
@@ -46,5 +56,5 @@ def test_route_uses_dist_name_helper_not_munged_import_name():
     derived distribution name, not the old `name.replace('_','-')` (the exact
     bug that hid llama-cpp-python)."""
     src = (Path(__file__).resolve().parents[1] / "routes" / "shell_routes.py").read_text(encoding="utf-8")
-    assert "importlib_metadata.version(_pip_dist_name(pkg))" in src
+    assert "for dist_name in _pip_dist_names(pkg):" in src
     assert 'importlib_metadata.version(pkg["name"].replace("_", "-"))' not in src

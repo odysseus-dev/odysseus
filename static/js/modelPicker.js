@@ -521,7 +521,7 @@ function _initModelPickerDropdown() {
         }
         const sessions = _deps.getSessions();
         const s = sessions.find(x => x.id === currentSessionId);
-        if (s) { s.model = m.mid; s.endpoint_url = m.url; }
+        if (s) { s.model = m.mid; s.endpoint_url = m.url; s.endpoint_id = m.endpointId || ''; }
         // Header stays as session name — model info shown in picker only
       } catch (e) {
         uiModule.showError('Failed to set model: ' + e);
@@ -697,7 +697,7 @@ export function updateModelPicker() {
       if (!currentSessionId) {
         _deps.setPendingChat({ url: first.url, modelId, endpointId: first.endpoint_id });
       } else {
-        if (s) { s.model = modelId; s.endpoint_url = first.url; }
+        if (s) { s.model = modelId; s.endpoint_url = first.url; s.endpoint_id = first.endpoint_id || ''; }
         _autoSelectingDefault = true;
         const fd = new FormData();
         fd.append('model', modelId);
