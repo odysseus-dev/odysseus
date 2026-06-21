@@ -51,7 +51,8 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt \
-    && if [ -f "requirements-optional.txt" ]; then pip install --no-cache-dir -r requirements-optional.txt || true; fi
+    && if [ -f "requirements-optional.txt" ]; then pip install --no-cache-dir -r requirements-optional.txt || true; fi \
+    && chmod -R a+rw /opt/venv
 
 # ROCm Environment Variables for llama.cpp compilation
 ENV PATH="/opt/rocm/bin:/opt/rocm/llvm/bin:${PATH}"
