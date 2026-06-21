@@ -1253,10 +1253,18 @@ def setup_cookbook_routes() -> APIRouter:
             # also allowed spaces and `+`, both of which can be abused to
             # introduce extra shell tokens once interpolated into the
             # serve command. We now use `re.fullmatch` and drop space/`+`.
-            if not req.repo_id or not re.fullmatch(
-                r"[A-Za-z0-9][A-Za-z0-9._\-\[\]<>=!,~]{0,200}", req.repo_id
-            ):
-                raise HTTPException(400, "Invalid pip package name")
+            _pip_pkg_re = r"[A-Za-z0-9][A-Za-z0-9._\-\[\]<>=!,~]{0,200}"
+            if not req.repo_id or not re.fullmatch(_pip_pkg_re, req.repo_id):
+                # Recipe runs send "backend setup" as repo_id — fall back to
+                # extracting the package name from the install command itself.
+                _pkg_m = re.search(
+                    r'pip\s+install(?:\s+-\S+)*\s+"?(' + _pip_pkg_re + r')"?',
+                    req.cmd,
+                )
+                if _pkg_m and re.fullmatch(_pip_pkg_re, _pkg_m.group(1)):
+                    req.repo_id = _pkg_m.group(1)
+                else:
+                    raise HTTPException(400, "Invalid pip package name")
         else:
             _validate_serve_model_id(req.repo_id)
         TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
