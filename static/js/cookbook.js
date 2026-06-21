@@ -33,6 +33,8 @@ import {
   _fetchCachedModels, _cachedAllModels, _filterCachedList, _rerenderCachedModels, _deleteCachedModel,
 } from './cookbookServe.js';
 
+import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
+
 const STORAGE_KEY = 'cookbook-presets';
 const LAST_STATE_KEY = 'cookbook-last-state';
 const SERVE_STATE_KEY = 'cookbook-serve-state';
@@ -1141,7 +1143,7 @@ async function _fetchDependencies() {
 
     // Wire the ⋮ menu on installed packages — currently just "Update".
     function _showDepMenu(anchor) {
-      document.querySelectorAll('.cookbook-dep-menu').forEach(d => d.remove());
+      document.querySelectorAll('.cookbook-dep-menu').forEach(dismissOrRemove);
       const row = anchor.closest('.cookbook-dep-row');
       if (!row) return;
       const pipName = row.dataset.depPip;
@@ -1161,24 +1163,19 @@ async function _fetchDependencies() {
       it.title = `Update ${pkgName} to the latest version (pip install -U)`;
       it.addEventListener('click', async (e) => {
         e.stopPropagation();
-        dropdown.remove();
+        close();
         await _installDep(pipName, pkgName, isLocalOnly, true, null);
       });
       dropdown.appendChild(it);
       document.body.appendChild(dropdown);
-      const close = (ev) => {
-        if (!dropdown.contains(ev.target) && ev.target !== anchor && !anchor.contains(ev.target)) {
-          dropdown.remove();
-          document.removeEventListener('click', close, true);
-        }
-      };
-      setTimeout(() => document.addEventListener('click', close, true), 10);
+      const close = bindMenuDismiss(dropdown, () => { dropdown.remove(); }, (ev) =>
+        !dropdown.contains(ev.target) && ev.target !== anchor && !anchor.contains(ev.target));
     }
     list.querySelectorAll('.cookbook-dep-installed-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         if (document.querySelector('.cookbook-dep-menu')) {
-          document.querySelectorAll('.cookbook-dep-menu').forEach(d => d.remove());
+          document.querySelectorAll('.cookbook-dep-menu').forEach(dismissOrRemove);
           return;
         }
         _showDepMenu(btn);

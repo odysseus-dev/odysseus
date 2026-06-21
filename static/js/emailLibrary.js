@@ -23,6 +23,7 @@ import {
 } from './emailLibrary/signatureFold.js';
 import { state } from './emailLibrary/state.js';
 import { collapseSidebarToRail } from './modalSnap.js';
+import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
 const API_BASE = window.location.origin;
 let _emailUnreadChipClickWired = false;
@@ -5458,16 +5459,12 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
   // Toggle: if a dropdown for THIS anchor is already open, close it.
   const existing = document.querySelector('.email-card-dropdown');
   if (existing && existing._anchor === anchor) {
-    existing.remove();
-    anchor.classList.remove('reader-more-active');
+    dismissOrRemove(existing);
     return;
   }
-  // Otherwise close any other open dropdown (and clear its anchor's active
-  // state) before opening a fresh one.
-  document.querySelectorAll('.email-card-dropdown').forEach(d => {
-    if (d._anchor) d._anchor.classList.remove('reader-more-active');
-    d.remove();
-  });
+  // Otherwise close any other open dropdown (its own teardown clears its
+  // anchor's active state) before opening a fresh one.
+  document.querySelectorAll('.email-card-dropdown').forEach(dismissOrRemove);
 
   const dropdown = document.createElement('div');
   dropdown.className = 'email-card-dropdown';
@@ -5680,8 +5677,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
         _showLibRemindSubmenu(em, dropdown);
         return;
       }
-      dropdown.remove();
-      anchor.classList.remove('reader-more-active');
+      close();
       a.action();
     });
     dropdown.appendChild(item);
@@ -5694,25 +5690,20 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
   cancelItem.innerHTML = _icon(_cancelIco) + '<span>Cancel</span>';
   cancelItem.addEventListener('click', (e) => {
     e.stopPropagation();
-    dropdown.remove();
-    anchor.classList.remove('reader-more-active');
+    close();
   });
   dropdown.appendChild(cancelItem);
 
   document.body.appendChild(dropdown);
   _fitEmailDropdown(dropdown, rect);
-  const close = (ev) => {
-    if (!dropdown.contains(ev.target) && ev.target !== anchor) {
-      dropdown.remove();
-      anchor.classList.remove('reader-more-active');
-      document.removeEventListener('click', close, true);
-    }
-  };
-  setTimeout(() => document.addEventListener('click', close, true), 10);
+  const close = bindMenuDismiss(dropdown, () => {
+    dropdown.remove();
+    anchor.classList.remove('reader-more-active');
+  }, (ev) => !dropdown.contains(ev.target) && ev.target !== anchor);
 }
 
 function _showCardMenu(em, anchor) {
-  document.querySelectorAll('.email-card-dropdown').forEach(d => d.remove());
+  document.querySelectorAll('.email-card-dropdown').forEach(dismissOrRemove);
 
   const dropdown = document.createElement('div');
   dropdown.className = 'email-card-dropdown';
@@ -5877,8 +5868,7 @@ function _showCardMenu(em, anchor) {
         _showLibRemindSubmenu(em, dropdown);
         return;
       }
-      dropdown.remove();
-      anchor.classList.remove('reader-more-active');
+      close();
       a.action();
     });
     dropdown.appendChild(item);
@@ -5891,26 +5881,21 @@ function _showCardMenu(em, anchor) {
   cancelItem.innerHTML = _icon(_cancelIco) + '<span>Cancel</span>';
   cancelItem.addEventListener('click', (e) => {
     e.stopPropagation();
-    dropdown.remove();
-    anchor.classList.remove('reader-more-active');
+    close();
   });
   dropdown.appendChild(cancelItem);
 
   document.body.appendChild(dropdown);
   _fitEmailDropdown(dropdown, rect);
-  const close = (ev) => {
-    if (!dropdown.contains(ev.target) && ev.target !== anchor) {
-      dropdown.remove();
-      anchor.classList.remove('reader-more-active');
-      document.removeEventListener('click', close, true);
-    }
-  };
-  setTimeout(() => document.addEventListener('click', close, true), 10);
+  const close = bindMenuDismiss(dropdown, () => {
+    dropdown.remove();
+    anchor.classList.remove('reader-more-active');
+  }, (ev) => !dropdown.contains(ev.target) && ev.target !== anchor);
 }
 
 // Bulk "Actions" dropdown for select mode — Delete is a separate visible button.
 function _showBulkActionsMenu(anchor) {
-  document.querySelectorAll('.email-card-dropdown').forEach(d => d.remove());
+  document.querySelectorAll('.email-card-dropdown').forEach(dismissOrRemove);
   const dropdown = document.createElement('div');
   dropdown.className = 'email-card-dropdown email-bulk-menu';
   const rect = anchor.getBoundingClientRect();
@@ -5927,7 +5912,7 @@ function _showBulkActionsMenu(anchor) {
     const it = document.createElement('div');
     it.className = 'dropdown-item-compact' + (a.danger ? ' dropdown-item-danger' : '');
     it.innerHTML = `<span class="dropdown-icon">${a.icon}</span><span>${a.label}</span>`;
-    it.addEventListener('click', (e) => { e.stopPropagation(); dropdown.remove(); a.action(); });
+    it.addEventListener('click', (e) => { e.stopPropagation(); close(); a.action(); });
     dropdown.appendChild(it);
   }
   // Mobile-only Cancel — matches the per-card and sidebar dropdowns.
@@ -5937,7 +5922,7 @@ function _showBulkActionsMenu(anchor) {
   cancelIt.innerHTML = `<span class="dropdown-icon">${_cancelIco2}</span><span>Cancel</span>`;
   cancelIt.addEventListener('click', (e) => {
     e.stopPropagation();
-    dropdown.remove();
+    close();
     // Cancel inside the bulk-Actions menu also exits select mode — matches the
     // documents bulk dropdown.
     state._selectMode = false;
@@ -5948,13 +5933,9 @@ function _showBulkActionsMenu(anchor) {
   dropdown.appendChild(cancelIt);
   document.body.appendChild(dropdown);
   _fitEmailDropdown(dropdown, rect);
-  const close = (ev) => {
-    if (!dropdown.contains(ev.target) && ev.target !== anchor) {
-      dropdown.remove();
-      document.removeEventListener('click', close, true);
-    }
-  };
-  setTimeout(() => document.addEventListener('click', close, true), 10);
+  const close = bindMenuDismiss(dropdown, () => {
+    dropdown.remove();
+  }, (ev) => !dropdown.contains(ev.target) && ev.target !== anchor);
 }
 
 function _updateBulkBar() {

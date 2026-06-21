@@ -6,6 +6,7 @@ import uiModule from './ui.js';
 import { openEditor, closeEditor, isEditorOpen } from './galleryEditor.js';
 import spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
+import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -2514,7 +2515,7 @@ export function openGallery() {
   // shares the exact same dropdown style/behaviour.
   const _bulkActionsBtn = document.getElementById('gallery-bulk-actions');
   function _showGalleryBulkMenu(anchor) {
-    document.querySelectorAll('.gallery-bulk-menu').forEach(d => d.remove());
+    document.querySelectorAll('.gallery-bulk-menu').forEach(dismissOrRemove);
     // Standard Odysseus dropdown (.dropdown + dropdown-item-compact) so it
     // matches every other menu in the app. Positioned fixed at the button.
     const dropdown = document.createElement('div');
@@ -2548,17 +2549,11 @@ export function openGallery() {
       const it = document.createElement('div');
       it.className = 'dropdown-item-compact' + (a.danger ? ' dropdown-item-danger' : '');
       it.innerHTML = `<span class="dropdown-icon">${a.icon}</span><span>${a.label}</span>`;
-      it.addEventListener('click', (e) => { e.stopPropagation(); dropdown.remove(); a.action(); });
+      it.addEventListener('click', (e) => { e.stopPropagation(); close(); a.action(); });
       dropdown.appendChild(it);
     }
     document.body.appendChild(dropdown);
-    const close = (ev) => {
-      if (!dropdown.contains(ev.target) && ev.target !== anchor) {
-        dropdown.remove();
-        document.removeEventListener('click', close, true);
-      }
-    };
-    setTimeout(() => document.addEventListener('click', close, true), 10);
+    const close = bindMenuDismiss(dropdown, () => { dropdown.remove(); }, (ev) => !dropdown.contains(ev.target) && ev.target !== anchor);
   }
 
   _bulkActionsBtn?.addEventListener('click', (e) => {
@@ -2567,7 +2562,7 @@ export function openGallery() {
     // should close it. The outside-click handler explicitly skips clicks on
     // the anchor, so the button itself has to do its own dismiss.
     const existing = document.querySelector('.gallery-bulk-menu');
-    if (existing) { existing.remove(); return; }
+    if (existing) { dismissOrRemove(existing); return; }
     if (!_selectedIds().length) { uiModule.showToast('Select photos first'); return; }
     _showGalleryBulkMenu(e.currentTarget);
   });
