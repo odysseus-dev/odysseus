@@ -7,6 +7,8 @@
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 4L16 22L6 22Z' fill='%23e06c75'/%3E%3Cpath d='M16 8L16 22L24 22Z' fill='%23e06c75' opacity='0.6'/%3E%3Cpath d='M4 24Q10 20 16 24Q22 28 28 24' stroke='%23e06c75' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="manifest" href="/static/manifest.json">
 <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+
+<link rel="stylesheet" href="/static/style-login.css">
 <script nonce="{{CSP_NONCE}}">
 (function(){
   // Per-theme bg-effect defaults — mirrors THEME_DEFAULT_* maps in
@@ -136,14 +138,12 @@
 <!-- Axios needs to be loaded first to ensure it is available for other modules -->
 <script type="module" src="https://cdn.jsdelivr.net/npm/axios@1.18.0/dist/axios.min.js"></script>
 <script nonce="{{CSP_NONCE}}">
-(async () => {
+  (async () => {
+  const { api, apiPath } = await import('/static/js/api.js');
   // Load version
   try {
-    const vr = await fetch('/api/version');
-    if (vr.ok) {
-      const vd = await vr.json();
-      document.getElementById('version-label').textContent = 'v' + vd.version;
-    }
+    const { data: vd } = await api.get('/api/version');
+    document.getElementById('version-label').textContent = 'v' + vd.version;
   } catch(e) {}
 
   // Prefill last username
@@ -200,10 +200,9 @@
 
   // Check auth status and fetch policy in parallel, but don't block the
   // authenticated redirect on the policy response.
-  const policyPromise = fetch('/api/auth/policy', { credentials: 'same-origin' }).catch(() => null);
+  const policyPromise = api.get('/api/auth/policy').catch(() => null);
   try {
-    const statusRes = await fetch('/api/auth/status', { credentials: 'same-origin' });
-    const data = await statusRes.json();
+    const { data } = await api.get('/api/auth/status');
     if (data.authenticated) {
       window.location.replace('/');
       return;
@@ -242,19 +241,14 @@
       if (!code) { totpInput.focus(); submitBtn.disabled = false; return; }
       const remember = document.getElementById('remember').checked;
       try {
-        const res = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ username, password, remember, totp_code: code })
+        const { data } = await api.post('/api/auth/login', {
+          username, password, remember, totp_code: code
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Invalid code');
         if (!data.ok) throw new Error('Login failed');
         form._totpMode = false;
         finishLogin();
       } catch (err) {
-        errEl.textContent = err.message;
+        errEl.textContent = err.response?.data?.detail || err.message || 'Invalid code';
         errEl.style.display = 'block';
         submitBtn.disabled = false;
       }
@@ -288,16 +282,9 @@
     if (mode === 'setup' || mode === 'signup') {
       const endpoint = mode === 'setup' ? '/api/auth/setup' : '/api/auth/signup';
       try {
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ username, password })
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Account creation failed');
+        const { data } = await api.post(endpoint, { username, password });
       } catch (err) {
-        errEl.textContent = err.message;
+        errEl.textContent = err.response?.data?.detail || err.message || 'Account creation failed';
         errEl.style.display = 'block';
         submitBtn.disabled = false;
         return;
@@ -314,9 +301,9 @@
       submitBtn.innerHTML = '<span class="login-spinner" aria-hidden="true"></span>';
       submitBtn.disabled = true;
       Promise.all([
-        fetch('/api/sessions', { credentials: 'same-origin' }).then(r => r.json()),
-        fetch('/api/auth/features', { credentials: 'same-origin' }).then(r => r.json()),
-        fetch('/api/auth/settings', { credentials: 'same-origin' }).then(r => r.json()),
+        api.get('/api/sessions').then(r => r.data),
+        api.get('/api/auth/features').then(r => r.data),
+        api.get('/api/auth/settings').then(r => r.data),
       ]).then(([sess, feat, sett]) => {
         sessionStorage.setItem('ody-prefetch-sessions', JSON.stringify(sess));
         sessionStorage.setItem('ody-prefetch-features', JSON.stringify(feat));
@@ -326,15 +313,12 @@
     async function doLogin(totpCode) {
       const loginBody = { username, password, remember };
       if (totpCode) loginBody.totp_code = totpCode;
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify(loginBody)
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Login failed');
-      return data;
+      try {
+        const { data } = await api.post('/api/auth/login', loginBody);
+        return data;
+      } catch (err) {
+        throw new Error(err.response?.data?.detail || 'Login failed');
+      }
     }
     try {
       let data = await doLogin();
