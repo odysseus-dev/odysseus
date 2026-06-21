@@ -1,0 +1,65 @@
+# Stage 1: Extract app code from the stock Odysseus container
+FROM odysseus-odysseus:latest AS base
+
+# Stage 2: Build the runtime using Ubuntu 22.04 (Jammy) for official ROCm 6.1.2 support
+FROM ubuntu:jammy
+
+USER root
+
+# Prevent interactive prompts during apt installations
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install ROCm 6.1.2 toolchain and Python 3.11
+RUN apt-get update && apt-get install -y software-properties-common wget ca-certificates build-essential gpg \
+    && add-apt-repository ppa:deadsnakes/ppa -y \
+    && mkdir -p /etc/apt/sources.list.d \
+    && wget -qO - https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor -o /etc/apt/trusted.gpg.d/rocm.gpg \
+    && echo "deb [arch=amd64] https://repo.radeon.com/amdgpu/6.1.2/ubuntu jammy main" > /etc/apt/sources.list.d/amdgpu.list \
+    && echo "deb [arch=amd64] https://repo.radeon.com/rocm/apt/6.1.2 jammy main" > /etc/apt/sources.list.d/rocm.list \
+    && echo 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600' > /etc/apt/preferences.d/rocm-pin-600 \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        rocm-dev \
+        rocblas-dev \
+        hipblas-dev \
+        rocsparse-dev \
+        hipsparse-dev \
+        rocfft-dev \
+        hipfft-dev \
+        cmake curl git nodejs npm tmux openssh-client gosu \
+        python3.11 python3.11-venv python3.11-dev python3-pip \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Set Python 3.11 as default
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+
+WORKDIR /app
+
+# Copy app code and entrypoint from the stock container
+COPY --from=base /app /app
+COPY --from=base /usr/local/bin/entrypoint.sh /usr/local/bin/entrypoint.sh
+
+# Patch the cookbook builder to inject CMAKE compiler flags for HIP narrowing warnings
+# This ensures we don't need to modify upstream source code on the host.
+RUN sed -i 's|-DGGML_HIP=ON|-DGGML_HIP=ON -DCMAKE_CXX_FLAGS="-Wno-narrowing -Wno-c++11-narrowing" -DCMAKE_HIP_FLAGS="-Wno-narrowing -Wno-c++11-narrowing"|' /app/routes/cookbook_helpers.py
+
+# Install Python dependencies in a virtualenv to avoid system glibc conflicts
+ENV VIRTUAL_ENV=/opt/venv
+RUN python3.11 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt \
+    && if [ -f "requirements-optional.txt" ]; then pip install --no-cache-dir -r requirements-optional.txt || true; fi
+
+# ROCm Environment Variables for llama.cpp compilation
+ENV PATH="/opt/rocm/bin:/opt/rocm/llvm/bin:${PATH}"
+ENV ROCM_PATH="/opt/rocm"
+ENV HIP_PATH="/opt/rocm"
+ENV HIPCXX="/opt/rocm/llvm/bin/clang++"
+
+EXPOSE 7000
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7000"]
