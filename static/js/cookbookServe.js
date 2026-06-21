@@ -669,15 +669,13 @@ function _rerenderCachedModels() {
       } else if (_defaultGguf) {
         panelHtml += `<input type="hidden" class="hwfit-sf" data-field="gguf_file" value="${esc(_defaultGguf)}" />`;
       }
-      // Row 2: Core settings — the handful you actually touch every launch.
-      // TP / Context / GPU / GPU Mem / Max Seqs / Dtype. Everything else
-      // (Swap, KV Cache, Attention backend, Env vars, llama.cpp batch/ubatch)
-      // moved to the Advanced fold below to keep this row scannable.
-      panelHtml += `<div class="hwfit-serve-row hwfit-serve-row-core hwfit-backend-vllm hwfit-backend-sglang hwfit-backend-llamacpp hwfit-backend-ollama">`;
-      // Order: TP → Context → Max Seqs → GPUs → GPU Mem.
-      // Dtype moved up to Row 1. GPUs moved here next to GPU Mem so the
-      // "which devices + how much of them" decisions sit adjacent. Max
-      // Seqs follows Context per the "request-shape" cluster.
+      // Hidden ngl field — set to 99 initially; _loadServeProfiles updates it
+      // to the hardware-computed smart default (0 for CPU-only, proportional for
+      // partial offload, 99 for full GPU). The OOM retry in the bash runner then
+      // further halves it on CUDA out-of-memory.
+      panelHtml += `<input type="hidden" class="hwfit-sf" data-field="ngl" value="99" />`;
+      // Row 2: Core settings
+      panelHtml += `<div class="hwfit-serve-row hwfit-backend-vllm hwfit-backend-sglang hwfit-backend-llamacpp">`;
       panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('TP','Tensor Parallelism — split model across N GPUs')}<select class="hwfit-sf" data-field="tp">${tpOpts}</select></label>`;
       // ctx resets to the model's max on every panel open (the real ctx slider
       // lives in the Scan/Download toolbar — see cookbook.js .hwfit-ctx-control).
@@ -788,6 +786,22 @@ function _rerenderCachedModels() {
       panelHtml += `<label>${_l('Tensor Split','GPU proportions for llama.cpp, e.g. 50,50 across two visible GPUs. Leave blank for auto.')}<input type="text" class="hwfit-sf" data-field="llama_tensor_split" value="${esc(sv('llama_tensor_split', ''))}" placeholder="50,50" /></label>`;
       panelHtml += `<label>${_l('Main GPU','llama.cpp --main-gpu index inside the visible GPU set. Mostly useful for split mode none/row.')}<input type="text" class="hwfit-sf" data-field="llama_main_gpu" value="${esc(sv('llama_main_gpu', ''))}" placeholder="auto" /></label>`;
       panelHtml += `<label>${_l('Parallel','llama.cpp parallel slots. Leave blank for llama.cpp default; 1 matches single-lane presets.')}<input type="text" class="hwfit-sf" data-field="llama_parallel" value="${esc(sv('llama_parallel', ''))}" placeholder="1" /></label>`;
+      panelHtml += `<label>${_l('Batch','llama.cpp prompt batch size. Leave blank for llama.cpp default.')}<input type="text" class="hwfit-sf" data-field="llama_batch_size" value="${esc(sv('llama_batch_size', ''))}" placeholder="2048" /></label>`;
+      panelHtml += `<label>${_l('UBatch','llama.cpp physical micro-batch size. Leave blank for llama.cpp default.')}<input type="text" class="hwfit-sf" data-field="llama_ubatch_size" value="${esc(sv('llama_ubatch_size', ''))}" placeholder="512" /></label>`;
+      panelHtml += `</div>`;
+      // Row 2d: Intent profiles (MAX / DAILY / CUSTOM) — user-intent presets
+      // fetched from /api/profiles. Clicking one fills ctx + flash_attn and
+      // updates the command; the hardware-computed "Auto profiles" below then
+      // further refine KV/offload independently.
+      panelHtml += `<div class="hwfit-serve-row hwfit-backend-llamacpp hwfit-serve-profiles-intent" style="align-items:center;gap:8px;">`;
+      panelHtml += `<span style="opacity:0.7;font-size:11px;">Profile:</span>`;
+      panelHtml += `<span class="hwfit-intent-btns" style="display:flex;gap:6px;flex-wrap:wrap;"><span style="opacity:0.5;font-size:11px;">loading…</span></span>`;
+      panelHtml += `</div>`;
+      // Row 2e: Auto profiles — computed from detected hardware (see profiles.py).
+      // Buttons are injected after the panel mounts (needs an async fetch).
+      panelHtml += `<div class="hwfit-serve-row hwfit-backend-llamacpp hwfit-serve-profiles" style="align-items:center;gap:8px;">`;
+      panelHtml += `<span style="opacity:0.7;font-size:11px;">Auto:</span>`;
+      panelHtml += `<span class="hwfit-profile-btns" style="display:flex;gap:6px;flex-wrap:wrap;"><span style="opacity:0.5;font-size:11px;">computing…</span></span>`;
       panelHtml += `</div>`;
       // Auto-profile chips row removed — visual fit with the rest of the
       // serve panel was off, and the manual ctx/n_cpu_moe/cache controls
@@ -941,12 +955,66 @@ function _rerenderCachedModels() {
         _clampCtx(false);   // fix any stale/preset value already present
       }
 
-      // Tighten the ctx slider's upper bound to the model's trained limit.
-      // Asking llama.cpp for ctx > n_ctx_train overflows and, with a quantized
-      // KV cache, can crash the GPU (radv ErrorDeviceLost). The auto-profile
-      // chip row that used to also live here was removed — visual fit with
-      // the rest of the serve panel was off — but this clamp is essential.
-      (async () => {
+      // Intent profiles — fetch MAX/DAILY/CUSTOM from /api/profiles and render
+      // clickable chips. Clicking one fills ctx + flash_attn and rebuilds the
+      // command. Coarse user-intent presets; the Auto profiles below refine
+      // KV/offload on top of whatever the user picks here.
+      async function _loadIntentProfiles() {
+        const wrap = panel.querySelector('.hwfit-intent-btns');
+        if (!wrap) return;
+        try {
+          const res = await fetch('/api/profiles', { credentials: 'same-origin' });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const profs = await res.json();
+          if (!Array.isArray(profs) || !profs.length) {
+            wrap.innerHTML = `<span style="opacity:0.5;font-size:11px;">unavailable</span>`;
+            return;
+          }
+          wrap.innerHTML = '';
+          for (const p of profs) {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'cookbook-btn hwfit-profile-chip';
+            b.style.cssText = 'height:24px;padding:0 9px;font-size:11px;';
+            b.dataset.intentKey = p.key;
+            b.textContent = p.label;
+            b.title = `${p.description}\nTTFT: ${p.ttft_estimate} · ctx ${(p.ctx_size / 1024).toFixed(0)}k`;
+            b.addEventListener('click', () => {
+              const set = (field, val) => {
+                const el = panel.querySelector(`[data-field="${field}"]`);
+                if (!el) return;
+                if (el.type === 'checkbox') el.checked = !!val; else el.value = val;
+              };
+              set('ctx', p.ctx_size);
+              set('flash_attn', p.flash_attn !== false);
+              wrap.querySelectorAll('.hwfit-profile-chip').forEach(x => x.classList.remove('cookbook-btn-active'));
+              b.classList.add('cookbook-btn-active');
+              // Persist the profile selection so the chat header badge can reflect it.
+              try {
+                const _ctxVal = Number(p.ctx_size) || 0;
+                const _ctxLabel = _ctxVal >= 1000 ? Math.round(_ctxVal / 1000) + 'k' : String(_ctxVal);
+                localStorage.setItem('odysseus_active_profile', JSON.stringify({
+                  key: p.key, label: p.label, ctx: _ctxVal, ctxLabel: _ctxLabel, repo,
+                }));
+                document.dispatchEvent(new CustomEvent('odysseus:profile-selected'));
+              } catch {}
+              updateCmd();
+            });
+            wrap.appendChild(b);
+          }
+        } catch {
+          wrap.innerHTML = `<span style="opacity:0.5;font-size:11px;">unavailable</span>`;
+        }
+      }
+      _loadIntentProfiles();
+
+      // Auto profiles — fetch hardware-computed llama.cpp profiles and render
+      // them as clickable chips. Clicking one fills the ctx/CPU-MoE/KV/flash
+      // fields and rebuilds the command. Computed from detected VRAM (see
+      // services/hwfit/profiles.py); rough on t/s, accurate on fit.
+      async function _loadServeProfiles() {
+        const wrap = panel.querySelector('.hwfit-profile-btns');
+        if (!wrap) return;
         try {
           const host = (_es.remoteHost || '').trim();
           const params = new URLSearchParams({ model: repo });
@@ -962,8 +1030,46 @@ function _rerenderCachedModels() {
             panel._modelCtxMax = ctxMax;
             _clampCtx(false);
           }
-        } catch { /* clamp falls back to the static default */ }
-      })();
+          // Apply the hardware-computed ngl default (99 full-GPU, 0 CPU-only,
+          // proportional for partial offload). Updates the hidden ngl field and
+          // triggers a command rebuild so the preview reflects the smart default.
+          const recNgl = data && typeof data.recommended_ngl === 'number' ? data.recommended_ngl : null;
+          if (recNgl !== null) {
+            const nglEl = panel.querySelector('[data-field="ngl"]');
+            if (nglEl && nglEl.value !== String(recNgl)) { nglEl.value = String(recNgl); updateCmd(); }
+          }
+          const profs = (data && Array.isArray(data.profiles)) ? data.profiles : [];
+          if (!profs.length) { wrap.innerHTML = `<span style="opacity:0.5;font-size:11px;">no auto profile for this model</span>`; return; }
+          wrap.innerHTML = '';
+          for (const p of profs) {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'cookbook-btn hwfit-profile-chip';
+            b.style.cssText = 'height:24px;padding:0 9px;font-size:11px;';
+            const off = p.offloads ? `, ncm${p.n_cpu_moe}` : ', all-GPU';
+            b.textContent = `${p.label} · ${p.quant} · ${Math.round(p.ctx/1024)}k${off}`;
+            b.title = `${p.note}\nKV ${p.cache_type}, ~${p.est_vram_gb} GB VRAM`;
+            b.addEventListener('click', () => {
+              const set = (field, val) => {
+                const el = panel.querySelector(`[data-field="${field}"]`);
+                if (!el) return;
+                if (el.type === 'checkbox') el.checked = !!val; else el.value = val;
+              };
+              set('ctx', p.ctx);
+              set('n_cpu_moe', p.n_cpu_moe || '');
+              set('cache_type', p.cache_type || '');
+              set('flash_attn', true);   // required for a quantized KV cache
+              wrap.querySelectorAll('.hwfit-profile-chip').forEach(x => x.classList.remove('cookbook-btn-active'));
+              b.classList.add('cookbook-btn-active');
+              updateCmd();
+            });
+            wrap.appendChild(b);
+          }
+        } catch {
+          wrap.innerHTML = `<span style="opacity:0.5;font-size:11px;">profile compute failed</span>`;
+        }
+      }
+      _loadServeProfiles();
 
       // Live GPU-memory monitor: poll /api/cookbook/gpus and show VRAM usage +
       // RAM-spillover, with a plain-language health/speed hint. Lets you tell at

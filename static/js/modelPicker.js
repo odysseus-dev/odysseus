@@ -103,6 +103,13 @@ function _modelExists(modelId, url) {
 export function initModelPicker(deps) {
   _deps = deps;
   _initModelPickerDropdown();
+  // Refresh badge when cookbookServe signals a profile was selected.
+  document.addEventListener('odysseus:profile-selected', () => {
+    const sid = _deps?.getCurrentSessionId?.();
+    const s = (_deps?.getSessions?.() || []).find(x => x.id === sid);
+    const mid = s?.model || _deps?.getPendingChat?.()?.modelId || '';
+    _refreshProfileBadge(mid ? mid.split('/').pop() : '');
+  });
 }
 
 function _initModelPickerDropdown() {
@@ -623,6 +630,40 @@ function _initModelPickerDropdown() {
       _close();
     }
   });
+  // Active profile badge — opens Cookbook serve for the model the profile was set on.
+  const badge = document.getElementById('active-profile-badge');
+  if (badge && !badge._profileClickBound) {
+    badge._profileClickBound = true;
+    badge.addEventListener('click', async () => {
+      try {
+        const stored = JSON.parse(localStorage.getItem('odysseus_active_profile') || 'null');
+        if (!stored?.repo) return;
+        const { openServePanelForRepo } = await import('./cookbookServe.js');
+        await openServePanelForRepo(stored.repo);
+      } catch {}
+    });
+  }
+}
+
+/**
+ * Shows or hides the active-profile-badge in the chat header.
+ * The badge is shown only when the currently-selected chat model matches the
+ * model for which a profile was last configured in the Cookbook serve panel.
+ */
+function _refreshProfileBadge(currentShort) {
+  const badge = document.getElementById('active-profile-badge');
+  if (!badge) return;
+  try {
+    const stored = JSON.parse(localStorage.getItem('odysseus_active_profile') || 'null');
+    if (!stored || !stored.repo || !currentShort) { badge.style.display = 'none'; return; }
+    const storedShort = stored.repo.split('/').pop();
+    if (storedShort !== currentShort) { badge.style.display = 'none'; return; }
+    badge.textContent = `${stored.key.toLowerCase()} · ${stored.ctxLabel} ctx`;
+    badge.title = `Serving profile: ${stored.label} (ctx ${stored.ctxLabel}) — click to open Cookbook serve`;
+    badge.style.display = '';
+  } catch {
+    badge.style.display = 'none';
+  }
 }
 
 /**
@@ -720,4 +761,5 @@ export function updateModelPicker() {
   } else {
     label.textContent = displayName;
   }
+  _refreshProfileBadge(modelId ? modelId.split('/').pop() : '');
 }

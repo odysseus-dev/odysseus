@@ -713,6 +713,10 @@ app.include_router(setup_workspace_routes())
 from routes.hwfit_routes import setup_hwfit_routes
 app.include_router(setup_hwfit_routes())
 
+# Named serving profiles (MAX / DAILY / CUSTOM intent presets)
+from routes.profile_routes import setup_profile_routes
+app.include_router(setup_profile_routes())
+
 # Model A/B Comparison
 from routes.compare_routes import setup_compare_routes
 app.include_router(setup_compare_routes(session_manager))

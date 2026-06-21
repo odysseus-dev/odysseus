@@ -2735,6 +2735,24 @@ body.bg-pattern-sparkles {
       user-select: none;
       margin-right: 2px;
     }
+    /* Active serving profile badge in the chat header */
+    .active-profile-badge {
+      font-size: 9px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: color-mix(in srgb, var(--fg) 7%, transparent);
+      color: color-mix(in srgb, var(--fg) 45%, transparent);
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+      border: none;
+      line-height: 1.6;
+      transition: background 0.15s, color 0.15s;
+    }
+    .active-profile-badge:hover {
+      background: color-mix(in srgb, var(--fg) 13%, transparent);
+      color: color-mix(in srgb, var(--fg) 70%, transparent);
+    }
     /* Model picker — input bar drop-up */
     .model-picker-wrap {
       position: relative;
