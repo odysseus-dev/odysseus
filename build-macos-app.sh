@@ -159,10 +159,20 @@ start_search_stack() {
 # Ensure OrbStack + SearXNG on every launch (incl. the fast path below).
 start_search_stack
 
-# Already serving? Just open another app window and exit.
+# Always pick up the latest code. A backend already serving on $PORT is left over
+# from a previous launch — closing the UI window does NOT stop it (this launcher
+# keeps running headless, holding the port), so reusing it would silently serve
+# stale code after every edit. Stop the old stack and start fresh instead.
+# Set ODYSSEUS_REUSE=1 to attach to a running backend without restarting.
 if /usr/bin/curl -s -o /dev/null --max-time 2 "$URL"; then
-  open_ui
-  exit 0
+  if [ "${ODYSSEUS_REUSE:-0}" = "1" ]; then
+    open_ui
+    exit 0
+  fi
+  echo "Stopping stale backend on $PORT to load latest code…"
+  pkill -f "uvicorn app:app --host 127.0.0.1 --port $PORT" 2>/dev/null
+  pkill -f "$INSTALL_DIR/mcp_servers/" 2>/dev/null
+  for _ in $(seq 1 20); do port_up "$PORT" || break; sleep 0.25; done
 fi
 
 notify "Starting…"
