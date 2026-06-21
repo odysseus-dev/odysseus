@@ -26,7 +26,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: wizard815/odysseus
   DH_IMAGE: zenth815/odysseus-frontend
 
 jobs:
