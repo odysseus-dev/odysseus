@@ -15,6 +15,7 @@ on:
       - '**.md'
       - 'docs/**'
       - '.github/ISSUE_TEMPLATE/**'
+  workflow_dispatch:
 
 concurrency:
   group: docker-publish-${{ github.ref }}
