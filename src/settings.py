@@ -179,6 +179,11 @@ DEFAULT_SETTINGS = {
         "Newsletters, marketing, automated digests, and FYI-only updates are "
         "NOT urgent."
     ),
+    # Live hardware telemetry sidebar (CPU/RAM/VRAM/GPU °C). Opt-in because
+    # the sampler thread polls once per second and reads pynvml, which adds
+    # a small but measurable overhead. Threshold configurable via
+    # ODYSSEUS_THROTTLE_TEMP env var (default 87 °C).
+    "telemetry_enabled": False,
     # Keyboard shortcuts (action: key combination)
     "keybinds": {
         "search": "ctrl+k",

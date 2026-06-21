@@ -713,6 +713,10 @@ app.include_router(setup_workspace_routes())
 from routes.hwfit_routes import setup_hwfit_routes
 app.include_router(setup_hwfit_routes())
 
+# Live hardware telemetry (CPU/RAM/GPU while streaming)
+from routes.telemetry_routes import setup_telemetry_routes
+app.include_router(setup_telemetry_routes())
+
 # Model A/B Comparison
 from routes.compare_routes import setup_compare_routes
 app.include_router(setup_compare_routes(session_manager))
@@ -1013,6 +1017,16 @@ async def _startup_event():
 
     _startup_tasks.append(asyncio.create_task(_keepalive_loop()))
 
+    # Start hardware telemetry sampler if enabled. Runs as a daemon thread so
+    # it dies automatically with the process — no explicit join needed on crash.
+    try:
+        from src.settings import get_setting as _gs
+        if _gs("telemetry_enabled", False):
+            from services.telemetry.sampler import get_sampler as _get_sampler
+            _get_sampler().start()
+    except Exception as _e:
+        logger.warning("Telemetry sampler startup skipped: %s", _e)
+
     async def _ensure_default_tasks():
         # Create/reconcile default automation tasks + personal assistant for every user.
         owners = set()
@@ -1172,6 +1186,12 @@ async def _shutdown_event():
         await mcp_manager.disconnect_all()
     except Exception as e:
         logger.warning(f"MCP shutdown error: {e}")
+    # Stop telemetry sampler thread (graceful join, 3 s timeout)
+    try:
+        from services.telemetry.sampler import get_sampler as _get_sampler
+        _get_sampler().stop()
+    except Exception:
+        pass
     logger.info("Application shutdown complete")
 
 

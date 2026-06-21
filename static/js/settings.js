@@ -1741,6 +1741,35 @@ async function initAgentSettings() {
   }
 }
 
+/* ── Performance Monitoring (AI tab) ── */
+async function initTelemetrySettings() {
+  var toggle = el('set-telemetryToggle');
+  var msg = el('set-telemetryMsg');
+  if (!toggle) return;
+
+  try {
+    var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+    var settings = await res.json();
+    toggle.checked = !!settings.telemetry_enabled;
+  } catch (e) { /* leave unchecked on error */ }
+
+  toggle.addEventListener('change', async function() {
+    try {
+      await fetch('/api/auth/settings', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ telemetry_enabled: toggle.checked }),
+      });
+      if (msg) {
+        msg.textContent = toggle.checked ? 'Enabled — reload to activate.' : 'Disabled.';
+        setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
+      }
+    } catch (e) {
+      if (msg) { msg.textContent = 'Save failed'; msg.style.color = 'var(--red)'; }
+    }
+  });
+}
+
 /* ═══════════════════════════════════════════
    APPEARANCE TAB
    ═══════════════════════════════════════════ */
@@ -2350,6 +2379,7 @@ function initAll() {
   initResearchSettings();
   initResearchSearchSettings();
   initAgentSettings();
+  initTelemetrySettings();
   initAppearance();
   initShortcuts();
   initAccount();

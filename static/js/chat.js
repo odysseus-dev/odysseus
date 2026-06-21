@@ -11,6 +11,7 @@ import sessionModule from './sessions.js';
 import chatRenderer from './chatRenderer.js';
 import chatStream from './chatStream.js';
 import { addAITTSButton } from './tts-ai.js';
+import './telemetry.js';
 import markdownModule from './markdown.js';
 import { svgifyEmoji } from './markdown.js';
 import spinnerModule from './spinner.js';

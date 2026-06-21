@@ -1491,7 +1491,13 @@
               <div id="set-researchMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);margin-top:2px;"></div>
             </div>
           </div>
-          <!-- Agent card moved to the Agent Tools tab. -->
+          <!-- Performance monitoring (live telemetry sidebar while streaming) -->
+          <div class="admin-card">
+            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Performance Monitoring<span style="flex:1"></span><label class="admin-switch"><input type="checkbox" id="set-telemetryToggle"><span class="admin-slider"></span></label></h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Show a live CPU / RAM / VRAM / GPU °C bar while a response is streaming. Requires <code>psutil</code>; for GPU temperature also install <code>pynvml</code>. Default off.</div>
+            <div id="set-telemetryMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+          </div>
+
           <div class="admin-card">
             <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>Image Generation<span style="flex:1"></span><label class="admin-switch"><input type="checkbox" id="set-imgEnabledToggle"><span class="admin-slider"></span></label></h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Configure which model to use for image generation.</div>

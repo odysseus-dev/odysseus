@@ -37530,6 +37530,89 @@ body.theme-frosted .modal {
 .ask-user-other-send { flex-shrink: 0; white-space: nowrap; min-height: 39px; }
 .ask-user-other-send:disabled { opacity: 0.5; cursor: default; }
 
+/* ── Live hardware telemetry widget ── */
+.telemetry-widget {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0 12px 6px;
+  user-select: none;
+}
+.telemetry-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--color-muted-alt);
+  flex-wrap: wrap;
+}
+.telemetry-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.6;
+}
+.telemetry-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  transition: background 0.15s, border-color 0.15s;
+  min-width: 0;
+}
+.telemetry-chip:empty { display: none; }
+.telemetry-chip-warn {
+  background: color-mix(in srgb, #ff9900 18%, transparent);
+  border-color: color-mix(in srgb, #ff9900 40%, transparent);
+  color: #ff9900;
+}
+.telemetry-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  color: var(--color-muted-alt);
+  opacity: 0.5;
+  transition: opacity 0.15s;
+  margin-left: auto;
+}
+.telemetry-collapse-btn:hover { opacity: 1; }
+/* Thermal throttle warning inline banner */
+.telemetry-throttle-warn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: #ff9900;
+  background: color-mix(in srgb, #ff9900 10%, transparent);
+  border-top: 1px solid color-mix(in srgb, #ff9900 25%, transparent);
+  animation: telemetry-warn-in 0.2s ease;
+}
+@keyframes telemetry-warn-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.telemetry-warn-dismiss {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.6;
+  font-size: 12px;
+  padding: 0 2px;
+  margin-left: auto;
+}
+.telemetry-warn-dismiss:hover { opacity: 1; }
 /* ── Workspace picker ───────────────────────────────────────────── */
 /* Layout (width/flex column/max-height) inherited from base .modal-content. */
 /* Editable path/address bar: reuses .styled-prompt-input for border/bg/radius/
