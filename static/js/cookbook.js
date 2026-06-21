@@ -352,6 +352,9 @@ export function _detectToolParser(modelName) {
 // ── Backend detection ──
 
 export function _detectBackend(model) {
+  if (model?.backend === 'lmstudio' || model?._source === 'lmstudio') {
+    return { backend: 'lmstudio', label: 'LM Studio' };
+  }
   const _ollamaName = String(model?.repo_id || model?.name || model?.id || '').trim();
   const _ollamaMeta = `${model?.backend || ''} ${model?.endpoint_kind || ''} ${model?.provider || ''} ${model?.source || ''}`.toLowerCase();
   const _looksLikeOllamaTag = /^[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)$/.test(_ollamaName);

@@ -3,7 +3,7 @@ import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text
+from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, Float, ForeignKey, JSON, Index, func, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
@@ -406,6 +406,35 @@ class ProviderAuthSession(TimestampMixin, Base):
     refresh_token = Column(EncryptedText, nullable=True)
     last_refresh = Column(DateTime, nullable=True)
     auth_mode = Column(String, nullable=True)
+
+
+class DiscoveredModel(TimestampMixin, Base):
+    """Persisted model catalog row used by the hardware-fit recommender."""
+    __tablename__ = "discovered_models"
+
+    id = Column(String, primary_key=True, index=True)
+    name = Column(String, nullable=False, unique=True, index=True)
+    provider = Column(String, nullable=True)
+    parameter_count = Column(String, nullable=True)
+    params_b = Column(Float, nullable=True)
+    quantization = Column(String, nullable=True)
+    pipeline_tag = Column(String, nullable=True, index=True)
+    source = Column(String, nullable=False, default="hf_trending", index=True)
+    gguf_sources = Column(JSON, default=list)
+    capabilities = Column(JSON, default=list)
+    context_length = Column(Integer, nullable=True)
+    release_date = Column(String, nullable=True)
+    backend = Column(String, nullable=True)
+    local_path = Column(String, nullable=True)
+    mmproj_path = Column(String, nullable=True)
+    architecture = Column(String, nullable=True)
+    format = Column(String, nullable=True)
+    last_seen = Column(DateTime, default=utcnow_naive, nullable=False, index=True)
+
+    __table_args__ = (
+        Index("ix_discovered_models_source_seen", "source", "last_seen"),
+    )
+
 
 class McpServer(TimestampMixin, Base):
     """Admin-configured MCP (Model Context Protocol) tool servers."""

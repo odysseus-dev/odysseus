@@ -21739,6 +21739,78 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-hw-chip-manual:hover {
   background: color-mix(in srgb, var(--accent, var(--red)) 22%, transparent);
 }
+/* Editable RAM-budget chip. The body is a click target (opens the editor),
+   so give it the affordance and a hover lift. When an override is active the
+   chip picks up the accent treatment so it reads as "modified". */
+.hwfit-ram-edit { cursor: pointer; }
+.hwfit-ram-chip:hover { opacity: 1; }
+.hwfit-ram-chip-ovr {
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 45%, transparent);
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+  color: var(--accent, var(--red));
+  opacity: 1;
+}
+.hwfit-ram-ovr-tag {
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.8;
+  margin-left: 3px;
+}
+.hwfit-ram-reset {
+  cursor: pointer;
+  font-size: 11px !important;
+  line-height: 1 !important;
+  transform: translateY(-2px);
+  opacity: 0.75;
+}
+.hwfit-ram-reset:hover { opacity: 1; }
+/* RAM-budget editor popover (anchored under the chip, appended to <body>). */
+.hwfit-ram-editor {
+  position: fixed;
+  z-index: 9999;
+  width: 256px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hwfit-ram-editor-title { font-size: 11px; font-weight: 600; }
+.hwfit-ram-editor-row { display: flex; align-items: center; gap: 8px; }
+.hwfit-ram-editor-row .hwfit-ram-range { flex: 1; accent-color: var(--accent, var(--red)); }
+.hwfit-ram-editor-row .hwfit-ram-num {
+  width: 56px;
+  height: 24px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 11px;
+  padding: 0 6px;
+  box-sizing: border-box;
+}
+.hwfit-ram-editor-row .hwfit-ram-unit { font-size: 10px; opacity: 0.6; }
+.hwfit-ram-editor-hint { font-size: 9px; line-height: 1.4; color: var(--fg-muted); opacity: 0.85; }
+.hwfit-ram-editor-actions { display: flex; justify-content: flex-end; }
+.hwfit-ram-editor-reset {
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--fg);
+  border-radius: 4px;
+}
+.hwfit-ram-editor-reset:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
 .hwfit-hw-manual-btn {
   min-width: 42px;
 }
@@ -21856,6 +21928,51 @@ body.gallery-selecting .gallery-dl-btn,
   display: inline-block; padding: 0 4px; border-radius: 4px; margin-left: 4px;
   background: color-mix(in srgb, var(--red) 15%, transparent);
   color: var(--red); font-weight: 600; font-size: 8px;
+}
+.hwfit-source-ollama {
+  display: inline-block; padding: 0 4px; border-radius: 4px; margin-left: 4px;
+  background: color-mix(in srgb, var(--warn) 15%, transparent);
+  color: var(--warn); font-weight: 600; font-size: 8px;
+}
+.hwfit-source-local {
+  display: inline-block; padding: 0 4px; border-radius: 4px; margin-left: 4px;
+  background: color-mix(in srgb, var(--green) 16%, transparent);
+  color: var(--green); font-weight: 600; font-size: 8px;
+}
+.hwfit-source-lmstudio {
+  display: inline-block; padding: 0 4px; border-radius: 4px; margin-left: 4px;
+  background: color-mix(in srgb, var(--hl-keyword) 15%, transparent);
+  color: var(--hl-keyword); font-weight: 600; font-size: 8px;
+}
+.hwfit-backend-badge {
+  display: inline-block; padding: 1px 5px; border-radius: 4px;
+  font-size: 9px; font-weight: 600; white-space: nowrap;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--color-muted);
+}
+.hwfit-backend-badge[data-backend="llamacpp"] {
+  background: color-mix(in srgb, var(--green) 15%, transparent);
+  color: var(--green);
+}
+.hwfit-backend-badge[data-backend="vllm"] {
+  background: color-mix(in srgb, var(--hl-function) 15%, transparent);
+  color: var(--hl-function);
+}
+.hwfit-backend-badge[data-backend="sglang"] {
+  background: color-mix(in srgb, var(--hl-keyword) 15%, transparent);
+  color: var(--hl-keyword);
+}
+.hwfit-backend-badge[data-backend="lmstudio"] {
+  background: color-mix(in srgb, var(--hl-keyword) 15%, transparent);
+  color: var(--hl-keyword);
+}
+.hwfit-backend-badge[data-backend="ollama"] {
+  background: color-mix(in srgb, var(--warn) 15%, transparent);
+  color: var(--warn);
+}
+.hwfit-backend-badge[data-backend="diffusers"] {
+  background: color-mix(in srgb, var(--red) 15%, transparent);
+  color: var(--red);
 }
 .hwfit-sort, .hwfit-quant { width: auto; min-width: 70px; flex-shrink: 0; }
 .hwfit-row-active { background: color-mix(in srgb, var(--red) 8%, transparent); }

@@ -107,6 +107,31 @@ def _apply_manual_hardware(system, manual_mode="", manual_gpu_count="", manual_v
     return system
 
 
+def _apply_ram_override(system, override_ram_gb=""):
+    """Override only the available-RAM budget the ranker uses, leaving the
+    DETECTED GPU intact.
+
+    Distinct from the manual-hardware simulator: probed ``available_ram_gb`` is
+    just the live free memory at scan time, not a real ceiling. This lets the
+    user say "rank as if I'll free N GB before serving" (the inline RAM-budget
+    chip) without faking a different GPU, so speed estimates keep using the real
+    card's bandwidth. ``total_ram_gb`` is bumped to at least the override so the
+    chip's "used / total" reads sensibly.
+    """
+    try:
+        ov = float(override_ram_gb) if override_ram_gb else 0.0
+    except (TypeError, ValueError):
+        return system
+    if ov <= 0:
+        return system
+    ov = round(min(ov, 100000.0), 1)
+    system["available_ram_gb"] = ov
+    if (system.get("total_ram_gb") or 0) < ov:
+        system["total_ram_gb"] = ov
+    system["ram_override_gb"] = ov
+    return system
+
+
 def setup_hwfit_routes():
     router = APIRouter(prefix="/api/hwfit", tags=["hwfit"])
 
@@ -119,7 +144,7 @@ def setup_hwfit_routes():
         return detect_system(host=host, ssh_port=ssh_port, platform=platform, fresh=fresh)
 
     @router.get("/models")
-    def get_models(use_case: str = "", sort: str = "newest", limit: int = 50, search: str = "", host: str = "", quant: str = "", ctx: str = "", gpu_count: str = "", gpu_group: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, manual_mode: str = "", manual_gpu_count: str = "", manual_vram_gb: str = "", manual_ram_gb: str = "", manual_backend: str = "", ignore_detected_gpu: bool = False, ignore_detected_ram: bool = False, fit_only: bool = False):
+    def get_models(use_case: str = "", sort: str = "newest", limit: int = 50, search: str = "", host: str = "", quant: str = "", ctx: str = "", gpu_count: str = "", gpu_group: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, manual_mode: str = "", manual_gpu_count: str = "", manual_vram_gb: str = "", manual_ram_gb: str = "", manual_backend: str = "", ignore_detected_gpu: bool = False, ignore_detected_ram: bool = False, override_ram_gb: str = "", fit_only: bool = False):
         """Rank LLM models against detected hardware and return scored results.
         gpu_count: override GPU count (0 = CPU only, 1-N = simulate N GPUs of the
             active group). gpu_group: index into system.gpu_groups (the homogeneous
@@ -128,6 +153,7 @@ def setup_hwfit_routes():
         fresh=true bypasses the hardware-detection cache."""
         from services.hwfit.hardware import detect_system
         from services.hwfit.fit import rank_models
+        from services.hwfit.catalog_sync import get_catalog_or_static, upsert_discovered_models
         from services.hwfit.models import get_models, model_catalog_path
         host, ssh_port = _validate_detection_target(host, ssh_port)
         system = deepcopy(detect_system(host=host, ssh_port=ssh_port, platform=platform, fresh=fresh))
@@ -151,7 +177,12 @@ def setup_hwfit_routes():
             system["available_ram_gb"] = 0
             system["total_ram_gb"] = 0
 
+        # True installed RAM, captured before any simulator/override mutates it,
+        # so the inline RAM-budget control can cap its slider at the real ceiling.
+        system["detected_ram_total_gb"] = system.get("total_ram_gb")
+
         system = _apply_manual_hardware(system, manual_mode, manual_gpu_count, manual_vram_gb, manual_ram_gb, manual_backend)
+        system = _apply_ram_override(system, override_ram_gb)
 
         # Keep the raw detection around so the UI can still show the box's full
         # GPU complement even while we rank against one homogeneous pool.
@@ -214,24 +245,23 @@ def setup_hwfit_routes():
         if target_context is not None:
             target_context = max(1024, min(target_context, 1000000))
 
-        rank_kwargs = {
-            "use_case": use_case or None,
-            "limit": limit,
-            "search": search or None,
-            "sort": sort,
-            "quant": quant or None,
-            "fit_only": fit_only,
-        }
-        if target_context is not None:
-            rank_kwargs["target_context"] = target_context
-        try:
-            import inspect
-            supported = set(inspect.signature(rank_models).parameters)
-            rank_kwargs = {k: v for k, v in rank_kwargs.items() if k in supported}
-        except Exception:
-            rank_kwargs.pop("target_context", None)
-            rank_kwargs.pop("fit_only", None)
-        results = rank_models(system, **rank_kwargs)
+        from services.hwfit.local_scanner import scan_local_gguf
+        from services.hwfit.lmstudio_catalog import fetch_lmstudio_models
+        from services.hwfit.ollama_catalog import fetch_ollama_models
+        catalog_models = get_catalog_or_static(seed_if_empty=True)
+        local_models = scan_local_gguf() if not host else []
+        lmstudio_models = fetch_lmstudio_models(host=host)
+        ollama_models = fetch_ollama_models(host=host)
+        live_models = local_models + lmstudio_models + ollama_models
+        if live_models:
+            try:
+                from core.database import get_db_session
+                with get_db_session() as db:
+                    upsert_discovered_models(db, live_models)
+                    db.commit()
+            except Exception:
+                pass
+        results = rank_models(system, use_case=use_case or None, limit=limit, search=search or None, sort=sort, quant=quant or None, target_context=target_context, fit_only=fit_only, extra_models=live_models, catalog_models=catalog_models)
         return {"system": system, "models": results}
 
     @router.get("/profiles")
@@ -283,6 +313,27 @@ def setup_hwfit_routes():
             if isinstance(v, (int, float)) and v > 0:
                 model_ctx_max = int(v)
                 break
+        # Compute the smart initial -ngl default. Uses analyze_model() to determine
+        # whether the model fits fully on GPU, partially offloads, or is CPU-only,
+        # then translates that to an integer layer count (99/proportional/0).
+        from services.hwfit.fit import analyze_model, _default_ram_budget
+        from routes.cookbook_helpers import _compute_gpu_layers
+        # Rank the serve recommendation against the model's default RAM budget
+        # (e.g. 20 GB for the 26B) so the panel's -ngl matches the What Fits
+        # verdict instead of whatever RAM happens to be free this second. The
+        # explicit RAM override still wins; copy the dict so the cached detection
+        # result isn't mutated.
+        _mb = _default_ram_budget(m)
+        if _mb > 0 and not system.get("ram_override_gb"):
+            _cap = system.get("total_ram_gb") or _mb
+            _budget = round(min(_mb, float(_cap)), 1)
+            system = {**system, "available_ram_gb": _budget, "ram_budget_gb": _budget}
+        _fit = analyze_model(m, system)
+        recommended_ngl = _compute_gpu_layers(
+            (_fit or {}).get("run_mode", "gpu"),
+            (_fit or {}).get("vram_gb"),
+            (_fit or {}).get("required_gb"),
+        )
         return {
             "system": system,
             "profiles": compute_serve_profiles(
@@ -291,6 +342,7 @@ def setup_hwfit_routes():
                 serve_quant=(serve_quant or None),
             ),
             "model_ctx_max": model_ctx_max,
+            "recommended_ngl": recommended_ngl,
         }
 
     @router.get("/image-models")
@@ -320,5 +372,32 @@ def setup_hwfit_routes():
         system["gpu_count"] = 1 if single_vram > 0 else 0
         results = rank_image_models(system, search=search or None, sort=sort)
         return {"system": system, "models": results}
+
+    @router.get("/model-caps")
+    def get_model_caps(model: str = ""):
+        """Return the capability list for a model ID looked up in the catalog DB.
+
+        Performs an exact name match first, then a suffix match on the portion
+        after the last ``/``. Returns an empty capability list (not an error)
+        when the model is unknown so the frontend can degrade gracefully.
+        """
+        if not model:
+            return {"model_id": model, "capabilities": [], "found": False}
+        from core.database import get_db_session, DiscoveredModel
+        with get_db_session() as db:
+            row = db.query(DiscoveredModel).filter(
+                DiscoveredModel.name == model
+            ).first()
+            if row is None:
+                suffix = model.split("/")[-1]
+                row = (
+                    db.query(DiscoveredModel)
+                    .filter(DiscoveredModel.name.like(f"%/{suffix}"))
+                    .first()
+                )
+            if row is not None:
+                caps = row.capabilities if isinstance(row.capabilities, list) else []
+                return {"model_id": model, "capabilities": caps, "found": True}
+        return {"model_id": model, "capabilities": [], "found": False}
 
     return router

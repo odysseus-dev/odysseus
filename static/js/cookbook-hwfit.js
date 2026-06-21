@@ -287,6 +287,7 @@ export function _renderGpuToggles(system) {
 // reload paints instantly, then we refresh in the background and swap.
 const _SCAN_CACHE_KEY = 'hwfit_scan_cache_v1';
 const _MANUAL_HW_KEY = 'hwfit_manual_hardware_v1';
+const _RAM_OVERRIDE_KEY = 'hwfit_ram_override_v1';
 const _CTX_KEY = 'hwfit_target_context_v1';
 const _CTX_PRESETS = [8192, 16384, 32768, 50000, 131072, 0]; // 0 = model max
 const _SCAN_CACHE_MAX = 12;            // keep the newest N signatures
@@ -329,6 +330,23 @@ function _saveManualHwState(s) {
   try {
     if (!s || !s.mode) localStorage.removeItem(_MANUAL_HW_KEY);
     else localStorage.setItem(_MANUAL_HW_KEY, JSON.stringify(s));
+  } catch {}
+}
+
+// Inline RAM-budget override (the editable RAM chip). Distinct from the manual
+// simulator: it only raises/lowers the available-RAM budget the ranker uses,
+// keeping the detected GPU so speed estimates stay accurate. null = use detected.
+function _ramOverride() {
+  try {
+    const v = Number(JSON.parse(localStorage.getItem(_RAM_OVERRIDE_KEY) || 'null'));
+    return Number.isFinite(v) && v > 0 ? v : null;
+  } catch { return null; }
+}
+
+function _saveRamOverride(v) {
+  try {
+    if (!v || v <= 0) localStorage.removeItem(_RAM_OVERRIDE_KEY);
+    else localStorage.setItem(_RAM_OVERRIDE_KEY, JSON.stringify(Math.round(v)));
   } catch {}
 }
 
@@ -422,6 +440,7 @@ function _scanSig() {
     g: (tc && typeof tc._activeCount === 'number') ? String(tc._activeCount) : '',
     gg: (tc && tc._activeGroup) ? String(tc._activeGroup) : '',
     m: _manualHwParams(),
+    ro: _ramOverride() || 0,
     d: Array.from(_dismissedHwChips).sort(),
   });
 }
@@ -666,6 +685,13 @@ export async function _hwfitFetch(fresh = false) {
     Object.entries(manualParams).forEach(([k, v]) => {
       if (v !== '') params.set(k, v);
     });
+    // Inline RAM-budget override — only when not in the full manual simulator
+    // (manual mode already replaces RAM via manual_ram_gb) and not when RAM is
+    // dismissed entirely. Keeps the detected GPU; just changes the RAM budget.
+    const ramOv = _ramOverride();
+    if (ramOv && !_manualHwState() && !_dismissedHwChips.has('ram')) {
+      params.set('override_ram_gb', String(ramOv));
+    }
     if (hasManualOrDismissed) params.set('_hw_override_ts', String(Date.now()));
     // Image models use a separate registry/endpoint
     const isImageMode = useCase === 'image_gen';
@@ -950,9 +976,12 @@ export function _hwfitRenderHw(el, sys) {
       ? ''
       : (() => {
           const dim = _dismissedHwChips.has('gpu') ? ' hwfit-hw-chip-off' : '';
+          const label = /docker|container|compose overlay/i.test(sys.gpu_error || '')
+            ? 'GPU unavailable'
+            : 'GPU driver error';
           return (
             `<span class="hwfit-hw-chip hwfit-hw-chip-row hwfit-hw-chip-error${dim}" data-hw-chip="gpu">`
-            + `<button type="button" class="hwfit-hw-chip-toggle" data-hw-chip="gpu" title="${esc(sys.gpu_error)}">GPU driver error</button>`
+            + `<button type="button" class="hwfit-hw-chip-toggle" data-hw-chip="gpu" title="${esc(sys.gpu_error)}">${label}</button>`
             + `<button type="button" class="hwfit-hw-chip-x" data-hw-chip="gpu" title="Remove this chip" aria-label="Remove">×</button>`
             + `</span>`
           );
@@ -961,8 +990,21 @@ export function _hwfitRenderHw(el, sys) {
     gpuChip = chip('gpu', 'No GPU');
   }
   const vram = sys.gpu_vram_gb ? `${sys.gpu_vram_gb.toFixed(1)} GB VRAM` : '';
-  const ram = `${sys.available_ram_gb?.toFixed(1) || '?'} / ${sys.total_ram_gb?.toFixed(1) || '?'} GB RAM`;
-  const cores = `${sys.cpu_cores || '?'} cores`;
+  const ramScope = String(sys.ram_scope || '');
+  const scopedRam = /docker|wsl/i.test(ramScope);
+  const ramName = scopedRam ? 'Odysseus RAM' : 'RAM';
+  const ram = `${sys.available_ram_gb?.toFixed(1) || '?'} / ${sys.total_ram_gb?.toFixed(1) || '?'} GB ${ramName}`;
+  const hostRam = sys.host_total_ram_gb
+    ? ` Host installed RAM: ${Number(sys.host_total_ram_gb).toFixed(1)} GB.`
+    : '';
+  const ramTitle = scopedRam
+    ? `RAM available to Odysseus inside ${sys.runtime || 'container/WSL'}.${hostRam} Increase Docker Desktop or WSL memory to make more host RAM usable for local serving.`
+    : 'Click to toggle off (X to hide)';
+  const logicalCores = sys.cpu_logical_cores || sys.cpu_cores || 0;
+  const physicalCores = sys.cpu_physical_cores || 0;
+  const cores = physicalCores && logicalCores && physicalCores !== logicalCores
+    ? `${physicalCores}C/${logicalCores}T`
+    : `${logicalCores || '?'} cores`;
   const manual = _manualHwState();
   const manualChip = (sys.manual_hardware || manual)
     ? `<span class="hwfit-hw-chip hwfit-hw-chip-row hwfit-hw-chip-manual" data-hw-chip="manual">`
@@ -970,10 +1012,28 @@ export function _hwfitRenderHw(el, sys) {
       + `<button type="button" class="hwfit-hw-chip-x" data-hw-chip="manual" title="Clear manual hardware" aria-label="Clear">×</button>`
       + `</span>`
     : '';
+  // RAM chip is editable: clicking the body opens a budget editor (slider +
+  // number) that overrides available_ram_gb while keeping the detected GPU, so
+  // the user can rank "as if I free N GB" without faking hardware. The probed
+  // value is just live free memory, not a real ceiling. ↺ clears the override.
+  const ramOv = _ramOverride();
+  const ramOff = _dismissedHwChips.has('ram') ? ' hwfit-hw-chip-off' : '';
+  const ramBtnInner = esc(ramOv ? `RAM: ${Math.round(ramOv)} GB` : ram)
+    + (ramOv ? ' <span class="hwfit-ram-ovr-tag">override</span>' : '');
+  const ramResetBtn = ramOv
+    ? `<button type="button" class="hwfit-ram-reset" title="Reset to detected RAM" aria-label="Reset RAM to detected">↺</button>`
+    : '';
+  const ramChip = _removedHwChips.has('ram') ? '' : (
+    `<span class="hwfit-hw-chip hwfit-hw-chip-row hwfit-ram-chip${ramOv ? ' hwfit-ram-chip-ovr' : ''}${ramOff}" data-hw-chip="ram">`
+    + `<button type="button" class="hwfit-hw-chip-toggle hwfit-ram-edit" data-hw-chip="ram" title="${esc('Set the RAM budget to rank against. ' + ramTitle)}">${ramBtnInner}</button>`
+    + ramResetBtn
+    + `<button type="button" class="hwfit-hw-chip-x" data-hw-chip="ram" title="Remove this chip" aria-label="Remove">×</button>`
+    + `</span>`
+  );
   el.innerHTML = gpuChip
     + (vram ? chip('vram', vram) : '')
-    + chip('ram', ram)
-    + chip('cores', cores)
+    + ramChip
+    + chip('cores', cores, sys.cpu_name || 'Click to toggle off (X to hide)')
     + chip('backend', esc(sys.backend || ''))
     + manualChip;
   _renderHwVisibilityWarning(sys);
@@ -986,7 +1046,9 @@ export function _hwfitRenderHw(el, sys) {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const key = btn.dataset.hwChip;
-      if (!key || key === 'manual') return;
+      // 'manual' and 'ram' have bespoke click behavior (manual = open panel,
+      // ram = open the budget editor), so they opt out of the dim-toggle here.
+      if (!key || key === 'manual' || key === 'ram') return;
       const row = btn.closest('.hwfit-hw-chip-row');
       if (_dismissedHwChips.has(key)) {
         _dismissedHwChips.delete(key);
@@ -1029,6 +1091,87 @@ export function _hwfitRenderHw(el, sys) {
     });
   });
   _wireManualHardwareControls(el);
+  _wireRamBudgetControl(el, sys);
+}
+
+// Inline RAM-budget editor: a slider + number popover anchored under the RAM
+// chip. Lets the user rank against a chosen available-RAM budget (e.g. what
+// they'll free before serving) without faking the GPU, then re-ranks live.
+function _openRamEditor(anchorEl, sys) {
+  document.getElementById('hwfit-ram-editor')?.remove();
+  const installed = Math.max(8, Math.round(sys.detected_ram_total_gb || sys.total_ram_gb || 8));
+  const cur = Math.round(_ramOverride() || sys.available_ram_gb || Math.min(8, installed));
+  const min = 1, max = installed;
+  const pop = document.createElement('div');
+  pop.id = 'hwfit-ram-editor';
+  pop.className = 'hwfit-ram-editor';
+  pop.innerHTML =
+    `<div class="hwfit-ram-editor-title">RAM budget to rank against</div>`
+    + `<div class="hwfit-ram-editor-row">`
+    + `<input type="range" class="hwfit-ram-range" min="${min}" max="${max}" step="1" value="${Math.min(cur, max)}">`
+    + `<input type="number" class="hwfit-ram-num" min="${min}" max="${max}" step="1" value="${Math.min(cur, max)}">`
+    + `<span class="hwfit-ram-unit">GB</span>`
+    + `</div>`
+    + `<div class="hwfit-ram-editor-hint">Assumes you free this much before serving. Doesn't resize a running server. Installed: ${installed} GB.</div>`
+    + `<div class="hwfit-ram-editor-actions"><button type="button" class="hwfit-ram-editor-reset">Reset to detected</button></div>`;
+  document.body.appendChild(pop);
+  const r = anchorEl.getBoundingClientRect();
+  pop.style.top = `${Math.round(r.bottom + 6)}px`;
+  pop.style.left = `${Math.round(Math.max(8, Math.min(r.left, window.innerWidth - 268)))}px`;
+
+  const range = pop.querySelector('.hwfit-ram-range');
+  const num = pop.querySelector('.hwfit-ram-num');
+  let debounce;
+  const apply = (raw) => {
+    let v = Math.round(Number(raw) || 0);
+    v = Math.max(min, Math.min(max, v));
+    range.value = String(v);
+    num.value = String(v);
+    clearTimeout(debounce);
+    debounce = setTimeout(() => {
+      _saveRamOverride(v);
+      _resetGpuToggleState(false);
+      _hwfitCache = null;
+      _hwfitFetch(true);
+    }, 300);
+  };
+  range.addEventListener('input', () => apply(range.value));
+  num.addEventListener('input', () => apply(num.value));
+
+  const close = () => {
+    pop.remove();
+    document.removeEventListener('mousedown', onDoc);
+    document.removeEventListener('keydown', onKey);
+  };
+  const onDoc = (e) => { if (!pop.contains(e.target) && !anchorEl.contains(e.target)) close(); };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  pop.querySelector('.hwfit-ram-editor-reset').addEventListener('click', () => {
+    _saveRamOverride(null);
+    close();
+    _resetGpuToggleState(false);
+    _hwfitCache = null;
+    _hwfitFetch(true);
+  });
+  setTimeout(() => {
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+  }, 0);
+  num.focus();
+  num.select();
+}
+
+function _wireRamBudgetControl(el, sys) {
+  el.querySelector('.hwfit-ram-edit')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _openRamEditor(e.currentTarget, sys);
+  });
+  el.querySelector('.hwfit-ram-reset')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _saveRamOverride(null);
+    _resetGpuToggleState(false);
+    _hwfitCache = null;
+    _hwfitFetch(true);
+  });
 }
 
 function _wireManualHardwareControls(el) {
@@ -1105,12 +1248,31 @@ function _modeLabel(model) {
   return String(model?.run_mode || '').replace('_', '+');
 }
 
+// Returns a tooltip explaining why the detected backend is preferred for a model.
+function _backendBadgeTip(backend, model) {
+  const isGguf = model?.is_gguf
+    || /^Q[2-8]|^IQ/.test((model?.quant || '').toUpperCase())
+    || (model?.quant || '').toUpperCase() === 'GGUF'
+    || `${model?.name || ''} ${model?.repo_id || ''}`.toLowerCase().includes('gguf');
+  switch (backend) {
+    case 'llamacpp': return isGguf
+      ? 'llama.cpp preferred — GGUF format runs on CPU or GPU without CUDA drivers'
+      : 'llama.cpp preferred — platform does not support vLLM/SGLang';
+    case 'vllm':     return 'vLLM preferred — safetensors format; fast GPU serving with CUDA';
+    case 'sglang':   return 'SGLang preferred — safetensors on ROCm (AMD GPU)';
+    case 'lmstudio': return 'Available from a running LM Studio server';
+    case 'ollama':   return 'Served via Ollama registry';
+    case 'diffusers':return 'Image generation via Diffusers pipeline';
+    default:         return '';
+  }
+}
+
 export const _hwfitColumns = [
   { key: 'fit', label: 'Fit',    cls: 'hwfit-fit' },
   { key: 'newest', label: 'Model (latest)',  cls: 'hwfit-name' },
   { key: 'params',label: 'Param', cls: 'hwfit-c-params' },
   { key: null,    label: 'Quant',  cls: 'hwfit-c-quant' },
-  { key: 'vram',  label: 'VRAM',   cls: 'hwfit-c-vram' },
+  { key: 'vram',  label: 'Mem',    cls: 'hwfit-c-vram' },
   { key: 'context',label: 'Ctx',   cls: 'hwfit-c-ctx' },
   { key: 'speed', label: 'Speed',  cls: 'hwfit-c-speed' },
   { key: 'score', label: 'Score',  cls: 'hwfit-c-score' },
@@ -1186,12 +1348,35 @@ export function _hwfitRenderList(el, models) {
     const ctx = m.context ? (m.context >= 1024 ? (m.context / 1024).toFixed(0) + 'k' : m.context) : '?';
     const fitLabel = (m.fit_level || '').replace('_', ' ');
     const modeLabel = _modeLabel(m);
-    const vramLabel = m.required_gb ? m.required_gb.toFixed(1) + 'G' : '?';
+    const _bkDetected = _detectBackend(m);
+    const _bkTip = _backendBadgeTip(_bkDetected.backend, m);
+    // Partial-offload split: cpu_offload rows show "X.XG+Y.YG" to indicate
+    // GPU VRAM portion + RAM portion. All other rows show total required_gb.
+    let vramLabel, vramTitle;
+    if (m.run_mode === 'cpu_offload' && m.vram_gb != null && m.ram_gb != null) {
+      vramLabel = `${m.vram_gb.toFixed(1)}G+${m.ram_gb.toFixed(1)}G`;
+      vramTitle = `${m.vram_gb.toFixed(1)} GB on GPU + ${m.ram_gb.toFixed(1)} GB in RAM (partial offload)`;
+    } else {
+      vramLabel = m.required_gb ? m.required_gb.toFixed(1) + 'G' : '?';
+      vramTitle = '';
+    }
+    // (RAM) sub-label for rows that rely on system RAM for inference.
+    const ramBadge = (m.run_mode === 'cpu_offload' || m.run_mode === 'cpu_only')
+      ? ' <span style="opacity:0.55;font-size:9px;">(RAM)</span>'
+      : '';
     const moeBadge = m.is_moe ? '<span class="hwfit-badge hwfit-moe">MoE</span>' : '';
     const imgBadge = m.is_image_gen ? '<span class="hwfit-badge" style="background:color-mix(in srgb, var(--red) 20%, transparent);color:var(--red);font-size:8px;padding:1px 4px;border-radius:3px;margin-left:4px;">IMG</span>' : '';
+    let sourceBadge = '';
+    if (m._source === 'local_gguf') {
+      sourceBadge = '<span class="hwfit-badge hwfit-source-local" title="Installed GGUF file">local</span>';
+    } else if (m._source === 'lmstudio') {
+      sourceBadge = '<span class="hwfit-badge hwfit-source-lmstudio" title="Available in LM Studio">LM</span>';
+    } else if (m._source === 'ollama') {
+      sourceBadge = '<span class="hwfit-badge hwfit-source-ollama" title="Installed in local Ollama">Ollama</span>';
+    }
     const dlDot = (_cachedModelIds && (_cachedModelIds.has(m.name) || [..._cachedModelIds].some(id => id === m.name?.split('/').pop()))) ? '<span class="hwfit-dl-dot" title="Downloaded">\u25CF</span>' : '';
     html += `<div class="hwfit-row" data-model="${esc(m.name)}">`;
-    html += `<span class="hwfit-col hwfit-fit" style="color:${fitColor}">${esc(fitLabel)}</span>`;
+    html += `<span class="hwfit-col hwfit-fit" style="color:${fitColor}">${esc(fitLabel)}${ramBadge}</span>`;
     // Append quant to the title when it's not already in the repo name. The
     // suffix strips quant-parts the name already contains — e.g. for
     // QuantTrio/MiniMax-M2-AWQ + quant=AWQ-4bit we just show "(4bit)", not
@@ -1210,18 +1395,18 @@ export function _hwfitRenderList(el, models) {
         _quantSuffix = ` <span class="hwfit-name-quant" title="${esc(_quantTag)} — full storage format">(${esc(_display)})</span>`;
       }
     }
-    html += `<span class="hwfit-col hwfit-name">${modelLogo(m.name)}${esc(_short)}${_quantSuffix}${moeBadge}${imgBadge}${dlDot}</span>`;
+    html += `<span class="hwfit-col hwfit-name">${modelLogo(m.name)}${esc(_short)}${_quantSuffix}${moeBadge}${imgBadge}${sourceBadge}${dlDot}</span>`;
     html += `<span class="hwfit-col hwfit-c-params">${esc(pcount)}</span>`;
     // Truncate the Quant cell to 9 chars + ellipsis so long tags like
     // "FP4-MoE-Mixed" don't push neighboring columns. Full tag stays in title.
     const _qRaw = m.quant || '?';
     const _qShort = _qRaw.length > 9 ? _qRaw.slice(0, 9) + '…' : _qRaw;
     html += `<span class="hwfit-col hwfit-c-quant" title="${esc(_qRaw)}">${esc(_qShort)}</span>`;
-    html += `<span class="hwfit-col hwfit-c-vram">${vramLabel}</span>`;
+    html += `<span class="hwfit-col hwfit-c-vram"${vramTitle ? ` title="${esc(vramTitle)}"` : ''}>${vramLabel}</span>`;
     html += `<span class="hwfit-col hwfit-c-ctx">${m.is_image_gen ? '\u2014' : ctx}</span>`;
     html += `<span class="hwfit-col hwfit-c-speed">${m.is_image_gen ? '\u2014' : tps + ' t/s'}</span>`;
     html += `<span class="hwfit-col hwfit-c-score">${score}</span>`;
-    html += `<span class="hwfit-col hwfit-c-mode" title="${_requiresAcceleratorBackend(m) ? 'Requires vLLM or SGLang with a visible CUDA/ROCm accelerator. llama.cpp and Ollama need GGUF files.' : ''}">${esc(modeLabel)}</span>`;
+    html += `<span class="hwfit-col hwfit-c-mode"><span class="hwfit-backend-badge" data-backend="${esc(_bkDetected.backend)}" title="${esc(_bkTip)}">${esc(modeLabel)}</span></span>`;
     html += `</div>`;
   }
   el.innerHTML = html;
@@ -1415,6 +1600,15 @@ export function _expandModelRow(row, modelData) {
 
   const dlSource = _downloadSourceRepo(modelData, backend);
   const hfUrl = `https://huggingface.co/${dlSource.repo}`;
+
+  const isLocalGguf = modelData._source === 'local_gguf';
+  const _modelShort = modelData.name.split('/').pop();
+  const _isCached = !isLocalGguf && _cachedModelIds && (
+    _cachedModelIds.has(modelData.name)
+    || [..._cachedModelIds].some(id => id === modelData.name || id.endsWith('/' + _modelShort))
+  );
+  const dlBtnLabel = isLocalGguf ? 'Serve' : (_isCached ? 'Update' : 'Download');
+
   // Official vendor recipe deep-links. These point to vLLM / SGLang's curated
   // hardware-specific launch-command pages. They 404 for uncatalogued models \u2014
   // a known tradeoff; user just gets the vendor's "model not found" page.
@@ -1434,7 +1628,7 @@ export function _expandModelRow(row, modelData) {
   }
   html += `</div>`;
   html += `<div class="hwfit-panel-actions">`;
-  html += `<button class="cookbook-btn hwfit-dl-btn">Download</button>`;
+  html += `<button class="cookbook-btn hwfit-dl-btn">${esc(dlBtnLabel)}</button>`;
   if (!modelData.is_image_gen) {
     html += `<button class="cookbook-btn cookbook-run-btn hwfit-quickrun-btn" title="Download + launch with smart defaults">Run</button>`;
     html += `<button class="cookbook-btn hwfit-serve-expand-btn" title="Configure & serve">Configure</button>`;
@@ -1459,10 +1653,15 @@ export function _expandModelRow(row, modelData) {
   row.insertAdjacentHTML('afterend', html);
   const panel = row.nextElementSibling;
 
-  // Wire download button
+  // Wire download/serve button
   const dlBtn = panel.querySelector('.hwfit-dl-btn');
   if (dlBtn) {
     dlBtn.addEventListener('click', () => {
+      // Local GGUF is already on disk — skip download, open the serve panel.
+      if (isLocalGguf) {
+        panel.querySelector('.hwfit-serve-expand-btn')?.click();
+        return;
+      }
       const host = _syncHostFromScanDropdown();   // host the user picked, passed explicitly
       if (backend === 'ollama') {
         _runPanelCmd(panel, _buildDownloadCmd(modelData, backend), { timeout: 0 });

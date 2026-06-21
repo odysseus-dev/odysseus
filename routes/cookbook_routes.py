@@ -46,9 +46,7 @@ from routes.cookbook_helpers import (
     load_stored_hf_token,
     _append_vllm_linux_preflight_lines, _ollama_bind_from_cmd, _pip_install_fallback_chain,
     _pip_install_no_cache, _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
-    _diagnose_serve_output, run_ssh_command_async,
-    _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
-    _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
+    _diagnose_serve_output, _compute_gpu_layers, run_ssh_command_async,
     _normalize_llama_cpp_python_cache_types,
     ModelDownloadRequest, ServeRequest,
 )
@@ -1535,22 +1533,64 @@ def setup_cookbook_routes() -> APIRouter:
                     runner_lines,
                     keep_shell_open=not local_windows,
                 )
-                runner_lines.append(req.cmd)
-                if local_windows:
-                    # Detached background process — no interactive shell to keep open.
-                    # Print the exit marker the status poller looks for, then stop.
-                    _append_serve_exit_code_lines(
-                        runner_lines,
-                        keep_shell_open=False,
-                        is_pip_install=is_pip_install,
-                    )
+                # OOM retry for native llama-server on POSIX (tmux) runs.
+                # Windows detached process and remote PowerShell use different
+                # runners that don't support this bash loop.
+                _is_llamacpp_bash_retry = "llama-server" in req.cmd and not local_windows
+                if _is_llamacpp_bash_retry:
+                    # Extract the literal -ngl value so we can initialize the
+                    # bash variable with whatever the frontend computed (99 by
+                    # default, or a hardware-computed partial-offload value).
+                    _ngl_m = re.search(r'-ngl\s+(\d+)', req.cmd)
+                    _initial_ngl = int(_ngl_m.group(1)) if _ngl_m else 99
+                    # Replace all literal ngl numbers with a bash variable so
+                    # the retry loop can halve it without rebuilding the command.
+                    _cmd_tmpl = re.sub(r'(-ngl\s+)\d+', r'\1$_OOM_NGL', req.cmd)
+                    _cmd_tmpl = re.sub(r'(--n_gpu_layers\s+)\d+', r'\1$_OOM_NGL', _cmd_tmpl)
+                    _log_path = f'/tmp/odysseus-tmux/{session_id}.log'
+                    runner_lines.append(f'_OOM_NGL={_initial_ngl}')
+                    runner_lines.append('_OOM_RETRIES=0')
+                    runner_lines.append('while true; do')
+                    runner_lines.append(f'  {_cmd_tmpl}')
+                    runner_lines.append('  _OOM_EC=$?')
+                    runner_lines.append('  [ $_OOM_EC -eq 0 ] && break')
+                    # 127 = command not found (llama-server missing); Python
+                    # bindings fallback already ran via ||; don't retry.
+                    runner_lines.append('  [ $_OOM_EC -eq 127 ] && break')
+                    runner_lines.append('  [ $_OOM_RETRIES -ge 3 ] && break')
+                    runner_lines.append(f'  if [ $_OOM_EC -eq 137 ] || grep -qi "out of memory\\|failed to allocate" {_log_path} 2>/dev/null; then')
+                    runner_lines.append('    _OOM_NGL=$((_OOM_NGL / 2))')
+                    runner_lines.append('    _OOM_RETRIES=$((_OOM_RETRIES + 1))')
+                    runner_lines.append('    echo "[odysseus] OOM fallback: retrying with -ngl $_OOM_NGL (attempt $_OOM_RETRIES/3)"')
+                    runner_lines.append('    sleep 2')
+                    runner_lines.append('    continue')
+                    runner_lines.append('  fi')
+                    runner_lines.append('  break')
+                    runner_lines.append('done')
+                    # $? after the while loop is always 0 (from break); preserve
+                    # the actual serve exit code via _OOM_EC for the exit handler.
+                    runner_lines.append('ODYSSEUS_CMD_EXIT=$_OOM_EC')
+                    runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="')
+                    runner_lines.append('exec 1>&3 2>&4 3>&- 4>&- 2>/dev/null || true')
+                    runner_lines.append('sleep 0.2  # let tee child flush + exit')
+                    runner_lines.append('exec "${SHELL:-/bin/bash}"')
                 else:
-                    # Keep shell open after exit so user can see errors
-                    _append_serve_exit_code_lines(
-                        runner_lines,
-                        keep_shell_open=True,
-                        is_pip_install=is_pip_install,
-                    )
+                    runner_lines.append(req.cmd)
+                    if local_windows:
+                        # Detached background process — no interactive shell to keep open.
+                        # Print the exit marker the status poller looks for, then stop.
+                        _append_serve_exit_code_lines(
+                            runner_lines,
+                            keep_shell_open=False,
+                            is_pip_install=is_pip_install,
+                        )
+                    else:
+                        # Keep shell open after exit so user can see errors
+                        _append_serve_exit_code_lines(
+                            runner_lines,
+                            keep_shell_open=True,
+                            is_pip_install=is_pip_install,
+                        )
 
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.sh"
             runner_path.write_text("\n".join(runner_lines) + "\n", encoding="utf-8")
@@ -2227,20 +2267,44 @@ def setup_cookbook_routes() -> APIRouter:
         import re
         import httpx
 
+        # Pipelines that represent runnable chat/LLM models. Multimodal flagships
+        # (Gemma 4, Qwen-VL, etc.) are tagged image-text-to-text or any-to-any on
+        # HF, not text-generation — so a text-generation-only query silently drops
+        # them. For the default LLM browse we pull all three and merge; an explicit
+        # non-LLM pipeline (e.g. text-to-image for the image tab) is honored as-is.
+        llm_pipelines = ("text-generation", "image-text-to-text", "any-to-any")
+        pipelines = list(llm_pipelines) if pipeline in ("", "text-generation", "llm") else [pipeline]
+
         # Fetch a larger pool so we have enough to filter from (we drop ~80%)
         pool_size = max(limit * 15, 100)
-        url = (
-            "https://huggingface.co/api/models"
-            f"?sort=trendingScore&direction=-1&limit={pool_size}&filter={pipeline}"
-        )
+        raw = []
+        seen_repos = set()
+        last_error = None
         try:
             async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(url)
-                if resp.status_code != 200:
-                    return {"models": [], "error": f"HF API HTTP {resp.status_code}"}
-                raw = resp.json()
+                for _pl in pipelines:
+                    url = (
+                        "https://huggingface.co/api/models"
+                        f"?sort=trendingScore&direction=-1&limit={pool_size}&filter={_pl}"
+                    )
+                    resp = await client.get(url)
+                    if resp.status_code != 200:
+                        last_error = f"HF API HTTP {resp.status_code}"
+                        continue
+                    for _entry in resp.json():
+                        _rid = _entry.get("modelId") or _entry.get("id") or ""
+                        if _rid and _rid in seen_repos:
+                            continue
+                        if _rid:
+                            seen_repos.add(_rid)
+                        raw.append(_entry)
         except Exception as e:
             return {"models": [], "error": str(e)}
+        if not raw:
+            return {"models": [], "error": last_error or "no models returned"}
+        # Merged across pipelines — re-establish a single trending order.
+        raw.sort(key=lambda e: e.get("trendingScore", 0) or 0, reverse=True)
+        allowed_pipelines = set(pipelines)
 
         # Estimate VRAM from the model id. Looks for patterns like "7B", "70B", "1.5B" etc.
         # Returns approx VRAM in GB at fp16 (params*2). Caller adjusts for quant.
@@ -2262,7 +2326,8 @@ def setup_cookbook_routes() -> APIRouter:
                 return 1.0
             return 1.0  # default fp16
 
-        # Exclude adapters, LoRAs, datasets, GGUF-only repos, and other non-runnable artifacts
+        # Exclude adapters, LoRAs, datasets, and other non-runnable artifacts.
+        # GGUF repos are NOT excluded — they are the preferred local-serving format.
         EXCLUDE_TAG_SUBSTRINGS = (
             "lora", "adapter", "peft", "qlora",
             "dataset", "embeddings",
@@ -2296,18 +2361,33 @@ def setup_cookbook_routes() -> APIRouter:
             tags = entry.get("tags") or []
             pipeline_tag = entry.get("pipeline_tag") or ""
 
-            # Hard filter: only the requested pipeline (HF's filter param is loose)
-            if pipeline and pipeline_tag and pipeline_tag != pipeline:
+            # Keep only the requested/runnable pipelines (HF's filter param is
+            # loose). allowed_pipelines covers multimodal-tagged chat models too,
+            # so flagships like Gemma 4 (any-to-any) are no longer dropped. An
+            # empty pipeline_tag is kept, as before.
+            if pipeline_tag and pipeline_tag not in allowed_pipelines:
                 continue
             # Skip adapters, LoRAs, datasets, etc.
             if _is_excluded(repo_id, tags):
                 continue
 
-            est_fp16 = _est_vram_fp16(repo_id)
-            quant_mult = _quant_factor(repo_id, tags)
-            est_vram = (est_fp16 * quant_mult) if est_fp16 else None
-            # Add 30% headroom for KV cache, activations, etc.
-            needed_vram = (est_vram * 1.3) if est_vram else None
+            # GGUF repos are served by llama-server which offloads layers to CPU
+            # RAM — VRAM is not the gating constraint. Bypassing the VRAM filter
+            # for GGUF is correct: the user picks a quantization at download time,
+            # and llama.cpp will mix VRAM + CPU RAM to fit whatever they choose.
+            is_gguf = (
+                "gguf" in repo_id.lower()
+                or "gguf" in " ".join(tags or []).lower()
+            )
+            if is_gguf:
+                est_vram = None
+                needed_vram = None
+            else:
+                est_fp16 = _est_vram_fp16(repo_id)
+                quant_mult = _quant_factor(repo_id, tags)
+                est_vram = (est_fp16 * quant_mult) if est_fp16 else None
+                # Add 30% headroom for KV cache, activations, etc.
+                needed_vram = (est_vram * 1.3) if est_vram else None
 
             if vram_gb > 0 and needed_vram is not None and needed_vram > vram_gb:
                 continue

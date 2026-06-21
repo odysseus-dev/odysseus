@@ -504,6 +504,7 @@ class TaskScheduler:
         # old event scanner too caused duplicate emails/notifications for the
         # same calendar event.
         self._note_pings_task = asyncio.create_task(self._note_pings_loop())
+        self._catalog_refresh_task = asyncio.create_task(self._catalog_refresh_loop())
         logger.info(f"Task scheduler started (concurrency cap: {self._concurrency_cap})")
         # Audit clusters: show any minute-of-day where >1 active scheduled
         # tasks land. Helps spot "all my tasks fire at 9am" patterns the user
@@ -540,13 +541,35 @@ class TaskScheduler:
                 await self._task
             except asyncio.CancelledError:
                 pass
-        for attr in ("_note_pings_task", "_event_pings_task"):
+        for attr in ("_note_pings_task", "_event_pings_task", "_catalog_refresh_task"):
             t = getattr(self, attr, None)
             if t:
                 t.cancel()
                 try: await t
                 except asyncio.CancelledError: pass
         logger.info("Task scheduler stopped")
+
+    async def _catalog_refresh_loop(self):
+        """Refresh the dynamic model catalog on a six-hour cadence."""
+        from services.hwfit.catalog_sync import (
+            HF_TRENDING_REFRESH_INTERVAL_S,
+            refresh_hf_trending_catalog,
+            refresh_live_catalog_sources,
+        )
+
+        await asyncio.sleep(20)
+        while self._running:
+            try:
+                live_count = await asyncio.to_thread(refresh_live_catalog_sources)
+                hf_count = await refresh_hf_trending_catalog()
+                logger.info(
+                    "Catalog refresh complete: live=%d hf_trending=%d",
+                    live_count,
+                    hf_count,
+                )
+            except Exception as e:
+                logger.warning(f"Catalog refresh errored: {e}")
+            await asyncio.sleep(HF_TRENDING_REFRESH_INTERVAL_S)
 
     async def _note_pings_loop(self):
         """Built-in note-due scanner — ticks every 60s inside the scheduler.

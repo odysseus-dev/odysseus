@@ -9,7 +9,7 @@ from services.hwfit.models import (
 GPU_BANDWIDTH = {
     "5090": 1792, "5080": 960, "5070 ti": 896, "5070": 672, "5060 ti": 448, "5060": 256,
     "4090": 1008, "4080 super": 736, "4080": 717, "4070 ti super": 672, "4070 ti": 504, "4070 super": 504, "4070": 504, "4060 ti": 288, "4060": 272,
-    "3090 ti": 1008, "3090": 936, "3080 ti": 912, "3080": 760, "3070 ti": 608, "3070": 448, "3060 ti": 448, "3060": 360,
+    "3090 ti": 1008, "3090": 936, "3080 ti": 912, "3080": 760, "3070 ti": 608, "3070": 448, "3060 ti": 448, "3060": 360, "3050 ti": 192, "3050": 224,
     "2080 ti": 616, "2080 super": 496, "2080": 448, "2070 super": 448, "2070": 448, "2060 super": 448, "2060": 336,
     "1660 ti": 288, "1660 super": 336, "1660": 192, "1650 super": 192, "1650": 128,
     "h100 sxm": 3350, "h100": 2039, "h200": 4800, "a100 sxm": 2039, "a100": 1555,
@@ -50,6 +50,41 @@ _APPLE_VARIANT_KEYS_SORTED = sorted(APPLE_BANDWIDTH_BY_CORES.keys(), key=len, re
 # metal: backstop for Apple Silicon chips not in the explicit tables above
 # (e.g. a future M6) — use a conservative generic estimate when unknown.
 FALLBACK_K = {"cuda": 220, "rocm": 180, "metal": 150, "cpu_x86": 70, "cpu_arm": 90}
+
+# Hardcoded default RAM budgets (GB) for specific models, applied only when the
+# user has NOT set an explicit RAM override (the RAM chip). The probed
+# available-RAM is just whatever's momentarily free, so a heavy model you always
+# intend to give N GB would otherwise read as marginal/too_tight until you free
+# memory. Listing it here lets that model rank against its intended budget by
+# default. Models NOT listed track live free RAM, i.e. update dynamically with
+# whatever you have left. A catalog entry may also carry its own
+# "default_ram_budget_gb"; that takes precedence over this map.
+DEFAULT_RAM_BUDGET_GB = {
+    "google/gemma-4-26B-A4B-it-qat-q4_0-gguf": 20.0,
+    "google/gemma-4-26B-A4B-it": 20.0,
+}
+
+
+def _default_ram_budget(model):
+    """Return the model's declared/hardcoded default RAM budget in GB, or 0.0.
+
+    Prefers an explicit ``default_ram_budget_gb`` field on the catalog entry,
+    then the DEFAULT_RAM_BUDGET_GB map (exact name, then the bare repo name after
+    the last ``/`` so local/alias copies still match)."""
+    try:
+        field = float(model.get("default_ram_budget_gb") or 0)
+    except (TypeError, ValueError):
+        field = 0.0
+    if field > 0:
+        return field
+    name = model.get("name") or ""
+    if name in DEFAULT_RAM_BUDGET_GB:
+        return DEFAULT_RAM_BUDGET_GB[name]
+    suffix = name.split("/")[-1]
+    for k, v in DEFAULT_RAM_BUDGET_GB.items():
+        if k.split("/")[-1] == suffix:
+            return v
+    return 0.0
 
 USE_CASE_WEIGHTS = {
     "general":    (0.45, 0.30, 0.15, 0.10),
@@ -411,6 +446,18 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
     gpu_count = system.get("gpu_count", 1) or 1
     single_gpu_vram = gpu_vram / gpu_count if gpu_count > 1 else gpu_vram
     available_ram = system.get("available_ram_gb", 0)
+    # Per-model default RAM budget. The explicit global RAM override (the chip,
+    # surfaced as ram_override_gb) always wins. Otherwise, a model with a declared
+    # default budget is ranked against it (capped at installed RAM), while models
+    # without one keep tracking live free RAM. See DEFAULT_RAM_BUDGET_GB.
+    if not system.get("ram_override_gb"):
+        _model_budget = _default_ram_budget(model)
+        if _model_budget > 0:
+            _ram_cap = system.get("detected_ram_total_gb") or system.get("total_ram_gb") or _model_budget
+            try:
+                available_ram = min(_model_budget, float(_ram_cap))
+            except (TypeError, ValueError):
+                available_ram = _model_budget
     # When the user has explicitly picked a GPU config (not RAM mode), they want
     # to see what runs ON the GPU(s) — not big models that only "fit" by spilling
     # most layers to system RAM. Zeroing the offload budget makes _try_quant_at
@@ -429,6 +476,17 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
     native_quant = _native_quant(model)
     preq = is_prequantized(model)
 
+    # Quantization-aware-training builds that ship a real GGUF are served by
+    # llama.cpp, not vLLM: Gemma QAT is distributed as int4 GGUF for exactly
+    # this consumer path. So a QAT row WITH gguf_sources must be treated like
+    # any other GGUF — eligible for CPU offload — instead of the vLLM/GPU-only
+    # path the bare "QAT-" prequant label would otherwise force. QAT safetensors
+    # (no GGUF) stay vLLM-only via the unchanged native_gpu_only below.
+    qat_gguf = (
+        native_quant.upper().startswith("QAT")
+        and bool(model.get("is_gguf") or model.get("gguf_sources"))
+    )
+
     # GGUF models can't be sharded across GPUs — use single GPU VRAM
     is_gguf = bool(model.get("gguf_sources"))
     quant_upper = (native_quant or "").upper()
@@ -437,12 +495,12 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
     # across GPUs). Prequantized formats (AWQ/GPTQ/FP8) are served sharded by
     # vLLM across all GPUs, so they get the FULL multi-GPU VRAM — even when the
     # model also lists a GGUF alternate download (gguf_sources).
-    if (is_gguf or is_gguf_quant) and not preq:
+    if ((is_gguf or is_gguf_quant) and not preq) or qat_gguf:
         effective_vram = single_gpu_vram
     else:
         effective_vram = gpu_vram
 
-    native_gpu_only = preq and not native_quant.startswith("mlx-")
+    native_gpu_only = preq and not native_quant.startswith("mlx-") and not qat_gguf
 
     # Determine which quant to evaluate at
     native_quant_prefixes = (
@@ -511,6 +569,10 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
             "gguf_sources": model.get("gguf_sources", []),
             "context_length": model_ctx,
             "target_context": target_context or None,
+            "_source": model.get("_source", ""),
+            "source": model.get("_source", ""),
+            "local_path": model.get("local_path", ""),
+            "mmproj_path": model.get("mmproj_path", ""),
         }
 
     run_mode, quant, fit_ctx, required_gb = result
@@ -528,6 +590,11 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
         else:
             fit_level = "marginal"
     elif run_mode == "cpu_offload":
+        fit_level = "good" if available_ram >= required_gb * 1.2 else "marginal"
+    elif run_mode == "cpu_only":
+        # Previously always "marginal" regardless of RAM headroom. A model that
+        # fits comfortably in RAM with 20% headroom is a legitimate "good" fit;
+        # "marginal" should be reserved for tight cases where OOM is a real risk.
         fit_level = "good" if available_ram >= required_gb * 1.2 else "marginal"
     else:
         fit_level = "marginal"
@@ -547,6 +614,14 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
     wq, ws, wf, wc = USE_CASE_WEIGHTS.get(score_use_case, (0.45, 0.30, 0.15, 0.10))
     composite = q_score * wq + s_score * ws + f_score * wf + c_score * wc
 
+    # For cpu_offload rows, expose how much of required_gb lands on GPU vs RAM
+    # so the UI can render a "4.5G+3.0G" partial-offload split in the Mem column.
+    vram_gb = None
+    ram_gb = None
+    if run_mode == "cpu_offload" and effective_vram > 0:
+        vram_gb = round(min(effective_vram, required_gb), 1)
+        ram_gb = round(max(0.0, required_gb - effective_vram), 1)
+
     return {
         "name": model.get("name"),
         "provider": model.get("provider"),
@@ -559,6 +634,9 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
         "quant": quant,
         "context": fit_ctx,
         "required_gb": round(required_gb, 1),
+        "ram_budget_gb": round(available_ram, 1),
+        "vram_gb": vram_gb,
+        "ram_gb": ram_gb,
         "speed_tps": round(tps, 1),
         "score": round(composite, 1),
         "scores": {
@@ -571,6 +649,10 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
         "context_length": model_ctx,
         "release_date": model.get("release_date", ""),
         "target_context": target_context or None,
+        "_source": model.get("_source", ""),
+        "source": model.get("_source", ""),
+        "local_path": model.get("local_path", ""),
+        "mmproj_path": model.get("mmproj_path", ""),
     }
 
 
@@ -620,16 +702,34 @@ SORT_KEYS = {
     "newest": lambda r: r.get("release_date") or "",
 }
 
+_SOURCE_PRIORITY = {
+    "local_gguf": 4,
+    "lmstudio": 3,
+    "ollama": 2,
+    "hf_trending": 1,
+    "": 0,
+}
 
-def rank_models(system, use_case=None, limit=50, search=None, sort="score", quant=None, target_context=None, fit_only=False):
+
+def _source_priority(result):
+    """Return source precedence for same-metric catalog rows."""
+    return _SOURCE_PRIORITY.get(result.get("_source") or result.get("source") or "", 0)
+
+
+def rank_models(system, use_case=None, limit=50, search=None, sort="score", quant=None, target_context=None, fit_only=False, extra_models=None, catalog_models=None):
     """Rank all models against detected hardware. Returns sorted list of fit results.
 
     fit_only: when True, drop rows whose fit_level is "too_tight" (model doesn't
     actually fit on the chosen budget). When False (default), every model is
     shown — sorting by Param means highest-param PERIOD, even ones that won't
     run, so the user can see the truth.
+    extra_models: additional catalog entries (e.g. from Ollama) to include in
+    the ranking pass alongside the static catalog.
+    catalog_models: optional primary catalog override, used by the dynamic DB
+    catalog while preserving the static JSON fallback for existing callers.
     """
-    models = get_models()
+    models = list(catalog_models) if catalog_models is not None else get_models()
+    models = models + list(extra_models or [])
     results = []
 
     # Include image gen models only when explicitly filtered
@@ -667,7 +767,7 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
             })
         if use_case == "image_gen":
             sort_fn = SORT_KEYS.get(sort, SORT_KEYS["score"])
-            results.sort(key=sort_fn, reverse=True)  # see main path below
+            results.sort(key=lambda r: (sort_fn(r), _source_priority(r)), reverse=True)  # see main path below
             return results[:limit]
 
     # If user picked a native prequantized format, filter to only those models.
@@ -773,6 +873,6 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
     # global highest by that metric. Before, vram was special-cased
     # ascending → truncate kept the 50 SMALLEST models and "highest VRAM"
     # could never appear, breaking the column-click toggle.
-    results.sort(key=sort_fn, reverse=True)
+    results.sort(key=lambda r: (sort_fn(r), _source_priority(r)), reverse=True)
     results = results[:limit]
     return results

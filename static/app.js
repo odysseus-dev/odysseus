@@ -3748,6 +3748,52 @@ function startOdysseusApp() {
   // Expose globally so voiceRecorder can trigger update after async fetch
   window._updateSendBtnIcon = _updateSendBtnIcon;
 
+  // ── Model capability affordances ──
+  // When modelPicker broadcasts 'odysseus:model-capabilities', update which
+  // input affordances are enabled based on the active model's capability list.
+  let _activeModelCaps = [];
+
+  function _applyAffordances(caps) {
+    const hasVision = caps.includes('vision');
+    const hasAudio  = caps.includes('audio');
+    const hasTools  = caps.includes('tools');
+
+    // Vision: show dedicated image-attach button only for vision models.
+    const visionBtn = el('vision-attach-btn');
+    if (visionBtn) visionBtn.style.display = hasVision ? '' : 'none';
+
+    // Stamp data attributes on the input bar so CSS can react.
+    const inputBar = document.querySelector('.chat-input-bar');
+    if (inputBar) {
+      inputBar.dataset.modelVision = hasVision ? 'true' : 'false';
+      inputBar.dataset.modelAudio  = hasAudio  ? 'true' : 'false';
+      inputBar.dataset.modelTools  = hasTools  ? 'true' : 'false';
+    }
+
+    // Expose for _updateSendBtnIcon and any other module that needs it.
+    window._activeModelHasAudio = hasAudio;
+    window._activeModelHasVision = hasVision;
+  }
+
+  document.addEventListener('odysseus:model-capabilities', (e) => {
+    _activeModelCaps = (e.detail && e.detail.capabilities) || [];
+    _applyAffordances(_activeModelCaps);
+    try { _updateSendBtnIcon(); } catch (_) {}
+  });
+
+  // Wire the vision-attach button to an image-only file picker.
+  const _visionAttachBtn = el('vision-attach-btn');
+  if (_visionAttachBtn) {
+    _visionAttachBtn.addEventListener('click', () => {
+      const fi = document.getElementById('file-input');
+      if (!fi) return;
+      const prev = fi.accept;
+      fi.accept = 'image/*';
+      fi.click();
+      fi.addEventListener('change', () => { fi.accept = prev; }, { once: true });
+    });
+  }
+
   // Initial icon state
   _updateSendBtnIcon();
 

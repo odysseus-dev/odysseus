@@ -78,6 +78,54 @@ function _handlePickerKeydown(e, listEl, itemSelector, closeFn) {
 let _deps = null;
 let _autoSelectingDefault = false;
 
+// Capability cache for the active model
+let _activeModelCaps = [];
+let _capsFetchModelId = '';
+
+/**
+ * Returns the cached capability list for the currently-active model.
+ * @returns {string[]}
+ */
+export function getActiveModelCaps() {
+  return _activeModelCaps;
+}
+
+/**
+ * Fetches capabilities for the given model ID from the catalog API and
+ * broadcasts an ``odysseus:model-capabilities`` event on the document.
+ * @param {string} modelId
+ */
+async function _fetchAndBroadcastCaps(modelId) {
+  if (!modelId) {
+    _activeModelCaps = [];
+    _capsFetchModelId = '';
+    document.dispatchEvent(new CustomEvent('odysseus:model-capabilities', {
+      detail: { modelId: '', capabilities: [] },
+    }));
+    return;
+  }
+  if (modelId === _capsFetchModelId) {
+    // Same model — re-broadcast without re-fetching
+    document.dispatchEvent(new CustomEvent('odysseus:model-capabilities', {
+      detail: { modelId, capabilities: _activeModelCaps },
+    }));
+    return;
+  }
+  _capsFetchModelId = modelId;
+  try {
+    const r = await fetch(
+      `${API_BASE}/api/hwfit/model-caps?model=${encodeURIComponent(modelId)}`,
+      { credentials: 'same-origin' }
+    );
+    _activeModelCaps = r.ok ? ((await r.json()).capabilities || []) : [];
+  } catch {
+    _activeModelCaps = [];
+  }
+  document.dispatchEvent(new CustomEvent('odysseus:model-capabilities', {
+    detail: { modelId, capabilities: _activeModelCaps },
+  }));
+}
+
 function _modelExists(modelId, url) {
   if (!modelId || !window.modelsModule || !window.modelsModule.getCachedItems) return false;
   const items = window.modelsModule.getCachedItems() || [];
@@ -103,6 +151,13 @@ function _modelExists(modelId, url) {
 export function initModelPicker(deps) {
   _deps = deps;
   _initModelPickerDropdown();
+  // Refresh badge when cookbookServe signals a profile was selected.
+  document.addEventListener('odysseus:profile-selected', () => {
+    const sid = _deps?.getCurrentSessionId?.();
+    const s = (_deps?.getSessions?.() || []).find(x => x.id === sid);
+    const mid = s?.model || _deps?.getPendingChat?.()?.modelId || '';
+    _refreshProfileBadge(mid ? mid.split('/').pop() : '');
+  });
 }
 
 function _initModelPickerDropdown() {
@@ -623,6 +678,175 @@ function _initModelPickerDropdown() {
       _close();
     }
   });
+  // Active profile badge — shows inline profile selector popover.
+  const badge = document.getElementById('active-profile-badge');
+  if (badge && !badge._profileClickBound) {
+    badge._profileClickBound = true;
+    badge.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      // Toggle: close if popover already open.
+      const existing = document.getElementById('profile-selector-popover');
+      if (existing) { existing.remove(); return; }
+      await _showProfilePopover(badge);
+    });
+  }
+}
+
+/**
+ * Renders a small popover below the profile badge so the user can switch
+ * profiles without leaving the chat. Selecting a profile updates
+ * ``localStorage['odysseus_active_profile']`` and broadcasts
+ * ``odysseus:profile-selected``. A footer link re-opens the full Cookbook
+ * serve panel for users who want to adjust advanced serve flags.
+ * @param {HTMLElement} badgeEl
+ */
+async function _showProfilePopover(badgeEl) {
+  // Fetch available profiles from the API.
+  let profiles = [];
+  try {
+    const r = await fetch(`${API_BASE}/api/profiles`, { credentials: 'same-origin' });
+    if (r.ok) profiles = await r.json();
+  } catch { /* fall through with empty list */ }
+
+  const stored = (() => {
+    try { return JSON.parse(localStorage.getItem('odysseus_active_profile') || 'null'); } catch { return null; }
+  })();
+
+  const pop = document.createElement('div');
+  pop.id = 'profile-selector-popover';
+  pop.className = 'profile-selector-popover';
+  pop.setAttribute('role', 'menu');
+
+  const header = document.createElement('div');
+  header.className = 'profile-sel-header';
+  header.textContent = 'Serving profile';
+  pop.appendChild(header);
+
+  // Render a chip per profile
+  for (const p of profiles) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'profile-sel-row' + (stored?.key === p.key ? ' active' : '');
+    row.setAttribute('role', 'menuitem');
+    row.dataset.profileKey = p.key;
+
+    const name = document.createElement('span');
+    name.className = 'profile-sel-name';
+    name.textContent = p.label;
+
+    const ttft = document.createElement('span');
+    ttft.className = 'profile-sel-ttft';
+    ttft.textContent = p.ttft_estimate || '';
+
+    row.appendChild(name);
+    row.appendChild(ttft);
+    row.title = p.description || '';
+
+    row.addEventListener('click', () => {
+      // Build a minimal stored profile entry and save it.
+      const ctxK = Math.round((p.ctx_size || 4096) / 1024);
+      const ctxLabel = ctxK >= 1 ? `${ctxK}k` : String(p.ctx_size);
+      const next = {
+        key: p.key,
+        label: p.label,
+        ctx: p.ctx_size || 4096,
+        ctxLabel,
+        repo: stored?.repo || '',
+      };
+      try { localStorage.setItem('odysseus_active_profile', JSON.stringify(next)); } catch { /* quota */ }
+      document.dispatchEvent(new CustomEvent('odysseus:profile-selected', { detail: next }));
+      pop.remove();
+      if (uiModule && uiModule.showToast) uiModule.showToast(`Profile: ${p.label} — re-serve to apply`);
+    });
+
+    pop.appendChild(row);
+  }
+
+  // Footer: open Cookbook serve panel (original badge behaviour)
+  const footer = document.createElement('div');
+  footer.className = 'profile-sel-footer';
+  const cookbookLink = document.createElement('button');
+  cookbookLink.type = 'button';
+  cookbookLink.className = 'profile-sel-cookbook-link';
+  cookbookLink.textContent = 'Re-serve in Cookbook →';
+  cookbookLink.addEventListener('click', async () => {
+    pop.remove();
+    try {
+      const s2 = (() => {
+        try { return JSON.parse(localStorage.getItem('odysseus_active_profile') || 'null'); } catch { return null; }
+      })();
+      if (!s2?.repo) return;
+      const { openServePanelForRepo } = await import('./cookbookServe.js');
+      await openServePanelForRepo(s2.repo);
+      if (s2.key) {
+        for (let i = 0; i < 20; i++) {
+          const chip = document.querySelector(`.hwfit-profile-chip[data-intent-key="${s2.key}"]`);
+          if (chip) { chip.click(); break; }
+          await new Promise(r => setTimeout(r, 100));
+        }
+      }
+    } catch {}
+  });
+  footer.appendChild(cookbookLink);
+  pop.appendChild(footer);
+
+  // Position below the badge
+  document.body.appendChild(pop);
+  const rect = badgeEl.getBoundingClientRect();
+  pop.style.position = 'fixed';
+  pop.style.top  = (rect.bottom + 6) + 'px';
+  pop.style.left = rect.left + 'px';
+  pop.style.zIndex = '9999';
+
+  // Clamp to viewport right edge
+  requestAnimationFrame(() => {
+    const pw = pop.offsetWidth;
+    const vw = window.innerWidth;
+    if (rect.left + pw > vw - 8) {
+      pop.style.left = Math.max(8, vw - pw - 8) + 'px';
+    }
+  });
+
+  // Close on outside click or Escape
+  function _dismiss(ev) {
+    if (!pop.contains(ev.target) && ev.target !== badgeEl) {
+      pop.remove();
+      document.removeEventListener('click', _dismiss);
+      document.removeEventListener('keydown', _dismissKey);
+    }
+  }
+  function _dismissKey(ev) {
+    if (ev.key === 'Escape') {
+      pop.remove();
+      document.removeEventListener('click', _dismiss);
+      document.removeEventListener('keydown', _dismissKey);
+    }
+  }
+  setTimeout(() => {
+    document.addEventListener('click', _dismiss);
+    document.addEventListener('keydown', _dismissKey);
+  }, 0);
+}
+
+/**
+ * Shows or hides the active-profile-badge in the chat header.
+ * The badge is shown only when the currently-selected chat model matches the
+ * model for which a profile was last configured in the Cookbook serve panel.
+ */
+function _refreshProfileBadge(currentShort) {
+  const badge = document.getElementById('active-profile-badge');
+  if (!badge) return;
+  try {
+    const stored = JSON.parse(localStorage.getItem('odysseus_active_profile') || 'null');
+    if (!stored || !stored.repo || !currentShort) { badge.style.display = 'none'; return; }
+    const storedShort = stored.repo.split('/').pop();
+    if (storedShort !== currentShort) { badge.style.display = 'none'; return; }
+    badge.textContent = `${stored.key.toLowerCase()} · ${stored.ctxLabel} ctx`;
+    badge.title = `Serving profile: ${stored.label} (ctx ${stored.ctxLabel}) — click to open Cookbook serve`;
+    badge.style.display = '';
+  } catch {
+    badge.style.display = 'none';
+  }
 }
 
 /**
@@ -720,4 +944,6 @@ export function updateModelPicker() {
   } else {
     label.textContent = displayName;
   }
+  _refreshProfileBadge(modelId ? modelId.split('/').pop() : '');
+  _fetchAndBroadcastCaps(modelId || '');
 }

@@ -417,6 +417,37 @@ def _read_file(path):
         return None
 
 
+def _running_in_container():
+    """Return True when Odysseus appears to be running inside a container."""
+    if _remote_host:
+        return False
+    if os.path.exists("/.dockerenv"):
+        return True
+    cgroup = _read_file("/proc/1/cgroup") or ""
+    return any(marker in cgroup.lower() for marker in ("docker", "containerd", "kubepods"))
+
+
+def _container_gpu_error():
+    """Return a helpful GPU visibility warning for containerized deployments."""
+    if not _running_in_container():
+        return None
+    if os.path.exists("/dev/kfd") or os.path.exists("/dev/dri"):
+        return None
+    if os.path.exists("/dev/nvidiactl") or os.path.exists("/dev/nvidia0"):
+        return None
+    if os.environ.get("NVIDIA_VISIBLE_DEVICES"):
+        return (
+            "The NVIDIA GPU compose overlay is configured, but no NVIDIA device "
+            "is visible inside the Odysseus Docker container. Check Docker Desktop "
+            "GPU support or the NVIDIA Container Toolkit setup in docs/HARDWARE_SETUP.md."
+        )
+    return (
+        "No GPU is visible inside the Odysseus Docker container. "
+        "If this host has a GPU, restart with the NVIDIA or AMD GPU compose overlay "
+        "from docs/HARDWARE_SETUP.md."
+    )
+
+
 def _parse_meminfo():
     """Parse /proc/meminfo into a dict of key -> KB values."""
     text = _read_file("/proc/meminfo")
@@ -503,6 +534,87 @@ def _get_cpu_count():
     return os.cpu_count() or 1
 
 
+def _get_physical_cpu_count():
+    """Return physical CPU core count when the OS exposes it."""
+    text = _read_file("/proc/cpuinfo") or ""
+    if text:
+        physical_cores: set[tuple[str, str]] = set()
+        package_cores: dict[str, int] = {}
+        current: dict[str, str] = {}
+        for line in text.splitlines() + [""]:
+            if not line.strip():
+                if "physical id" in current and "core id" in current:
+                    physical_cores.add((current["physical id"], current["core id"]))
+                elif "physical id" in current and "cpu cores" in current:
+                    try:
+                        package_cores[current["physical id"]] = int(current["cpu cores"])
+                    except ValueError:
+                        pass
+                current = {}
+                continue
+            if ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            current[key.strip()] = value.strip()
+        if physical_cores:
+            return len(physical_cores)
+        if package_cores:
+            return sum(package_cores.values())
+
+    if _remote_host:
+        out = _run(["sysctl", "-n", "hw.physicalcpu"])
+        if out:
+            try:
+                return int(out.strip())
+            except ValueError:
+                pass
+    return None
+
+
+def _runtime_context():
+    """Return runtime metadata that explains container/WSL resource scopes."""
+    version = (_read_file("/proc/version") or "").lower()
+    in_container = _running_in_container()
+    in_wsl = "microsoft" in version or "wsl" in version
+    runtime = "host"
+    ram_scope = "host"
+    if in_container and in_wsl:
+        runtime = "docker_wsl2"
+        ram_scope = "docker_wsl2"
+    elif in_container:
+        runtime = "docker"
+        ram_scope = "docker"
+    elif in_wsl:
+        runtime = "wsl2"
+        ram_scope = "wsl2"
+
+    return {
+        "runtime": runtime,
+        "ram_scope": ram_scope,
+        "in_container": in_container,
+        "in_wsl": in_wsl,
+    }
+
+
+def _configured_host_ram():
+    """Return optional host RAM metadata supplied by deployment environment."""
+    def _float_env(name):
+        try:
+            value = os.environ.get(name)
+            return round(float(value), 1) if value not in (None, "") else None
+        except ValueError:
+            return None
+
+    total = _float_env("ODYSSEUS_HOST_TOTAL_RAM_GB")
+    available = _float_env("ODYSSEUS_HOST_AVAILABLE_RAM_GB")
+    if total is None and available is None:
+        return {}
+    return {
+        "host_total_ram_gb": total,
+        "host_available_ram_gb": available,
+    }
+
+
 def _canonical_cpu_arch(value):
     arch = str(value or "").lower().strip().replace("-", "_")
     if arch in ("x86_64", "amd64", "x64"):
@@ -546,6 +658,7 @@ def _detect_windows():
         $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
         $r.cpu_name = $cpu.Name
         $r.cpu_cores = (Get-CimInstance Win32_Processor | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum
+        $r.cpu_physical_cores = (Get-CimInstance Win32_Processor | Measure-Object -Property NumberOfCores -Sum).Sum
         $r.arch = $cpu.AddressWidth
         $r.cpu_arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
         # GPU detection via nvidia-smi (fastest) or WMI fallback
@@ -618,6 +731,8 @@ def _detect_windows():
             "total_ram_gb": d.get("ram_gb", 0),
             "available_ram_gb": d.get("avail_gb", 0),
             "cpu_cores": _as_int(d.get("cpu_cores"), 1),
+            "cpu_logical_cores": _as_int(d.get("cpu_cores"), 1),
+            "cpu_physical_cores": _as_int(d.get("cpu_physical_cores"), 0) or None,
             "cpu_name": _cpu_name,
             "cpu_arch": _canonical_cpu_arch(d.get("cpu_arch")),
             "has_gpu": bool(d.get("gpu_name")),
@@ -628,6 +743,10 @@ def _detect_windows():
             "homogeneous": True,
             "gpu_error": None,
             "platform": "windows",
+            "runtime": "host",
+            "ram_scope": "host",
+            "in_container": False,
+            "in_wsl": False,
         }
         # PowerShell only reports aggregate GPU info, not per-card detail, so we
         # can't tell a mixed box from a uniform one here — assume one homogeneous
@@ -814,7 +933,10 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
         return result
     available_ram = round(_get_available_ram_gb(), 1)
     cpu_cores = _get_cpu_count()
+    physical_cores = _get_physical_cpu_count()
     cpu_name = _get_cpu_name()
+    runtime_context = _runtime_context()
+    host_ram = _configured_host_ram()
     cpu_arch = _get_cpu_arch()
 
     gpu_info = _detect_apple_silicon() or _detect_nvidia() or _detect_amd()
@@ -824,6 +946,8 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
             "total_ram_gb": total_ram,
             "available_ram_gb": available_ram,
             "cpu_cores": cpu_cores,
+            "cpu_logical_cores": cpu_cores,
+            "cpu_physical_cores": physical_cores,
             "cpu_name": cpu_name,
             "cpu_arch": cpu_arch,
             "has_gpu": True,
@@ -838,6 +962,8 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
             # Apple Silicon / AMD APUs share system RAM with the GPU — carry the
             # flag through so callers can tell unified from discrete VRAM.
             "unified_memory": gpu_info.get("unified_memory", False),
+            **runtime_context,
+            **host_ram,
         }
     else:
         backend = "cpu_arm" if cpu_arch == "arm64" else "cpu_x86"
@@ -845,6 +971,8 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
             "total_ram_gb": total_ram,
             "available_ram_gb": available_ram,
             "cpu_cores": cpu_cores,
+            "cpu_logical_cores": cpu_cores,
+            "cpu_physical_cores": physical_cores,
             "cpu_name": cpu_name,
             "cpu_arch": cpu_arch,
             "has_gpu": False,
@@ -855,7 +983,9 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
             # Set when nvidia-smi exists but failed (e.g. driver/library
             # version mismatch) — lets the UI say "GPU driver error" instead
             # of the misleading "No GPU".
-            "gpu_error": _last_gpu_error,
+            "gpu_error": _last_gpu_error or _container_gpu_error(),
+            **runtime_context,
+            **host_ram,
         }
 
     result = _attach_probe_context(result, host=host)

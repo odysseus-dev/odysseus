@@ -163,6 +163,21 @@ class ModelDiscovery:
                     return "lmstudio"
         except Exception:
             pass
+        # llama.cpp's llama-server exposes a native /props endpoint (no /v1 prefix)
+        # describing the loaded model, slots, and chat template — distinct from
+        # LM Studio (/api/v1/models) and vLLM (/version, /metrics).
+        try:
+            r = httpx.get(f"http://{host}:{port}/props", timeout=1.5)
+            if r.is_success:
+                props = r.json() or {}
+                if isinstance(props, dict) and (
+                    "default_generation_settings" in props
+                    or "total_slots" in props
+                    or "chat_template" in props
+                ):
+                    return "llamacpp"
+        except Exception:
+            pass
         return None
 
     def _check_port(self, host: str, port: int) -> Optional[Dict[str, Any]]:
@@ -194,10 +209,11 @@ class ModelDiscovery:
 
         logger.info(f"Scanning {len(hosts)} hosts for models: {hosts}")
 
-        # Well-known ports: 8000-8020 (vLLM, llama.cpp, SGLang, Cookbook),
-        # 1234 (LM Studio), 11434 (Ollama), 11435 for APFEL as its default port is
-        # occupied by Ollama. The env vars can add more ports which will be merged in.
-        ports = list(range(8000, 8021)) + [1234, 11434, 11435]
+        # Well-known ports: 8000-8020 (vLLM, SGLang, Cookbook), 8080 (llama.cpp /
+        # llama-server default), 1234 (LM Studio), 11434 (Ollama), 11435 for APFEL
+        # as its default port is occupied by Ollama. The env vars can add more
+        # ports which will be merged in.
+        ports = list(range(8000, 8021)) + [8080, 1234, 11434, 11435]
         ports += [p for p in sorted(self._extra_ports) if p not in ports]
         targets = [(h, p) for h in hosts for p in ports]
 
@@ -218,10 +234,50 @@ class ModelDiscovery:
         # Sort by host then port for consistent ordering
         items.sort(key=lambda x: (x["host"], x["port"]))
 
-        logger.info(
-            f"Discovered {len(items)} model endpoints across {len(hosts)} hosts"
-        )
+        logger.info(f"Discovered {len(items)} model endpoints across {len(hosts)} hosts")
+
+        # Persist catalog entries for any LM Studio / Ollama endpoints found.
+        # Runs in a daemon thread so it never blocks the scan response.
+        lm_hosts = {item["host"] for item in items if item.get("provider") == "lmstudio"}
+        ollama_hosts = {item["host"] for item in items if item.get("port") == 11434}
+        if lm_hosts or ollama_hosts:
+            import threading
+            threading.Thread(
+                target=self._persist_discovered_endpoints,
+                args=(lm_hosts, ollama_hosts),
+                daemon=True,
+            ).start()
+
         return {"hosts": hosts, "items": items}
+
+    def _persist_discovered_endpoints(self, lm_hosts: set, ollama_hosts: set) -> None:
+        """Persist catalog entries for discovered LM Studio and Ollama endpoints."""
+        entries: List[Dict[str, Any]] = []
+        for host in lm_hosts:
+            try:
+                from services.hwfit.lmstudio_catalog import fetch_lmstudio_models
+                entries.extend(fetch_lmstudio_models(host=host))
+            except Exception:
+                logger.debug("LM Studio catalog fetch failed for %s", host, exc_info=True)
+        for host in ollama_hosts:
+            try:
+                from services.hwfit.ollama_catalog import fetch_ollama_models
+                entries.extend(fetch_ollama_models(host=host))
+            except Exception:
+                logger.debug("Ollama catalog fetch failed for %s", host, exc_info=True)
+        if not entries:
+            return
+        try:
+            from services.hwfit.catalog_sync import upsert_discovered_models
+            from core.database import get_db_session
+            with get_db_session() as db:
+                upsert_discovered_models(db, entries)
+                db.commit()
+            logger.debug(
+                "Persisted %d catalog entries from endpoint discovery", len(entries)
+            )
+        except Exception:
+            logger.debug("Catalog persistence after endpoint discovery failed", exc_info=True)
 
     def warmup_ping_urls(self, limit: int = 5) -> List[str]:
         """The ``/models`` URLs of up to ``limit`` discovered endpoints.
