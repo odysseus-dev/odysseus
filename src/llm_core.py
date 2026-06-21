@@ -716,10 +716,15 @@ def _provider_label(url: str) -> str:
             pass
     if _is_ollama_native_url(url): return "Ollama"
     try:
-        host = (urlparse(url).hostname or "").lower()
+        _parsed_local = urlparse(url)
+        host = (_parsed_local.hostname or "").lower()
+        port = _parsed_local.port
     except Exception:
         return "provider"
     if host in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
+        if port == 8080: return "llama.cpp"
+        if port == 8000: return "vLLM"
+        if port == 1234: return "LM Studio"
         return "local endpoint"
     return host or "provider"
 

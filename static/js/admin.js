@@ -1581,8 +1581,8 @@ function initEndpointForm() {
         wrap.style.cssText = 'display:flex;align-items:center;padding:8px 0;';
         wrap.appendChild(wp.element);
         const txt = document.createElement('span');
-        txt.textContent = 'Scanning ports 8000-8020 and 11434 for model servers...';
-        txt.style.cssText = 'opacity:0.7;';
+        txt.textContent = 'Scanning ports 8000-8020, 8080, 1234, 11434, and 11435 for model servers...';
+        txt.style.cssText = 'font-size:12px;opacity:0.7;';
         wrap.appendChild(txt);
         msg.appendChild(wrap);
         discoverBtn._wp = wp;
@@ -1597,12 +1597,24 @@ function initEndpointForm() {
         } else {
           // Auto-add each discovered endpoint. Server dedupes on base_url
           // and returns `existing: true` for already-registered ones.
+          // Map fingerprinted provider IDs to friendly display names.
+          const _PROVIDER_DISPLAY = {
+            llamacpp: 'llama.cpp', lmstudio: 'LM Studio', vllm: 'vLLM',
+            ollama: 'Ollama',
+          };
           let added = 0;
           let skipped = 0;
           for (const item of items) {
             const base = item.url.replace('/chat/completions', '').replace(/\/$/, '');
+            const providerDisplay = _PROVIDER_DISPLAY[item.provider] || null;
             const fd = new FormData();
             fd.append('base_url', base);
+            if (providerDisplay) {
+              // Use "Provider (host:port)" so the endpoint is immediately
+              // identifiable in the list, e.g. "llama.cpp (localhost:8080)".
+              const hostPart = base.replace(/^https?:\/\//, '').split('/')[0];
+              fd.append('name', `${providerDisplay} (${hostPart})`);
+            }
             fd.append('endpoint_kind', 'local');
             fd.append('model_refresh_mode', 'auto');
             fd.append('skip_probe', 'false');
@@ -1616,7 +1628,12 @@ function initEndpointForm() {
             }
           }
           const totalModels = items.reduce((n, i) => n + (i.models ? i.models.length : 0), 0);
-          const parts = [`Found ${items.length} server${items.length !== 1 ? 's' : ''} with ${totalModels} model${totalModels !== 1 ? 's' : ''}`];
+          const serverNames = items.map(i =>
+            (_PROVIDER_DISPLAY[i.provider] || i.url.replace(/^https?:\/\//, '').split('/')[0])
+          );
+          const parts = [
+            `Found ${items.length} server${items.length !== 1 ? 's' : ''} (${serverNames.join(', ')}) with ${totalModels} model${totalModels !== 1 ? 's' : ''}`,
+          ];
           if (added) parts.push(`added ${added} new`);
           if (skipped) parts.push(`${skipped} already added`);
           msg.innerHTML = parts.join(' — ');

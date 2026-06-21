@@ -127,17 +127,36 @@ const _ENDPOINT_LABELS = [
  * Returns "Local" for loopback/LAN hosts, a known provider name when matched,
  * else the bare host. Null when no URL is available.
  */
+// Port → friendly server name for well-known local serving tools. Mirrors the
+// Python _provider_label() heuristic in src/llm_core.py so both layers agree.
+const _LOCAL_PORT_LABELS = new Map([
+  [8080, "llama.cpp"],
+  [8000, "vLLM"],
+  [1234, "LM Studio"],
+  [11434, "Ollama"],
+]);
+
 export function providerLabel(endpointUrl) {
   if (!endpointUrl || typeof endpointUrl !== "string") return null;
-  let host;
+  let host, port;
   try {
-    host = new URL(endpointUrl).hostname;
+    const parsed = new URL(endpointUrl);
+    host = parsed.hostname;
+    port = parsed.port ? parseInt(parsed.port, 10) : null;
   } catch (_) {
-    // Not a full URL (e.g. bare host[:port]) — strip scheme/path/port best-effort.
-    host = endpointUrl.replace(/^[a-z]+:\/\//i, "").split("/")[0].split(":")[0];
+    // Not a full URL (e.g. bare host[:port]) — strip scheme/path best-effort.
+    const stripped = endpointUrl.replace(/^[a-z]+:\/\//i, "").split("/")[0];
+    const colonIdx = stripped.lastIndexOf(":");
+    host = colonIdx >= 0 ? stripped.slice(0, colonIdx) : stripped;
+    const rawPort = colonIdx >= 0 ? parseInt(stripped.slice(colonIdx + 1), 10) : NaN;
+    port = isNaN(rawPort) ? null : rawPort;
   }
   if (!host) return null;
-  if (/^(localhost|127\.|0\.0\.0\.0|::1|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(host)) {
+  const isLoopback = /^(localhost|127\.|0\.0\.0\.0|::1)/.test(host);
+  if (isLoopback) {
+    return _LOCAL_PORT_LABELS.get(port) ?? "Local";
+  }
+  if (/^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(host)) {
     return "Local";
   }
   for (const [re, label] of _ENDPOINT_LABELS) {

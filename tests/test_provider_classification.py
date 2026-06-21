@@ -93,10 +93,17 @@ class TestProviderLabel:
     def test_known_labels(self, url, expected):
         assert _provider_label(url) == expected
 
-    def test_local_non_ollama_endpoint(self):
-        # A loopback host that isn't on the native Ollama /api path is just a
-        # generic local endpoint (e.g. an OpenAI-compatible local server).
-        assert _provider_label("http://localhost:8080/v1") == "local endpoint"
+    @pytest.mark.parametrize("url,expected", [
+        ("http://localhost:8080/v1", "llama.cpp"),
+        ("http://127.0.0.1:8080/v1", "llama.cpp"),
+        ("http://localhost:8000/v1", "vLLM"),
+        ("http://localhost:1234/v1", "LM Studio"),
+        ("http://localhost:9999/v1", "local endpoint"),
+    ])
+    def test_local_non_ollama_endpoint(self, url, expected):
+        # Port-based heuristics identify well-known local servers; everything
+        # else falls back to the generic label.
+        assert _provider_label(url) == expected
 
     def test_unknown_host_returns_host(self):
         assert _provider_label("https://api.unknown-llm.example/v1") == "api.unknown-llm.example"
