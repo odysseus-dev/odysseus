@@ -26,6 +26,7 @@ from core.middleware import require_admin
 from src.auth_helpers import get_current_user
 
 from companion import pairing as _pairing
+from companion import messages as _messages
 
 
 def token_owner(request: Request) -> str | None:
@@ -158,6 +159,85 @@ def setup_companion_routes() -> APIRouter:
         finally:
             db.close()
         return {"endpoints": out}
+
+    @router.post("/messages/send")
+    async def message_send(request: Request):
+        """Queue an iMessage/SMS for a paired phone to send.
+
+        This intentionally does not shell out to macOS Messages/AppleScript:
+        Linux, Docker, Windows, and cloud installs can queue the message, and a
+        paired Apple device/Shortcut can poll `/messages/outbox` to perform the
+        actual send.
+        """
+        owner = token_owner(request)
+        if not owner:
+            raise HTTPException(403, "Unable to resolve token owner")
+        try:
+            data = await request.json()
+        except Exception:
+            raise HTTPException(400, "Expected JSON body")
+        try:
+            queued = _messages.queue_outbound(
+                owner,
+                data.get("to"),
+                data.get("body") or data.get("message"),
+                data.get("service") or "imessage",
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        return {"queued": queued}
+
+    @router.get("/messages/outbox")
+    def message_outbox(request: Request, limit: int = 25):
+        """Return queued messages for the paired device's real owner."""
+        owner = token_owner(request)
+        if not owner:
+            raise HTTPException(403, "Unable to resolve token owner")
+        return {"messages": _messages.pending_outbound(owner, limit)}
+
+    @router.post("/messages/{message_id}/status")
+    async def message_status(message_id: str, request: Request):
+        """Let the paired device acknowledge a queued message as sent/failed."""
+        owner = token_owner(request)
+        if not owner:
+            raise HTTPException(403, "Unable to resolve token owner")
+        try:
+            data = await request.json()
+        except Exception:
+            raise HTTPException(400, "Expected JSON body")
+        try:
+            updated = _messages.mark_outbound(
+                owner,
+                message_id,
+                data.get("status"),
+                data.get("error"),
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        except KeyError:
+            raise HTTPException(404, "Message not found")
+        return {"message": updated}
+
+    @router.post("/messages/inbound")
+    async def message_inbound(request: Request):
+        """Record a message delivered by a paired phone/Shortcut."""
+        owner = token_owner(request)
+        if not owner:
+            raise HTTPException(403, "Unable to resolve token owner")
+        try:
+            data = await request.json()
+        except Exception:
+            raise HTTPException(400, "Expected JSON body")
+        try:
+            message = _messages.record_inbound(
+                owner,
+                data.get("from") or data.get("sender"),
+                data.get("body") or data.get("message"),
+                data.get("service") or "imessage",
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        return {"message": message}
 
     @router.get("/pair")
     def pair_page(request: Request):
