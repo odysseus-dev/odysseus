@@ -847,9 +847,10 @@ export async function saveCustomPreset(showToast, showError) {
 
         // Optimistically update the in-memory templates list by @michaelxer
         if (_existing) {
-          Object.assign(_existing, _entry);
           // slow but works for now
           clone = JSON.parse(JSON.stringify(_existing));
+
+          Object.assign(_existing, _entry);
         } else {
           userTemplates.push(_entry);
         }

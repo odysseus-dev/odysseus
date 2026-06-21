@@ -224,8 +224,8 @@ function _initGroupTab() {
   async function repopulateExistingSelections() {
     const EMPTY = "";
 
-    const characterSelections = participantsEl.querySelectorAll("select.preset-input[data-selection-type=character");
-    const modelSelections = participantsEl.querySelectorAll("select.preset-input[data-selection-type=model");
+    const characterSelections = participantsEl.querySelectorAll("select.preset-input[data-selection-type=character]");
+    const modelSelections = participantsEl.querySelectorAll("select.preset-input[data-selection-type=model]");
 
     if (characterSelections.length !== 0) {
       const characters = await _getCharacterList();
@@ -255,7 +255,7 @@ function _initGroupTab() {
         modelSelection.innerHTML = '<option value="">Model…</option>' +
           models.map(m => '<option value="' + m.mid + '">' + uiModule.esc(m.display) + '</option>').join('');
         if (isChosenModelExisting) {
-          modelSelection.vale = chosenModel;
+          modelSelection.value = chosenModel;
         }
       });
     }

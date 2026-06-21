@@ -58,3 +58,27 @@ def test_presets_optimistic_id_not_empty():
     assert "user-' + Math.random" in PRESETS_JS
     # Must NOT use empty string as fallback (that was the bug)
     assert "(_existing && _existing.id) || ''" not in PRESETS_JS
+
+def test_presets_clone_happens_before_mutation():
+    """Rollback snapshot must be taken before Object.assign mutates _existing."""
+    clone_idx = PRESETS_JS.find("clone = JSON.parse(JSON.stringify(_existing))")
+    assign_idx = PRESETS_JS.find("Object.assign(_existing, _entry)")
+
+    assert clone_idx != -1
+    assert assign_idx != -1
+    assert clone_idx < assign_idx
+
+def test_presets_rollbak_restores_from_clone():
+    """Failed save must restore the original object from the pre-mutation clone."""
+    assert "if (clone)" in PRESETS_JS
+    assert "Object.assign(_existing, clone)" in PRESETS_JS
+
+def test_presets_clone_is_deep_copy():
+    """Rollback snapshot must be a deep clone, not an alias."""
+    assert "clone = JSON.parse(JSON.stringify(_existing))" in PRESETS_JS
+
+def test_presets_no_alias_clone():
+    """Prevent accidental rollback breakage via reference assignment."""
+    assert "clone = _existing" not in PRESETS_JS
+    assert "const clone = _existing" not in PRESETS_JS
+    assert "let clone = _existing" not in PRESETS_JS
