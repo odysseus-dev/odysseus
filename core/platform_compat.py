@@ -72,17 +72,17 @@ def detect_gpu() -> Optional[str]:
             if result.returncode == 0 and result.stdout.strip():
                 return "cuda"
         elif IS_POSIX:
+            # Apple Silicon macOS uses Metal; there is no nvidia-smi.
+            if IS_APPLE_SILICON:
+                return "metal"
             result = subprocess.run(
                 ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=5,
             )
             if result.returncode == 0 and result.stdout.strip():
                 return "cuda"
-            # Check for Apple Metal
-            if sys.platform == "darwin" and platform.machine().lower() in {"arm64", "aarch64"}:
-                return "metal"
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
     return None
