@@ -718,7 +718,7 @@ def test_local_windows_download_pid_tracks_inner_bash_and_stop_kills_tree():
 
     assert 'printf \'%s\\\\n\' \\"$$\\" > {pp}' in routes_src
     assert "function Stop-Tree([int]$Id)" in running_src
-    assert "ParentProcessId = $Id" in running_src
+    assert "('ParentProcessId = ' + $Id)" in running_src
     assert "Stop-Tree ([int]$p)" in running_src
 
 
