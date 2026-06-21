@@ -1372,7 +1372,6 @@ export async function loadSessions() {
     // on the user's last actual conversation, not whichever check-in task
     // most recently appended a message.
     const _isTransient = (s) => !!s && (s.folder === 'Assistant' || s.folder === 'Tasks');
-    const _realSessions = activeSessions.filter(s => !_isTransient(s));
     const hashId = window.location.hash.replace('#', '');
     let savedId = Storage.get('lastSessionId');
     // If the persisted lastSessionId points to a transient session (legacy
@@ -1399,28 +1398,19 @@ export async function loadSessions() {
     } else if (currentSessionId) {
       // Session was just created but may not be in the list yet — keep it
       targetId = currentSessionId;
-    } else if (savedId && activeSessions.some(s => s.id === savedId)) {
-      targetId = savedId;
-    } else if (!_skipAutoSelect && _realSessions.length > 0) {
-      // Most-recent NON-transient session — skip Assistant / Tasks so the
-      // auto-firing assistant doesn't become the apparent default chat.
-      targetId = _realSessions[0].id;
-    } else if (!_skipAutoSelect && activeSessions.length > 0) {
-      // Only transient sessions exist (brand-new account) — fall through to
-      // the original behaviour so we don't leave the user with nothing.
-      targetId = activeSessions[0].id;
     }
     _skipAutoSelect = false;
 
     // Fresh login: prefer a default-model session so a brand-new user lands
     // ready to chat. CRITICAL: only do this when there's NO session to return
-    // to (no hash / lastSessionId / existing chat resolved into targetId).
+    // to (no hash / existing chat resolved into targetId).
     // Otherwise a fresh page load — which a server restart triggers — would
     // spin up a new empty default-model chat and shadow the user's last
     // conversation, making it look like the chat "lost its context" (and the
     // picker would still show the old model's name from cached state). See
-    // the targetId resolution above (hash → currentSession → lastSessionId →
-    // most-recent).
+    // the targetId resolution above: explicit hash first, then the current
+    // in-memory session. Root URL intentionally does not restore lastSessionId
+    // or auto-select an existing session.
     const _isFirstLoad = !sessionStorage.getItem('ody-session-active');
     if (_isFirstLoad) {
       sessionStorage.setItem('ody-session-active', '1');
