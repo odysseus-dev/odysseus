@@ -2,6 +2,16 @@
 import mimetypes
 import os
 import sys
+import asyncio
+
+# On Windows, asyncio.create_subprocess_exec/shell require the ProactorEventLoop.
+# When started via `python -m uvicorn` from a terminal, uvicorn sets this
+# automatically. But the VS Code debugger (and other non-uvicorn entrypoints)
+# use the default SelectorEventLoop, which raises NotImplementedError on any
+# subprocess call. Force ProactorEventLoop here so the right loop is always
+# used, regardless of how the process is launched.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 
 def register_static_mime_types() -> None:
