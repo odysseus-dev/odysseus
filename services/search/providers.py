@@ -125,11 +125,20 @@ def _safesearch_for(provider: str) -> Optional[str]:
 
 _NEWS_HINTS = ("news", "nyheter", "headlines", "breaking", "latest", "today", "idag")
 
-# Default general engines (google/duckduckgo/brave/startpage/wikipedia) are
-# routinely rate-limited / CAPTCHA-blocked on this instance and return nothing.
-# Pin engines that actually respond so non-news queries get results without any
-# third-party API fallback. Override via SEARXNG_GENERAL_ENGINES.
-_GENERAL_ENGINES = os.environ.get("SEARXNG_GENERAL_ENGINES", "bing,mojeek,presearch")
+# Don't pin engines by default: the SearXNG instance (config/searxng/settings.yml)
+# already enables google and disables the rest, so let it choose. The old
+# "bing,mojeek,presearch" pin fought that config — bing is disabled there, and the
+# others surfaced lottery / dictionary / SEO noise that buried the real results.
+# Override via SEARXNG_GENERAL_ENGINES only if the instance's engines get blocked.
+_GENERAL_ENGINES = os.environ.get("SEARXNG_GENERAL_ENGINES", "")
+
+# Query language. "auto" lets SearXNG match the query's own language — a Portuguese
+# "resultado MotoGP hoje" returns Brazilian sport pages; an English query returns
+# English ones. The previous hard "en" pin mistranslated every non-English query
+# (it ranked a dictionary "resultado" entry and lottery pages over the actual race).
+# Override with SEARXNG_LANGUAGE (e.g. "en" to force English for brand-ambiguous
+# terms like "Odyssey" -> Honda Japan); set empty to omit the language param.
+_SEARCH_LANGUAGE = os.environ.get("SEARXNG_LANGUAGE", "auto")
 
 
 def searxng_search_api(query: str, count: Optional[int] = None, categories: str = "general",
@@ -142,21 +151,18 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     # News/fresh queries do badly in the 'general' category — it favours
-    # encyclopedic/tourism pages, ignores recency, and (with no language pin)
-    # bleeds in foreign-language results. When the agent layer detected
-    # freshness (time_filter) or the query reads like a news lookup, switch to
-    # the 'news' category, constrain recency, and pin language to English so a
-    # search like "Canada latest news" returns actual news instead of Wikipedia.
-    # Pin English for ALL searches — without it, SearXNG geolocates / mixes
-    # languages and brand-ambiguous terms bleed in foreign SEO pages (e.g.
-    # "Odyssey" → Honda Japan, "Trojan" → Japanese malware blogs, "Polyphemus"
-    # → Chinese math forums). The news path already did this; general didn't.
+    # encyclopedic/tourism pages and ignores recency. When the agent layer
+    # detected freshness (time_filter) or the query reads like a news lookup,
+    # switch to the 'news' category and constrain recency (below). Language is
+    # left to SearXNG's auto-detection (see _SEARCH_LANGUAGE) so the results
+    # match the query's own language instead of being forced to English.
     params = {
         "q": query,
         "format": "json",
-        "language": "en",
         "safesearch": _safesearch_for("searxng"),
     }
+    if _SEARCH_LANGUAGE:
+        params["language"] = _SEARCH_LANGUAGE
     q_lc = query.lower()
     is_news = time_filter is not None or any(h in q_lc for h in _NEWS_HINTS)
     if is_news and categories == "general":
@@ -203,10 +209,11 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
             fallback = {
                 "q": query,
                 "format": "json",
-                "language": "en",
                 "categories": "general",
                 "safesearch": _safesearch_for("searxng"),
             }
+            if _SEARCH_LANGUAGE:
+                fallback["language"] = _SEARCH_LANGUAGE
             if _GENERAL_ENGINES:
                 fallback["engines"] = _GENERAL_ENGINES
             logger.info(

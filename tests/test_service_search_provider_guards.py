@@ -98,3 +98,49 @@ def test_service_ddg_html_fallback_sends_safesearch(monkeypatch):
 
     assert seen["params"]["kp"] == "-2"
     assert results[0]["url"].startswith("https://notduckduckgo.com/")
+
+
+def _capture_searxng_params(monkeypatch, query, **kw):
+    seen = {}
+
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"results": [{"title": "R", "url": "https://example.com", "content": "S"}]}
+
+    def fake_get(url, **kwargs):
+        seen["params"] = kwargs["params"]
+        return _Response()
+
+    monkeypatch.setattr(providers, "_get_search_instance", lambda: "http://searx.test")
+    monkeypatch.setattr(providers, "_get_search_settings", lambda: {"search_safesearch": "strict"})
+    monkeypatch.setattr(providers.httpx, "get", fake_get)
+    providers.searxng_search_api(query, **kw)
+    return seen["params"]
+
+
+def test_service_searxng_general_query_uses_auto_language_no_engine_pin(monkeypatch):
+    """A non-English query must not be forced to English, and a general query must
+    not pin engines — the regression that buried 'resultado MotoGP hoje' under
+    SpanishDict / lottery / Lusa pages instead of the actual race results."""
+    monkeypatch.setattr(providers, "_SEARCH_LANGUAGE", "auto")
+    monkeypatch.setattr(providers, "_GENERAL_ENGINES", "")
+    params = _capture_searxng_params(monkeypatch, "resultado MotoGP hoje", count=3)
+    assert params.get("language") == "auto"
+    assert "engines" not in params
+    assert params["q"] == "resultado MotoGP hoje"
+
+
+def test_service_searxng_empty_language_omits_param(monkeypatch):
+    monkeypatch.setattr(providers, "_SEARCH_LANGUAGE", "")
+    monkeypatch.setattr(providers, "_GENERAL_ENGINES", "")
+    params = _capture_searxng_params(monkeypatch, "odysseus", count=1)
+    assert "language" not in params
+
+
+def test_service_search_defaults_are_not_english_or_bing_pinned():
+    """Defaults must not regress to the hard 'en' pin or the bad engine pin."""
+    assert providers._SEARCH_LANGUAGE != "en"
+    assert "bing" not in providers._GENERAL_ENGINES
