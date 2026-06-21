@@ -41,6 +41,71 @@ def _content_tokens(text: str) -> list:
     return [w for w in words if len(w) >= 3 and w not in _STOPWORDS]
 
 
+# ── Auto web-search query generation ──
+
+_SEARCH_QUERY_PROMPT = (
+    "Rewrite the user's message below as a single concise web-search query.\n"
+    "Keep only the searchable keywords — topics, proper names, dates. Drop "
+    'greetings ("Chat", "hi"), instructions directed at you ("search", '
+    '"pesquisa", "traga um resumo", "summarize") and conversational filler. '
+    "Keep the user's original language.\n"
+    "Return ONLY the query text, on a single line, with no quotes and no "
+    "explanation.\n\n"
+    "Message: {message}\n\nQuery:"
+)
+
+
+def _clean_search_query(raw: str) -> str:
+    """Reduce an LLM query response to a single clean line of keywords.
+
+    Models may wrap the query in quotes, prefix it with ``Query:``, or — for
+    reasoning models — emit a ``<think>`` block first. Strip all of that and
+    return the first real line.
+    """
+    if not raw:
+        return ""
+    text = re.sub(r"<think>.*?</think>", " ", raw, flags=re.I | re.S)
+    line = ""
+    for candidate in text.splitlines():
+        candidate = candidate.strip()
+        if candidate:
+            line = candidate
+            break
+    line = re.sub(r"^(search query|search|query|q)\s*[:\-]\s*", "", line, flags=re.I)
+    return line.strip().strip("\"'`").strip()
+
+
+def _search_query_from_message(message, url, model, headers=None, timeout=15):
+    """Condense a conversational user message into a focused web-search query.
+
+    The web toggle would otherwise send the raw message (e.g. "Chat, pesquisa o
+    resultado da moto GP de hoje") straight to the engine, which then ranks on
+    the greeting "chat" instead of the topic. A short, low-token LLM call
+    rewrites it to keywords. Any failure (no endpoint, timeout, empty output)
+    falls back to the raw message so search still runs.
+    """
+    msg = (message or "").strip()
+    if not msg or not url or not model:
+        return msg
+    try:
+        from src.llm_core import llm_call
+        from src.deep_research import current_date_context
+        prompt = current_date_context() + _SEARCH_QUERY_PROMPT.format(message=msg)
+        raw = llm_call(
+            url,
+            model,
+            [{"role": "user", "content": prompt}],
+            temperature=0.0,
+            max_tokens=120,
+            headers=headers,
+            timeout=timeout,
+        )
+        return _clean_search_query(raw) or msg
+    except Exception as e:
+        logger.warning("Search query generation failed; using raw message: %s", e)
+        return msg
+
+
 class ChatProcessor:
     def __init__(self, memory_manager, personal_docs_manager, memory_vector=None, skills_manager=None):
         self.memory_manager = memory_manager
@@ -280,8 +345,19 @@ class ChatProcessor:
         web_sources = []
         if use_web:
             try:
+                # Condense the conversational message into a focused query
+                # before searching. Sending the raw message (e.g. "Chat,
+                # pesquisa o resultado da moto GP de hoje") makes the engine
+                # rank on the greeting "chat" and return chat-room/ChatGPT
+                # pages instead of the topic. Falls back to the raw message.
+                search_query = _search_query_from_message(
+                    message,
+                    getattr(session, "endpoint_url", None),
+                    getattr(session, "model", None),
+                    getattr(session, "headers", None),
+                )
                 web_context, web_sources = comprehensive_web_search(
-                    message, time_filter=time_filter, return_sources=True
+                    search_query, time_filter=time_filter, return_sources=True
                 )
                 preface.append(untrusted_context_message("web search results", web_context))
             except Exception as e:
