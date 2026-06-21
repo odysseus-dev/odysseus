@@ -57,11 +57,12 @@ const _RECIPES = [
     variants: {
       pip:    { commands: ['CMAKE_ARGS="-DGGML_CUDA=on" uv pip install -U "llama-cpp-python[server]"'] },
       docker: { commands: ['docker pull ghcr.io/ggml-org/llama.cpp:server-cuda'] },
+      rocm:   { commands: ['CMAKE_ARGS="-DGGML_HIP=on" uv pip install -U "llama-cpp-python[server]"'] },
     },
   },
 ];
 
-export const RECIPE_VARIANTS = ['pip', 'docker'];
+export const RECIPE_VARIANTS = ['pip', 'docker', 'rocm'];
 export const RECIPE_DEFAULT_VARIANT = 'pip';
 
 // Get the commands array for a recipe + variant. Falls back to pip when

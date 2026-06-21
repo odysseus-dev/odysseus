@@ -893,6 +893,7 @@ async function _fetchDependencies() {
             <div class="mode-toggle${rightActive}" data-dep-recipe-variants="${esc(backend)}" style="flex-shrink:0;">
               <button type="button" class="mode-toggle-btn${initialVariant === 'pip' ? ' active' : ''}" data-dep-recipe-variant="${esc(backend)}" data-variant="pip" aria-pressed="${initialVariant === 'pip'}">Pip/uv</button>
               <button type="button" class="mode-toggle-btn${initialVariant === 'docker' ? ' active' : ''}" data-dep-recipe-variant="${esc(backend)}" data-variant="docker" aria-pressed="${initialVariant === 'docker'}">Docker</button>
+              ${backend === 'llama_cpp' ? `<button type="button" class="mode-toggle-btn${initialVariant === 'rocm' ? ' active' : ''}" data-dep-recipe-variant="${esc(backend)}" data-variant="rocm" aria-pressed="${initialVariant === 'rocm'}">ROCm</button>` : ''}
             </div>
           </div>
           <div style="position:relative;">
