@@ -13,6 +13,9 @@
        browser-default styling that didn't match the Odysseus theme. -->
   <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+  
+  <!-- Axios needs to be loaded first to ensure it is available for other modules -->
+  <script type="module" src="https://cdn.jsdelivr.net/npm/axios@1.18.0/dist/axios.min.js"></script>
   <script nonce="{{CSP_NONCE}}">
   window._odysseusLoadTime = Date.now();
   (function(){
