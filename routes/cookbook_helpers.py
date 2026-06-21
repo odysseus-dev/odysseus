@@ -565,6 +565,7 @@ _SERVE_CMD_ALLOWLIST = {
     "python", "python3",
     "sglang", "lmdeploy",
     "node", "npx",
+    "uv",
 }
 
 
