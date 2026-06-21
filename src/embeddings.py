@@ -41,11 +41,13 @@ class EmbeddingClient:
     """Drop-in replacement for SentenceTransformer.encode() using an HTTP API."""
 
     def __init__(self, url: Optional[str] = None, model: Optional[str] = None, api_key: Optional[str] = None):
-        self.url = url or os.getenv(
-            "EMBEDDING_URL",
-            f"http://{os.getenv('LLM_HOST', 'localhost')}:11434/v1/embeddings",
+        # `or` chains (not getenv defaults) so an explicitly-empty EMBEDDING_URL=
+        # / EMBEDDING_MODEL= from Compose (${VAR:-}) falls through to the real
+        # default instead of becoming '' (which httpx rejects: "missing protocol").
+        self.url = url or os.getenv("EMBEDDING_URL") or (
+            f"http://{os.getenv('LLM_HOST') or 'localhost'}:11434/v1/embeddings"
         )
-        self.model = model or os.getenv("EMBEDDING_MODEL", _DEFAULT_MODEL)
+        self.model = model or os.getenv("EMBEDDING_MODEL") or _DEFAULT_MODEL
         self.api_key = api_key or os.getenv("EMBEDDING_API_KEY")
         self._dim: Optional[int] = None
         # Short connect timeout so a DOWN embedding endpoint (e.g. Ollama not
@@ -115,7 +117,7 @@ class FastEmbedClient:
                 "embeddings server."
             ) from e
 
-        self.model = model or os.getenv("FASTEMBED_MODEL", _DEFAULT_FASTEMBED_MODEL)
+        self.model = model or os.getenv("FASTEMBED_MODEL") or _DEFAULT_FASTEMBED_MODEL
         # Persistent cache under data/ so the model survives reboots and so
         # the download lands exactly where the admin panel's _is_downloaded()
         # check looks (both default to this same path).
