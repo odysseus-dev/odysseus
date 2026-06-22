@@ -666,7 +666,7 @@ import * as Modals from './modalManager.js';
     overlay.className = 'modal pdf-export-overlay';
     overlay.style.cssText = 'pointer-events:auto;background:rgba(0,0,0,0.5);backdrop-filter:blur(4px);';
     overlay.innerHTML = `
-      <div class="modal-content" style="width:min(780px,94vw);max-height:86vh;">
+      <div class="modal-content" style="width:min(780px,94vw);">
         <div class="modal-header">
           <h4>Export filled PDF</h4>
           <button id="pdf-export-close" class="modal-close" title="Close">×</button>

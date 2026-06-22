@@ -1707,6 +1707,7 @@ class TaskScheduler:
         except Exception:
             pass
         full_text = ""
+        reasoning_text = ""
         tool_results = []
 
         # Honor per-task max_steps (defense against runaway agent loops).
@@ -1743,6 +1744,7 @@ class TaskScheduler:
                     # Capture text from all event types, not just delta
                     if "delta" in data:
                         if data.get("thinking"):
+                            reasoning_text += data["delta"]
                             continue
                         full_text += data["delta"]
                     elif data.get("type") == "tool_output":
@@ -1782,6 +1784,8 @@ class TaskScheduler:
                 logger.warning(f"Grace summarization failed: {e}")
                 if tool_results:
                     full_text = "\n".join(tool_results[-5:])
+                elif reasoning_text.strip():
+                    full_text = reasoning_text.strip()
 
         return full_text or "(no output)"
 

@@ -3951,6 +3951,16 @@ async def do_trigger_research(content: str, owner: Optional[str] = None) -> Dict
             resp = await client.post(f"{_INTERNAL_BASE}/api/research/start",
                                      json=payload, headers=_internal_headers(owner))
         if resp.status_code >= 400:
+            if resp.status_code in (401, 403):
+                return {
+                    "error": (
+                        f"Deep research could not start (HTTP {resp.status_code}). "
+                        "Do not retry trigger_research this turn. If the user gave a specific URL, "
+                        "use web_fetch on that URL and continue from the fetched page; otherwise "
+                        "explain that the Deep Research tool is blocked and ask the user to check research permissions."
+                    ),
+                    "exit_code": 1,
+                }
             return {"error": f"research/start returned HTTP {resp.status_code}: {resp.text[:200]}", "exit_code": 1}
         data = resp.json()
         sid = data.get("session_id", "?")

@@ -16,6 +16,9 @@ import types
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+from fastapi import HTTPException
+
 # The helper resolves `from src.database import ModelEndpoint` at call time.
 # Stub the module so we can hand it a fake declarative class whose column
 # comparisons return inspectable predicates (the real one is a SQLAlchemy
@@ -24,7 +27,11 @@ _sd = types.ModuleType("src.database")
 _sd.ModelEndpoint = MagicMock()
 sys.modules.setdefault("src.database", _sd)
 
-from routes.research_routes import _owned_enabled_endpoint, _resolve_endpoint_runtime  # noqa: E402
+from routes.research_routes import (  # noqa: E402
+    _owned_enabled_endpoint,
+    _resolve_endpoint_runtime,
+    _resolve_internal_research_user,
+)
 
 
 class _Predicate:
@@ -155,3 +162,54 @@ def test_runtime_resolution_uses_provider_auth_for_chatgpt_subscription(monkeypa
     assert url == "https://chatgpt.com/backend-api/codex/responses"
     assert model == "gpt-5.5"
     assert headers["Authorization"] == "Bearer fresh-access-token"
+
+
+# --- agent trigger_research loopback owner resolution -----------------------
+
+class _AuthMgr:
+    is_configured = True
+
+    def __init__(self, users, privileges=None):
+        self.users = users
+        self._privileges = privileges or {}
+
+    def get_privileges(self, username):
+        return {"can_use_research": True, **self._privileges.get(username, {})}
+
+
+def _request(owner_header="", users=None, privileges=None):
+    return SimpleNamespace(
+        headers={"X-Odysseus-Owner": owner_header},
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                auth_manager=_AuthMgr(users or {"admin": {}}, privileges=privileges)
+            )
+        ),
+    )
+
+
+def test_internal_tool_research_uses_single_configured_user_when_owner_missing():
+    assert _resolve_internal_research_user(_request(), "internal-tool") == "admin"
+
+
+def test_internal_tool_research_does_not_guess_owner_when_multiple_users():
+    assert _resolve_internal_research_user(
+        _request(users={"admin": {}, "bob": {}}),
+        "internal-tool",
+    ) == "internal-tool"
+
+
+def test_internal_tool_research_normalizes_owner_header():
+    assert _resolve_internal_research_user(
+        _request(owner_header=" Admin ", users={"admin": {}, "bob": {}}),
+        "internal-tool",
+    ) == "admin"
+
+
+def test_internal_tool_research_enforces_resolved_owner_privilege():
+    with pytest.raises(HTTPException) as exc:
+        _resolve_internal_research_user(
+            _request(privileges={"admin": {"can_use_research": False}}),
+            "internal-tool",
+        )
+    assert exc.value.status_code == 403
