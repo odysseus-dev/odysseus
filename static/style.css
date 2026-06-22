@@ -3545,14 +3545,18 @@ body.bg-pattern-sparkles {
     }
     .edit-btn:hover { color:var(--accent); }
     .edit-textarea {
-      width:100%; background:var(--bg); color:var(--fg);
-      border:1px solid var(--border); border-radius:6px;
-      padding:8px; font-family:inherit; font-size:0.95rem;
-      resize:both; outline:none;
-      min-height:160px;
-      min-width:min(360px, 100%);
-      max-width:100%;
-      box-sizing:border-box;
+      width: 100%;
+      background: var(--bg);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px;
+      font-family: inherit;
+      font-size: 0.95rem;
+      resize: vertical;
+      outline: none;
+      min-height: 80px;
+      field-sizing: content;
     }
     .edit-textarea:focus { border-color:var(--red); }
     .edit-save-btn, .edit-cancel-btn {
