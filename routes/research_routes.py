@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from core.middleware import INTERNAL_TOOL_USER
 from src.endpoint_resolver import resolve_endpoint
 from src.auth_helpers import _auth_disabled, get_current_user
-from core.auth import RESERVED_USERNAMES
+from core.auth import RESERVED_USERNAMES, normalize_known_username
 from src.constants import DEEP_RESEARCH_DIR
 
 _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]{1,128}$")
@@ -107,6 +107,47 @@ def _resolve_endpoint_runtime(ep, owner=None, model: Optional[str] = None):
     if not ep_model:
         return None
     return build_chat_url(base), ep_model, build_headers(api_key, base)
+
+
+def _resolve_internal_research_user(request: Request, user: str) -> str:
+    """Resolve trusted tool-loopback research calls to a real owner.
+
+    Agent tools call this route through Odysseus's internal loopback token.
+    Middleware stamps those requests as either the supplied X-Odysseus-Owner
+    or the reserved internal-tool user. If the owner header is missing or not
+    matched, use the only configured real user in single-user installs so
+    trigger_research can resolve that user's model endpoint instead of falling
+    through under the synthetic owner.
+    """
+    if user != INTERNAL_TOOL_USER:
+        return user
+
+    auth_mgr = getattr(request.app.state, "auth_manager", None)
+    raw_owner = (request.headers.get("X-Odysseus-Owner") or "").strip()
+    if raw_owner and raw_owner not in RESERVED_USERNAMES:
+        if auth_mgr is not None and getattr(auth_mgr, "is_configured", False):
+            known = normalize_known_username(getattr(auth_mgr, "users", {}) or {}, raw_owner)
+            if known:
+                privs = auth_mgr.get_privileges(known) or {}
+                if not privs.get("can_use_research", True):
+                    raise HTTPException(403, "Your account is not allowed to use research.")
+                return known
+        else:
+            return raw_owner
+
+    if auth_mgr is not None and getattr(auth_mgr, "is_configured", False):
+        real_users = [
+            u for u in (getattr(auth_mgr, "users", {}) or {})
+            if u and u not in RESERVED_USERNAMES
+        ]
+        if len(real_users) == 1:
+            only_user = real_users[0]
+            privs = auth_mgr.get_privileges(only_user) or {}
+            if not privs.get("can_use_research", True):
+                raise HTTPException(403, "Your account is not allowed to use research.")
+            return only_user
+
+    return user
 
 
 def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
@@ -387,20 +428,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         """Launch a research job from the dedicated panel."""
         from src.auth_helpers import require_privilege
         user = require_privilege(request, "can_use_research")
-        if user == INTERNAL_TOOL_USER:
-            tool_owner = (request.headers.get("X-Odysseus-Owner") or "").strip()
-            if tool_owner and tool_owner not in RESERVED_USERNAMES:
-                auth_mgr = getattr(request.app.state, "auth_manager", None)
-                if auth_mgr is not None and getattr(auth_mgr, "is_configured", False):
-                    try:
-                        privs = auth_mgr.get_privileges(tool_owner) or {}
-                        if not privs.get("can_use_research", True):
-                            raise HTTPException(403, f"Your account is not allowed to can use research.")
-                    except HTTPException:
-                        raise
-                    except Exception:
-                        pass
-                user = tool_owner
+        user = _resolve_internal_research_user(request, user)
         session_id = f"rp-{uuid.uuid4().hex[:12]}"
 
         if body.endpoint_id:

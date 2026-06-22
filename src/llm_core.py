@@ -33,6 +33,9 @@ class LLMConfig:
     CONNECT_TIMEOUT = float(os.getenv('LLM_CONNECT_TIMEOUT', '10') or '10')
 
 
+OLLAMA_NUM_CTX_CAP = int(os.getenv("OLLAMA_NUM_CTX_CAP", "16384") or "16384")
+
+
 def _call_timeout(read_timeout) -> httpx.Timeout:
     """Per-request timeout for non-streaming LLM calls (connect from config)."""
     return httpx.Timeout(connect=LLMConfig.CONNECT_TIMEOUT, read=float(read_timeout), write=10.0, pool=5.0)
@@ -397,22 +400,25 @@ def _build_ollama_payload(
     when the option is omitted, so a model with a larger advertised
     window is silently truncated there, and a model with a smaller one
     gets an oversized window it can't service. Pass the discovered
-    context length through ``num_ctx``; this builder only emits it when
-    the value is trusted (not the ``DEFAULT_CONTEXT`` fallback), so we
-    don't guess for unknown models but do tell Ollama the real window
-    when we know it — even if it's smaller than 2048.
+    context length through ``num_ctx``. Large GGUF context windows can be
+    unusably slow on local Apple Silicon, so cap the advertised value unless
+    ``OLLAMA_NUM_CTX_CAP=0`` disables the cap.
     """
     payload: Dict = {
         "model": model,
         "messages": _ollama_normalize_tool_messages(messages),
         "stream": stream,
     }
+    if _supports_thinking(model):
+        payload["think"] = False
     options: Dict = {}
     if temperature is not None:
         options["temperature"] = temperature
     if max_tokens and max_tokens > 0:
         options["num_predict"] = max_tokens
     if num_ctx is not None and num_ctx > 0 and num_ctx != DEFAULT_CONTEXT:
+        if OLLAMA_NUM_CTX_CAP > 0:
+            num_ctx = min(num_ctx, OLLAMA_NUM_CTX_CAP)
         options["num_ctx"] = num_ctx
     if options:
         payload["options"] = options
@@ -907,7 +913,7 @@ def _anthropic_rejects_temperature(model: str) -> bool:
     return (int(match.group(1)), int(match.group(2))) >= (4, 7)
 
 # Models that support structured thinking — may output </think> without opening tag
-_THINKING_MODEL_PATTERNS = ("qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "minimax", "m2-reap", "gemma")
+_THINKING_MODEL_PATTERNS = ("qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "minimax", "m2-reap", "gemma", "gpt-oss")
 
 def _supports_thinking(model: str) -> bool:
     """Check if model supports structured thinking output."""

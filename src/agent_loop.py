@@ -69,6 +69,7 @@ _AGENT_RULES = """\
 ## Rules
 - Only use tools when needed. Don't search for things you already know.
 - For web lookup/search/latest/current requests, use `web_search` or `web_fetch`. Do NOT use `bash`, `python`, `curl`, `requests`, or scraping code for web lookup unless web tools are disabled or already failed.
+- If the user provides a concrete URL and asks to research/analyze/report on that URL, call `web_fetch` for that URL first. Use `trigger_research` for open-ended topic research, and use `web_search` only for additional sources after the named URL is read.
 - These exact tags execute automatically. For showing code examples, use ```shell, ```sh, ```py, etc. instead.
 - Multiple tool blocks per response OK. 60s timeout per tool, 10K char output limit.
 - Code/content >15 lines → ```create_document (NOT in chat). Short snippets OK in chat.
@@ -116,6 +117,7 @@ _API_AGENT_RULES = """\
 - Only call tools when they materially help answer the request.
 - You MUST use tools to take action — do not describe what you would do. Act, don't narrate.
 - For web lookup/search/latest/current requests, call `web_search` or `web_fetch`. Do NOT use shell, Python, curl, requests, or scraping code for web lookup unless web tools are unavailable or already failed.
+- If the user provides a concrete URL and asks to research/analyze/report on that URL, call `web_fetch` for that URL first. Use `trigger_research` for open-ended topic research, and use `web_search` only for additional sources after the named URL is read.
 - Keep answers concise unless the user asks for depth.
 - For long code or content, use document tools instead of pasting large blocks into chat.
 - Editing an existing document: ALWAYS use `edit_document` with find/replace. Only use `update_document` for genuine full rewrites (>50% changed) — do NOT echo the entire file back for small edits.
@@ -179,6 +181,7 @@ To use a tool, write a fenced code block with the tool name as the language tag.
 _AGENT_RULES = """\
 ## Base rules
 - Only use tools when needed. For casual messages like "test", "yo", "thanks", answer normally.
+- If the user provides a concrete URL and asks to research/analyze/report on that URL, call `web_fetch` for that URL first. Use `trigger_research` for open-ended topic research, and use `web_search` only for additional sources after the named URL is read.
 - If a needed tool/domain is missing from this turn, say what is missing briefly instead of pretending.
 - After a tool succeeds, do not second-guess it; reply with one short confirmation unless more work remains.
 - After a tool fails, retry with a concrete fix or state what is blocking you.
@@ -191,6 +194,7 @@ _API_AGENT_RULES = """\
 - Prefer native tool/function calling when tools are needed.
 - Only call tools when they materially help answer the request. For casual messages like "test", "yo", "thanks", answer normally.
 - You MUST use tools to take action; do not claim you did something without a tool result.
+- If the user provides a concrete URL and asks to research/analyze/report on that URL, call `web_fetch` for that URL first. Use `trigger_research` for open-ended topic research, and use `web_search` only for additional sources after the named URL is read.
 - If a needed tool/domain is missing from this turn, say what is missing briefly instead of pretending.
 - Keep answers concise unless the user asks for depth.
 - After a tool succeeds, do not second-guess it; reply with one short confirmation unless more work remains.
@@ -217,6 +221,7 @@ _DOMAIN_RULES = {
 ## Web rules
 - For web lookup/search/latest/current requests, use `web_search` or `web_fetch`.
 - Do not use shell, Python, curl, requests, or scraping code for web lookup unless web tools are unavailable or already failed.
+- If the user provides a concrete URL and asks to research/analyze/report on that URL, call `web_fetch` for that URL first, then use `web_search` only if additional sources are needed.
 - "Research X" means `trigger_research`, not a one-off `web_search`, unless the user explicitly asks for a quick lookup.""",
     "documents": """\
 ## Document rules
@@ -338,7 +343,7 @@ Use this instead of `bash`, `curl`, `python`, `requests`, or scraping code for w
 ```web_fetch
 <url or domain>
 ```
-Fetch and read the text content of a SPECIFIC URL the user names (e.g. "check example.com", "what does this page say <url>"). A bare domain like `example.com` works (defaults to https). Use this when you already have a concrete URL. For open-ended lookups use `web_search`, and for "research X" jobs use `trigger_research`.""",
+Fetch and read the text content of a SPECIFIC URL the user names (e.g. "check example.com", "what does this page say <url>"). A bare domain like `example.com` works (defaults to https). Use this first when the user gives a concrete URL and asks to research/analyze/report on it. For open-ended lookups use `web_search`, and for open-ended "research X" jobs without a named URL use `trigger_research`.""",
 
     "read_file": """\
 ```read_file
@@ -1523,6 +1528,7 @@ def _append_tool_results(
     used_native: bool,
     round_num: int,
     round_reasoning: str = "",
+    native_tool_results_as_user: bool = False,
 ):
     """Append tool execution results back into the message history for the next LLM round.
 
@@ -1543,7 +1549,7 @@ def _append_tool_results(
     for _m in messages:
         if _m.get("role") == "assistant":
             _m.pop("reasoning_content", None)
-    if used_native and native_tool_calls:
+    if used_native and native_tool_calls and not native_tool_results_as_user:
         assistant_msg = {"role": "assistant"}
         # When the model emitted ONLY tool calls (no prose), content must be
         # null, NOT an empty string. Google Gemini's OpenAI-compatible endpoint
@@ -1581,10 +1587,11 @@ def _append_tool_results(
             })
     else:
         tool_output_text = "\n\n".join(tool_results)
-        msg = {"role": "assistant", "content": round_response}
-        if round_reasoning:
-            msg["reasoning_content"] = round_reasoning
-        messages.append(msg)
+        if round_response.strip() or round_reasoning:
+            msg = {"role": "assistant", "content": round_response}
+            if round_reasoning:
+                msg["reasoning_content"] = round_reasoning
+            messages.append(msg)
         # Tool output (shell/python stdout, file reads, fetched pages, email
         # bodies, MCP results) is sourced from outside the server. Wrap it as
         # untrusted data so prompt-injection inside a tool result is treated as
@@ -1762,12 +1769,66 @@ def _empty_response_fallback(
         (final_response: str, chunk: str | None)
             chunk is the SSE string to yield, or None if nothing should be emitted.
     """
-    if full_response.strip() or tool_events:
+    if full_response.strip():
         return full_response, None
     if round_reasoning.strip():
-        return round_reasoning, None
+        return round_reasoning, f'data: {json.dumps({"delta": round_reasoning, "thinking": True})}\n\n'
+    if tool_events:
+        _error_msg = (
+            "I ran the tool successfully, but the model returned an empty final answer. "
+            "Please try again or switch to a different model."
+        )
+        return _error_msg, f'data: {json.dumps({"delta": _error_msg})}\n\n'
     _error_msg = "The model returned an empty response. Please try again or switch to a different model."
     return _error_msg, f'data: {json.dumps({"delta": _error_msg})}\n\n'
+
+
+async def _synthesize_final_answer_from_context(
+    messages: List[Dict],
+    *,
+    endpoint_url: str,
+    model: str,
+    headers: dict,
+    max_tokens: int,
+    timeout: int = 60,
+    fallbacks: Optional[List[tuple]] = None,
+) -> str:
+    """Ask the model for one final answer from already-collected context."""
+    synth_messages = list(messages) + [{
+        "role": "user",
+        "content": (
+            "Using ONLY the information already gathered above, write the "
+            "final answer for the user now. Do NOT call any tools, do NOT "
+            "explain your reasoning, and do NOT return an empty response. "
+            "If some data could not be fetched, work with what is available "
+            "and note what is missing in one short line."
+        ),
+    }]
+    candidates = [(endpoint_url, model, headers)] + list(fallbacks or [])
+    from src.llm_core import llm_call_async
+    for cand_url, cand_model, cand_headers in candidates:
+        try:
+            raw = await llm_call_async(
+                url=cand_url,
+                model=cand_model,
+                messages=synth_messages,
+                headers=cand_headers or {},
+                temperature=0.3,
+                max_tokens=max_tokens,
+                timeout=timeout,
+            )
+            answer = re.sub(r"<think>.*?</think>", "", strip_tool_blocks(raw or ""),
+                            flags=re.DOTALL | re.IGNORECASE).strip()
+            if answer:
+                if cand_model != model or cand_url != endpoint_url:
+                    logger.info("[agent] final synthesis used fallback model %s at %s", cand_model, cand_url)
+                return answer
+        except Exception as e:
+            logger.warning(
+                "[agent] final synthesis failed for %s at %s: %s",
+                cand_model, cand_url, e,
+            )
+    return ""
 
 
 PLAN_MODE_DIRECTIVE = (
@@ -2537,26 +2598,15 @@ async def stream_agent_loop(
                 # briefings). Salvage it: one blunt non-streaming synthesis call
                 # over the full conversation (which already holds every tool
                 # result) before falling back to the canned apology.
-                _synth = ""
-                try:
-                    from src.llm_core import llm_call_async
-                    _synth_messages = list(messages) + [{
-                        "role": "user",
-                        "content": (
-                            "Using ONLY the information already gathered above, write "
-                            "the final answer for the user now. Do NOT call any tools, "
-                            "do NOT explain your reasoning — output the finished response "
-                            "directly. If some data couldn't be fetched, just work with "
-                            "what you have and note what's missing in one short line."
-                        ),
-                    }]
-                    _raw = await llm_call_async(
-                        url=endpoint_url, model=model, messages=_synth_messages,
-                        headers=headers, temperature=0.3, max_tokens=max_tokens, timeout=60,
-                    )
-                    _synth = _THINK_RE.sub("", strip_tool_blocks(_raw or "")).strip()
-                except Exception as _e:
-                    logger.warning(f"[agent] grace synthesis failed: {_e}")
+                _synth = await _synthesize_final_answer_from_context(
+                    messages,
+                    endpoint_url=endpoint_url,
+                    model=model,
+                    headers=headers,
+                    max_tokens=max_tokens,
+                    timeout=60,
+                    fallbacks=fallbacks,
+                )
                 if _synth:
                     yield f'data: {json.dumps({"delta": _synth})}\n\n'
                     full_response += _synth
@@ -3122,7 +3172,8 @@ async def stream_agent_loop(
         # Feed results back to LLM for next round
         _append_tool_results(messages, round_response, native_tool_calls,
                              tool_results, tool_result_texts, used_native, round_num,
-                             round_reasoning=round_reasoning)
+                             round_reasoning=round_reasoning,
+                             native_tool_results_as_user=_is_ollama_native)
 
         # Emit agent_step event
         yield (
@@ -3146,8 +3197,26 @@ async def stream_agent_loop(
         logger.info("[agent] round cap (%d) reached mid-task — emitting rounds_exhausted", max_rounds)
         yield f'data: {json.dumps({"type": "rounds_exhausted", "rounds": max_rounds})}\n\n'
 
-    # If the response is completely empty and no tools were executed,
-    # yield a fallback message so the user is not left hanging.
+    # A successful tool call is not a completed answer. Some local thinking
+    # models can call a tool, receive results, then return an empty follow-up.
+    # Make one tool-free synthesis attempt from the already-gathered context
+    # before falling back to a visible error message.
+    if not full_response.strip() and tool_events:
+        _synth = await _synthesize_final_answer_from_context(
+            messages,
+            endpoint_url=endpoint_url,
+            model=model,
+            headers=headers,
+            max_tokens=max_tokens,
+            timeout=60,
+            fallbacks=fallbacks,
+        )
+        if _synth:
+            full_response = _synth
+            yield f'data: {json.dumps({"delta": _synth})}\n\n'
+
+    # If the response is completely empty, yield a fallback message so the
+    # user is not left hanging.
     full_response, _fallback_chunk = _empty_response_fallback(
         full_response, round_reasoning, tool_events
     )
