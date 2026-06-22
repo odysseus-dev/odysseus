@@ -58,6 +58,17 @@ def test_android_gallery_routes_try_provider_backed_ai_tools():
     assert "runProviderSharpen(source, body)" in ANDROID_SERVER
     assert "postOpenAiImageEdit" in ANDROID_SERVER
     assert 'new URL(base + "/images/edits")' in ANDROID_SERVER
+    assert 'isOpenAICompatibleImageEditBase(choice.optString("base_url"))' in ANDROID_SERVER
+    assert 'String requestedEndpointId = jsonString(body, "_endpoint_id", "").trim();' in ANDROID_SERVER
+    assert "ep = findEndpointForId(requestedEndpointId);" in ANDROID_SERVER
+    assert "private JSONObject findEndpointForId(String endpointId)" in ANDROID_SERVER
+    assert 'boolean openAiCompatible = isOpenAICompatibleImageEditBase(choice.optString("base_url"));' in ANDROID_SERVER
+    assert "if (openAiCompatible || isImageEditModel(model))" in ANDROID_SERVER
+    assert '!jsonString(body, "_endpoint_id", "").trim().isEmpty()' in ANDROID_SERVER
+    assert "private boolean isOpenAICompatibleImageEditBase" in ANDROID_SERVER
+    assert "private String providerLabelForBase(String baseUrl)" in ANDROID_SERVER
+    assert "Alibaba Model Studio" in ANDROID_SERVER
+    assert "mobileProviderLabel(endpoint, model)" in ANDROID_SERVER
 
 
 def test_android_gallery_ai_tools_keep_local_fallbacks():
@@ -126,7 +137,7 @@ def test_android_bgremove_can_force_or_auto_select_downloaded_rembg_models():
     assert "boolean forceProviderBgRemove = \"model\".equals(bgRemovePipeline);" in ANDROID_SERVER
     assert "boolean forceRembg = \"rembg\".equals(bgRemovePipeline);" in ANDROID_SERVER
     assert "boolean forceHeuristic = \"heuristic\".equals(bgRemovePipeline);" in ANDROID_SERVER
-    assert "openAiHosted || isImageEditModel(model)" in ANDROID_SERVER
+    assert "openAiCompatible || isImageEditModel(model)" in ANDROID_SERVER
     assert 'new String[]{"/images/remove-bg", "/images/background-remove", "/images/rembg"}' in ANDROID_SERVER
     bgremove_block = ANDROID_SERVER.split("private JSONObject runProviderBackgroundRemove", 1)[1].split(
         "private JSONObject runProviderSharpen", 1
@@ -136,12 +147,14 @@ def test_android_bgremove_can_force_or_auto_select_downloaded_rembg_models():
     assert 'if (apiKey.isEmpty() && isOpenAIBase(base)) throw new IOException("OpenAI endpoint has no API key stored in Settings.");' in ANDROID_SERVER
     assert 'if (!apiKey.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + apiKey);' in ANDROID_SERVER
     assert "Image edit failed at /v1/images/edits" in ANDROID_SERVER
-    assert "shouldRetryJsonImageEdit(status, response)" in ANDROID_SERVER
+    assert "boolean likelyJsonOnly = shouldRetryJsonImageEdit(status, response);" in ANDROID_SERVER
+    assert "Multipart /v1/images/edits failed" in ANDROID_SERVER
     assert "Image edit JSON retry failed at /v1/images/edits" in ANDROID_SERVER
     assert 'conn.setRequestProperty("Content-Type", "application/json");' in ANDROID_SERVER
     assert "private JSONObject postChatImageEdit" in ANDROID_SERVER
     assert 'new URL(base + "/chat/completions")' in ANDROID_SERVER
     assert '"data:image/png;base64," + encodeBitmapPng(src)' in ANDROID_SERVER
+    assert "The second image is a mask" in ANDROID_SERVER
     assert "providerImageValueFromText(value)" in ANDROID_SERVER
     assert '"content", "message", "choices"' in ANDROID_SERVER
     image_edit_block = ANDROID_SERVER.split("private boolean isImageEditModel", 1)[1].split(
@@ -256,6 +269,21 @@ def test_pc_bgremove_sample_strokes_bound_search_without_flooding_subject():
     assert "strict_ratio = strict_count / max(1, len(component))" in pc_route
     assert "bg = _recover_sampled_background_islands(bg)" in pc_route
     assert "A closed cyan stroke is only a search boundary" in pc_route
+
+
+def test_pc_inpaint_routes_openai_compatible_endpoints_through_image_edit():
+    pc_route = (ROOT / "routes" / "gallery_routes.py").read_text(encoding="utf-8")
+    inpaint_block = pc_route.split('@router.post("/api/image/inpaint")', 1)[1].split(
+        "# ---- POST /api/image/harmonize", 1
+    )[0]
+    assert "def _is_openai_compatible_image_edit_base(value: str) -> bool:" in inpaint_block
+    assert '"compatible-mode"' in inpaint_block
+    assert '"aliyuncs.com"' in inpaint_block
+    assert "is_openai_style_edit = _is_openai_compatible_image_edit_base(base)" in inpaint_block
+    assert "if is_openai_style_edit:" in inpaint_block
+    assert 'jr = await client.post(f"{base}/images/edits", headers=headers, json=json_payload)' in inpaint_block
+    assert 'cr = await client.post(f"{base}/chat/completions", headers=headers, json=chat_payload)' in inpaint_block
+    assert "The second image is a mask" in inpaint_block
 
 
 def test_editor_hides_bgremove_sample_overlay_after_successful_sampled_run():

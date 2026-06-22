@@ -587,9 +587,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         body = await request.json()
         current = _load_settings()
         # Per-key validation for numeric settings: coerce to int and clamp to a
-        # sane range so a bad value can't disable the agent or let it run away.
+        # sane range. For agent limits, 0 means unlimited where noted below.
         _INT_RANGES = {
-            "agent_max_rounds": (1, 200),
+            "agent_max_rounds": (0, 200),  # 0 = unlimited
             "agent_max_tool_calls": (0, 1000),  # 0 = unlimited
         }
         for key in DEFAULT_SETTINGS:
@@ -671,6 +671,11 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         if not integ:
             raise HTTPException(404, "Integration not found")
         preset = (integ.get("preset") or integ.get("name", "")).lower()
+
+        if preset in {"comfyui_local", "comfyui local", "runcomfy_cloud", "runcomfy cloud", "runcomfy"}:
+            from src.runcomfy_media import test_media_integration
+
+            return await test_media_integration(integ)
 
         # ntfy is special: a GET / proves the server is reachable but
         # publishes nothing, so the user has no way to know whether

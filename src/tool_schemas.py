@@ -861,12 +861,12 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "manage_documents",
-            "description": "Manage documents: list all documents (with optional search/language filter), delete documents, or run tidy cleanup.",
+            "description": "Manage in-app editor Documents/Library documents only: list/read editor documents, delete documents, or run tidy cleanup. Do NOT use for workspace/project/repo/disk files, source code, folders, or Notes; use file tools or manage_notes for those.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["list", "delete", "tidy"]},
-                    "document_id": {"type": "string", "description": "Document ID (for delete)"},
+                    "action": {"type": "string", "enum": ["list", "read", "delete", "tidy"]},
+                    "document_id": {"type": "string", "description": "Document ID (for read/delete)"},
                     "search": {"type": "string", "description": "Search query (for list)"},
                     "language": {"type": "string", "description": "Filter by language (for list)"},
                     "limit": {"type": "integer", "description": "Max results (for list, default 50)"}
@@ -1110,11 +1110,13 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "generate_image",
-            "description": "Generate a professional AI image file from a text prompt, save it to Odysseus generated media/Gallery, and render it inline. Do not answer image creation requests with SVG, HTML, code, or prompt-only workarounds unless the user explicitly asks for that format. Tries the current/configured/mentioned image-capable model first, then falls back to RunComfy/ComfyUI.",
+            "description": "Generate a professional AI image file from a text prompt, save it to Odysseus generated media/Gallery, and render it inline. Do not answer image creation requests with SVG, HTML, code, or prompt-only workarounds unless the user explicitly asks for that format. Tries the current/configured/mentioned image-capable model first, then falls back to free local ComfyUI if available. RunComfy Cloud is a paid opt-in integration.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "prompt": {"type": "string", "description": "Subject-first image prompt. Include composition, use case, visual style, lighting, and any exact text in quotes."},
+                    "provider": {"type": "string", "enum": ["comfyui", "runcomfy"], "description": "Optional media backend. comfyui = free local ComfyUI; runcomfy = paid RunComfy Cloud integration."},
+                    "integration": {"type": "string", "description": "Optional integration id/name to use when multiple ComfyUI/RunComfy integrations exist."},
                     "model": {"type": "string", "description": "Optional image model or RunComfy model id. Leave blank for auto: GPT Image 2 for typography/text, FLUX 2 Klein 9B for general professional imagery."},
                     "size": {"type": "string", "description": "Size such as 1024x1024, 1024x1536, 1536x1024, or 1536x864"},
                     "aspect_ratio": {"type": "string", "description": "Optional aspect such as 16:9, 9:16, 1:1, 3:2, or 2:3 when size is omitted"},
@@ -1153,11 +1155,13 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "generate_video",
-            "description": "Generate a professional AI video with RunComfy/ComfyUI, save the downloaded file to Odysseus generated media/Gallery, and render it inline. Auto-selects text-to-video, image-to-video, lip-sync, or premium tiers based on inputs and quality.",
+            "description": "Generate a professional AI video with the configured media backend, save the downloaded file to Odysseus generated media/Gallery, and render it inline. RunComfy Cloud requires an enabled paid integration; local ComfyUI requires an exact workflow JSON.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "prompt": {"type": "string", "description": "Subject-first video direction. Include one main action, scene, motion verbs, camera movement, lighting, and audio notes when relevant."},
+                    "provider": {"type": "string", "enum": ["comfyui", "runcomfy"], "description": "Optional media backend. comfyui = free local workflow; runcomfy = paid RunComfy Cloud integration."},
+                    "integration": {"type": "string", "description": "Optional integration id/name to use when multiple ComfyUI/RunComfy integrations exist."},
                     "model": {"type": "string", "description": "Optional RunComfy model id. Leave blank for auto: HappyHorse for general pro video, HappyHorse/Veo for i2v, Wan for audio lip-sync, Kling 4K for premium 4K."},
                     "duration": {"type": "integer", "description": "Duration in seconds"},
                     "aspect_ratio": {"type": "string", "description": "Aspect ratio such as 16:9, 9:16, 1:1, or 21:9"},
@@ -1168,7 +1172,8 @@ FUNCTION_TOOL_SCHEMAS = [
                     "audio_url": {"type": "string", "description": "Optional source audio URL for lip-sync/audio-driven models"},
                     "seed": {"type": "integer", "description": "Optional seed"},
                     "enhance_prompt": {"type": "boolean", "description": "Default true. Adds professional camera, lighting, audio, and color-grade cues."},
-                    "input": {"type": "object", "description": "Exact RunComfy JSON input body; overrides generated defaults"},
+                    "input": {"type": "object", "description": "Exact RunComfy JSON input body or exact ComfyUI workflow object; overrides generated defaults"},
+                    "workflow": {"type": "object", "description": "Exact ComfyUI workflow JSON for provider=comfyui"},
                     "timeout": {"type": "integer", "description": "Timeout in seconds"}
                 },
                 "required": ["prompt"]
@@ -1179,11 +1184,13 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "generate_music",
-            "description": "Generate professional AI music/audio with RunComfy/ComfyUI, save it to Odysseus generated media, and render it inline. Auto-selects ACE Step 1.5 for polished defaults, ElevenLabs for premium commercial music, and ACE edit endpoints for inpaint/outpaint.",
+            "description": "Generate professional AI music/audio with the configured media backend, save it to Odysseus generated media, and render it inline. RunComfy Cloud requires an enabled paid integration; local ComfyUI requires an exact workflow JSON.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "prompt": {"type": "string", "description": "Style brief or full ElevenLabs prompt. Include genre, mood, instrumentation, vocal type, BPM, arrangement, and use case."},
+                    "provider": {"type": "string", "enum": ["comfyui", "runcomfy"], "description": "Optional media backend. comfyui = free local workflow; runcomfy = paid RunComfy Cloud integration."},
+                    "integration": {"type": "string", "description": "Optional integration id/name to use when multiple ComfyUI/RunComfy integrations exist."},
                     "model": {"type": "string", "description": "Optional RunComfy model id. Leave blank for auto: ACE Step 1.5 for professional, ElevenLabs for premium/commercial, ACE Step base for drafts/batches."},
                     "quality": {"type": "string", "enum": ["draft", "professional", "premium", "commercial", "broadcast"], "description": "Audio tier. professional defaults to ACE Step 1.5; premium/commercial defaults to ElevenLabs Music."},
                     "tags": {"type": "string", "description": "ACE Step style tags, e.g. indie pop, driving drums, female vocal, 120 BPM, polished mix"},
@@ -1199,7 +1206,8 @@ FUNCTION_TOOL_SCHEMAS = [
                     "extend_before_duration": {"type": "number", "description": "Seconds to add before source audio"},
                     "extend_after_duration": {"type": "number", "description": "Seconds to add after source audio"},
                     "enhance_prompt": {"type": "boolean", "description": "Default true. Adds professional arrangement/mix/master cues."},
-                    "input": {"type": "object", "description": "Exact RunComfy JSON input body; overrides generated defaults"},
+                    "input": {"type": "object", "description": "Exact RunComfy JSON input body or exact ComfyUI workflow object; overrides generated defaults"},
+                    "workflow": {"type": "object", "description": "Exact ComfyUI workflow JSON for provider=comfyui"},
                     "timeout": {"type": "integer", "description": "Timeout in seconds"}
                 },
                 "required": []
@@ -1210,19 +1218,22 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "runcomfy_media",
-            "description": "Run any RunComfy media endpoint using an exact model_id and input body from a viewed skill. Use for image/video/music/edit/avatar/lip-sync endpoints whose schema is more specific than the narrow wrappers.",
+            "description": "Run any exact media backend request from a viewed skill. Use provider=comfyui for a free local ComfyUI workflow, or provider=runcomfy for a paid RunComfy Cloud model_id/input body.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "media_type": {"type": "string", "enum": ["image", "video", "music", "audio"], "description": "Output family"},
+                    "provider": {"type": "string", "enum": ["comfyui", "runcomfy"], "description": "Media backend. comfyui = local workflow; runcomfy = paid cloud integration."},
+                    "integration": {"type": "string", "description": "Optional integration id/name to use when multiple ComfyUI/RunComfy integrations exist."},
                     "model_id": {"type": "string", "description": "RunComfy model id, e.g. blackforestlabs/flux-2-klein/9b/text-to-image"},
-                    "input": {"type": "object", "description": "Exact RunComfy JSON request body"},
+                    "input": {"type": "object", "description": "Exact RunComfy JSON request body or exact ComfyUI workflow object"},
+                    "workflow": {"type": "object", "description": "Exact ComfyUI workflow JSON for provider=comfyui"},
                     "prompt": {"type": "string", "description": "Optional prompt if input is omitted"},
                     "quality": {"type": "string", "description": "Optional tier hint such as professional, premium, draft, commercial, hero, or 4k"},
                     "enhance_prompt": {"type": "boolean", "description": "Default true when input is omitted; ignored for exact input bodies"},
                     "timeout": {"type": "integer", "description": "Timeout in seconds"}
                 },
-                "required": ["media_type", "model_id"]
+                "required": ["media_type"]
             }
         }
     },

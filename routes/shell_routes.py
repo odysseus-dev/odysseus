@@ -34,6 +34,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from core.constants import BASE_DIR
 from core.platform_compat import (
     IS_WINDOWS,
     detached_popen_kwargs,
@@ -45,6 +46,8 @@ from core.platform_compat import (
 def _require_admin(request: Request):
     """Reject non-admin callers. Shell exec is admin-only — never expose to
     regular users; that's RCE-after-signup."""
+    if os.getenv("AUTH_ENABLED", "true").lower() == "false":
+        return
     auth_manager = getattr(request.app.state, "auth_manager", None)
     if not auth_manager:
         # No auth at all — only safe in fully-trusted localhost dev mode
@@ -122,6 +125,13 @@ def _running_in_container(dockerenv_path="/.dockerenv", cgroup_path="/proc/1/cgr
 
 DockerRowStatus = namedtuple("DockerRowStatus", ["applicable", "install_hint"])
 PackageUpdateStatus = namedtuple("PackageUpdateStatus", ["available", "note"])
+
+IMAGE_RUNTIME_PACKAGE_NAMES = {
+    "diffusers",
+    "onnxruntime",
+    "onnxruntime-directml",
+    "onnxruntime-gpu",
+}
 
 
 REMBG_MODEL_DEPENDENCIES = {
@@ -394,6 +404,11 @@ def _package_pip_update_status(
             False,
             "Using a vLLM CLI on PATH without Python package metadata; update it outside Odysseus.",
         )
+    if isinstance(probe, dict) and probe.get("runtime_python"):
+        return PackageUpdateStatus(
+            False,
+            "Using the image runtime Python; update that environment outside the generic dependency action.",
+        )
 
     return PackageUpdateStatus(
         True, "Update uses pip in the selected Python environment."
@@ -414,6 +429,9 @@ def _prepend_user_install_bins_to_path() -> None:
         candidates = [os.path.join(site.USER_BASE, "bin")]
     except Exception:
         candidates = []
+    home = os.environ.get("HOME")
+    if home:
+        candidates.append(os.path.join(home, ".local", "bin"))
     candidates.append(os.path.expanduser("~/.local/bin"))
 
     parts = (
@@ -517,6 +535,57 @@ def probe(n):
 
 print(json.dumps({{n: probe(n) for n in names}}))
 """
+
+
+def _image_runtime_python() -> Path | None:
+    """Return the dedicated image-sidecar interpreter when it is available."""
+    root = Path(BASE_DIR)
+    candidates = [
+        root / ".image-venv" / "Scripts" / "python.exe",
+        root / ".image-venv" / "bin" / "python",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _probe_package_with_python(python_exe: Path, name: str) -> dict | None:
+    """Run the standard package probe under a specific Python interpreter."""
+    try:
+        proc = subprocess.run(
+            [str(python_exe), "-c", _package_probe_script([name])],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+    except Exception:
+        return None
+    if proc.returncode != 0:
+        return None
+    for line in reversed((proc.stdout or "").splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        probe = data.get(name)
+        if isinstance(probe, dict):
+            probe["runtime_python"] = str(python_exe)
+            return probe
+    return None
+
+
+def _status_note_with_runtime(name: str, probe: dict) -> str:
+    note = _package_status_note(name, probe)
+    runtime_python = probe.get("runtime_python")
+    if runtime_python:
+        runtime_note = f"image runtime: {runtime_python}"
+        return f"{note}; {runtime_note}" if note else runtime_note
+    return note
 
 
 def _find_line_break(buf):
@@ -972,6 +1041,53 @@ def setup_shell_routes() -> APIRouter:
         )
         return result
 
+    @router.post("/api/android/adb-pc/connect")
+    async def android_adb_pc_connect(request: Request) -> Dict[str, Any]:
+        """Run the checked-in Android ADB reverse helper. Admin only."""
+        _require_admin(request)
+        _reject_cross_site(request)
+        if not IS_WINDOWS:
+            return {
+                "ok": False,
+                "error": "ADB PC setup is currently wired for the Windows desktop helper.",
+            }
+
+        batch = Path(BASE_DIR) / "connect-android-pc.bat"
+        if not batch.exists() or not batch.is_file():
+            return {"ok": False, "error": f"Missing helper: {batch}"}
+
+        env = os.environ.copy()
+        env["ODYSSEUS_NO_PAUSE"] = "1"
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                os.environ.get("ComSpec", "cmd.exe"),
+                "/c",
+                str(batch),
+                cwd=str(BASE_DIR),
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=75)
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            return {"ok": False, "error": "Android ADB PC setup timed out."}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)[-600:]}
+
+        output = out.decode("utf-8", errors="replace")
+        error = err.decode("utf-8", errors="replace")
+        combined = "\n".join(part for part in (output.strip(), error.strip()) if part)
+        if proc.returncode == 0:
+            return {"ok": True, "output": combined[-4000:]}
+        return {
+            "ok": False,
+            "error": (combined or f"Helper exited with code {proc.returncode}")[-4000:],
+        }
+
     @router.post("/api/shell/stream")
     async def shell_stream(request: Request, req: ShellExecRequest):
         """Execute a shell command and stream output line-by-line via SSE. Admin only."""
@@ -1344,6 +1460,8 @@ def setup_shell_routes() -> APIRouter:
             except Exception:
                 pass
 
+        image_runtime_python = None if host else _image_runtime_python()
+
         for pkg in packages:
             on_remote = bool(host and pkg.get("target") == "remote")
             probe = None
@@ -1371,6 +1489,22 @@ def setup_shell_routes() -> APIRouter:
                 pkg["installed"] = installed
                 if status_note:
                     pkg["status_note"] = status_note
+            elif (
+                image_runtime_python
+                and pkg["name"] in IMAGE_RUNTIME_PACKAGE_NAMES
+                and (
+                    runtime_probe := _probe_package_with_python(
+                        image_runtime_python, pkg["name"]
+                    )
+                )
+                and _package_installed_from_probe(pkg["name"], runtime_probe)
+            ):
+                probe = runtime_probe
+                pkg["installed"] = True
+                pkg["details"] = probe
+                note = _status_note_with_runtime(pkg["name"], probe)
+                if note:
+                    pkg["status_note"] = note
             elif pkg["name"] == "llama_cpp" and shutil.which("llama-server"):
                 pkg["installed"] = True
                 pkg["status_note"] = (

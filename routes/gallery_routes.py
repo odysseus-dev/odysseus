@@ -187,6 +187,13 @@ def _visible_image_endpoint_for_base(db, base: str, owner: str | None):
     return fallback
 
 
+def _visible_image_endpoint_for_id(db, endpoint_id: str, owner: str | None):
+    endpoint_id = str(endpoint_id or "").strip()
+    if not endpoint_id:
+        return None
+    return _visible_image_endpoint_query(db, owner).filter(ModelEndpoint.id == endpoint_id).first()
+
+
 def setup_gallery_routes() -> APIRouter:
     router = APIRouter(tags=["gallery"])
 
@@ -1158,10 +1165,11 @@ def setup_gallery_routes() -> APIRouter:
 
         progress("accepted", "Backend received the inpaint request.", percent=52)
         # Use endpoint from request body (editor dropdown) or fall back to DB lookup
+        endpoint_id = (body.pop("_endpoint_id", "") or "").strip()
         base = (body.pop("_endpoint", "") or "").rstrip("/")
         # SSRF hardening: validate a client-supplied endpoint before any
         # outbound request (mirrors routes/embedding_routes.py).
-        if base:
+        if base and not endpoint_id:
             from src.url_safety import check_outbound_url
             ok, reason = check_outbound_url(
                 base,
@@ -1172,7 +1180,18 @@ def setup_gallery_routes() -> APIRouter:
                 raise HTTPException(400, f"Rejected endpoint URL: {reason}")
         chosen_model = (body.pop("_model", "") or "").strip()
         api_key = None
-        if not base:
+        if endpoint_id:
+            db = SessionLocal()
+            try:
+                ep = _visible_image_endpoint_for_id(db, endpoint_id, user)
+                if not ep:
+                    progress("failed", "The selected image endpoint is not registered for this user.", percent=100, done=True, error=True)
+                    raise HTTPException(403, "Choose a registered image endpoint")
+                base = ep.base_url.rstrip("/")
+                api_key = ep.api_key
+            finally:
+                db.close()
+        elif not base:
             db = SessionLocal()
             try:
                 ep = _first_visible_image_endpoint(db, user)
@@ -1212,6 +1231,17 @@ def setup_gallery_routes() -> APIRouter:
 
         base_root = base[:-3].rstrip("/") if base.endswith("/v1") else base.rstrip("/")
         is_openai = "api.openai.com" in base
+
+        def _is_openai_compatible_image_edit_base(value: str) -> bool:
+            lower = str(value or "").lower()
+            return (
+                "api.openai.com" in lower
+                or "compatible-mode" in lower
+                or "dashscope" in lower
+                or "aliyuncs.com" in lower
+            )
+
+        is_openai_style_edit = _is_openai_compatible_image_edit_base(base)
         endpoint_label = chosen_model or base_root or base
         progress("endpoint", f"Selected {endpoint_label}.", percent=56)
 
@@ -1341,16 +1371,17 @@ def setup_gallery_routes() -> APIRouter:
                 return None, _provider_no_image_detail(parsed)
             return await _provider_image_value_to_b64(image, client), ""
 
-        if is_openai:
+        if is_openai_style_edit:
             # OpenAI path: /v1/images/edits with gpt-image-1.
             # Mask convention differs from Stable Diffusion:
             #   SD:     white pixels = regenerate, black = keep
             #   OpenAI: transparent alpha = regenerate, opaque = keep
             # So we convert the incoming PNG mask into an alpha-channel PNG.
-            progress("openai_prepare", "Preparing OpenAI edit request.", percent=60)
+            provider_label = "OpenAI" if is_openai else "OpenAI-compatible image endpoint"
+            progress("openai_prepare", f"Preparing {provider_label} edit request.", percent=60)
             if not api_key:
-                progress("failed", "OpenAI endpoint has no stored API key.", percent=100, done=True, error=True)
-                raise HTTPException(400, "OpenAI endpoint has no api_key stored — edit it in Endpoints settings.")
+                progress("failed", f"{provider_label} has no stored API key.", percent=100, done=True, error=True)
+                raise HTTPException(400, f"{provider_label} has no api_key stored - edit it in Endpoints settings.")
             import base64, io
             try:
                 from PIL import Image
@@ -1397,10 +1428,14 @@ def setup_gallery_routes() -> APIRouter:
                 "image": ("source.png", src_buf.getvalue(), "image/png"),
                 "mask": ("mask.png", mask_buf.getvalue(), "image/png"),
             }
-            # Honor explicit model selection from the editor; fall back to gpt-image-1.
-            # dall-e-3 has no edit endpoint — refuse it loudly so the user picks again.
-            oa_model = chosen_model or "gpt-image-1"
-            if "dall-e-3" in oa_model:
+            # Honor explicit model selection from the editor. Only native OpenAI
+            # should silently fall back to gpt-image-1; compatible providers need
+            # their own edit-capable model name.
+            oa_model = chosen_model or ("gpt-image-1" if is_openai else "")
+            if not oa_model:
+                progress("failed", "No image-edit model is selected for this endpoint.", percent=100, done=True, error=True)
+                raise HTTPException(400, "Select an image-edit model for this endpoint.")
+            if "dall-e-3" in oa_model.lower():
                 progress("failed", "dall-e-3 does not support image edits.", percent=100, done=True, error=True)
                 raise HTTPException(400, "dall-e-3 doesn't support image edits — pick gpt-image-1 or dall-e-2")
             data = {
@@ -1409,31 +1444,90 @@ def setup_gallery_routes() -> APIRouter:
                 "size": size,
                 "n": "1",
             }
-            headers = {"Authorization": f"Bearer {api_key}"}
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
             try:
                 async with httpx.AsyncClient(timeout=120) as client:
+                    async def _chat_image_edit(previous_error=""):
+                        chat_prompt = (
+                            f"{body.get('prompt', '')}\n\n"
+                            "Use the first image as the source. The second image is a mask: "
+                            "white pixels mark the area to edit, black pixels should stay unchanged."
+                        ).strip()
+                        chat_payload = {
+                            "messages": [{
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": chat_prompt},
+                                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{body.get('image', '')}"}},
+                                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{body.get('mask', '')}"}},
+                                ],
+                            }],
+                            "stream": False,
+                            "extra_body": {
+                                "num_inference_steps": 50,
+                                "guidance_scale": 1,
+                                "size": size,
+                                "output_format": "png",
+                            },
+                        }
+                        if oa_model:
+                            chat_payload["model"] = oa_model
+                        progress("model_wait", "Trying /v1/chat/completions image edit fallback.", percent=72)
+                        cr = await client.post(f"{base}/chat/completions", headers=headers, json=chat_payload)
+                        if cr.status_code < 200 or cr.status_code >= 300:
+                            suffix = f" Previous /v1/images/edits error: {previous_error[:180]}" if previous_error else ""
+                            raise HTTPException(
+                                cr.status_code,
+                                f"Image edit chat fallback failed at /v1/chat/completions: {cr.text[:300]}{suffix}",
+                            )
+                        image_b64, no_image_detail = await _normalized_provider_image_response(cr.text, client)
+                        if not image_b64:
+                            suffix = f" Previous /v1/images/edits error: {previous_error[:180]}" if previous_error else ""
+                            raise HTTPException(
+                                502,
+                                f"Image edit chat fallback returned no image: {no_image_detail}{suffix}",
+                            )
+                        return image_b64
+
+                    async def _json_or_chat_image_edit(previous_error=""):
+                        mask_b64 = base64.b64encode(mask_buf.getvalue()).decode()
+                        json_payload = {
+                            "model": oa_model,
+                            "prompt": body.get("prompt", ""),
+                            "image": body.get("image", ""),
+                            "mask_image": mask_b64,
+                            "size": size,
+                            "n": 1,
+                            "response_format": "b64_json",
+                            "output_format": "png",
+                        }
+                        progress("model_wait", "Trying /v1/images/edits JSON fallback.", percent=70)
+                        jr = await client.post(f"{base}/images/edits", headers=headers, json=json_payload)
+                        if jr.status_code >= 200 and jr.status_code < 300:
+                            image_b64, no_image_detail = await _normalized_provider_image_response(jr.text, client)
+                            if image_b64:
+                                return image_b64
+                            previous_error = f"/images/edits JSON: {no_image_detail}"
+                        else:
+                            previous_error = f"/images/edits JSON: HTTP {jr.status_code}: {jr.text[:300]}"
+                        return await _chat_image_edit(previous_error)
+
                     progress("model_wait", f"Sending edit request to {oa_model}.", percent=66)
                     r = await client.post(f"{base}/images/edits", headers=headers, data=data, files=files)
-                    if r.status_code != 200:
-                        progress("failed", f"OpenAI edit failed with HTTP {r.status_code}.", percent=100, done=True, error=True)
-                        raise HTTPException(r.status_code, f"OpenAI edit failed: {r.text[:300]}")
-                    progress("response", "OpenAI returned an edited image.", percent=78)
-                    result = r.json()
-                    raw_b64 = None
-                    if result.get("data"):
-                        item = result["data"][0]
-                        # gpt-image-1 returns b64_json by default; dall-e-2 may return url
-                        if item.get("b64_json"):
-                            raw_b64 = item["b64_json"]
-                        elif item.get("url"):
-                            async with httpx.AsyncClient(timeout=60) as c2:
-                                progress("download_result", "Downloading edited image URL.", percent=80)
-                                img_r = await c2.get(item["url"])
-                                if img_r.status_code == 200:
-                                    raw_b64 = base64.b64encode(img_r.content).decode()
+                    if r.status_code < 200 or r.status_code >= 300:
+                        last_err = f"/images/edits: HTTP {r.status_code}: {r.text[:300]}"
+                        if is_openai:
+                            progress("failed", f"OpenAI edit failed with HTTP {r.status_code}.", percent=100, done=True, error=True)
+                            raise HTTPException(r.status_code, f"OpenAI edit failed: {r.text[:300]}")
+                        raw_b64 = await _json_or_chat_image_edit(last_err)
+                    else:
+                        progress("response", f"{provider_label} returned an edited image.", percent=78)
+                        raw_b64, no_image_detail = await _normalized_provider_image_response(r.text, client)
+                        if not raw_b64 and not is_openai:
+                            raw_b64 = await _chat_image_edit(f"/images/edits: {no_image_detail}")
                     if not raw_b64:
-                        progress("failed", "OpenAI returned no image.", percent=100, done=True, error=True)
-                        raise HTTPException(502, "OpenAI returned no image")
+                        progress("failed", f"{provider_label} returned no image.", percent=100, done=True, error=True)
+                        raise HTTPException(502, f"{provider_label} returned no image")
 
                     # OpenAI's edits API doesn't truly preserve unmasked
                     # pixels — gpt-image-1 regenerates the whole image,
@@ -1541,12 +1635,13 @@ def setup_gallery_routes() -> APIRouter:
         if not image_b64:
             raise HTTPException(400, "No image provided")
 
+        endpoint_id = (body.get("_endpoint_id") or "").strip()
         endpoint = (body.get("_endpoint") or "").rstrip("/")
         # SSRF hardening: a client-supplied endpoint is fetched server-side
         # below, so validate it first (mirrors routes/embedding_routes.py).
         # Local-first means loopback/LAN is allowed by default; the cloud
         # metadata range and non-HTTP(S) schemes are always rejected.
-        if endpoint:
+        if endpoint and not endpoint_id:
             from src.url_safety import check_outbound_url
             ok, reason = check_outbound_url(
                 endpoint,
@@ -1558,7 +1653,17 @@ def setup_gallery_routes() -> APIRouter:
 
         base = endpoint
         api_key = None
-        if not base:
+        if endpoint_id:
+            db = SessionLocal()
+            try:
+                ep = _visible_image_endpoint_for_id(db, endpoint_id, user)
+                if not ep:
+                    raise HTTPException(403, "Choose a registered image endpoint")
+                base = ep.base_url.rstrip("/")
+                api_key = ep.api_key
+            finally:
+                db.close()
+        elif not base:
             db = SessionLocal()
             try:
                 ep = _first_visible_image_endpoint(db, user)
@@ -1876,6 +1981,7 @@ def setup_gallery_routes() -> APIRouter:
             bg_strength = bg_strength / 100.0
         bg_strength = max(0.1, min(1.0, bg_strength))
         known_rembg_models = {"u2netp", "silueta", "isnet-general-use"}
+        selected_endpoint_id = str(body.get("_endpoint_id") or "").strip()
         selected_endpoint = str(body.get("_endpoint") or "").strip()
         selected_model = str(body.get("_model") or "").strip()
         requested_rembg_model = str(
@@ -2157,7 +2263,17 @@ def setup_gallery_routes() -> APIRouter:
             base = selected_endpoint.rstrip("/")
             model = "" if selected_model in known_rembg_models else selected_model
             api_key = None
-            if base:
+            if selected_endpoint_id:
+                db = SessionLocal()
+                try:
+                    ep = _visible_image_endpoint_for_id(db, selected_endpoint_id, user)
+                    if not ep:
+                        raise HTTPException(403, "Choose a registered image endpoint")
+                    base = ep.base_url.rstrip("/")
+                    api_key = ep.api_key
+                finally:
+                    db.close()
+            elif base:
                 from src.url_safety import check_outbound_url
                 ok, reason = check_outbound_url(
                     base,
@@ -2743,7 +2859,7 @@ def setup_gallery_routes() -> APIRouter:
             return out
 
         provider_error = None
-        has_provider_selection = bool(selected_endpoint) or bool(selected_model and selected_model not in known_rembg_models)
+        has_provider_selection = bool(selected_endpoint_id) or bool(selected_endpoint) or bool(selected_model and selected_model not in known_rembg_models)
         if bg_remove_pipeline == "model" or (bg_remove_pipeline == "auto" and has_provider_selection):
             try:
                 provider_image = await _remove_with_provider()

@@ -79,6 +79,10 @@ public class MobileBackendServer {
     private static final int DEFAULT_MOBILE_WORKSPACE_FILE_ENTRIES = 250;
     private static final int MAX_MOBILE_WORKSPACE_FILE_ENTRIES = 500;
     private static final int MAX_MOBILE_WORKSPACE_TEXT_BYTES = 1024 * 1024;
+    private static final int MAX_MOBILE_WORKSPACE_CONTEXT_ENTRIES = 60;
+    private static final int MAX_MOBILE_WORKSPACE_CONTEXT_DEPTH = 3;
+    private static final int MAX_MOBILE_WORKSPACE_CONTEXT_PREVIEW_FILES = 6;
+    private static final int MAX_MOBILE_WORKSPACE_CONTEXT_PREVIEW_BYTES = 3072;
     private static final String MOBILE_PUBLIC_WORKSPACE_ACCESS_DETAIL =
             "Android cannot read this public folder yet. Grant Odysseus All files access in Android settings, or choose App Workspace.";
     private static final String MOBILE_DEPRECATED_PRIVATE_WORKSPACE_DETAIL =
@@ -3276,7 +3280,7 @@ public class MobileBackendServer {
         if (choice == null) return null;
         String prompt = jsonString(body, "prompt", "").trim();
         prompt = detailedInpaintPrompt(prompt);
-        if (isOpenAIBase(choice.optString("base_url"))) {
+        if (isOpenAICompatibleImageEditBase(choice.optString("base_url"))) {
             return postOpenAiImageEdit(choice, source, mask, prompt, true, null);
         }
         JSONObject payload = new JSONObject()
@@ -3303,7 +3307,8 @@ public class MobileBackendServer {
         if (choice == null) return null;
         String model = choice.optString("model", "").trim();
         boolean openAiHosted = isOpenAIBase(choice.optString("base_url"));
-        if (openAiHosted || isImageEditModel(model)) {
+        boolean openAiCompatible = isOpenAICompatibleImageEditBase(choice.optString("base_url"));
+        if (openAiCompatible || isImageEditModel(model)) {
             Bitmap fullMask = solidMask(source.getWidth(), source.getHeight(), 255);
             String prompt = jsonString(body, "prompt", "").trim();
             if (prompt.isEmpty()) {
@@ -3352,10 +3357,16 @@ public class MobileBackendServer {
     }
 
     private JSONObject resolveImageEndpoint(JSONObject body) throws Exception {
+        String requestedEndpointId = jsonString(body, "_endpoint_id", "").trim();
         String requestedBase = jsonString(body, "_endpoint", "").trim();
         String requestedModel = jsonString(body, "_model", "").trim();
         JSONObject ep;
-        if (!requestedBase.isEmpty()) {
+        if (!requestedEndpointId.isEmpty()) {
+            ep = findEndpointForId(requestedEndpointId);
+            if (ep == null || !ep.optBoolean("is_enabled", true) || !looksLikeImageEndpoint(ep)) {
+                throw new IOException("Choose a registered image endpoint");
+            }
+        } else if (!requestedBase.isEmpty()) {
             ep = findEndpointForBase(requestedBase);
             if (ep == null) {
                 ep = new JSONObject()
@@ -3380,7 +3391,8 @@ public class MobileBackendServer {
 
     private boolean hasExplicitImageProvider(JSONObject body) {
         String model = jsonString(body, "_model", "").trim();
-        return !jsonString(body, "_endpoint", "").trim().isEmpty()
+        return !jsonString(body, "_endpoint_id", "").trim().isEmpty()
+                || !jsonString(body, "_endpoint", "").trim().isEmpty()
                 || (!model.isEmpty() && !isKnownRembgModel(model));
     }
 
@@ -3400,6 +3412,17 @@ public class MobileBackendServer {
         for (int i = 0; i < endpoints.length(); i++) {
             JSONObject ep = endpoints.optJSONObject(i);
             if (ep != null && target.equals(comparableBase(ep.optString("base_url")))) return ep;
+        }
+        return null;
+    }
+
+    private JSONObject findEndpointForId(String endpointId) throws Exception {
+        String target = valueOr(endpointId, "").trim();
+        if (target.isEmpty()) return null;
+        JSONArray endpoints = loadArray(PREF_ENDPOINTS);
+        for (int i = 0; i < endpoints.length(); i++) {
+            JSONObject ep = endpoints.optJSONObject(i);
+            if (ep != null && target.equals(ep.optString("id", ""))) return ep;
         }
         return null;
     }
@@ -3465,6 +3488,14 @@ public class MobileBackendServer {
         return valueOr(baseUrl, "").toLowerCase(Locale.US).contains("api.openai.com");
     }
 
+    private boolean isOpenAICompatibleImageEditBase(String baseUrl) {
+        String base = valueOr(baseUrl, "").toLowerCase(Locale.US);
+        return isOpenAIBase(base)
+                || base.contains("compatible-mode")
+                || base.contains("dashscope")
+                || base.contains("aliyuncs.com");
+    }
+
     private String comparableBase(String raw) {
         String base = normalizeBase(raw).trim();
         while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
@@ -3520,8 +3551,15 @@ public class MobileBackendServer {
         if (!base.endsWith("/v1")) base += "/v1";
         String apiKey = choice.optString("api_key", "");
         if (apiKey.isEmpty() && isOpenAIBase(base)) throw new IOException("OpenAI endpoint has no API key stored in Settings.");
-        String model = choice.optString("model", "gpt-image-1").trim();
-        if (model.isEmpty()) model = "gpt-image-1";
+        boolean openAiHosted = isOpenAIBase(base);
+        String model = choice.optString("model", "").trim();
+        if (model.isEmpty()) {
+            if (openAiHosted) {
+                model = "gpt-image-1";
+            } else {
+                throw new IOException("Select an image-edit model for this endpoint.");
+            }
+        }
         if (model.toLowerCase(Locale.US).contains("dall-e-3")) {
             throw new IOException("dall-e-3 does not support image edits. Pick gpt-image-1, dall-e-2, SDXL inpaint, or Flux fill.");
         }
@@ -3552,14 +3590,16 @@ public class MobileBackendServer {
         int status = conn.getResponseCode();
         String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
         conn.disconnect();
-        boolean openAiHosted = isOpenAIBase(base);
         if (status < 200 || status >= 300) {
-            if (!openAiHosted && shouldRetryJsonImageEdit(status, response)) {
+            if (!openAiHosted) {
+                boolean likelyJsonOnly = shouldRetryJsonImageEdit(status, response);
+                String previousError = (likelyJsonOnly ? "" : "Multipart /v1/images/edits failed: "
+                        + formatProviderError(status, response) + ". ");
                 try {
                     return postJsonOpenAiImageEdit(choice, src, openAiMask, mask, prompt, compositeToMask, alphaHint);
                 } catch (Exception jsonEx) {
                     Log.w(TAG, "JSON image edit retry failed; trying chat-completions image edit", jsonEx);
-                    return postChatImageEdit(choice, src, mask, prompt, compositeToMask, alphaHint, jsonEx.getMessage());
+                    return postChatImageEdit(choice, src, mask, prompt, compositeToMask, alphaHint, previousError + jsonEx.getMessage());
                 }
             }
             throw new IOException("Image edit failed at /v1/images/edits: " + formatProviderError(status, response));
@@ -3628,14 +3668,20 @@ public class MobileBackendServer {
         String apiKey = choice.optString("api_key", "");
         String model = choice.optString("model", "").trim();
 
+        String chatPrompt = valueOr(prompt, "").trim();
+        chatPrompt += "\n\nUse the first image as the source. The second image is a mask: white pixels mark the area to edit, black pixels should stay unchanged.";
         JSONArray content = new JSONArray()
                 .put(new JSONObject()
                         .put("type", "text")
-                        .put("text", prompt))
+                        .put("text", chatPrompt))
                 .put(new JSONObject()
                         .put("type", "image_url")
                         .put("image_url", new JSONObject()
-                                .put("url", "data:image/png;base64," + encodeBitmapPng(src))));
+                                .put("url", "data:image/png;base64," + encodeBitmapPng(src))))
+                .put(new JSONObject()
+                        .put("type", "image_url")
+                        .put("image_url", new JSONObject()
+                                .put("url", "data:image/png;base64," + encodeBitmapPng(editMask))));
         JSONObject payload = new JSONObject()
                 .put("messages", new JSONArray()
                         .put(new JSONObject()
@@ -8558,7 +8604,7 @@ public class MobileBackendServer {
     }
 
     private String tryHandleMobileWorkspaceRequest(String userText, File activeWorkspace, String workspaceRejected) throws Exception {
-        if (!mobileMentionsWorkspace(userText)) return "";
+        if (!mobileIsWorkspaceStatusRequest(userText)) return "";
         StringBuilder sb = new StringBuilder();
         sb.append("Android standalone workspace check:\n");
         if (!workspaceRejected.isEmpty()) {
@@ -8572,6 +8618,11 @@ public class MobileBackendServer {
             sb.append("- Active Android workspace: `").append(activeWorkspace.getCanonicalPath()).append("`.\n");
             sb.append("- This is local to this Android device, not your PC filesystem.\n");
             sb.append("- Current contents: ").append(mobileWorkspaceOneLineSummary(activeWorkspace, 10)).append("\n");
+            sb.append("- Visible tree:\n").append(mobileWorkspaceTreeSummary(
+                    activeWorkspace,
+                    MAX_MOBILE_WORKSPACE_CONTEXT_ENTRIES,
+                    MAX_MOBILE_WORKSPACE_CONTEXT_DEPTH
+            )).append("\n");
         }
         JSONArray dirs = loadArray(PREF_PERSONAL_DIRECTORIES);
         if (dirs.length() > 0) {
@@ -8604,8 +8655,41 @@ public class MobileBackendServer {
         }
         sb.append("Active Android workspace: ").append(activeWorkspace.getCanonicalPath()).append("\n");
         sb.append("Workspace summary: ").append(mobileWorkspaceOneLineSummary(activeWorkspace, 14)).append("\n");
+        sb.append("Visible workspace tree, bounded for prompt size:\n");
+        sb.append(mobileWorkspaceTreeSummary(
+                activeWorkspace,
+                MAX_MOBILE_WORKSPACE_CONTEXT_ENTRIES,
+                MAX_MOBILE_WORKSPACE_CONTEXT_DEPTH
+        )).append("\n");
+        String previews = mobileWorkspaceTextPreviews(
+                activeWorkspace,
+                MAX_MOBILE_WORKSPACE_CONTEXT_PREVIEW_FILES,
+                MAX_MOBILE_WORKSPACE_CONTEXT_PREVIEW_BYTES
+        );
+        if (!previews.isEmpty()) {
+            sb.append("Small text file previews from the visible workspace:\n").append(previews).append("\n");
+        } else {
+            sb.append("No readable text file previews were available from the visible workspace.\n");
+        }
         sb.append("If asked about saved Folders/RAG entries such as PC paths, explain that those are separate from the active Android workspace.");
         return sb.toString();
+    }
+
+    private boolean mobileIsWorkspaceStatusRequest(String userText) {
+        String q = valueOr(userText, "").toLowerCase(Locale.US).trim();
+        q = q.replaceAll("[?!.,]+", " ").replaceAll("\\s+", " ");
+        if (!mobileMentionsWorkspace(userText)) return false;
+        return q.contains("workspace check")
+                || q.contains("check workspace")
+                || q.contains("can you see")
+                || q.contains("can u see")
+                || q.contains("do you see")
+                || q.contains("what files")
+                || q.contains("which files")
+                || q.contains("list files")
+                || q.contains("show files")
+                || q.equals("workspace")
+                || q.equals("my workspace");
     }
 
     private boolean mobileMentionsWorkspace(String userText) {
@@ -8658,6 +8742,126 @@ public class MobileBackendServer {
         int hidden = sorted.size() - shown;
         if (hidden > 0) sb.append(", ... ").append(hidden).append(" more");
         return sb.toString();
+    }
+
+    private String mobileWorkspaceTreeSummary(File root, int maxEntries, int maxDepth) throws Exception {
+        if (root == null || !root.isDirectory()) return "workspace folder is not available";
+        File[] children = root.listFiles();
+        if (children == null) {
+            return mobileIsPublicExternalWorkspace(root)
+                    ? MOBILE_PUBLIC_WORKSPACE_ACCESS_DETAIL
+                    : "workspace folder is not readable";
+        }
+        if (children.length == 0) return "(empty)";
+        StringBuilder sb = new StringBuilder();
+        int[] shown = new int[]{0};
+        int[] hidden = new int[]{0};
+        appendMobileWorkspaceTree(root, root, 0, Math.max(0, maxDepth), Math.max(1, maxEntries), shown, hidden, sb);
+        if (shown[0] == 0) return "(empty)";
+        if (hidden[0] > 0) sb.append("... ").append(hidden[0]).append(" more not shown\n");
+        return sb.toString().trim();
+    }
+
+    private void appendMobileWorkspaceTree(File root, File dir, int depth, int maxDepth,
+                                           int maxEntries, int[] shown, int[] hidden,
+                                           StringBuilder sb) throws Exception {
+        File[] children = dir.listFiles();
+        if (children == null) {
+            if (shown[0] < maxEntries) {
+                String rel = mobileWorkspaceRelPath(root, dir);
+                if (!rel.isEmpty()) {
+                    sb.append("[unreadable folder] ").append(rel).append("\n");
+                    shown[0]++;
+                }
+            }
+            return;
+        }
+        List<File> sorted = new ArrayList<>(Arrays.asList(children));
+        Collections.sort(sorted, (a, b) -> {
+            if (a.isDirectory() != b.isDirectory()) return a.isDirectory() ? -1 : 1;
+            return a.getName().compareToIgnoreCase(b.getName());
+        });
+        for (File child : sorted) {
+            if (child.getName().startsWith(".")) continue;
+            if (mobileIsDeprecatedPrivateWorkspaceFolder(child)) continue;
+            if (shown[0] >= maxEntries) {
+                hidden[0]++;
+                continue;
+            }
+            sb.append(child.isDirectory() ? "[folder] " : child.isFile() ? "[file] " : "[other] ")
+                    .append(mobileWorkspaceRelPath(root, child))
+                    .append("\n");
+            shown[0]++;
+            if (child.isDirectory() && depth < maxDepth) {
+                appendMobileWorkspaceTree(root, child, depth + 1, maxDepth, maxEntries, shown, hidden, sb);
+            }
+        }
+    }
+
+    private String mobileWorkspaceTextPreviews(File root, int maxFiles, int maxBytes) throws Exception {
+        if (root == null || !root.isDirectory()) return "";
+        List<File> files = new ArrayList<>();
+        collectMobileWorkspacePreviewFiles(root, root, 0, MAX_MOBILE_WORKSPACE_CONTEXT_DEPTH, Math.max(1, maxFiles), files);
+        StringBuilder sb = new StringBuilder();
+        for (File file : files) {
+            String preview = mobileWorkspaceReadTextPreview(file, maxBytes);
+            if (preview.isEmpty()) continue;
+            sb.append("--- ").append(mobileWorkspaceRelPath(root, file)).append(" (")
+                    .append(file.length()).append(" bytes) ---\n")
+                    .append(preview).append("\n");
+        }
+        return sb.toString().trim();
+    }
+
+    private void collectMobileWorkspacePreviewFiles(File root, File dir, int depth, int maxDepth,
+                                                    int maxFiles, List<File> out) throws Exception {
+        if (out.size() >= maxFiles) return;
+        File[] children = dir.listFiles();
+        if (children == null) return;
+        List<File> sorted = new ArrayList<>(Arrays.asList(children));
+        Collections.sort(sorted, (a, b) -> {
+            if (a.isFile() != b.isFile()) return a.isFile() ? -1 : 1;
+            return a.getName().compareToIgnoreCase(b.getName());
+        });
+        for (File child : sorted) {
+            if (out.size() >= maxFiles) return;
+            if (child.getName().startsWith(".")) continue;
+            if (mobileIsDeprecatedPrivateWorkspaceFolder(child)) continue;
+            if (child.isFile() && child.length() <= MAX_MOBILE_WORKSPACE_TEXT_BYTES && mobileWorkspaceTextName(child.getName())) {
+                try {
+                    if (!mobileWorkspaceIsProbablyBinary(child)) out.add(child);
+                } catch (IOException ignored) {
+                    // Ignore unreadable preview candidates; the tree still reports their names.
+                }
+            }
+        }
+        if (depth >= maxDepth) return;
+        for (File child : sorted) {
+            if (out.size() >= maxFiles) return;
+            if (child.getName().startsWith(".")) continue;
+            if (mobileIsDeprecatedPrivateWorkspaceFolder(child)) continue;
+            if (child.isDirectory()) {
+                collectMobileWorkspacePreviewFiles(root, child, depth + 1, maxDepth, maxFiles, out);
+            }
+        }
+    }
+
+    private String mobileWorkspaceReadTextPreview(File file, int maxBytes) throws IOException {
+        long size = Math.max(0, file.length());
+        if (size == 0) return "";
+        int cap = (int) Math.min(size, Math.max(256, maxBytes));
+        byte[] buffer = new byte[cap];
+        int read;
+        try (FileInputStream in = new FileInputStream(file)) {
+            read = in.read(buffer);
+        }
+        if (read <= 0) return "";
+        String text = new String(buffer, 0, read, StandardCharsets.UTF_8);
+        if (text.indexOf('\u0000') >= 0) return "";
+        text = text.replace("\r\n", "\n").replace('\r', '\n').trim();
+        if (text.isEmpty()) return "";
+        if (size > read) text += "\n...";
+        return text;
     }
 
     private String mobilePersonalContextForPrompt(String userText) throws Exception {
@@ -9251,11 +9455,30 @@ public class MobileBackendServer {
     private String mobileProviderLabel(JSONObject endpoint, String model) {
         String host = "unknown endpoint";
         try {
-            host = new URL(normalizeBase(endpoint == null ? "" : endpoint.optString("base_url"))).getHost();
+            host = providerLabelForBase(endpoint == null ? "" : endpoint.optString("base_url"));
         } catch (Exception ignored) {
         }
         String providerModel = providerModelId(endpoint, model);
         return host + (providerModel.isEmpty() ? "" : " / " + providerModel);
+    }
+
+    private String providerLabelForBase(String baseUrl) {
+        try {
+            URL parsed = new URL(normalizeBase(baseUrl));
+            String host = valueOr(parsed.getHost(), "").toLowerCase(Locale.US);
+            if (host.equals("api.openai.com")) return "OpenAI";
+            if (host.equals("openrouter.ai") || host.endsWith(".openrouter.ai")) return "OpenRouter";
+            if (host.equals("api.deepseek.com") || host.endsWith(".deepseek.com")) return "DeepSeek";
+            if (host.equals("dashscope.aliyuncs.com") || host.endsWith(".dashscope.aliyuncs.com")) return "DashScope";
+            if (host.equals("aliyuncs.com") || host.endsWith(".aliyuncs.com")) return "Alibaba Model Studio";
+            if (host.equals("localhost") || host.equals("127.0.0.1") || host.equals("0.0.0.0") || host.equals("::1")) {
+                int p = parsed.getPort();
+                return p > 0 ? host + ":" + p : "local endpoint";
+            }
+            return host.isEmpty() ? "unknown endpoint" : host;
+        } catch (Exception ignored) {
+            return "unknown endpoint";
+        }
     }
 
     private void probeChat(JSONObject endpoint, String model) throws Exception {

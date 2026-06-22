@@ -4,6 +4,19 @@
 
 let _syncRailSideFn = null;
 
+function _dismissSoftKeyboard() {
+  const active = document.activeElement;
+  let dismissed = document.documentElement.classList.contains('android-keyboard-open');
+  if (active && active !== document.body && active.matches?.('input, textarea, [contenteditable="true"], [contenteditable=""]')) {
+    active.blur();
+    dismissed = true;
+  }
+  try {
+    window.OdysseusAndroid?.hideKeyboard?.();
+  } catch (_) {}
+  return dismissed;
+}
+
 /**
  * Get the current syncRailSide function reference.
  * Needed because it gets patched after initial setup.
@@ -262,11 +275,9 @@ export function initSidebarLayout(Storage, opts) {
             sidebar.classList.toggle('right-side', wantRight);
             if (documentModule && documentModule.swapSide) { try { documentModule.swapSide(); } catch (_) {} }
           }
-          // Opening sidebar — blur keyboard first, then open after layout settles
-          if (document.activeElement && document.activeElement !== document.body
-              && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) {
-            document.activeElement.blur();
-            // Wait for keyboard dismiss to settle, then open
+          // Opening sidebar — close Android/mobile keyboard first, then open
+          // after the viewport settles so the whole WebView does not pan.
+          if (_dismissSoftKeyboard()) {
             setTimeout(() => {
               sidebar.classList.remove('hidden');
               if (backdrop) backdrop.classList.add('visible');

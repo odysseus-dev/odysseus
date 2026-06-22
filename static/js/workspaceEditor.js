@@ -22,6 +22,7 @@ let _filter = '';
 let _entryRenderToken = 0;
 let _loadController = null;
 let _loadToken = 0;
+let _hasLoadedDir = false;
 
 const ICONS = {
   folder: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
@@ -252,6 +253,7 @@ function _renderRoot() {
 function _renderDir(data) {
   _cwd = data.path || '';
   _entries = Array.isArray(data.entries) ? data.entries : [];
+  _hasLoadedDir = true;
   const pathInput = _modal.querySelector('#workspace-editor-path-input');
   if (pathInput) pathInput.value = _cwd;
   _renderRoot();
@@ -299,7 +301,12 @@ function _renderEntries() {
     ? _entries
     : _entries.filter((entry) => String(entry.name || '').toLowerCase().includes(_filter));
   if (!visible.length) {
-    list.innerHTML = '<div class="workspace-editor-empty">No files found.</div>';
+    const message = !_hasLoadedDir
+      ? 'Press Reload to load files.'
+      : _filter
+        ? 'No matching files or folders.'
+        : 'No files or folders found.';
+    list.innerHTML = `<div class="workspace-editor-empty">${_esc(message)}</div>`;
     return;
   }
   list.innerHTML = '';
@@ -554,6 +561,7 @@ export async function openWorkspaceEditor(options = {}) {
   _modal.classList.remove('hidden');
   _renderRoot();
   _entries = [];
+  _hasLoadedDir = false;
   const pathInput = _modal.querySelector('#workspace-editor-path-input');
   if (pathInput) pathInput.value = _cwd;
   _renderEntries();

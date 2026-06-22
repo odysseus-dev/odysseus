@@ -82,10 +82,10 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "edit_document": "Preferred tool for editing an existing document — targeted find-and-replace. Use for any small change: add a function, fix a bug, tweak a section, rename things.",
     "update_document": "Replace the entire active document content. ONLY for full rewrites (>50% changed). Do not use for small edits — use edit_document instead.",
     "suggest_document": "Suggest changes to the active document with explanations. For code review, proofreading, feedback requests.",
-    "generate_image": "Generate a professional AI image file from a text prompt and render it inline. Use for image creation requests; do not substitute SVG/HTML/code/prompt text unless the user explicitly asks for that format. Tries the current/configured/mentioned image-capable model first, then falls back to RunComfy/ComfyUI. Supports size, aspect ratio, style, quality, seed, product shots, posters, ads, portraits, concept art.",
-    "generate_video": "Generate a professional AI video from a prompt using RunComfy/ComfyUI and render it inline. Supports cinematic camera direction, social clips, ad creative, animations, image-to-video, lip-sync/audio-driven clips, and premium tiers.",
-    "generate_music": "Generate professional AI music or audio using RunComfy/ComfyUI and render it inline. Supports songs, instrumentals, jingles, background music, seamless loops, vocals, lyrics, BPM, polished mix/master.",
-    "runcomfy_media": "Run any exact RunComfy media endpoint from a skill model_id and input body. Use for advanced image, video, music, avatar, lip-sync, edit, inpaint, outpaint, or model-specific schemas.",
+    "generate_image": "Generate a professional AI image file from a text prompt and render it inline. Use for image creation requests; do not substitute SVG/HTML/code/prompt text unless the user explicitly asks for that format. Tries the current/configured/mentioned image-capable model first, then falls back to free local ComfyUI if available; RunComfy Cloud is a paid opt-in integration. Supports size, aspect ratio, style, quality, seed, product shots, posters, ads, portraits, concept art.",
+    "generate_video": "Generate a professional AI video from a prompt using the configured media backend and render it inline. RunComfy Cloud requires an enabled paid integration; local ComfyUI requires an exact workflow. Supports cinematic camera direction, social clips, ad creative, animations, image-to-video, lip-sync/audio-driven clips, and premium tiers.",
+    "generate_music": "Generate professional AI music or audio using the configured media backend and render it inline. RunComfy Cloud requires an enabled paid integration; local ComfyUI requires an exact workflow. Supports songs, instrumentals, jingles, background music, seamless loops, vocals, lyrics, BPM, polished mix/master.",
+    "runcomfy_media": "Run any exact media backend endpoint from a skill model_id/input body or local ComfyUI workflow. Use provider=comfyui for the free local route and provider=runcomfy for paid RunComfy Cloud schemas.",
     "chat_with_model": "Send a message to a different AI model. Compare responses, get specialized help, delegate tasks.",
     "ask_teacher": "Ask a more capable model for help with a difficult problem. Escalate complex tasks.",
     "pipeline": "Run a multi-step AI pipeline with multiple models. Chain tasks together in sequence.",
@@ -98,7 +98,7 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "manage_mcp": "MCP server management: list, add, delete, reconnect servers, or list available tools.",
     "manage_webhooks": "Webhook management: list, add, delete, enable, or disable webhooks.",
     "manage_tokens": "API token management: list, create, or delete API access tokens.",
-    "manage_documents": "List, read, delete, or tidy documents in the editor panel. action='list' returns clickable rows (most-recent first) so the user can open any doc by clicking. action='read' (aka view/open/get) with document_id returns the content. action='delete' with document_id removes a doc (only way to delete). Use this for ANY 'show/read/list/open my documents/docs/files/notes' request — never shell or curl.",
+    "manage_documents": "List, read, delete, or tidy documents in the in-app editor Documents/Library panel. action='list' returns clickable rows (most-recent first) so the user can open any editor doc by clicking. action='read' (aka view/open/get) with document_id returns the content. action='delete' with document_id removes a doc. Do NOT use for workspace/project/repo/disk files, source code, folders, or the Notes app; use workspace file tools or manage_notes for those.",
     "manage_research": "List, read/open, or delete saved DEEP RESEARCH results from the Library. action='list' returns clickable [query](#research-<id>) rows (most-recent first). action='read' (aka open/view/get) with id returns the report + sources. action='delete' with id removes it. Use this for ANY 'open/read/find/delete my research / that report / the research on X' request. NOTE: this is for EXISTING research; to START new research use trigger_research.",
     "manage_settings": "Change ANY real app setting (the ones the Settings panel writes) so the user never has to open it: TTS voice/provider/speed, STT, search engine + result count, default/teacher/task/utility/vision/image/research models, image quality, reminder channel (browser/email/ntfy), agent timeout/tool-call budget, and more. action=set with key (friendly aliases ok: voice, 'search engine', 'default model', 'teacher model', 'image quality', 'reminder channel'...) + value; get/list/reset too. Also toggles tools on/off (disable_tool/enable_tool/list_tools). Secrets/API keys are read-only. Use for any 'change my…/set my…/use X for…/turn on…' preference request.",
     "create_session": "Create a new chat with a name and model.",
@@ -447,26 +447,30 @@ class ToolIndex:
                    "edit photo", "edit image", "remove background", "upscale image",
                    "sharpen image", "enhance face", "inpaint"}):
             {"generate_image", "manage_gallery", "edit_image", "ui_control"},
-        # Document edit/update intent
-        frozenset({"edit", "change", "fix", "rewrite", "update",
-                   "replace", "add a", "tweak", "modify", "rename", "paragraph",
-                   "section", "line", "the doc", "the docs", "the document", "the documents", "in the doc", "in the docs", "in document"}):
+        # Document edit/update intent. Keep this scoped to editor documents;
+        # generic "fix/edit/change" belongs to files when the user says
+        # workspace/project/code/repo/file.
+        frozenset({"paragraph", "section", "the doc", "the docs",
+                   "the document", "the documents", "in the doc", "in the docs",
+                   "in document", "in the document", "doc text", "document text"}):
             {"edit_document", "update_document", "create_document", "suggest_document"},
-        # Document deletion / management — include generic open/find/read/show
-        # verbs + file/doc synonyms so "open my <X>", "find the <X>", "delete
-        # <X>" reach manage_documents even without the literal word "document".
+        # Document deletion / management. This is ONLY the in-app editor
+        # Documents/Library surface, not the workspace/filesystem or Notes app.
         frozenset({"delete this doc", "delete the doc", "delete document",
                    "remove document", "remove the doc", "trash", "list document", "list documents",
-                   "list doc", "list docs", "all my docs", "my document", "my documents", "my doc", "my docs", "my files",
-                   "open the", "open my", "open document", "open doc", "find the",
-                   "find my", "find document", "read the", "read my", "show me the",
-                   "show my", "the file", "my file", "the report", "the write-up",
-                   "the writeup", "saved document", "in my library", "in the library"}):
+                   "list doc", "list docs", "all my docs", "my document", "my documents",
+                   "my doc", "my docs", "open document", "open doc", "find document",
+                   "read document", "show documents", "show my documents", "what documents",
+                   "the report", "the write-up", "the writeup", "saved document",
+                   "in my library", "in the library", "document library", "doc library"}):
             {"manage_documents", "edit_document", "ui_control"},
         frozenset({"workspace", "workspaces", "open workspace", "show workspace",
                    "browse workspace", "my workspace", "file tree", "folder tree",
                    "project files", "open files", "show files", "open folders",
-                   "show folders", "can you see my workspace"}):
+                   "show folders", "can you see my workspace", "my files", "the file",
+                   "my file", "read file", "read files", "search files", "find files",
+                   "grep", "project", "repo", "repository", "codebase", "source tree",
+                   "source files", "directory", "directories"}):
             {"get_workspace", "ls", "glob", "grep", "read_file", "write_file", "edit_file", "ui_control"},
         frozenset({"skills", "skill", "my skills", "open skills", "show skills",
                    "can you see my skills"}):

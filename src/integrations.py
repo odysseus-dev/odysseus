@@ -150,6 +150,28 @@ INTEGRATION_PRESETS: Dict[str, Dict[str, Any]] = {
             "  GET /api/greader.php/reader/api/0/unread-count?output=json — unread counts"
         ),
     },
+    "comfyui_local": {
+        "name": "ComfyUI Local",
+        "base_url": "http://127.0.0.1:8188",
+        "auth_type": "none",
+        "description": (
+            "Free local ComfyUI server. Odysseus uses this for local image generation before any paid media route.\n"
+            "Odysseus can auto-launch a local ComfyUI install. Keep the Base URL as http://127.0.0.1:8188 unless you changed the port.\n"
+            "If ComfyUI is missing, Odysseus can auto-install it under the app data folder. For AMD GPUs, set COMFYUI_ACCELERATOR=amd.\n"
+            "Default image requests use the first installed checkpoint reported by ComfyUI. Advanced requests may pass an exact "
+            "ComfyUI workflow JSON through the media tool input."
+        ),
+    },
+    "runcomfy_cloud": {
+        "name": "RunComfy Cloud",
+        "base_url": "https://www.runcomfy.com",
+        "auth_type": "none",
+        "description": (
+            "Paid RunComfy cloud/CLI route. Keep this integration enabled only when you want Odysseus to use the paid media path.\n"
+            "The local RunComfy CLI still needs to be installed and signed in with `runcomfy login`, or have RUNCOMFY_TOKEN set "
+            "in the Odysseus process environment."
+        ),
+    },
 }
 
 # ---------------------------------------------------------------------------

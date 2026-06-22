@@ -56,6 +56,10 @@ One sentence describing what the user is trying to accomplish.
 - Include specific file paths, function names, variable names, URLs, and config values
 - Note any errors encountered and how they were resolved
 
+### Tools / Actions Used
+- List important tools, commands, APIs, files edited, apps launched, or external services used
+- Include success/failure status and any result the next assistant turn must remember
+
 ### Current State
 What is the system/code/task state right now? What was the last thing discussed?
 

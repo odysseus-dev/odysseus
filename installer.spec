@@ -17,6 +17,7 @@ a = Analysis(
         ('integrations', 'integrations'),
         ('companion', 'companion'),
         ('scripts', 'scripts'),
+        ('connect-android-pc.bat', '.'),
         ('launch-windows.ps1', '.'),
         ('requirements.txt', '.'),
         ('setup.py', '.')

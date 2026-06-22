@@ -3,9 +3,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 AI_MODELS_JS = (ROOT / "static" / "js" / "editor" / "ai-models.js").read_text(encoding="utf-8")
+AI_INPAINT_JS = (ROOT / "static" / "js" / "editor" / "ai-inpaint.js").read_text(encoding="utf-8")
+AI_TOOL_RUNNER_JS = (ROOT / "static" / "js" / "editor" / "ai-tool-runner.js").read_text(encoding="utf-8")
 AI_REMBG_JS = (ROOT / "static" / "js" / "editor" / "ai-rembg.js").read_text(encoding="utf-8")
 CONTROLS_JS = (ROOT / "static" / "js" / "editor" / "build" / "controls.js").read_text(encoding="utf-8")
 GALLERY_EDITOR_JS = (ROOT / "static" / "js" / "galleryEditor.js").read_text(encoding="utf-8")
+GALLERY_ROUTES = (ROOT / "routes" / "gallery_routes.py").read_text(encoding="utf-8")
 CANVAS_EVENTS_JS = (ROOT / "static" / "js" / "editor" / "canvas-events.js").read_text(encoding="utf-8")
 RIGHT_PANEL_JS = (ROOT / "static" / "js" / "editor" / "build" / "right-panel.js").read_text(encoding="utf-8")
 SLIDER_UX_JS = (ROOT / "static" / "js" / "editor" / "slider-ux.js").read_text(encoding="utf-8")
@@ -21,6 +24,20 @@ def test_inpaint_model_picker_wraps_native_select_without_changing_payload_sourc
     assert "function hasModernImageEditCue" in AI_MODELS_JS
     assert "function hasImageEditCue" in AI_MODELS_JS
     assert "function hasEndpointInpaintSurfaceCue" in AI_MODELS_JS
+    assert "function safeEndpointDisplayFromUrl(value)" in AI_MODELS_JS
+    assert "function looksSensitiveEndpointLabel(text)" in AI_MODELS_JS
+    assert "Alibaba compatible endpoint" in AI_MODELS_JS
+    assert "opt.dataset.endpointDisplay = endpointDisplay;" in AI_MODELS_JS
+    assert "opt.dataset.modelDisplay = shortModel;" in AI_MODELS_JS
+    assert "const endpointRef = ep.id ? `endpoint:${ep.id}` : (ep.base_url || '');" in AI_MODELS_JS
+    assert "opt.dataset.endpointId = ep.id || '';" in AI_MODELS_JS
+    assert "Dropdown values are encoded as \"endpoint:<id>::<model_id>\"" in GALLERY_EDITOR_JS
+    assert "_endpoint_id: sel.endpointId" in AI_INPAINT_JS
+    assert "if (sel.endpointId) extraPayload._endpoint_id = sel.endpointId;" in AI_TOOL_RUNNER_JS
+    assert "def _visible_image_endpoint_for_id" in GALLERY_ROUTES
+    assert 'endpoint_id = (body.pop("_endpoint_id", "") or "").strip()' in GALLERY_ROUTES
+    assert "return `${desc.label} ${desc.meta}`.toLowerCase().includes(q);" in AI_MODELS_JS
+    assert "`${desc.label} ${desc.meta} ${opt.value}`" not in AI_MODELS_JS
     assert "No image-edit endpoints found. LM Studio/GGUF downloads need a Diffusers or ONNX image endpoint." in AI_MODELS_JS
     assert "LM Studio GGUF models need a Diffusers or ONNX image endpoint for inpaint." in AI_MODELS_JS
     assert "dall-e-2" in AI_MODELS_JS
@@ -53,10 +70,10 @@ def test_inpaint_model_picker_has_mobile_sheet_and_clipping_safe_menu_styles():
     assert ".ge-inpaint-model-row #ge-ai-inpaint.ge-model-native-select" in STYLE_CSS
     assert ".ge-inpaint-model-picker-search" in STYLE_CSS
     assert ".ge-inpaint-model-option.is-selected" in STYLE_CSS
-    assert "function visiblePickerBounds(pad = 8)" in AI_MODELS_JS
+    assert "function visiblePickerBounds(pad = 8, options = {})" in AI_MODELS_JS
     assert "container?.closest?.('.gallery-editor')" in AI_MODELS_JS
     assert "container?.closest?.('.gallery-modal-content, .modal-content')" in AI_MODELS_JS
-    assert "const bounds = visiblePickerBounds(8);" in AI_MODELS_JS
+    assert "const bounds = visiblePickerBounds(8, { viewportOnly: true });" in AI_MODELS_JS
     assert "menu.style.minWidth = `${Math.round(Math.min(260, width))}px`;" in AI_MODELS_JS
     assert "menu.style.maxWidth = `${Math.round(availableWidth)}px`;" in AI_MODELS_JS
     mobile_block = STYLE_CSS[STYLE_CSS.index("@media (max-width: 700px) {"):]
@@ -108,7 +125,7 @@ def test_gallery_tool_sheet_dismiss_restores_layer_peek():
 
 
 def test_gallery_editor_cache_bumped_for_android_assets():
-    assert "const CACHE_NAME = 'odysseus-v415';" in SW_JS
+    assert "const CACHE_NAME = 'odysseus-v416';" in SW_JS
 
 
 def test_gallery_fit_zoom_uses_visible_canvas_above_mobile_layers_sheet():

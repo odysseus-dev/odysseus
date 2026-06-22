@@ -100,7 +100,7 @@ DEFAULT_SETTINGS = {
     # Tune via Settings or by editing data/settings.json.
     "research_run_timeout_seconds": 1800,
     "agent_max_tool_calls": 0,
-    "agent_max_rounds": 20,  # per-message agent step cap (clamped 1..200)
+    "agent_max_rounds": 0,  # per-message agent step cap; 0 = unlimited
     "agent_input_token_budget": 6000,
     # Ceiling on the *auto-derived* input budget that #1230 introduced. Has
     # no effect when `agent_input_token_budget` is explicitly set (the user's
@@ -188,6 +188,20 @@ DEFAULT_FEATURES = {
 
 # ── Settings (data/settings.json) ──
 
+_LEGACY_AGENT_ROUND_CAPS = {20, 50}
+
+
+def _normalize_loaded_settings(settings: dict) -> dict:
+    """Apply small compatibility migrations to loaded settings."""
+    try:
+        round_cap = int(settings.get("agent_max_rounds", 0))
+    except (TypeError, ValueError):
+        return settings
+    if round_cap in _LEGACY_AGENT_ROUND_CAPS:
+        settings["agent_max_rounds"] = 0
+    return settings
+
+
 def load_settings() -> dict:
     """Load settings merged with defaults. Always returns a complete dict."""
     global _settings_cache
@@ -202,6 +216,7 @@ def load_settings() -> dict:
         merged = {**DEFAULT_SETTINGS, **saved}
     except (FileNotFoundError, PermissionError, json.JSONDecodeError, ValueError):
         merged = dict(DEFAULT_SETTINGS)
+    merged = _normalize_loaded_settings(merged)
     _settings_cache = (now, merged)
     return merged
 

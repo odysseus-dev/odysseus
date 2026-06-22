@@ -886,6 +886,7 @@ function _syncDockRowMode(dock, bounds = _dockWorkspaceBounds()) {
   dock.classList.toggle('dock-stacked-pages', stackedTouchPages);
   dock.classList.toggle('dock-chatbar-row', desktopChatbarDock);
   dock.classList.toggle('dock-compact-chips', compactTouchChips);
+  _syncDockOverflowState(dock);
   if (previousPaged !== pagedTouchDock || previousStacked !== stackedTouchPages) {
     requestAnimationFrame(() => {
       if (!dock.classList.contains('dock-paged-row')) {
@@ -911,6 +912,17 @@ function _syncDockRowMode(dock, bounds = _dockWorkspaceBounds()) {
       }
     });
   }
+}
+
+function _syncDockOverflowState(dock) {
+  if (!dock) return;
+  if (!dock.classList.contains('dock-chatbar-row')) {
+    dock.classList.remove('dock-overflowing');
+    return;
+  }
+  const overflowing = dock.scrollWidth > dock.clientWidth + 1;
+  dock.classList.toggle('dock-overflowing', overflowing);
+  if (!overflowing && dock.scrollLeft) dock.scrollLeft = 0;
 }
 
 function _pageTouchDock(dock, direction, { wrap = false } = {}) {
@@ -1028,6 +1040,7 @@ function _applyDockPos(dock) {
     dock.style.right = 'auto';
     dock.style.removeProperty('top');
     dock.style.bottom = '';
+    _syncDockOverflowState(dock);
     return;
   }
   if (!_dockPos) {
@@ -1037,6 +1050,7 @@ function _applyDockPos(dock) {
     dock.style.right = 'auto';
     dock.style.removeProperty('top');
     dock.style.bottom = '';
+    _syncDockOverflowState(dock);
     return;
   }
   const next = _clampDockPosition(dock, _dockPos.left, _dockPos.top);
@@ -1047,6 +1061,7 @@ function _applyDockPos(dock) {
   dock.style.bottom = 'auto';
   dock.style.removeProperty('width');
   dock.style.transform = 'none';
+  _syncDockOverflowState(dock);
 }
 
 let _dockPlacementWired = false;

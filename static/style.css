@@ -66,6 +66,7 @@
   /* Warm accent — used by the Goals/Today UI in Notes. Lives as a token so
      themes can override without touching the goal CSS. */
   --accent-warm: #d19a66;
+  --android-keyboard-inset: 0px;
 }
 
 :root.light {
@@ -107,6 +108,11 @@ body {
   height: 100%;
   height: 100dvh; /* dynamic viewport height — adapts when mobile keyboard opens */
   overflow: hidden;
+}
+
+html.android-webview body {
+  height: 100vh;
+  min-height: 100vh;
 }
 
 /* Self-hosted Fira Code font */
@@ -882,7 +888,7 @@ body.bg-pattern-sparkles {
     #minimized-dock.dock-chatbar-row {
       flex-wrap: nowrap;
       align-items: center;
-      justify-content: flex-start;
+      justify-content: center;
       gap: 6px;
       overflow-x: auto;
       overflow-y: hidden;
@@ -903,6 +909,9 @@ body.bg-pattern-sparkles {
           transparent 16% 84%,
           color-mix(in srgb, var(--bg) 82%, transparent));
       mask-image: linear-gradient(90deg, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+    }
+    #minimized-dock.dock-chatbar-row.dock-overflowing {
+      justify-content: flex-start;
     }
     #minimized-dock.dock-chatbar-row::-webkit-scrollbar {
       height: 5px;
@@ -1070,9 +1079,54 @@ body.bg-pattern-sparkles {
     }
     .minimized-dock-chip.chip-compact-touch.chip-active svg { opacity: 1; }
 
+    /* Long-press feedback for compact touch chips (all touch devices,
+       including landscape >768px where the @media block below doesn't apply). */
+    .minimized-dock-chip.chip-compact-touch.chip-long-press {
+      background:
+        radial-gradient(circle at 30% 25%, color-mix(in srgb, #fff 28%, transparent), transparent 36%),
+        linear-gradient(135deg,
+          color-mix(in srgb, var(--accent, var(--red)) 34%, var(--panel, var(--bg))),
+          color-mix(in srgb, #7dd3fc 26%, var(--panel, var(--bg))) 52%,
+          color-mix(in srgb, #f0abfc 22%, var(--panel, var(--bg))));
+      border-color: color-mix(in srgb, var(--accent, var(--red)) 72%, #fff 12%) !important;
+      animation: chip-long-press-pulse 0.82s ease-in-out infinite;
+      z-index: 10030;
+    }
+    .minimized-dock-chip.chip-compact-touch.chip-long-press::before {
+      content: '';
+      position: absolute;
+      inset: -96px;
+      border-radius: inherit;
+      background:
+        radial-gradient(circle,
+          color-mix(in srgb, var(--accent, var(--red)) 42%, transparent) 0 18%,
+          color-mix(in srgb, #7dd3fc 34%, transparent) 34%,
+          color-mix(in srgb, #f0abfc 30%, transparent) 50%,
+          transparent 72%);
+      pointer-events: none;
+      z-index: -1;
+      animation: chip-long-press-ripple 0.82s ease-out infinite;
+    }
+    @keyframes chip-long-press-pulse {
+      0%, 100% { transform: scale(1); }
+      50%      { transform: scale(1.42);
+                 box-shadow: 0 14px 42px rgba(0,0,0,0.66),
+                             0 0 0 16px color-mix(in srgb, var(--accent, var(--red)) 42%, transparent),
+                             0 0 72px color-mix(in srgb, #7dd3fc 44%, transparent),
+                             0 0 118px color-mix(in srgb, #f0abfc 32%, transparent); }
+    }
+    @keyframes chip-long-press-ripple {
+      0%   { opacity: 0.92; transform: scale(0.08); }
+      72%  { opacity: 0.28; transform: scale(3.6); }
+      100% { opacity: 0; transform: scale(5.4); }
+    }
+
     /* Mobile: chips are icon-only round pills. Tap to restore, drag toward
        the trash zone at top-center to close. touch-action:none lets the
-       pointermove listener claim the gesture instead of the page scroll. */
+       pointermove listener claim the gesture instead of the page scroll.
+       These rules are also covered by .chip-compact-touch above for
+       landscape/touch devices wider than 768px; this block catches
+       narrow desktop viewports or hybrid-pointer devices. */
     @media (max-width: 768px) {
       .minimized-dock-chip {
         width: 40px; height: 40px;
@@ -1090,10 +1144,6 @@ body.bg-pattern-sparkles {
         box-shadow: 0 8px 22px rgba(0,0,0,0.55),
                     0 0 0 2px color-mix(in srgb, var(--accent, var(--red)) 50%, transparent) !important;
       }
-      /* Long-press hint — chip swells and settles while the detach timer
-         counts down so the user feels feedback before the bubble peels out
-         of the chain. Returns to scale(1) at the end so there's no visual
-         jump when the timer fires and the chip becomes a free-drag puck. */
       .minimized-dock-chip.chip-long-press {
         background:
           radial-gradient(circle at 30% 25%, color-mix(in srgb, #fff 28%, transparent), transparent 36%),
@@ -1119,19 +1169,6 @@ body.bg-pattern-sparkles {
         pointer-events: none;
         z-index: -1;
         animation: chip-long-press-ripple 0.82s ease-out infinite;
-      }
-      @keyframes chip-long-press-pulse {
-        0%, 100% { transform: scale(1); }
-        50%      { transform: scale(1.42);
-                   box-shadow: 0 14px 42px rgba(0,0,0,0.66),
-                               0 0 0 16px color-mix(in srgb, var(--accent, var(--red)) 42%, transparent),
-                               0 0 72px color-mix(in srgb, #7dd3fc 44%, transparent),
-                               0 0 118px color-mix(in srgb, #f0abfc 32%, transparent); }
-      }
-      @keyframes chip-long-press-ripple {
-        0%   { opacity: 0.92; transform: scale(0.08); }
-        72%  { opacity: 0.28; transform: scale(3.6); }
-        100% { opacity: 0; transform: scale(5.4); }
       }
       /* Chip whose modal is currently open — accent ring so the user can
          tell at a glance which floating bubble belongs to the visible
@@ -4596,6 +4633,12 @@ body.bg-pattern-sparkles {
       /* Safe area padding for notched devices */
       .chat-input-bar {
         padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+      }
+      html.android-webview.android-keyboard-open .chat-container {
+        padding-bottom: calc(10px + var(--android-keyboard-inset, 0px));
+      }
+      html.android-webview.android-keyboard-open .chat-history {
+        scroll-padding-bottom: calc(var(--collapsed-overlay-space, 0px) + var(--android-keyboard-inset, 0px) + 12px);
       }
       /* Mode toggle — larger touch targets */
       .mode-toggle {
@@ -17698,7 +17741,15 @@ body.hamburger-right:not(.email-doc-split-active) #email-lib-modal.email-lib-ful
   gap: 6px;
   margin-bottom: 4px;
   align-items: center;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
 }
+.gallery-toolbar::-webkit-scrollbar { display: none; }
 .gallery-toolbar-break { display: none; }
 /* Search input + its "↵ enter to tag" hint live in a relative wrapper that
    carries the 2px down-shift, so input and hint move together. */
@@ -17748,6 +17799,87 @@ body.hamburger-right:not(.email-doc-split-active) #email-lib-modal.email-lib-ful
   font: inherit;
   font-size: 11px;
   cursor: pointer;
+}
+
+/* Docked Gallery can be narrow even in landscape, so it needs the same
+   self-scrolling toolbar behavior as phone portrait instead of the desktop
+   flex row. */
+#gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) .gallery-toolbar {
+  flex-wrap: nowrap;
+  gap: 10px;
+  padding: 0 10px 6px 2px;
+  margin: 0 0 6px;
+}
+#gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) .gallery-search-wrap {
+  flex: 0 0 min(220px, 42vw);
+  min-width: 150px;
+  max-width: 240px;
+}
+#gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) .gallery-search {
+  padding-right: 8px;
+}
+#gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) .gallery-search-enter-hint {
+  display: none;
+}
+#gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) .gallery-model-filter,
+#gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) .gallery-sort {
+  flex: 0 0 auto;
+  max-width: none;
+  position: relative;
+  top: 2px;
+}
+#gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) .gallery-model-filter {
+  width: clamp(150px, 24vw, 260px);
+}
+#gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) .gallery-sort {
+  width: 118px;
+}
+#gallery-modal:is(.modal-left-docked, .modal-right-docked):not(.modal-full-expanded) .gallery-toolbar .gallery-select-btn {
+  flex: 0 0 auto;
+  min-width: 68px;
+  order: 0;
+  margin-left: 0;
+}
+@media (hover: none) and (pointer: coarse) and (orientation: landscape) {
+  #gallery-modal.modal-full-expanded .gallery-toolbar {
+    flex-wrap: nowrap;
+    gap: 8px;
+    padding: 0 18px 6px 2px;
+    margin: 0 0 6px;
+    box-sizing: border-box;
+  }
+  #gallery-modal.modal-full-expanded .gallery-search-wrap {
+    flex: 0 0 clamp(190px, 28vw, 240px);
+    min-width: 190px;
+    max-width: 240px;
+  }
+  #gallery-modal.modal-full-expanded .gallery-search {
+    padding-right: 8px;
+  }
+  #gallery-modal.modal-full-expanded .gallery-search-enter-hint {
+    display: none;
+  }
+  #gallery-modal.modal-full-expanded .gallery-model-filter,
+  #gallery-modal.modal-full-expanded .gallery-sort {
+    flex: 0 0 auto;
+    max-width: none;
+    position: relative;
+    top: 2px;
+  }
+  #gallery-modal.modal-full-expanded .gallery-model-filter {
+    width: clamp(140px, 20vw, 180px);
+  }
+  #gallery-modal.modal-full-expanded .gallery-sort {
+    width: clamp(88px, 10vw, 96px);
+  }
+  #gallery-modal.modal-full-expanded .gallery-toolbar .gallery-select-btn {
+    flex: 0 0 auto;
+    min-width: 62px;
+    order: 0;
+    margin-left: 0;
+    padding: 6px 8px 8px;
+    font-size: 10px;
+  }
 }
 .gallery-tag-chips {
   display: flex;
@@ -18637,15 +18769,19 @@ body.gallery-selecting .gallery-dl-btn,
     grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
     gap: 6px;
   }
-  /* Single-row toolbar on mobile: search + Sources + Recent (sort) all share
-     one row. The search bar shrinks so the dropdowns fit beside it. */
+  /* Single-row toolbar on mobile: the row owns its sideways scroll so
+     Search / Sources / Sort / Select keep usable tap widths without
+     widening or clipping the gallery panel. */
   .gallery-toolbar {
     flex-wrap: nowrap;
-    gap: 4px;
+    gap: 10px;
+    padding: 0 10px 6px 2px;
+    margin: 0 0 6px;
   }
   .gallery-search-wrap {
-    flex: 1 1 0;
-    min-width: 0;
+    flex: 0 0 min(220px, 54vw);
+    min-width: 150px;
+    max-width: 260px;
   }
   .gallery-search {
     /* Drop the desktop right-padding reserved for the "enter to tag" hint —
@@ -18658,8 +18794,7 @@ body.gallery-selecting .gallery-dl-btn,
   .gallery-model-filter,
   .gallery-sort {
     flex: 0 0 auto;
-    /* Cap each dropdown so search keeps a usable amount of width. */
-    max-width: 100px;
+    max-width: none;
     font-size: 11px;
     padding: 4px 6px;
     /* Nudge down 2px to baseline with the search input (which carries a
@@ -18667,14 +18802,19 @@ body.gallery-selecting .gallery-dl-btn,
     position: relative;
     top: 2px;
   }
-  .gallery-select-btn {
+  .gallery-model-filter {
+    width: clamp(118px, 34vw, 170px);
+  }
+  .gallery-sort {
+    width: clamp(102px, 28vw, 132px);
+  }
+  .gallery-toolbar .gallery-select-btn {
     padding: 6px 8px 8px;
     font-size: 10px;
-    flex-shrink: 0;
-    /* Push Select to the far right of the single-row toolbar, regardless
-       of its DOM position (sits between search and the dropdowns). */
-    order: 99;
-    margin-left: auto;
+    flex: 0 0 auto;
+    min-width: 68px;
+    order: 0;
+    margin-left: 0;
   }
   /* Tabs scroll horizontally rather than wrapping when narrow. */
   .gallery-tabs {
@@ -28112,6 +28252,11 @@ button .spinner-whirlpool {
   align-items: center;
   gap: 8px;
   min-height: 24px;
+  cursor: grab;
+  user-select: none;
+}
+.ge-inpaint-model-picker-head:active {
+  cursor: grabbing;
 }
 .ge-inpaint-model-picker-head strong {
   flex: 1 1 auto;
@@ -40028,7 +40173,87 @@ body.theme-frosted .modal {
 }
 #workspace-editor-status.error { color: var(--color-error); }
 
+.android-connect-modal-content {
+  width: min(520px, calc(100vw - 28px));
+  max-height: min(640px, calc(100vh - 32px));
+}
+.android-connect-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.android-connect-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.android-connect-option {
+  min-height: 78px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 88%, var(--bg));
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+.android-connect-option:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+}
+.android-connect-option.primary {
+  border-color: color-mix(in srgb, var(--accent) 68%, var(--border));
+}
+.android-connect-option:disabled {
+  opacity: 0.58;
+  cursor: wait;
+}
+.android-connect-option-title {
+  font-size: 13px;
+  font-weight: 650;
+}
+.android-connect-option-sub {
+  color: var(--fg-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.android-connect-status {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 6px;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.android-connect-status[data-kind="running"] { color: var(--accent); }
+.android-connect-status[data-kind="ok"] { color: var(--color-success, #7bd88f); }
+.android-connect-status[data-kind="error"] { color: var(--color-error, #ff6b6b); }
+.android-connect-output {
+  min-height: 118px;
+  max-height: 210px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono, 'Consolas', monospace);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
 @media (max-width: 760px) {
+  .android-connect-options {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .workspace-editor-content {
     width: 96vw;
     height: 92vh;

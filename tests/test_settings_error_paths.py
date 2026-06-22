@@ -92,3 +92,19 @@ def test_valid_settings_merged_with_defaults(tmp_path):
     # Defaults still present for keys not in file.
     for key in s.DEFAULT_SETTINGS:
         assert key in result
+
+
+def test_legacy_agent_round_caps_load_as_unlimited(tmp_path):
+    """Old default round caps should not resurrect the Continue limit."""
+    for legacy_value in (20, "20", 50):
+        result = _fresh_load(
+            tmp_path / f"settings_{legacy_value}.json",
+            content=json.dumps({"agent_max_rounds": legacy_value}),
+        )
+        assert result["agent_max_rounds"] == 0
+
+    result = _fresh_load(
+        tmp_path / "settings_custom_cap.json",
+        content=json.dumps({"agent_max_rounds": 12}),
+    )
+    assert result["agent_max_rounds"] == 12

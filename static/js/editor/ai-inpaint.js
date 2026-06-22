@@ -490,7 +490,7 @@ export function wireInpaintButtons({
         throw new Error('Inpaint request is too large. Try a smaller mask area or resize the canvas.');
       }
       const sel = getSelectedAIEndpoint('inpaint');
-      const endpointDetail = [sel.model, sel.endpoint].filter(Boolean).join(' · ') || 'Default image endpoint.';
+      const endpointDetail = [sel.model, sel.display || sel.endpoint].filter(Boolean).join(' · ') || 'Default image endpoint.';
       progress?.step('Selecting endpoint', endpointDetail, 48);
       const payload = {
         image: imageB64,
@@ -501,6 +501,7 @@ export function wireInpaintButtons({
         strength,
         feather: initialBlend.featherPx,
         _endpoint: sel.endpoint,
+        _endpoint_id: sel.endpointId,
         _model: sel.model,
         _progress_id: progress?.id || '',
       };

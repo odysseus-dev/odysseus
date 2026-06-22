@@ -5,6 +5,9 @@ plugins {
 def odysseusDefaultUrl = providers.gradleProperty("ODYSSEUS_ANDROID_URL")
         .orElse("http://10.0.2.2:7000")
         .get()
+def odysseusAdbReverseUrl = providers.gradleProperty("ODYSSEUS_ANDROID_ADB_URL")
+        .orElse("http://127.0.0.1:7000")
+        .get()
 
 android {
     namespace = "com.odysseus.simplesignal"
@@ -14,8 +17,8 @@ android {
         applicationId = "com.odysseus.simplesignal"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "1.0.2"
 
         ndk {
             // Keep native payloads phone-sized when native modules are enabled.
@@ -23,6 +26,7 @@ android {
         }
 
         buildConfigField "String", "ODYSSEUS_DEFAULT_URL", "\"${odysseusDefaultUrl}\""
+        buildConfigField "String", "ODYSSEUS_ADB_REVERSE_URL", "\"${odysseusAdbReverseUrl}\""
     }
 
     buildFeatures {

@@ -89,6 +89,8 @@ class TestProviderLabel:
         ("https://api.mistral.ai/v1", "Mistral"),
         ("https://api.deepseek.com", "DeepSeek"),
         ("https://generativelanguage.googleapis.com/v1beta/openai", "Google"),
+        ("https://dashscope.aliyuncs.com/compatible-mode/v1", "DashScope"),
+        ("https://ws-14mw4hok7d25w1hl.cn-hongkong.maas.aliyuncs.com/compatible-mode/v1", "Alibaba Model Studio"),
         ("https://api.together.xyz/v1", "Together"),
         ("https://api.together.ai/v1", "Together"),
         ("https://api.fireworks.ai/inference/v1", "Fireworks"),
@@ -156,6 +158,15 @@ class TestFormatUpstreamError:
         msg = _format_upstream_error(500, "upstream exploded", "https://api.openai.com/v1")
         assert "OpenAI is having an outage (HTTP 500)." in msg
         assert "upstream exploded" in msg
+
+    def test_alibaba_maas_5xx_does_not_expose_workspace_host(self):
+        msg = _format_upstream_error(
+            500,
+            '{"message":"UNAVAILABLE: io exception"}',
+            "https://ws-14mw4hok7d25w1hl.cn-hongkong.maas.aliyuncs.com/compatible-mode/v1",
+        )
+        assert msg == "Alibaba Model Studio is having an outage (HTTP 500). UNAVAILABLE: io exception"
+        assert "ws-14mw4hok7d25w1hl" not in msg
 
     def test_bytes_body_is_decoded(self):
         msg = _format_upstream_error(

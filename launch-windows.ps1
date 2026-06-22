@@ -181,7 +181,12 @@ if ($LASTEXITCODE -ne 0) { Fail "setup.py failed." }
 $sidecarLauncher = Join-Path $PSScriptRoot "scripts\autostart_image_sidecars.py"
 if (Test-Path $sidecarLauncher) {
     Write-Step "Checking local image edit sidecars"
-    & $venvPy $sidecarLauncher --python $venvPy
+    $imageVenvPy = Join-Path $PSScriptRoot ".image-venv\Scripts\python.exe"
+    $sidecarPy = if (Test-Path $imageVenvPy) { $imageVenvPy } else { $venvPy }
+    if ($sidecarPy -ne $venvPy) {
+        Write-Host ("Using image sidecar Python: {0}" -f $sidecarPy)
+    }
+    & $venvPy $sidecarLauncher --python $sidecarPy
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Image sidecar autostart returned a non-zero status; continuing with the main app." -ForegroundColor Yellow
     }

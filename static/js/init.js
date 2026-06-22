@@ -3,6 +3,68 @@
 
 import Storage from './storage.js';
 
+function isOdysseusAndroidWebView() {
+  return /OdysseusAndroid\/\d+/i.test(navigator.userAgent || '')
+    || typeof window.OdysseusAndroid !== 'undefined';
+}
+
+function initAndroidKeyboardInsets() {
+  if (!isOdysseusAndroidWebView()) return;
+  const root = document.documentElement;
+  root.classList.add('android-webview');
+
+  let scheduled = false;
+  let lastInset = -1;
+
+  const apply = () => {
+    scheduled = false;
+    const vv = window.visualViewport;
+    const layoutHeight = window.innerHeight || root.clientHeight || 0;
+    const rawInset = vv
+      ? Math.max(0, layoutHeight - vv.height - Math.max(0, vv.offsetTop || 0))
+      : 0;
+    const inset = rawInset > 80 ? Math.round(rawInset) : 0;
+    if (inset === lastInset) return;
+    lastInset = inset;
+    root.style.setProperty('--android-keyboard-inset', `${inset}px`);
+    root.classList.toggle('android-keyboard-open', inset > 0);
+    try {
+      window.dispatchEvent(new CustomEvent('odysseus:keyboard-inset-change', {
+        detail: { inset },
+      }));
+      window.dispatchEvent(new Event('resize'));
+    } catch (_) {
+      window.dispatchEvent(new Event('resize'));
+    }
+    if (inset > 0) {
+      const chatHistory = document.getElementById('chat-history');
+      if (chatHistory) {
+        requestAnimationFrame(() => {
+          chatHistory.scrollTop = chatHistory.scrollHeight;
+        });
+      }
+    }
+  };
+
+  const schedule = () => {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(apply);
+  };
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', schedule);
+    window.visualViewport.addEventListener('scroll', schedule);
+  }
+  window.addEventListener('resize', schedule);
+  window.addEventListener('orientationchange', () => setTimeout(schedule, 250));
+  document.addEventListener('focusin', schedule);
+  document.addEventListener('focusout', () => setTimeout(schedule, 220));
+  schedule();
+}
+
+initAndroidKeyboardInsets();
+
 function clearFreshComposerRestore() {
   const msgInput = document.getElementById('message');
   if (!msgInput) return;

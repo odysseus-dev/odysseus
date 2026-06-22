@@ -1,6 +1,6 @@
 {
     "name":  "odysseus",
-    "version":  "1.0.1",
+    "version":  "1.0.2",
     "main":  "main.js",
     "scripts":  {
                     "start":  "electron .",
@@ -43,6 +43,7 @@
                                      "integrations/**/*",
                                      "companion/**/*",
                                      "scripts/**/*",
+                                     "connect-android-pc.bat",
                                      "launch-windows.ps1",
                                      "requirements.txt",
                                      "setup.py",

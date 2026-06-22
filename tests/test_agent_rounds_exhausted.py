@@ -68,3 +68,27 @@ def test_no_rounds_exhausted_on_normal_finish(monkeypatch):
     # A plain answer (no tool block) -> done-break on round 1 -> no event.
     events = _run_loop(monkeypatch, "All done, here is your answer.", max_rounds=2)
     assert not any(e.get("type") == "rounds_exhausted" for e in events), events
+
+
+def test_zero_max_rounds_means_unlimited(monkeypatch):
+    _patch_common(monkeypatch)
+    calls = {"n": 0}
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            yield f'data: {json.dumps({"delta": "```bash\necho hi\n```"})}\n\n'
+        else:
+            yield f'data: {json.dumps({"delta": "Done."})}\n\n'
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+    gen = al.stream_agent_loop(
+        "http://x/v1", "m",
+        [{"role": "user", "content": "do a two-step task"}],
+        max_rounds=0,
+        relevant_tools={"bash"},
+    )
+    events = _types(_collect(gen))
+    assert calls["n"] == 2
+    assert not any(e.get("type") == "rounds_exhausted" for e in events), events

@@ -68,6 +68,164 @@ window.fetch = async function(...args) {
 
 const el = uiModule.el;
 
+function isOdysseusAndroidWebView() {
+  return /OdysseusAndroid\/\d+/i.test(navigator.userAgent || '')
+    || typeof window.OdysseusAndroid !== 'undefined';
+}
+
+function dismissSoftKeyboard() {
+  const active = document.activeElement;
+  let dismissed = document.documentElement.classList.contains('android-keyboard-open');
+  if (active && active !== document.body && active.matches?.('input, textarea, [contenteditable="true"], [contenteditable=""]')) {
+    active.blur();
+    dismissed = true;
+  }
+  try {
+    window.OdysseusAndroid?.hideKeyboard?.();
+  } catch (_) {}
+  return dismissed;
+}
+
+function keyboardDismissSettleDelay() {
+  return isOdysseusAndroidWebView() ? 220 : 120;
+}
+
+function openAndroidConnectionMode() {
+  dismissSoftKeyboard();
+  const bridge = window.OdysseusAndroid;
+  if (!isOdysseusAndroidWebView() || !bridge?.showConnectionMode) return openPcAndroidConnectModal();
+  setTimeout(() => {
+    try {
+      bridge.showConnectionMode();
+    } catch (_) {
+      uiModule.showToast('Could not open connection mode.');
+    }
+  }, keyboardDismissSettleDelay());
+}
+
+function ensurePcAndroidConnectModal() {
+  let modal = document.getElementById('android-connect-modal');
+  if (modal) return modal;
+  modal = document.createElement('div');
+  modal.id = 'android-connect-modal';
+  modal.className = 'modal hidden';
+  modal.innerHTML = `
+    <div class="modal-content android-connect-modal-content" role="dialog" aria-label="Android connection">
+      <div class="modal-header">
+        <h4>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px">
+            <path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15"/>
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.15-1.15"/>
+          </svg>
+          Connect Android
+        </h4>
+        <button class="close-btn" id="android-connect-close" aria-label="Close Android connection">✖</button>
+      </div>
+      <div class="modal-body android-connect-body">
+        <div class="android-connect-options">
+          <button type="button" class="android-connect-option primary" id="android-connect-adb">
+            <span class="android-connect-option-title">ADB PC</span>
+            <span class="android-connect-option-sub">Reverse 7000 and launch Odysseus</span>
+          </button>
+          <button type="button" class="android-connect-option" data-connect-note="emulator">
+            <span class="android-connect-option-title">Emulator</span>
+            <span class="android-connect-option-sub">Use http://10.0.2.2:7000</span>
+          </button>
+          <button type="button" class="android-connect-option" data-connect-note="url">
+            <span class="android-connect-option-title">URL / LAN</span>
+            <span class="android-connect-option-sub">Use a reachable PC or Tailscale URL</span>
+          </button>
+          <button type="button" class="android-connect-option" data-connect-note="standalone">
+            <span class="android-connect-option-title">Standalone</span>
+            <span class="android-connect-option-sub">Use the phone-local backend</span>
+          </button>
+        </div>
+        <div class="android-connect-status" id="android-connect-status">Ready</div>
+        <pre class="android-connect-output" id="android-connect-output"></pre>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  modal.querySelector('#android-connect-close')?.addEventListener('click', closePcAndroidConnectModal);
+  modal.addEventListener('mousedown', e => {
+    if (e.target === modal) closePcAndroidConnectModal();
+  });
+  modal.querySelector('#android-connect-adb')?.addEventListener('click', runAndroidAdbPcSetup);
+  modal.querySelectorAll('[data-connect-note]').forEach(btn => {
+    btn.addEventListener('click', () => showAndroidConnectNote(btn.dataset.connectNote || ''));
+  });
+  return modal;
+}
+
+function openPcAndroidConnectModal() {
+  const modal = ensurePcAndroidConnectModal();
+  modal.classList.remove('hidden');
+  modal.style.display = 'flex';
+}
+
+function closePcAndroidConnectModal() {
+  const modal = document.getElementById('android-connect-modal');
+  if (!modal) return;
+  modal.classList.add('hidden');
+  modal.style.display = 'none';
+}
+
+function setAndroidConnectStatus(text, kind = '') {
+  const status = document.getElementById('android-connect-status');
+  if (!status) return;
+  status.textContent = text || '';
+  status.dataset.kind = kind;
+}
+
+function setAndroidConnectOutput(text) {
+  const out = document.getElementById('android-connect-output');
+  if (!out) return;
+  out.textContent = text || '';
+}
+
+function showAndroidConnectNote(kind) {
+  const notes = {
+    emulator: 'Emulator target: http://10.0.2.2:7000',
+    url: 'URL target: use a PC LAN, Tailscale, or tunnel URL that the phone can reach.',
+    standalone: 'Standalone runs from the Android app without the PC backend.',
+  };
+  setAndroidConnectStatus(notes[kind] || 'Ready');
+}
+
+async function runAndroidAdbPcSetup() {
+  const btn = document.getElementById('android-connect-adb');
+  if (btn) btn.disabled = true;
+  setAndroidConnectStatus('Connecting ADB PC...', 'running');
+  setAndroidConnectOutput('');
+  try {
+    const res = await fetch('/api/android/adb-pc/connect', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    let data = {};
+    try { data = await res.json(); } catch (_) {}
+    if (!res.ok || data.ok === false) {
+      const err = data.error || data.detail || res.statusText || 'ADB PC setup failed.';
+      setAndroidConnectStatus('ADB PC failed', 'error');
+      setAndroidConnectOutput(err);
+      uiModule.showToast('ADB PC setup failed.');
+      return;
+    }
+    setAndroidConnectStatus('ADB PC connected', 'ok');
+    setAndroidConnectOutput(data.output || 'ADB reverse active.');
+    uiModule.showToast('Android ADB PC connected.');
+  } catch (e) {
+    setAndroidConnectStatus('ADB PC failed', 'error');
+    setAndroidConnectOutput(e?.message || String(e));
+    uiModule.showToast('ADB PC setup failed.');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 // Default chat config — refreshed on every new-chat action so settings
 // changes take effect immediately (previously cached once at page load and
 // went stale when the user changed their default model).
@@ -912,6 +1070,12 @@ function initializeEventListeners() {
         }
       }
     });
+  }
+
+  // Android connection mode
+  const toolConnectBtn = el('tool-connect-btn');
+  if (toolConnectBtn) {
+    toolConnectBtn.addEventListener('click', openAndroidConnectionMode);
   }
 
   // Calendar tool button
@@ -1871,11 +2035,13 @@ function initializeEventListeners() {
       }
       menu.style.top = (r.top - 8 - h) + 'px';
     }
-    // Tapping the chevron must NOT steal focus from the message box, or the
-    // mobile keyboard collapses. preventDefault on pointerdown keeps the
-    // textarea focused (keyboard stays up) while click still opens the menu.
-    plusBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); });
-    plusBtn.addEventListener('click', (e) => {
+    // Tapping the chevron is an explicit tools-menu action. Close the soft
+    // keyboard first so Android does not pan the whole WebView under the menu.
+    plusBtn.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      dismissSoftKeyboard();
+    });
+    plusBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       // Closing path needs to play the fold-in animation, not just flip
       // .hidden — route through closeOverflowMenu so the second-click
@@ -1885,6 +2051,10 @@ function initializeEventListeners() {
         closeOverflowMenu();
         return;
       }
+      const dismissedKeyboard = dismissSoftKeyboard();
+      if (dismissedKeyboard) {
+        await new Promise(resolve => setTimeout(resolve, keyboardDismissSettleDelay()));
+      }
       // Re-opening while a fold-in is mid-animation: cancel it cleanly.
       menu.classList.remove('closing');
       menu.classList.remove('hidden');
@@ -1892,9 +2062,8 @@ function initializeEventListeners() {
       document.body.appendChild(menu);  // escape the composer's container-type trap
       // Hide pill bar label so it doesn't show through the menu
       if (pickerWrap) pickerWrap.style.visibility = 'hidden';
-      // Keep the textarea focused so the keyboard stays up if it was open (the
-      // pointerdown handler above prevents the focus-steal). Still watch
-      // visualViewport so the menu follows the chevron if the viewport shifts.
+      // Watch visualViewport so the menu follows the chevron while the keyboard
+      // finishes dismissing or if the viewport shifts.
       positionMenu();
       if (window.visualViewport && !_vvReposition) {
         _vvReposition = () => positionMenu();
@@ -2432,6 +2601,7 @@ function initializeEventListeners() {
     'tool-memory':         '#tool-memory-btn',
     'tool-notes':          '#tool-notes-btn',
     'tool-tasks':          '#tool-tasks-btn',
+    'tool-connect':        '#tool-connect-btn, #rail-connect',
     'tool-theme':          '#tool-theme-btn',
     'user-bar':            '#user-bar-profile',
     'sidebar-settings-btn':'#user-bar-settings',
@@ -2468,7 +2638,7 @@ function initializeEventListeners() {
     Object.entries(UI_VIS_MAP).forEach(([key, selector]) => {
       // section-drag-reorder uses a body class instead of inline styles
       if (key === 'section-drag-reorder') return;
-      const visible = key in state ? state[key] !== false : !UI_VIS_DEFAULT_OFF.has(key);
+      let visible = key in state ? state[key] !== false : !UI_VIS_DEFAULT_OFF.has(key);
       document.querySelectorAll(selector).forEach(el => {
         el.style.display = visible ? '' : 'none';
       });
@@ -3445,17 +3615,18 @@ function startOdysseusApp() {
 
   // Rail tool buttons — delegate to sidebar tool buttons
   const _railToolMap = {
-    'rail-compare':   'tool-compare-btn',
-    'rail-research':  'tool-research-btn',
-    'rail-cookbook':   'tool-cookbook-btn',
-    'rail-archive':   'tool-library-btn',
-    'rail-gallery':   'tool-gallery-btn',
-    'rail-tasks':     'tool-tasks-btn',
-    'rail-calendar':  'tool-calendar-btn',
-    'rail-notes':     'tool-notes-btn',
     'rail-memory':    'tool-memory-btn',
-    'rail-theme':     'tool-theme-btn',
+    'rail-calendar':  'tool-calendar-btn',
+    'rail-compare':   'tool-compare-btn',
+    'rail-connect':   'tool-connect-btn',
+    'rail-cookbook':   'tool-cookbook-btn',
+    'rail-research':  'tool-research-btn',
     'rail-email':     'email-section-title',
+    'rail-gallery':   'tool-gallery-btn',
+    'rail-archive':   'tool-library-btn',
+    'rail-notes':     'tool-notes-btn',
+    'rail-tasks':     'tool-tasks-btn',
+    'rail-theme':     'tool-theme-btn',
   };
   Object.entries(_railToolMap).forEach(([railId, toolId]) => {
     const railBtn = el(railId);

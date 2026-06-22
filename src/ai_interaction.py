@@ -14,6 +14,7 @@ import re
 import uuid
 import time
 from typing import Dict, Optional, Tuple
+from urllib.parse import quote, urlparse
 
 from src.constants import GENERATED_IMAGES_DIR
 
@@ -22,6 +23,14 @@ logger = logging.getLogger(__name__)
 AI_CHAT_TIMEOUT = 120  # seconds for a single LLM call
 MAX_DEBATE_ROUNDS = 5
 MAX_PIPELINE_STEPS = 10
+
+GEMINI_IMAGE_MODEL_ALIASES = {
+    "gemini-image-pro": "gemini-3-pro-image",
+    "models/gemini-image-pro": "gemini-3-pro-image",
+    "nano-banana-pro": "gemini-3-pro-image",
+    "gemini-pro-image": "gemini-3-pro-image",
+}
+GEMINI_IMAGE_FALLBACK_MODEL = "gemini-3-pro-image"
 
 # ---------------------------------------------------------------------------
 # Global managers (set from app.py, same pattern as _mcp_manager)
@@ -65,6 +74,64 @@ def set_rag_manager(rag_mgr, personal_docs_mgr=None):
 # ---------------------------------------------------------------------------
 
 from src.endpoint_resolver import build_chat_url, build_headers, build_models_url, resolve_endpoint_runtime
+
+
+def _model_ids_from_endpoint_fields(ep: object, *field_names: str) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for field_name in field_names:
+        raw = getattr(ep, field_name, None)
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+        except Exception:
+            parsed = raw
+        if isinstance(parsed, str):
+            values = [part.strip() for part in parsed.replace("\n", ",").split(",") if part.strip()]
+        elif isinstance(parsed, (list, tuple, set)):
+            values = [str(item).strip() for item in parsed if str(item or "").strip()]
+        else:
+            values = []
+        for value in values:
+            key = value.lower()
+            if key not in seen:
+                seen.add(key)
+                out.append(value)
+    return out
+
+
+def _canonical_gemini_image_model(model_id: str) -> str:
+    raw = (model_id or "").strip()
+    lowered = raw.lower()
+    return GEMINI_IMAGE_MODEL_ALIASES.get(lowered, raw)
+
+
+def _is_gemini_endpoint(base_or_url: str, ep: object | None = None) -> bool:
+    text = f"{base_or_url or ''} {getattr(ep, 'name', '') if ep else ''}".lower()
+    try:
+        host = (urlparse(base_or_url or "").hostname or "").lower()
+    except Exception:
+        host = ""
+    return "generativelanguage.googleapis.com" in host or "gemini" in text or "google" in text
+
+
+def _is_gemini_image_model(model_id: str) -> bool:
+    model = (model_id or "").strip().lower()
+    model = GEMINI_IMAGE_MODEL_ALIASES.get(model, model)
+    return (
+        "gemini" in model and "image" in model
+    ) or model.startswith("imagen") or model.startswith("models/imagen")
+
+
+def _gemini_image_fallback_for_endpoint(ep: object) -> str:
+    models = _model_ids_from_endpoint_fields(ep, "cached_models", "pinned_models")
+    for model in models:
+        if _is_gemini_image_model(model):
+            return _canonical_gemini_image_model(model)
+    if _is_gemini_endpoint(getattr(ep, "base_url", "") or "", ep):
+        return GEMINI_IMAGE_FALLBACK_MODEL
+    return ""
 
 
 def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Dict]:
@@ -123,6 +190,7 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
                     return build_chat_url(base), matched, headers
             else:
                 # OpenAI-compatible and native Ollama: probe the provider's model list.
+                pinned_model_ids = _model_ids_from_endpoint_fields(ep, "pinned_models")
                 try:
                     models_url = build_models_url(base)
                     if models_url:
@@ -144,11 +212,11 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
                     except Exception:
                         model_ids = []
                 if not model_ids:
-                    try:
-                        model_ids = json.loads(ep.cached_models or "[]")
-                    except Exception:
-                        model_ids = []
+                    model_ids = _model_ids_from_endpoint_fields(ep, "cached_models")
                 model_ids = [str(mid) for mid in model_ids if str(mid or "").strip()]
+                for pinned in pinned_model_ids:
+                    if pinned.lower() not in {mid.lower() for mid in model_ids}:
+                        model_ids.append(pinned)
 
                 # Exact match first
                 for mid in model_ids:
@@ -159,6 +227,9 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
                 for mid in model_ids:
                     if model_name.lower() in mid.lower() or mid.lower() in model_name.lower():
                         return build_chat_url(base), mid, headers
+
+                if _is_gemini_endpoint(base, ep) and _is_gemini_image_model(model_name):
+                    return build_chat_url(base), _canonical_gemini_image_model(model_name), headers
 
         raise ValueError(f"Model '{spec}' not found on any configured endpoint")
     finally:
@@ -176,11 +247,8 @@ def _cached_models_for_hint(owner: Optional[str] = None) -> list[tuple[object, l
             query = owner_filter(query, ModelEndpoint, owner)
         rows: list[tuple[object, list[str]]] = []
         for ep in query.all():
-            try:
-                models = json.loads(ep.cached_models or "[]") or []
-            except Exception:
-                models = []
-            rows.append((ep, [str(model) for model in models if str(model or "").strip()]))
+            models = _model_ids_from_endpoint_fields(ep, "cached_models", "pinned_models")
+            rows.append((ep, models))
         return rows
     finally:
         db.close()
@@ -235,6 +303,10 @@ def _image_model_hint_from_prompt(prompt: str, owner: Optional[str] = None) -> s
         )
         if model:
             return model
+        for ep, _models in rows:
+            fallback = _gemini_image_fallback_for_endpoint(ep)
+            if fallback:
+                return fallback
 
     if re.search(r"\b(?:imagen)\b", text):
         model = _best_cached_model(
@@ -267,6 +339,88 @@ def _image_model_hint_from_prompt(prompt: str, owner: Optional[str] = None) -> s
         if model:
             return model
 
+    return ""
+
+
+def _extract_api_key_from_headers(headers: Dict[str, str]) -> str:
+    auth = str((headers or {}).get("Authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return str(
+        (headers or {}).get("x-goog-api-key")
+        or (headers or {}).get("X-Goog-Api-Key")
+        or ""
+    ).strip()
+
+
+def _gemini_api_root_from_url(url: str) -> str:
+    parsed = urlparse(url or "")
+    scheme = parsed.scheme or "https"
+    netloc = parsed.netloc or "generativelanguage.googleapis.com"
+    parts = [part for part in (parsed.path or "").split("/") if part]
+    version = "v1beta"
+    for part in parts:
+        if re.fullmatch(r"v\d+(?:beta)?", part):
+            version = part
+            break
+    return f"{scheme}://{netloc}/{version}"
+
+
+def _gemini_generate_content_url(url: str, model_id: str) -> str:
+    model = _canonical_gemini_image_model(model_id).strip()
+    if model.startswith("models/"):
+        model = model.split("/", 1)[1]
+    return f"{_gemini_api_root_from_url(url)}/models/{quote(model, safe='')}:generateContent"
+
+
+def _aspect_ratio_from_size(size: str) -> str:
+    raw = str(size or "").strip().lower()
+    if raw in {"auto", ""}:
+        return "1:1"
+    try:
+        width_s, height_s = raw.split("x", 1)
+        width = max(1, int(width_s))
+        height = max(1, int(height_s))
+    except Exception:
+        return "1:1"
+    if width == height:
+        return "1:1"
+    return "16:9" if width > height else "9:16"
+
+
+def _gemini_image_payload(prompt: str, size: str) -> Dict:
+    aspect_ratio = _aspect_ratio_from_size(size)
+    return {
+        "contents": [{
+            "role": "user",
+            "parts": [{"text": prompt}],
+        }],
+        "generationConfig": {
+            "responseModalities": ["TEXT", "IMAGE"],
+            "imageConfig": {
+                "aspectRatio": aspect_ratio,
+                "imageSize": "1K",
+            },
+        },
+    }
+
+
+def _extract_gemini_image_b64(payload) -> str:
+    if isinstance(payload, dict):
+        inline = payload.get("inlineData") or payload.get("inline_data")
+        if isinstance(inline, dict):
+            data = inline.get("data") or inline.get("bytesBase64Encoded") or inline.get("bytes_base64_encoded")
+            if isinstance(data, str) and data.strip():
+                return data.strip()
+        for value in payload.values():
+            found = _extract_gemini_image_b64(value)
+            if found:
+                return found
+    elif isinstance(payload, list):
+        for item in payload:
+            found = _extract_gemini_image_b64(item)
+            if found:
+                return found
     return ""
 
 
@@ -1781,6 +1935,19 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                 break
             except ValueError:
                 continue
+        if not model_spec:
+            for candidate in (
+                "gemini-3-pro-image",
+                "gemini-3.1-flash-image",
+                "gemini-2.5-flash-image",
+                "gemini-image-pro",
+            ):
+                try:
+                    _resolve_model(candidate, owner=owner)
+                    model_spec = candidate
+                    break
+                except ValueError:
+                    continue
         # Fallback: find any locally registered image-type endpoint
         if not model_spec:
             try:
@@ -1826,6 +1993,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     # Detect if this is a GPT image model vs DALL-E vs local diffusion
     is_gpt_image = "gpt-image" in model_id.lower()
     is_dalle = "dall-e" in model_id.lower()
+    is_gemini_image = _is_gemini_endpoint(url) and _is_gemini_image_model(model_id)
     is_local_diffusion = not is_gpt_image and not is_dalle
 
     # Build the images endpoint URL from the chat completions URL
@@ -1856,10 +2024,55 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
 
     logger.info(f"Image generation: model={model_id}, size={size}, quality={quality}, prompt={prompt[:80]}")
 
+    def _save_to_gallery(filename: str) -> str:
+        """Insert a GalleryImage row and return the new id (or '')."""
+        try:
+            from src.database import SessionLocal as _GallerySL, GalleryImage
+            new_id = str(uuid.uuid4())
+            _gdb = _GallerySL()
+            _gdb.add(GalleryImage(
+                id=new_id,
+                filename=filename,
+                prompt=prompt,
+                model=model_id,
+                size=size,
+                quality=payload.get("quality", quality),
+                session_id=session_id,
+                owner=owner,
+            ))
+            _gdb.commit()
+            _gdb.close()
+            return new_id
+        except Exception as _ge:
+            logger.warning(f"Failed to save gallery record: {_ge}")
+            return ""
+
+    def _save_image_bytes(raw: bytes) -> tuple[str, str]:
+        img_dir = Path(GENERATED_IMAGES_DIR)
+        img_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"{uuid.uuid4().hex[:12]}.png"
+        img_path = img_dir / filename
+        img_path.write_bytes(raw)
+        return f"/api/generated-image/{filename}", _save_to_gallery(filename)
+
     try:
         # GPT image models can take 30-120s+ depending on quality
         async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0)) as client:
-            resp = await client.post(images_url, json=payload, headers=headers)
+            if is_gemini_image:
+                gemini_url = _gemini_generate_content_url(url, model_id)
+                gemini_headers = {"Content-Type": "application/json"}
+                api_key = _extract_api_key_from_headers(headers)
+                if api_key:
+                    gemini_headers["x-goog-api-key"] = api_key
+                else:
+                    gemini_headers.update(headers)
+                resp = await client.post(
+                    gemini_url,
+                    json=_gemini_image_payload(prompt, size),
+                    headers=gemini_headers,
+                )
+            else:
+                resp = await client.post(images_url, json=payload, headers=headers)
 
             if resp.status_code != 200:
                 error_text = resp.text[:500]
@@ -1871,6 +2084,21 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                 return {"error": f"Image generation failed ({resp.status_code}): {error_text}"}
 
             data = resp.json()
+            if is_gemini_image:
+                image_b64 = _extract_gemini_image_b64(data)
+                if not image_b64:
+                    return {"error": "Gemini image API returned no inline image data."}
+                image_url, image_id = _save_image_bytes(base64.b64decode(image_b64))
+                return {
+                    "results": f"Generated image for: {prompt[:100]}",
+                    "image_url": image_url,
+                    "image_id": image_id,
+                    "image_prompt": prompt,
+                    "image_model": _canonical_gemini_image_model(model_id),
+                    "image_size": size,
+                    "image_quality": payload.get("quality", quality),
+                }
+
             images = data.get("data", [])
             if not images:
                 return {"error": "No images returned from API"}
@@ -1879,38 +2107,9 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
             image_url = None
             image_id = None
 
-            def _save_to_gallery(filename: str) -> str:
-                """Insert a GalleryImage row and return the new id (or '')."""
-                try:
-                    from src.database import SessionLocal as _GallerySL, GalleryImage
-                    new_id = str(uuid.uuid4())
-                    _gdb = _GallerySL()
-                    _gdb.add(GalleryImage(
-                        id=new_id,
-                        filename=filename,
-                        prompt=prompt,
-                        model=model_id,
-                        size=size,
-                        quality=payload.get("quality", "medium"),
-                        session_id=session_id,
-                        owner=owner,
-                    ))
-                    _gdb.commit()
-                    _gdb.close()
-                    return new_id
-                except Exception as _ge:
-                    logger.warning(f"Failed to save gallery record: {_ge}")
-                    return ""
-
             # GPT image models always return b64_json; DALL-E may return url
             if img.get("b64_json"):
-                img_dir = Path(GENERATED_IMAGES_DIR)
-                img_dir.mkdir(parents=True, exist_ok=True)
-                filename = f"{uuid.uuid4().hex[:12]}.png"
-                img_path = img_dir / filename
-                img_path.write_bytes(base64.b64decode(img.get("b64_json")))
-                image_url = f"/api/generated-image/{filename}"
-                image_id = _save_to_gallery(filename)
+                image_url, image_id = _save_image_bytes(base64.b64decode(img.get("b64_json")))
 
             elif img.get("url"):
                 # Download external URL and save locally (DALL-E returns temp URLs)

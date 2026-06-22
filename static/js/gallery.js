@@ -56,6 +56,56 @@ function _computeFetchLimit() {
 let _searchDebounce = null;
 let _escHandler = null;
 let _albums = [];
+
+function _androidBridge() {
+  try {
+    return window.OdysseusAndroid || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function _blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('read failed'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function _downloadViaAnchor(blobOrUrl, filename) {
+  const a = document.createElement('a');
+  let objUrl = '';
+  if (blobOrUrl instanceof Blob) {
+    objUrl = URL.createObjectURL(blobOrUrl);
+    a.href = objUrl;
+  } else {
+    a.href = blobOrUrl;
+  }
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  if (objUrl) setTimeout(() => URL.revokeObjectURL(objUrl), 2000);
+}
+
+async function _downloadBlob(blob, filename) {
+  const bridge = _androidBridge();
+  if (bridge && typeof bridge.saveDownload === 'function') {
+    const dataUrl = await _blobToDataUrl(blob);
+    bridge.saveDownload(dataUrl, filename, blob.type || 'application/octet-stream');
+    return;
+  }
+  _downloadViaAnchor(blob, filename);
+}
+
+async function _downloadUrl(url, filename) {
+  const res = await fetch(url, { credentials: 'same-origin' });
+  if (!res.ok) throw new Error(`download failed: HTTP ${res.status}`);
+  const blob = await res.blob();
+  await _downloadBlob(blob, filename);
+}
 // Albums tab — search filter + multi-select state. Mirrors what the
 // Photos tab does (_search, _selectMode) but scoped to the albums grid.
 let _albumSearch = '';
@@ -1311,23 +1361,9 @@ function _renderGrid() {
       const url = btn.dataset.url;
       const filename = btn.dataset.filename || `image-${btn.dataset.id}.png`;
       try {
-        const res = await fetch(url, { credentials: 'same-origin' });
-        const blob = await res.blob();
-        const objUrl = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = objUrl;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
+        await _downloadUrl(url, filename);
       } catch (_) {
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
+        _downloadViaAnchor(url, filename);
       }
     });
   });
@@ -1621,25 +1657,11 @@ function _openDetail(img) {
   });
 
   document.getElementById('gallery-download-btn').addEventListener('click', async () => {
+    const filename = img.filename || `image-${img.id}.png`;
     try {
-      const res = await fetch(img.url, { credentials: 'same-origin' });
-      const blob = await res.blob();
-      const objUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = objUrl;
-      a.download = img.filename || `image-${img.id}.png`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
+      await _downloadUrl(img.url, filename);
     } catch (e) {
-      // Fallback: direct link
-      const a = document.createElement('a');
-      a.href = img.url;
-      a.download = img.filename || `image-${img.id}.png`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      _downloadViaAnchor(img.url, filename);
     }
   });
 
@@ -2669,14 +2691,7 @@ export function openGallery() {
         });
         if (!res.ok) throw new Error('zip failed');
         const blob = await res.blob();
-        const objUrl = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = objUrl;
-        a.download = 'gallery-photos.zip';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(objUrl), 2000);
+        await _downloadBlob(blob, 'gallery-photos.zip');
         _exitSelectMode();
         if (uiModule) uiModule.showToast(`Downloaded ${ids.length} photos (zip)`);
       } catch (e) {
@@ -2690,16 +2705,7 @@ export function openGallery() {
       const it = _items.find(i => i.id === id);
       if (!it) continue;
       try {
-        const res = await fetch(it.url, { credentials: 'same-origin' });
-        const blob = await res.blob();
-        const objUrl = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = objUrl;
-        a.download = it.filename || `image-${it.id}.png`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
+        await _downloadUrl(it.url, it.filename || `image-${it.id}.png`);
         n++;
         // Stagger so the browser doesn't drop simultaneous downloads.
         await new Promise(r => setTimeout(r, 250));

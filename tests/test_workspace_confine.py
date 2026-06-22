@@ -172,20 +172,24 @@ async def test_binding_does_not_leak(ws, admin):
 # must still surface the file tools, otherwise the agent says it has no file
 # access (the bug this guards against).
 
-def _sent_tool_names(monkeypatch, *, workspace):
+def _sent_tool_names(monkeypatch, *, workspace, text="look at the local project", history=None):
     import asyncio
     import src.agent_loop as al
+    import src.tool_index as ti
 
     monkeypatch.setattr(al, "get_setting", lambda key, default=None: default, raising=False)
     monkeypatch.setattr(al, "get_mcp_manager", lambda: None, raising=False)
     monkeypatch.setattr(al, "estimate_tokens", lambda *a, **k: 10, raising=False)
     # Isolate the selection logic from owner gating (tested separately).
     monkeypatch.setattr(al, "blocked_tools_for_owner", lambda owner: set(), raising=False)
+    # Keep these tests deterministic: exercise keyword/domain fallback rather
+    # than whatever embedding index happens to be available on the machine.
+    monkeypatch.setattr(ti, "get_tool_index", lambda: None, raising=False)
 
     captured = []
 
     async def _fake_stream(_candidates, messages, **kwargs):
-        captured.append(kwargs.get("tools"))
+        captured.append({"tools": kwargs.get("tools"), "messages": messages})
         yield "data: " + json.dumps({"delta": "ok"}) + "\n\n"
         yield "data: [DONE]\n\n"
 
@@ -194,18 +198,19 @@ def _sent_tool_names(monkeypatch, *, workspace):
     async def _run():
         gen = al.stream_agent_loop(
             "https://api.openai.com/v1", "gpt-test",
-            [{"role": "user", "content": "look at the local project"}],
+            history or [{"role": "user", "content": text}],
             max_rounds=1, relevant_tools=None, owner="admin", workspace=workspace,
         )
         return [c async for c in gen]
 
     asyncio.run(_run())
-    schemas = captured[0] or []
-    return {t["function"]["name"] for t in schemas if isinstance(t, dict) and "function" in t}
+    schemas = captured[0]["tools"] or []
+    names = {t["function"]["name"] for t in schemas if isinstance(t, dict) and "function" in t}
+    return names, captured[0]["messages"]
 
 
 def test_low_signal_with_workspace_surfaces_readonly_file_tools(monkeypatch):
-    names = _sent_tool_names(monkeypatch, workspace="/tmp")
+    names, _ = _sent_tool_names(monkeypatch, workspace="/tmp")
     # read-only nav tools surface so the agent can explore
     assert "read_file" in names
     assert "get_workspace" in names
@@ -218,9 +223,114 @@ def test_low_signal_with_workspace_surfaces_readonly_file_tools(monkeypatch):
 
 
 def test_low_signal_without_workspace_excludes_file_tools(monkeypatch):
-    names = _sent_tool_names(monkeypatch, workspace=None)
+    names, _ = _sent_tool_names(monkeypatch, workspace=None)
     assert "read_file" not in names
     assert "get_workspace" not in names
+
+
+def test_workspace_file_request_does_not_surface_manage_documents(monkeypatch):
+    names, _ = _sent_tool_names(
+        monkeypatch,
+        workspace="/tmp",
+        text="show files in my workspace and search the project",
+    )
+
+    assert "get_workspace" in names
+    assert "grep" in names
+    assert "manage_documents" not in names
+
+
+def test_continue_button_prompt_resumes_workspace_tool_context(monkeypatch):
+    history = [
+        {"role": "user", "content": "search the workspace for the model picker source files"},
+        {
+            "role": "assistant",
+            "content": "I found the modal code and need to inspect the next file.",
+            "metadata": {
+                "tool_events": [
+                    {
+                        "round": 1,
+                        "tool": "get_workspace",
+                        "command": "",
+                        "output": "/tmp/project",
+                        "exit_code": 0,
+                    },
+                    {
+                        "round": 1,
+                        "tool": "grep",
+                        "command": "model picker",
+                        "output": "static/js/modalManager.js:12:model picker",
+                        "exit_code": 0,
+                    },
+                ]
+            },
+        },
+        {
+            "role": "user",
+            "content": (
+                "You hit the step limit before finishing - the task is not complete. "
+                "Continue from exactly where you left off and keep going until it is done. "
+                "Do NOT repeat work already done."
+            ),
+        },
+    ]
+
+    names, messages = _sent_tool_names(monkeypatch, workspace="/tmp", history=history)
+
+    assert "grep" in names
+    assert "read_file" in names
+    assert "manage_documents" not in names
+    assert any(
+        "previous agent continuation trace" in str(msg.get("content", ""))
+        and "static/js/modalManager.js" in str(msg.get("content", ""))
+        for msg in messages
+    )
+
+
+def test_long_history_gets_conversation_brief_with_tool_ledger(monkeypatch):
+    history = []
+    for i in range(5):
+        history.append({"role": "user", "content": f"prior request {i}: keep editing the workspace"})
+        history.append({"role": "assistant", "content": f"prior response {i}: completed one check"})
+    history.extend([
+        {"role": "user", "content": "find the modal files and patch the layout"},
+        {
+            "role": "assistant",
+            "content": "I found the modal code and edited the layout file.",
+            "metadata": {
+                "tool_events": [
+                    {
+                        "round": 1,
+                        "tool": "grep",
+                        "command": "modal layout",
+                        "output": "static/js/modalManager.js:44: modal layout",
+                        "exit_code": 0,
+                    },
+                    {
+                        "round": 2,
+                        "tool": "edit_file",
+                        "command": "static/js/modalManager.js",
+                        "output": "updated static/js/modalManager.js",
+                        "exit_code": 0,
+                    },
+                ]
+            },
+        },
+        {"role": "user", "content": "now verify it"},
+    ])
+
+    _, messages = _sent_tool_names(monkeypatch, workspace="/tmp", history=history)
+
+    brief = "\n".join(
+        str(msg.get("content", ""))
+        for msg in messages
+        if "conversation continuity brief" in str(msg.get("content", ""))
+    )
+    assert "Recent tools/actions used" in brief
+    assert "grep" in brief
+    assert "edit_file" in brief
+    assert "static/js/modalManager.js" in brief
+    assert any("Conversation briefing rule" in str(msg.get("content", "")) for msg in messages)
 
 
 # ── browse route is admin-gated ─────────────────────────────────────────

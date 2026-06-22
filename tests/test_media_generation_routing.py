@@ -29,9 +29,10 @@ def test_requested_media_generation_kind(message, expected):
 
 def test_image_model_hint_prefers_image_capable_provider_models(monkeypatch):
     class Endpoint:
-        def __init__(self, name, base_url):
+        def __init__(self, name, base_url, pinned_models=None):
             self.name = name
             self.base_url = base_url
+            self.pinned_models = pinned_models
 
     rows = [
         (Endpoint("Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai"), [
@@ -53,6 +54,71 @@ def test_image_model_hint_prefers_image_capable_provider_models(monkeypatch):
     assert ai_interaction._image_model_hint_from_prompt("use Gemini to create an image") == "models/gemini-3.1-flash-image"
     assert ai_interaction._image_model_hint_from_prompt("use ChatGPT/OpenAI to create an image") == "gpt-image-1"
     assert ai_interaction._image_model_hint_from_prompt("use flux for this image") == "flux.1-dev"
+
+
+def test_image_model_hint_uses_pinned_gemini_image_model(monkeypatch):
+    class Endpoint:
+        def __init__(self, name, base_url, cached_models=None, pinned_models=None):
+            self.name = name
+            self.base_url = base_url
+            self.cached_models = cached_models
+            self.pinned_models = pinned_models
+
+    rows = [
+        (Endpoint(
+            "Gemini",
+            "https://generativelanguage.googleapis.com/v1beta/openai",
+            cached_models='["models/gemini-2.5-flash"]',
+            pinned_models='["gemini-image-pro"]',
+        ), ai_interaction._model_ids_from_endpoint_fields(
+            Endpoint(
+                "Gemini",
+                "https://generativelanguage.googleapis.com/v1beta/openai",
+                cached_models='["models/gemini-2.5-flash"]',
+                pinned_models='["gemini-image-pro"]',
+            ),
+            "cached_models",
+            "pinned_models",
+        )),
+    ]
+    monkeypatch.setattr(ai_interaction, "_cached_models_for_hint", lambda owner=None: rows)
+
+    assert ai_interaction._image_model_hint_from_prompt("use gemini to create an image") == "gemini-image-pro"
+
+
+def test_image_model_hint_falls_back_to_native_gemini_image_api(monkeypatch):
+    class Endpoint:
+        def __init__(self, name, base_url):
+            self.name = name
+            self.base_url = base_url
+
+    rows = [
+        (Endpoint("Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai"), [
+            "models/gemini-2.5-flash",
+            "models/gemini-2.5-pro",
+        ]),
+    ]
+    monkeypatch.setattr(ai_interaction, "_cached_models_for_hint", lambda owner=None: rows)
+
+    assert ai_interaction._image_model_hint_from_prompt("use gemini to create an image") == "gemini-3-pro-image"
+
+
+def test_gemini_image_api_helpers_handle_openai_compatible_base():
+    url = ai_interaction._gemini_generate_content_url(
+        "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "gemini-image-pro",
+    )
+
+    assert url == "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image:generateContent"
+    assert ai_interaction._extract_gemini_image_b64({
+        "candidates": [{
+            "content": {
+                "parts": [{
+                    "inlineData": {"mimeType": "image/png", "data": "abc123"}
+                }]
+            }
+        }]
+    }) == "abc123"
 
 
 def test_media_generation_continuation_reuses_last_explicit_request():

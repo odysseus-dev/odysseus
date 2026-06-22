@@ -352,7 +352,7 @@ function _getModal() {
     try {
       const mod = await import('./workspaceEditor.js');
       const editor = mod.default || mod;
-      await editor.openWorkspaceEditor({ workspace: _curPath, deferLoad: true });
+      await editor.openWorkspaceEditor({ workspace: _curPath });
     } catch (e) {
       if (uiModule && uiModule.showError) uiModule.showError('Could not open workspace files');
     }

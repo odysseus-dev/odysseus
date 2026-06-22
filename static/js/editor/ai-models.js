@@ -106,10 +106,56 @@ function modelCaps(modelId, endpointName, endpointType, endpoint = {}) {
   return { gen: false, inpaint: false };
 }
 
-function pickerHostFromValue(value) {
-  if (!value) return '';
-  const endpoint = value.includes('::') ? value.slice(0, value.indexOf('::')) : value;
-  try { return new URL(endpoint).host; } catch { return endpoint.replace(/^https?:\/\//i, ''); }
+function endpointUrlFromPickerValue(value) {
+  const raw = String(value || '');
+  return raw.includes('::') ? raw.slice(0, raw.indexOf('::')) : raw;
+}
+
+function redactDisplaySecrets(text) {
+  return String(text || '')
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{12,}/gi, '$1[redacted]')
+    .replace(/\b(sk-[A-Za-z0-9_-]{12,})\b/g, '[redacted-api-key]')
+    .replace(/\b(hf_[A-Za-z0-9]{12,})\b/g, '[redacted-hf-token]')
+    .replace(/\b(AIza[0-9A-Za-z_-]{16,})\b/g, '[redacted-google-key]')
+    .replace(/\b(xox[baprs]-[A-Za-z0-9-]{12,})\b/g, '[redacted-slack-token]')
+    .replace(/([?&](?:api[_-]?key|token|access[_-]?token|key|secret|password)=)[^&#\s]+/gi, '$1[redacted]');
+}
+
+function looksSensitiveEndpointLabel(text) {
+  const value = String(text || '').trim();
+  if (!value) return false;
+  return /^https?:\/\//i.test(value)
+    || /[?&](?:api[_-]?key|token|access[_-]?token|key|secret|password)=/i.test(value)
+    || /\b(?:sk-|hf_|AIza|xox[baprs]-)[A-Za-z0-9_-]{8,}/i.test(value)
+    || /\bws-[a-z0-9-]{8,}/i.test(value)
+    || /^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?::\d+)?(?:\/|$)/i.test(value);
+}
+
+function safeEndpointDisplayFromUrl(value) {
+  const endpoint = endpointUrlFromPickerValue(value);
+  if (!endpoint) return '';
+  try {
+    const parsed = new URL(endpoint);
+    const host = (parsed.hostname || '').toLowerCase();
+    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '::1') return parsed.host;
+    if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)) return parsed.host;
+    if (/^100\.(6[4-9]|[78]\d|9\d|1[01]\d|12[0-7])\./.test(host)) return parsed.host;
+    if (host === 'api.openai.com') return 'OpenAI endpoint';
+    if (host.includes('aliyuncs.com')) return 'Alibaba compatible endpoint';
+    if (host.includes('dashscope')) return 'DashScope endpoint';
+    if (host.includes('openrouter.ai')) return 'OpenRouter endpoint';
+    if (host.includes('runcomfy')) return 'RunComfy endpoint';
+    return 'Cloud/API endpoint';
+  } catch {
+    const clean = endpoint.replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
+    return looksSensitiveEndpointLabel(clean) ? 'Configured endpoint' : redactDisplaySecrets(clean);
+  }
+}
+
+function safeEndpointDisplay(endpoint = {}) {
+  const name = redactDisplaySecrets(endpoint?.name || '').trim();
+  if (name && !looksSensitiveEndpointLabel(name)) return name;
+  return safeEndpointDisplayFromUrl(endpoint?.base_url || endpoint?.url || '');
 }
 
 function inpaintModelCount(select) {
@@ -155,14 +201,18 @@ function describeInpaintOption(opt, select) {
     ? []
     : cleanText.split(' · ').map(p => p.trim()).filter(Boolean);
   const label = parts.shift() || fallback;
-  const host = pickerHostFromValue(value);
-  const meta = [
-    ...parts,
-    host,
-    offline ? 'offline' : 'ready',
-  ].filter(Boolean).join(' · ');
+  const endpointDisplay = opt?.dataset?.endpointDisplay || safeEndpointDisplayFromUrl(value);
+  const modelDisplay = opt?.dataset?.modelDisplay || '';
+  const metaParts = [];
+  for (const part of [...parts, endpointDisplay, offline ? 'offline' : 'ready']) {
+    const clean = String(part || '').trim();
+    if (!clean) continue;
+    if (metaParts.some(existing => existing.toLowerCase() === clean.toLowerCase())) continue;
+    metaParts.push(clean);
+  }
+  const meta = metaParts.join(' · ');
   return {
-    label,
+    label: modelDisplay || label,
     meta,
     kind: offline ? 'offline' : 'model',
     disabled: !!opt?.disabled,
@@ -321,7 +371,7 @@ function wireInpaintModelPicker({ select, container, openCookbookForImg2img, ref
     const matches = (opt) => {
       if (!q) return true;
       const desc = describeInpaintOption(opt, select);
-      return `${desc.label} ${desc.meta} ${opt.value}`.toLowerCase().includes(q);
+      return `${desc.label} ${desc.meta}`.toLowerCase().includes(q);
     };
     const renderGroup = (section, group) => {
       const filtered = group.filter(matches);
@@ -341,13 +391,14 @@ function wireInpaintModelPicker({ select, container, openCookbookForImg2img, ref
     focusActive();
   }
 
-  function visiblePickerBounds(pad = 8) {
+  function visiblePickerBounds(pad = 8, options = {}) {
     const viewport = {
       left: pad,
       top: pad,
       right: Math.max(pad, (window.innerWidth || document.documentElement.clientWidth || 0) - pad),
       bottom: Math.max(pad, (window.innerHeight || document.documentElement.clientHeight || 0) - pad),
     };
+    if (options.viewportOnly) return viewport;
     const surface = container?.closest?.('.gallery-editor')
       || container?.closest?.('.gallery-modal-content, .modal-content')
       || container;
@@ -378,7 +429,25 @@ function wireInpaintModelPicker({ select, container, openCookbookForImg2img, ref
       menu.style.maxHeight = '';
       return;
     }
-    const bounds = visiblePickerBounds(8);
+    // If the user has dragged the menu, don't override its position;
+    // just clamp it into the viewport.
+    if (menu.dataset.userMoved === '1') {
+      const bounds = visiblePickerBounds(8, { viewportOnly: true });
+      const mRect = menu.getBoundingClientRect();
+      const mw = menu.offsetWidth || mRect.width || 320;
+      const mh = menu.offsetHeight || mRect.height || 300;
+      let left = mRect.left;
+      let top = mRect.top;
+      left = Math.max(bounds.left, Math.min(Math.max(bounds.left, bounds.right - mw), left));
+      top = Math.max(bounds.top, Math.min(Math.max(bounds.top, bounds.bottom - mh), top));
+      menu.style.left = `${Math.round(left)}px`;
+      menu.style.top = `${Math.round(top)}px`;
+      menu.style.bottom = 'auto';
+      menu.style.right = 'auto';
+      menu.style.maxHeight = `${Math.round(Math.max(80, bounds.bottom - bounds.top))}px`;
+      return;
+    }
+    const bounds = visiblePickerBounds(8, { viewportOnly: true });
     const availableWidth = Math.max(180, bounds.right - bounds.left);
     const width = Math.min(Math.max(rect.width, 320), availableWidth);
     let left = rect.left;
@@ -445,6 +514,46 @@ function wireInpaintModelPicker({ select, container, openCookbookForImg2img, ref
     else close();
   });
   closeBtn.addEventListener('click', close);
+
+  // ── Drag the model picker menu anywhere ──
+  head.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('button') || e.isPrimary === false) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const r0 = menu.getBoundingClientRect();
+    try { head.setPointerCapture(e.pointerId); } catch {}
+    head.style.cursor = 'grabbing';
+    const prevUserSelect = document.body.style.userSelect;
+    document.body.style.userSelect = 'none';
+    const onMove = (ev) => {
+      ev.preventDefault();
+      const w = menu.offsetWidth || r0.width;
+      const h = menu.offsetHeight || r0.height;
+      const bounds = visiblePickerBounds(8, { viewportOnly: true });
+      const nx = Math.max(bounds.left, Math.min(Math.max(bounds.left, bounds.right - w), r0.left + ev.clientX - startX));
+      const ny = Math.max(bounds.top, Math.min(Math.max(bounds.top, bounds.bottom - h), r0.top + ev.clientY - startY));
+      menu.dataset.userMoved = '1';
+      menu.style.left = `${Math.round(nx)}px`;
+      menu.style.top = `${Math.round(ny)}px`;
+      menu.style.bottom = 'auto';
+      menu.style.right = 'auto';
+      menu.style.maxHeight = `${Math.round(Math.max(80, bounds.bottom - bounds.top))}px`;
+    };
+    const onUp = () => {
+      try { head.releasePointerCapture(e.pointerId); } catch {}
+      head.style.cursor = '';
+      document.body.style.userSelect = prevUserSelect;
+      document.removeEventListener('pointermove', onMove, true);
+      document.removeEventListener('pointerup', onUp, true);
+      document.removeEventListener('pointercancel', onUp, true);
+    };
+    document.addEventListener('pointermove', onMove, true);
+    document.addEventListener('pointerup', onUp, true);
+    document.addEventListener('pointercancel', onUp, true);
+  });
+
   search.addEventListener('input', () => renderList(search.value));
   search.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.preventDefault(); close(); return; }
@@ -566,15 +675,23 @@ export function wireAIModelSelectors({ container, apiBase, openCookbookForImg2im
         for (const modelId of models) {
           const caps = modelCaps(modelId, ep.name, ep.model_type, ep);
           if (!caps.gen && !caps.inpaint) continue;
-          // Encode "<base_url>::<model_id>" so the value carries both pieces.
-          const value = `${ep.base_url}::${modelId}`;
-          const shortModel = modelId ? String(modelId).split('/').pop() : (ep.name || ep.base_url);
-          const epHint = modelId && ep.name && ep.name !== modelId ? ` · ${ep.name}` : '';
+          // Encode endpoint ID rather than the raw base URL so secrets never
+          // appear in visible labels or select values.
+          const endpointRef = ep.id ? `endpoint:${ep.id}` : (ep.base_url || '');
+          const value = `${endpointRef}::${modelId}`;
+          const endpointDisplay = safeEndpointDisplay(ep);
+          const shortModel = redactDisplaySecrets(modelId ? String(modelId).split('/').pop() : (endpointDisplay || 'Image edit model'));
+          const epHint = modelId && endpointDisplay && endpointDisplay.toLowerCase() !== shortModel.toLowerCase()
+            ? ` · ${endpointDisplay}`
+            : '';
           const label = `${shortModel}${epHint}${epUsable ? '' : ' (offline)'}`;
           if (caps.gen && aiGenSelect) {
             const opt = document.createElement('option');
             opt.value = value;
             opt.textContent = label;
+            opt.dataset.endpointDisplay = endpointDisplay;
+            opt.dataset.modelDisplay = shortModel;
+            opt.dataset.endpointId = ep.id || '';
             opt.disabled = !epUsable;
             aiGenSelect.appendChild(opt);
             if (epUsable && !firstGen) firstGen = value;
@@ -584,6 +701,9 @@ export function wireAIModelSelectors({ container, apiBase, openCookbookForImg2im
             const opt = document.createElement('option');
             opt.value = value;
             opt.textContent = label;
+            opt.dataset.endpointDisplay = endpointDisplay;
+            opt.dataset.modelDisplay = shortModel;
+            opt.dataset.endpointId = ep.id || '';
             opt.disabled = !epUsable;
             aiInpaintSelect.appendChild(opt);
             if (epUsable && selectBaseUrl && ep.base_url === selectBaseUrl && !selectedInpaint) selectedInpaint = value;
@@ -601,6 +721,9 @@ export function wireAIModelSelectors({ container, apiBase, openCookbookForImg2im
               const opt = document.createElement('option');
               opt.value = value;
               opt.textContent = label;
+              opt.dataset.endpointDisplay = endpointDisplay;
+              opt.dataset.modelDisplay = shortModel;
+              opt.dataset.endpointId = ep.id || '';
               opt.disabled = !epUsable;
               ts.appendChild(opt);
             }

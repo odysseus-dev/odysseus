@@ -20,9 +20,9 @@ logger = logging.getLogger(__name__)
 
 _monitor_task = None
 POLL_INTERVAL_S = 5
-# The follow-up agent run is allowed a few rounds to actually continue the task
-# (e.g. after `pip install` finishes, run the transcription).
-_FOLLOWUP_MAX_ROUNDS = 12
+# The follow-up agent run is allowed enough rounds to actually continue the
+# task (e.g. after `pip install` finishes, run the transcription).
+_FOLLOWUP_MAX_ROUNDS = 50
 
 
 async def _drain_agent(sess, messages):

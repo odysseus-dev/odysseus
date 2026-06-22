@@ -84,6 +84,10 @@ def test_desktop_minimized_dock_uses_chatbar_width_and_side_scroll():
     assert "return { left: Math.round(left), width };" in MODAL_MANAGER_JS
     assert "const desktopChatbarDock = !!_desktopChatbarDockRect(bounds);" in MODAL_MANAGER_JS
     assert "dock.classList.toggle('dock-chatbar-row', desktopChatbarDock);" in MODAL_MANAGER_JS
+    assert "function _syncDockOverflowState(dock)" in MODAL_MANAGER_JS
+    assert "dock.classList.toggle('dock-overflowing', overflowing);" in MODAL_MANAGER_JS
+    assert "dock.scrollWidth > dock.clientWidth + 1" in MODAL_MANAGER_JS
+    assert "if (!overflowing && dock.scrollLeft) dock.scrollLeft = 0;" in MODAL_MANAGER_JS
     assert "const chatbarDock = _desktopChatbarDockRect(bounds);" in MODAL_MANAGER_JS
     assert "if (chatbarDock) {\n    if (_dockPos) {" in MODAL_MANAGER_JS
     assert "_dockPos = null;\n      delete _dockPosByLayout[_dockLayout];\n      _saveDockState();" in MODAL_MANAGER_JS
@@ -100,6 +104,8 @@ def test_desktop_minimized_dock_uses_chatbar_width_and_side_scroll():
     assert marker in CSS
     block = CSS[CSS.index(marker): CSS.index(marker) + 1800]
     assert "flex-wrap: nowrap;" in block
+    assert "justify-content: center;" in block
+    assert "#minimized-dock.dock-chatbar-row.dock-overflowing" in block
     assert "justify-content: flex-start;" in block
     assert "overflow-x: auto;" in block
     assert "overflow-y: hidden;" in block
@@ -232,7 +238,8 @@ def test_shared_modal_controls_include_full_expand_button():
     assert "const hidden = _isTouchPortrait();" in MODAL_MANAGER_JS
     assert "Fullscreen hidden in portrait" in MODAL_MANAGER_JS
     assert "function _syncAllExpandButtons()" in MODAL_MANAGER_JS
-    assert "window.addEventListener('orientationchange', _syncAllExpandButtons);" in MODAL_MANAGER_JS
+    assert "function _syncFullExpandViewportState()" in MODAL_MANAGER_JS
+    assert "window.addEventListener('orientationchange', _syncFullExpandViewportState);" in MODAL_MANAGER_JS
     assert "if (_isTouchLandscape() && !wasExpanded) {" not in MODAL_MANAGER_JS
     assert "Fullscreen disabled in landscape" not in MODAL_MANAGER_JS
 
@@ -248,8 +255,11 @@ def test_full_expand_restores_previous_dock_or_window_state():
     assert "function _releaseWindowDockState(modal, content)" in MODAL_MANAGER_JS
     assert "function _captureFullExpandReturnState(modal, content)" in MODAL_MANAGER_JS
     assert "function _restoreFullExpandReturnState(modal, content)" in MODAL_MANAGER_JS
+    assert "function _fullExpandTargetRect(modal)" in MODAL_MANAGER_JS
+    assert "if (_isTouchLandscape()) return fullscreenWorkspaceRect();" in MODAL_MANAGER_JS
+    assert "return modal?.getBoundingClientRect ? modal.getBoundingClientRect() : _fullViewportRect();" in MODAL_MANAGER_JS
     assert "function _fitFullExpandedContentToModalFrame(modal)" in MODAL_MANAGER_JS
-    assert "const rect = _isTouchLandscape() ? fullscreenWorkspaceRect() : modal.getBoundingClientRect();" in MODAL_MANAGER_JS
+    assert "const rect = _fullExpandTargetRect(modal);" in MODAL_MANAGER_JS
     assert "content.style.setProperty('left', `${Math.round(rect.left)}px`, 'important');" in MODAL_MANAGER_JS
     assert "content.style.setProperty('width', `${Math.round(rect.width)}px`, 'important');" in MODAL_MANAGER_JS
     assert "content.style.setProperty('max-width', 'none', 'important');" in MODAL_MANAGER_JS
@@ -293,7 +303,8 @@ def test_fullscreen_safe_rect_ignores_hidden_or_offscreen_nav_geometry():
     assert "content.style.setProperty('max-width', 'none', 'important');" in TILE_MANAGER_JS
     assert "case 'fullscreen':     r = _fullscreenRect(); break;" in TILE_MANAGER_JS
     assert "fullscreenWorkspaceRect," in MODAL_MANAGER_JS
-    assert "const rect = _isTouchLandscape() ? fullscreenWorkspaceRect() : modal.getBoundingClientRect();" in MODAL_MANAGER_JS
+    assert "function _fullExpandTargetRect(modal)" in MODAL_MANAGER_JS
+    assert "const rect = _fullExpandTargetRect(modal);" in MODAL_MANAGER_JS
     assert "function _scheduleFullscreenSettle(content, zoneName)" in TILE_MANAGER_JS
     assert "if (zoneName !== 'fullscreen' || !_isTouchLandscape() || !content) return;" in TILE_MANAGER_JS
     assert "_reclampAllThrottled(false);" in TILE_MANAGER_JS

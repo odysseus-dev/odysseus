@@ -72,6 +72,7 @@ export function createApplyImageTool({
       const type = m ? m[1].replace('upscale-ai', 'upscale').replace('remove-bg', 'rembg') : null;
       const sel = getSelectedAIEndpoint(type);
       if (sel.endpoint) extraPayload._endpoint = sel.endpoint;
+      if (sel.endpointId) extraPayload._endpoint_id = sel.endpointId;
       if (sel.model && !extraPayload._model) extraPayload._model = sel.model;
     }
     try {

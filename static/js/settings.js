@@ -1573,7 +1573,7 @@ async function initAgentSettings() {
     var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await res.json();
     if (settings.agent_max_tool_calls) toolsInput.value = settings.agent_max_tool_calls;
-    if (roundsInput && settings.agent_max_rounds) roundsInput.value = settings.agent_max_rounds;
+    if (roundsInput && settings.agent_max_rounds != null) roundsInput.value = settings.agent_max_rounds;
     if (supInput) supInput.checked = !!settings.agent_supervisor_ladder;
   } catch (e) {}
 
@@ -1587,7 +1587,7 @@ async function initAgentSettings() {
 
   async function save() {
     var tools = clampInt(toolsInput.value, 0, 1000, 0);
-    var rounds = roundsInput ? clampInt(roundsInput.value, 1, 200, 20) : null;
+    var rounds = roundsInput ? clampInt(roundsInput.value, 0, 200, 0) : null;
     toolsInput.value = tools;                       // reflect the clamped value
     if (roundsInput) roundsInput.value = rounds;
     var payload = { agent_max_tool_calls: tools };
@@ -1599,7 +1599,7 @@ async function initAgentSettings() {
         body: JSON.stringify(payload)
       });
       msg.textContent = (tools > 0 ? 'Limit: ' + tools + ' tool calls' : 'Unlimited tool calls') +
-        (rounds != null ? ' · ' + rounds + ' steps/message' : '') +
+        (rounds != null ? ' · ' + (rounds > 0 ? rounds + ' steps/message' : 'unlimited steps/message') : '') +
         (supInput && supInput.checked ? ' · supervisor on' : '');
       msg.style.color = 'var(--fg)';
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
@@ -1609,9 +1609,9 @@ async function initAgentSettings() {
   if (roundsInput) roundsInput.addEventListener('change', save);
   if (supInput) supInput.addEventListener('change', save);
   var cur = parseInt(toolsInput.value, 10) || 0;
-  var curR = roundsInput ? (parseInt(roundsInput.value, 10) || 20) : null;
+  var curR = roundsInput ? clampInt(roundsInput.value, 0, 200, 0) : null;
   msg.textContent = (cur > 0 ? 'Limit: ' + cur + ' tool calls' : 'Unlimited tool calls') +
-    (curR != null ? ' · ' + curR + ' steps/message' : '') +
+    (curR != null ? ' · ' + (curR > 0 ? curR + ' steps/message' : 'unlimited steps/message') : '') +
     (supInput && supInput.checked ? ' · supervisor on' : '');
 }
 
@@ -3123,6 +3123,7 @@ async function initIntegrations() {
     const p = presets[presetSel.value];
     if (!p) return;
     nameIn.value = p.name || '';
+    if (p.base_url && !urlIn.value) urlIn.value = p.base_url;
     authTypeSel.value = p.auth_type || 'none';
     authHeaderIn.value = p.auth_header || '';
     descIn.value = p.description || '';
@@ -3558,6 +3559,8 @@ async function initUnifiedIntegrations() {
       ntfy:            _apiLetter('n', '#317f43'),
       vaultwarden:     _apiLetter('V', '#175ddc'),
       freshrss:        _apiLetter('R', '#ef6c00'),
+      comfyui_local:   _apiLetter('C', '#7c3aed'),
+      runcomfy_cloud:  _apiLetter('R', '#0f766e'),
     };
     const _apiIconFor = (k) => {
       if (!k) return _apiCustomIco;
@@ -3649,15 +3652,22 @@ async function initUnifiedIntegrations() {
     const _applyPreset = () => {
       const p = presets[preset.value];
       const isNtfy = preset.value === 'ntfy' || (p && (p.name || '').toLowerCase() === 'ntfy');
+      const isComfyLocal = preset.value === 'comfyui_local';
+      const isRunComfy = preset.value === 'runcomfy_cloud';
       const isUrlAuth = preset.value === 'discord_webhook'; // secret embedded in URL — no key/auth fields needed
       if (ntfyHint) {
-        ntfyHint.style.display = isNtfy ? 'block' : 'none';
+        ntfyHint.style.display = (isNtfy || isComfyLocal || isRunComfy) ? 'block' : 'none';
         if (isNtfy) {
           ntfyHint.innerHTML = 'Enter the ntfy server URL Odysseus can reach. Examples: <code>http://127.0.0.1:8091</code>, <code>http://100.x.y.z:8091</code>, or <code>https://ntfy.example.com</code>.';
+        } else if (isComfyLocal) {
+          ntfyHint.innerHTML = 'Free local route. Odysseus can auto-install and launch local ComfyUI at <code>http://127.0.0.1:8188</code>. For AMD use <code>COMFYUI_ACCELERATOR=amd</code>.';
+        } else if (isRunComfy) {
+          ntfyHint.innerHTML = 'Paid route. Enabling this lets media generation use the RunComfy CLI/cloud path when local ComfyUI is not selected.';
         }
       }
       if (url) {
-        url.placeholder = isNtfy ? 'http://127.0.0.1:8091' : isUrlAuth ? 'https://discord.com/api/webhooks/...' : 'http://localhost:8080';
+        url.placeholder = isNtfy ? 'http://127.0.0.1:8091' : isComfyLocal ? 'http://127.0.0.1:8188' : isRunComfy ? 'https://www.runcomfy.com' : isUrlAuth ? 'https://discord.com/api/webhooks/...' : 'http://localhost:8080';
+        if (p && p.base_url && !url.value) url.value = p.base_url;
       }
       // For presets that embed the secret in the URL, hide auth/key/header rows
       // so users aren't confused into thinking they need to fill them in.

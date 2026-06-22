@@ -43,6 +43,9 @@ class TestSelfSummaryPrompt:
     def test_contains_what_was_done_section(self):
         assert "### What Was Done" in SELF_SUMMARY_SYSTEM_PROMPT
 
+    def test_contains_tools_used_section(self):
+        assert "### Tools / Actions Used" in SELF_SUMMARY_SYSTEM_PROMPT
+
     def test_contains_current_state_section(self):
         assert "### Current State" in SELF_SUMMARY_SYSTEM_PROMPT
 

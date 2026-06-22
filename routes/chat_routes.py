@@ -1377,13 +1377,15 @@ def setup_chat_routes(
                     from src.settings import get_setting
                     from src.agent_tools import MAX_AGENT_ROUNDS as _DEFAULT_ROUNDS
                     _tool_budget = int(get_setting("agent_max_tool_calls", 0))
-                    # Per-message round cap from settings; clamp defensively in
-                    # case settings.json was hand-edited to a bad value.
+                    # Per-message round cap from settings; 0 means unlimited.
+                    # Clamp defensively in case settings.json was hand-edited
+                    # to a bad value.
                     try:
-                        _max_rounds = int(get_setting("agent_max_rounds", _DEFAULT_ROUNDS) or _DEFAULT_ROUNDS)
+                        _raw_max_rounds = get_setting("agent_max_rounds", 0)
+                        _max_rounds = 0 if _raw_max_rounds in (None, "") else int(_raw_max_rounds)
                     except (TypeError, ValueError):
                         _max_rounds = _DEFAULT_ROUNDS
-                    _max_rounds = max(1, min(_max_rounds, 200))
+                    _max_rounds = 0 if _max_rounds <= 0 else min(_max_rounds, 200)
 
                     async for chunk in stream_agent_loop(
                         sess.endpoint_url,

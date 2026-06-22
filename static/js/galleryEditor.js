@@ -366,24 +366,44 @@ function _registerDocClickAway(handler) {
 // Undo/Redo
 const MAX_HISTORY = 20;
 
-/** Get the selected AI endpoint+model. Returns { endpoint, model }.
- * Dropdown values are encoded as "<base_url>::<model_id>" so users can pick
- * a specific model on a multi-model endpoint (e.g. dall-e-2 vs gpt-image-1). */
+/** Get the selected AI endpoint+model. Returns { endpoint, endpointId, model, display }.
+ * Dropdown values are encoded as "endpoint:<id>::<model_id>" so users can pick
+ * a specific model without exposing endpoint URLs in the UI. Legacy
+ * "<base_url>::<model_id>" values are still accepted. */
 function _getSelectedAIEndpoint(type) {
   let raw = '';
+  let selectedOption = null;
   if (type === 'inpaint') {
-    raw = document.getElementById('ge-ai-inpaint')?.value || '';
+    const sel = document.getElementById('ge-ai-inpaint');
+    raw = sel?.value || '';
+    selectedOption = sel?.selectedOptions?.[0] || null;
   } else if (type) {
     // Per-tool dropdowns (harmonize/upscale/style). Each lives in its
     // own section's panel and is marked with data-ge-tool-model="<name>".
     const sel = document.querySelector(`select[data-ge-tool-model="${type}"]`);
     raw = sel?.value || '';
+    selectedOption = sel?.selectedOptions?.[0] || null;
   }
-  if (!raw) raw = document.getElementById('ge-ai-model')?.value || '';
-  if (!raw) return { endpoint: '', model: '' };
+  if (!raw) {
+    const sel = document.getElementById('ge-ai-model');
+    raw = sel?.value || '';
+    selectedOption = sel?.selectedOptions?.[0] || null;
+  }
+  if (!raw) return { endpoint: '', endpointId: '', model: '', display: '' };
   const idx = raw.indexOf('::');
-  if (idx < 0) return { endpoint: raw, model: '' };
-  return { endpoint: raw.slice(0, idx), model: raw.slice(idx + 2) };
+  const endpointPart = idx < 0 ? raw : raw.slice(0, idx);
+  const model = idx < 0 ? '' : raw.slice(idx + 2);
+  const datasetEndpointId = selectedOption?.dataset?.endpointId || '';
+  const endpointId = endpointPart.startsWith('endpoint:')
+    ? endpointPart.slice('endpoint:'.length)
+    : datasetEndpointId;
+  const endpoint = endpointId ? '' : endpointPart;
+  return {
+    endpoint,
+    endpointId,
+    model,
+    display: selectedOption?.dataset?.endpointDisplay || '',
+  };
 }
 
 /** Shared helper: flatten layers → POST to API → add result as new layer. */
@@ -3543,6 +3563,13 @@ function _openCookbookForImg2img() {
 
 export function downloadPNG() {
   const dataUrl = exportPNG();
+  try {
+    const bridge = window.OdysseusAndroid || null;
+    if (bridge && typeof bridge.saveDownload === 'function') {
+      bridge.saveDownload(dataUrl, 'edited-image.png', 'image/png');
+      return;
+    }
+  } catch (_) {}
   const a = document.createElement('a');
   a.href = dataUrl;
   a.download = 'edited-image.png';

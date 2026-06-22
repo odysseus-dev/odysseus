@@ -1,9 +1,9 @@
-"""RunComfy-backed media generation helpers.
+"""ComfyUI/RunComfy media generation helpers.
 
-The skills.sh RunComfy skills describe the model routing. This module gives
-Odysseus a small executable bridge: run a selected RunComfy endpoint, copy the
-downloaded artifact into the local generated-media folder, and return fields
-the chat renderer can display inline.
+Odysseus routes simple image fallback through free local ComfyUI when it is
+available. Paid RunComfy Cloud remains available as an explicit integration
+option. Both paths save generated artifacts into the local generated-media
+folder and return fields the chat renderer can display inline.
 """
 
 from __future__ import annotations
@@ -15,12 +15,19 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
+import time
+import urllib.request
 import uuid
+import zipfile
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
-from src.constants import GENERATED_IMAGES_DIR
+import httpx
+
+from src.constants import BASE_DIR, DATA_DIR, GENERATED_IMAGES_DIR
 
 
 IMAGE_EXTS = {"png", "jpg", "jpeg", "webp", "gif"}
@@ -33,6 +40,52 @@ DEFAULT_MODELS = {
     "video": "kling/kling-3.0/standard/text-to-video",
     "music": "acestep-ai/ace-step-1.5/text-to-audio",
 }
+
+LOCAL_COMFY_PRESETS = {"comfyui", "comfy", "comfyui_local", "comfyui-local", "local_comfyui", "local-comfyui"}
+RUNCOMFY_PRESETS = {"runcomfy_cloud", "runcomfy-cloud", "runcomfy", "run_comfy"}
+LOCAL_COMFY_PROVIDER_ALIASES = {
+    "comfy",
+    "comfyui",
+    "comfy_ui",
+    "comfyui_local",
+    "comfyui-local",
+    "local",
+    "local_comfy",
+    "local_comfyui",
+    "local-comfyui",
+    "free",
+}
+RUNCOMFY_PROVIDER_ALIASES = {
+    "runcomfy",
+    "run_comfy",
+    "runcomfy_cloud",
+    "runcomfy-cloud",
+    "comfyui_cloud",
+    "comfyui-cloud",
+    "cloud",
+    "paid",
+}
+RUNCOMFY_MODEL_PREFIXES = (
+    "blackforestlabs/",
+    "kling/",
+    "acestep-ai/",
+    "elevenlabs/",
+    "wan-ai/",
+    "happyhorse/",
+    "openai/gpt-image",
+)
+
+LOCAL_COMFY_HOSTS = {"127.0.0.1", "localhost", "::1"}
+COMFYUI_REPO_URL = "https://github.com/comfyanonymous/ComfyUI.git"
+COMFYUI_ZIP_URL = "https://github.com/comfyanonymous/ComfyUI/archive/refs/heads/master.zip"
+COMFYUI_DEFAULT_MODEL_URL = "https://huggingface.co/Lykon/DreamShaper/resolve/main/DreamShaper_8_pruned.safetensors"
+COMFYUI_DEFAULT_MODEL_NAME = "DreamShaper_8_pruned.safetensors"
+
+_COMFYUI_AUTOSTART_PROCESS: Optional[subprocess.Popen] = None
+_COMFYUI_AUTOSTART_LAST_ATTEMPT = 0.0
+_COMFYUI_AUTOSTART_LAST_MESSAGE = ""
+_COMFYUI_ACCELERATOR_CACHE: Optional[str] = None
+_COMFYUI_BOOTSTRAP_LAST_MESSAGE = ""
 
 MODEL_ALIASES = {
     "happyhorse/happyhorse-1-0/text-to-video": "happyhorse/happyhorse-1.0/text-to-video",
@@ -98,19 +151,119 @@ def wants_runcomfy_media(content: str) -> bool:
     provider = str(args.get("provider") or args.get("backend") or args.get("service") or "").lower()
     model = str(args.get("model_id") or args.get("model") or "").lower()
     text = str(content or "").lower()
-    if provider in {"runcomfy", "comfy", "comfyui", "comfyui-cloud", "comfyui cloud"}:
+    if _normalize_provider_name(provider) in (LOCAL_COMFY_PROVIDER_ALIASES | RUNCOMFY_PROVIDER_ALIASES):
         return True
-    if any(phrase in text for phrase in ("runcomfy", "run comfy", "comfyui", "comfy ui", "comfy cloud")):
+    if any(phrase in text for phrase in (
+        "runcomfy",
+        "run comfy",
+        "comfyui",
+        "comfy ui",
+        "comfy cloud",
+        "local comfy",
+    )):
         return True
-    return any(model.startswith(prefix) for prefix in (
-        "blackforestlabs/",
-        "kling/",
-        "acestep-ai/",
-        "elevenlabs/",
-        "wan-ai/",
-        "happyhorse/",
-        "openai/gpt-image",
-    ))
+    return any(model.startswith(prefix) for prefix in RUNCOMFY_MODEL_PREFIXES)
+
+
+def _normalize_provider_name(value: Any) -> str:
+    raw = str(value or "").strip().lower().replace(" ", "_")
+    return re.sub(r"[^a-z0-9_/-]+", "", raw)
+
+
+def _compact_provider_name(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+
+def _integration_kind(integration: Dict[str, Any]) -> str:
+    fields = [
+        integration.get("preset"),
+        integration.get("provider"),
+        integration.get("service"),
+        integration.get("name"),
+        integration.get("id"),
+    ]
+    normalized = {_normalize_provider_name(item) for item in fields if item}
+    compacted = {_compact_provider_name(item) for item in fields if item}
+    if normalized & LOCAL_COMFY_PRESETS or compacted & {"comfyuilocal", "localcomfyui"}:
+        return "comfyui_local"
+    if normalized & RUNCOMFY_PRESETS or compacted & {"runcomfycloud", "runcomfy"}:
+        return "runcomfy"
+    return ""
+
+
+def _load_media_integrations() -> list[Dict[str, Any]]:
+    try:
+        from src.integrations import load_integrations
+
+        return [
+            item for item in load_integrations()
+            if isinstance(item, dict) and item.get("enabled", True)
+        ]
+    except Exception:
+        return []
+
+
+def _find_media_integration(args: Dict[str, Any], kind: str) -> Optional[Dict[str, Any]]:
+    identifier = str(
+        args.get("integration")
+        or args.get("integration_id")
+        or args.get("provider_id")
+        or ""
+    ).strip()
+    integrations = _load_media_integrations()
+    if identifier:
+        ident_lower = identifier.lower()
+        for item in integrations:
+            if str(item.get("id", "")).lower() == ident_lower or str(item.get("name", "")).lower() == ident_lower:
+                return item if _integration_kind(item) == kind else None
+        return None
+
+    for item in integrations:
+        if _integration_kind(item) == kind:
+            return item
+    return None
+
+
+def _comfyui_integration(args: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    return _find_media_integration(args or {}, "comfyui_local")
+
+
+def _runcomfy_integration(args: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    return _find_media_integration(args or {}, "runcomfy")
+
+
+def _requested_provider(args: Dict[str, Any], content: str = "") -> str:
+    raw_provider = _normalize_provider_name(
+        args.get("provider") or args.get("backend") or args.get("service") or ""
+    )
+    if raw_provider in RUNCOMFY_PROVIDER_ALIASES:
+        return "runcomfy"
+    if raw_provider in LOCAL_COMFY_PROVIDER_ALIASES:
+        return "comfyui_local"
+
+    if args.get("workflow") or args.get("comfyui_workflow"):
+        return "comfyui_local"
+
+    model = str(args.get("model_id") or args.get("model") or "").strip().lower()
+    if any(model.startswith(prefix) for prefix in RUNCOMFY_MODEL_PREFIXES):
+        return "runcomfy"
+
+    text = str(content or "").lower()
+    if "runcomfy" in text or "run comfy" in text or "comfy cloud" in text:
+        return "runcomfy"
+    if "local comfy" in text or "comfyui" in text or "comfy ui" in text:
+        return "comfyui_local"
+    return ""
+
+
+def _requested_provider_from_integration(args: Dict[str, Any]) -> str:
+    if not (args.get("integration") or args.get("integration_id") or args.get("provider_id")):
+        return ""
+    if _runcomfy_integration(args):
+        return "runcomfy"
+    if _comfyui_integration(args):
+        return "comfyui_local"
+    return ""
 
 
 def runcomfy_fallback_content(kind: str, content: str) -> str:
@@ -345,10 +498,24 @@ def _subprocess_command(cmd: list[str]) -> list[str]:
     return cmd
 
 
-def _run_checked(cmd: list[str], timeout: int, cwd: Optional[str] = None) -> subprocess.CompletedProcess:
+def _runcomfy_env(integration: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+    env = dict(os.environ)
+    token = str((integration or {}).get("api_key") or "").strip()
+    if token and "****" not in token:
+        env["RUNCOMFY_TOKEN"] = token
+    return env
+
+
+def _run_checked(
+    cmd: list[str],
+    timeout: int,
+    cwd: Optional[str] = None,
+    env: Optional[Dict[str, str]] = None,
+) -> subprocess.CompletedProcess:
     return subprocess.run(
         _subprocess_command(cmd),
         cwd=cwd,
+        env=env,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -370,9 +537,12 @@ def _auth_error_message(output: str = "") -> str:
     )
 
 
-def _check_runcomfy_ready(exe: str) -> Optional[Dict[str, Any]]:
+def _check_runcomfy_ready(
+    exe: str,
+    integration: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
     try:
-        proc = _run_checked([exe, "whoami"], timeout=20)
+        proc = _run_checked([exe, "whoami"], timeout=20, env=_runcomfy_env(integration))
     except FileNotFoundError:
         return {"error": "RunComfy CLI is not installed or not on PATH.", "exit_code": 1}
     except subprocess.TimeoutExpired:
@@ -784,15 +954,1202 @@ def _failure_message(kind: str, model_id: str, code: int, output: str, body: Dic
     return "\n\n".join(parts)
 
 
-async def generate_runcomfy_media(
+def _default_comfyui_base_url() -> str:
+    return (os.environ.get("COMFYUI_URL") or "http://127.0.0.1:8188").rstrip("/")
+
+
+def _comfyui_base_url(integration: Optional[Dict[str, Any]]) -> str:
+    return str((integration or {}).get("base_url") or _default_comfyui_base_url()).strip().rstrip("/")
+
+
+def _comfyui_headers(integration: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    integration = integration or {}
+    api_key = str(integration.get("api_key") or "").strip()
+    auth_type = str(integration.get("auth_type") or "none").lower()
+    if not api_key or "****" in api_key:
+        return {}
+    if auth_type == "bearer":
+        return {"Authorization": f"Bearer {api_key}"}
+    if auth_type == "header":
+        return {integration.get("auth_header") or "Authorization": api_key}
+    return {}
+
+
+def _comfyui_params(
+    integration: Optional[Dict[str, Any]],
+    params: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    final = dict(params or {})
+    integration = integration or {}
+    api_key = str(integration.get("api_key") or "").strip()
+    if api_key and "****" not in api_key and str(integration.get("auth_type") or "").lower() == "query":
+        final[integration.get("auth_param") or "api_key"] = api_key
+    return final
+
+
+def _comfyui_auth(integration: Optional[Dict[str, Any]]) -> Optional[httpx.BasicAuth]:
+    integration = integration or {}
+    api_key = str(integration.get("api_key") or "").strip()
+    if not api_key or "****" in api_key or str(integration.get("auth_type") or "").lower() != "basic":
+        return None
+    user, sep, password = api_key.partition(":")
+    return httpx.BasicAuth(user, password if sep else "")
+
+
+async def _comfyui_server_available(integration: Optional[Dict[str, Any]] = None) -> bool:
+    base_url = _comfyui_base_url(integration)
+    if not base_url:
+        return False
+    try:
+        async with httpx.AsyncClient(
+            timeout=2.5,
+            headers=_comfyui_headers(integration),
+            auth=_comfyui_auth(integration),
+        ) as client:
+            response = await client.get(
+                f"{base_url}/system_stats",
+                params=_comfyui_params(integration),
+            )
+        return response.is_success
+    except Exception:
+        return False
+
+
+def _parsed_comfyui_url(integration: Optional[Dict[str, Any]]) -> Any:
+    base_url = _comfyui_base_url(integration)
+    url = base_url if "://" in base_url else f"http://{base_url}"
+    return urlparse(url)
+
+
+def _is_local_comfyui_url(integration: Optional[Dict[str, Any]]) -> bool:
+    parsed = _parsed_comfyui_url(integration)
+    return (parsed.hostname or "").lower() in LOCAL_COMFY_HOSTS
+
+
+def _comfyui_launch_port(integration: Optional[Dict[str, Any]]) -> int:
+    parsed = _parsed_comfyui_url(integration)
+    if parsed.port:
+        return parsed.port
+    return 443 if parsed.scheme == "https" else 80
+
+
+def _comfyui_launch_host(integration: Optional[Dict[str, Any]]) -> str:
+    host = (_parsed_comfyui_url(integration).hostname or "127.0.0.1").lower()
+    return "127.0.0.1" if host == "localhost" else host
+
+
+def _comfyui_auto_launch_enabled(integration: Optional[Dict[str, Any]]) -> bool:
+    integration = integration or {}
+    value = integration.get("auto_launch")
+    if value is None:
+        value = os.environ.get("COMFYUI_AUTO_LAUNCH")
+    return _coerce_bool(value, True)
+
+
+def _comfyui_bootstrap_enabled(integration: Optional[Dict[str, Any]]) -> bool:
+    integration = integration or {}
+    value = integration.get("auto_install")
+    if value is None:
+        value = integration.get("bootstrap")
+    if value is None:
+        value = os.environ.get("COMFYUI_AUTO_INSTALL")
+    if value is None:
+        value = os.environ.get("COMFYUI_BOOTSTRAP")
+    return _coerce_bool(value, True)
+
+
+def _comfyui_model_download_enabled(integration: Optional[Dict[str, Any]]) -> bool:
+    integration = integration or {}
+    value = integration.get("auto_download_model")
+    if value is None:
+        value = os.environ.get("COMFYUI_AUTO_DOWNLOAD_MODEL")
+    return _coerce_bool(value, True)
+
+
+def _normalize_comfyui_accelerator(value: Any) -> str:
+    raw = str(value or "").strip().lower().replace("_", "-").replace("/", "-")
+    if raw in {"amd", "amd-directml", "radeon", "directml", "dml", "dx12"}:
+        return "directml"
+    if raw in {"nvidia", "cuda", "gpu"}:
+        return "nvidia"
+    if raw in {"cpu", "none"}:
+        return "cpu"
+    if raw in {"auto", ""}:
+        return "auto"
+    return raw
+
+
+def _detect_windows_comfyui_accelerator() -> str:
+    global _COMFYUI_ACCELERATOR_CACHE
+    if _COMFYUI_ACCELERATOR_CACHE is not None:
+        return _COMFYUI_ACCELERATOR_CACHE
+    if os.name != "nt":
+        _COMFYUI_ACCELERATOR_CACHE = "auto"
+        return _COMFYUI_ACCELERATOR_CACHE
+    try:
+        completed = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "(Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name) -join ';'",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+        names = f"{completed.stdout} {completed.stderr}".lower()
+        if any(token in names for token in ("amd", "radeon", "advanced micro devices")):
+            _COMFYUI_ACCELERATOR_CACHE = "directml"
+        elif "nvidia" in names:
+            _COMFYUI_ACCELERATOR_CACHE = "nvidia"
+        else:
+            _COMFYUI_ACCELERATOR_CACHE = "auto"
+    except Exception:
+        _COMFYUI_ACCELERATOR_CACHE = "auto"
+    return _COMFYUI_ACCELERATOR_CACHE
+
+
+def _comfyui_accelerator(integration: Optional[Dict[str, Any]]) -> str:
+    integration = integration or {}
+    raw = (
+        integration.get("accelerator")
+        or integration.get("gpu")
+        or integration.get("device")
+        or os.environ.get("COMFYUI_ACCELERATOR")
+        or os.environ.get("COMFYUI_GPU")
+    )
+    normalized = _normalize_comfyui_accelerator(raw)
+    return _detect_windows_comfyui_accelerator() if normalized == "auto" else normalized
+
+
+def _comfyui_configured_dirs(integration: Optional[Dict[str, Any]]) -> list[Path]:
+    integration = integration or {}
+    raw_values = [
+        integration.get("launch_cwd"),
+        integration.get("working_dir"),
+        integration.get("comfyui_dir"),
+        integration.get("install_dir"),
+        os.environ.get("COMFYUI_LAUNCH_CWD"),
+        os.environ.get("COMFYUI_DIR"),
+        os.environ.get("COMFYUI_PATH"),
+    ]
+    dirs: list[Path] = []
+    for raw in raw_values:
+        value = str(raw or "").strip()
+        if not value:
+            continue
+        dirs.append(Path(os.path.expandvars(os.path.expanduser(value))))
+    return dirs
+
+
+def _default_comfyui_dirs() -> list[Path]:
+    base = Path(BASE_DIR).resolve()
+    data = Path(DATA_DIR).resolve()
+    home = Path.home()
+    dirs = [
+        data / "comfyui" / "ComfyUI",
+        data / "ComfyUI",
+        base / "ComfyUI",
+        base.parent / "ComfyUI",
+        Path.cwd() / "ComfyUI",
+        home / "ComfyUI",
+        home / "Documents" / "ComfyUI",
+        Path("C:/ComfyUI"),
+        Path("D:/ComfyUI"),
+        Path("E:/ComfyUI"),
+    ]
+    for root in (base.parent, Path("D:/GitHub"), home):
+        try:
+            dirs.extend(path for path in root.glob("ComfyUI*") if path.is_dir())
+        except Exception:
+            pass
+    return dirs
+
+
+def _bootstrap_comfyui_dir(integration: Optional[Dict[str, Any]]) -> Path:
+    configured = _comfyui_configured_dirs(integration)
+    if configured:
+        return configured[0]
+    return Path(DATA_DIR).resolve() / "comfyui" / "ComfyUI"
+
+
+def _comfyui_install_markers(path: Path) -> list[Path]:
+    return [
+        path / "main.py",
+        path / "ComfyUI" / "main.py",
+        path / "run_nvidia_gpu.bat",
+        path / "run_amd_gpu.bat",
+        path / "run_directml.bat",
+        path / "run_cpu.bat",
+    ]
+
+
+def _candidate_comfyui_dirs(integration: Optional[Dict[str, Any]]) -> list[Path]:
+    seen: set[str] = set()
+    candidates: list[Path] = []
+    for path in [*_comfyui_configured_dirs(integration), *_default_comfyui_dirs()]:
+        try:
+            resolved = path.resolve()
+        except Exception:
+            resolved = path
+        key = str(resolved).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if any(marker.exists() for marker in _comfyui_install_markers(resolved)):
+            candidates.append(resolved)
+    return candidates
+
+
+def _comfyui_script_order(accelerator: str) -> list[str]:
+    if accelerator == "directml":
+        return ["run_amd_gpu.bat", "run_directml.bat", "run_amd.bat", "run_gpu.bat"]
+    if accelerator == "nvidia":
+        return ["run_nvidia_gpu.bat", "run_gpu.bat", "run_cpu.bat"]
+    if accelerator == "cpu":
+        return ["run_cpu.bat"]
+    return ["run_nvidia_gpu.bat", "run_amd_gpu.bat", "run_directml.bat", "run_gpu.bat", "run_cpu.bat"]
+
+
+def _comfyui_main_script(path: Path) -> Optional[str]:
+    if (path / "main.py").exists():
+        return "main.py"
+    nested = path / "ComfyUI" / "main.py"
+    if nested.exists():
+        return str(Path("ComfyUI") / "main.py")
+    return None
+
+
+def _comfyui_python_executable(path: Path) -> str:
+    for rel in (
+        Path("python_embeded") / "python.exe",
+        Path("python_embedded") / "python.exe",
+        Path(".venv") / "Scripts" / "python.exe",
+        Path("venv") / "Scripts" / "python.exe",
+        Path(".venv") / "bin" / "python",
+        Path("venv") / "bin" / "python",
+    ):
+        candidate = path / rel
+        if candidate.exists():
+            return str(candidate)
+    return sys.executable or "python"
+
+
+def _comfyui_main_extra_args(accelerator: str) -> list[str]:
+    if accelerator == "directml":
+        return ["--directml"]
+    if accelerator == "cpu":
+        return ["--cpu"]
+    return []
+
+
+def _comfyui_command_shell(command: str, cwd: Path) -> list[str]:
+    if os.name == "nt":
+        return [os.environ.get("ComSpec") or "cmd.exe", "/c", command]
+    return ["sh", "-lc", command]
+
+
+def _comfyui_launch_spec(integration: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    if not _comfyui_auto_launch_enabled(integration) or not _is_local_comfyui_url(integration):
+        return None
+
+    integration = integration or {}
+    base_url = _comfyui_base_url(integration)
+    host = _comfyui_launch_host(integration)
+    port = _comfyui_launch_port(integration)
+    accelerator = _comfyui_accelerator(integration)
+    raw_command = str(
+        integration.get("launch_command")
+        or integration.get("command")
+        or os.environ.get("COMFYUI_LAUNCH_COMMAND")
+        or ""
+    ).strip()
+    if raw_command:
+        command = (
+            raw_command
+            .replace("{base_url}", base_url)
+            .replace("{host}", host)
+            .replace("{port}", str(port))
+            .replace("{accelerator}", accelerator)
+        )
+        cwd = (_comfyui_configured_dirs(integration) or [Path(BASE_DIR)])[0]
+        return {
+            "argv": _comfyui_command_shell(command, cwd),
+            "cwd": str(cwd),
+            "accelerator": accelerator,
+            "source": "COMFYUI_LAUNCH_COMMAND",
+        }
+
+    for cwd in _candidate_comfyui_dirs(integration):
+        for script_name in _comfyui_script_order(accelerator):
+            script = cwd / script_name
+            if not script.exists():
+                continue
+            if os.name == "nt" and script.suffix.lower() in {".bat", ".cmd"}:
+                argv = [os.environ.get("ComSpec") or "cmd.exe", "/c", str(script)]
+            else:
+                argv = [str(script)]
+            return {
+                "argv": argv,
+                "cwd": str(cwd),
+                "accelerator": accelerator,
+                "source": script_name,
+            }
+
+        main_script = _comfyui_main_script(cwd)
+        if main_script:
+            argv = [
+                _comfyui_python_executable(cwd),
+                main_script,
+                "--listen",
+                host,
+                "--port",
+                str(port),
+                *_comfyui_main_extra_args(accelerator),
+            ]
+            return {
+                "argv": argv,
+                "cwd": str(cwd),
+                "accelerator": accelerator,
+                "source": main_script,
+            }
+
+    return None
+
+
+def _comfyui_can_auto_launch(integration: Optional[Dict[str, Any]] = None) -> bool:
+    return _comfyui_launch_spec(integration) is not None
+
+
+def _comfyui_can_auto_bootstrap(integration: Optional[Dict[str, Any]] = None) -> bool:
+    return _comfyui_bootstrap_enabled(integration) and _is_local_comfyui_url(integration)
+
+
+def _comfyui_log_paths() -> tuple[Path, Path]:
+    log_dir = Path(DATA_DIR) / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir / "comfyui-local.out.log", log_dir / "comfyui-local.err.log"
+
+
+def _comfyui_launch_timeout(integration: Optional[Dict[str, Any]]) -> int:
+    integration = integration or {}
+    return _coerce_int(
+        integration.get("launch_timeout") or os.environ.get("COMFYUI_START_TIMEOUT"),
+        120,
+        5,
+        600,
+    )
+
+
+def _comfyui_launch_retry_seconds(integration: Optional[Dict[str, Any]]) -> int:
+    integration = integration or {}
+    return _coerce_int(
+        integration.get("launch_retry_seconds") or os.environ.get("COMFYUI_LAUNCH_RETRY_SECONDS"),
+        15,
+        0,
+        300,
+    )
+
+
+def _comfyui_bootstrap_timeout(integration: Optional[Dict[str, Any]]) -> int:
+    integration = integration or {}
+    return _coerce_int(
+        integration.get("bootstrap_timeout") or os.environ.get("COMFYUI_BOOTSTRAP_TIMEOUT"),
+        3600,
+        60,
+        14400,
+    )
+
+
+def _comfyui_bootstrap_log_path() -> Path:
+    log_dir = Path(DATA_DIR) / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir / "comfyui-bootstrap.log"
+
+
+def _display_command(cmd: list[str]) -> str:
+    if os.name == "nt":
+        return subprocess.list2cmdline(cmd)
+    import shlex
+
+    return shlex.join(cmd)
+
+
+def _run_comfyui_bootstrap_step(
+    cmd: list[str],
+    *,
+    cwd: Path,
+    log_path: Path,
+    timeout: int,
+    env: Optional[Dict[str, str]] = None,
+) -> None:
+    run_env = dict(os.environ)
+    run_env.setdefault("PIP_DISABLE_PIP_VERSION_CHECK", "1")
+    run_env.setdefault("PYTHONUTF8", "1")
+    if env:
+        run_env.update(env)
+    with log_path.open("a", encoding="utf-8", errors="replace") as log:
+        log.write(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] $ {_display_command(cmd)}\n")
+        log.flush()
+        proc = subprocess.run(
+            cmd,
+            cwd=str(cwd),
+            env=run_env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        log.write(f"[exit {proc.returncode}]\n")
+        if proc.returncode != 0:
+            raise RuntimeError(f"Command failed with exit code {proc.returncode}: {_display_command(cmd)}")
+
+
+def _download_file(url: str, destination: Path, log_path: Path, timeout: int) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = destination.with_suffix(destination.suffix + ".download")
+    if temp_path.exists():
+        temp_path.unlink()
+    with log_path.open("a", encoding="utf-8", errors="replace") as log:
+        log.write(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] download {url} -> {destination}\n")
+        log.flush()
+    previous_timeout = None
+    try:
+        import socket
+
+        previous_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(timeout)
+        urllib.request.urlretrieve(url, temp_path)
+        temp_path.replace(destination)
+    finally:
+        try:
+            import socket
+
+            socket.setdefaulttimeout(previous_timeout)
+        except Exception:
+            pass
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except Exception:
+                pass
+
+
+def _clone_or_download_comfyui(target_dir: Path, log_path: Path, timeout: int) -> None:
+    if (target_dir / "main.py").exists():
+        return
+    if target_dir.exists():
+        try:
+            has_files = any(target_dir.iterdir())
+        except Exception:
+            has_files = True
+        if has_files:
+            raise RuntimeError(f"{target_dir} exists but does not look like a ComfyUI checkout.")
+
+    target_dir.parent.mkdir(parents=True, exist_ok=True)
+    git_exe = shutil.which("git")
+    repo_url = os.environ.get("COMFYUI_REPO_URL") or COMFYUI_REPO_URL
+    if git_exe:
+        _run_comfyui_bootstrap_step(
+            [git_exe, "clone", "--depth", "1", repo_url, str(target_dir)],
+            cwd=target_dir.parent,
+            log_path=log_path,
+            timeout=timeout,
+        )
+        return
+
+    zip_url = os.environ.get("COMFYUI_ZIP_URL") or COMFYUI_ZIP_URL
+    with tempfile.TemporaryDirectory(prefix="odysseus-comfyui-") as tmp:
+        tmp_dir = Path(tmp)
+        archive = tmp_dir / "comfyui.zip"
+        _download_file(zip_url, archive, log_path, timeout)
+        with zipfile.ZipFile(archive) as zf:
+            zf.extractall(tmp_dir)
+        roots = [path for path in tmp_dir.iterdir() if path.is_dir() and (path / "main.py").exists()]
+        if not roots:
+            raise RuntimeError("Downloaded ComfyUI archive did not contain main.py.")
+        shutil.move(str(roots[0]), str(target_dir))
+
+
+def _comfyui_venv_python(target_dir: Path) -> Path:
+    venv_dir = target_dir / ".venv"
+    if os.name == "nt":
+        return venv_dir / "Scripts" / "python.exe"
+    return venv_dir / "bin" / "python"
+
+
+def _install_comfyui_requirements(
+    target_dir: Path,
+    integration: Optional[Dict[str, Any]],
+    log_path: Path,
+    timeout: int,
+) -> None:
+    python_exe = _comfyui_venv_python(target_dir)
+    if not python_exe.exists():
+        _run_comfyui_bootstrap_step(
+            [sys.executable, "-m", "venv", str(target_dir / ".venv")],
+            cwd=target_dir,
+            log_path=log_path,
+            timeout=timeout,
+        )
+    _run_comfyui_bootstrap_step(
+        [str(python_exe), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"],
+        cwd=target_dir,
+        log_path=log_path,
+        timeout=timeout,
+    )
+    requirements = target_dir / "requirements.txt"
+    if requirements.exists() and _coerce_bool(os.environ.get("COMFYUI_INSTALL_REQUIREMENTS"), True):
+        _run_comfyui_bootstrap_step(
+            [str(python_exe), "-m", "pip", "install", "-r", str(requirements)],
+            cwd=target_dir,
+            log_path=log_path,
+            timeout=timeout,
+        )
+    if _comfyui_accelerator(integration) == "directml":
+        _run_comfyui_bootstrap_step(
+            [str(python_exe), "-m", "pip", "install", "torch-directml", "torchaudio==2.4.1"],
+            cwd=target_dir,
+            log_path=log_path,
+            timeout=timeout,
+        )
+
+
+def _comfyui_checkpoint_dir(target_dir: Path) -> Path:
+    return target_dir / "models" / "checkpoints"
+
+
+def _comfyui_has_checkpoint(target_dir: Path) -> bool:
+    checkpoint_dir = _comfyui_checkpoint_dir(target_dir)
+    if not checkpoint_dir.exists():
+        return False
+    return any(checkpoint_dir.glob("*.safetensors")) or any(checkpoint_dir.glob("*.ckpt"))
+
+
+def _bootstrap_comfyui_model(
+    target_dir: Path,
+    integration: Optional[Dict[str, Any]],
+    log_path: Path,
+    timeout: int,
+) -> None:
+    if _comfyui_has_checkpoint(target_dir) or not _comfyui_model_download_enabled(integration):
+        return
+    integration = integration or {}
+    model_url = str(
+        integration.get("model_url")
+        or os.environ.get("COMFYUI_BOOTSTRAP_MODEL_URL")
+        or COMFYUI_DEFAULT_MODEL_URL
+    ).strip()
+    if not model_url:
+        return
+    model_name = str(
+        integration.get("model_filename")
+        or os.environ.get("COMFYUI_BOOTSTRAP_MODEL_NAME")
+        or Path(urlparse(model_url).path).name
+        or COMFYUI_DEFAULT_MODEL_NAME
+    ).strip()
+    if not model_name.lower().endswith((".safetensors", ".ckpt")):
+        model_name = COMFYUI_DEFAULT_MODEL_NAME
+    destination = _comfyui_checkpoint_dir(target_dir) / model_name
+    if destination.exists():
+        return
+    _download_file(model_url, destination, log_path, timeout)
+
+
+def _bootstrap_comfyui_install(integration: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    global _COMFYUI_BOOTSTRAP_LAST_MESSAGE
+
+    base_url = _comfyui_base_url(integration)
+    if not _comfyui_bootstrap_enabled(integration):
+        return {
+            "ok": False,
+            "message": f"ComfyUI Local is not reachable at {base_url}, and auto-install is disabled.",
+        }
+    if not _is_local_comfyui_url(integration):
+        return {
+            "ok": False,
+            "message": f"ComfyUI Local is not reachable at {base_url}. Auto-install only supports localhost URLs.",
+        }
+
+    target_dir = _bootstrap_comfyui_dir(integration).resolve()
+    log_path = _comfyui_bootstrap_log_path()
+    timeout = _comfyui_bootstrap_timeout(integration)
+    try:
+        with log_path.open("a", encoding="utf-8", errors="replace") as log:
+            log.write(
+                "\n[{ts}] Bootstrapping ComfyUI for Odysseus\n"
+                "target: {target}\n"
+                "base_url: {base_url}\n"
+                "accelerator: {accelerator}\n".format(
+                    ts=time.strftime("%Y-%m-%d %H:%M:%S"),
+                    target=target_dir,
+                    base_url=base_url,
+                    accelerator=_comfyui_accelerator(integration),
+                )
+            )
+        _clone_or_download_comfyui(target_dir, log_path, timeout)
+        _install_comfyui_requirements(target_dir, integration, log_path, timeout)
+        _bootstrap_comfyui_model(target_dir, integration, log_path, timeout)
+    except Exception as exc:
+        message = f"ComfyUI auto-install failed: {exc}. Log: {log_path}"
+        _COMFYUI_BOOTSTRAP_LAST_MESSAGE = message
+        return {"ok": False, "message": message}
+
+    message = f"ComfyUI auto-install finished at {target_dir}. Log: {log_path}"
+    _COMFYUI_BOOTSTRAP_LAST_MESSAGE = message
+    return {"ok": True, "message": message, "path": str(target_dir)}
+
+
+def _launch_comfyui_server(integration: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    global _COMFYUI_AUTOSTART_LAST_ATTEMPT, _COMFYUI_AUTOSTART_LAST_MESSAGE, _COMFYUI_AUTOSTART_PROCESS
+
+    base_url = _comfyui_base_url(integration)
+    if not _comfyui_auto_launch_enabled(integration):
+        return {"ok": False, "message": f"ComfyUI Local is not reachable at {base_url}, and auto-launch is disabled."}
+    if not _is_local_comfyui_url(integration):
+        return {
+            "ok": False,
+            "message": (
+                f"ComfyUI Local is not reachable at {base_url}. Auto-launch only starts localhost ComfyUI servers."
+            ),
+        }
+    if _COMFYUI_AUTOSTART_PROCESS and _COMFYUI_AUTOSTART_PROCESS.poll() is None:
+        out_log, err_log = _comfyui_log_paths()
+        return {
+            "ok": True,
+            "message": f"ComfyUI auto-launch is already running. Logs: {out_log}, {err_log}",
+        }
+
+    now = time.monotonic()
+    cooldown = _comfyui_launch_retry_seconds(integration)
+    if cooldown and _COMFYUI_AUTOSTART_LAST_ATTEMPT and now - _COMFYUI_AUTOSTART_LAST_ATTEMPT < cooldown:
+        return {
+            "ok": False,
+            "message": _COMFYUI_AUTOSTART_LAST_MESSAGE
+            or f"ComfyUI Local is not reachable at {base_url}, and the previous auto-launch just failed.",
+        }
+
+    _COMFYUI_AUTOSTART_LAST_ATTEMPT = now
+    spec = _comfyui_launch_spec(integration)
+    if not spec:
+        bootstrap = _bootstrap_comfyui_install(integration)
+        if not bootstrap.get("ok"):
+            message = str(bootstrap.get("message") or (
+                f"ComfyUI Local is not reachable at {base_url}, and Odysseus could not install ComfyUI."
+            ))
+            _COMFYUI_AUTOSTART_LAST_MESSAGE = message
+            return {"ok": False, "message": message}
+        spec = _comfyui_launch_spec(integration)
+        if not spec:
+            message = (
+                f"{bootstrap.get('message')} Odysseus still could not find a launchable ComfyUI entry point. "
+                "Set COMFYUI_DIR to your ComfyUI folder or set COMFYUI_LAUNCH_COMMAND."
+            )
+            _COMFYUI_AUTOSTART_LAST_MESSAGE = message
+            return {"ok": False, "message": message}
+
+    out_log, err_log = _comfyui_log_paths()
+    creationflags = 0
+    if os.name == "nt":
+        creationflags |= getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        creationflags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+
+    try:
+        with out_log.open("ab", buffering=0) as stdout, err_log.open("ab", buffering=0) as stderr:
+            _COMFYUI_AUTOSTART_PROCESS = subprocess.Popen(
+                spec["argv"],
+                cwd=spec["cwd"],
+                stdin=subprocess.DEVNULL,
+                stdout=stdout,
+                stderr=stderr,
+                creationflags=creationflags,
+            )
+    except Exception as exc:
+        message = f"ComfyUI auto-launch failed: {exc}"
+        _COMFYUI_AUTOSTART_LAST_MESSAGE = message
+        return {"ok": False, "message": message}
+
+    message = (
+        f"Started ComfyUI Local from {spec['source']} using {spec['accelerator']} mode. "
+        f"Waiting for {base_url}. Logs: {out_log}, {err_log}"
+    )
+    _COMFYUI_AUTOSTART_LAST_MESSAGE = message
+    return {"ok": True, "message": message}
+
+
+async def _ensure_comfyui_server_available(integration: Optional[Dict[str, Any]] = None) -> tuple[bool, str]:
+    base_url = _comfyui_base_url(integration)
+    if await _comfyui_server_available(integration):
+        return True, f"ComfyUI Local is reachable at {base_url}."
+
+    launch = await asyncio.to_thread(_launch_comfyui_server, integration)
+    if not launch.get("ok"):
+        return False, str(launch.get("message") or f"ComfyUI Local is not reachable at {base_url}.")
+
+    timeout = _comfyui_launch_timeout(integration)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await asyncio.sleep(2.0)
+        if await _comfyui_server_available(integration):
+            return True, str(launch.get("message") or f"ComfyUI Local started at {base_url}.")
+
+    return (
+        False,
+        (
+            f"{launch.get('message') or 'ComfyUI auto-launch started.'} "
+            f"ComfyUI did not become ready at {base_url} within {timeout}s."
+        ),
+    )
+
+
+def _object_options(object_info: Dict[str, Any], class_type: str, input_name: str) -> list[str]:
+    class_info = object_info.get(class_type) if isinstance(object_info, dict) else None
+    if not isinstance(class_info, dict):
+        return []
+    input_info = class_info.get("input") or {}
+    for group in ("required", "optional"):
+        spec = (input_info.get(group) or {}).get(input_name)
+        if isinstance(spec, list) and spec:
+            options = spec[0] if isinstance(spec[0], list) else spec
+            return [str(item) for item in options if item is not None]
+    return []
+
+
+def _pick_comfy_option(
+    options: list[str],
+    requested: Any,
+    preferred: list[str],
+    fallback: str,
+) -> str:
+    raw = str(requested or "").strip()
+    if raw and (not options or raw in options):
+        return raw
+    lowered = {item.lower(): item for item in options}
+    for candidate in preferred:
+        if candidate.lower() in lowered:
+            return lowered[candidate.lower()]
+    return options[0] if options else fallback
+
+
+def _local_checkpoint_name(args: Dict[str, Any], object_info: Dict[str, Any]) -> str:
+    for key in ("ckpt_name", "checkpoint", "local_model"):
+        value = str(args.get(key) or "").strip()
+        if value:
+            return value
+    model = str(args.get("model") or args.get("model_id") or "").strip()
+    if model and not any(model.lower().startswith(prefix) for prefix in RUNCOMFY_MODEL_PREFIXES):
+        return model
+    options = _object_options(object_info, "CheckpointLoaderSimple", "ckpt_name")
+    return options[0] if options else ""
+
+
+def _build_default_comfyui_image_workflow(
+    args: Dict[str, Any],
+    object_info: Dict[str, Any],
+) -> tuple[Dict[str, Any], str, str]:
+    prompt = str(args.get("prompt") or args.get("description") or "").strip()
+    if not prompt:
+        return {}, "", ""
+
+    ckpt_name = _local_checkpoint_name(args, object_info)
+    if not ckpt_name:
+        return {}, prompt, ""
+
+    if args.get("size"):
+        width, height = _split_size(str(args.get("size") or "1024x1024"))
+    else:
+        width, height = _size_from_aspect(str(args.get("aspect_ratio") or ""), (1024, 1024))
+
+    quality = _quality(args)
+    steps_default = 8 if quality in {"draft", "low", "fast"} else 25
+    sampler = _pick_comfy_option(
+        _object_options(object_info, "KSampler", "sampler_name"),
+        args.get("sampler") or args.get("sampler_name"),
+        ["dpmpp_2m", "euler", "euler_ancestral"],
+        "euler",
+    )
+    scheduler = _pick_comfy_option(
+        _object_options(object_info, "KSampler", "scheduler"),
+        args.get("scheduler"),
+        ["karras", "normal", "simple"],
+        "normal",
+    )
+    seed_default = int(uuid.uuid4().int % 2147483647)
+    prompt = _professional_image_prompt(prompt, args, "comfyui-local")
+    negative = str(
+        args.get("negative_prompt")
+        or "low quality, blurry, distorted, deformed, text artifacts, watermark"
+    ).strip()
+    workflow = {
+        "4": {
+            "class_type": "CheckpointLoaderSimple",
+            "inputs": {"ckpt_name": ckpt_name},
+        },
+        "5": {
+            "class_type": "EmptyLatentImage",
+            "inputs": {
+                "width": _coerce_int(args.get("width"), width, 256, 2048),
+                "height": _coerce_int(args.get("height"), height, 256, 2048),
+                "batch_size": _coerce_int(args.get("batch_size"), 1, 1, 4),
+            },
+        },
+        "6": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {"text": prompt, "clip": ["4", 1]},
+        },
+        "7": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {"text": negative, "clip": ["4", 1]},
+        },
+        "3": {
+            "class_type": "KSampler",
+            "inputs": {
+                "seed": _coerce_int(args.get("seed"), seed_default, 0, 2147483647),
+                "steps": _coerce_int(args.get("steps"), steps_default, 1, 80),
+                "cfg": _coerce_float(args.get("cfg") or args.get("cfg_scale"), 7.0, 1.0, 20.0),
+                "sampler_name": sampler,
+                "scheduler": scheduler,
+                "denoise": _coerce_float(args.get("denoise"), 1.0, 0.0, 1.0),
+                "model": ["4", 0],
+                "positive": ["6", 0],
+                "negative": ["7", 0],
+                "latent_image": ["5", 0],
+            },
+        },
+        "8": {
+            "class_type": "VAEDecode",
+            "inputs": {"samples": ["3", 0], "vae": ["4", 2]},
+        },
+        "9": {
+            "class_type": "SaveImage",
+            "inputs": {"filename_prefix": "odysseus", "images": ["8", 0]},
+        },
+    }
+    return workflow, prompt, f"comfyui-local:{ckpt_name}"
+
+
+def _workflow_from_args(args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    workflow = args.get("workflow") or args.get("comfyui_workflow")
+    if isinstance(workflow, dict):
+        return workflow
+    if isinstance(workflow, str) and workflow.strip():
+        try:
+            parsed = json.loads(workflow)
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            return None
+    explicit = args.get("input") or args.get("body")
+    if isinstance(explicit, dict) and any(
+        isinstance(value, dict) and value.get("class_type")
+        for value in explicit.values()
+    ):
+        return explicit
+    return None
+
+
+def _comfyui_history_outputs(history_entry: Dict[str, Any]) -> list[Dict[str, Any]]:
+    outputs = history_entry.get("outputs") if isinstance(history_entry, dict) else None
+    if not isinstance(outputs, dict):
+        return []
+    collected: list[Dict[str, Any]] = []
+    for node_output in outputs.values():
+        if not isinstance(node_output, dict):
+            continue
+        for key in ("images", "gifs", "videos", "audio", "audios"):
+            values = node_output.get(key)
+            if isinstance(values, list):
+                collected.extend(item for item in values if isinstance(item, dict) and item.get("filename"))
+    return collected
+
+
+def _ext_from_response(filename: str, content_type: str) -> str:
+    ext = Path(filename or "").suffix.lower().lstrip(".")
+    if ext:
+        return ext
+    content_type = str(content_type or "").lower()
+    if "png" in content_type:
+        return "png"
+    if "jpeg" in content_type or "jpg" in content_type:
+        return "jpg"
+    if "webp" in content_type:
+        return "webp"
+    if "mp4" in content_type:
+        return "mp4"
+    if "mpeg" in content_type:
+        return "mp3"
+    if "wav" in content_type:
+        return "wav"
+    return "bin"
+
+
+async def _download_comfyui_outputs(
+    client: httpx.AsyncClient,
+    base_url: str,
+    integration: Optional[Dict[str, Any]],
+    outputs: list[Dict[str, Any]],
+    *,
     kind: str,
-    content: str,
+    prompt: str,
+    model_id: str,
+    owner: Optional[str],
+    session_id: Optional[str],
+    args: Dict[str, Any],
+) -> list[Dict[str, Any]]:
+    generated_root = Path(GENERATED_IMAGES_DIR)
+    generated_root.mkdir(parents=True, exist_ok=True)
+    preferred_type = "audio" if kind == "music" else kind
+    files: list[Dict[str, Any]] = []
+    for output in outputs:
+        view_params = {
+            "filename": output.get("filename"),
+            "subfolder": output.get("subfolder") or "",
+            "type": output.get("type") or "output",
+        }
+        response = await client.get(
+            f"{base_url}/view",
+            params=_comfyui_params(integration, view_params),
+        )
+        response.raise_for_status()
+        ext = _ext_from_response(str(output.get("filename") or ""), response.headers.get("content-type", ""))
+        if ext not in MEDIA_EXTS:
+            ext = "png" if kind == "image" else ext
+        final_name = f"{uuid.uuid4().hex[:12]}.{ext}"
+        final_path = generated_root / final_name
+        final_path.write_bytes(response.content)
+        media_type = _media_type_for_path(final_path, preferred_type)
+        media_id = _save_gallery_row(
+            path=final_path,
+            filename=final_name,
+            media_type=media_type,
+            prompt=prompt,
+            model_id=model_id,
+            owner=owner,
+            session_id=session_id,
+            args=args,
+        )
+        files.append({
+            "url": f"/api/generated-image/{final_name}",
+            "id": media_id,
+            "filename": final_name,
+            "type": media_type,
+            "kind": kind,
+            "size_bytes": final_path.stat().st_size,
+        })
+    return files
+
+
+def _media_success_result(
+    *,
+    kind: str,
+    files: list[Dict[str, Any]],
+    prompt: str,
+    model_id: str,
+    args: Dict[str, Any],
+    provider: str,
+) -> Dict[str, Any]:
+    first = files[0]
+    label = first["type"]
+    result: Dict[str, Any] = {
+        "output": f"Generated {label} saved: {first['url']}",
+        "media_url": first["url"],
+        "media_id": first.get("id") or "",
+        "media_type": first["type"],
+        "media_prompt": prompt,
+        "media_model": model_id,
+        "media_provider": provider,
+        "media_size": str(args.get("size") or args.get("duration") or ""),
+        "media_quality": _quality(args),
+        "media_files": files,
+        "exit_code": 0,
+    }
+    if first["type"] == "image":
+        result.update({
+            "image_url": first["url"],
+            "image_id": first.get("id") or "",
+            "image_prompt": prompt,
+            "image_model": model_id,
+            "image_provider": provider,
+            "image_size": str(args.get("size") or ""),
+            "image_quality": _quality(args),
+        })
+    return result
+
+
+async def _generate_local_comfyui_media(
+    kind: str,
+    args: Dict[str, Any],
+    *,
+    owner: Optional[str] = None,
+    session_id: Optional[str] = None,
+    integration: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    if kind != "image" and not _workflow_from_args(args):
+        return {
+            "error": (
+                "Local ComfyUI currently needs an exact workflow JSON for video or audio. "
+                "For simple video/music requests, enable the RunComfy Cloud integration, or pass "
+                "`workflow`/`comfyui_workflow` for your local ComfyUI setup."
+            ),
+            "exit_code": 1,
+        }
+
+    integration = integration or _comfyui_integration(args)
+    base_url = _comfyui_base_url(integration)
+    if not base_url:
+        return {"error": "ComfyUI Local has no Base URL configured.", "exit_code": 1}
+
+    ready, ready_message = await _ensure_comfyui_server_available(integration)
+    if not ready:
+        return {"error": ready_message, "exit_code": 1}
+
+    timeout = _coerce_int(args.get("timeout"), 900, 30, 7200)
+    client_id = uuid.uuid4().hex
+    prompt = str(args.get("prompt") or args.get("description") or f"Generated {kind}").strip()
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=30.0,
+            headers=_comfyui_headers(integration),
+            auth=_comfyui_auth(integration),
+        ) as client:
+            object_info: Dict[str, Any] = {}
+            workflow = _workflow_from_args(args)
+            if workflow is None:
+                try:
+                    object_response = await client.get(
+                        f"{base_url}/object_info",
+                        params=_comfyui_params(integration),
+                    )
+                    object_response.raise_for_status()
+                    object_info = object_response.json()
+                except Exception as exc:
+                    return {
+                        "error": (
+                            f"ComfyUI Local is reachable at {base_url}, but Odysseus could not read /object_info: {exc}. "
+                            "Start ComfyUI normally and make sure its API is enabled."
+                        ),
+                        "exit_code": 1,
+                    }
+                workflow, prompt, model_id = _build_default_comfyui_image_workflow(args, object_info)
+                if not workflow:
+                    if not model_id:
+                        return {
+                            "error": (
+                                "ComfyUI Local is reachable, but no checkpoint was reported by CheckpointLoaderSimple. "
+                                "Put a .safetensors/.ckpt file under ComfyUI/models/checkpoints or pass `ckpt_name`."
+                            ),
+                            "exit_code": 1,
+                        }
+                    return {"error": f"A prompt is required for local ComfyUI {kind} generation.", "exit_code": 1}
+            else:
+                model_id = str(args.get("model") or args.get("model_id") or "comfyui-local:workflow").strip()
+
+            submit_response = await client.post(
+                f"{base_url}/prompt",
+                json={"prompt": workflow, "client_id": client_id},
+                params=_comfyui_params(integration),
+            )
+            if submit_response.status_code >= 400:
+                return {
+                    "error": f"ComfyUI Local rejected the workflow: HTTP {submit_response.status_code}\n{submit_response.text[:1200]}",
+                    "exit_code": 1,
+                }
+            submit_payload = submit_response.json()
+            prompt_id = str(submit_payload.get("prompt_id") or "").strip()
+            if not prompt_id:
+                return {"error": f"ComfyUI Local did not return a prompt_id: {submit_payload}", "exit_code": 1}
+
+            history_entry: Dict[str, Any] = {}
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                history_response = await client.get(
+                    f"{base_url}/history/{prompt_id}",
+                    params=_comfyui_params(integration),
+                )
+                if history_response.is_success:
+                    history_payload = history_response.json()
+                    entry = history_payload.get(prompt_id) if isinstance(history_payload, dict) else None
+                    if isinstance(entry, dict):
+                        status = entry.get("status") or {}
+                        status_str = str(status.get("status_str") or "").lower()
+                        if status_str == "error":
+                            return {
+                                "error": f"ComfyUI Local workflow failed: {json.dumps(status, ensure_ascii=False)[:1600]}",
+                                "exit_code": 1,
+                            }
+                        outputs = _comfyui_history_outputs(entry)
+                        if outputs:
+                            history_entry = entry
+                            break
+                await asyncio.sleep(1.0)
+
+            if not history_entry:
+                return {"error": f"ComfyUI Local generation timed out after {timeout}s.", "exit_code": 1}
+
+            outputs = _comfyui_history_outputs(history_entry)
+            files = await _download_comfyui_outputs(
+                client,
+                base_url,
+                integration,
+                outputs,
+                kind=kind,
+                prompt=prompt,
+                model_id=model_id,
+                owner=owner,
+                session_id=session_id,
+                args=args,
+            )
+    except httpx.ConnectError:
+        return {
+            "error": (
+                f"ComfyUI Local is not reachable at {base_url}. Start ComfyUI locally, or add/edit the "
+                "ComfyUI Local integration with the right Base URL."
+            ),
+            "exit_code": 1,
+        }
+    except httpx.RequestError as exc:
+        return {"error": f"ComfyUI Local request failed: {exc}", "exit_code": 1}
+    except Exception as exc:
+        return {"error": f"ComfyUI Local generation failed: {exc}", "exit_code": 1}
+
+    if not files:
+        return {
+            "error": "ComfyUI Local completed, but no media outputs were returned in prompt history.",
+            "exit_code": 1,
+        }
+
+    return _media_success_result(
+        kind=kind,
+        files=files,
+        prompt=prompt,
+        model_id=model_id,
+        args=args,
+        provider="comfyui_local",
+    )
+
+
+async def _generate_runcomfy_cli_media(
+    kind: str,
+    args: Dict[str, Any],
     *,
     owner: Optional[str] = None,
     session_id: Optional[str] = None,
     default_model: Optional[str] = None,
+    integration: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    args = _parse_args(content, kind=kind)
+    integration = integration or _runcomfy_integration(args)
+    if not integration:
+        return {
+            "error": (
+                "RunComfy Cloud is disabled. Add and enable the `RunComfy Cloud` integration to use the paid route. "
+                "For the free route, start local ComfyUI and add/use the `ComfyUI Local` integration."
+            ),
+            "exit_code": 1,
+        }
+
     model_id = _select_model(kind, args, default_model).strip()
     if not model_id:
         return {"error": "RunComfy model_id is required.", "exit_code": 1}
@@ -805,13 +2162,13 @@ async def generate_runcomfy_media(
     if not exe:
         return {
             "error": (
-                "RunComfy CLI is not installed or not on PATH. Install it with "
-                "`npm i -g @runcomfy/cli`, then run `runcomfy login` once."
+                "RunComfy Cloud integration is enabled, but the RunComfy CLI is not installed or not on PATH. "
+                "Install it with `npm i -g @runcomfy/cli`, then run `runcomfy login` once."
             ),
             "exit_code": 1,
         }
 
-    ready_error = await asyncio.to_thread(_check_runcomfy_ready, exe)
+    ready_error = await asyncio.to_thread(_check_runcomfy_ready, exe, integration)
     if ready_error:
         return ready_error
 
@@ -837,7 +2194,7 @@ async def generate_runcomfy_media(
             cmd.extend(["--output", "json"])
 
         try:
-            proc = await asyncio.to_thread(_run_checked, cmd, timeout, str(tmp_dir))
+            proc = await asyncio.to_thread(_run_checked, cmd, timeout, str(tmp_dir), _runcomfy_env(integration))
         except subprocess.TimeoutExpired:
             return {"error": f"RunComfy {kind} generation timed out after {timeout}s.", "exit_code": 1}
         except Exception as exc:
@@ -875,29 +2232,128 @@ async def generate_runcomfy_media(
             "exit_code": 1,
         }
 
-    first = files[0]
-    label = first["type"]
-    result: Dict[str, Any] = {
-        "output": f"Generated {label} saved: {first['url']}",
-        "media_url": first["url"],
-        "media_id": first.get("id") or "",
-        "media_type": first["type"],
-        "media_prompt": prompt,
-        "media_model": model_id,
-        "media_size": str(args.get("size") or args.get("duration") or ""),
-        "media_quality": _quality(args),
-        "media_files": files,
-        "exit_code": 0,
-    }
-    if first["type"] == "image":
-        result.update({
-            "image_url": first["url"],
-            "image_id": first.get("id") or "",
-            "image_prompt": prompt,
-            "image_model": model_id,
-            "image_size": str(args.get("size") or body.get("size") or (
-                f"{body.get('width')}x{body.get('height')}" if body.get("width") and body.get("height") else ""
-            )),
-            "image_quality": _quality(args),
-        })
+    result = _media_success_result(
+        kind=kind,
+        files=files,
+        prompt=prompt,
+        model_id=model_id,
+        args=args,
+        provider="runcomfy",
+    )
+    if result.get("image_url"):
+        result["image_size"] = str(args.get("size") or body.get("size") or (
+            f"{body.get('width')}x{body.get('height')}" if body.get("width") and body.get("height") else ""
+        ))
     return result
+
+
+async def generate_runcomfy_media(
+    kind: str,
+    content: str,
+    *,
+    owner: Optional[str] = None,
+    session_id: Optional[str] = None,
+    default_model: Optional[str] = None,
+) -> Dict[str, Any]:
+    args = _parse_args(content, kind=kind)
+    requested = _requested_provider(args, content) or _requested_provider_from_integration(args)
+
+    if requested == "comfyui_local":
+        return await _generate_local_comfyui_media(
+            kind,
+            args,
+            owner=owner,
+            session_id=session_id,
+            integration=_comfyui_integration(args),
+        )
+
+    if requested == "runcomfy":
+        return await _generate_runcomfy_cli_media(
+            kind,
+            args,
+            owner=owner,
+            session_id=session_id,
+            default_model=default_model,
+            integration=_runcomfy_integration(args),
+        )
+
+    if kind == "image":
+        local_integration = _comfyui_integration(args)
+        if (
+            local_integration
+            or await _comfyui_server_available(None)
+            or _comfyui_can_auto_launch(None)
+            or _comfyui_can_auto_bootstrap(None)
+        ):
+            return await _generate_local_comfyui_media(
+                kind,
+                args,
+                owner=owner,
+                session_id=session_id,
+                integration=local_integration,
+            )
+
+    runcomfy_integration = _runcomfy_integration(args)
+    if runcomfy_integration:
+        return await _generate_runcomfy_cli_media(
+            kind,
+            args,
+            owner=owner,
+            session_id=session_id,
+            default_model=default_model,
+            integration=runcomfy_integration,
+        )
+
+    if kind == "image":
+        return {
+            "error": (
+                "No media backend is ready. For the free path, Odysseus can auto-install and launch ComfyUI at "
+                f"{_default_comfyui_base_url()}. If you disabled auto-install, set COMFYUI_DIR or COMFYUI_LAUNCH_COMMAND. "
+                "For AMD GPUs, set COMFYUI_ACCELERATOR=amd or use a DirectML ComfyUI launch script. "
+                "For the paid path, add and enable the `RunComfy Cloud` integration."
+            ),
+            "exit_code": 1,
+        }
+
+    return {
+        "error": (
+            f"No {kind} media backend is configured. Enable `RunComfy Cloud` for simple {kind} generation, "
+            "or pass an exact local ComfyUI workflow with provider `comfyui`."
+        ),
+        "exit_code": 1,
+    }
+
+
+async def test_media_integration(integration: Dict[str, Any]) -> Dict[str, Any]:
+    kind = _integration_kind(integration)
+    if kind == "comfyui_local":
+        base_url = _comfyui_base_url(integration)
+        try:
+            async with httpx.AsyncClient(
+                timeout=5.0,
+                headers=_comfyui_headers(integration),
+                auth=_comfyui_auth(integration),
+            ) as client:
+                response = await client.get(
+                    f"{base_url}/system_stats",
+                    params=_comfyui_params(integration),
+                )
+            if response.is_success:
+                return {"ok": True, "message": f"ComfyUI Local is reachable at {base_url}."}
+            return {"ok": False, "message": f"ComfyUI Local returned HTTP {response.status_code} from {base_url}."}
+        except Exception as exc:
+            return {"ok": False, "message": f"ComfyUI Local is not reachable at {base_url}: {exc}"[:500]}
+
+    if kind == "runcomfy":
+        exe = _runcomfy_executable()
+        if not exe:
+            return {
+                "ok": False,
+                "message": "RunComfy Cloud integration is enabled, but the RunComfy CLI is not installed or not on PATH.",
+            }
+        ready_error = await asyncio.to_thread(_check_runcomfy_ready, exe, integration)
+        if ready_error:
+            return {"ok": False, "message": str(ready_error.get("error") or "RunComfy CLI is not ready")[:500]}
+        return {"ok": True, "message": "RunComfy CLI is installed and signed in."}
+
+    return {"ok": False, "message": "This integration is not a ComfyUI/RunComfy media integration."}
