@@ -167,7 +167,7 @@
         var svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>" + inner + "</svg>";
         href = 'data:image/svg+xml,' + encodeURIComponent(svg);
       } else {
-        href = bp + '/static/icon-512.png';
+        href = bp + '/static' + '/icon-512.png';
         iconType = 'image/png';
       }
 
@@ -182,7 +182,7 @@
       try {
         var ml = document.querySelector("link[rel='manifest']");
         if (!ml) { ml = document.createElement('link'); ml.rel = 'manifest'; document.head.appendChild(ml); }
-        ml.href = bp + '/manifest.json';
+        ml.href = bp + '/manifest' + '.json';
       } catch(_) {}
     } catch(e){}
   })();
@@ -2366,6 +2366,6 @@
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
 <script type="module" src="/static/js/init.js"></script>
 <script type="module" src="/static/js/a11y.js"></script>
-<script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register((window.__odysseusBasePath || '') + '/sw.js').catch(()=>{});}</script>
+<script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register((window.__odysseusBasePath || '') + '/sw' + '.js').catch(()=>{});}</script>
 </body>
 </html>

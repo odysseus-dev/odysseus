@@ -44,13 +44,13 @@
     
     // Dynamic manifest, favicon and apple-touch-icon registration for subdirectory support
     var ml = document.querySelector("link[rel='manifest']");
-    if (ml) ml.href = bp + '/manifest.json';
+    if (ml) ml.href = bp + '/manifest' + '.json';
     
     var fav = document.querySelector("link[rel='icon']");
-    if (fav) fav.href = bp + '/static/icon-192.png';
+    if (fav) fav.href = bp + '/static' + '/icon-192.png';
     
     var apple = document.querySelector("link[rel='apple-touch-icon']");
-    if (apple) apple.href = bp + '/static/icon-192.png';
+    if (apple) apple.href = bp + '/static' + '/icon-192.png';
 
     var t = JSON.parse(localStorage.getItem('odysseus-theme'));
     var s = document.documentElement.style;
