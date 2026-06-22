@@ -820,7 +820,12 @@ async def serve_manifest(request: Request):
             content = content.replace('"/login', f'"{base_path}/login')
             content = content.replace('"start_url": "/"', f'"start_url": "{base_path}/"')
             content = content.replace('"scope": "/"', f'"scope": "{base_path}/"')
-        return Response(content, media_type="application/manifest+json")
+        headers = {
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
+        return Response(content, media_type="application/manifest+json", headers=headers)
     raise HTTPException(404, "manifest.json not found")
 
 def calculate_static_hash() -> str:
@@ -858,7 +863,12 @@ async def serve_sw(request: Request):
             f"const CACHE_NAME = 'odysseus-{STATIC_HASH}'",
             content
         )
-        return Response(content, media_type="text/javascript")
+        headers = {
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
+        return Response(content, media_type="text/javascript", headers=headers)
     raise HTTPException(404, "sw.js not found")
 
 @app.get("/")
