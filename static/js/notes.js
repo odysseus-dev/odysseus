@@ -1247,8 +1247,6 @@ export function openPanel() {
   }
   _open = true;
   _editingId = null;
-  // Reset the search filter — the rebuilt pane's search input renders empty, so a
-  // stale _searchQuery would silently hide non-matching notes after a reopen.
   _searchQuery = '';
   _clearViewedReminderGlows();
   _firedDotDismissedAt = Date.now();
@@ -2054,10 +2052,6 @@ function _renderNotes() {
       ${canEdit && _hasItems(note) ? `<div class="note-cl-quickadd"><input type="text" class="note-cl-quickadd-input" placeholder="+ Add item" data-note-id="${note.id}" /></div>` : ''}
       ${(reminderTagHtml || goalPill) ? `<div class="note-card-tagrow">${reminderTagHtml}${goalPill}</div>` : ''}
       ${noteTags.length ? `<div class="note-card-label">${noteTags.map(t => `<button type="button" class="note-card-label-chip" data-note-label-filter="${_esc(t)}" title="Filter #${_esc(t)}">#${_esc(t)}</button>`).join(' ')}</div>` : ''}
-      ${note.agent_session_id ? `<button class="note-agent-tag" data-note-id="${note.id}" data-session-id="${_esc(note.agent_session_id)}" title="Open the agent's chat for this note">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></svg>
-        <span>Agent</span>
-      </button>` : ''}
       <div class="note-card-actions">
         <div class="note-card-colors">${canEdit ? colorDots : ''}</div>
         <span style="flex:1"></span>
@@ -2469,16 +2463,6 @@ function _bindCardEvents(body) {
       e.preventDefault();
       e.stopPropagation();
       _openNoteCornerMenu(btn);
-    });
-  });
-  // Agent tag — opens the chat session the agent ran for this note.
-  body.querySelectorAll('.note-agent-tag').forEach(tag => {
-    tag.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const sid = tag.dataset.sessionId;
-      const _sm = window.sessionModule;
-      if (sid && _sm && _sm.selectSession) { closePanel(); _sm.selectSession(sid); }
     });
   });
   body.querySelectorAll('.note-card-label-chip').forEach(chip => {
@@ -4466,6 +4450,23 @@ function _openNoteCornerMenu(btn) {
   menu.querySelector('[data-act="agent"]').addEventListener('click', () => { menu.remove(); _agentSolveNote(id); });
 }
 
+function _positionNoteMenu(menu, btn, width = 196) {
+  document.body.appendChild(menu);
+  const r = btn.getBoundingClientRect();
+  let left = Math.min(r.right - width, window.innerWidth - width - 8);
+  left = Math.max(8, left);
+  const mh = menu.offsetHeight || 112;
+  const below = window.innerHeight - r.bottom;
+  const top = (below < mh + 8 && r.top > mh + 8) ? (r.top - mh - 4) : (r.bottom + 4);
+  menu.style.cssText += `position:fixed;z-index:11000;top:${Math.round(top)}px;left:${Math.round(left)}px;min-width:${width}px;`;
+  const close = (ev) => {
+    if (ev && menu.contains(ev.target)) return;
+    menu.remove();
+    document.removeEventListener('click', close, true);
+  };
+  setTimeout(() => document.addEventListener('click', close, true), 0);
+}
+
 // Build the prompt the agent gets from a note: title + body, plus any
 // not-yet-done checklist items.
 function _noteToAgentPrompt(note) {
@@ -4477,7 +4478,7 @@ function _noteToAgentPrompt(note) {
       .forEach(it => parts.push('- ' + it.text.trim()));
   }
   const body = parts.join('\n');
-  return body ? `Help me get this done:\n\n${body}` : '';
+  return body ? `Help me get this done:\n\n${body}\n\nThe source note is read-only. Do not edit, replace, or update it.` : '';
 }
 
 // Agent-solve: create a chat session server-side, kick off an agent run
@@ -4519,6 +4520,7 @@ async function _agentSolveNote(id) {
     fd.append('message', prompt);
     fd.append('session', sid);
     fd.append('mode', 'agent');
+    fd.append('disabled_tools', JSON.stringify(['manage_notes']));
     fetch(`${API_BASE}/api/chat_stream`, { method: 'POST', credentials: 'same-origin', body: fd })
       .then(async (res) => {
         if (!res.ok || !res.body) return;
@@ -4537,6 +4539,11 @@ async function _agentSolveNote(id) {
   }
 }
 
+// Per-item version of _agentSolveNote. Scoped to a single checklist item;
+// the note title (if any) is included as context, but only this one item's
+// text is the work the agent is asked to do. agent_session_id is set on the
+// PARENT note (latest-wins) so the Agent tag still surfaces the most recent
+// run from this note — same UX as a per-note solve.
 async function _copyNote(noteId, btnEl) {
   const note = _notes.find(n => n.id === noteId);
   if (!note) return false;

@@ -2936,6 +2936,20 @@ function _createCard(em) {
     titleRow.appendChild(att);
   }
 
+  const tags = Array.isArray(em.tags) ? em.tags : [];
+  if (tags.length || em.is_spam_verdict) {
+    const tagWrap = document.createElement('span');
+    tagWrap.className = 'email-tags email-card-tags';
+    tagWrap.innerHTML = tags.map(t => {
+      const tag = String(t || '').trim().toLowerCase().replace(/_/g, '-');
+      return tag ? `<span class="email-tag email-tag-${_esc(tag)}">${_esc(tag)}</span>` : '';
+    }).join('');
+    if (em.is_spam_verdict) {
+      tagWrap.insertAdjacentHTML('beforeend', '<span class="email-tag email-tag-spam">spam</span>');
+    }
+    titleRow.appendChild(tagWrap);
+  }
+
   // Done check + unread dot stay next to the subject on the left.
   const isSentFolder = /sent/i.test(state._libFolder);
   if (!isSentFolder) {
@@ -4560,11 +4574,12 @@ function _wireAttachmentHandlers(reader, folder) {
       const uid = openBtn.dataset.openUid;
       const index = openBtn.dataset.openIndex;
       const name = openBtn.dataset.openName || `attachment-${index}`;
+      const sourceFolder = openBtn.dataset.openFolder || useFolder;
       if (!uid || index == null) return;
       const orig = openBtn.style.opacity;
       openBtn.style.opacity = '0.4';
       try {
-        const folderQs = encodeURIComponent(useFolder);
+        const folderQs = encodeURIComponent(sourceFolder);
         const res = await fetch(
           `${API_BASE}/api/email/attachment-as-doc/${encodeURIComponent(uid)}/${encodeURIComponent(index)}?folder=${folderQs}${_acct()}`,
           { method: 'POST', credentials: 'same-origin' }
@@ -4618,8 +4633,9 @@ function _wireAttachmentHandlers(reader, folder) {
       const uid = chip.dataset.attUid;
       const index = chip.dataset.attIndex;
       const name = chip.dataset.attName || `attachment-${index}`;
+      const sourceFolder = chip.dataset.attFolder || useFolder;
       if (!uid || index == null) return;
-      const url = `${API_BASE}/api/email/attachment/${encodeURIComponent(uid)}/${encodeURIComponent(index)}?folder=${encodeURIComponent(useFolder)}${_acct()}`;
+      const url = `${API_BASE}/api/email/attachment/${encodeURIComponent(uid)}/${encodeURIComponent(index)}?folder=${encodeURIComponent(sourceFolder)}${_acct()}`;
       if (_isMobileUA) {
         window.open(url, '_blank');
         return;
@@ -4698,25 +4714,50 @@ function _isLikelySignatureImage(a) {
 // Build the attachments header+chips HTML for an email read response. Pulled
 // out so both the initial-open and the swap-reader paths can render it.
 function _buildAttsHtmlFor(uid, data) {
-  if (!data || !data.attachments || !data.attachments.length) return '';
-  const _OPENABLE_RE = /\.(pdf|docx|txt|md|markdown)$/i;
-  const visible = data.attachments.filter(a => !_isLikelySignatureImage(a));
-  if (!visible.length) return '';
-  const chips = visible.map(a => {
+  if (!data) return '';
+  const _OPENABLE_RE = /\.(pdf|docx|txt|md|markdown|eml)$/i;
+  const currentAttachments = Array.isArray(data.attachments) ? data.attachments : [];
+  const relatedAttachments = Array.isArray(data.related_attachments) ? data.related_attachments : [];
+  if (!currentAttachments.length && !relatedAttachments.length) return '';
+  const visible = currentAttachments.filter(a => !_isLikelySignatureImage(a));
+  const hidden = currentAttachments.filter(a => _isLikelySignatureImage(a));
+  const related = relatedAttachments.filter(a => !_isLikelySignatureImage(a));
+  const renderChip = (a, extraClass = '') => {
     const openable = _OPENABLE_RE.test(a.filename || '');
+    const chipUid = a.source_uid || a.uid || uid;
+    const chipFolder = a.source_folder || data.folder || state._libFolder || 'INBOX';
     const openBtn = openable
-      ? `<span class="email-attachment-open" title="Open in document editor" data-open-uid="${_esc(uid)}" data-open-index="${a.index}" data-open-name="${_esc(a.filename)}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><line x1="8" y1="9" x2="10" y2="9"/></svg><span class="email-attachment-open-label">Open</span></span>`
+      ? `<span class="email-attachment-open" title="Open in document editor" data-open-uid="${_esc(chipUid)}" data-open-index="${a.index}" data-open-name="${_esc(a.filename)}" data-open-folder="${_esc(chipFolder)}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><line x1="8" y1="9" x2="10" y2="9"/></svg><span class="email-attachment-open-label">Open</span></span>`
       : '';
-    return `<button type="button" class="email-attachment-chip" data-att-uid="${_esc(uid)}" data-att-index="${a.index}" data-att-name="${_esc(a.filename)}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg><span>${_esc(a.filename)}</span><span class="att-size">${Math.round((a.size||0)/1024)} KB</span>${openBtn}</button>`;
-  }).join('');
+    return `<button type="button" class="email-attachment-chip${extraClass}" data-att-uid="${_esc(chipUid)}" data-att-index="${a.index}" data-att-name="${_esc(a.filename)}" data-att-folder="${_esc(chipFolder)}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg><span>${_esc(a.filename)}</span><span class="att-size">${Math.round((a.size||0)/1024)} KB</span>${openBtn}</button>`;
+  };
+  const chips = visible.map(a => renderChip(a)).join('');
+  const hiddenChips = hidden.map(a => renderChip(a, ' email-attachment-chip-muted')).join('');
+  const relatedChips = related.map(a => renderChip(a, ' email-attachment-chip-related')).join('');
+  const visibleSection = visible.length
+    ? '<div class="email-reader-atts">' + chips + '</div>'
+    : '';
+  const relatedSection = related.length
+    ? '<div class="email-reader-atts-hidden-note">From earlier in this thread</div><div class="email-reader-atts email-reader-atts-related">' + relatedChips + '</div>'
+    : '';
+  const hiddenSection = hidden.length
+    ? '<div class="email-reader-atts-hidden-note">Filtered inline images / signature files</div><div class="email-reader-atts email-reader-atts-hidden">' + hiddenChips + '</div>'
+    : '';
+  const label = visible.length
+    ? `Attachments (${visible.length + related.length})`
+    : related.length
+      ? `Thread attachments (${related.length})`
+      : `Hidden inline attachments (${hidden.length})`;
   return (
     '<div class="email-reader-atts-wrap collapsed">'
     +   '<div class="email-reader-atts-header email-summary-toggle" role="button" tabindex="0">'
     +     '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>'
-    +     `<span>Attachments (${data.attachments.length})</span>`
+    +     `<span>${label}</span>`
     +     '<svg class="email-summary-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:auto;transition:transform .15s ease;"><polyline points="6 9 12 15 18 9"/></svg>'
     +   '</div>'
-    +   '<div class="email-reader-atts">' + chips + '</div>'
+    +   visibleSection
+    +   relatedSection
+    +   hiddenSection
     + '</div>'
   );
 }
