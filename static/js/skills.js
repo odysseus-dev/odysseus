@@ -1802,7 +1802,7 @@ async function _showSkillSource(name) {
   wrap.className = 'modal';
   wrap.style.display = 'block';
   wrap.innerHTML = `
-    <div class="modal-content" style="max-width:760px;max-height:85vh;display:flex;flex-direction:column">
+    <div class="modal-content" style="max-width:760px;display:flex;flex-direction:column">
       <div class="modal-header">
         <h4>SKILL.md — <code>${esc(name)}</code></h4>
         <span style="flex:1"></span>

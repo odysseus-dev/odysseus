@@ -571,6 +571,24 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     let timeoutId = null;
     let responseTimeoutCleared = false;
     let clearResponseTimeout = () => {};
+    let firstTokenWaitTimers = [];
+    const clearFirstTokenWaitTimers = () => {
+      firstTokenWaitTimers.forEach(t => { try { clearTimeout(t); } catch (_) {} });
+      firstTokenWaitTimers = [];
+    };
+    const scheduleFirstTokenWaitMessages = () => {
+      clearFirstTokenWaitTimers();
+      const steps = [
+        [20000, 'Still waiting for first token'],
+        [60000, 'Large local model is pre-filling context'],
+        [120000, 'Still working - no tokens yet from the model'],
+      ];
+      firstTokenWaitTimers = steps.map(([ms, text]) => setTimeout(() => {
+        if (!accumulated && spinner && spinner.element && !(currentAbort && currentAbort.signal.aborted)) {
+          spinner.updateMessage(text);
+        }
+      }, ms));
+    };
     const clearProcessingProbe = () => {
       if (processingProbeTimer) {
         clearTimeout(processingProbeTimer);
@@ -921,56 +939,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         setTimeout(() => spinner.updateMessage('Analyzing sources'), 1500);
       } else {
         spinner.updateMessage('Processing request');
-        const endpointUrlForProbe = sessionModule.getCurrentEndpointUrl ? sessionModule.getCurrentEndpointUrl() : null;
-        if (endpointUrlForProbe && modelName) {
-          processingProbeTimer = setTimeout(async () => {
-            processingProbeTimer = null;
-            if (accumulated || !spinner || !spinner.element || (currentAbort && currentAbort.signal.aborted)) return;
-            processingProbeAbort = new AbortController();
-            try {
-              spinner.updateMessage('Checking model endpoint');
-              const status = await _probeCurrentEndpointStatus(endpointUrlForProbe, processingProbeAbort.signal);
-              if (accumulated || !spinner || !spinner.element || (currentAbort && currentAbort.signal.aborted)) return;
-              if (!status) {
-                spinner.updateMessage('Still waiting for model');
-              } else if (status.alive) {
-                const latency = status.latency_ms ? ` (${status.latency_ms}ms)` : '';
-                spinner.updateMessage(`Endpoint online${latency}; waiting for first token`);
-              } else {
-                // Probe confirms the endpoint isn't responding. Don't
-                // sit on a hung fetch — give the user 5s to read the
-                // status, then auto-abort with reason='offline' so the
-                // catch handler shows a clean "switch model" message
-                // instead of leaving the spinner spinning forever.
-                if (status.error) console.warn('Model endpoint probe failed:', status.error);
-                let _countdown = 5;
-                spinner.updateMessage(`Endpoint offline — cancelling in ${_countdown}s`);
-                const _tick = setInterval(() => {
-                  _countdown--;
-                  if (!spinner || !spinner.element || (currentAbort && currentAbort.signal.aborted) || accumulated) {
-                    clearInterval(_tick);
-                    return;
-                  }
-                  if (_countdown > 0) {
-                    spinner.updateMessage(`Endpoint offline — cancelling in ${_countdown}s`);
-                  } else {
-                    clearInterval(_tick);
-                    if (currentAbort && !currentAbort.signal.aborted) {
-                      currentAbort._reason = 'offline';
-                      currentAbort.abort();
-                    }
-                  }
-                }, 1000);
-              }
-            } catch (e) {
-              if (e && e.name !== 'AbortError' && spinner && spinner.element && !accumulated) {
-                spinner.updateMessage('Still waiting for model');
-              }
-            } finally {
-              processingProbeAbort = null;
-            }
-          }, 10000);
-        }
+        scheduleFirstTokenWaitMessages();
       }
       
       const researchBtn = el('research-toggle-btn');
@@ -1150,6 +1119,11 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         uiModule.scrollHistory();
       }
 
+      function _replaceThinkingSpinner(label) {
+        _removeThinkingSpinner();
+        _showThinkingSpinner(label);
+      }
+
       // Auto-show thinking spinner after text stops streaming
       let _textPauseTimer = null;
       function _scheduleThinkingSpinner() {
@@ -1173,10 +1147,24 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       let _liveThinkHeader = null;
       let _liveThinkSpinnerSlot = null;
       let _liveThinkTimerEl = null;
+      let _liveThinkTokenCount = 0;
       let _liveThinkToggle = null;
       let _liveThinkDomId = null;
 
+      function _estimateThinkingTokens(text) {
+        const clean = (text || '').trim();
+        if (!clean) return 0;
+        return Math.max(1, Math.ceil(clean.length / 4));
+      }
+
+      function _formatThinkStats(seconds, tokenCount) {
+        const time = seconds ? seconds + 's' : '';
+        const tokens = tokenCount ? tokenCount + ' tok' : '';
+        return time && tokens ? time + ' · ' + tokens : (time || tokens);
+      }
+
       function _replyAfterClosedThinking(text) {
+        text = markdownModule.normalizeThinkingMarkup(text || '');
         const closeRe = /<\/(?:think(?:ing)?|thought)>|<channel\|>/gi;
         let match = null;
         let last = null;
@@ -1187,7 +1175,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
       // Direct render helper for streaming text
       _renderStream = () => {
-        let dt = stripToolBlocks(roundText);
+        let dt = markdownModule.normalizeThinkingMarkup(stripToolBlocks(roundText));
         const bodyEl = roundHolder.querySelector('.body');
         const contentEl = _ensureStreamLayout(bodyEl);
 
@@ -1277,6 +1265,12 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
       let _nextIsError = false;
       let _streamSawDone = false;
+      let _firstVisibleOutputSeen = false;
+      const markFirstVisibleOutput = () => {
+        if (_firstVisibleOutputSeen) return;
+        _firstVisibleOutputSeen = true;
+        clearFirstTokenWaitTimers();
+      };
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1296,6 +1290,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
           }
           if (line.startsWith('data: ')) {
             const data = line.slice(6);
+            if (data && data !== '[DONE]') markFirstVisibleOutput();
 
             // (thinking spinner removal is handled in agent_step / tool_start / content handlers)
 
@@ -1357,7 +1352,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 if (_liveThinkHeader) _liveThinkHeader.textContent = 'View thinking process';
                 if (_liveThinkSpinnerSlot) _liveThinkSpinnerSlot.remove();
                 if (_liveThinkTimerEl && _elapsedDone) {
-                  _liveThinkTimerEl.textContent = _elapsedDone + 's';
+                  _liveThinkTimerEl.textContent = _formatThinkStats(_elapsedDone, _liveThinkTokenCount);
                   _liveThinkTimerEl.style.marginLeft = 'auto';
                   _liveThinkTimerEl.style.marginRight = '5px';
                   var _hdrDone = _liveThinkTimerEl.closest('.thinking-header');
@@ -1399,9 +1394,17 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 typewriterInto(roundHolder.querySelector('.body'), errMsg);
                 break;
               }
-              if (json.delta || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
+              if (json.delta || json.type === 'agent_prep' || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
                 clearResponseTimeout();
                 clearProcessingProbe();
+                clearFirstTokenWaitTimers();
+              }
+              if (json.type === 'agent_prep') {
+                if (!_isBg) {
+                  _cancelThinkingTimer();
+                  _replaceThinkingSpinner('Preparing agent');
+                }
+                continue;
               }
               if (json.delta) {
                 _cancelThinkingTimer();
@@ -1464,12 +1467,13 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 // 1. Normal: <think>...no closing tag yet
                 // 2. Malformed: <think></think>\n...text but no second </think> yet
                 // 3. Qwen3.5: "Thinking Process:" without <think> tags
-                let hasUnclosedThink = markdownModule.hasUnclosedThinkTag(roundText);
+                const normalizedRoundText = markdownModule.normalizeThinkingMarkup(roundText);
+                let hasUnclosedThink = markdownModule.hasUnclosedThinkTag(normalizedRoundText);
                 // Detect non-tag thinking patterns: "Thinking:", "Thinking Process:", Gemma-style reasoning
                 // These patterns don't use <think> tags, so we simulate unclosed thinking during streaming
                 const _replyPrefixes = ['Hey', 'Hi ', 'Hi!', 'Hello', 'Sure', 'Yes', 'No ', 'No,', 'Yo', 'OK', 'Here', 'Absolutely', 'Of course', 'Great', 'Alright', 'Thanks', 'Welcome', 'Good ', "I'm happy", "I'd be"];
-                if (!hasUnclosedThink && !/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>|<\|channel>thought/i.test(roundText)) {
-                  const _trimmedRT = roundText.trimStart();
+                if (!hasUnclosedThink && !/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>|<\|channel>thought/i.test(normalizedRoundText)) {
+                  const _trimmedRT = normalizedRoundText.trimStart();
                   const _isReasoning = markdownModule.startsWithReasoningPrefix(_trimmedRT);
                   if (_isReasoning) {
                     // Check if we can see a reply boundary yet (newline then reply pattern)
@@ -1494,9 +1498,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                     }
                   }
                 }
-                if (!hasUnclosedThink && /^<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*<\/(?:think(?:ing)?|thought)>/i.test(roundText)) {
+                if (!hasUnclosedThink && /^<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*<\/(?:think(?:ing)?|thought)>/i.test(normalizedRoundText)) {
                   // Empty <think></think> — the model likely put thinking outside the tags
-                  const afterEmpty = roundText.replace(/^<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*<\/(?:think(?:ing)?|thought)>/i, '').trim();
+                  const afterEmpty = normalizedRoundText.replace(/^<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*<\/(?:think(?:ing)?|thought)>/i, '').trim();
                   const closeTags = (afterEmpty.match(/<\/(?:think(?:ing)?|thought)>/gi) || []).length;
                   if (closeTags === 0 && afterEmpty.length > 0) {
                     hasUnclosedThink = true; // still waiting for real closing tag
@@ -1506,10 +1510,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 // Only applies when there's a second </think> later (model leaked thinking outside tags)
                 // Do NOT trigger if the text after </think> contains tool calls (that's real content)
                 if (!hasUnclosedThink && isThinking) {
-                  const _thinkMatch = roundText.match(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>([\s\S]*?)<\/(?:think(?:ing)?|thought)>/i);
+                  const _thinkMatch = normalizedRoundText.match(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>([\s\S]*?)<\/(?:think(?:ing)?|thought)>/i);
                   const _thinkLen = _thinkMatch ? _thinkMatch[1].trim().length : 0;
                   if (_thinkLen < 20) {
-                    const _afterClose = roundText.replace(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>([\s\S]*?)<\/(?:think(?:ing)?|thought)>/i, '').trim();
+                    const _afterClose = normalizedRoundText.replace(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>([\s\S]*?)<\/(?:think(?:ing)?|thought)>/i, '').trim();
                     // Only keep waiting if there's trailing text that looks like thinking (not tool calls)
                     const _hasToolCall = /```(?:bash|python|web_search|read_file|write_file|create_document|edit_document|manage_|generate_image)/i.test(_afterClose);
                     const _hasOrphanClose = /<\/(?:think(?:ing)?|thought)>/i.test(_afterClose);
@@ -1554,7 +1558,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   function _tickThinkTimer() {
                     if (!_liveThinkTimerEl || !_liveThinkTimerEl.isConnected) return;
                     var s = ((Date.now() - _thinkTimerStart) / 1000).toFixed(1);
-                    _liveThinkTimerEl.textContent = s + 's';
+                    _liveThinkTimerEl.textContent = _formatThinkStats(s, _liveThinkTokenCount);
                     _thinkTimerRAF = requestAnimationFrame(_tickThinkTimer);
                   }
                   _thinkTimerRAF = requestAnimationFrame(_tickThinkTimer);
@@ -1570,13 +1574,18 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 } else if (hasUnclosedThink && isThinking) {
                   if (_liveThinkInner) {
                     // Extract raw thinking text (strip known thinking wrappers and prefixes)
-                    var thinkText = roundText
+                    var thinkText = markdownModule.normalizeThinkingMarkup(roundText)
                       .replace(/<\/?(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/gi, '')
                       .replace(/<\|channel>thought\s*\n?/gi, '')
                       .replace(/<\|channel>response\s*\n?/gi, '')
                       .replace(/<channel\|>/gi, '');
                     thinkText = thinkText.replace(/^\s*Thinking(?:\s+Process)?:\s*/i, '');
+                    _liveThinkTokenCount = _estimateThinkingTokens(thinkText);
                     _liveThinkInner.innerHTML = markdownModule.mdToHtml(thinkText);
+                    if (_liveThinkTimerEl) {
+                      var _elapsedLive = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : '';
+                      _liveThinkTimerEl.textContent = _formatThinkStats(_elapsedLive, _liveThinkTokenCount);
+                    }
                     // Keep thinking box scrolled to bottom, but let user scroll up
                     var thinkBox = _liveThinkInner.closest('.thinking-content');
                     if (thinkBox) {
@@ -1600,6 +1609,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                     _liveThinkHeader = null;
                     _liveThinkSpinnerSlot = null;
                     _liveThinkTimerEl = null;
+                    _liveThinkTokenCount = 0;
                     _liveThinkToggle = null;
                     _liveThinkDomId = null;
                     // Fall through to normal streaming
@@ -1622,7 +1632,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   if (_liveThinkSpinnerSlot) _liveThinkSpinnerSlot.remove();
                   // Move timer to right side of header
                   if (_liveThinkTimerEl && elapsed) {
-                    _liveThinkTimerEl.textContent = elapsed + 's';
+                    _liveThinkTimerEl.textContent = _formatThinkStats(elapsed, _liveThinkTokenCount);
                     _liveThinkTimerEl.style.marginLeft = 'auto';
                     _liveThinkTimerEl.style.marginRight = '5px';
                     var _hdrRow = _liveThinkTimerEl.closest('.thinking-header');
@@ -2023,7 +2033,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   cancelAnimationFrame(_thinkTimerRAF);
                   var _elapsed2 = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
                   if (_liveThinkHeader) _liveThinkHeader.textContent = 'View thinking process';
-                  if (_liveThinkTimerEl) _liveThinkTimerEl.textContent = _elapsed2 ? _elapsed2 + 's' : '';
+                  if (_liveThinkTimerEl) _liveThinkTimerEl.textContent = _elapsed2 ? _formatThinkStats(_elapsed2, _liveThinkTokenCount) : '';
                   if (_liveThinkSpinnerSlot) _liveThinkSpinnerSlot.remove();
                   // Assign stable IDs
                   var _thinkId2 = 'think-' + Date.now();
@@ -2037,7 +2047,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 if (!roundFinalized) {
                   roundFinalized = true;
                   if (spinner && spinner.element) spinner.destroy();
-                  const dt = stripToolBlocks(roundText);
+                  const dt = markdownModule.normalizeThinkingMarkup(stripToolBlocks(roundText));
                   if (dt.trim()) {
                     var _body3 = roundHolder.querySelector('.body');
                     var _contentEl3 = _ensureStreamLayout(_body3);
@@ -3018,6 +3028,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     } finally {
       clearResponseTimeout();
       clearProcessingProbe();
+      clearFirstTokenWaitTimers();
       // Streaming done — let screen readers announce the settled response.
       const _chatLogDone = document.getElementById('chat-history');
       if (_chatLogDone) _chatLogDone.setAttribute('aria-busy', 'false');
@@ -3396,7 +3407,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     };
 
     const renderDelta = () => {
-      const dt = stripToolBlocks(roundText);
+      const dt = markdownModule.normalizeThinkingMarkup(stripToolBlocks(roundText));
       contentDiv.innerHTML = markdownModule.mdToHtml(markdownModule.squashOutsideCode(dt));
       uiModule.scrollHistory();
     };
