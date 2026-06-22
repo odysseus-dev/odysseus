@@ -206,8 +206,22 @@ class MemoryService:
                 logger.error(f"Glacier append failed, aborting archive: {e}")
                 return 0
 
-            # 2. Evict dead weight from the vector DB BEFORE committing to JSON.
-            # This prevents ghost vectors if the network call fails or times out.
+            # 2. Commit the truncated hot array to disk BEFORE touching the vector
+            # store. If this save fails, the records are still fully intact in hot
+            # memory and in the vector store, so we abort without reporting success
+            # and nothing is left stranded. The only residue is a duplicate line in
+            # the glacier on the next attempt, which recall tolerates — never a
+            # memory that has been removed from hot but lost its data.
+            try:
+                self.manager.save(hot_memories)
+            except Exception as e:
+                logger.error(f"Hot memory save failed, aborting archive (no records evicted): {e}", exc_info=True)
+                return 0
+
+            # 3. Records are now off the hot array, so drop their vectors. A failure
+            # here only leaves ghost vectors (no data loss): the data lives in the
+            # glacier and is already gone from hot memory, so we log and move on
+            # rather than rolling back a committed archive.
             if self.vector_store and self.vector_store.healthy:
                 cold_ids = [m["id"] for m in cold_memories if "id" in m]
                 try:
@@ -217,14 +231,7 @@ class MemoryService:
                         for cid in cold_ids:
                             self.vector_store.remove(cid)
                 except Exception as e:
-                    logger.error(f"Vector store eviction failed, aborting disk save to prevent split-brain: {e}", exc_info=True)
-                    return 0
-
-            # 3. Commit the truncated hot memory array back to disk safely inside the lock.
-            try:
-                self.manager.save(hot_memories)
-            except Exception as e:
-                logger.critical(f"Failed to save hot memories! Duplication risk! {e}")
+                    logger.error(f"Vector eviction failed after archive; ghost vectors left for {len(cold_ids)} records: {e}", exc_info=True)
 
             return len(cold_memories)
 

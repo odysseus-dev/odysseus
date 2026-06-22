@@ -149,7 +149,7 @@ class MemoryManager:
         except Exception as e:
             logger.error("Failed to read glacier: %s", e)
 
-        results.sort(key=lambda x: x, reverse=True)
+        results.sort(key=lambda x: x[0], reverse=True)
         return [m for _, m in results[:limit]]
 
 

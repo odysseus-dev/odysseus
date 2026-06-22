@@ -152,6 +152,8 @@ _TOOL_NAME_MAP = {
     "session_control": "manage_session",
     "manage_memory": "manage_memory",
     "memory": "manage_memory",
+    "recall_archived_memory": "recall_archived_memory",
+    "recall_memory": "recall_archived_memory",
     "manage_tasks": "manage_tasks",
     "tasks": "manage_tasks",
     "schedule": "manage_tasks",

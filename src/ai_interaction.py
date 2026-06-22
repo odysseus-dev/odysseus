@@ -453,6 +453,38 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         return {"error": f"Unknown action '{action}'. Use: list, add, edit, delete, search"}
 
 
+async def do_recall_archived_memory(
+    content: str, session_id: Optional[str] = None, owner: Optional[str] = None
+) -> Dict:
+    """Read from cold storage (the memory glacier) for the explicit recall tool.
+
+    Hot memories are surfaced automatically by the context builder; this is the
+    deliberate path for facts that have aged out of hot memory and onto disk.
+    The whole content body is the search query.
+    """
+    if not _memory_manager:
+        return {"error": "Memory manager is not available."}
+
+    query = content.strip()
+    if not query:
+        return {"error": "recall_archived_memory needs a search query."}
+
+    # search_glacier is a synchronous O(N) disk scan — offload it so a large
+    # glacier doesn't stall the event loop.
+    import asyncio
+    loop = asyncio.get_running_loop()
+    results = await loop.run_in_executor(
+        None,
+        lambda: _memory_manager.search_glacier(query, owner=owner, limit=10),
+    )
+
+    if not results:
+        return {"results": "I searched the deep archives but couldn't find anything matching that query."}
+
+    formatted = "\n".join(f"- {m.get('text', '')} (archived)" for m in results)
+    return {"results": f"I recalled the following from the archives:\n{formatted}"}
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -1111,6 +1143,11 @@ async def dispatch_ai_tool(
         action = content.split("\n")[0].strip()[:40]
         desc = f"manage_memory: {action}"
         result = await do_manage_memory(content, session_id, owner=owner)
+
+    elif tool == "recall_archived_memory":
+        query = content.strip()
+        desc = f"recall_archived_memory: {query[:40]}"
+        result = await do_recall_archived_memory(content, session_id, owner=owner)
 
     elif tool == "ui_control":
         action = content.split("\n")[0].strip()[:60]

@@ -1380,6 +1380,9 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
                 content += "\n" + args["category"]
         else:
             content = action
+    elif tool_type == "recall_archived_memory":
+        # Single free-text query; dispatch reads it as the whole content body.
+        content = args.get("query", "")
     elif tool_type == "list_models":
         content = args.get("filter", "")
     elif tool_type == "ui_control":
