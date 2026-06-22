@@ -244,6 +244,7 @@ function _buildCrashReport(task, outputText) {
 
 // Shared state/functions injected by init()
 let _envState;
+let _getHwfitCache;
 let _sshCmd;
 let _getPort;
 let _sshPrefix;
@@ -1579,6 +1580,12 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
     }
   }
 
+  const _hwCache = _getHwfitCache?.();
+  const _sysBackend = String(_hwCache?.system?.backend || '').toLowerCase();
+  const _sysFamily = String(_hwCache?.system?.gpu_family || '').toLowerCase();
+  const _gpuBackend = _sysBackend === 'rocm'
+    ? (_sysFamily === 'gcn' ? 'rocm-gcn' : 'rocm')
+    : (_sysBackend || undefined);
   const reqBody = {
     repo_id: repo,
     cmd: cmd,
@@ -1587,6 +1594,7 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
     env_prefix: envPrefix || undefined,
     hf_token: _envState.hfToken || undefined,
     gpus: _envState.gpus || undefined,
+    gpu_backend: _gpuBackend || undefined,
     platform: _hplatform || undefined,
   };
 
@@ -3786,6 +3794,7 @@ async function _pollBackgroundStatus() {
 
 export function initRunning(shared) {
   _envState = shared._envState;
+  _getHwfitCache = shared._getHwfitCache;
   _sshCmd = shared._sshCmd;
   _getPort = shared._getPort;
   _sshPrefix = shared._sshPrefix;

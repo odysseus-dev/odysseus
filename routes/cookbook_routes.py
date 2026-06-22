@@ -1320,7 +1320,14 @@ def setup_cookbook_routes() -> APIRouter:
             if req.hf_token:
                 ps_lines.append(f"$env:HF_TOKEN = '{_ps_squote(req.hf_token)}'")
             if req.gpus:
-                ps_lines.append(f"$env:CUDA_VISIBLE_DEVICES = '{req.gpus}'")
+                _win_rocm = (req.gpu_backend or "").lower().startswith("rocm")
+                _win_gcn = (req.gpu_backend or "").lower() == "rocm-gcn"
+                if _win_rocm:
+                    if _win_gcn:
+                        ps_lines.append('$env:HSA_OVERRIDE_GFX_VERSION = "9.0.6"')
+                    ps_lines.append(f"$env:ROCR_VISIBLE_DEVICES = '{req.gpus}'")
+                else:
+                    ps_lines.append(f"$env:CUDA_VISIBLE_DEVICES = '{req.gpus}'")
             if req.env_prefix:
                 ps_lines.append(_safe_env_prefix(req.env_prefix))
             # Auto-install ollama if the command uses it
@@ -1390,7 +1397,14 @@ def setup_cookbook_routes() -> APIRouter:
             if req.hf_token:
                 runner_lines.append(f"export HF_TOKEN='{_bash_squote(req.hf_token)}'")
             if req.gpus:
-                runner_lines.append(f"export CUDA_VISIBLE_DEVICES='{req.gpus}'")
+                _is_rocm = (req.gpu_backend or "").lower().startswith("rocm")
+                _is_gcn = (req.gpu_backend or "").lower() == "rocm-gcn"
+                if _is_rocm:
+                    if _is_gcn:
+                        runner_lines.append("export HSA_OVERRIDE_GFX_VERSION=9.0.6")
+                    runner_lines.append(f"export ROCR_VISIBLE_DEVICES='{req.gpus}'")
+                else:
+                    runner_lines.append(f"export CUDA_VISIBLE_DEVICES='{req.gpus}'")
             if req.env_prefix:
                 runner_lines.append(_safe_env_prefix(req.env_prefix))
             else:

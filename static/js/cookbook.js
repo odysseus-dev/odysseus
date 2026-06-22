@@ -431,7 +431,16 @@ export function _buildEnvPrefix() {
   }
   let envVars = [];
   if (_envState.hfToken) envVars.push('export HF_TOKEN=' + _shellQuote(_envState.hfToken));
-  if (_envState.gpus) envVars.push('export CUDA_VISIBLE_DEVICES=' + _shellQuote(_envState.gpus));
+  if (_envState.gpus) {
+    const _sb = String(_hwfitCache?.system?.backend || '').toLowerCase();
+    if (_sb === 'rocm') {
+      const _gf = String(_hwfitCache?.system?.gpu_family || '').toLowerCase();
+      if (_gf === 'gcn') envVars.push('export HSA_OVERRIDE_GFX_VERSION=9.0.6');
+      envVars.push('export ROCR_VISIBLE_DEVICES=' + _shellQuote(_envState.gpus));
+    } else {
+      envVars.push('export CUDA_VISIBLE_DEVICES=' + _shellQuote(_envState.gpus));
+    }
+  }
   if (envVars.length) parts.push(envVars.join(' && '));
   if (parts.length === 0) return '';
   return parts.join(' && ') + ' &&';
@@ -447,7 +456,16 @@ function _buildEnvPrefixWindows() {
     parts.push('conda activate ' + _psQuote(_envState.envPath));
   }
   if (_envState.hfToken) parts.push('$env:HF_TOKEN=' + _psQuote(_envState.hfToken));
-  if (_envState.gpus) parts.push('$env:CUDA_VISIBLE_DEVICES=' + _psQuote(_envState.gpus));
+  if (_envState.gpus) {
+    const _sb = String(_hwfitCache?.system?.backend || '').toLowerCase();
+    if (_sb === 'rocm') {
+      const _gf = String(_hwfitCache?.system?.gpu_family || '').toLowerCase();
+      if (_gf === 'gcn') parts.push('$env:HSA_OVERRIDE_GFX_VERSION="9.0.6"');
+      parts.push('$env:ROCR_VISIBLE_DEVICES=' + _psQuote(_envState.gpus));
+    } else {
+      parts.push('$env:CUDA_VISIBLE_DEVICES=' + _psQuote(_envState.gpus));
+    }
+  }
   if (parts.length === 0) return '';
   return parts.join('; ') + ';';
 }
@@ -468,7 +486,16 @@ export function _buildServeCmd(f, modelName, backend) {
     // the bare "auto" input that used to back gpu_id is gone, and the
     // button strip is the only source for which devices to pin.
     const gpuId = (f.gpus || f.gpu_id || '').toString().trim();
-    if (gpuId) cmd += `CUDA_VISIBLE_DEVICES=${gpuId} `;
+    if (gpuId) {
+      const _sb = String(_hwfitCache?.system?.backend || '').toLowerCase();
+      if (_sb === 'rocm') {
+        const _gf = String(_hwfitCache?.system?.gpu_family || '').toLowerCase();
+        if (_gf === 'gcn') cmd += 'HSA_OVERRIDE_GFX_VERSION=9.0.6 ';
+        cmd += `ROCR_VISIBLE_DEVICES=${gpuId} `;
+      } else {
+        cmd += `CUDA_VISIBLE_DEVICES=${gpuId} `;
+      }
+    }
     if (f.moe_env) {
       const _opts = _detectModelOptimizations(modelName);
       if (_opts.envVars.length) cmd += _opts.envVars.join(' ') + ' ';
@@ -513,7 +540,16 @@ export function _buildServeCmd(f, modelName, backend) {
     // the bare "auto" input that used to back gpu_id is gone, and the
     // button strip is the only source for which devices to pin.
     const gpuId = (f.gpus || f.gpu_id || '').toString().trim();
-    if (gpuId) cmd += `CUDA_VISIBLE_DEVICES=${gpuId} `;
+    if (gpuId) {
+      const _sb = String(_hwfitCache?.system?.backend || '').toLowerCase();
+      if (_sb === 'rocm') {
+        const _gf = String(_hwfitCache?.system?.gpu_family || '').toLowerCase();
+        if (_gf === 'gcn') cmd += 'HSA_OVERRIDE_GFX_VERSION=9.0.6 ';
+        cmd += `ROCR_VISIBLE_DEVICES=${gpuId} `;
+      } else {
+        cmd += `CUDA_VISIBLE_DEVICES=${gpuId} `;
+      }
+    }
     const _extraEnv = (f.extra_env ?? '').toString().replace(/\s+/g, ' ').trim();
     if (_extraEnv) cmd += _extraEnv + ' ';
     cmd += `${_py3Bin} -m sglang.launch_server --model-path ${modelName} --host 0.0.0.0 --port ${f.port || '30000'}`;
@@ -540,11 +576,29 @@ export function _buildServeCmd(f, modelName, backend) {
     const lcPrefix = (() => {
       let p = '';
       if (f.unified_mem && !_cpuOnly && !_isWindows()) p += `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 `;
-      if (gpuId && !_isWindows()) p += `CUDA_VISIBLE_DEVICES=${gpuId} `;
+      if (gpuId && !_isWindows()) {
+        const _sb = String(_hwfitCache?.system?.backend || '').toLowerCase();
+        if (_sb === 'rocm') {
+          const _gf = String(_hwfitCache?.system?.gpu_family || '').toLowerCase();
+          if (_gf === 'gcn') p += 'HSA_OVERRIDE_GFX_VERSION=9.0.6 ';
+          p += `ROCR_VISIBLE_DEVICES=${gpuId} `;
+        } else {
+          p += `CUDA_VISIBLE_DEVICES=${gpuId} `;
+        }
+      }
       return p;
     })();
     if (f.unified_mem && !_cpuOnly && _isWindows()) cmd += `$env:GGML_CUDA_ENABLE_UNIFIED_MEMORY="1"; `;
-    if (gpuId && _isWindows()) cmd += `$env:CUDA_VISIBLE_DEVICES="${gpuId}"; `;
+    if (gpuId && _isWindows()) {
+      const _sb = String(_hwfitCache?.system?.backend || '').toLowerCase();
+      if (_sb === 'rocm') {
+        const _gf = String(_hwfitCache?.system?.gpu_family || '').toLowerCase();
+        if (_gf === 'gcn') cmd += `$env:HSA_OVERRIDE_GFX_VERSION="9.0.6"; `;
+        cmd += `$env:ROCR_VISIBLE_DEVICES="${gpuId}"; `;
+      } else {
+        cmd += `$env:CUDA_VISIBLE_DEVICES="${gpuId}"; `;
+      }
+    }
     if (!_isWindows()) {
       // Resolve GGUF path once, fail loudly if nothing matched (prevents
       // `--model ""` which causes confusing downstream errors).
@@ -652,7 +706,16 @@ export function _buildServeCmd(f, modelName, backend) {
     }
   } else if (backend === 'diffusers') {
     const gpuStr = f.gpus?.trim();
-    if (gpuStr) cmd += `CUDA_VISIBLE_DEVICES=${gpuStr} `;
+    if (gpuStr) {
+      const _sb = String(_hwfitCache?.system?.backend || '').toLowerCase();
+      if (_sb === 'rocm') {
+        const _gf = String(_hwfitCache?.system?.gpu_family || '').toLowerCase();
+        if (_gf === 'gcn') cmd += 'HSA_OVERRIDE_GFX_VERSION=9.0.6 ';
+        cmd += `ROCR_VISIBLE_DEVICES=${gpuStr} `;
+      } else {
+        cmd += `CUDA_VISIBLE_DEVICES=${gpuStr} `;
+      }
+    }
     const diffusersPy = _isWindows() ? 'python' : _py3Bin;
     cmd += `${diffusersPy} scripts/diffusion_server.py --model ${modelName} --port ${f.port || '8100'}`;
     if (f.diff_dtype && f.diff_dtype !== 'bfloat16') cmd += ` --dtype ${f.diff_dtype}`;
@@ -2576,6 +2639,7 @@ function _sshPrefix(port) {
 
 const shared = {
   _envState,
+  _getHwfitCache: () => _hwfitCache,
   _sshCmd,
   _getPort,
   _sshPrefix,

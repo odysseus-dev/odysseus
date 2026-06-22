@@ -878,6 +878,7 @@ class ServeRequest(BaseModel):
     env_prefix: str | None = None
     hf_token: str | None = None
     gpus: str | None = None
+    gpu_backend: str | None = None  # "rocm", "rocm-gcn", "cuda" — from frontend GPU probe
     platform: str | None = None    # "linux", "termux", or "windows"
 
 
