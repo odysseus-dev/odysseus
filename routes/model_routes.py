@@ -406,8 +406,11 @@ def _endpoint_refresh_timeout(ep: Any, category: str) -> float:
     except Exception:
         val = 0
     if val > 0:
-        return float(max(1, min(30, val)))
-    return 2.5 if category == "local" else 2.0
+        return float(max(1, min(60, val)))
+    # llama.cpp and other local OpenAI-compatible servers can block briefly
+    # while warming/loading. A 2s local timeout makes working endpoints flicker
+    # offline before /v1/models is ready.
+    return 10.0 if category == "local" else 2.0
 
 
 def _manual_refresh_timeout(ep: Any, category: str, requested: Any = None) -> float:
@@ -474,7 +477,7 @@ def _explicit_model_list_timeout(base_url: str, endpoint_kind: str = "auto", req
     category = _classify_endpoint(base_url, kind)
     if kind in ("api", "proxy") or category == "api":
         return 30.0
-    return 3.0 if _is_ollama_base(base_url) else 2.0
+    return 15.0 if category == "local" else (3.0 if _is_ollama_base(base_url) else 2.0)
 
 
 def _cached_model_ids(ep: Any) -> List[str]:
@@ -577,6 +580,18 @@ def _safe_build_headers(api_key: Optional[str], base_url: str) -> dict:
     except Exception as exc:
         logger.debug("Header detection failed for %s: %s", base_url, exc)
         return {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+
+def _redact_url_for_log(url: str) -> str:
+    """Return a URL safe for logs by removing userinfo and query/fragment."""
+    try:
+        parsed = urlparse(url or "")
+        host = parsed.hostname or ""
+        if parsed.port:
+            host = f"{host}:{parsed.port}"
+        return urlunparse((parsed.scheme, host, parsed.path, "", "", ""))
+    except Exception:
+        return "<endpoint>"
 
 
 def _is_discovery_only_provider(provider: str) -> bool:
@@ -711,6 +726,16 @@ def _effective_endpoint_kind(ep: Any, base_url: str) -> str:
     return "auto"
 
 
+def _is_loading_model_response(resp: Any) -> bool:
+    if getattr(resp, "status_code", None) != 503:
+        return False
+    try:
+        body = resp.text or ""
+    except Exception:
+        body = ""
+    return "loading model" in body.lower()
+
+
 
 def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> List[str]:
     """Probe a base URL's /models endpoint and return list of model IDs.
@@ -775,11 +800,14 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
                         models.append(_e)
             return [m for m in models if _is_chat_model(m)]
     except httpx.HTTPStatusError as e:
+        if e.response is not None and _is_loading_model_response(e.response):
+            logger.info("Endpoint still loading model at %s", _redact_url_for_log(url))
+            return []
         if api_key:
             status = e.response.status_code if e.response is not None else "unknown"
-            logger.warning(f"Failed to probe {url} with API key: HTTP {status}")
+            logger.warning("Failed to probe %s with API key: HTTP %s", _redact_url_for_log(url), status)
             return []
-        logger.warning(f"Failed to probe {url}: {e}")
+        logger.warning("Failed to probe %s: %s", _redact_url_for_log(url), e)
     except Exception as e:
         if api_key:
             logger.warning(f"Failed to probe {url} with API key: {e}")
@@ -824,6 +852,15 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
         or "ollama" in (parsed_base.hostname or "").lower()
     )
 
+    def _is_loading_model_response(r) -> bool:
+        if getattr(r, "status_code", None) != 503:
+            return False
+        try:
+            body = r.text or ""
+        except Exception:
+            body = ""
+        return "loading model" in body.lower()
+
     def _result_from_response(r) -> Dict[str, Any]:
         if 300 <= r.status_code < 400:
             loc = r.headers.get("location", "")
@@ -839,6 +876,13 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
                 "reachable": True,
                 "status_code": r.status_code,
                 "error": None,
+            }
+        if _is_loading_model_response(r):
+            return {
+                "reachable": True,
+                "loading": True,
+                "status_code": r.status_code,
+                "error": "Loading model",
             }
         return {"reachable": False, "status_code": r.status_code, "error": f"HTTP {r.status_code}"}
 
@@ -872,7 +916,7 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
         if 400 <= sc < 500 and sc not in (401, 403):
             models_url = _safe_build_models_url(base)
             try:
-                r2 = httpx.get(models_url, headers=headers, timeout=timeout, verify=llm_verify())
+                r2 = httpx.get(models_url, headers=headers,timeout=timeout, verify=llm_verify())
                 result2 = _result_from_response(r2)
                 if result2["reachable"]:
                     return result2
@@ -1056,9 +1100,11 @@ def setup_model_routes(model_discovery):
         except Exception:
             return 0.0
 
-    def _failure_delay(fails: int) -> float:
+    def _failure_delay(fails: int, *, empty_local: bool = False) -> float:
         if fails <= 0:
             return 0.0
+        if empty_local:
+            return min(5.0 * (2 ** max(0, fails - 1)), 30.0)
         return min(_REFRESH_FAILURE_BASE * (2 ** max(0, fails - 1)), _REFRESH_FAILURE_MAX)
 
     def _should_refresh_endpoint(ep: Any, now: float, force: bool = False) -> tuple[bool, Dict[str, Any]]:
@@ -1089,7 +1135,12 @@ def setup_model_routes(model_discovery):
         fails = int(state.get("fail_count") or 0)
         if fails and not force:
             last_failure = float(state.get("last_failure") or 0.0)
-            if now - last_failure < _failure_delay(fails):
+            empty_local = (
+                not cached
+                and category == "local"
+                and str(getattr(ep, "id", "") or "").startswith("local-")
+            )
+            if now - last_failure < _failure_delay(fails, empty_local=empty_local):
                 return False, info
         if cached and not force:
             interval = _endpoint_refresh_interval(ep, category)
@@ -1404,7 +1455,7 @@ def setup_model_routes(model_discovery):
                 t0 = _time.time()
                 ping = _ping_endpoint(base, ep.api_key, timeout=1.5)
                 entry["latency_ms"] = round((_time.time() - t0) * 1000)
-                entry["status"] = "online" if ping.get("reachable") or cached_count else "offline"
+                entry["status"] = "loading" if ping.get("loading") else ("online" if ping.get("reachable") or cached_count else "offline")
                 entry["error"] = ping.get("error")
                 entry["model_count"] = cached_count or (len(ANTHROPIC_MODELS) if provider == "anthropic" else 0)
             except Exception as e:
@@ -1578,9 +1629,37 @@ def setup_model_routes(model_discovery):
                 # "everything's already cached" path because this branch only
                 # runs for endpoints with an empty cached_models.
                 if not all_models and not pinned and r.is_enabled:
-                    ping = _ping_endpoint(r.base_url, r.api_key, timeout=3.5)
+                    base_for_ping = _normalize_base(r.base_url)
+                    kind_for_ping = _effective_endpoint_kind(r, base_for_ping)
+                    ping_timeout = 10.0 if _classify_endpoint(base_for_ping, kind_for_ping) == "local" else 3.5
+                    ping = _ping_endpoint(r.base_url, r.api_key, timeout=ping_timeout)
                     if ping.get("reachable"):
-                        status = "empty"
+                        status = "loading" if ping.get("loading") else "empty"
+                        if ping.get("loading"):
+                            base = _normalize_base(r.base_url)
+                            kind = _effective_endpoint_kind(r, base)
+                            results.append({
+                                "id": r.id,
+                                "name": r.name,
+                                "base_url": r.base_url,
+                                "has_key": bool(r.api_key),
+                                "api_key_fingerprint": _api_key_fingerprint(r.api_key),
+                                "is_enabled": r.is_enabled,
+                                "models": visible,
+                                "pinned_models": pinned,
+                                "hidden_count": len(hidden),
+                                "online": True,
+                                "status": status,
+                                "ping_error": (ping or {}).get("error") if ping else None,
+                                "model_type": getattr(r, "model_type", None) or "llm",
+                                "supports_tools": getattr(r, "supports_tools", None),
+                                "endpoint_kind": kind,
+                                "category": _classify_endpoint(base, kind),
+                                "model_refresh_mode": _endpoint_refresh_mode(r, kind),
+                                "model_refresh_interval": getattr(r, "model_refresh_interval", None),
+                                "model_refresh_timeout": getattr(r, "model_refresh_timeout", None),
+                            })
+                            continue
                         # Best-effort: if the probe came back reachable, try
                         # to populate cached_models in the background so the
                         # NEXT picker load shows "online" instead of "empty".
@@ -1588,7 +1667,7 @@ def setup_model_routes(model_discovery):
                         # "empty" status, and the existing background refresh
                         # path will eventually fill it in too.
                         try:
-                            probed = _probe_endpoint(r.base_url, r.api_key, timeout=5)
+                            probed = _probe_endpoint(r.base_url, r.api_key, timeout=max(5, int(ping_timeout)))
                             if probed:
                                 r.cached_models = json.dumps(probed)
                                 db.commit()
@@ -1766,7 +1845,7 @@ def setup_model_routes(model_discovery):
         model_ids = _probe_endpoint(base_url, api_key.strip() or None, timeout=explicit_timeout) if should_probe else []
         ping = {"reachable": False, "error": None}
         if (should_probe or requested_kind in ("api", "proxy")) and not model_ids:
-            ping = _ping_endpoint(base_url, api_key.strip() or None, timeout=min(explicit_timeout, 2.0))
+            ping = _ping_endpoint(base_url, api_key.strip() or None, timeout=min(explicit_timeout, 10.0))
         if require_model_list and not model_ids:
             raise HTTPException(400, _model_endpoint_error_message(base_url, ping))
 
@@ -1833,7 +1912,7 @@ def setup_model_routes(model_discovery):
             "models": _merge_model_ids(model_ids, _pinned),
             "pinned_models": _pinned,
             "online": bool(model_ids) or bool(_pinned) or bool(ping.get("reachable")),
-            "status": "online" if (model_ids or _pinned) else ("empty" if ping.get("reachable") else "offline"),
+            "status": "online" if (model_ids or _pinned) else ("loading" if ping.get("loading") else ("empty" if ping.get("reachable") else "offline")),
             "ping_error": ping.get("error") if ping else None,
             "endpoint_kind": requested_kind,
             "category": _classify_endpoint(base_url, requested_kind),
@@ -1858,11 +1937,11 @@ def setup_model_routes(model_discovery):
         configured_timeout = _parse_positive_int(model_refresh_timeout, minimum=1, maximum=60)
         probe_timeout = _explicit_model_list_timeout(base_url, requested_kind, configured_timeout)
         models = _probe_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
-        ping = {"reachable": True, "error": None} if models else _ping_endpoint(base_url, api_key.strip() or None, timeout=min(probe_timeout, 2.0))
+        ping = {"reachable": True, "error": None} if models else _ping_endpoint(base_url, api_key.strip() or None, timeout=min(probe_timeout, 10.0))
         return {
             "base_url": base_url,
             "online": bool(models) or bool(ping.get("reachable")),
-            "status": "online" if models else ("empty" if ping.get("reachable") else "offline"),
+            "status": "online" if models else ("loading" if ping.get("loading") else ("empty" if ping.get("reachable") else "offline")),
             "ping_error": ping.get("error") if ping else None,
             "models": models,
             "count": len(models),

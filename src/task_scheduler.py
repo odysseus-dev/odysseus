@@ -886,6 +886,14 @@ class TaskScheduler:
                     owner=task.owner,
                     body=run.result if output == "notification" else None,
                 )
+            elif run.status == "error":
+                self.add_notification(
+                    task.name,
+                    "error",
+                    task_id,
+                    owner=task.owner,
+                    body=run.error or run.result,
+                )
 
             # Log result to the assistant chat so all task activity is visible.
             # Skip skipped/error rows — user shouldn't see "skipped: …" noise
@@ -1468,12 +1476,18 @@ class TaskScheduler:
             )
         except Exception as e:
             logger.warning(f"Agent loop failed for task '{task.name}', falling back to simple call: {e}")
-            from src.llm_core import llm_call_async
+            from src.task_endpoint import task_llm_call_async
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": task.prompt},
             ]
-            result = await llm_call_async(url=endpoint_url, model=model, messages=messages, timeout=120)
+            result = await task_llm_call_async(
+                messages,
+                fallback_url=endpoint_url,
+                fallback_model=model,
+                owner=task.owner,
+                timeout=120,
+            )
 
         # Strip the model's chain-of-thought before saving/delivering. Task
         # output is LLM-only, so prose=True (which also removes untagged
@@ -1698,13 +1712,17 @@ class TaskScheduler:
         # Honor per-task max_steps (defense against runaway agent loops).
         # Falls back to 20 if not set — the historical default.
         _task_max_rounds = task.max_steps if task.max_steps and task.max_steps > 0 else 20
-        # Tasks are background workloads — they share the Utility model's
-        # fallback chain (Settings → Utility Model → Fallbacks). A downed
-        # primary endpoint won't silently yield `(no output)` — same recipe
-        # chat uses but with the utility list (`utility_model_fallbacks`).
+        # Tasks are background workloads: use the shared task fallback chain
+        # behind the primary endpoint so a downed primary won't silently yield
+        # `(no output)`.
         try:
-            from src.endpoint_resolver import resolve_utility_fallback_candidates
-            _task_fallbacks = resolve_utility_fallback_candidates(owner=task.owner or None)
+            from src.task_endpoint import resolve_task_candidates
+            _task_fallbacks = resolve_task_candidates(
+                fallback_url=endpoint_url,
+                fallback_model=model,
+                fallback_headers=headers,
+                owner=task.owner or None,
+            )[1:]
         except Exception:
             _task_fallbacks = []
         async for event_str in stream_agent_loop(
@@ -1741,21 +1759,22 @@ class TaskScheduler:
         # asking it to summarize what it did. Guarantees output.
         if not full_text.strip():
             try:
-                from src.llm_core import llm_call_async_with_fallback
-                from src.endpoint_resolver import resolve_utility_fallback_candidates
+                from src.task_endpoint import task_llm_call_async
                 grace_context = "You ran out of steps. "
                 if tool_results:
                     grace_context += "Here's what your tools returned:\n" + "\n".join(tool_results[-5:])
                 else:
                     grace_context += "No tool results were captured."
                 grace_context += "\n\nSummarize what you accomplished and what's still pending. Be concise."
-                _grace_candidates = [(endpoint_url, model, headers)] + resolve_utility_fallback_candidates(owner=task.owner or None)
-                full_text = await llm_call_async_with_fallback(
-                    _grace_candidates,
+                full_text = await task_llm_call_async(
                     messages=[
                         {"role": "system", "content": system_content},
                         {"role": "user", "content": grace_context},
                     ],
+                    fallback_url=endpoint_url,
+                    fallback_model=model,
+                    fallback_headers=headers,
+                    owner=task.owner or None,
                     timeout=30,
                 )
                 full_text = (full_text or "").strip()

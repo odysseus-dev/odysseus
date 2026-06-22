@@ -17,8 +17,15 @@ let _tasksFetched = false;   // first-fetch sentinel — `false` → show loadin
 let _escHandler = null;
 let _viewingRuns = null; // task id when viewing run history
 let _clockInterval = null;
+let _taskFailurePending = false;
 
 const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+function _setTaskFailurePending(active) {
+  _taskFailurePending = !!active;
+  document.getElementById('tool-tasks-btn')?.classList.toggle('task-failure-pending', _taskFailurePending);
+  document.getElementById('rail-tasks')?.classList.toggle('task-failure-pending', _taskFailurePending);
+}
 
 // ---- API ----
 
@@ -2238,6 +2245,9 @@ function _renderActivityEntry(entry) {
     status = _classifyResult(entry.result);
   }
   const statusDot = `<span class="task-log-status task-log-status-${status}" title="${status}"></span>`;
+  const failedTag = status === 'error'
+    ? '<span class="task-log-failed-tag">(failed)</span>'
+    : '';
   // Render the result through markdown so code blocks, lists, links look right.
   let resultHtml;
   const _isRunning = entry.status === 'running' || entry.status === 'queued';
@@ -2361,7 +2371,7 @@ function _renderActivityEntry(entry) {
       <div class="task-log-row-head">
         ${statusDot}
         <span class="task-log-task-icon">${_taskIcon({ action: entry.action, task_type: entry.kind })}</span>
-        <span class="task-log-name">${_escHtml(entry.taskName)}</span>${_taskAiMark(entry)}
+        <span class="task-log-name">${_escHtml(entry.taskName)}</span>${failedTag}${_taskAiMark(entry)}
         ${repeatBadge}
         <span style="flex:1"></span>
         ${rightHtml}
@@ -2502,8 +2512,11 @@ function _renderMainView() {
 
 export function openTasks(focusId, opts) {
   const o = opts || {};
+  const openActivityForFailure = _taskFailurePending && !focusId && o.filter === undefined;
+  _setTaskFailurePending(false);
   if (_open) {
     // Already open — just focus the requested task / apply filter.
+    if (openActivityForFailure) _switchTab('activity');
     if (o.filter !== undefined) { _taskFilter = o.filter; _renderList(); }
     if (focusId) _focusTask(focusId);
     return;
@@ -2610,7 +2623,7 @@ export function openTasks(focusId, opts) {
   // of an empty modal-body that fills in after the fetch resolves — that delay
   // was visible as a "flicker" right after opening.
   _activeTab = 'tasks';
-  _switchTab('tasks');
+  _switchTab(openActivityForFailure ? 'activity' : 'tasks');
   _fetchTasks().then(() => {
     // Re-render so the list swaps the Loading row for real cards.
     _renderList();
@@ -2704,7 +2717,13 @@ async function _pollTaskNotifications() {
       const msg = `Task ${ok ? 'finished' : 'failed'}: ${n.task_name}`;
       if (!uiModule) continue;
       if (ok) uiModule.showToast(msg, { duration: 5000 });
-      else uiModule.showError(msg);
+      else {
+        _setTaskFailurePending(true);
+        uiModule.showError(msg);
+        if (_open && document.querySelector('.tasks-tab.active[data-tab="activity"]')) {
+          _renderActivityView();
+        }
+      }
     }
   } catch (e) {
     // Silently ignore — server may be unreachable
