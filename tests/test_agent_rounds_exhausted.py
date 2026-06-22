@@ -342,6 +342,98 @@ def test_workspace_clarification_gets_inspection_recovery_round(monkeypatch):
     }
 
 
+def test_generic_readme_not_found_gets_target_recovery_round(monkeypatch):
+    _patch_common(monkeypatch)
+    calls = 0
+    tool_calls = []
+    message_snapshots = []
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        nonlocal calls
+        calls += 1
+        message_snapshots.append([dict(m) for m in messages])
+        if calls == 1:
+            text = (
+                "```read_file\n/workspace/README.md\n```\n"
+                "```get_workspace\n```"
+            )
+        elif calls == 2:
+            text = (
+                "I'm currently unable to inspect the workspace contents because "
+                "README.md was not found. Please paste the README text here."
+            )
+        elif calls == 3:
+            text = (
+                "```ls\n.\n```\n"
+                "```read_file\nREADME.txt\n```"
+            )
+        else:
+            text = "- README.txt says this is a mounted workspace test."
+        yield f'data: {json.dumps({"delta": text})}\n\n'
+        yield "data: [DONE]\n\n"
+
+    async def _fake_exec(block, *args, **kwargs):
+        tool_calls.append(block.tool_type)
+        if block.tool_type == "read_file" and "README.md" in block.content:
+            return ("read_file: /workspace/README.md", {
+                "output": "read_file: /workspace/README.md: not found",
+                "exit_code": 1,
+            })
+        if block.tool_type == "get_workspace":
+            return ("get_workspace", {"output": "/workspace", "exit_code": 0})
+        if block.tool_type == "ls":
+            return ("ls: .", {"output": "README.txt\nnotes", "exit_code": 0})
+        if block.tool_type == "read_file" and "README.txt" in block.content:
+            return ("read_file: README.txt", {
+                "output": "Odysseus workspace mount test.",
+                "exit_code": 0,
+            })
+        raise AssertionError(f"unexpected tool call: {block.tool_type} {block.content!r}")
+
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+    monkeypatch.setattr(al, "execute_tool_block", _fake_exec, raising=False)
+
+    gen = al.stream_agent_loop(
+        "http://x/v1",
+        "m",
+        [{"role": "user", "content": "Read the README in the mounted workspace and summarize it in two bullets."}],
+        max_rounds=4,
+        relevant_tools={"get_workspace", "read_file"},
+        workspace="/workspace",
+    )
+    events = _types(_collect(gen))
+
+    assert calls == 4
+    assert tool_calls == ["read_file", "get_workspace", "ls", "read_file"]
+    assert any(e.get("type") == "agent_step" and e.get("round") == 3 for e in events), events
+    assert any(
+        e.get("type") == "agent_process"
+        and "Please paste the README text here" in e.get("text", "")
+        for e in events
+    )
+    assert not any(
+        e.get("type") == "agent_final"
+        and "Please paste the README text here" in e.get("text", "")
+        for e in events
+    )
+    assert any(
+        "search for `README*`" in str(m.get("content", ""))
+        for m in message_snapshots[2]
+    )
+    assert any(
+        e.get("type") == "agent_final"
+        and e.get("round") == 4
+        and e.get("text") == "- README.txt says this is a mounted workspace test."
+        for e in events
+    )
+    metrics = [e["data"] for e in events if e.get("type") == "metrics"][-1]
+    assert metrics["agent_workspace_target_recovery"] == {
+        "nudges": 1,
+        "max_nudges": 1,
+        "pending": False,
+    }
+
+
 def test_workspace_clarification_after_inspection_is_allowed(monkeypatch):
     _patch_common(monkeypatch)
     calls = 0

@@ -1814,9 +1814,11 @@ _MAX_WORKSPACE_SHELL_WRITE_RECOVERY_NUDGES = 2
 _MAX_INCOMPLETE_FINAL_NUDGES = 2
 _MAX_EMPTY_RESPONSE_RETRIES = 2
 _MAX_WORKSPACE_CLARIFICATION_NUDGES = 1
+_MAX_WORKSPACE_TARGET_RECOVERY_NUDGES = 1
 
 _WORKSPACE_READ_TOOL_NAMES = {"get_workspace", "ls", "glob", "grep", "read_file"}
 _WORKSPACE_FILE_TOOL_NAMES = _WORKSPACE_READ_TOOL_NAMES | {"write_file", "edit_file"}
+_WORKSPACE_TARGET_RECOVERY_TOOLS = _WORKSPACE_READ_TOOL_NAMES
 
 _WORKSPACE_INSPECTION_REQUEST_RE = re.compile(
     r"(?:"
@@ -1853,6 +1855,31 @@ _WORKSPACE_CLARIFICATION_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
+_WORKSPACE_TARGET_FAILURE_RE = re.compile(
+    r"(?:"
+    r"\b(?:unable|not\s+able|can't|cannot|couldn'?t|blocked|failed)\b"
+    r"[^.\n]{0,180}\b(?:read|inspect|access|find|open|summari[sz]e)\b"
+    r"[^.\n]{0,160}\b(?:workspace|readme|files?|folder|directory|path)\b"
+    r"|"
+    r"\b(?:workspace|readme|files?|folder|directory|path)\b"
+    r"[^.\n]{0,180}\b(?:returning\s+no\s+content|not\s+found|no\s+content|"
+    r"not\s+accessible|isn'?t\s+accessible)\b"
+    r"|"
+    r"\bplease\s+(?:paste|upload|provide|send)\b[^.\n]{0,140}"
+    r"\b(?:readme|file|contents?|text)\b"
+    r"|"
+    r"\b(?:allow\s+me|confirm\s+whether)\b[^.\n]{0,180}"
+    r"\b(?:try|use)\b[^.\n]{0,120}\b(?:bash|filename|file|readme|guess)"
+    r")",
+    re.IGNORECASE,
+)
+_WORKSPACE_TARGET_NOT_FOUND_RE = re.compile(
+    r"\b(?:not\s+found|no\s+such\s+file|does\s+not\s+exist|couldn'?t\s+find|"
+    r"can't\s+find|cannot\s+find)\b",
+    re.IGNORECASE,
+)
+_GENERIC_README_REQUEST_RE = re.compile(r"\breadme\b", re.IGNORECASE)
+_EXPLICIT_README_PATH_RE = re.compile(r"\breadme\.[A-Za-z0-9]{1,12}\b", re.IGNORECASE)
 
 _INCOMPLETE_FINAL_ACTION_RE = re.compile(
     r"(?:^|[\n.!?]\s*)"
@@ -1934,6 +1961,78 @@ def _workspace_read_tools_available(
 
 def _has_workspace_file_tool_event(tool_events: list) -> bool:
     return any(str(event.get("tool") or "").lower() in _WORKSPACE_FILE_TOOL_NAMES for event in tool_events)
+
+
+def _has_successful_workspace_read_file_event(tool_events: list) -> bool:
+    for event in tool_events or []:
+        if str(event.get("tool") or "").lower() != "read_file":
+            continue
+        if event.get("exit_code") not in (None, 0):
+            continue
+        output = str(event.get("output") or "").strip()
+        if output and not _WORKSPACE_TARGET_NOT_FOUND_RE.search(output):
+            return True
+    return False
+
+
+def _has_workspace_target_not_found_event(tool_events: list, target_hint: str) -> bool:
+    hint = str(target_hint or "").lower()
+    for event in tool_events or []:
+        if str(event.get("tool") or "").lower() not in _WORKSPACE_READ_TOOL_NAMES:
+            continue
+        text = f"{event.get('command') or ''}\n{event.get('output') or ''}".lower()
+        if hint and hint not in text:
+            continue
+        if event.get("exit_code") not in (None, 0) or _WORKSPACE_TARGET_NOT_FOUND_RE.search(text):
+            return True
+    return False
+
+
+def _find_incomplete_workspace_target_lookup(
+    text: str,
+    user_text: str,
+    intent: dict,
+    workspace: Optional[str],
+    tool_events: list,
+    relevant_tools: Optional[Set[str]],
+    disabled_tools: Optional[Set[str]],
+) -> Optional[re.Match]:
+    """Detect incomplete workspace target lookup after an obvious miss.
+
+    Example: for a generic "read the README" request, trying only
+    ``README.md`` and then asking the user to paste content is incomplete when
+    the active workspace can still be listed or globbed for ``README*``.
+    """
+    if not _looks_like_workspace_file_request(user_text, intent, workspace):
+        return None
+    if not _workspace_read_tools_available(relevant_tools, disabled_tools):
+        return None
+    if _has_successful_workspace_read_file_event(tool_events):
+        return None
+
+    visible = strip_tool_blocks(text or "").strip()
+    visible = re.sub(r"<think>.*?</think>", "", visible, flags=re.DOTALL | re.IGNORECASE).strip()
+    if not visible or "```" in visible or len(visible) > 1800:
+        return None
+
+    failure_match = _WORKSPACE_TARGET_FAILURE_RE.search(visible)
+    if failure_match is None:
+        return None
+
+    generic_readme_request = (
+        _GENERIC_README_REQUEST_RE.search(user_text or "") is not None
+        and _EXPLICIT_README_PATH_RE.search(user_text or "") is None
+    )
+    if generic_readme_request:
+        if _has_workspace_target_not_found_event(tool_events, "readme"):
+            return failure_match
+        if not _has_workspace_file_tool_event(tool_events):
+            return failure_match
+        return None
+
+    if not _has_workspace_file_tool_event(tool_events):
+        return failure_match
+    return None
 
 
 def _find_avoidable_workspace_clarification(
@@ -2379,6 +2478,8 @@ async def stream_agent_loop(
     _empty_response_seen = False
     _empty_response_failed = False
     _workspace_clarification_nudges = 0
+    _workspace_target_recovery_pending = False
+    _workspace_target_recovery_nudges = 0
 
     # "I said I would, then didn't" detector. The pattern that breaks debug
     # loops on weak models (deepseek-v4-flash mid-2026): the model writes
@@ -2449,6 +2550,12 @@ async def stream_agent_loop(
                 all_tool_schemas = [
                     t for t in all_tool_schemas
                     if _tool_schema_name(t) in _WORKSPACE_FILE_TOOL_RECOVERY_TOOLS
+                ]
+            elif _workspace_target_recovery_pending:
+                all_tool_schemas = [
+                    t for t in (FUNCTION_TOOL_SCHEMAS + mcp_schemas)
+                    if _tool_schema_name(t) in _WORKSPACE_TARGET_RECOVERY_TOOLS
+                    and _tool_schema_name(t) not in disabled_tools
                 ]
         else:
             # Local: only MCP schemas when message suggests MCP tool usage
@@ -2846,6 +2953,51 @@ async def stream_agent_loop(
                         "still leaves multiple plausible targets. If the user asked "
                         "for a write/edit/delete and the target is still ambiguous "
                         "after inspection, ask before mutating files."
+                    ),
+                })
+                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                continue
+            _workspace_target_match = _find_incomplete_workspace_target_lookup(
+                _THINK_RE.sub("", cleaned_round).strip(),
+                _last_user,
+                _intent,
+                workspace,
+                tool_events,
+                _relevant_tools,
+                disabled_tools,
+            )
+            if (
+                _workspace_target_match is not None
+                and not _force_answer
+                and not guide_only
+                and _workspace_target_recovery_nudges < _MAX_WORKSPACE_TARGET_RECOVERY_NUDGES
+                and round_num < max_rounds
+            ):
+                _workspace_target_recovery_nudges += 1
+                _workspace_target_recovery_pending = True
+                logger.info(
+                    "[agent] incomplete workspace target lookup nudge #%d on round %d: %r",
+                    _workspace_target_recovery_nudges,
+                    round_num,
+                    _workspace_target_match.group(0).strip()[:200],
+                )
+                if cleaned_round:
+                    yield f'data: {json.dumps({"type": "agent_process", "round": round_num, "text": cleaned_round})}\n\n'
+                _ws_prompt = str(workspace or "").replace("`", "\\`")
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "The previous round stopped after an incomplete active-workspace "
+                        "target lookup. A workspace is already bound at "
+                        f"`{_ws_prompt}`. Do not ask the user to paste file contents, "
+                        "and do not stop after trying one guessed path such as "
+                        "`README.md`. In this next round, use read-only workspace "
+                        "tools to finish the lookup: call `get_workspace` if needed, "
+                        "then `ls`, `glob`, `grep`, or `read_file`. For a generic "
+                        "README request, search for `README*` / `readme*` and read "
+                        "the best root-level match such as `README.txt` or "
+                        "`README.md`. If inspection still finds multiple equally "
+                        "plausible targets, ask one precise clarification."
                     ),
                 })
                 yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
@@ -3292,6 +3444,11 @@ async def stream_agent_loop(
                 and _is_successful_file_mutation_event(tool_event)
             ):
                 _workspace_shell_write_recovery_pending = False
+            if (
+                _workspace_target_recovery_pending
+                and str(tool_event.get("tool") or "").lower() in _WORKSPACE_READ_TOOL_NAMES
+            ):
+                _workspace_target_recovery_pending = False
             if block.tool_type in _VERIFIER_EFFECTFUL_TOOLS:
                 _effectful_used = True
 
@@ -3390,6 +3547,12 @@ async def stream_agent_loop(
         metrics["agent_workspace_clarification_recovery"] = {
             "nudges": _workspace_clarification_nudges,
             "max_nudges": _MAX_WORKSPACE_CLARIFICATION_NUDGES,
+        }
+    if _workspace_target_recovery_nudges:
+        metrics["agent_workspace_target_recovery"] = {
+            "nudges": _workspace_target_recovery_nudges,
+            "max_nudges": _MAX_WORKSPACE_TARGET_RECOVERY_NUDGES,
+            "pending": _workspace_target_recovery_pending,
         }
     yield f"data: {json.dumps({'type': 'metrics', 'data': metrics})}\n\n"
 
