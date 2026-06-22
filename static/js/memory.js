@@ -865,7 +865,16 @@ export function renderMemoryList() {
         dropdown.style.top = rect.bottom + 2 + 'px';
         dropdown.style.right = (window.innerWidth - rect.right) + 'px';
         dropdown.style.left = 'auto';
-        dropdown.style.zIndex = '10001';
+        // Portaled to <body>, so it must outrank the Brain modal it belongs to.
+        // Tool modals get a monotonically increasing z-index from modalManager's
+        // bring-to-front counter, which climbs unbounded over a long session —
+        // once it passed the old hardcoded 10001 the menu rendered behind the
+        // panel (#4720). Derive the z from the owning modal so it always sits
+        // just above, however high the counter has climbed (10001 floor kept
+        // for the common low-counter case).
+        const ownerModal = menuBtn.closest('.modal');
+        const ownerZ = ownerModal ? parseInt(getComputedStyle(ownerModal).zIndex, 10) : NaN;
+        dropdown.style.zIndex = String(Math.max(10001, (Number.isFinite(ownerZ) ? ownerZ : 0) + 1));
         dropdown.style.display = 'block';
         document.body.appendChild(dropdown);
         // Keep on-screen (mobile): flip above the button if it overflows the
