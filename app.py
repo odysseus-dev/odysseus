@@ -765,19 +765,24 @@ app.include_router(setup_companion_routes())
 
 def get_base_path(request: Request) -> str:
     """Determine the base path prefix of the deployment, ignoring trailing slash."""
-    # 1. Check environment variable first
-    env_base = os.getenv("ODYSSEUS_BASE_PATH", "").strip().rstrip("/")
-    if env_base:
-        if not env_base.startswith("/"):
-            env_base = "/" + env_base
-        return env_base
-
-    # 2. Fall back to X-Forwarded-Prefix header
+    # 1. Check X-Forwarded-Prefix header first (set by Nginx reverse proxy)
     forwarded_prefix = request.headers.get("x-forwarded-prefix", "").strip().rstrip("/")
     if forwarded_prefix:
         if not forwarded_prefix.startswith("/"):
             forwarded_prefix = "/" + forwarded_prefix
         return forwarded_prefix
+
+    # 2. Check if the request is made directly to localhost/loopback
+    host = request.headers.get("host", "")
+    if "localhost" in host or "127.0.0.1" in host:
+        return ""
+
+    # 3. Fall back to environment variable
+    env_base = os.getenv("ODYSSEUS_BASE_PATH", "").strip().rstrip("/")
+    if env_base:
+        if not env_base.startswith("/"):
+            env_base = "/" + env_base
+        return env_base
 
     return ""
 
@@ -818,11 +823,42 @@ async def serve_manifest(request: Request):
         return Response(content, media_type="application/manifest+json")
     raise HTTPException(404, "manifest.json not found")
 
+def calculate_static_hash() -> str:
+    """Recursively hashes files in static/ to generate a dynamic build version for cache busting."""
+    import hashlib
+    hasher = hashlib.sha256()
+    static_dir = abs_join(BASE_DIR, "static")
+    if not os.path.exists(static_dir):
+        return "default"
+    for root, _, files in sorted(os.walk(static_dir)):
+        for file in sorted(files):
+            if file == "sw.js" or file.startswith("."):
+                continue
+            file_path = os.path.join(root, file)
+            try:
+                with open(file_path, "rb") as f:
+                    while chunk := f.read(8192):
+                        hasher.update(chunk)
+            except Exception:
+                pass
+    return hasher.hexdigest()[:12]
+
+# Calculate once at startup to keep it high-performance with zero per-request overhead
+STATIC_HASH = calculate_static_hash()
+
 @app.get("/sw.js")
 async def serve_sw(request: Request):
     static_path = abs_join(BASE_DIR, "static/sw.js")
     if os.path.exists(static_path):
-        return FileResponse(static_path, media_type="text/javascript")
+        with open(static_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        import re
+        content = re.sub(
+            r"const\s+CACHE_NAME\s*=\s*['\"][^'\"]+['\"]",
+            f"const CACHE_NAME = 'odysseus-{STATIC_HASH}'",
+            content
+        )
+        return Response(content, media_type="text/javascript")
     raise HTTPException(404, "sw.js not found")
 
 @app.get("/")
