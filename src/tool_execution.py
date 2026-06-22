@@ -323,6 +323,24 @@ _MCP_TOOL_MAP = {
     "web_fetch":      ("web_fetch",  "web_fetch"),
     "generate_image": ("image_gen",  "generate_image"),
 }
+_EMAIL_MCP_OWNER_ARG = "_odysseus_owner"
+
+
+def _parse_qualified_mcp_args(tool: str, content: str) -> tuple[Dict, Optional[str]]:
+    raw = (content or "").strip()
+    if not raw:
+        return {}, None
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        if tool.startswith("mcp__email__"):
+            return {}, "Email MCP tool arguments must be a JSON object."
+        return {}, None
+    if not isinstance(parsed, dict):
+        if tool.startswith("mcp__email__"):
+            return {}, "Email MCP tool arguments must be a JSON object."
+        return {}, None
+    return parsed, None
 
 
 def _parse_generate_image(content: str) -> Dict:
@@ -453,6 +471,8 @@ async def _direct_fallback(
     tool: str,
     content: str,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+    session_id: Optional[str] = None,
+    owner: Optional[str] = None,
 ) -> Optional[Dict]:
     _subproc_env = {
         **os.environ,
@@ -466,6 +486,8 @@ async def _direct_fallback(
         ctx = {
             "progress_cb": progress_cb,
             "subproc_env": _subproc_env,
+            "session_id": session_id,
+            "owner": owner,
         }
 
         from src.agent_tools import TOOL_HANDLERS
@@ -713,10 +735,13 @@ async def _execute_tool_block_impl(
             desc = f"bash (background): {short}"
             result = {
                 "output": (
-                    f"Started background job `{rec['id']}`. It is running detached — "
+                    f"Started background job `{rec['id']}`. It is running detached; "
                     f"do NOT wait for it or poll it. You will be automatically re-invoked "
                     f"with its full output when it finishes. Continue with other work, or "
-                    f"end your turn now and resume when the result arrives."
+                    f"end your turn now and resume when the result arrives. If the user "
+                    f"later asks to check progress or stop it, call the manage_bg_jobs "
+                    f"tool yourself (output or kill); do not tell them to run a tool "
+                    f"command, and do not surface raw tool syntax in your reply."
                 ),
                 "exit_code": 0,
                 "bg_job_id": rec["id"],
@@ -737,6 +762,11 @@ async def _execute_tool_block_impl(
         desc = f"{tool}: {first_line}"
         result = await _direct_fallback(tool, content, progress_cb=progress_cb) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
+    elif tool == "manage_bg_jobs":
+        # Inspect/kill detached `bash` jobs; needs session_id to scope to chat.
+        desc = f"manage_bg_jobs: {content.split(chr(10))[0][:80]}"
+        result = await _direct_fallback(tool, content, session_id=session_id, owner=owner) \
+            or {"error": "manage_bg_jobs: execution failed", "exit_code": 1}
     elif tool in ("create_document", "update_document", "edit_document",
                   "suggest_document", "manage_documents"):
         desc = f"{tool}: {content.split(chr(10))[0][:80]}"
@@ -748,10 +778,24 @@ async def _execute_tool_block_impl(
         query = content.split("\n")[0].strip()
         desc = f"search_chats: {query[:80]}"
         result = await do_search_chats(query, owner=owner)
-    elif tool in ("chat_with_model", "create_session", "list_sessions",
-                  "send_to_session", "pipeline",
-                  "manage_session", "manage_memory", "list_models",
-                  "ui_control", "ask_teacher"):
+    elif tool in ("chat_with_model", "ask_teacher", "list_models"):
+        # Migrated to the agent_tools registry (#3629): dispatched through
+        # TOOL_HANDLERS with the owner/session ctx these tools need, instead
+        # of the legacy dispatch_ai_tool elif. The impls live in
+        # src/agent_tools/model_interaction_tools.py.
+        first_line = content.split(chr(10))[0].strip()[:60]
+        desc = f"{tool}: {first_line}" if first_line else tool
+        result = await _document_tool_dispatch(tool, content, session_id, owner) \
+            or {"error": f"{tool}: execution failed", "exit_code": 1}
+    elif tool in ("create_session", "list_sessions", "send_to_session", "manage_session"):
+        # Migrated to the agent_tools registry (#3629): dispatched through
+        # TOOL_HANDLERS with the owner/session ctx these tools need. The impls
+        # live in src/agent_tools/session_tools.py.
+        first_line = content.split(chr(10))[0].strip()[:60]
+        desc = f"{tool}: {first_line}" if first_line else tool
+        result = await _document_tool_dispatch(tool, content, session_id, owner) \
+            or {"error": f"{tool}: execution failed", "exit_code": 1}
+    elif tool in ("pipeline", "manage_memory", "ui_control"):
         from src.ai_interaction import dispatch_ai_tool
         desc, result = await dispatch_ai_tool(tool, content, session_id, owner=owner)
     elif tool == "manage_tasks":
@@ -858,12 +902,15 @@ async def _execute_tool_block_impl(
         # MCP tool dispatch
         mcp = get_mcp_manager()
         if mcp:
-            try:
-                args = json.loads(content) if content.strip().startswith("{") else {}
-            except (json.JSONDecodeError, TypeError):
-                args = {}
             desc = f"mcp: {tool}"
-            result = await mcp.call_tool(tool, args)
+            args, parse_error = _parse_qualified_mcp_args(tool, content)
+            if parse_error:
+                result = {"error": parse_error, "exit_code": 1}
+            else:
+                if tool.startswith("mcp__email__") and owner:
+                    args = dict(args)
+                    args[_EMAIL_MCP_OWNER_ARG] = owner
+                result = await mcp.call_tool(tool, args)
         else:
             desc = f"mcp: {tool}"
             result = {"error": "MCP manager not available", "exit_code": 1}

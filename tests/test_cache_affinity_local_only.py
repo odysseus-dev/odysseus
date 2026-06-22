@@ -38,6 +38,16 @@ def test_unknown_public_host_gets_no_affinity_fields(monkeypatch):
     assert payload == {}
 
 
+@pytest.mark.parametrize("url", [
+    "https://10.example-cloud.com/v1",
+    "https://172.16.example-cloud.com/v1",
+    "https://192.168.example-cloud.com/v1",
+])
+def test_private_prefix_dns_host_gets_no_affinity_fields(monkeypatch, url):
+    payload = _affinity_fields(url, monkeypatch)
+    assert payload == {}
+
+
 def test_localhost_server_gets_affinity_fields(monkeypatch):
     payload = _affinity_fields("http://localhost:8080/v1", monkeypatch)
     assert payload == {"session_id": "sess-123", "cache_prompt": True}
