@@ -459,6 +459,8 @@ def test_stopped_agent_placeholder_hides_process_as_final_answer():
     assert "metadata?.agent_stopped_before_final) return ''" in renderer
     assert "metadata?.agent_stopped_before_final && !metadata?.agent_final_response" in renderer
     assert "[Agent stopped before final answer]" in renderer
+    assert "hasCapturedAgentProcess" in renderer
+    assert "No tool actions were captured before the stop." in renderer
     assert "Continue the interrupted agent task from the existing process state" in renderer
 
 

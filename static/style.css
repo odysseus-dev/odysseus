@@ -3536,6 +3536,9 @@ body.bg-pattern-sparkles {
       gap:8px;
       flex-wrap:wrap;
     }
+    .stopped-detail {
+      color:var(--muted);
+    }
 
     /* Message edit UI */
     .msg-edit-textarea {

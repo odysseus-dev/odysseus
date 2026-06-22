@@ -48,3 +48,4 @@ def test_agent_process_has_collapsed_panel_styles():
     assert ".agent-process-meta" in source
     assert ".agent-process > summary::before" in source
     assert ".agent-process[open] > .agent-process-summary::after" in source
+    assert ".stopped-detail" in source

@@ -2517,6 +2517,12 @@ export function addMessage(role, content, modelName, metadata) {
       const runFailed = metadata.run_status === 'error' ||
         metadata.stop_reason === 'error';
       const stoppedBeforeFinal = !!metadata.agent_stopped_before_final;
+      const hasCapturedAgentProcess = (
+        Array.isArray(metadata.tool_events) && metadata.tool_events.length > 0
+      ) || (
+        Array.isArray(metadata.round_texts) &&
+        metadata.round_texts.some(txt => typeof txt === 'string' && txt.trim())
+      );
       // Differentiate between "stopped mid-stream" (had content, can continue)
       // and "cancelled before any content" — the latter has no Continue affordance.
       stoppedLabel.textContent = timedOut
@@ -2531,6 +2537,12 @@ export function addMessage(role, content, modelName, metadata) {
         ? '[Cancelled by user]'
         : '[Message interrupted]';
       stoppedIndicator.appendChild(stoppedLabel);
+      if (stoppedBeforeFinal && !hasCapturedAgentProcess) {
+        const stoppedDetail = document.createElement('span');
+        stoppedDetail.className = 'stopped-detail';
+        stoppedDetail.textContent = 'No tool actions were captured before the stop.';
+        stoppedIndicator.appendChild(stoppedDetail);
+      }
       // Continue button only makes sense when there's partial content to
       // resume from - skip it for fully-cancelled/timeout/lost/failed turns.
       if (!metadata.cancelled && !timedOut && !lostAfterRestart && !runFailed) {
