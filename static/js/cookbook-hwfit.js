@@ -1366,15 +1366,23 @@ export function _hwfitRenderList(el, models) {
       : '';
     const moeBadge = m.is_moe ? '<span class="hwfit-badge hwfit-moe">MoE</span>' : '';
     const imgBadge = m.is_image_gen ? '<span class="hwfit-badge" style="background:color-mix(in srgb, var(--red) 20%, transparent);color:var(--red);font-size:8px;padding:1px 4px;border-radius:3px;margin-left:4px;">IMG</span>' : '';
+    // One unified "you already have this locally" cue. A GGUF on disk, a model
+    // in your HF download cache, or one served by a local LM Studio / Ollama all
+    // mean "present on this machine" \u2014 so they share the same badge styling and
+    // the tooltip names the specific source. (Previously a separate green dot
+    // for the HF cache and a "local" badge for GGUF files looked redundant and
+    // were mutually exclusive, which was confusing.)
     let sourceBadge = '';
+    const _cachedHere = _cachedModelIds && (_cachedModelIds.has(m.name) || [..._cachedModelIds].some(id => id === m.name?.split('/').pop()));
     if (m._source === 'local_gguf') {
-      sourceBadge = '<span class="hwfit-badge hwfit-source-local" title="Installed GGUF file">local</span>';
+      sourceBadge = '<span class="hwfit-badge hwfit-source-local" title="GGUF file on this machine">local</span>';
     } else if (m._source === 'lmstudio') {
-      sourceBadge = '<span class="hwfit-badge hwfit-source-lmstudio" title="Available in LM Studio">LM</span>';
+      sourceBadge = '<span class="hwfit-badge hwfit-source-lmstudio" title="Served by LM Studio on this machine">LM</span>';
     } else if (m._source === 'ollama') {
-      sourceBadge = '<span class="hwfit-badge hwfit-source-ollama" title="Installed in local Ollama">Ollama</span>';
+      sourceBadge = '<span class="hwfit-badge hwfit-source-ollama" title="Served by Ollama on this machine">Ollama</span>';
+    } else if (_cachedHere) {
+      sourceBadge = '<span class="hwfit-badge hwfit-source-local" title="Downloaded to your model cache">local</span>';
     }
-    const dlDot = (_cachedModelIds && (_cachedModelIds.has(m.name) || [..._cachedModelIds].some(id => id === m.name?.split('/').pop()))) ? '<span class="hwfit-dl-dot" title="Downloaded">\u25CF</span>' : '';
     html += `<div class="hwfit-row" data-model="${esc(m.name)}">`;
     html += `<span class="hwfit-col hwfit-fit" style="color:${fitColor}">${esc(fitLabel)}${ramBadge}</span>`;
     // Append quant to the title when it's not already in the repo name. The
@@ -1395,7 +1403,7 @@ export function _hwfitRenderList(el, models) {
         _quantSuffix = ` <span class="hwfit-name-quant" title="${esc(_quantTag)} — full storage format">(${esc(_display)})</span>`;
       }
     }
-    html += `<span class="hwfit-col hwfit-name">${modelLogo(m.name)}${esc(_short)}${_quantSuffix}${moeBadge}${imgBadge}${sourceBadge}${dlDot}</span>`;
+    html += `<span class="hwfit-col hwfit-name">${modelLogo(m.name)}${esc(_short)}${_quantSuffix}${moeBadge}${imgBadge}${sourceBadge}</span>`;
     html += `<span class="hwfit-col hwfit-c-params">${esc(pcount)}</span>`;
     // Truncate the Quant cell to 9 chars + ellipsis so long tags like
     // "FP4-MoE-Mixed" don't push neighboring columns. Full tag stays in title.

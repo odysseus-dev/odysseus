@@ -21892,11 +21892,11 @@ body.gallery-selecting .gallery-dl-btn,
   transition: background 0.1s;
 }
 .hwfit-row:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
-/* Already-downloaded rows: dim slightly so attention falls on undownloaded
-   options. The green dot stays bright as the "this is local" cue. */
-.hwfit-row:has(.hwfit-dl-dot) { opacity: 0.55; }
-.hwfit-row:has(.hwfit-dl-dot):hover { opacity: 0.9; }
-.hwfit-row:has(.hwfit-dl-dot) .hwfit-dl-dot { opacity: 1; }
+/* Rows you already have locally: dim slightly so attention falls on options
+   you'd still need to download. The green "local" badge stays bright as the cue. */
+.hwfit-row:has(.hwfit-source-local) { opacity: 0.55; }
+.hwfit-row:has(.hwfit-source-local):hover { opacity: 0.9; }
+.hwfit-row:has(.hwfit-source-local) .hwfit-source-local { opacity: 1; }
 .hwfit-header {
   cursor: default; position: sticky; top: 0; z-index: 1;
   background: var(--panel); border-bottom: 1px solid var(--border);
@@ -21912,7 +21912,7 @@ body.gallery-selecting .gallery-dl-btn,
   flex-shrink: 0; white-space: nowrap; text-align: left;
   font-size: 9px; color: var(--fg-muted);
 }
-.hwfit-fit { width: 52px; font-weight: 700; text-transform: uppercase; }
+.hwfit-fit { width: 92px; font-weight: 700; text-transform: uppercase; overflow: hidden; text-overflow: ellipsis; }
 .hwfit-name {
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
   font-weight: 500; font-size: 11px; color: var(--fg);
