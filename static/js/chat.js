@@ -212,6 +212,26 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   var hideWelcomeScreen = chatRenderer.hideWelcomeScreen;
   var showWelcomeScreen = chatRenderer.showWelcomeScreen;
 
+  /** Return focus to the composer after a chat turn finishes. */
+  function _focusMessageInput() {
+    const input = uiModule.el('message');
+    if (!input || input.disabled) return;
+    try { input.removeAttribute('readonly'); } catch (_) {}
+    // Defer past button/icon animations and end-of-stream UI updates.
+    setTimeout(() => {
+      try {
+        input.focus({ preventScroll: window.innerWidth <= 768 });
+      } catch (_) {
+        try { input.focus(); } catch (_) {}
+      }
+      requestAnimationFrame(() => {
+        if (document.activeElement !== input) {
+          try { input.focus({ preventScroll: window.innerWidth <= 768 }); } catch (_) {}
+        }
+      });
+    }, 0);
+  }
+
   /**
    * Update submit button state
    */
@@ -340,6 +360,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         updateSubmitButton('idle', submitBtn);
         const messageInput = uiModule.el('message');
         if (messageInput) messageInput.disabled = false;
+        _focusMessageInput();
         currentAccumulated = '';
         return;
       }
@@ -407,6 +428,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       // Re-enable message input
       const messageInput = uiModule.el('message');
       if (messageInput) messageInput.disabled = false;
+      _focusMessageInput();
       
       // Clear tracking variables
       currentAccumulated = '';
@@ -3046,14 +3068,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         // Reset button to idle state
         updateSubmitButton('idle', submitBtn);
 
-        // Re-enable message input; on mobile blur to dismiss keyboard
+        // Re-enable message input and return focus for the next message.
         if (messageInput) {
           messageInput.disabled = false;
-          if (window.innerWidth <= 768) {
-            messageInput.blur();
-          } else {
-            messageInput.focus();
-          }
+          _focusMessageInput();
         }
 
         // Clear tracking variables
@@ -3477,6 +3495,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       const meta_ = metricsData ? Object.assign({ model }, metricsData) : { model };
       chatRenderer.addMessage('assistant', roundText, model, meta_);
       uiModule.scrollHistory();
+      _focusMessageInput();
       return true;
     }
 
@@ -3766,7 +3785,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         var _submitBtn = document.getElementById('submit');
         updateSubmitButton('idle', _submitBtn);
         var _msgInput = document.getElementById('message');
-        if (_msgInput) _msgInput.disabled = false;
+        if (_msgInput) {
+          _msgInput.disabled = false;
+          _focusMessageInput();
+        }
       }, 2000); // 2 second grace period
     });
 
