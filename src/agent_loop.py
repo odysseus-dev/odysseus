@@ -3460,9 +3460,12 @@ async def stream_agent_loop(
                     f'data: {json.dumps({"type": "ui_control", "data": result})}\n\n'
                 )
 
-            # ask_user: the agent posed a multiple-choice question. Emit it so the
-            # frontend renders clickable options, then end the turn (below) and
-            # wait — the user's pick becomes the next message.
+            # ask_user: remember the payload now, but emit the interactive event
+            # only *after* tool_output below.  Emitting it before tool_output let
+            # the subsequent tool-card rewrite/scroll push the choices out of
+            # view.  The payload is also copied into the persisted tool event so
+            # history reload can reconstruct an unanswered card.
+            _pending_ask_user_event = None
             if "ask_user" in result:
                 # The question lives in the tool args. ChatMessage.to_dict()
                 # replays only role+content to the model next turn — tool_event
@@ -3477,9 +3480,7 @@ async def stream_agent_loop(
                     _auq_delta = ("\n\n" if full_response.strip() else "") + _auq_q
                     full_response += _auq_delta
                     yield 'data: ' + json.dumps({"delta": _auq_delta}) + '\n\n'
-                yield (
-                    f'data: {json.dumps({"type": "ask_user", "data": result["ask_user"]})}\n\n'
-                )
+                _pending_ask_user_event = _auq
                 _awaiting_user = True
 
             # update_plan: agent wrote back to the plan (ticked a step / revised).
@@ -3534,6 +3535,10 @@ async def stream_agent_loop(
 
             # Emit tool_output (include ui_event data if present)
             tool_output_data = {"type": "tool_output", "tool": block.tool_type, "command": cmd_display, "output": output_text, "exit_code": result.get("exit_code")}
+            if _pending_ask_user_event:
+                # Keep enough state in the streamed tool result for alternate
+                # clients to render the prompt without depending on event order.
+                tool_output_data["ask_user"] = _pending_ask_user_event
             if "ui_event" in result:
                 tool_output_data["ui_event"] = result["ui_event"]
                 for k in (
@@ -3563,6 +3568,14 @@ async def stream_agent_loop(
             if "diff" in result:
                 tool_output_data["diff"] = result["diff"]
             yield f'data: {json.dumps(tool_output_data)}\n\n'
+
+            # This must be the final UI event for ask_user: the frontend appends
+            # the card below the now-settled tool node and cancels any between-
+            # round spinner.  The turn ends after the current tool batch.
+            if _pending_ask_user_event:
+                yield (
+                    f'data: {json.dumps({"type": "ask_user", "data": _pending_ask_user_event})}\n\n'
+                )
 
             # Native document tools open in the editor + carry the REAL doc id.
             # Emit a doc_update so the frontend opens/activates it and sends it
@@ -3621,6 +3634,11 @@ async def stream_agent_loop(
             # this the diff shows live but vanishes from saved history.
             if result.get("diff"):
                 tool_event["diff"] = result["diff"]
+            if _pending_ask_user_event:
+                # Persist the structured question with the tool event.  On a
+                # reload, chatRenderer can restore the card; a later user
+                # message removes it as answered.
+                tool_event["ask_user"] = _pending_ask_user_event
             tool_events.append(tool_event)
             if block.tool_type in _VERIFIER_EFFECTFUL_TOOLS:
                 _effectful_used = True

@@ -29,6 +29,7 @@ from routes.document_helpers import _owner_session_filter
 from core.database import SessionLocal, get_session_mode, set_session_mode
 from core.database import Session as DBSession, ChatMessage as DBChatMessage
 from core.database import Document as DBDocument, ModelEndpoint
+from core.log_safety import redact_url
 from routes.research_routes import _resolve_research_endpoint
 from routes.model_routes import _visible_models
 from routes.chat_helpers import (
@@ -930,7 +931,7 @@ def setup_chat_routes(
             if effective_do_research:
                 _r_ep, _r_model, _r_headers = _resolve_research_endpoint(sess)
                 _auth_keys = list(_r_headers.keys()) if _r_headers else []
-                logger.info(f"Research endpoint resolved: model={_r_model}, endpoint={_r_ep}, auth_keys={_auth_keys}, sess_headers_keys={list(sess.headers.keys()) if isinstance(sess.headers, dict) else type(sess.headers)}")
+                logger.info(f"Research endpoint resolved: model={_r_model}, endpoint={redact_url(_r_ep)}, auth_keys={_auth_keys}, sess_headers_keys={list(sess.headers.keys()) if isinstance(sess.headers, dict) else type(sess.headers)}")
 
                 # Clarification round: only for very short/vague queries on first research message.
                 # Skip in compare mode — each pane is a fresh session, so every one would

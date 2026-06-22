@@ -1667,7 +1667,7 @@ class TaskScheduler:
             msg["X-Odysseus-Ref"] = str(task.id)
             msg.set_content(result or "")
             _send_smtp_message(cfg, from_addr, [to_addr], msg.as_string(), timeout=30)
-            logger.info("Task %s emailed result to %s (%sb)", task.id, to_addr, len(result or ""))
+            logger.info("Task %s emailed result (recipient_set=%s, %sb)", task.id, bool(to_addr), len(result or ""))
         except Exception as e:
             logger.error("Task %s email delivery failed: %s", task.id, e, exc_info=True)
             raise
@@ -2029,7 +2029,7 @@ class TaskScheduler:
                 # silent SMTP failure is easier to spot in the logs.
                 logger.info(
                     f"Task {task.id} delivered via MCP tool {tool_name} "
-                    f"(to={recipient or '<unset>'}, body={body_len}b, reply={stdout[:200]!r})"
+                    f"(recipient_set={bool(recipient)}, body={body_len}b, reply={stdout[:200]!r})"
                 )
         except Exception as e:
             logger.error(f"Task {task.id} MCP delivery failed: {e}")

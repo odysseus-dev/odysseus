@@ -44,6 +44,17 @@ from routes.email_helpers import (
 
 logger = logging.getLogger(__name__)
 
+# Recovers a `[{"action": ...}, ...]` JSON array from raw LLM output when the
+# fenced-block strip leaves nothing usable. Runs on model output influenced by
+# untrusted email bodies, so it must not backtrack: the object content class is
+# `[^{}]` (brace-delimited, greedy) rather than the old `[^[\]]*?` lazy runs,
+# which exploded exponentially on inputs like `[{"action"},{` + `}},{{` * N
+# (CodeQL py/redos #198).
+_CAL_ACTION_ARRAY_RE = re.compile(
+    r'\[\s*\{[^{}]*"action"[^{}]*\}\s*(?:,\s*\{[^{}]*\}\s*)*\]',
+    re.DOTALL,
+)
+
 
 def _owner_for_email_account(account_id: str | None) -> str:
     if not account_id:
@@ -558,7 +569,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                         cal_extract = _strip_think(_raw_original)
                         cal_extract = re.sub(r"^```(?:json)?\s*|\s*```$", "", cal_extract, flags=re.MULTILINE).strip()
                         if not cal_extract and _raw_original:
-                            matches = list(re.finditer(r'\[\s*\{[^[\]]*?"action"[^[\]]*?\}\s*(?:,\s*\{[^[\]]*?\}\s*)*\]', _raw_original, re.DOTALL))
+                            matches = list(_CAL_ACTION_ARRAY_RE.finditer(_raw_original))
                             if matches:
                                 cal_extract = matches[-1].group()
                         logger.info(f"[cal-extract] uid={uid.decode() if isinstance(uid, bytes) else uid} folder={_folder} subj={subject[:50]!r} raw_len={len(cal_extract)} orig_len={len(_raw_original)} raw={cal_extract[:800]!r}")

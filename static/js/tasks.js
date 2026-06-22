@@ -8,6 +8,7 @@ import * as spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { sortModelIds } from './modelSort.js';
 import { ordinalSuffix } from './util/ordinal.js';
+import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -899,7 +900,7 @@ function _attachTaskLongPress(card, menuBtn) {
 
 function _showTaskDropdown(anchor, items) {
   // Remove any existing dropdown
-  document.querySelectorAll('.task-dropdown').forEach(d => d.remove());
+  document.querySelectorAll('.task-dropdown').forEach(dismissOrRemove);
   const dd = document.createElement('div');
   dd.className = 'task-dropdown';
   dd.style.cssText = 'position:fixed;z-index:100000;background:var(--panel);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.3);padding:4px;min-width:120px;';
@@ -914,7 +915,7 @@ function _showTaskDropdown(anchor, items) {
     }
     btn.addEventListener('mouseenter', () => { btn.style.background = 'color-mix(in srgb, var(--fg) 8%, transparent)'; });
     btn.addEventListener('mouseleave', () => { btn.style.background = 'none'; });
-    btn.addEventListener('click', (e) => { e.stopPropagation(); dd.remove(); item.action(); });
+    btn.addEventListener('click', (e) => { e.stopPropagation(); close(); item.action(); });
     dd.appendChild(btn);
   });
   document.body.appendChild(dd);
@@ -926,16 +927,13 @@ function _showTaskDropdown(anchor, items) {
   dd.style.top = top + 'px';
   dd.style.left = left + 'px';
   const openedAt = performance.now();
-  const close = (e) => {
+  const close = bindMenuDismiss(dd, () => { dd.remove(); }, (ev) => {
     // Ignore any clicks that occur within 250ms of the open (covers touch
     // "ghost click" duplicates that were firing right after pointerup and
-    // removing the dropdown before the user could see it).
-    if (performance.now() - openedAt < 250) return;
-    if (!dd.contains(e.target)) { dd.remove(); document.removeEventListener('click', close); }
-  };
-  // requestAnimationFrame so the listener is registered AFTER the current
-  // pointer/click event cycle has finished bubbling.
-  requestAnimationFrame(() => document.addEventListener('click', close));
+    // removing the dropdown before the user could see it) — treat as inside.
+    if (performance.now() - openedAt < 250) return false;
+    return !dd.contains(ev.target);
+  });
 }
 
 // ---- Presets ----
