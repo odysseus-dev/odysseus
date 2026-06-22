@@ -203,6 +203,8 @@ def test_default_chat_does_not_auto_pick_shared_endpoint_for_fresh_user(monkeypa
         "endpoint_id": "",
         "endpoint_url": "",
         "model": "",
+        "default_reasoning_effort": "",
+        "default_verbosity": "",
     }
 
 
@@ -245,6 +247,8 @@ def test_default_chat_uses_owned_endpoint_as_regular_user_last_resort(monkeypatc
         "endpoint_id": "owned",
         "endpoint_url": "http://localhost:11434/chat/completions",
         "model": "owned-model",
+        "default_reasoning_effort": "",
+        "default_verbosity": "",
     }
 
 
