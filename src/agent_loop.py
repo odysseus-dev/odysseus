@@ -1305,6 +1305,26 @@ def _build_system_prompt(
             logger.debug(f"skill injection failed (non-fatal): {_sk_err}")
 
     agent_msg = {"role": "system", "content": agent_prompt}
+
+    # ── System-prompt override ──
+    # If the user configured a custom system prompt in Defaults, replace
+    # the assembled tool prompt entirely with their override.
+    try:
+        _sp_override = get_setting("system_prompt_override", "")
+        # Also check user prefs (per-user override)
+        try:
+            from routes.prefs_routes import _load_for_user as _load_prefs
+            _user_prefs = _load_prefs(owner) or {}
+            if _user_prefs.get("system_prompt_override"):
+                _sp_override = _user_prefs["system_prompt_override"]
+        except Exception:
+            pass
+        if _sp_override and _sp_override.strip():
+            agent_msg["content"] = _sp_override.strip()
+            logger.debug("Using system_prompt_override (%d chars)", len(_sp_override))
+    except Exception:
+        pass
+
     insert_idx = 0
     for i, msg in enumerate(messages):
         if msg.get("role") == "system":

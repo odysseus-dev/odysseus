@@ -464,6 +464,7 @@
       <button class="admin-tab active" data-tab="theme-tab-browse"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><path d="M12 2a7 7 0 0 0 0 20 4 4 0 0 1 0-8 4 4 0 0 0 0-8"/><circle cx="8" cy="9" r="1.4" fill="currentColor"/><circle cx="15" cy="14" r="1.4" fill="currentColor"/><circle cx="9" cy="15" r="1.4" fill="currentColor"/></svg>Themes</button>
       <button class="admin-tab" data-tab="theme-tab-customize"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M9.06 11.9l-3.5 3.5a2.85 2.85 0 1 0 4.03 4.03l8.49-8.49a4.5 4.5 0 1 0-6.36-6.36L3.18 12.62"/><path d="M14 7l3 3"/></svg>Customize</button>
       <button class="admin-tab" data-tab="theme-tab-branding"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/><path d="M21 15l-5-5L5 21"/></svg>Branding</button>
+      <button class="admin-tab" data-tab="theme-tab-defaults"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>Defaults</button>
     </div>
 
     <!-- Tab: Browse themes -->
@@ -703,11 +704,47 @@
             <button id="branding-save-btn" style="flex:1;padding:10px;border:none;border-radius:8px;background:var(--accent,var(--red));color:var(--bg);font-weight:600;cursor:pointer;font-size:0.9em;">Save Branding</button>
             <button id="branding-reset-btn" style="padding:10px 16px;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--fg);cursor:pointer;font-size:0.9em;opacity:0.6;">Reset</button>
           </div>
+        </div> <!-- branding-form -->
+      </div> <!-- admin-card -->
+    </div> <!-- theme-tab-branding -->
+
+    <!-- Tab: Defaults -->
+    <div id="theme-tab-defaults" class="theme-tab-panel" style="display:none">
+      <div class="admin-card">
+        <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>Defaults</h2>
+        <p style="opacity:0.6;font-size:0.85em;margin:-8px 0 16px;">Customize how the AI introduces itself, what it's called, and the system prompt it follows.</p>
+        <div class="defaults-form" style="display:flex;flex-direction:column;gap:14px;">
+          <div class="defaults-field">
+            <label for="defaults-ai-nickname" style="display:block;font-size:0.85em;opacity:0.7;margin-bottom:4px;">AI Nickname</label>
+            <input type="text" id="defaults-ai-nickname" placeholder="Odysseus" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.9em;">
+            <div style="font-size:0.75em;opacity:0.45;margin-top:3px;">Used in the chat input placeholder: "Message {nickname}..."</div>
+          </div>
+          <div class="defaults-field">
+            <label for="defaults-app-title" style="display:block;font-size:0.85em;opacity:0.7;margin-bottom:4px;">Browser Tab Title</label>
+            <input type="text" id="defaults-app-title" placeholder="Odysseus" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.9em;">
+            <div style="font-size:0.75em;opacity:0.45;margin-top:3px;">Shown in the browser tab (overrides App Name if set).</div>
+          </div>
+          <div class="defaults-field">
+            <label for="defaults-language" style="display:block;font-size:0.85em;opacity:0.7;margin-bottom:4px;">Language</label>
+            <select id="defaults-language" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.9em;">
+              <option value="en">🇬🇧 English</option>
+              <option value="de">🇩🇪 Deutsch</option>
+            </select>
+            <div style="font-size:0.75em;opacity:0.45;margin-top:3px;">UI language (more languages coming soon).</div>
+          </div>
+          <div class="defaults-field">
+            <label for="defaults-system-prompt" style="display:block;font-size:0.85em;opacity:0.7;margin-bottom:4px;">System Prompt <span style="opacity:0.5;">(optional override)</span></label>
+            <textarea id="defaults-system-prompt" placeholder="Leave empty to use the default system prompt." style="width:100%;min-height:120px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.85em;font-family:monospace;resize:vertical;line-height:1.5;"></textarea>
+            <div style="font-size:0.75em;opacity:0.45;margin-top:3px;">When set, this replaces the built-in system prompt entirely. Leave empty for the default.</div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:4px;">
+            <button id="defaults-save-btn" style="flex:1;padding:10px;border:none;border-radius:8px;background:var(--accent,var(--red));color:var(--bg);font-weight:600;cursor:pointer;font-size:0.9em;">Save Defaults</button>
+            <button id="defaults-reset-btn" style="padding:10px 16px;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--fg);cursor:pointer;font-size:0.9em;opacity:0.6;">Reset</button>
+          </div>
         </div>
       </div>
     </div>
-  </div>
-  </div>
+  </div> <!-- theme popup inner -->
 
   <div id="mobile-backdrop"></div>
   <button id="mobile-menu-btn" aria-label="Toggle sidebar">&#x2630;</button>
@@ -2786,6 +2823,142 @@
         colorText.value = '#e06c75';
       });
     }
+  }
+})();
+
+// ── Defaults loader (nickname, app-title, language, system prompt) ──
+(async function() {
+  const ATTR = 'data-defaults-loaded';
+  if (document.documentElement.getAttribute(ATTR)) return;
+  document.documentElement.setAttribute(ATTR, 'true');
+
+  function applyDefaults(cfg) {
+    // AI Nickname
+    const nickname = cfg.ai_nickname || 'Odysseus';
+    const titleEl = document.getElementById('app-title');
+    if (titleEl && cfg.app_title) {
+      titleEl.textContent = cfg.app_title;
+    }
+    // Update chat textarea placeholder
+    const ta = document.getElementById('message');
+    if (ta) {
+      // Store nickname on element so app.js resize handler can read it
+      ta.dataset.nickname = nickname;
+      const w = ta.closest('.chat-input-inner')?.clientWidth || 9999;
+      const hideWidth = 320; // matches PLACEHOLDER_HIDE_WIDTH in app.js
+      ta.setAttribute('placeholder', w < hideWidth ? '' : 'Message ' + nickname + '...');
+    }
+    // Update route-specific page titles to use app_title
+    const path = (window.location.pathname || '').toLowerCase();
+    const routeTitles = {
+      '/calendar': 'Calendar',
+      '/notes': 'Notes',
+      '/cookbook': 'Cookbook',
+      '/email': 'Email',
+      '/memory': 'Memory',
+      '/gallery': 'Gallery',
+      '/tasks': 'Tasks',
+      '/library': 'Library',
+    };
+    // Only override here on root path; route-specific titles are set by the
+    // per-route favicon script and already have " — Odysseus" appended.
+    // The root path (no match) uses app_title from defaults.
+    // But we also need to update the per-route script's title setting.
+    // For now just set the root document.title via app-title element.
+    if (titleEl && cfg.app_title) {
+      titleEl.textContent = cfg.app_title;
+      // Also update document.title immediately for current page
+      const base = routeTitles[path];
+      if (base) {
+        document.title = base + ' — ' + cfg.app_title;
+      } else {
+        document.title = cfg.app_title;
+      }
+    }
+
+    // Language
+    if (cfg.app_language) {
+      document.documentElement.lang = cfg.app_language;
+      const langSel = document.getElementById('defaults-language');
+      if (langSel) langSel.value = cfg.app_language;
+    }
+
+    // Populate form fields
+    const nickInput = document.getElementById('defaults-ai-nickname');
+    const titleInput = document.getElementById('defaults-app-title');
+    const promptArea = document.getElementById('defaults-system-prompt');
+    const langSelect = document.getElementById('defaults-language');
+    if (nickInput) nickInput.value = nickname;
+    if (titleInput) titleInput.value = cfg.app_title || '';
+    if (promptArea) promptArea.value = cfg.system_prompt_override || '';
+    if (langSelect && cfg.app_language) langSelect.value = cfg.app_language;
+  }
+
+  try {
+    const res = await fetch('/api/prefs/defaults');
+    if (res.ok) {
+      const cfg = await res.json();
+      applyDefaults(cfg);
+    }
+  } catch (e) {
+    console.warn('Defaults load failed:', e);
+  }
+
+  // ── Wire up save/reset ──
+  const saveBtn = document.getElementById('defaults-save-btn');
+  if (saveBtn) {
+    saveBtn.addEventListener('click', async function() {
+      const data = {
+        ai_nickname: document.getElementById('defaults-ai-nickname')?.value || '',
+        app_title: document.getElementById('defaults-app-title')?.value || '',
+        app_language: document.getElementById('defaults-language')?.value || 'en',
+        system_prompt_override: document.getElementById('defaults-system-prompt')?.value || '',
+      };
+      const keys = ['ai_nickname', 'app_title', 'app_language', 'system_prompt_override'];
+      try {
+        for (const key of keys) {
+          await fetch('/api/prefs/' + key, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({value: data[key] || ''}),
+          });
+        }
+        applyDefaults(data);
+        saveBtn.textContent = '✓ Saved!';
+        setTimeout(() => { saveBtn.textContent = 'Save Defaults'; }, 2000);
+      } catch (e) {
+        console.error('Defaults save failed:', e);
+        saveBtn.textContent = '✗ Failed';
+        setTimeout(() => { saveBtn.textContent = 'Save Defaults'; }, 3000);
+      }
+    });
+  }
+
+  // Reset button
+  const resetBtn = document.getElementById('defaults-reset-btn');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', async function() {
+      try {
+        const keys = ['ai_nickname', 'app_title', 'app_language', 'system_prompt_override'];
+        for (const key of keys) {
+          await fetch('/api/prefs/' + key, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({value: ''}),
+          });
+        }
+        // Reload defaults from server (which returns server defaults when empty)
+        const res = await fetch('/api/prefs/defaults');
+        if (res.ok) {
+          const cfg = await res.json();
+          applyDefaults(cfg);
+        }
+        resetBtn.textContent = '✓ Reset';
+        setTimeout(() => { resetBtn.textContent = 'Reset'; }, 2000);
+      } catch (e) {
+        console.error('Defaults reset failed:', e);
+      }
+    });
   }
 })();
 </script>

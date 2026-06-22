@@ -198,6 +198,12 @@ DEFAULT_SETTINGS = {
     "app_footer": "",        # Footer-Text ("Powered by ...")
     "brand_color": "",       # Primäre Markenfarbe (Hex, z.B. "#ff6b35")
 
+    # ── Defaults (personalisierbare KI-Einstellungen) ────────────────────
+    "ai_nickname": "Odysseus",       # Nickname der KI, z.B. für Chat-Placeholder
+    "app_title": "Odysseus",         # Browser-Tab-Titel (unabhängig von app_name)
+    "app_language": "en",            # UI-Sprache ("en", "de", ...)
+    "system_prompt_override": "",    # Benutzerdefinierter System-Prompt (leer = Standard)
+
 }
 
 DEFAULT_FEATURES = {

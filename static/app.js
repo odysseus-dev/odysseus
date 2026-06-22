@@ -2123,9 +2123,10 @@ function initializeEventListeners() {
       const w = inputTop.clientWidth;
       // Hide model picker
       pickerWrap.classList.toggle('picker-auto-hidden', w < PICKER_HIDE_WIDTH);
-      // Hide placeholder text
+      // Hide placeholder text — use dynamic nickname from dataset if available
       if (textarea) {
-        textarea.setAttribute('placeholder', w < PLACEHOLDER_HIDE_WIDTH ? '' : 'Message Odysseus...');
+        const nick = textarea.dataset.nickname || 'Odysseus';
+        textarea.setAttribute('placeholder', w < PLACEHOLDER_HIDE_WIDTH ? '' : 'Message ' + nick + '...');
       }
       // Hide entire bottom toolbar (tools, mode toggle) — only send button remains
       if (inputBottom) {

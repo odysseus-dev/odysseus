@@ -106,4 +106,21 @@ def setup_prefs_routes():
                 merged[key] = get_setting(key, "")
         return merged
 
+    # ── Defaults endpoint (AI nickname, app title, language, system prompt) ──
+    _DEFAULTS_KEYS = ["ai_nickname", "app_title", "app_language", "system_prompt_override"]
+
+    @router.get("/defaults")
+    async def get_defaults(request: Request):
+        """Return merged defaults: user prefs override server defaults."""
+        user = get_current_user(request)
+        prefs = _load_for_user(user)
+        merged = {}
+        for key in _DEFAULTS_KEYS:
+            # User pref wins if set and non-empty, otherwise server default
+            if key in prefs and prefs[key]:
+                merged[key] = prefs[key]
+            else:
+                merged[key] = get_setting(key, "")
+        return merged
+
     return router
