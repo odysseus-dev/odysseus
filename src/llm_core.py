@@ -345,41 +345,93 @@ def _normalize_ollama_url(url: str) -> str:
     return base.rstrip("/") + "/chat"
 
 
-def _ollama_normalize_tool_messages(messages: List[Dict]) -> List[Dict]:
+def _ollama_normalize_messages(messages: List[Dict]) -> List[Dict]:
     """Adapt Odysseus' canonical OpenAI-style messages to native Ollama /api/chat.
 
-    Odysseus carries assistant tool calls in the OpenAI shape, where
-    `function.arguments` is a JSON *string*. Native Ollama expects it to be a
-    JSON *object*; given the string it fails the whole request with HTTP 400
-    "Value looks like object, but can't find closing '}' symbol", which aborts
-    every follow-up (tool-result) round. Parse the arguments back into an object
-    here, on a shallow copy, leaving non-tool messages untouched. The opaque
-    Gemini `extra_content` (thought_signature) is dropped — it is meaningless to
-    Ollama and only matters when the conversation is replayed to Gemini.
+    Two shape mismatches silently break requests:
+
+    1. Tool calls: Odysseus carries `function.arguments` as a JSON *string*.
+       Native Ollama expects a JSON *object* and rejects the string form with
+       HTTP 400 ("Value looks like object, but can't find closing '}' symbol"),
+       aborting every follow-up (tool-result) round. Parse the arguments back
+       into an object here, on a shallow copy, leaving non-tool messages
+       untouched. The opaque Gemini `extra_content` (thought_signature) is
+       dropped — it is meaningless to Ollama and only matters when the
+       conversation is replayed to Gemini.
+
+    2. Images (issue #4723): Odysseus carries multimodal user content as an
+       OpenAI-style list ``[{type: "text", ...}, {type: "image_url",
+       image_url: {url: "data:image/...;base64,XXX"}}, ...]``. Native Ollama
+       does not accept a list for ``content`` — it wants ``content`` as a
+       string plus a separate ``images`` array of raw base64 strings (no
+       ``data:`` prefix). Without this conversion the image blocks pass
+       through untouched, the vision-capable model never sees the picture,
+       and the user gets "I can't see any image" even though the request
+       succeeded.
     """
     out: List[Dict] = []
     for m in messages or []:
-        tcs = m.get("tool_calls") if isinstance(m, dict) else None
-        if not tcs:
+        if not isinstance(m, dict):
             out.append(m)
             continue
-        new_calls = []
-        for tc in tcs:
-            fn = tc.get("function") or {}
-            args = fn.get("arguments")
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args) if args.strip() else {}
-                except (json.JSONDecodeError, TypeError):
-                    args = {}
-            call: Dict = {"function": {"name": fn.get("name", ""), "arguments": args or {}}}
-            if tc.get("id"):
-                call["id"] = tc["id"]
-            new_calls.append(call)
+
         nm = dict(m)
-        nm["tool_calls"] = new_calls
+
+        # 1. Tool-call argument strings -> objects.
+        tcs = nm.get("tool_calls")
+        if tcs:
+            new_calls = []
+            for tc in tcs:
+                fn = tc.get("function") or {}
+                args = fn.get("arguments")
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args) if args.strip() else {}
+                    except (json.JSONDecodeError, TypeError):
+                        args = {}
+                call: Dict = {"function": {"name": fn.get("name", ""), "arguments": args or {}}}
+                if tc.get("id"):
+                    call["id"] = tc["id"]
+                new_calls.append(call)
+            nm["tool_calls"] = new_calls
+
+        # 2. Multimodal content list -> native content string + images array.
+        content = nm.get("content")
+        if isinstance(content, list):
+            text_parts: List[str] = []
+            images: List[str] = list(nm.get("images") or [])
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type")
+                if btype == "text":
+                    t = block.get("text")
+                    if t:
+                        text_parts.append(str(t))
+                elif btype == "image_url":
+                    url = (block.get("image_url") or {}).get("url", "")
+                    if not url:
+                        continue
+                    if url.startswith("data:"):
+                        # Strip the ``data:[...];base64,`` prefix — native
+                        # Ollama wants only the base64 bytes.
+                        _, _, b64 = url.partition(",")
+                        if b64:
+                            images.append(b64)
+                    else:
+                        # http(s) URLs pass through; Ollama fetches them.
+                        images.append(url)
+            nm["content"] = "\n".join(text_parts).strip()
+            if images:
+                nm["images"] = images
+
         out.append(nm)
     return out
+
+
+# Backward-compatible alias for callers/tests that imported the older name
+# (it only handled tool messages originally — issue #4723 broadened scope).
+_ollama_normalize_tool_messages = _ollama_normalize_messages
 
 
 def _build_ollama_payload(
@@ -404,7 +456,7 @@ def _build_ollama_payload(
     """
     payload: Dict = {
         "model": model,
-        "messages": _ollama_normalize_tool_messages(messages),
+        "messages": _ollama_normalize_messages(messages),
         "stream": stream,
     }
     options: Dict = {}
