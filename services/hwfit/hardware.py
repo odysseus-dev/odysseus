@@ -282,7 +282,17 @@ def _detect_amd():
             "gpus": cards,
             "gpu_groups": groups,
             "homogeneous": len(groups) <= 1,
-            "backend": "rocm",
+            # Pick the actual runtime label: ROCm/HIP only when its
+            # toolchain is installed, otherwise Vulkan if vulkaninfo is
+            # present (mesa RADV works fine on RDNA/CDNA when ROCm
+            # packages are absent — see Strix Halo where ROCm support
+            # is still backporting). Reporting "rocm" on a Vulkan-only
+            # host misleads downstream env-var pinning
+            # (HIP_VISIBLE_DEVICES is a no-op there).
+            "backend": (
+                "rocm" if (_run(["which", "rocminfo"]) or _run(["which", "hipconfig"]))
+                else ("vulkan" if _run(["which", "vulkaninfo"]) else "rocm")
+            ),
             "unified_memory": is_apu,
             # AMD ISA/family so downstream can tell datacenter Instinct (CDNA,
             # where vLLM/SGLang run AWQ/GPTQ reliably) from consumer Radeon

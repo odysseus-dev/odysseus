@@ -348,7 +348,7 @@ def test_serve_pip_install_normalizes_llama_cpp_alias_and_adds_wheel_index():
     src = (pathlib.Path(__file__).resolve().parent.parent
         / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
 
-    assert "re.sub(r\"(?<![A-Za-z0-9_.-])llama_cpp(?![A-Za-z0-9_.-])\", \"llama-cpp-python[server]\", req.cmd)" in src
+    assert "re.sub(r\"(?<![A-Za-z0-9_.\\-/])llama_cpp(?![A-Za-z0-9_.\\-/])\", \"llama-cpp-python[server]\", req.cmd)" in src
     assert "if \"llama-cpp-python\" in req.cmd and \"--extra-index-url\" not in req.cmd:" in src
     assert "https://abetlen.github.io/llama-cpp-python/whl/cpu" in src
 
@@ -626,7 +626,7 @@ def test_llama_cpp_linux_bootstrap_prefers_rocm_before_cuda():
     script = "\n".join(runner_lines)
 
     assert "mkdir -p ~/bin" in script
-    assert script.index("mkdir -p ~/bin") < script.index("cd ~/llama.cpp && rm -rf build")
+    assert script.index("mkdir -p ~/bin") < script.index("cd ~/llama.cpp")
     assert 'command -v hipconfig &>/dev/null || [ -d /opt/rocm ] || [ -n "$ROCM_PATH" ] || [ -n "$HIP_PATH" ]' in script
     assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON' in script
     assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON' in script
@@ -676,7 +676,7 @@ def test_llama_cpp_linux_bootstrap_nvcc_without_cudart_warns_and_falls_back():
     # outer else that handles no-GPU-toolchain). Verify it appears at least once
     # before the outer "no HIP/CUDA toolchain" warning.
     cpu_cmake = 'cmake -B build -DCMAKE_BUILD_TYPE=Release &&'
-    no_toolchain_warn = 'WARNING: no HIP/CUDA toolchain found'
+    no_toolchain_warn = 'WARNING: no HIP/CUDA/Vulkan toolchain found'
     assert cpu_cmake in script
     assert script.index(cpu_cmake) < script.index(no_toolchain_warn)
 
@@ -693,8 +693,8 @@ def test_llama_cpp_linux_bootstrap_keeps_cpu_fallback_when_no_gpu_toolchain():
     _append_llama_cpp_linux_accel_build_lines(runner_lines)
     script = "\n".join(runner_lines)
 
-    assert 'WARNING: no HIP/CUDA toolchain found — building llama-server for CPU only.' in script
-    assert 'Install ROCm for AMD GPUs or vLLM/CUDA tooling for NVIDIA' in script
+    assert 'WARNING: no HIP/CUDA/Vulkan toolchain found — building llama-server for CPU only.' in script
+    assert 'Install Vulkan (libvulkan-dev) / ROCm for AMD GPUs or CUDA tooling for NVIDIA' in script
 
 
 def test_llama_cpp_rebuild_cmd_clears_cached_build_paths():

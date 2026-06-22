@@ -578,7 +578,9 @@ export async function _hwfitFetch(fresh = false) {
   const _cached = fresh ? null : _readScanCache(_sig);
   const wp = spinnerModule.createWhirlpool(18);
   if (_cached) {
-    _hwfitCache = _cached;
+    // Tag the restored cache with its host too (scan-sig keys cache per
+    // host, so a hit here is always for the current remoteHost).
+    _hwfitCache = { ..._cached, _scannedHost: remoteHost || '' };
     _hwfitRenderHw(hw, _cached.system);
     if (!remoteHost && _cached.system && _cached.system.platform) {
       _envState.platform = _cached.system.platform;
@@ -750,7 +752,11 @@ export async function _hwfitFetch(fresh = false) {
         : _olRows;
       data.models = (data.models || []).concat(_olFiltered);
     }
-    _hwfitCache = data;
+    // Tag the cache with the host this scan was for, so downstream
+    // code (_gpuEnvVarName, backend-aware command builders) can avoid
+    // trusting a stale scan when the user switches the server picker
+    // to a different target without re-running hwfit.
+    _hwfitCache = { ...data, _scannedHost: remoteHost || '' };
     _hwfitRenderHw(hw, data.system);
     // Propagate local platform from hardware probe so _isWindows(task) works
     // for local tasks (menu items, shell commands, etc.).
@@ -1415,23 +1421,11 @@ export function _expandModelRow(row, modelData) {
 
   const dlSource = _downloadSourceRepo(modelData, backend);
   const hfUrl = `https://huggingface.co/${dlSource.repo}`;
-  // Official vendor recipe deep-links. These point to vLLM / SGLang's curated
-  // hardware-specific launch-command pages. They 404 for uncatalogued models \u2014
-  // a known tradeoff; user just gets the vendor's "model not found" page.
-  const _recipeRepo = modelData.name || '';
-  const _vllmUrl = _recipeRepo ? `https://recipes.vllm.ai/${_recipeRepo}` : '';
-  const _sglangUrl = _recipeRepo ? `https://docs.sglang.io/cookbook/autoregressive/${_recipeRepo}${_sglangHashFor(modelData)}` : '';
   let html = `<div class="hwfit-action-panel" data-model-name="${esc(modelData.name)}">`;
   html += `<div class="hwfit-panel-header">`;
   html += `<span class="hwfit-panel-model">${esc(modelData.name)}${dlSource.kind ? ` <span style="opacity:0.5;font-size:10px;">(${esc(dlSource.kind)} ${esc(modelData.quant || '')})</span>` : (modelData.quant_repo ? ` <span style="opacity:0.5;font-size:10px;">(${esc(modelData.quant)})</span>` : '')}</span>`;
   html += `<span class="hwfit-panel-badge">${esc(label)}</span>`;
   html += `<a href="${esc(hfUrl)}" target="_blank" rel="noopener" class="hwfit-panel-hf-link" title="View download source on HuggingFace">HF \u2197</a>`;
-  if (backend === 'vllm' && _vllmUrl) {
-    html += `<a href="${esc(_vllmUrl)}" target="_blank" rel="noopener" class="hwfit-panel-hf-link" title="vLLM official recipe (curated launch command). 404s if this model isn't in vLLM's recipes catalog.">vLLM \u2197</a>`;
-  }
-  if (backend === 'sglang' && _sglangUrl) {
-    html += `<a href="${esc(_sglangUrl)}" target="_blank" rel="noopener" class="hwfit-panel-hf-link" title="SGLang cookbook (hash pre-filled with your detected hardware). 404s if this model isn't in SGLang's cookbook catalog.">SGLang \u2197</a>`;
-  }
   html += `</div>`;
   html += `<div class="hwfit-panel-actions">`;
   html += `<button class="cookbook-btn hwfit-dl-btn">Download</button>`;
@@ -1679,7 +1673,7 @@ export function _expandModelRow(row, modelData) {
       } else if (runBackend === 'llamacpp') {
         const dir = `"$HOME/.cache/huggingface/hub/models--${modelData.name.replace(/\//g, '--')}/snapshots"`;
         const ggufPath = `$({ find ${dir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${dir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`;
-        cmd = `MODEL_FILE=${ggufPath} && { [ -n "$MODEL_FILE" ] && [ -f "$MODEL_FILE" ]; } || { echo "ERROR: No GGUF found on this host. Download a GGUF quant or switch backend."; exit 1; } && llama-server --model "$MODEL_FILE" --host 0.0.0.0 --port 8080 -ngl 99 -c ${maxCtx} || python3 -m llama_cpp.server --model "$MODEL_FILE" --host 0.0.0.0 --port 8080 --n_gpu_layers 99 --n_ctx ${maxCtx}`;
+        cmd = `llama-server --model "${ggufPath}" --host 0.0.0.0 --port 8080 -ngl 99 -c ${maxCtx} --flash-attn auto`;
       } else {
         cmd = `vllm serve ${modelData.name} --host 0.0.0.0 --port ${port}`;
         cmd += ` --tensor-parallel-size ${tp}`;
