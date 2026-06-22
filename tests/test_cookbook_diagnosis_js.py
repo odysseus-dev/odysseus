@@ -20,3 +20,10 @@ def test_sglang_native_dependency_diagnosis_is_exposed_to_browser():
     assert "SGLang native dependencies" in source
     assert "libnuma-dev python3.12-dev build-essential" in source
     assert "sglang-kernel" in source
+
+
+def test_show_diagnosis_appends_fixes_to_diag_not_undefined_body():
+    source = DIAGNOSIS_JS.read_text(encoding="utf-8")
+
+    assert "body.appendChild(row)" not in source
+    assert "diag.appendChild(row)" in source

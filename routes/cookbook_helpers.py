@@ -655,6 +655,41 @@ def _normalize_llama_cpp_python_cache_types(cmd: str | None) -> str | None:
     return _LLAMA_CPP_PYTHON_TYPE_FLAG_RE.sub(repl, cmd)
 
 
+def _normalize_llamacpp_vision_ubatch(cmd: str | None) -> str | None:
+    """Raise llama.cpp ubatch when vision flags are present.
+
+    mtmd image decode asserts ``n_ubatch >= n_tokens`` for non-causal attention.
+    Cookbook defaults ``--image-max-tokens 1024`` while llama-server's default
+    ``--ubatch-size`` is 512, which aborts the server on the first vision request.
+    Patches saved/stale serve commands server-side so relaunching an old preset
+    still works without re-opening the serve panel in the browser.
+    """
+    if not cmd:
+        return cmd
+    if not any(tok in cmd for tok in ("--mmproj", "--image-max-tokens", "--clip_model_path")):
+        return cmd
+    img_m = re.search(r"--image-max-tokens\s+(\d+)", cmd)
+    need = int(img_m.group(1)) if img_m else 1024
+
+    def _patch_segment(seg: str) -> str:
+        if not re.search(r"\bllama-server\b|llama_cpp\.server", seg):
+            return seg
+        ub_m = re.search(r"(?:--ubatch-size|-ub)\s+(\d+)", seg)
+        if ub_m and int(ub_m.group(1)) >= need:
+            return seg
+        if ub_m:
+            return re.sub(r"(?:--ubatch-size|-ub)\s+\d+", f"--ubatch-size {need}", seg, count=1)
+        for pat in (r"(--mmproj\b)", r"(--image-max-tokens\b)", r"(--clip_model_path\b)"):
+            m = re.search(pat, seg)
+            if m:
+                i = m.start()
+                return seg[:i].rstrip() + f" --ubatch-size {need} " + seg[i:]
+        return seg.rstrip() + f" --ubatch-size {need}"
+
+    parts = re.split(r"\s*\|\|\s*", cmd)
+    return " || ".join(_patch_segment(p) for p in parts)
+
+
 def _check_serve_binary(seg: str) -> None:
     """Validate that a single command segment starts with an allowlisted binary
     (after skipping leading env-var assignments like `CUDA_VISIBLE_DEVICES=0`)."""

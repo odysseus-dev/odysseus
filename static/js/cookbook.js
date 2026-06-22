@@ -598,8 +598,6 @@ export function _buildServeCmd(f, modelName, backend) {
     if (_llamaParallel) _lcExtra += ` --parallel ${_llamaParallel}`;
     const _llamaBatch = _llamaNum(f.llama_batch_size);
     if (_llamaBatch) _lcExtra += ` --batch-size ${_llamaBatch}`;
-    const _llamaUBatch = _llamaNum(f.llama_ubatch_size);
-    if (_llamaUBatch) _lcExtra += ` --ubatch-size ${_llamaUBatch}`;
     if (f.llama_speculative_mtp) {
       const specTokens = parseInt(f.llama_spec_tokens, 10);
       const specN = Number.isFinite(specTokens) && specTokens > 0 ? specTokens : 3;
@@ -608,11 +606,22 @@ export function _buildServeCmd(f, modelName, backend) {
     // Vision: serve the multimodal projector so the model can read images. The
     // mmproj path is resolved at runtime (find mmproj-*.gguf next to the model);
     // only emitted when the Vision toggle is on AND a projector was found.
+    const _visionImgMaxTok = 1024;
     if (f.vision && f._mmproj_path) {
-      _lcExtra += ` --mmproj "${f._mmproj_path}" --image-max-tokens 1024`;
+      _lcExtra += ` --mmproj "${f._mmproj_path}" --image-max-tokens ${_visionImgMaxTok}`;
       // llama-cpp-python takes the projector via --clip_model_path.
       _lcpExtra += ` --clip_model_path "${f._mmproj_path}"`;
     }
+    // mtmd vision decode uses non-causal attention and requires
+    // n_ubatch >= image token count; default ubatch (512) aborts llama-server
+    // when image-max-tokens is 1024 (GGML_ASSERT in process_mtmd).
+    const _llamaUBatch = _llamaNum(f.llama_ubatch_size);
+    let _ubatchOut = _llamaUBatch;
+    if (f.vision && f._mmproj_path) {
+      const u = _ubatchOut ? Number(_ubatchOut) : 0;
+      if (!u || u < _visionImgMaxTok) _ubatchOut = String(_visionImgMaxTok);
+    }
+    if (_ubatchOut) _lcExtra += ` --ubatch-size ${_ubatchOut}`;
     const _lcpServer = `${lcPrefix}${py} -m llama_cpp.server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} --n_gpu_layers ${f.ngl || '99'} --n_ctx ${f.ctx || '8192'}${_lcpExtra}`;
     if (_isWindows()) {
       cmd += _lcpServer;

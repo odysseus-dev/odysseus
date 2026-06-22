@@ -557,6 +557,37 @@ def test_validate_serve_cmd_accepts_windows_printf_format():
     assert _validate_serve_cmd(cmd) == cmd
 
 
+def test_normalize_llamacpp_vision_ubatch_injects_when_missing():
+    from routes.cookbook_helpers import _normalize_llamacpp_vision_ubatch
+
+    cmd = (
+        'llama-server --model "$MODEL_FILE" --host 0.0.0.0 --port 8000 -ngl 99 -c 20000 '
+        '--mmproj "/tmp/mmproj-BF16.gguf" --image-max-tokens 1024'
+    )
+    out = _normalize_llamacpp_vision_ubatch(cmd)
+    assert "--ubatch-size 1024" in out
+    assert out.index("--ubatch-size 1024") < out.index("--mmproj")
+
+
+def test_normalize_llamacpp_vision_ubatch_raises_low_ubatch():
+    from routes.cookbook_helpers import _normalize_llamacpp_vision_ubatch
+
+    cmd = (
+        "llama-server --model model.gguf --ubatch-size 512 "
+        "--mmproj mmproj.gguf --image-max-tokens 1024"
+    )
+    out = _normalize_llamacpp_vision_ubatch(cmd)
+    assert "--ubatch-size 1024" in out
+    assert "--ubatch-size 512" not in out
+
+
+def test_normalize_llamacpp_vision_ubatch_preserves_adequate_ubatch():
+    from routes.cookbook_helpers import _normalize_llamacpp_vision_ubatch
+
+    cmd = "llama-server --ubatch-size 2048 --image-max-tokens 1024 --mmproj x.gguf"
+    assert _normalize_llamacpp_vision_ubatch(cmd) == cmd
+
+
 def test_normalize_llama_cpp_python_cache_types_for_stale_client_cmd():
     cmd = (
         "python -m llama_cpp.server --model model.gguf --host 0.0.0.0 --port 8000 "
