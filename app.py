@@ -1,6 +1,7 @@
 # app.py — slim orchestrator
 import mimetypes
 import os
+import sys
 
 
 def register_static_mime_types() -> None:
@@ -38,7 +39,7 @@ load_dotenv(encoding="utf-8-sig")
 import asyncio
 import logging
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict
 
 from contextlib import asynccontextmanager
@@ -113,12 +114,13 @@ app = FastAPI(
 )
 
 # ========= CORS =========
+CORS_ALLOW_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
 allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost,http://127.0.0.1").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_methods=CORS_ALLOW_METHODS,
     allow_headers=[
         "Accept",
         "Authorization",
@@ -316,7 +318,7 @@ if AUTH_ENABLED:
             # (no admin cookie available in that context). Restricted to
             # loopback clients + matching token to keep it locked down.
             try:
-                from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN as _ITT
+                from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN as _ITT, INTERNAL_TOOL_USER
                 _hdr = request.headers.get(INTERNAL_TOOL_HEADER)
                 if _hdr and secrets.compare_digest(_hdr, _ITT) and _is_trusted_loopback(request):
                     # Impersonation: when the agent's loopback call sets
@@ -328,7 +330,7 @@ if AUTH_ENABLED:
                     if _impersonate and _impersonate in getattr(_auth_mgr, "users", {}):
                         request.state.current_user = _impersonate
                     else:
-                        request.state.current_user = "internal-tool"
+                        request.state.current_user = INTERNAL_TOOL_USER
                     request.state.api_token = False
                     return await call_next(request)
             except Exception as _e:
@@ -437,7 +439,7 @@ class _RevalidatingStatic(StaticFiles):
         return resp
 
 
-app.mount("/static", _RevalidatingStatic(directory="static"), name="static")
+app.mount("/static", _RevalidatingStatic(directory=STATIC_DIR), name="static")
 
 # ========= GENERATED IMAGES =========
 @app.get("/api/generated-image/{filename}")
@@ -527,6 +529,7 @@ memory_vector     = components.get("memory_vector")
 upload_handler    = components["upload_handler"]
 app.state.upload_handler = upload_handler
 personal_docs_mgr = components["personal_docs_manager"]
+app.state.personal_docs_manager = personal_docs_mgr
 api_key_manager   = components["api_key_manager"]
 preset_manager    = components["preset_manager"]
 chat_processor    = components["chat_processor"]
@@ -860,7 +863,7 @@ async def get_version():
 
 @app.get("/api/health")
 async def health_check() -> Dict[str, str]:
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 @app.get("/api/ready")
 async def readiness_check() -> JSONResponse:
@@ -1170,3 +1173,12 @@ async def _shutdown_event():
     except Exception as e:
         logger.warning(f"MCP shutdown error: {e}")
     logger.info("Application shutdown complete")
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    bind_host = os.getenv("APP_BIND", "127.0.0.1")
+    bind_port = int(os.getenv("APP_PORT", "7000"))
+
+    uvicorn.run(app, host=bind_host, port=bind_port, log_level="info")

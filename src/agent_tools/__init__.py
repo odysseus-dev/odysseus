@@ -33,6 +33,9 @@ from .vault_tools import VaultSearchTool, VaultGetTool, VaultUnlockTool
 from .research_tools import TriggerResearchTool, ManageResearchTool
 from .api_integration_tools import ApiCallTool, AppApiTool
 from .image_tools import EditImageTool, GenerateImageTool
+from .model_interaction_tools import ChatWithModelTool, AskTeacherTool, ListModelsTool
+from .bg_job_tools import ManageBgJobsTool
+from .session_tools import CreateSessionTool, ListSessionsTool, SendToSessionTool, ManageSessionTool
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -67,6 +70,14 @@ TOOL_HANDLERS = {
     "edit_image": EditImageTool().execute,
     "generate_image": GenerateImageTool().execute,
     "get_workspace": GetWorkspaceTool().execute,
+    "chat_with_model": ChatWithModelTool().execute,
+    "ask_teacher": AskTeacherTool().execute,
+    "list_models": ListModelsTool().execute,
+    "manage_bg_jobs": ManageBgJobsTool().execute,
+    "create_session": CreateSessionTool().execute,
+    "list_sessions": ListSessionsTool().execute,
+    "send_to_session": SendToSessionTool().execute,
+    "manage_session": ManageSessionTool().execute,
 }
 
 # ---------------------------------------------------------------------------
@@ -77,42 +88,41 @@ MAX_AGENT_ROUNDS = 50
 SHELL_TIMEOUT = 60
 PYTHON_TIMEOUT = 30
 
-## DEPRECATED: entries already in TOOL_HANDLERS are commented out.
-## Remove each commented entry once its tool is fully migrated.
-_TOOL_TAGS = {
-    # "bash", "python", "web_search", "web_fetch", "read_file", "write_file", "edit_file",
-    # "grep", "glob", "ls",
-    # "create_document", "update_document", "edit_document",
-    # "search_chats",
-    "chat_with_model", "create_session", "list_sessions",
-    "send_to_session",
-    # "pipeline",
-    "manage_session",  # "manage_memory", "list_models",
-    # "ui_control",
-    # "generate_image",
-    "ask_user", "update_plan",
-    # "manage_tasks",
-    "api_call", "ask_teacher",  # "manage_skills",
-    # "suggest_document",
-    "manage_endpoints", "manage_mcp", "manage_webhooks",
-    "manage_tokens",  # "manage_documents",
-    "manage_settings",
-    "manage_notes", "manage_calendar",
-    "resolve_contact", "manage_contact", "list_email_accounts", "send_email", "list_emails",
-    "read_email", "reply_to_email", "bulk_email", "archive_email",
-    "delete_email", "mark_email_read",
-    "download_model", "serve_model",
-    "list_served_models", "stop_served_model",
-    "list_downloads", "cancel_download",
-    "search_hf_models", "list_cached_models",
-    "list_serve_presets", "serve_preset", "adopt_served_model",
-    "list_cookbook_servers",
-    # "edit_image",
-    # "trigger_research", "manage_research",
-    # "api_call", "app_api",
-}
-
-TOOL_TAGS = set(TOOL_HANDLERS.keys()) | _TOOL_TAGS
+# Tool types that trigger execution
+TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_file", "edit_file",
+             "grep", "glob", "ls", "get_workspace", "manage_bg_jobs",
+             "create_document", "update_document", "edit_document",
+             "search_chats",
+             "chat_with_model", "create_session", "list_sessions",
+             "send_to_session",
+             "pipeline",
+             "manage_session", "manage_memory", "list_models",
+             "ui_control", "generate_image", "ask_user", "update_plan",
+             "manage_tasks", "api_call", "ask_teacher", "manage_skills",
+             "suggest_document",
+             "manage_endpoints", "manage_mcp", "manage_webhooks",
+             "manage_tokens", "manage_documents", "manage_settings",
+             "manage_notes", "manage_calendar",
+             "resolve_contact", "manage_contact", "list_email_accounts", "send_email", "list_emails",
+             "read_email", "reply_to_email", "bulk_email", "archive_email",
+             "delete_email", "mark_email_read",
+             # Cookbook tools (LLM serving + downloads). Without these
+             # entries, native function calls to e.g. list_served_models
+             # are rejected as "Unknown function call" before reaching
+             # the dispatcher — silent failure for the whole cookbook
+             # surface.
+             "download_model", "serve_model",
+             "list_served_models", "stop_served_model",
+             "list_downloads", "cancel_download",
+             "search_hf_models", "list_cached_models",
+             "list_serve_presets", "serve_preset", "adopt_served_model",
+             "list_cookbook_servers",
+             # Other tools the agent reaches for that were also missing.
+             "edit_image", "trigger_research", "manage_research",
+             # Generic loopback to any UI-button endpoint (cookbook,
+             # gallery, email folders, etc.) — agent uses this when
+             # there's no named tool wrapper for the action.
+             "app_api"}
 
 ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
 

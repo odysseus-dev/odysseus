@@ -85,6 +85,22 @@ function _ggufIncludePattern(model, source) {
   return '*.gguf';
 }
 
+function _ggufDisplayPartFromInclude(include) {
+  const clean = String(include || '').replace(/\*/g, '');
+  const parts = clean.split('/').filter(Boolean);
+  const file = parts[parts.length - 1] || clean;
+  const dir = parts.length > 1 ? parts[parts.length - 2] : '';
+  const quant = `${dir} ${file}`.match(/\b(?:UD-)?(?:IQ[1-8]_[A-Z0-9]+|Q[2-8]_K_[MLS]|Q[2-8]_[0-9A-Z]+|Q[2-8])\b/i);
+  if (quant) return quant[0].toUpperCase().replace(/^UD-/, '');
+  return file.replace(/\.gguf$/i, '').replace(/-\d{5}-of-\d{5}$/i, '');
+}
+
+function _downloadTaskName(shortName, payload) {
+  const include = payload?.include || '';
+  const part = include ? _ggufDisplayPartFromInclude(include) : '';
+  return part ? `${shortName} · ${part}` : shortName;
+}
+
 function _missingGgufMessage(model) {
   const name = model?.name || 'this model';
   if (/\bnvfp4\b/i.test(name)) {
@@ -519,6 +535,7 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
   }
 
   const shortName = (model.name || repo).split('/').pop();
+  const taskName = _downloadTaskName(shortName, payload);
   const targetHost = host || 'local';
 
   const tasks = _loadTasks();
@@ -576,7 +593,7 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
   if (activeOnHost) {
     const queueId = `queue-${Date.now().toString(36)}`;
     const allTasks = _loadTasks();
-    allTasks.push({ id: queueId, sessionId: queueId, name: shortName, type: 'download', status: 'queued', output: '', ts: Date.now(), payload, remoteHost: host });
+    allTasks.push({ id: queueId, sessionId: queueId, name: taskName, type: 'download', status: 'queued', output: '', ts: Date.now(), payload, remoteHost: host });
     _saveTasks(allTasks);
     _renderRunningTab();
     uiModule.showToast(`Queued ${shortName} — waiting for current download`);
@@ -601,8 +618,8 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
       uiModule.showToast('Download failed: ' + (data.error || ''), 9000);
       return;
     }
-    _addTask(data.session_id, shortName, 'download', payload);
-    uiModule.showToast(`Downloading ${shortName}...`);
+    _addTask(data.session_id, taskName, 'download', payload);
+    uiModule.showToast(`Downloading ${taskName}...`);
   } catch (e) {
     uiModule.showToast('Download failed: ' + e.message, 9000);
   }

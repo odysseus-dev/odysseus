@@ -1332,6 +1332,12 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             if not pdf_path:
                 raise HTTPException(404, f"Source PDF {upload_id} not found")
 
+            # Fail fast with a clear 503 if the optional PyMuPDF dependency
+            # is missing — fill_fields/stamp_annotations will otherwise
+            # raise RuntimeError deep inside and bubble out as a 500.
+            # Mirrors the convention in _load_pdf_viewer_fitz above.
+            _load_pdf_viewer_fitz()
+
             values = parse_markdown_to_values(doc.current_content or "")
             out_path = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False).name
             _to_unlink.append(out_path)

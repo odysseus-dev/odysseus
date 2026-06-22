@@ -18,7 +18,7 @@ def _compute_is_api_model(model: str, endpoint_url: str, endpoint_supports=None)
     model_supports_tools = any(kw in model_lc for kw in (
         "gpt-4", "gpt-5", "gpt-o", "claude", "gemini", "gemma",
         "qwen3", "qwen2.5", "mixtral", "mistral", "llama-3.1", "llama-3.2",
-        "llama-3.3", "llama-4",
+        "llama-3.3", "llama-4", "llama3.1", "llama3.2", "llama3.3", "llama4",
         "minimax", "kimi", "yi-", "phi-3", "phi-4", "command-r",
         "glm-4", "internlm", "hermes",
         "deepseek-v", "deepseek-chat",

@@ -385,7 +385,7 @@ async def test_build_chat_context_incognito_does_not_duplicate_current_user_mess
     monkeypatch.setattr(chat_helpers, "extract_preset", fake_extract_preset)
     monkeypatch.setattr(chat_helpers, "add_user_message", fake_add_user_message)
     monkeypatch.setattr(chat_helpers, "load_prefs_for_user", lambda user: {})
-    monkeypatch.setattr(chat_helpers, "get_current_user", lambda request: "tester")
+    monkeypatch.setattr(chat_helpers, "effective_user", lambda request: "tester")
     monkeypatch.setattr(chat_helpers, "normalize_model_id", lambda endpoint_url, model, **kwargs: None)
     monkeypatch.setattr(chat_helpers, "maybe_compact", fake_maybe_compact)
     monkeypatch.setattr(chat_helpers, "trim_for_context", lambda messages, context_length: messages)
@@ -624,6 +624,63 @@ async def test_public_agent_policy_blocks_sensitive_tools(monkeypatch):
         assert desc == f"{tool_name}: BLOCKED"
         assert result["exit_code"] == 1
         assert "restricted to admin users" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_email_mcp_non_object_args_fail_before_dispatch(monkeypatch):
+    import src.tool_execution as tool_execution
+    from src.tool_execution import execute_tool_block
+
+    class FakeMcp:
+        def __init__(self):
+            self.calls = []
+
+        async def call_tool(self, name, args):
+            self.calls.append((name, args))
+            return {"output": "called", "exit_code": 0}
+
+    fake = FakeMcp()
+    monkeypatch.setattr(tool_execution, "_owner_is_admin", lambda owner: True)
+    monkeypatch.setattr(tool_execution, "get_mcp_manager", lambda: fake)
+
+    desc, result = await execute_tool_block(
+        SimpleNamespace(tool_type="mcp__email__list_emails", content='["INBOX"]'),
+        owner="alice",
+    )
+
+    assert desc == "mcp: mcp__email__list_emails"
+    assert result["exit_code"] == 1
+    assert "JSON object" in result["error"]
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
+async def test_email_mcp_dispatch_includes_hidden_owner(monkeypatch):
+    import src.tool_execution as tool_execution
+    from src.tool_execution import execute_tool_block
+
+    class FakeMcp:
+        def __init__(self):
+            self.calls = []
+
+        async def call_tool(self, name, args):
+            self.calls.append((name, args))
+            return {"output": "called", "exit_code": 0}
+
+    fake = FakeMcp()
+    monkeypatch.setattr(tool_execution, "_owner_is_admin", lambda owner: True)
+    monkeypatch.setattr(tool_execution, "get_mcp_manager", lambda: fake)
+
+    desc, result = await execute_tool_block(
+        SimpleNamespace(tool_type="mcp__email__list_emails", content='{"folder":"INBOX"}'),
+        owner="alice",
+    )
+
+    assert desc == "mcp: mcp__email__list_emails"
+    assert result["exit_code"] == 0
+    assert fake.calls == [
+        ("mcp__email__list_emails", {"folder": "INBOX", "_odysseus_owner": "alice"}),
+    ]
 
 
 def test_public_agent_policy_hides_sensitive_tools(monkeypatch):
