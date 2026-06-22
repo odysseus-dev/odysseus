@@ -343,6 +343,25 @@ function initSignupToggle() {
   });
 }
 
+function initShareDefaultsToggle() {
+  const toggle = el('adm-shareDefaultsToggle');
+  fetch('/api/settings', { credentials: 'same-origin' })
+    .then(r => r.json())
+    .then(d => { toggle.checked = d.share_defaults_with_users !== false; })
+    .catch(e => console.warn('Settings fetch failed:', e));
+  toggle.addEventListener('change', async () => {
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ share_defaults_with_users: toggle.checked }),
+      });
+      if (!res.ok) throw new Error('Failed to save');
+    } catch (e) { toggle.checked = !toggle.checked; }
+  });
+}
+
 function initAddUser() {
   fetch('/api/auth/policy', { credentials: 'same-origin' })
     .then(r => r.ok ? r.json() : null)
@@ -2986,7 +3005,7 @@ function initLogsView() {
 function initAll() {
   modalEl = el('settings-modal');
   const inits = [
-    initSignupToggle, initAddUser, initEndpointForm, initMcpForm,
+    initSignupToggle, initShareDefaultsToggle, initAddUser, initEndpointForm, initMcpForm,
     initCalDAV, initBackup, initDangerZone, initTokenForm, initLogsView,
     () => settingsModule.initIntegrations()
   ];
