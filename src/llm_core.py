@@ -419,8 +419,15 @@ def _ollama_normalize_messages(messages: List[Dict]) -> List[Dict]:
                         if b64:
                             images.append(b64)
                     else:
-                        # http(s) URLs pass through; Ollama fetches them.
-                        images.append(url)
+                        # Native Ollama images[] is base64-only; it does
+                        # not fetch HTTP URLs.  Skip unsupported schemes
+                        # rather than sending a non-base64 string that the
+                        # model silently ignores.
+                        logger.warning(
+                            "Skipping non-data image_url (Ollama images[] "
+                            "requires base64): %s",
+                            url[:80],
+                        )
             nm["content"] = "\n".join(text_parts).strip()
             if images:
                 nm["images"] = images

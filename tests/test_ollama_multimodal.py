@@ -40,9 +40,9 @@ def test_ollama_payload_converts_openai_image_blocks_to_native_images_array():
     assert msg["images"] == ["AAAA", "BBBB"]
 
 
-def test_ollama_payload_handles_http_image_url():
-    """Non-data-URI image_url values are passed through verbatim so Ollama
-    can fetch them itself."""
+def test_ollama_payload_skips_http_image_url():
+    """Non-data-URI image_url values are skipped with a warning because
+    native Ollama images[] accepts base64 only."""
     msg = {
         "role": "user",
         "content": [
@@ -53,7 +53,8 @@ def test_ollama_payload_handles_http_image_url():
     payload = llm_core._build_ollama_payload("gemma4:e4b", [msg], temperature=0.0, max_tokens=0)
     out = payload["messages"][0]
     assert out["content"] == "Look"
-    assert out["images"] == ["https://example.com/cat.png"]
+    # HTTP URL is NOT added to images — Ollama cannot fetch it.
+    assert "images" not in out
 
 
 def test_ollama_payload_preserves_native_images_array():
