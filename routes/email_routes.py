@@ -910,12 +910,28 @@ def _envelope_recipients(*fields: str) -> list:
     strings. A naive `field.split(",")` corrupts display names that contain a
     comma (e.g. `"Smith, John" <john@corp.com>`, the canonical Outlook form):
     it splits into `"Smith` and `John" <john@corp.com>`, breaking delivery.
-    email.utils.getaddresses parses the address grammar correctly."""
+    email.utils.getaddresses parses the address grammar correctly.
+
+    Each field is first run through `_normalize_addr_field` so a stray
+    trailing or leading comma (e.g. the address-book autocomplete that
+    appends `", "` after a contact) does not produce an empty envelope.
+    On older Python (3.10) `getaddresses` drops an address glued to a
+    trailing comma, and the only thing that reaches the SMTP RCPT TO list
+    is the empty list - which surfaces as the opaque `{}`
+    SMTPRecipientsRefused error from `smtp.sendmail`. Normalising inside
+    the helper makes it safe for any caller, not just the two that
+    pre-normalise at the call site."""
     out = []
-    for _name, addr in email.utils.getaddresses([f for f in fields if f]):
-        addr = (addr or "").strip()
-        if addr:
-            out.append(addr)
+    for field in fields:
+        if not field:
+            continue
+        normalized = _normalize_addr_field(field)
+        if not normalized:
+            continue
+        for _name, addr in email.utils.getaddresses([normalized]):
+            addr = (addr or "").strip()
+            if addr:
+                out.append(addr)
     return out
 
 
@@ -3538,6 +3554,13 @@ def setup_email_routes():
         # Build recipient list (parse the address grammar so display names with
         # commas don't get split into broken envelope addresses)
         recipients = _envelope_recipients(req.to, req.cc, req.bcc)
+        if not recipients:
+            # Empty envelope surfaces as the opaque `{}` SMTPRecipientsRefused
+            # error from smtp.sendmail; surface a clear message instead.
+            logger.warning(
+                f"Refusing to send email: no valid recipient address in to={req.to!r} cc={req.cc!r} bcc={req.bcc!r}"
+            )
+            return {"success": False, "error": "No valid recipient address"}
 
         # Serialize what the background task needs so the request object can be GC'd
         outer_bytes = outer.as_bytes()
