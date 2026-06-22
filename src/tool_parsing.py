@@ -21,14 +21,14 @@ logger = logging.getLogger(__name__)
 
 # Pattern 1: ```bash ... ``` fenced code blocks
 _TOOL_BLOCK_RE = re.compile(
-    r"```(" + "|".join(TOOL_TAGS) + r")\s*\n([\s\S]*?)```",
+    r"```(" + "|".join(TOOL_TAGS) + r")\s*\n((?:[^`]|`{1,2}(?!`))*)```",
     re.IGNORECASE,
 )
 
 # Pattern 2: [TOOL_CALL] ... [/TOOL_CALL] blocks (some models use this format)
 # Matches: {tool => "shell", args => {--command "ls -la"}} etc.
 _TOOL_CALL_RE = re.compile(
-    r"\[TOOL_CALL\]\s*\{([\s\S]*?)\}\s*\[/TOOL_CALL\]",
+    r"\[TOOL_CALL\]\s*\{((?:[^}]|\}(?!\s*\[/TOOL_CALL\]))*)\}\s*\[/TOOL_CALL\]",
     re.IGNORECASE,
 )
 
@@ -36,7 +36,7 @@ _TOOL_CALL_RE = re.compile(
 # <minimax:tool_call><invoke name="bash"><parameter name="command">...</parameter></invoke></minimax:tool_call>
 # Also handles: <tool_call><invoke ...>, <function_call><invoke ...>, plain <invoke ...>
 _XML_TOOL_CALL_RE = re.compile(
-    r"<(?:[\w]+:)?(?:tool_call|function_call)>\s*([\s\S]*?)</(?:[\w]+:)?(?:tool_call|function_call)>",
+    r"<(?:[\w]+:)?(?:tool_call|function_call)>\s*((?:[^<]|<(?!/(?:[\w]+:)?(?:tool_call|function_call)>))*)</(?:[\w]+:)?(?:tool_call|function_call)>",
     re.IGNORECASE,
 )
 _XML_OPEN_TOOL_CALL_RE = re.compile(
@@ -44,15 +44,15 @@ _XML_OPEN_TOOL_CALL_RE = re.compile(
     re.IGNORECASE,
 )
 _XML_INVOKE_RE = re.compile(
-    r'<invoke\s+name=["\'](\w+)["\']>\s*([\s\S]*?)</invoke>',
+    r'<invoke\s+name=["\'](\w+)["\']>\s*((?:[^<]|<(?!/invoke>))*)</invoke>',
     re.IGNORECASE,
 )
 _XML_PARAM_RE = re.compile(
-    r'<parameter\s+name=["\'](\w+)["\']>([\s\S]*?)</parameter>',
+    r'<parameter\s+name=["\'](\w+)["\']>([^<]*(?:<(?!/parameter>)[^<]*)*)</parameter>',
     re.IGNORECASE,
 )
 _XML_DIRECT_TOOL_RE = re.compile(
-    r"<\s*([A-Za-z_][\w-]*)\s*>([\s\S]*?)</\s*\1\s*>",
+    r"<\s*([A-Za-z_][\w-]*)\s*>((?:[^<]|<(?!/\s*\1\s*>))*)</\s*\1\s*>",
     re.IGNORECASE,
 )
 
@@ -70,7 +70,7 @@ _STEPFUN_CALLS_END = "<｜tool▁calls▁end｜>"
 # Pattern 4: <tool_code> blocks (MiniMax-M2.5 style)
 # {tool => 'tool_name', args => '<param>value</param>'}
 _TOOL_CODE_RE = re.compile(
-    r"<tool_code>\s*\{([\s\S]*?)\}\s*</tool_code>",
+    r"<tool_code>\s*\{((?:[^}]|\}(?!\s*</tool_code>))*)\}\s*</tool_code>",
     re.IGNORECASE,
 )
 

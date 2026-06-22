@@ -19,7 +19,12 @@ _THINK_TAG_NAME = r"(?:think(?:ing)?|thought)"
 
 # Closed reasoning blocks. Multi-pass loop in `strip_think` handles nested
 # `<think><think>...</think></think>` patterns some models emit.
-_THINK_CLOSED_RE = re.compile(rf"<{_THINK_TAG_NAME}(?:\s+[^>]*)?>[\s\S]*?</{_THINK_TAG_NAME}>\s*", re.IGNORECASE)
+# Content uses a tempered greedy token instead of [\s\S]*? to avoid O(n²)
+# backtracking when the closing tag is absent (ReDoS on large LLM outputs).
+_THINK_CLOSED_RE = re.compile(
+    rf"<{_THINK_TAG_NAME}(?:\s+[^>]*)?>(?:[^<]|<(?!/{_THINK_TAG_NAME}\s*>))*</{_THINK_TAG_NAME}>\s*",
+    re.IGNORECASE,
+)
 # Orphan opening or closing tags that survive after the closed-pass.
 _THINK_TAG_RE = re.compile(rf"</?{_THINK_TAG_NAME}[^>]*>\s*", re.IGNORECASE)
 # Dangling opener anywhere in the response with no closer — strip everything
@@ -31,7 +36,7 @@ _THINK_ATTR_RE = re.compile(rf"<{_THINK_TAG_NAME}\s+[^>]*>", re.IGNORECASE)
 _THINK_ATTR_CLOSE_RE = re.compile(rf"</{_THINK_TAG_NAME}\s+[^>]*>", re.IGNORECASE)
 _GEMMA_THOUGHT_OPEN_RE = re.compile(r"<\|channel>thought\s*\n?[\s\S]*$", re.IGNORECASE)
 _GEMMA_RESPONSE_CHANNEL_RE = re.compile(
-    r"<\|channel>response\s*\n?([\s\S]*?)<channel\|>",
+    r"<\|channel>response\s*\n?([^<]*(?:<(?!channel\|>)[^<]*)*)<channel\|>",
     re.IGNORECASE,
 )
 _GEMMA_RESPONSE_OPEN_RE = re.compile(r"<\|channel>response\s*\n?", re.IGNORECASE)
@@ -39,7 +44,7 @@ _GEMMA_CHANNEL_CLOSE_RE = re.compile(r"<channel\|>", re.IGNORECASE)
 _THOUGHT_TAG_OPEN_RE = re.compile(r"<thought(\s+[^>]*)?>", re.IGNORECASE)
 _THOUGHT_TAG_CLOSE_RE = re.compile(r"</thought>", re.IGNORECASE)
 _GEMMA_THOUGHT_CHANNEL_CAPTURE_RE = re.compile(
-    r"<\|channel>thought\s*\n?([\s\S]*?)<channel\|>\s*",
+    r"<\|channel>thought\s*\n?([^<]*(?:<(?!channel\|>)[^<]*)*)<channel\|>\s*",
     re.IGNORECASE,
 )
 # Qwen and a few other models prefix the response with a "Thinking Process:"
