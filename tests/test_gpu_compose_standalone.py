@@ -124,9 +124,9 @@ def test_nvidia_odysseus_adds_only_overlay(base):
         {"driver": "nvidia", "count": "all", "capabilities": ["gpu"]}
     ]
 
-    # No AMD-only keys leaked in.
+    # Base Docker socket group is preserved; no AMD-only keys leaked in.
     assert "devices" not in svc
-    assert "group_add" not in svc
+    assert svc["group_add"] == base_svc["group_add"]
 
 
 def test_amd_odysseus_adds_only_overlay(base):
@@ -137,11 +137,10 @@ def test_amd_odysseus_adds_only_overlay(base):
     # Environment is unchanged from base for AMD.
     assert svc["environment"] == base_svc["environment"]
 
-    # devices and group_add are new and match the overlay exactly.
+    # devices are new; group_add preserves the base Docker group and appends AMD groups.
     assert "devices" not in base_svc
-    assert "group_add" not in base_svc
     assert svc["devices"] == ["/dev/kfd", "/dev/dri"]
-    assert svc["group_add"] == ["video", "${RENDER_GID:-render}"]
+    assert svc["group_add"] == base_svc["group_add"] + ["video", "${RENDER_GID:-render}"]
 
     # No NVIDIA-only keys leaked in.
     assert "deploy" not in svc

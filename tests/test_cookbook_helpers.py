@@ -348,7 +348,7 @@ def test_serve_pip_install_normalizes_llama_cpp_alias_and_adds_wheel_index():
     src = (pathlib.Path(__file__).resolve().parent.parent
         / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
 
-    assert "re.sub(r\"(?<![A-Za-z0-9_.-])llama_cpp(?![A-Za-z0-9_.-])\", \"llama-cpp-python[server]\", req.cmd)" in src
+    assert "re.sub(r\"(?<![A-Za-z0-9_.\\-/])llama_cpp(?![A-Za-z0-9_.\\-/])\", \"llama-cpp-python[server]\", req.cmd)" in src
     assert "if \"llama-cpp-python\" in req.cmd and \"--extra-index-url\" not in req.cmd:" in src
     assert "https://abetlen.github.io/llama-cpp-python/whl/cpu" in src
 
@@ -626,7 +626,7 @@ def test_llama_cpp_linux_bootstrap_prefers_rocm_before_cuda():
     script = "\n".join(runner_lines)
 
     assert "mkdir -p ~/bin" in script
-    assert script.index("mkdir -p ~/bin") < script.index("cd ~/llama.cpp && rm -rf build")
+    assert script.index("mkdir -p ~/bin") < script.index("cd ~/llama.cpp")
     assert 'command -v hipconfig &>/dev/null || [ -d /opt/rocm ] || [ -n "$ROCM_PATH" ] || [ -n "$HIP_PATH" ]' in script
     assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON' in script
     assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON' in script
@@ -676,7 +676,7 @@ def test_llama_cpp_linux_bootstrap_nvcc_without_cudart_warns_and_falls_back():
     # outer else that handles no-GPU-toolchain). Verify it appears at least once
     # before the outer "no HIP/CUDA toolchain" warning.
     cpu_cmake = 'cmake -B build -DCMAKE_BUILD_TYPE=Release &&'
-    no_toolchain_warn = 'WARNING: no HIP/CUDA toolchain found'
+    no_toolchain_warn = 'WARNING: no HIP/CUDA/Vulkan toolchain found'
     assert cpu_cmake in script
     assert script.index(cpu_cmake) < script.index(no_toolchain_warn)
 
@@ -693,8 +693,8 @@ def test_llama_cpp_linux_bootstrap_keeps_cpu_fallback_when_no_gpu_toolchain():
     _append_llama_cpp_linux_accel_build_lines(runner_lines)
     script = "\n".join(runner_lines)
 
-    assert 'WARNING: no HIP/CUDA toolchain found — building llama-server for CPU only.' in script
-    assert 'Install ROCm for AMD GPUs or vLLM/CUDA tooling for NVIDIA' in script
+    assert 'WARNING: no HIP/CUDA/Vulkan toolchain found — building llama-server for CPU only.' in script
+    assert 'Install Vulkan (libvulkan-dev) / ROCm for AMD GPUs or CUDA tooling for NVIDIA' in script
 
 
 def test_llama_cpp_rebuild_cmd_clears_cached_build_paths():
@@ -718,7 +718,7 @@ def test_local_windows_download_pid_tracks_inner_bash_and_stop_kills_tree():
 
     assert 'printf \'%s\\\\n\' \\"$$\\" > {pp}' in routes_src
     assert "function Stop-Tree([int]$Id)" in running_src
-    assert "ParentProcessId = $Id" in running_src
+    assert "('ParentProcessId = ' + $Id)" in running_src
     assert "Stop-Tree ([int]$p)" in running_src
 
 
@@ -784,6 +784,50 @@ def test_cached_model_scan_reports_plain_dir_gguf(tmp_path):
     assert ggufs[1]["size_bytes"] == len(b"part1part2part3")
     assert ggufs[2]["quant"] == "Q6_K_XL"
     assert ggufs[3]["quant"] == "BF16"
+
+
+def test_cached_model_scan_uses_ollama_api_before_cli_and_windows_opt_in():
+    script = _cached_model_scan_script()
+
+    assert "scan_ollama_api()\nscan_ollama()" in script
+    assert "if any(m.get('is_ollama') for m in models): return" in script
+    assert "os.name == 'nt'" in script
+    assert "ODYSSEUS_ALLOW_OLLAMA_CLI_SCAN" in script
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Ollama CLI startup guard")
+def test_cached_model_scan_does_not_launch_ollama_cli_on_windows(tmp_path):
+    """Official Ollama for Windows can auto-start the tray/server on `ollama list`.
+    The read-only cache scanner must not invoke that CLI unless explicitly opted in.
+    """
+    marker = tmp_path / "ollama-called.txt"
+    fake_ollama = tmp_path / "ollama.cmd"
+    fake_ollama.write_text(
+        "@echo off\r\n"
+        f'echo called>"{marker}"\r\n'
+        "echo NAME ID SIZE MODIFIED\r\n"
+        "echo local-model:latest abc 1 GB now\r\n",
+        encoding="utf-8",
+    )
+
+    empty_home = tmp_path / "home"
+    empty_home.mkdir()
+    scan_py = tmp_path / "scan_cache.py"
+    scan_py.write_text(_cached_model_scan_script(), encoding="utf-8")
+    env = dict(os.environ)
+    env["PATH"] = str(tmp_path) + os.pathsep + env.get("PATH", "")
+    env["HOME"] = str(empty_home)
+    env.pop("ODYSSEUS_ALLOW_OLLAMA_CLI_SCAN", None)
+    proc = subprocess.run(
+        [sys.executable, str(scan_py)],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert marker.exists() is False
+    assert all(m.get("backend") != "ollama" for m in json.loads(proc.stdout))
 
 
 def test_cached_model_scan_uses_huggingface_cache_env(tmp_path):

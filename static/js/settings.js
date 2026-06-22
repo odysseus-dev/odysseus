@@ -11,6 +11,7 @@ import { isAltGrEvent } from './platform.js';
 
 let initialized = false;
 let modalEl = null;
+let _authPolicy = { password_min_length: 8 };
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
@@ -2160,6 +2161,16 @@ function initAccount() {
       }
     }).catch(() => {});
 
+  // Update password placeholder and policy from server
+  fetch('/api/auth/policy', { credentials: 'same-origin' })
+    .then(r => r.ok ? r.json() : null)
+    .then(policy => {
+      if (!policy) return;
+      _authPolicy = policy;
+      const pwNew = el('settings-pw-new');
+      if (pwNew) pwNew.placeholder = `New password (min ${policy.password_min_length})`;
+    }).catch(() => {});
+
   // Change password
   const saveBtn = el('settings-pw-save');
   const msgEl = el('settings-pw-msg');
@@ -2170,7 +2181,7 @@ function initAccount() {
       const conf = el('settings-pw-confirm').value;
       msgEl.style.color = '';
       if (!cur || !nw) { msgEl.textContent = 'Fill in all fields'; msgEl.style.color = 'var(--red)'; return; }
-      if (nw.length < 8) { msgEl.textContent = 'Min 8 characters'; msgEl.style.color = 'var(--red)'; return; }
+      if (nw.length < _authPolicy.password_min_length) { msgEl.textContent = `Min ${_authPolicy.password_min_length} characters`; msgEl.style.color = 'var(--red)'; return; }
       if (nw !== conf) { msgEl.textContent = 'Passwords don\'t match'; msgEl.style.color = 'var(--red)'; return; }
       saveBtn.disabled = true;
       try {

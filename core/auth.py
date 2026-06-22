@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 from core.atomic_io import atomic_write_json as _atomic_write_json  # noqa: E402
+from core.middleware import INTERNAL_TOOL_USER  # noqa: E402
 
 DEFAULT_PRIVILEGES = {
     "can_use_agent": True,
@@ -47,7 +48,7 @@ ADMIN_PRIVILEGES["allowed_models_restricted"] = False
 # backwards for this sentinel.
 ADMIN_PRIVILEGES["block_all_models"] = False
 
-from src.constants import AUTH_FILE
+from src.constants import AUTH_FILE, PASSWORD_MIN_LENGTH
 DEFAULT_AUTH_PATH = AUTH_FILE
 TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
 
@@ -65,7 +66,7 @@ TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
 # of those names would be denied an assistant and inconsistently owner-scoped.
 # Refuse to create or rename into any of them so the sentinels can't be
 # impersonated. (Keep this in sync with that synthetic-owner set.)
-RESERVED_USERNAMES = frozenset({"internal-tool", "api", "demo", "system"})
+RESERVED_USERNAMES = frozenset({INTERNAL_TOOL_USER, "api", "demo", "system"})
 
 
 def normalize_known_username(users: Dict[str, Any], username: str | None) -> Optional[str]:
@@ -242,6 +243,15 @@ class AuthManager:
     @property
     def is_configured(self) -> bool:
         return len(self.users) > 0
+
+    def policy(self) -> dict:
+        """Return public auth policy constants for the frontend."""
+        return {
+            "password_min_length": PASSWORD_MIN_LENGTH,
+            "reserved_usernames": sorted(RESERVED_USERNAMES),
+            "signup_enabled": self.signup_enabled,
+            "session_days": TOKEN_TTL // 86400,
+        }
 
     # ------------------------------------------------------------------
     # Account management
@@ -573,16 +583,20 @@ class AuthManager:
             return None
         return self.create_session_trusted(username)
 
-    def create_session_trusted(self, username: str) -> str:
+    def create_session_trusted(self, username: str) -> Optional[str]:
         """Issue a session token for an already-verified user.
         Call only after verify_password (and TOTP if enabled) have passed."""
         username = username.strip().lower()
         token = secrets.token_hex(32)
-        with self._sessions_lock:
-            self._sessions[token] = {
-                "username": username,
-                "expiry": time.time() + TOKEN_TTL,
-            }
+        with self._config_lock:
+            if username not in self.users:
+                logger.warning("Refused to issue session for missing user '%s'", username)
+                return None
+            with self._sessions_lock:
+                self._sessions[token] = {
+                    "username": username,
+                    "expiry": time.time() + TOKEN_TTL,
+                }
         self._save_sessions()
         return token
 

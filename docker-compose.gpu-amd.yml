@@ -28,6 +28,14 @@ services:
       # land under /app/.local for the odysseus user. Persist them so a
       # container recreate does not silently remove installed serve engines.
       - ${APP_DATA_DIR:-./data}/local:/app/.local:z
+      # Docker socket — lets Cookbook launch commands like
+      # `docker exec ollama-rocm ollama show <tag>` reach the host's
+      # Docker daemon (and sibling containers like ollama-rocm /
+      # ollama-test). The in-container user needs to be in the
+      # socket's owning group — see `group_add` below; the GID
+      # there must match the host's `docker` group (defaults to 963
+      # on Debian, 999 on Ubuntu — override via env if yours differs).
+      - /var/run/docker.sock:/var/run/docker.sock
     extra_hosts:
       # Lets the container reach local services on the Docker host, including
       # Ollama at http://host.docker.internal:11434.
@@ -60,6 +68,13 @@ services:
       - ODYSSEUS_INPROCESS_TASKS=${ODYSSEUS_INPROCESS_TASKS:-1}
       - ODYSSEUS_SCRIPT_HOST=${ODYSSEUS_SCRIPT_HOST:-localhost}
       - ODYSSEUS_CHAT_UPLOAD_MAX_BYTES=${ODYSSEUS_CHAT_UPLOAD_MAX_BYTES:-10485760}
+      - ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES=${ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES:-104857600}
+      - ODYSSEUS_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES=${ODYSSEUS_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES:-26214400}
+      - ODYSSEUS_MEMORY_IMPORT_MAX_BYTES=${ODYSSEUS_MEMORY_IMPORT_MAX_BYTES:-10485760}
+      - ODYSSEUS_PERSONAL_UPLOAD_MAX_BYTES=${ODYSSEUS_PERSONAL_UPLOAD_MAX_BYTES:-26214400}
+      - ODYSSEUS_EMAIL_COMPOSE_UPLOAD_MAX_BYTES=${ODYSSEUS_EMAIL_COMPOSE_UPLOAD_MAX_BYTES:-26214400}
+      - ODYSSEUS_STT_MAX_AUDIO_BYTES=${ODYSSEUS_STT_MAX_AUDIO_BYTES:-26214400}
+      - ODYSSEUS_ICS_MAX_BYTES=${ODYSSEUS_ICS_MAX_BYTES:-10485760}
       - DATA_BRAVE_API_KEY=${DATA_BRAVE_API_KEY:-}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
       - GOOGLE_PSE_CX=${GOOGLE_PSE_CX:-}
@@ -86,6 +101,7 @@ services:
       - /dev/kfd
       - /dev/dri
     group_add:
+      - "${DOCKER_GID:-963}"
       - video
       - ${RENDER_GID:-render}
 
