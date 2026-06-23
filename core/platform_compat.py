@@ -49,55 +49,9 @@ def safe_chmod(path, mode: int) -> bool:
         return False
     try:
         os.chmod(path, mode)
-        return True
-    except OSError:
+        return True    except OSError:
         return False
 
-
-# ── GPU detection ───────────────────────────────────────────────────────────
-def detect_gpu() -> Optional[str]:
-    """Detect available GPU backend for LLM inference.
-
-    Checks for NVIDIA CUDA via nvidia-smi, then Apple Metal, then returns None.
-    On Windows, checks NVIDIA-SMI via subprocess.
-    """
-    try:
-        if IS_WINDOWS:
-            result = subprocess.run(
-                ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                return "cuda"
-        elif IS_POSIX:
-            # Apple Silicon macOS uses Metal; there is no nvidia-smi.
-            if IS_APPLE_SILICON:
-                return "metal"
-            result = subprocess.run(
-                ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                return "cuda"
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        pass
-    return None
-
-def llama_gpu_layers(gpu_backend: Optional[str]) -> int:
-    """Return appropriate GPU layers setting based on detected backend.
-    For CUDA, return a high number to offload all layers to GPU (e.g., 999).
-    For Metal, return a reasonable number (e.g., 32).
-    For CPU, return 0.
-    """
-    if gpu_backend == "cuda":
-        return 999
-    elif gpu_backend == "metal":
-        return 32
-    return 0
 
 # ── Process detach / liveness / teardown ────────────────────────────────────
 def detached_popen_kwargs() -> dict:
