@@ -56,6 +56,16 @@ class EmbeddingClient:
         # endpoint (embedding a short string returns in well under a second).
         self._client = httpx.Client(timeout=httpx.Timeout(connect=3.0, read=10.0, write=5.0, pool=3.0))
 
+    def close(self) -> None:
+        """Release the pooled HTTP connection. Idempotent; safe to call twice."""
+        self._client.close()
+
+    def __enter__(self) -> "EmbeddingClient":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
     def get_sentence_embedding_dimension(self) -> int:
         """Probe the endpoint for embedding dimension if not yet known."""
         if self._dim is not None:
@@ -89,7 +99,14 @@ class EmbeddingClient:
             embeddings = data.get("data", [])
             embeddings.sort(key=lambda e: e.get("index", 0))
             for emb in embeddings:
-                all_vecs.append(emb["embedding"])
+                vec = emb.get("embedding") if isinstance(emb, dict) else None
+                if vec is None:
+                    raise ValueError(
+                        f"Malformed embedding response from {self.url} "
+                        f"(model={self.model}): expected an 'embedding' field, got "
+                        f"keys {sorted(emb) if isinstance(emb, dict) else type(emb).__name__}"
+                    )
+                all_vecs.append(vec)
 
         vecs = np.array(all_vecs, dtype="float32")
 
@@ -233,6 +250,7 @@ def get_embedding_client():
     # Try the HTTP embedding API — unless we already found it down this process
     # (avoids paying the connect timeout again on every RAG/memory/tool probe).
     if not _http_embed_down:
+        client = None
         try:
             client = EmbeddingClient()
             client.get_sentence_embedding_dimension()  # health check
@@ -240,6 +258,10 @@ def get_embedding_client():
             return client
         except Exception as e:
             _http_embed_down = True
+            # The probe client is being discarded; close it so its pooled
+            # httpx connection isn't leaked for the life of the process.
+            if client is not None:
+                client.close()
             logger.warning(f"HTTP embedding API unavailable ({e}); using local FastEmbed for the rest of this process")
 
     # Fall back to local fastembed

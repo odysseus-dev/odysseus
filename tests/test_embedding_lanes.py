@@ -397,6 +397,11 @@ def test_custom_lane_uses_http_down_latch(monkeypatch):
         def get_sentence_embedding_dimension(self):
             raise RuntimeError("endpoint down")
 
+        def close(self):
+            # Mirror the real EmbeddingClient: the factory now closes the probe
+            # client when the endpoint is down so its httpx pool isn't leaked.
+            pass
+
     class LocalFastEmbed(FakeEmbedder):
         def __init__(self):
             super().__init__(384, "mini", "local://fastembed")
