@@ -115,5 +115,63 @@ def setup_project_routes(app, project_service=None, memory_service=None) -> APIR
         svc.delete(pid, _owner(request))
         return {"ok": True}
 
+    # ──────────────────────────────── Settings ─────────────────────────────
+
+    MAX_PROMPT_CHARS = 4000
+    MAX_INSTRUCTIONS_CHARS = 2000
+
+    @router.get("/{pid}/settings")
+    def get_settings(request: Request, pid: str):
+        if not _features_enabled():
+            raise HTTPException(404)
+        try:
+            proj = svc.get(pid, _owner(request))
+        except ProjectNotFound:
+            raise HTTPException(404, {"error": "project_not_found"})
+        return {
+            "custom_prompt": proj.custom_prompt,
+            "custom_instructions": proj.custom_instructions,
+            "prompt_override_mode": proj.prompt_override_mode,
+            "instructions_override_mode": proj.instructions_override_mode,
+            "memory_mode": proj.memory_mode,
+            "snapshot_meta": proj.snapshot_meta,
+        }
+
+    @router.put("/{pid}/settings")
+    def put_settings(request: Request, pid: str, body: dict):
+        if not _features_enabled():
+            raise HTTPException(404)
+        owner = _owner(request)
+        if "custom_prompt" in body and body["custom_prompt"] is not None:
+            if len(body["custom_prompt"]) > MAX_PROMPT_CHARS:
+                raise HTTPException(422, {
+                    "error": "field_too_long",
+                    "field": "custom_prompt",
+                    "max": MAX_PROMPT_CHARS,
+                })
+        if "custom_instructions" in body and body["custom_instructions"] is not None:
+            if len(body["custom_instructions"]) > MAX_INSTRUCTIONS_CHARS:
+                raise HTTPException(422, {
+                    "error": "field_too_long",
+                    "field": "custom_instructions",
+                    "max": MAX_INSTRUCTIONS_CHARS,
+                })
+        # memory_mode is intentionally NOT settable after creation.
+        body.pop("memory_mode", None)
+        try:
+            proj = svc.update_settings(pid, owner, **body)
+        except ProjectNotFound:
+            raise HTTPException(404, {"error": "project_not_found"})
+        except ValueError as e:
+            raise HTTPException(422, {"error": "validation", "detail": str(e)})
+        return {
+            "custom_prompt": proj.custom_prompt,
+            "custom_instructions": proj.custom_instructions,
+            "prompt_override_mode": proj.prompt_override_mode,
+            "instructions_override_mode": proj.instructions_override_mode,
+            "memory_mode": proj.memory_mode,
+            "snapshot_meta": proj.snapshot_meta,
+        }
+
     app.include_router(router)
     return router

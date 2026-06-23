@@ -70,3 +70,45 @@ def test_other_owner_gets_404(app_and_client):
     pid = res.json()["id"]
     res = client.get(f"/api/projects/{pid}", headers={"X-Owner": "bob"})
     assert res.status_code == 404
+
+
+# ────────────────────────────────────── T19 settings routes ─────────────────────────────────────
+
+def test_settings_get_put_round_trip(app_and_client):
+    _app, client = app_and_client
+    res = client.post("/api/projects",
+                      json={"name": "S", "memory_mode": "isolated"},
+                      headers={"X-Owner": "alice"})
+    pid = res.json()["id"]
+
+    res = client.put(
+        f"/api/projects/{pid}/settings",
+        json={"custom_prompt": "Be terse.", "prompt_override_mode": "override"},
+        headers={"X-Owner": "alice"},
+    )
+    assert res.status_code == 200
+    assert res.json()["custom_prompt"] == "Be terse."
+    assert res.json()["prompt_override_mode"] == "override"
+
+    res = client.get(f"/api/projects/{pid}/settings",
+                     headers={"X-Owner": "alice"})
+    assert res.status_code == 200
+    assert res.json()["custom_prompt"] == "Be terse."
+
+
+def test_settings_rejects_oversized_prompt(app_and_client):
+    _app, client = app_and_client
+    res = client.post("/api/projects",
+                      json={"name": "S2", "memory_mode": "isolated"},
+                      headers={"X-Owner": "alice"})
+    pid = res.json()["id"]
+    huge = "x" * 4001
+    res = client.put(
+        f"/api/projects/{pid}/settings",
+        json={"custom_prompt": huge},
+        headers={"X-Owner": "alice"},
+    )
+    assert res.status_code == 422
+    body = res.json()
+    detail = body.get("detail", body)
+    assert detail.get("error") == "field_too_long"
