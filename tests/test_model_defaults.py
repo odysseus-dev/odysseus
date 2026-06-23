@@ -102,7 +102,6 @@ def _run_get_default_chat_test(monkeypatch, share_defaults_enabled, second_endpo
     fake_auth_manager = MagicMock()
     fake_auth_manager.is_admin = lambda user: False
     
-    # Endpoints always exist in the DB - the setting controls resolution, not existence
     endpoints = [
         _FakeEndpoint(
             id="global-ep-123",
@@ -116,7 +115,7 @@ def _run_get_default_chat_test(monkeypatch, share_defaults_enabled, second_endpo
         )
     ]
     
-    # When testing fallback scenario, remove the primary endpoint
+    # When testing fallback scenario, removes the primary endpoint
     if second_endpoint_only:
         endpoints = [endpoints[1]]
     
