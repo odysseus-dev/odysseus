@@ -417,9 +417,11 @@ const TOOL_CALL_RE = /\[TOOL_CALL\][\s\S]*?\[\/TOOL_CALL\]/gi;
 // invocations.
 //
 // Until the fetch resolves, EXEC_FENCE_RE stays null and exec fences aren't
-// stripped — a sub-second window before the first stream. The backend already
-// strips persisted history (src/tool_parsing.py builds the same regex from
-// TOOL_TAGS), so a reload always renders clean.
+// stripped — normally a sub-second window before the first stream. If the fetch
+// fails it stays null for the rest of the session (logged below), so live exec
+// fences won't be stripped until reload. Either way the backend already strips
+// persisted history (src/tool_parsing.py builds the same regex from TOOL_TAGS),
+// so a reload always renders clean.
 let EXEC_FENCE_RE = null;
 const EXEC_FENCE_NON_TOOL = new Set(['bash', 'python']);
 
@@ -435,8 +437,11 @@ async function loadExecFenceRegex() {
         '```(?:' + tags.join('|') + ')\\s*\\n[\\s\\S]*?```', 'gi'
       );
     }
-  } catch (_) {
-    // Leave EXEC_FENCE_RE null; persisted path stays clean regardless.
+  } catch (err) {
+    // Surface the failure rather than swallowing it: EXEC_FENCE_RE stays null,
+    // so this session won't strip live exec fences until reload (persisted path
+    // stays clean regardless).
+    console.warn('chatRenderer: /api/tools fetch failed; live exec-fence stripping disabled until reload', err);
   }
 }
 loadExecFenceRegex();
