@@ -83,7 +83,7 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
     """
     import httpx
     from src.database import SessionLocal, ModelEndpoint
-    from src.llm_core import _detect_provider, ANTHROPIC_MODELS
+    from src.llm_core import _detect_provider, ANTHROPIC_MODELS, MINIMAX_MODELS
     from src.auth_helpers import owner_filter
 
     spec = spec.strip()
@@ -117,10 +117,12 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
             provider = _detect_provider(base)
             headers = build_headers(api_key, base)
 
-            if provider == "anthropic":
-                # Anthropic: match against hardcoded model list
+            if provider in ("anthropic", "minimax"):
+                # Anthropic-compatible: match against hardcoded model list
+                # (Anthropic or Minimax — each has its own curated list)
+                candidate_list = MINIMAX_MODELS if provider == "minimax" else ANTHROPIC_MODELS
                 matched = None
-                for am in ANTHROPIC_MODELS:
+                for am in candidate_list:
                     if model_name.lower() in am.lower() or am.lower() in model_name.lower():
                         matched = am
                         break

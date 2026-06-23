@@ -936,8 +936,10 @@ function initEndpointForm() {
         u = 'https://ollama.com/api';
       }
     } catch(e) {}
-    // Ensure /v1 suffix for bare host:port URLs (not cloud providers)
-    if (!u.includes('api.') && !u.includes('openrouter') && !u.includes('opencode.ai') && !u.includes('ollama.com') && !u.endsWith('/v1')) {
+    // Ensure /v1 suffix for bare host:port URLs (not cloud providers).
+    // Minimax uses an /anthropic path prefix, so it must be excluded from the
+    // auto-/v1 append too — the user already typed the full path.
+    if (!u.includes('api.') && !u.includes('openrouter') && !u.includes('opencode.ai') && !u.includes('ollama.com') && !u.includes('minimax.io') && !u.endsWith('/v1')) {
       try {
         const parsed = new URL(u);
         if (!parsed.pathname || parsed.pathname === '/') {

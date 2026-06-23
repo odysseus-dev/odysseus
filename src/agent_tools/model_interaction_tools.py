@@ -120,7 +120,7 @@ async def list_models(content: str, session_id: Optional[str] = None, owner: Opt
     import json
     import httpx
     from src.database import SessionLocal, ModelEndpoint
-    from src.llm_core import _detect_provider, ANTHROPIC_MODELS
+    from src.llm_core import _detect_provider, ANTHROPIC_MODELS, MINIMAX_MODELS
     from src.auth_helpers import owner_filter
     from src.endpoint_resolver import resolve_endpoint_runtime, build_headers, build_models_url
 
@@ -149,6 +149,8 @@ async def list_models(content: str, session_id: Optional[str] = None, owner: Opt
             model_ids = []
             if provider == "anthropic":
                 model_ids = list(ANTHROPIC_MODELS)
+            elif provider == "minimax":
+                model_ids = list(MINIMAX_MODELS)
             else:
                 try:
                     models_url = build_models_url(base)

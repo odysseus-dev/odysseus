@@ -43,7 +43,7 @@ the codebase, you are probably right to stay away.
   whether the bottleneck is IMAP folder select/fetch, cache invalidation,
   attachment/body loading, SMTP handshakes, or frontend refresh behavior, then
   propose safer caching/prefetch/batching without breaking multi-account state.
-- Provider setup/probing audit for Anthropic, Gemini, Groq, xAI, OpenRouter, OpenAI, and DeepSeek.
+- Provider setup/probing audit for Anthropic, Minimax, Gemini, Groq, xAI, OpenRouter, OpenAI, and DeepSeek.
 
 ## Refactor Targets
 - CSS cleanup. `static/style.css` basically Calypso's island atm.

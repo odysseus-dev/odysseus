@@ -102,3 +102,9 @@ compound.config.json
 *.error.log
 _scratch/
 /odysseus/
+
+# Graphify
+graphify-out/
+
+CLAUDE.md
+superpowers

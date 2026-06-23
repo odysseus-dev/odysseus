@@ -43,6 +43,9 @@ _SOTA_HOSTS = frozenset({
     "api.perplexity.ai", "api.x.ai",
     "generativelanguage.googleapis.com", "api.groq.com",
     "openrouter.ai", "ollama.com", "api.venice.ai", "api.kimi.com",
+    # Minimax is a paid Anthropic-compatible API; skip the teacher-escalation
+    # loop when the student is already on a Minimax endpoint.
+    "api.minimax.io",
 })
 
 

@@ -1860,7 +1860,7 @@ def setup_gallery_routes() -> APIRouter:
                 "Be specific but concise. 10-25 tags. No explanation, just tags."
             )
 
-            if provider == "anthropic":
+            if provider in ("anthropic", "minimax"):
                 payload = {
                     "model": model_name,
                     "max_tokens": 200,
@@ -1903,8 +1903,9 @@ def setup_gallery_routes() -> APIRouter:
                     logger.error(f"Vision model {resp.status_code}: {body}")
                     return {"error": f"Vision model returned {resp.status_code}: {body[:200]}"}
                 data = resp.json()
-                # Anthropic returns content[0].text, OpenAI returns choices[0].message.content
-                if provider == "anthropic":
+                # Anthropic returns content[0].text, OpenAI returns choices[0].message.content.
+                # Minimax mirrors Anthropic's schema, so the same parser applies.
+                if provider in ("anthropic", "minimax"):
                     content = (data.get("content") or [{}])[0].get("text", "")
                 else:
                     content = data.get("choices", [{}])[0].get("message", {}).get("content", "")

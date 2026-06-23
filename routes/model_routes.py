@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 from core.database import SessionLocal, ModelEndpoint, Session as DbSession
 from core.middleware import require_admin
-from src.llm_core import _detect_provider, _host_match, ANTHROPIC_MODELS
+from src.llm_core import _detect_provider, _host_match, ANTHROPIC_MODELS, MINIMAX_MODELS
 from src.tls_overrides import llm_verify
 from src.settings import load_settings as _load_settings, save_settings as _save_settings
 from src.endpoint_resolver import (
@@ -241,6 +241,13 @@ _PROVIDER_CURATED = {
         "claude-sonnet-4", "claude-opus-4", "claude-haiku-4",
         "claude-sonnet-4-5", "claude-haiku-3-5",
     ],
+    "minimax": [
+        "MiniMax-M3",
+        "MiniMax-M2.7", "MiniMax-M2.7-highspeed",
+        "MiniMax-M2.5", "MiniMax-M2.5-highspeed",
+        "MiniMax-M2.1", "MiniMax-M2.1-highspeed",
+        "MiniMax-M2",
+    ],
     "zai": [
         "glm-5", "glm-5.1", "glm-5v-turbo", "glm-4.7", "glm-4.7-flash",
         "glm-4.6", "glm-4.6v",
@@ -305,6 +312,7 @@ _HOST_TO_CURATED = (
     ("nvidia.com", "nvidia"),
     ("openrouter.ai", "openrouter"),
     ("ollama.com", "ollama"),
+    ("minimax.io", "minimax"),
 )
 
 
@@ -606,12 +614,12 @@ def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 1
     # Simple tool definition to test tool support
     _test_tools = [{"type": "function", "function": {"name": "test", "description": "Test tool", "parameters": {"type": "object", "properties": {}}}}] if with_tools else None
 
-    if provider == "anthropic":
+    if provider in ("anthropic", "minimax"):
         from src.llm_core import _normalize_anthropic_url, _build_anthropic_headers, _build_anthropic_payload
         target_url = _normalize_anthropic_url(base)
         auth_headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         h = _build_anthropic_headers(auth_headers)
-        payload = _build_anthropic_payload(model_id, messages, 0.0, 5)
+        payload = _build_anthropic_payload(model_id, messages, 0.0, 5, provider=provider)
         if _test_tools:
             payload["tools"] = [{"name": "test", "description": "Test tool", "input_schema": {"type": "object", "properties": {}}}]
     elif provider == "ollama":
@@ -714,7 +722,10 @@ def _effective_endpoint_kind(ep: Any, base_url: str) -> str:
 
 def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> List[str]:
     """Probe a base URL's /models endpoint and return list of model IDs.
-    For Anthropic, queries their /v1/models API, falling back to hardcoded list."""
+    For Anthropic, queries their /v1/models API, falling back to hardcoded list.
+    Minimax exposes the same endpoint shape on /anthropic/v1/models, so it
+    shares the Anthropic probe branch and only differs in its hardcoded
+    fallback list."""
     from src.endpoint_resolver import resolve_url
     from src.llm_core import httpx_get_kimi_aware
     base = resolve_url(_normalize_base(base_url))
@@ -724,8 +735,9 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         if api_key:
             return fetch_available_models(api_key, timeout=timeout)
         return []
-    if provider == "anthropic":
-        # Try Anthropic's /v1/models endpoint first
+    if provider in ("anthropic", "minimax"):
+        # Try Anthropic's /v1/models endpoint first (Minimax exposes the same
+        # schema at /anthropic/v1/models; build_models_url handles the path).
         url = _safe_build_models_url(base)
         headers = {"anthropic-version": "2023-06-01"}
         if api_key:
@@ -748,7 +760,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
                 logger.warning(f"Anthropic /v1/models failed with API key: {e}")
                 return []
             logger.warning(f"Anthropic /v1/models failed, using hardcoded list: {e}")
-        return list(ANTHROPIC_MODELS)
+        return list(MINIMAX_MODELS if provider == "minimax" else ANTHROPIC_MODELS)
     url = _safe_build_models_url(base)
     headers = _safe_build_headers(api_key, base)
     try:
@@ -1406,7 +1418,11 @@ def setup_model_routes(model_discovery):
                 entry["latency_ms"] = round((_time.time() - t0) * 1000)
                 entry["status"] = "online" if ping.get("reachable") or cached_count else "offline"
                 entry["error"] = ping.get("error")
-                entry["model_count"] = cached_count or (len(ANTHROPIC_MODELS) if provider == "anthropic" else 0)
+                entry["model_count"] = cached_count or (
+                    len(MINIMAX_MODELS) if provider == "minimax"
+                    else len(ANTHROPIC_MODELS) if provider == "anthropic"
+                    else 0
+                )
             except Exception as e:
                 entry["latency_ms"] = None
                 entry["status"] = "online" if cached_count else "offline"

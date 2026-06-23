@@ -617,6 +617,10 @@ _API_HOSTS = frozenset([
     "api.perplexity.ai", "api.x.ai",
     "ollama.com", "api.venice.ai", "api.kimi.com",
     "api.githubcopilot.com",
+    # Minimax (api.minimax.io) is Anthropic-API-compatible and supports native
+    # tool schemas on MiniMax-M3. Listing it here lets the agent send the
+    # native tool schemas instead of falling back to fenced-block parsing.
+    "api.minimax.io",
     # Local OpenAI-compatible endpoints (llama.cpp, vLLM, LM Studio, etc.).
     # Without these, `_is_api_model` falls back to keyword sniffing on the
     # model name, so well-behaved local servers don't get native tool

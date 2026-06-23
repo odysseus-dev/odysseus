@@ -282,6 +282,18 @@ ANTHROPIC_MODELS = [
     "claude-haiku-4-20250514", "claude-haiku-4", "claude-haiku-3-5-20241022", "claude-haiku-3-5",
 ]
 
+# Minimax is an Anthropic-compatible API (https://api.minimax.io/anthropic) that
+# speaks the same Messages schema. Used as the fallback list when
+# /anthropic/v1/models is unreachable, mirroring the ANTHROPIC_MODELS pattern.
+# Verified against https://platform.minimax.io/docs/api-reference/text-anthropic-api.
+MINIMAX_MODELS = [
+    "MiniMax-M3",
+    "MiniMax-M2.7", "MiniMax-M2.7-highspeed",
+    "MiniMax-M2.5", "MiniMax-M2.5-highspeed",
+    "MiniMax-M2.1", "MiniMax-M2.1-highspeed",
+    "MiniMax-M2",
+]
+
 
 def _is_ollama_native_url(url: str) -> bool:
     """Return True for native Ollama API URLs, including Ollama Cloud."""
@@ -600,6 +612,8 @@ def _detect_provider(url: str) -> str:
         return "ollama"
     if _host_match(url, "anthropic.com"):
         return "anthropic"
+    if _host_match(url, "minimax.io"):
+        return "minimax"
     if _host_match(url, "opencode.ai/zen/go"):
         return "opencode-go"
     if _host_match(url, "opencode.ai/zen"):
@@ -691,6 +705,7 @@ def _provider_label(url: str) -> str:
     if not url:
         return "provider"
     if _host_match(url, "anthropic.com"): return "Anthropic"
+    if _host_match(url, "minimax.io"): return "Minimax"
     if _host_match(url, "ollama.com"): return "Ollama Cloud"
     if _host_match(url, "x.ai"): return "xAI"
     if _host_match(url, "openai.com"): return "OpenAI"
@@ -959,8 +974,16 @@ def _convert_openai_content_to_anthropic(content):
     return converted
 
 
-def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=False, tools=None):
-    """Convert OpenAI-style messages to Anthropic format."""
+def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=False, tools=None, provider=None):
+    """Convert OpenAI-style messages to Anthropic format.
+
+    ``provider`` is the dispatcher's provider string ("anthropic" or "minimax").
+    Minimax is Anthropic-API-compatible but documents a wider temperature range
+    ([0, 2] vs Anthropic's [0, 1]) and does not reject high values, so the
+    legacy Anthropic clamp is skipped for "minimax". The default (provider=None)
+    preserves the original Anthropic-only behavior for callers that don't pass
+    the argument explicitly.
+    """
     system_parts = []
     chat_messages = []
     for m in messages:
@@ -1003,7 +1026,8 @@ def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=Fa
     # 1.0. Clamp here (in the Anthropic builder only) so presets/sliders that use
     # the wider OpenAI 0.0-2.0 range — e.g. the shipped "Nietzsche" preset at 1.2
     # — don't hard-break every Claude request. OpenAI's own path is left untouched.
-    if temperature is not None:
+    # Minimax documents a [0, 2] range, so skip the Anthropic clamp for it.
+    if temperature is not None and provider != "minimax":
         temperature = max(0.0, min(temperature, 1.0))
     payload = {
         "model": model,
@@ -1322,6 +1346,8 @@ def list_model_ids(
     provider = _detect_provider(base_chat_url)
     if provider == "anthropic":
         return list(ANTHROPIC_MODELS)
+    if provider == "minimax":
+        return list(MINIMAX_MODELS)
     try:
         h = {}
         if headers:
@@ -1413,10 +1439,10 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         logger.debug(f"Returning cached response for key: {cache_key}")
         return cached_response
 
-    if provider == "anthropic":
+    if provider in ("anthropic", "minimax"):
         target_url = _normalize_anthropic_url(url)
         h = _build_anthropic_headers(headers)
-        payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens)
+        payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens, provider=provider)
     elif provider == "ollama":
         target_url = _normalize_ollama_url(url)
         payload = _build_ollama_payload(
@@ -1447,7 +1473,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         raise HTTPException(502, f"Upstream {target_url} -> {r.status_code}: {r.text}")
     data = r.json()
     try:
-        if provider == "anthropic":
+        if provider in ("anthropic", "minimax"):
             response = _parse_anthropic_response(data)
         elif provider == "ollama":
             response = _parse_ollama_response(data)
@@ -1603,10 +1629,10 @@ async def llm_call_async(
         _set_cached_response(cache_key, response)
         return response
 
-    if provider == "anthropic":
+    if provider in ("anthropic", "minimax"):
         target_url = _normalize_anthropic_url(url)
         h = _build_anthropic_headers(headers)
-        payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens)
+        payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens, provider=provider)
     elif provider == "ollama":
         target_url = _normalize_ollama_url(url)
         h = {"Content-Type": "application/json"}
@@ -1664,7 +1690,7 @@ async def llm_call_async(
             _clear_host_dead(target_url)
             data = r.json()
             try:
-                if provider == "anthropic":
+                if provider in ("anthropic", "minimax"):
                     response = _parse_anthropic_response(data)
                 elif provider == "ollama":
                     response = _parse_ollama_response(data)
@@ -1719,10 +1745,10 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     else:
         messages_copy = non_sys
 
-    if provider == "anthropic":
+    if provider in ("anthropic", "minimax"):
         target_url = _normalize_anthropic_url(url)
         h = _build_anthropic_headers(headers)
-        payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens, stream=True, tools=tools)
+        payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens, stream=True, tools=tools, provider=provider)
     elif provider == "ollama":
         target_url = _normalize_ollama_url(url)
         h = {"Content-Type": "application/json"}
@@ -1901,7 +1927,11 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         return
 
     # ── Anthropic streaming ──
-    if provider == "anthropic":
+    # Minimax is wire-compatible with Anthropic's Messages API and the same SSE
+    # event schema (content_block_start / delta / stop, message_start / delta /
+    # stop, input_json_delta for tool args), so the entire native parser is
+    # shared between the two providers.
+    if provider in ("anthropic", "minimax"):
         _anth_input_tokens = 0
         _anth_output_tokens = 0
         # Track tool_use blocks: {index: {id, name, arguments_json}}

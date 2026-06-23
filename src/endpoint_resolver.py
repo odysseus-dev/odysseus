@@ -188,9 +188,14 @@ def _pathless_host(base: str, host: str) -> bool:
 
 
 def _anthropic_api_root(base: str) -> str:
-    """Return Anthropic's API root, preserving /v1 for OpenAI-compatible APIs elsewhere."""
+    """Return Anthropic's API root, preserving /v1 for OpenAI-compatible APIs elsewhere.
+
+    Minimax (api.minimax.io) uses the same Messages schema with a trailing
+    ``/anthropic/v1`` path, so the same trailing ``/v1`` strip is applied for
+    it — the caller will re-append ``/v1/messages`` via ``build_chat_url``.
+    """
     base = (base or "").strip().rstrip("/")
-    if _host_match(base, "anthropic.com") and base.endswith("/v1"):
+    if (_host_match(base, "anthropic.com") or _host_match(base, "minimax.io")) and base.endswith("/v1"):
         return base[:-3].rstrip("/")
     return base
 
@@ -199,7 +204,7 @@ def build_chat_url(base: str) -> str:
     """Return the correct chat endpoint URL for a given base."""
     base = _prepare_endpoint_base(base)
     provider = _detect_provider(base)
-    if provider == "anthropic":
+    if provider in ("anthropic", "minimax"):
         return _append_endpoint_path(_anthropic_api_root(base), "/v1/messages")
     if provider == "ollama":
         return _append_endpoint_path(_ollama_api_root(base), "/chat")
@@ -223,7 +228,7 @@ def build_models_url(base: str) -> Optional[str]:
     """
     base = _prepare_endpoint_base(base)
     provider = _detect_provider(base)
-    if provider == "anthropic":
+    if provider in ("anthropic", "minimax"):
         return _append_endpoint_path(_anthropic_api_root(base), "/v1/models")
     if provider == "ollama":
         return _append_endpoint_path(_ollama_api_root(base), "/tags")
@@ -246,7 +251,7 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
     """Build auth headers for an endpoint."""
     provider = _detect_provider(base)
     headers: Dict[str, str] = {}
-    if provider == "anthropic":
+    if provider in ("anthropic", "minimax"):
         if api_key:
             headers["x-api-key"] = api_key
         headers["anthropic-version"] = "2023-06-01"

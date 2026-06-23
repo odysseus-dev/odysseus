@@ -109,6 +109,7 @@ const _ENDPOINT_LABELS = [
   [/(^|\.)chatgpt\.com$/i, "ChatGPT Subscription"],
   [/(^|\.)openrouter\.ai$/i, "OpenRouter"],
   [/(^|\.)anthropic\.com$/i, "Anthropic"],
+  [/(^|\.)minimax\.io$/i, "Minimax"],
   [/(^|\.)openai\.com$/i, "OpenAI"],
   [/(^|\.)(generativelanguage|aiplatform)\.googleapis\.com$/i, "Google"],
   [/(^|\.)bedrock[\w.-]*\.amazonaws\.com$/i, "AWS Bedrock"],
