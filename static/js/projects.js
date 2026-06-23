@@ -164,16 +164,20 @@
     }
 
     // Wire the "+" button next to the Projects section title.
-    document.addEventListener('DOMContentLoaded', () => {
-        const btn = document.getElementById('projects-new-btn');
-        if (btn) btn.addEventListener('click', (ev) => {
+    // Module scripts are deferred so DOMContentLoaded may have already
+    // fired before this script runs — attach directly instead of waiting
+    // for DOMContentLoaded.
+    const newBtn = document.getElementById('projects-new-btn');
+    if (newBtn) {
+        newBtn.addEventListener('click', (ev) => {
             ev.stopPropagation();
             showCreateDialog();
         });
-        // Clicking the Projects section title shows the list.
-        const title = document.getElementById('projects-section-title');
-        if (title) title.addEventListener('click', () => { renderProjectList(); });
-    });
+    }
+    const sectionTitle = document.getElementById('projects-section-title');
+    if (sectionTitle) {
+        sectionTitle.addEventListener('click', () => { renderProjectList(); });
+    }
 
     function explainerFor(proj) {
         if (proj.memory_mode === 'shared') {
