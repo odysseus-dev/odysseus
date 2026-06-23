@@ -22,7 +22,9 @@ import uuid
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update, delete, text
+
+from fastapi import HTTPException  # for the 503 case
 
 from core.atomic_io import atomic_write_json
 from core.database import DbProject, Session as DbSession, SessionLocal
@@ -53,6 +55,24 @@ class ProjectLimitReached(Exception):
         self.current = current
         self.maximum = maximum
         super().__init__(f"limit reached: {current}/{maximum}")
+
+
+def _chroma_reachable_or_raise() -> None:
+    from src.chroma_client import get_chroma_client
+    try:
+        get_chroma_client().heartbeat()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail={"error": "vector_store_unavailable"})
+
+
+def _delete_chroma_collection(project_id: str) -> None:
+    """Idempotent: drop the project's resource collection if present."""
+    from src.chroma_client import get_chroma_client
+    try:
+        client = get_chroma_client()
+        client.delete_collection(f"project_resources_{project_id}")
+    except Exception:
+        pass  # Already-missing is success.
 
 
 @dataclass
@@ -236,14 +256,28 @@ class ProjectService:
         return self.get(project_id, owner)
 
     def delete(self, project_id: str, owner: str) -> None:
-        """Atomicity order per spec §1d — full implementation in T11.
+        """Atomicity order per spec §1d:
 
-        Skeleton for T8: delete the SQLite row + the on-disk tree. No
-        ChromaDB pre-flight, no tombstone-on-FS-failure — those are T11.
+        1. Pre-flight: ChromaDB reachable.
+        2. ChromaDB: drop `project_resources_<pid>` collection.
+        3. SQLite: delete sessions + project row in one transaction.
+        4. FS: ``shutil.rmtree(data_dir)``.
+        5. On FS failure: insert tombstone row so a sweeper retries.
         """
-        # TODO(filled in T11): pre-flight + ChromaDB drop + tombstone.
+        # Step 1 — ChromaDB reachability check.
+        _chroma_reachable_or_raise()
+
+        # Step 2 — drop resource collection (idempotent on missing).
+        _delete_chroma_collection(project_id)
+
+        # Step 3 — SQLite.
         with SessionLocal() as db:
-            db.execute(delete(DbSession).where(DbSession.project_id == project_id))
+            # `project_id` on `sessions` is a migration-managed column not
+            # declared on the SQLAlchemy model, so delete via raw SQL.
+            db.execute(
+                text("DELETE FROM sessions WHERE project_id = :pid"),
+                {"pid": project_id},
+            )
             res = db.execute(
                 delete(DbProject).where(
                     DbProject.id == project_id, DbProject.owner == owner
@@ -253,8 +287,23 @@ class ProjectService:
             if res.rowcount == 0:
                 raise ProjectNotFound(project_id)
 
+        # Step 4 — FS wipe. On failure, write a tombstone.
         data_dir = project_data_dir(owner, project_id)
-        shutil.rmtree(data_dir, ignore_errors=True)
+        try:
+            shutil.rmtree(data_dir, ignore_errors=False)
+        except OSError:
+            with SessionLocal() as db:
+                db.add(DbProject(
+                    id=project_id,
+                    owner=owner,
+                    name="__deleted__",  # placeholder; never appears in list_for_owner
+                    memory_mode="isolated",
+                    prompt_override_mode="append",
+                    instructions_override_mode="append",
+                    deleted_at=int(time.time()),
+                ))
+                db.commit()
+            logger.warning("FS wipe failed for %s; tombstone inserted", project_id)
 
     # ────────────────────────────────────── internals ─────────────────────────────────────────
 
