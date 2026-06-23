@@ -1,0 +1,73 @@
+# Ollama overlay — runs Ollama IN Docker, started together with Odysseus.
+# ---------------------------------------------------------------------------
+# No more typing `ollama serve` by hand. Enable it once by adding this line to
+# your .env (this is the project's standard COMPOSE_FILE overlay mechanism, the
+# same one used for the GPU overlays):
+#
+#   Windows:        COMPOSE_FILE=docker-compose.yml;docker-compose.ollama.yml
+#   macOS / Linux:  COMPOSE_FILE=docker-compose.yml:docker-compose.ollama.yml
+#
+# Then just:  docker compose up -d
+# Odysseus AND Ollama come up together, both restart automatically with Docker
+# Desktop, and Odysseus talks to Ollama at http://ollama:11434 over the compose
+# network. You only ever open http://localhost:7000.
+#
+# REUSE YOUR EXISTING DOWNLOADED MODELS by also adding to .env:
+#   OLLAMA_MODELS=C:\Users\saimo\.ollama
+# (Leave it unset to start fresh in a Docker-managed volume instead.)
+# ---------------------------------------------------------------------------
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    # Published so a host-side `ollama` CLI can also reach this container.
+    # Quit the host Ollama tray app first if you hit "port already allocated".
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      # Bind your existing models when OLLAMA_MODELS is set; otherwise use the
+      # named volume declared at the bottom of this file.
+      - ${OLLAMA_MODELS:-ollama-data}:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    # restart "no" => Ollama NEVER auto-starts. It runs only when you launch it.
+    restart: "no"
+    # GPU passthrough (NVIDIA): your RTX 4050 is detected and the NVIDIA Container
+    # Toolkit is active in Docker. Ollama will use the GPU by default once these
+    # device reservations are in place. Environment variables follow the same
+    # pattern as the project's docker/gpu.nvidia.yml overlay.
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # Merge-only override: point Odysseus at the in-network Ollama and wait for it.
+  odysseus:
+    restart: "no"
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434/v1
+    depends_on:
+      ollama:
+        condition: service_started
+
+  # Neutralize the base file's `restart: unless-stopped` on the bundled services
+  # so NOTHING auto-resumes when Docker starts. They run only when you launch.
+  chromadb:
+    restart: "no"
+  searxng:
+    restart: "no"
+  ntfy:
+    restart: "no"
+
+volumes:
+  ollama-data:

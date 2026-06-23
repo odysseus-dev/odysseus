@@ -1,0 +1,314 @@
+# Odysseus — Polyglot Developer Stack (SEPARATE from the Odysseus app)
+# ---------------------------------------------------------------------------
+# This file is your personal Java + Python development playground plus optional
+# data/messaging services (Kafka, PostgreSQL, Redis, MongoDB). It does NOT run
+# Odysseus and does NOT touch the app's own Dockerfile / docker-compose.yml.
+#
+# Nothing here starts unless you opt in with a --profile flag:
+#
+#   cd dev-stack
+#   cp .env.example .env                                   # optional (defaults work)
+#   docker compose -f docker-compose.dev.yml --profile java up -d
+#   docker compose -f docker-compose.dev.yml --profile dev up -d        # java + python
+#   docker compose -f docker-compose.dev.yml --profile kafka up -d
+#   docker compose -f docker-compose.dev.yml --profile db up -d         # all databases
+#   docker compose -f docker-compose.dev.yml --profile all up -d        # everything
+#
+# Profiles:  java | python | dev (java+python) | kafka | postgres | redis |
+#            mongo | db (postgres+redis+mongo) | qdrant | pgvector |
+#            minio | ollama | jupyter | ai (qdrant+pgvector+ollama+jupyter) | all
+#
+# Ports are chosen to avoid clashing with Odysseus (7000/8080/8091/8100).
+# All ports bind to 127.0.0.1 by default — set BIND=0.0.0.0 in .env only if you
+# intentionally want other devices to reach these dev services.
+# ---------------------------------------------------------------------------
+name: odysseus-dev-stack
+
+services:
+  # ===================== Language dev containers =====================
+  java:
+    profiles: ["java", "dev", "all"]
+    build:
+      context: ./java
+    image: odysseus-dev/java:21
+    container_name: dev-java
+    working_dir: /workspace
+    volumes:
+      - ./java/workspace:/workspace
+      - m2-cache:/home/dev/.m2
+      - gradle-cache:/home/dev/.gradle
+    # Keep the container alive so you can shell in and build/run on demand:
+    #   docker compose -f docker-compose.dev.yml exec java bash
+    command: ["sleep", "infinity"]
+    tty: true
+
+  python:
+    profiles: ["python", "dev", "all"]
+    build:
+      context: ./python
+    image: odysseus-dev/python:3.12
+    container_name: dev-python
+    working_dir: /workspace
+    volumes:
+      - ./python/workspace:/workspace
+      - pip-cache:/home/dev/.cache/pip
+    # Shell in with:
+    #   docker compose -f docker-compose.dev.yml exec python bash
+    command: ["sleep", "infinity"]
+    tty: true
+
+  # ===================== Kafka (event streaming) =====================
+  kafka:
+    profiles: ["kafka", "all"]
+    image: apache/kafka:3.9.0
+    container_name: dev-kafka
+    ports:
+      # Host apps connect on localhost:9092 (HOST listener).
+      - "${BIND:-127.0.0.1}:${KAFKA_PORT:-9092}:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      # Three listeners: CONTROLLER (raft), INTERNAL (container-to-container),
+      # HOST (your machine). kafka-ui uses INTERNAL; your code uses HOST.
+      KAFKA_LISTENERS: CONTROLLER://0.0.0.0:9093,INTERNAL://0.0.0.0:19092,HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:19092,HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      # Single-node dev defaults (do not use these replication factors in prod).
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+    restart: unless-stopped
+
+  kafka-ui:
+    profiles: ["kafka", "all"]
+    image: kafbat/kafka-ui:latest
+    container_name: dev-kafka-ui
+    ports:
+      - "${BIND:-127.0.0.1}:${KAFKA_UI_PORT:-8085}:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:19092
+      DYNAMIC_CONFIG_ENABLED: "true"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ===================== PostgreSQL (SQL database) =====================
+  postgres:
+    profiles: ["postgres", "db", "all"]
+    image: postgres:16
+    container_name: dev-postgres
+    ports:
+      - "${BIND:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dev}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpass}
+      POSTGRES_DB: ${POSTGRES_DB:-devdb}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dev} -d ${POSTGRES_DB:-devdb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  pgadmin:
+    profiles: ["postgres", "db", "all"]
+    image: dpage/pgadmin4:latest
+    container_name: dev-pgadmin
+    ports:
+      - "${BIND:-127.0.0.1}:${PGADMIN_PORT:-5050}:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-dev@local.test}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-devpass}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ===================== Redis (cache / queue) =====================
+  redis:
+    profiles: ["redis", "db", "all"]
+    image: redis:7-alpine
+    container_name: dev-redis
+    ports:
+      - "${BIND:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  # ===================== MongoDB (document database) =====================
+  mongo:
+    profiles: ["mongo", "db", "all"]
+    image: mongo:7
+    container_name: dev-mongo
+    ports:
+      - "${BIND:-127.0.0.1}:${MONGO_PORT:-27017}:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-dev}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-devpass}
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  mongo-express:
+    profiles: ["mongo", "db", "all"]
+    image: mongo-express:latest
+    container_name: dev-mongo-express
+    ports:
+      - "${BIND:-127.0.0.1}:${MONGO_EXPRESS_PORT:-8081}:8081"
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: ${MONGO_USER:-dev}
+      ME_CONFIG_MONGODB_ADMINPASSWORD: ${MONGO_PASSWORD:-devpass}
+      ME_CONFIG_MONGODB_SERVER: mongo
+      ME_CONFIG_MONGODB_ENABLE_ADMIN: "true"
+      ME_CONFIG_BASICAUTH: "false"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ===================== Qdrant (vector database) =====================
+  qdrant:
+    profiles: ["qdrant", "ai", "all"]
+    image: qdrant/qdrant:latest
+    container_name: dev-qdrant
+    ports:
+      - "${BIND:-127.0.0.1}:${QDRANT_PORT:-6333}:6333"
+      - "${BIND:-127.0.0.1}:${QDRANT_API_PORT:-6334}:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  # ===================== pgvector (PostgreSQL + vector extension) =====================
+  pgvector:
+    profiles: ["pgvector", "ai", "all"]
+    image: pgvector/pgvector:pg16
+    container_name: dev-pgvector
+    ports:
+      - "${BIND:-127.0.0.1}:${PGVECTOR_PORT:-5433}:5432"
+    environment:
+      POSTGRES_USER: ${PGVECTOR_USER:-dev}
+      POSTGRES_PASSWORD: ${PGVECTOR_PASSWORD:-devpass}
+      POSTGRES_DB: ${PGVECTOR_DB:-vectordb}
+    volumes:
+      - pgvector-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGVECTOR_USER:-dev} -d ${PGVECTOR_DB:-vectordb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  # ===================== MinIO (S3-compatible object storage) =====================
+  minio:
+    profiles: ["minio", "all"]
+    image: minio/minio:latest
+    container_name: dev-minio
+    ports:
+      - "${BIND:-127.0.0.1}:${MINIO_PORT:-9000}:9000"
+      - "${BIND:-127.0.0.1}:${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  # ===================== Ollama (local LLM serving) =====================
+  ollama-dev:
+    profiles: ["ollama", "ai", "all"]
+    image: ollama/ollama:latest
+    container_name: dev-ollama
+    ports:
+      - "${BIND:-127.0.0.1}:${OLLAMA_DEV_PORT:-11435}:11434"
+    volumes:
+      - ollama-dev-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  # ===================== Jupyter (notebooks) =====================
+  jupyter:
+    profiles: ["jupyter", "ai", "all"]
+    image: jupyter/datascience-notebook:latest
+    container_name: dev-jupyter
+    ports:
+      - "${BIND:-127.0.0.1}:${JUPYTER_PORT:-8888}:8888"
+    volumes:
+      - ./python/workspace:/home/jovyan/work
+    environment:
+      JUPYTER_ENABLE_LAB: "yes"
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:-devtoken}
+    # Use Python (guaranteed in the image) instead of curl (not always present).
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8888/api\", timeout=5).read(1)' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  kafka-data:
+  pg-data:
+  pgadmin-data:
+  redis-data:
+  mongo-data:
+  qdrant-data:
+  pgvector-data:
+  minio-data:
+  ollama-dev-data:
+  m2-cache:
+  gradle-cache:
+  pip-cache:

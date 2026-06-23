@@ -1,0 +1,30 @@
+# Dev-stack GPU overlay — NVIDIA GPU passthrough for the ollama-dev service.
+# ---------------------------------------------------------------------------
+# Overlays the ollama-dev service in docker-compose.dev.yml with NVIDIA GPU
+# device reservations, so Ollama runs inference on your GPU instead of CPU.
+#
+# Usage:
+#   cd dev-stack
+#   docker compose -f docker-compose.dev.yml -f gpu.ollama.yml --profile ollama up -d
+#
+# Or combine with other profiles:
+#   docker compose -f docker-compose.dev.yml -f gpu.ollama.yml --profile ai up -d
+#
+# Requires the NVIDIA Container Toolkit on the host (already installed on this
+# machine — Docker's nvidia runtime is detected). Verify with:
+#   docker info | grep -i nvidia
+#
+# Follows the same pattern as docker/gpu.nvidia.yml in the Odysseus project.
+# ---------------------------------------------------------------------------
+services:
+  ollama-dev:
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

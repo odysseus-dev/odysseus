@@ -1,0 +1,14 @@
+# dev-stack local config + build artifacts (keep out of git)
+.env
+
+# Java build output / IDE
+java/workspace/**/target/
+java/workspace/**/.gradle/
+java/workspace/**/build/
+*.class
+
+# Python build output / venv / caches
+python/workspace/**/__pycache__/
+python/workspace/**/.venv/
+python/workspace/**/*.egg-info/
+*.pyc
