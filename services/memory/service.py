@@ -39,11 +39,14 @@ class MemoryService:
         results = await service.recall("preferences")
     """
 
-    def __init__(self, data_dir: str = DATA_DIR):
+    def __init__(self, data_dir: str = DATA_DIR, vector_store=None):
         self.manager = MemoryManager(data_dir)
-        self.vector_store = MemoryVectorStore(data_dir) if os.path.exists(
-            os.path.join(data_dir, "memory_vectors")
-        ) else None
+        if vector_store is not None:
+            self.vector_store = vector_store
+        else:
+            self.vector_store = MemoryVectorStore(data_dir) if os.path.exists(
+                os.path.join(data_dir, "memory_vectors")
+            ) else None
         self.provider = NativeMemoryProvider(self.manager, self.vector_store)
 
     def _sync_provider(self) -> None:
