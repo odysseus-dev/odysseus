@@ -561,13 +561,25 @@ async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
                 endpoint_added=endpoint_added, endpoint_id=endpoint_id or "",
             )
             note = "" if registered else " (state-write failed — task may not show in UI)"
+            where = host or "local"
+            log_path = f"/tmp/odysseus-tmux/{sid}.log"
             return {
-                "output": f"Serving {repo_id} (session: {sid}){note}",
+                "output": (
+                    f"Serving {repo_id} on {where} (session: {sid}){note}\n"
+                    f"Next required check: call list_served_models. If this task is not ready, "
+                    f"call tail_serve_output with session_id={sid} and tail=400 before answering. "
+                    f"Do not tell the user to check logs; you have the log tool."
+                ),
                 "session_id": sid,
                 "task_type": "serve",
                 "phase": "running",
                 "host": host,
                 "endpoint_id": endpoint_id,
+                "log_path": log_path,
+                "next_tools": [
+                    {"name": "list_served_models", "arguments": {}},
+                    {"name": "tail_serve_output", "arguments": {"session_id": sid, "tail": 400}},
+                ],
                 "exit_code": 0,
             }
         # FastAPI HTTPException puts the message under `detail`, not `error`.
@@ -917,8 +929,17 @@ async def do_tail_serve_output(content: str, owner: Optional[str] = None) -> Dic
         MAX_CHARS = 8000
         if len(output_text) > MAX_CHARS:
             output_text = "…(earlier output truncated)…\n" + output_text[-MAX_CHARS:]
+        if not output_text:
+            output_text = (
+                f"No log output captured yet for {session_id} on {host_label}. "
+                "This usually means the tmux wrapper has started but the model process "
+                "has not printed anything yet. Do not stop here: call list_served_models "
+                "again to check whether it is still loading, ready, or crashed; if it is "
+                "still not ready, call tail_serve_output again with a larger tail after "
+                "the next status check."
+            )
         return {
-            "output": output_text or "(empty pane)",
+            "output": output_text,
             "session_id": session_id,
             "host": host_label,
             "tail_lines": tail,
