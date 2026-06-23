@@ -907,7 +907,10 @@ def _anthropic_rejects_temperature(model: str) -> bool:
     return (int(match.group(1)), int(match.group(2))) >= (4, 7)
 
 # Models that support structured thinking — may output </think> without opening tag
-_THINKING_MODEL_PATTERNS = ("qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "minimax", "m2-reap", "gemma")
+_THINKING_MODEL_PATTERNS = (
+    "qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "minimax",
+    "m2-reap", "gemma", "stepfun", "step-3", "step3",
+)
 
 def _supports_thinking(model: str) -> bool:
     """Check if model supports structured thinking output."""
@@ -2135,6 +2138,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                             yield _stream_delta_event(reasoning, thinking=True)
                                         content = delta.get("content") or ""
                                         if content:
+                                            content = re.sub(r"<mm:think(\s+[^>]*)?>", r"<think\1>", content, flags=re.IGNORECASE)
+                                            content = re.sub(r"</mm:think>", "</think>", content, flags=re.IGNORECASE)
                                             stripped = content.lstrip()
                                             # gpt-oss harmony format (<|channel|>analysis/final): route via the harmony
                                             # stream router. Sticky once the first marker appears — distinct from the

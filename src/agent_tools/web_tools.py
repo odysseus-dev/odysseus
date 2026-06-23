@@ -7,6 +7,7 @@ from src.constants import MAX_OUTPUT_CHARS
 class WebSearchTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.search import comprehensive_web_search
+        progress_cb = ctx.get("progress_cb") if isinstance(ctx, dict) else None
         raw = content.strip()
         query = raw
         time_filter = None
@@ -37,18 +38,39 @@ class WebSearchTool:
             elif " news" in q_lc or q_lc.startswith("news ") or q_lc.endswith(" news"):
                 time_filter = "week"
         loop = asyncio.get_running_loop()
-        text, sources = await asyncio.wait_for(
-            loop.run_in_executor(
-                None,
-                lambda: comprehensive_web_search(
-                    query,
-                    max_pages=max_pages,
-                    time_filter=time_filter,
-                    return_sources=True,
+        if progress_cb:
+            await progress_cb({
+                "elapsed_s": 0,
+                "tail": f"Searching web for: {query[:160]}",
+            })
+        try:
+            text, sources = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: comprehensive_web_search(
+                        query,
+                        max_pages=max_pages,
+                        time_filter=time_filter,
+                        return_sources=True,
+                    ),
                 ),
-            ),
-            timeout=30,
-        )
+                timeout=30,
+            )
+        except asyncio.TimeoutError:
+            return {
+                "error": f"web_search timed out after 30s: {query[:200]}",
+                "exit_code": 1,
+            }
+        except Exception as e:
+            return {
+                "error": f"web_search failed: {type(e).__name__}: {str(e) or 'no details'}",
+                "exit_code": 1,
+            }
+        if progress_cb:
+            await progress_cb({
+                "elapsed_s": 30,
+                "tail": "Search completed; preparing sources.",
+            })
         output = text[:MAX_OUTPUT_CHARS] if len(text) > MAX_OUTPUT_CHARS else text
         if sources:
             output += "\n\n<!-- SOURCES:" + json.dumps(sources) + " -->"

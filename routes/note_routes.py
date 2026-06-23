@@ -335,10 +335,11 @@ async def dispatch_reminder(
             # Loud diagnostic so we can see WHY a reminder didn't send (the
             # previous "silently no-op when cfg has no smtp_host" was invisible).
             logger.info(
-                f"dispatch_reminder[email] note_id={note_id} owner={owner!r} "
-                f"smtp_host={cfg.get('smtp_host')!r} smtp_user={cfg.get('smtp_user')!r} "
-                f"from={from_addr!r} recipient={recipient!r} "
-                f"account_name={cfg.get('account_name')!r}"
+                "dispatch_reminder[email] note_id=%s owner=%r "
+                "has_smtp_host=%s has_smtp_user=%s has_from=%s has_recipient=%s",
+                note_id, owner,
+                bool(cfg.get("smtp_host")), bool(cfg.get("smtp_user")),
+                bool(from_addr), bool(recipient),
             )
             missing = []
             if not cfg.get("smtp_host"):

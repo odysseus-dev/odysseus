@@ -19,7 +19,12 @@ from pathlib import Path
 
 import pytest
 from fastapi import APIRouter
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 
+import core.database as cdb
+from core.database import GalleryImage
 from src.upload_handler import count_recent_uploads, UploadHandler
 import routes.upload_routes as up
 
@@ -80,6 +85,10 @@ def _request(ip="1.2.3.4", user="tester"):
 
 def _files(n):
     return [types.SimpleNamespace(filename=f"f{i}.txt") for i in range(n)]
+
+
+def _image_upload(name="photo.png", content=b"not really png but enough for route metadata"):
+    return types.SimpleNamespace(filename=name, file=io.BytesIO(content))
 
 
 @pytest.fixture(autouse=True)
@@ -163,3 +172,64 @@ def test_six_file_batch_is_not_rate_limited(tmp_path):
         assert meta and meta.get("id")
         saved += 1
     assert saved == 6
+
+
+async def test_chat_image_upload_is_added_to_gallery(tmp_path, monkeypatch):
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'gallery.db'}",
+        connect_args={"check_same_thread": False},
+        poolclass=NullPool,
+    )
+    cdb.Base.metadata.create_all(engine)
+    TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    gallery_dir = tmp_path / "generated_images"
+
+    monkeypatch.setattr(up, "SessionLocal", TestingSession)
+    monkeypatch.setattr(up, "GENERATED_IMAGES_DIR", str(gallery_dir))
+
+    h = UploadHandler(base_dir=str(tmp_path), upload_dir=str(tmp_path / "uploads"))
+    up.setup_upload_routes(h)
+    endpoint = _endpoint(up.router)
+
+    result = await endpoint(_request(user="alice"), [_image_upload()])
+    uploaded = result["files"][0]
+
+    assert uploaded["gallery_id"]
+    db = TestingSession()
+    try:
+        image = db.query(GalleryImage).filter(GalleryImage.id == uploaded["gallery_id"]).one()
+        assert image.owner == "alice"
+        assert image.model == "chat-upload"
+        assert image.prompt == "photo.png"
+        assert image.file_hash == uploaded["hash"]
+        assert (gallery_dir / image.filename).exists()
+    finally:
+        db.close()
+
+
+async def test_non_image_chat_upload_is_not_added_to_gallery(tmp_path, monkeypatch):
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'gallery.db'}",
+        connect_args={"check_same_thread": False},
+        poolclass=NullPool,
+    )
+    cdb.Base.metadata.create_all(engine)
+    TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    monkeypatch.setattr(up, "SessionLocal", TestingSession)
+    monkeypatch.setattr(up, "GENERATED_IMAGES_DIR", str(tmp_path / "generated_images"))
+
+    h = UploadHandler(base_dir=str(tmp_path), upload_dir=str(tmp_path / "uploads"))
+    up.setup_upload_routes(h)
+    endpoint = _endpoint(up.router)
+
+    result = await endpoint(_request(user="alice"), [types.SimpleNamespace(
+        filename="notes.txt",
+        file=io.BytesIO(b"plain text upload"),
+    )])
+
+    assert "gallery_id" not in result["files"][0]
+    db = TestingSession()
+    try:
+        assert db.query(GalleryImage).count() == 0
+    finally:
+        db.close()
