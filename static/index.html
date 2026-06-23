@@ -709,6 +709,15 @@
            assistant session is still maintained for log_to_assistant()
            writes from scheduled tasks. -->
 
+      <!-- Projects tab — sibling to the Chats section. Hidden by default
+           (inline display:none) until FEATURES.projects_enabled flips on;
+           projects.js reveals it via getElementById('projects-tab'). -->
+      <div class="section" id="projects-section">
+        <div class="section-header-flex">
+          <button class="tab" id="projects-tab" data-tab="projects" style="display:none">Projects</button>
+        </div>
+      </div>
+
       <div class="section" id="sessions-section">
         <div class="section-header-flex">
           <span class="section-title" id="chats-section-title"><svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span id="chats-section-label" class="section-title-label">Chats</span><span id="chats-notif-dot" class="sidebar-notif-dot" style="display:none"></span></span>
