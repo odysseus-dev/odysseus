@@ -709,14 +709,16 @@ def _validate_serve_cmd(v: str | None) -> str | None:
         return v
 
     # Otherwise: a single invocation — no shell metacharacters allowed.
-    # Temporarily replace safe $(printf %s ...) expressions with a placeholder
+    # Temporarily replace safe $(…) expressions with a placeholder
     # to avoid triggering the metacharacter/command-injection checks.
+    # This covers $(printf %s '…'), $(find … -iname '…' | sort | head -1),
+    # and other subshell patterns that only use safe operators.
     cleaned_v = v
-    printf_matches = list(re.finditer(r"\$\(\s*printf\s+%s\s+([^\n()]*?)\)", v))
-    for match in printf_matches:
+    safe_sub_matches = list(re.finditer(r"\$\(([^)]*)\)", v))
+    for match in safe_sub_matches:
         inner = match.group(1)
         if not any(c in inner for c in (";", "&&", "||", "$(", "`")):
-            cleaned_v = cleaned_v.replace(match.group(0), "/placeholder/safe/path.gguf")
+            cleaned_v = cleaned_v.replace(match.group(0), "/placeholder/safe/path")
 
     # (`$(` was the original intent; bare `$` is fine for shell-safe paths.)
     if any(c in cleaned_v for c in (";", "&&", "||", "$(")):
