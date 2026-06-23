@@ -173,5 +173,97 @@ def setup_project_routes(app, project_service=None, memory_service=None) -> APIR
             "snapshot_meta": proj.snapshot_meta,
         }
 
+    # ───────────────────────────── Sessions (T20) ─────────────────────────────
+
+    from sqlalchemy import select
+    from core.database import Session as DbSession, SessionLocal
+
+    def _load_session(sid: str, pid: str, owner: str):
+        with SessionLocal() as db:
+            row = db.execute(
+                select(DbSession).where(DbSession.id == sid, DbSession.owner == owner)
+            ).scalar_one_or_none()
+        if row is None or row.project_id != pid:
+            raise HTTPException(404, {"error": "session_not_found"})
+        return row
+
+    @router.get("/{pid}/sessions")
+    def list_sessions(request: Request, pid: str):
+        if not _features_enabled():
+            raise HTTPException(404)
+        try:
+            svc.get(pid, _owner(request))
+        except ProjectNotFound:
+            raise HTTPException(404, {"error": "project_not_found"})
+        with SessionLocal() as db:
+            rows = db.execute(
+                select(DbSession).where(
+                    DbSession.project_id == pid,
+                    DbSession.owner == _owner(request),
+                )
+            ).scalars().all()
+        return [r.to_dict() for r in rows]
+
+    @router.post("/{pid}/sessions")
+    def create_session(request: Request, pid: str, body: dict):
+        if not _features_enabled():
+            raise HTTPException(404)
+        try:
+            proj = svc.get(pid, _owner(request))
+        except ProjectNotFound:
+            raise HTTPException(404, {"error": "project_not_found"})
+        # Insert a Session row with project_id pinned. The rest of the
+        # session columns match the existing shape (see routes/session_routes.py).
+        import uuid
+        sid = body.get("id") or f"sess_{uuid.uuid4().hex[:12]}"
+        row = DbSession(
+            id=sid,
+            name=body.get("name", "New chat"),
+            endpoint_url=body.get("endpoint_url", ""),
+            model=body.get("model", ""),
+            owner=_owner(request),
+            project_id=pid,
+            rag=bool(body.get("rag", False)),
+            headers=body.get("headers", {}),
+            message_count=0,
+            total_input_tokens=0,
+            total_output_tokens=0,
+        )
+        # SQLAlchemy TimestampMixin defaults fill created_at/updated_at.
+        with SessionLocal() as db:
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+        return row.to_dict()
+
+    @router.get("/{pid}/sessions/{sid}")
+    def get_session(request: Request, pid: str, sid: str):
+        if not _features_enabled():
+            raise HTTPException(404)
+        return _load_session(sid, pid, _owner(request)).to_dict()
+
+    @router.delete("/{pid}/sessions/{sid}")
+    def delete_session(request: Request, pid: str, sid: str):
+        if not _features_enabled():
+            raise HTTPException(404)
+        row = _load_session(sid, pid, _owner(request))
+        with SessionLocal() as db:
+            db.delete(row)
+            db.commit()
+        return {"ok": True}
+
+    @router.patch("/{pid}/sessions/{sid}")
+    def patch_session(request: Request, pid: str, sid: str, body: dict):
+        if not _features_enabled():
+            raise HTTPException(404)
+        row = _load_session(sid, pid, _owner(request))
+        for k in ("name", "endpoint_url", "model", "rag", "headers"):
+            if k in body:
+                setattr(row, k, body[k])
+        with SessionLocal() as db:
+            db.merge(row)
+            db.commit()
+        return row.to_dict()
+
     app.include_router(router)
     return router

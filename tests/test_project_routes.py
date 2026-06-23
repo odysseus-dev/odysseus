@@ -112,3 +112,50 @@ def test_settings_rejects_oversized_prompt(app_and_client):
     body = res.json()
     detail = body.get("detail", body)
     assert detail.get("error") == "field_too_long"
+
+
+# ────────────────────────────────────── T20 sessions routes ───────────────────────────────────
+
+def test_create_session_in_project(app_and_client):
+    _app, client = app_and_client
+    res = client.post("/api/projects",
+                      json={"name": "S3", "memory_mode": "isolated"},
+                      headers={"X-Owner": "alice"})
+    pid = res.json()["id"]
+
+    res = client.post(
+        f"/api/projects/{pid}/sessions",
+        json={"name": "first chat", "endpoint_url": "http://x", "model": "m"},
+        headers={"X-Owner": "alice"},
+    )
+    assert res.status_code in (200, 201), res.text
+    sid = res.json()["id"]
+
+    # Session IS visible under the project.
+    res = client.get(f"/api/projects/{pid}/sessions",
+                     headers={"X-Owner": "alice"})
+    assert res.status_code == 200
+    assert any(s["id"] == sid for s in res.json())
+
+
+def test_session_with_mismatched_project_404s(app_and_client):
+    _app, client = app_and_client
+    res = client.post("/api/projects",
+                      json={"name": "A", "memory_mode": "isolated"},
+                      headers={"X-Owner": "alice"})
+    pid_a = res.json()["id"]
+    res = client.post(
+        f"/api/projects/{pid_a}/sessions",
+        json={"name": "s", "endpoint_url": "http://x", "model": "m"},
+        headers={"X-Owner": "alice"},
+    )
+    sid = res.json()["id"]
+
+    # Create a second project and try to access the session under it.
+    res = client.post("/api/projects",
+                      json={"name": "B", "memory_mode": "isolated"},
+                      headers={"X-Owner": "alice"})
+    pid_b = res.json()["id"]
+    res = client.get(f"/api/projects/{pid_b}/sessions/{sid}",
+                     headers={"X-Owner": "alice"})
+    assert res.status_code == 404

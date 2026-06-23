@@ -148,6 +148,8 @@ class Session(TimestampMixin, Base):
     total_input_tokens = Column(Integer, default=0)
     total_output_tokens = Column(Integer, default=0)
     mode = Column(String, nullable=True)  # 'agent', 'chat', or 'research'
+    # NULL = main Chats tab; non-NULL = scope to the named project (see spec §5).
+    project_id = Column(String, nullable=True, index=True)
     crew_member_id = Column(String, nullable=True)  # links to crew_members.id
 
     # Relationship to chat messages
@@ -177,6 +179,7 @@ class Session(TimestampMixin, Base):
             'total_input_tokens': self.total_input_tokens or 0,
             'total_output_tokens': self.total_output_tokens or 0,
             'crew_member_id': self.crew_member_id,
+            'project_id': self.project_id,
         }
 
 
