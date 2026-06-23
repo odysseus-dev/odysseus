@@ -14,7 +14,23 @@ from routes.project_routes import setup_project_routes
 def app_and_client(monkeypatch, tmp_path):
     """Build a minimal FastAPI app with project routes wired up. Uses
     X-Owner header to simulate auth (the real app uses effective_user
-    from request state). Uses a tmp_path SQLite so the migrations can run."""
+    from request state). Uses a tmp_path SQLite so the migrations can run.
+
+    Forces FEATURES.projects_enabled to True (matching the new default)
+    so route logic executes fully and is tested end-to-end. The flag
+    itself is exercised in tests/test_project_feature_flag.py."""
+    from src import settings
+    monkeypatch.setattr(settings, "_features_cache", None, raising=False)
+
+    def fake_load_features():
+        merged = dict(settings.DEFAULT_FEATURES)
+        merged["projects_enabled"] = True
+        return merged
+
+    monkeypatch.setattr(settings, "load_features", fake_load_features)
+    from routes import project_routes as pr_mod
+    monkeypatch.setattr(pr_mod, "load_features", fake_load_features)
+
     monkeypatch.setenv("ODYSSEUS_DATA_DIR", str(tmp_path))
     db_file = tmp_path / "app.db"
     db_url = f"sqlite:///{db_file}"
