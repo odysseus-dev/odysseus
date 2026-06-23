@@ -597,6 +597,17 @@ app.include_router(setup_admin_wipe_routes(session_manager))
 from routes.memory_routes import setup_memory_routes
 memory_router = setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector)
 app.include_router(memory_router)
+
+# Projects tab — gated by FEATURES.projects_enabled (off by default, Phase 1 rollout).
+try:
+    from src.settings import load_features
+    from routes.project_routes import setup_project_routes
+    if load_features().get("projects_enabled", False):
+        setup_project_routes(app)
+        logger.info("Projects routes registered (FEATURES.projects_enabled=True)")
+except Exception as e:
+    logger.warning(f"Projects routes not registered: {e}")
+
 from routes.skills_routes import setup_skills_routes
 app.include_router(setup_skills_routes(skills_manager))
 
