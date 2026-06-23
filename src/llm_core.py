@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class LLMConfig:
     """Configuration constants for LLM operations."""
     DEFAULT_TIMEOUT = 30
-    DEFAULT_TEMPERATURE = 1.0
+    DEFAULT_TEMPERATURE = 0.2
     DEFAULT_MAX_TOKENS = 0
     MAX_RETRIES = 3
     RETRY_DELAY = 0.5

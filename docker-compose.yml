@@ -25,6 +25,8 @@ services:
       - ./src/mcp_manager.py:/app/src/mcp_manager.py:z
       - ./src/agent_loop.py:/app/src/agent_loop.py:z
       - ./src/tool_index.py:/app/src/tool_index.py:z
+      - ./src/constants.py:/app/src/constants.py:z
+      - ./src/llm_core.py:/app/src/llm_core.py:z
     extra_hosts:
       # Lets the container reach local services on the Docker host, including
       # Ollama at http://host.docker.internal:11434.

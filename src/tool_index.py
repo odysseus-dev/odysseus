@@ -356,6 +356,17 @@ class ToolIndex:
             {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read", "resolve_contact", "ui_control"},
         frozenset({"calendar", "event", "meeting", "schedule", "appointment"}):
             {"manage_calendar"},
+        # Kanban board — force-include the full kanban toolset so the agent
+        # can list, create, move, update, and comment on tasks, not just the
+        # single tool RAG happens to surface.
+        frozenset({"kanban", "kanban board", "kanban task", "kanban tasks",
+                   "board task", "board tasks", "move to done", "move to review",
+                   "move to backlog", "move to in_progress", "move to in progress",
+                   "kanban column", "add to board", "add to kanban",
+                   "create a task on the board", "create a kanban"}):
+            {"mcp__erat9a5f9__kanban_list", "mcp__erat9a5f9__kanban_create",
+             "mcp__erat9a5f9__kanban_move", "mcp__erat9a5f9__kanban_update",
+             "mcp__erat9a5f9__kanban_delete", "mcp__erat9a5f9__kanban_comment"},
         # Detached background `bash` jobs (#!bg): check on / read output / kill.
         frozenset({"background job", "background jobs", "bg job", "bg jobs",
                    "background task", "is the job done", "check the job",
