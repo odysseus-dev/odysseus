@@ -43,46 +43,137 @@
     }
 
     async function renderProjectList() {
+        // Lightweight sidebar list — kept minimal. Click a project to select.
         const list = await fetchJson('GET', '');
-        const sidebar = document.getElementById('projects-sidebar');
+        const sidebar = document.getElementById('projects-list');
         if (!sidebar) return;
         sidebar.innerHTML = '';
+        if (list.length === 0) {
+            sidebar.style.display = 'none';
+            return;
+        }
+        sidebar.style.display = '';
         for (const p of list) {
             const item = el('div', {
-                class: 'project-item',
+                class: 'list-item project-item',
                 dataset: { projectId: p.id },
                 onclick: () => selectProject(p.id),
-            }, el('span', { class: 'icon' }, p.icon || '📁'),
-               el('span', { class: 'name' }, p.name));
+            },
+                el('span', { class: 'grow' }, p.icon || '📁 ', p.name),
+            );
             sidebar.appendChild(item);
         }
     }
 
     async function selectProject(pid) {
-        const proj = await fetchJson('GET', `/${pid}`);
-        const header = document.getElementById('projects-header');
-        if (!header) return;
-        header.innerHTML = '';
-        header.appendChild(el('span', { class: 'icon' }, proj.icon || '📁'));
-        header.appendChild(el('span', { class: 'name' }, proj.name));
-        // Sub-tab nav handled in T28.
+        try {
+            const proj = await fetchJson('GET', `/${pid}`);
+            // Highlight the selected item in the sidebar.
+            const list = document.getElementById('projects-list');
+            if (list) {
+                for (const item of list.querySelectorAll('.project-item')) {
+                    item.classList.toggle('selected', item.dataset.projectId === pid);
+                }
+            }
+            // Open the project header overlay so the user can see what they picked.
+            window.dispatchEvent(new CustomEvent('project-selected', { detail: proj }));
+            window.currentProjectId = pid;
+        } catch (e) {
+            console.error('selectProject failed:', e);
+        }
     }
 
-    async function createProject(body) {
-        const proj = await fetchJson('POST', '', body);
-        await renderProjectList();
-        await selectProject(proj.id);
-        return proj;
-    }
+    function showCreateDialog() {
+        const existing = document.getElementById('project-create-modal');
+        if (existing) existing.remove();
 
-    async function deleteProject(pid, name) {
-        const res = await fetch(`${API_BASE}/${pid}`, {
-            method: 'DELETE',
-            headers: { 'X-Owner': owner(), 'X-Confirm-Name': name },
+        const modal = el('div', {
+            id: 'project-create-modal',
+            class: 'modal-backdrop',
+            style: 'position:fixed; inset:0; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:9999;',
+        },
+            el('div', {
+                style: 'background:var(--panel, #222); border:1px solid var(--border, #444); border-radius:8px; padding:24px; min-width:380px; max-width:520px;',
+            },
+                el('h3', { style: 'margin:0 0 12px 0;' }, 'New project'),
+                el('label', { style: 'display:block; font-size:0.85em; opacity:0.8; margin:8px 0 4px;' }, 'Name'),
+                el('input', {
+                    id: 'project-name-input', type: 'text', maxlength: '64',
+                    style: 'width:100%; box-sizing:border-box; padding:8px; background:var(--bg, #111); color:var(--fg, #eee); border:1px solid var(--border, #444); border-radius:4px;',
+                }),
+                el('label', { style: 'display:block; font-size:0.85em; opacity:0.8; margin:12px 0 4px;' }, 'Icon (emoji, optional)'),
+                el('input', {
+                    id: 'project-icon-input', type: 'text', maxlength: '16',
+                    style: 'width:100%; box-sizing:border-box; padding:8px; background:var(--bg, #111); color:var(--fg, #eee); border:1px solid var(--border, #444); border-radius:4px;',
+                }),
+                el('label', { style: 'display:block; font-size:0.85em; opacity:0.8; margin:12px 0 4px;' }, 'Description (optional)'),
+                el('input', {
+                    id: 'project-desc-input', type: 'text', maxlength: '256',
+                    style: 'width:100%; box-sizing:border-box; padding:8px; background:var(--bg, #111); color:var(--fg, #eee); border:1px solid var(--border, #444); border-radius:4px;',
+                }),
+                el('label', { style: 'display:block; font-size:0.85em; opacity:0.8; margin:12px 0 4px;' }, 'Memory mode'),
+                el('select', {
+                    id: 'project-mode-input',
+                    style: 'width:100%; box-sizing:border-box; padding:8px; background:var(--bg, #111); color:var(--fg, #eee); border:1px solid var(--border, #444); border-radius:4px;',
+                },
+                    el('option', { value: 'isolated' }, 'Isolated — private memory'),
+                    el('option', { value: 'shared' }, 'Shared — share with main brain'),
+                    el('option', { value: 'inherit' }, 'Inherit — snapshot of main brain'),
+                ),
+                el('div', { id: 'project-create-error', style: 'color:var(--red, #e06c75); font-size:0.85em; margin-top:8px; min-height:1.2em;' }),
+                el('div', { style: 'display:flex; gap:8px; justify-content:flex-end; margin-top:16px;' },
+                    el('button', {
+                        type: 'button',
+                        style: 'padding:6px 14px; background:transparent; color:var(--fg, #eee); border:1px solid var(--border, #444); border-radius:4px; cursor:pointer;',
+                        onclick: () => modal.remove(),
+                    }, 'Cancel'),
+                    el('button', {
+                        type: 'button', id: 'project-create-submit',
+                        style: 'padding:6px 14px; background:var(--red, #e06c75); color:#fff; border:none; border-radius:4px; cursor:pointer;',
+                        onclick: () => submitCreate(modal),
+                    }, 'Create'),
+                ),
+            ),
+        );
+        document.body.appendChild(modal);
+        // Submit on Enter, dismiss on Escape, click outside.
+        const nameInput = modal.querySelector('#project-name-input');
+        nameInput.focus();
+        nameInput.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter') submitCreate(modal);
+            if (ev.key === 'Escape') modal.remove();
         });
-        if (!res.ok) throw new Error(`delete: ${res.status}`);
-        return res.json();
+        modal.addEventListener('click', (ev) => { if (ev.target === modal) modal.remove(); });
     }
+
+    async function submitCreate(modal) {
+        const errEl = modal.querySelector('#project-create-error');
+        errEl.textContent = '';
+        const name = modal.querySelector('#project-name-input').value.trim();
+        const icon = modal.querySelector('#project-icon-input').value.trim() || null;
+        const description = modal.querySelector('#project-desc-input').value.trim() || null;
+        const memory_mode = modal.querySelector('#project-mode-input').value;
+        if (!name) { errEl.textContent = 'Name is required.'; return; }
+        try {
+            await fetchJson('POST', '', { name, icon, description, memory_mode });
+            modal.remove();
+            await renderProjectList();
+        } catch (e) {
+            errEl.textContent = `Create failed: ${e.message}`;
+        }
+    }
+
+    // Wire the "+" button next to the Projects section title.
+    document.addEventListener('DOMContentLoaded', () => {
+        const btn = document.getElementById('projects-new-btn');
+        if (btn) btn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            showCreateDialog();
+        });
+        // Clicking the Projects section title shows the list.
+        const title = document.getElementById('projects-section-title');
+        if (title) title.addEventListener('click', () => { renderProjectList(); });
+    });
 
     function explainerFor(proj) {
         if (proj.memory_mode === 'shared') {
