@@ -844,6 +844,36 @@ def _migrate_add_owner_column():
         except Exception:
             pass
 
+
+def _migrate_add_sessions_project_id():
+    """Add nullable `project_id` + index to the `sessions` table.
+
+    Projects-scoped chat sessions have a non-null `project_id`; the
+    existing Chats-tab rows keep `project_id IS NULL`. Idempotent: a
+    no-op when the column already exists.
+    """
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(sessions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "project_id" not in columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN project_id VARCHAR")
+            conn.execute("CREATE INDEX IF NOT EXISTS ix_sessions_project_id ON sessions(project_id)")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'project_id' column to sessions")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"sessions.project_id migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
 def _migrate_model_endpoints():
     """Recreate model_endpoints table if schema changed (url->base_url)."""
     import sqlite3
@@ -1851,6 +1881,7 @@ def init_db():
     _migrate_add_supports_tools_column()
     _migrate_add_task_run_model_column()
     _migrate_add_owner_column()
+    _migrate_add_sessions_project_id()    # NEW
     _migrate_add_document_archived_column()
     _migrate_add_last_message_at_column()
     _migrate_add_folder_column()
