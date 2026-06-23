@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, UploadFile
 
 from src.auth_helpers import effective_user
 from src.settings import load_features
@@ -282,6 +282,101 @@ def setup_project_routes(app, project_service=None, memory_service=None) -> APIR
         if pipeline is None:
             raise HTTPException(501, {"error": "chat_pipeline_unavailable"})
         return await pipeline(row, body, ctx=ctx)
+
+    # ────────────────────────────── Resources (T22) ───────────────────────────
+
+    def _resource_store_for(pid: str, owner: str):
+        ctx = svc.open_context(pid, owner, global_memory_service=None)
+        return ctx.resource_store
+
+    @router.get("/{pid}/resources")
+    def list_resources(request: Request, pid: str):
+        if not _features_enabled():
+            raise HTTPException(404)
+        try:
+            svc.get(pid, _owner(request))
+        except ProjectNotFound:
+            raise HTTPException(404, {"error": "project_not_found"})
+        store = _resource_store_for(pid, _owner(request))
+        return [r.to_dict() for r in store.list()]
+
+    @router.post("/{pid}/resources")
+    async def upload_resource(
+        request: Request, pid: str,
+        file: UploadFile = File(...),
+    ):
+        if not _features_enabled():
+            raise HTTPException(404)
+        try:
+            svc.get(pid, _owner(request))
+        except ProjectNotFound:
+            raise HTTPException(404, {"error": "project_not_found"})
+        # Persist the upload to a temp file so the store can read it.
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            content = await file.read()
+            tmp.write(content)
+            tmp_path = tmp.name
+        try:
+            store = _resource_store_for(pid, _owner(request))
+            try:
+                res = store.add(
+                    source_path=tmp_path,
+                    filename=file.filename or "upload",
+                    mime=file.content_type or "application/octet-stream",
+                )
+            except ValueError as e:
+                raise HTTPException(422, {"error": "resource_parse_failed", "reason": str(e)})
+            return res.to_dict()
+        finally:
+            try:
+                os.remove(tmp_path)
+            except FileNotFoundError:
+                pass
+
+    @router.delete("/{pid}/resources/{rid}")
+    def remove_resource(request: Request, pid: str, rid: str):
+        if not _features_enabled():
+            raise HTTPException(404)
+        try:
+            svc.get(pid, _owner(request))
+        except ProjectNotFound:
+            raise HTTPException(404, {"error": "project_not_found"})
+        store = _resource_store_for(pid, _owner(request))
+        if not store.remove(rid):
+            raise HTTPException(404, {"error": "resource_not_found"})
+        return {"ok": True}
+
+    @router.post("/{pid}/resources/{rid}/reindex")
+    def reindex_resource(request: Request, pid: str, rid: str):
+        if not _features_enabled():
+            raise HTTPException(404)
+        try:
+            svc.get(pid, _owner(request))
+        except ProjectNotFound:
+            raise HTTPException(404, {"error": "project_not_found"})
+        store = _resource_store_for(pid, _owner(request))
+        try:
+            res = store.reindex(rid)
+        except KeyError:
+            raise HTTPException(404, {"error": "resource_not_found"})
+        return res.to_dict()
+
+    @router.get("/{pid}/resources/{rid}/content")
+    def get_resource_content(request: Request, pid: str, rid: str):
+        if not _features_enabled():
+            raise HTTPException(404)
+        try:
+            svc.get(pid, _owner(request))
+        except ProjectNotFound:
+            raise HTTPException(404, {"error": "project_not_found"})
+        store = _resource_store_for(pid, _owner(request))
+        rec = next((r for r in store.list() if r.id == rid), None)
+        if rec is None:
+            raise HTTPException(404, {"error": "resource_not_found"})
+        fpath = os.path.join(store.uploads_dir, rec.filename)
+        from fastapi.responses import FileResponse
+        return FileResponse(fpath, filename=rec.filename, media_type=rec.mime)
 
     app.include_router(router)
     return router

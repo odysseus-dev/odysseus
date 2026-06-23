@@ -195,3 +195,35 @@ def test_post_message_attaches_project_ctx(app_and_client):
     assert res.status_code == 200, res.text
     assert captured["project_id"] == pid
     assert captured["ctx"].project_id == pid
+
+
+# ────────────────────────────────────── T22 resources routes ──────────────────────────────────
+
+def test_upload_list_remove_resource(app_and_client, tmp_path):
+    _app, client = app_and_client
+    res = client.post("/api/projects",
+                      json={"name": "R", "memory_mode": "isolated"},
+                      headers={"X-Owner": "alice"})
+    pid = res.json()["id"]
+
+    # Build a tiny text file to upload.
+    fpath = tmp_path / "hello.txt"
+    fpath.write_text("Hello world.\n" * 50)
+
+    with open(fpath, "rb") as f:
+        res = client.post(
+            f"/api/projects/{pid}/resources",
+            files={"file": ("hello.txt", f, "text/plain")},
+            headers={"X-Owner": "alice"},
+        )
+    assert res.status_code == 200, res.text
+    rid = res.json()["id"]
+
+    res = client.get(f"/api/projects/{pid}/resources",
+                     headers={"X-Owner": "alice"})
+    assert res.status_code == 200
+    assert any(r["id"] == rid for r in res.json())
+
+    res = client.delete(f"/api/projects/{pid}/resources/{rid}",
+                        headers={"X-Owner": "alice"})
+    assert res.status_code == 200

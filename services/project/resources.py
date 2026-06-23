@@ -121,7 +121,13 @@ class ProjectResourceStore:
 
         rid = f"{RESOURCE_ID_PREFIX}{uuid.uuid4().hex[:12]}"
         if self.rag is not None:
-            self.rag.add_chunks(rid, chunks, metadata={"filename": filename})
+            try:
+                self.rag.add_chunks(rid, chunks, metadata={"filename": filename})
+            except Exception:
+                # RAG embedding is best-effort: if ChromaDB/lanes are unavailable,
+                # the file is still saved + indexed in rag_index.json. The user can
+                # reindex once the embedding service is back.
+                pass
 
         index = self._read_index()
         resource = Resource(
