@@ -70,6 +70,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # PDF previews are embedded by the in-app document library. Keep the
         # exception route-scoped so normal app pages remain unframeable.
         is_document_pdf_preview = path.startswith("/api/document/") and path.endswith("/render-pdf")
+        # The v2 Gallery hosts its canvas editor in a same-origin iframe so the
+        # mature editor CSS/JS stays isolated from the React shell. This is the
+        # only v2 HTML route that should be frameable.
+        is_gallery_editor_frame = path == "/v2/gallery-editor-frame"
         # Visual report pages are self-contained HTML — need inline scripts + external images
         is_report = path.startswith("/api/research/report/")
         # Public share pages are self-contained read-only HTML: inline styles for
@@ -122,6 +126,19 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "default-src 'none'; "
                 "frame-ancestors 'self'"
             )
+        elif is_gallery_editor_frame:
+            response.headers["X-Frame-Options"] = "SAMEORIGIN"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "font-src 'self' data: https://cdn.jsdelivr.net; "
+                "img-src 'self' data: blob:; "
+                "media-src 'self' blob:; "
+                "connect-src 'self'; "
+                "frame-src 'self'; "
+                "frame-ancestors 'self'"
+            )
         else:
             response.headers["X-Frame-Options"] = "DENY"
             # NOTE: `style-src 'unsafe-inline'` is intentionally retained.
@@ -130,11 +147,16 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             # Migrating to nonce-only requires templating the HTML files +
             # auditing every JS-set style attribute. Since inline styles
             # don't execute script, the residual risk is visual-only.
+            #
+            # `font-src` allows `data:` because the v2 bundle inlines a small
+            # woff2 as a base64 data-URI (Vite asset inlining). Without it the
+            # browser logs a CSP violation on every v2 route. Fonts can't
+            # execute script, so this matches the share/gallery-frame CSPs.
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self'; "
                 f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
                 "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-                "font-src 'self' https://cdn.jsdelivr.net; "
+                "font-src 'self' data: https://cdn.jsdelivr.net; "
                 "img-src 'self' data: blob:; "
                 "media-src 'self' blob:; "
                 "connect-src 'self'; "

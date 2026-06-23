@@ -984,6 +984,19 @@ function initializeEventListeners() {
       }).observe(sb, { attributes: true, attributeFilter: ['class'] });
     }
   }
+  const _initialSearch = window.location.search || '';
+  const _galleryDeepLink = () => {
+    const params = new URLSearchParams(_initialSearch || window.location.search || '');
+    const tab = params.get('gallery_tab') || params.get('tab') || 'images';
+    const imageId = params.get('gallery_image') || params.get('image_id');
+    if (imageId && (tab === 'editor' || tab === 'edit')) {
+      galleryModule?.openGalleryEditorForImage?.(imageId);
+    } else if (galleryModule?.openGalleryTab) {
+      galleryModule.openGalleryTab(tab);
+    } else {
+      document.getElementById('tool-gallery-btn')?.click();
+    }
+  };
   const _routeOpen = {
     '/notes':    () => {
       if (!notesModule) return;
@@ -1042,7 +1055,7 @@ function initializeEventListeners() {
       setTimeout(_goFullscreen, 200);
     },
     '/memory':   () => document.getElementById('tool-memory-btn')?.click(),
-    '/gallery':  () => document.getElementById('tool-gallery-btn')?.click(),
+    '/gallery':  _galleryDeepLink,
     '/tasks':    () => document.getElementById('tool-tasks-btn')?.click(),
     '/library':  () => sessionModule && sessionModule.openLibrary && sessionModule.openLibrary(),
   };
@@ -1053,6 +1066,11 @@ function initializeEventListeners() {
   // still being wired up further down in this same function. Stash the
   // opener so it runs from sessionModule.loadSessions().finally() below.
   if (_opener) window._odysseusRouteOpener = _opener;
+  try {
+    const params = new URLSearchParams(_initialSearch || window.location.search || '');
+    const requested = (params.get('odysseus_open') || params.get('open') || '').toLowerCase();
+    if (requested === 'gallery') window._odysseusRouteOpener = _galleryDeepLink;
+  } catch (_) {}
 
   // Archive browser tool button
   const toolLibraryBtn = el('tool-library-btn');

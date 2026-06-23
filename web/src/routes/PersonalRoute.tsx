@@ -102,25 +102,42 @@ function Browser({ onPick }: { onPick: (path: string) => void }) {
   )
 }
 
-function UploadButton() {
+function UploadDropZone() {
   const { upload } = usePersonalMutations()
   const ref = useRef<HTMLInputElement>(null)
   const [msg, setMsg] = useState("")
-  const onFiles = (files: FileList | null) => {
-    if (!files || files.length === 0) return
-    upload.mutate(files, {
-      onSuccess: (r) => setMsg(`Uploaded ${r.uploaded.length} file(s), ${r.indexed_count} chunk(s) indexed${r.failed_count ? `, ${r.failed_count} failed` : ""}.`),
+  const [dragging, setDragging] = useState(false)
+  const onFiles = (files: FileList | File[] | null) => {
+    const picked = Array.from(files || [])
+    if (picked.length === 0) return
+    setMsg("")
+    upload.mutate(picked, {
+      onSuccess: (r) => setMsg(`Uploaded ${r.uploaded.length} file${r.uploaded.length === 1 ? "" : "s"}; ${r.indexed_count} chunk${r.indexed_count === 1 ? "" : "s"} indexed${r.failed_count ? `, ${r.failed_count} failed` : ""}.`),
       onError: (e) => setMsg(e instanceof Error ? e.message : "Upload failed"),
     })
   }
   return (
-    <>
+    <div
+      onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false) }}
+      onDrop={(e) => { e.preventDefault(); setDragging(false); onFiles(e.dataTransfer.files) }}
+      className={cn("rounded-lg border bg-card p-3 transition-colors", dragging && "border-ring bg-accent/40 ring-[3px] ring-ring/25")}
+    >
       <input ref={ref} type="file" multiple className="hidden" onChange={(e) => { onFiles(e.target.files); e.target.value = "" }} />
-      <Button size="sm" disabled={upload.isPending} onClick={() => ref.current?.click()}>
-        <Upload className="size-4" />{upload.isPending ? "Uploading…" : "Upload"}
-      </Button>
-      {msg && <span className="text-xs text-muted-foreground">{msg}</span>}
-    </>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <div className="rounded-md border bg-background p-2 text-muted-foreground"><Upload className="size-4" /></div>
+          <div className="min-w-0">
+            <div className="text-sm font-medium">{upload.isPending ? "Uploading…" : dragging ? "Drop to index files" : "Drop files here or click to upload"}</div>
+            <p className="mt-0.5 text-xs text-muted-foreground">Text and PDF files are added to personal document RAG.</p>
+          </div>
+        </div>
+        <Button size="sm" disabled={upload.isPending} onClick={() => ref.current?.click()}>
+          <Upload className="size-4" />Choose files
+        </Button>
+      </div>
+      {msg && <p className="mt-2 text-xs text-muted-foreground">{msg}</p>}
+    </div>
   )
 }
 
@@ -136,8 +153,8 @@ export function PersonalRoute() {
         <FolderOpen className="size-4" />Personal files
       </header>
       <div className="flex-1 space-y-6 overflow-y-auto p-4">
-        <div className="flex items-center gap-2">
-          <UploadButton />
+        <div className="space-y-2">
+          <UploadDropZone />
           <Button variant="outline" size="sm" disabled={reload.isPending} onClick={() => reload.mutate()}>
             <RefreshCw className={cn("size-4", reload.isPending && "animate-spin")} />Reindex
           </Button>

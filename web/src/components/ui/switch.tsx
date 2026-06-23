@@ -27,6 +27,7 @@ export function Switch({
       aria-checked={checked}
       disabled={disabled}
       onClick={() => onCheckedChange(!checked)}
+      style={{ backgroundColor: checked ? "var(--toggle-active, var(--primary))" : undefined }}
       className={cn(
         "relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full outline-none transition-colors duration-200 ease-out focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50",
         checked ? "bg-primary" : "bg-input",

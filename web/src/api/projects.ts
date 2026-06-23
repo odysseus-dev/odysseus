@@ -45,7 +45,7 @@ export function sessionsInProject(sessions: Session[] | undefined, name: string)
 async function setSessionFolder(id: string, folder: string): Promise<void> {
   const fd = new FormData()
   fd.set("folder", folder) // "" clears the assignment
-  const r = await apiFetch(`/api/session/${id}`, { method: "POST", body: fd })
+  const r = await apiFetch(`/api/session/${id}`, { method: "PATCH", body: fd })
   if (!r.ok) throw new Error("Couldn't move the chat")
 }
 

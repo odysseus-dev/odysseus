@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Odysseus Gallery Editor</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <style>
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--bg); }
+      #gallery-editor-container { display: flex; width: 100%; height: 100%; min-height: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="gallery-editor-container" class="gallery-editor-container"></div>
+    <script type="module" nonce="{{CSP_NONCE}}">
+      import { openEditor } from '/static/js/galleryEditor.js';
+      const p = new URLSearchParams(location.search);
+      const imageUrl = p.get('url') || '';
+      const imageId = p.get('image') || null;
+      const draftId = p.get('draft') || null;
+      const displayName = p.get('name') || (draftId ? 'Saved project' : 'New canvas');
+      const dims = (p.get('size') || '1024x1024').match(/^(\d+)x(\d+)$/);
+      const preset = !imageUrl && !draftId && dims ? { w: Number(dims[1]), h: Number(dims[2]) } : null;
+      try {
+        await openEditor(imageUrl, imageId, preset, displayName, draftId);
+      } catch (error) {
+        document.getElementById('gallery-editor-container').innerHTML = '<p style="padding:24px;color:#b91c1c">The editor could not be opened.</p>';
+        console.error(error);
+      }
+    </script>
+  </body>
+</html>

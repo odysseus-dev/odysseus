@@ -2,6 +2,22 @@
 // EventSource can't POST, so read the body manually (ports static/js/chat.js).
 export type SseEvent = { type: string; [k: string]: unknown }
 
+export class StreamInterruptedError extends Error {
+  constructor(message = "The response stream closed before completion.") {
+    super(message)
+    this.name = "StreamInterruptedError"
+  }
+}
+
+export class SseResponseError extends Error {
+  status?: number
+  constructor(message: string, status?: number) {
+    super(message)
+    this.name = "SseResponseError"
+    this.status = status
+  }
+}
+
 export async function streamChat(
   form: FormData,
   onEvent: (e: SseEvent) => void | Promise<void>,
@@ -34,24 +50,57 @@ export async function streamResume(
   await readSse(res.body, onEvent)
 }
 
-async function readSse(body: ReadableStream<Uint8Array>, onEvent: (e: SseEvent) => void | Promise<void>) {
+export async function readSse(body: ReadableStream<Uint8Array>, onEvent: (e: SseEvent) => void | Promise<void>) {
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let buf = ""
+  let sawDone = false
+
+  const processRecord = async (record: string) => {
+    let eventName = "message"
+    const dataLines: string[] = []
+    for (const rawLine of record.split("\n")) {
+      const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine
+      if (!line || line.startsWith(":")) continue
+      const colon = line.indexOf(":")
+      const field = colon < 0 ? line : line.slice(0, colon)
+      let value = colon < 0 ? "" : line.slice(colon + 1)
+      if (value.startsWith(" ")) value = value.slice(1)
+      if (field === "event") eventName = value
+      else if (field === "data") dataLines.push(value)
+    }
+    if (!dataLines.length) return
+    const payload = dataLines.join("\n")
+    if (payload === "[DONE]") { sawDone = true; return }
+
+    let parsed: unknown
+    try { parsed = JSON.parse(payload) } catch { return }
+    if (!parsed || typeof parsed !== "object") return
+    const data = parsed as Record<string, unknown>
+    const status = typeof data.status === "number" ? data.status : undefined
+    const error = typeof data.error === "string" ? data.error : undefined
+    if (eventName === "error" || (status != null && status >= 400) || (error && !data.type)) {
+      throw new SseResponseError(error || "The agent run failed before completion.", status)
+    }
+    const ev = data as SseEvent
+    if (!ev.type && eventName !== "message") ev.type = eventName
+    await onEvent(ev)
+  }
+
   for (;;) {
     const { done, value } = await reader.read()
     if (done) break
     buf += decoder.decode(value, { stream: true })
-    let nl: number
-    while ((nl = buf.indexOf("\n")) >= 0) {
-      const line = buf.slice(0, nl).trim()
-      buf = buf.slice(nl + 1)
-      if (!line.startsWith("data:")) continue
-      const payload = line.slice(5).trim()
-      if (payload === "[DONE]") return
-      let ev: SseEvent | null = null
-      try { ev = JSON.parse(payload) as SseEvent } catch { /* ignore keepalives */ }
-      if (ev) await onEvent(ev)
+    buf = buf.replace(/\r\n/g, "\n")
+    let boundary: number
+    while ((boundary = buf.indexOf("\n\n")) >= 0) {
+      const record = buf.slice(0, boundary)
+      buf = buf.slice(boundary + 2)
+      await processRecord(record)
+      if (sawDone) { await reader.cancel(); return }
     }
   }
+  buf += decoder.decode()
+  if (buf.trim()) await processRecord(buf)
+  if (!sawDone) throw new StreamInterruptedError()
 }

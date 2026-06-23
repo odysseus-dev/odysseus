@@ -64,6 +64,14 @@ class RecordVoteRequest(BaseModel):
     is_blind: bool = True
 
 
+def _revealed_models(comp: Comparison) -> dict:
+    mapping = json.loads(comp.blind_mapping) if comp.blind_mapping else {"left": "a", "right": "b"}
+    return {
+        "left": comp.model_a if mapping.get("left") == "a" else comp.model_b,
+        "right": comp.model_a if mapping.get("right") == "a" else comp.model_b,
+    }
+
+
 def setup_compare_routes(session_manager: SessionManager):
     """Setup comparison routes."""
 
@@ -272,10 +280,27 @@ def setup_compare_routes(session_manager: SessionManager):
                 "winner": comp.winner,
                 "model_a": comp.model_a,
                 "model_b": comp.model_b,
-                "revealed": {
-                    "left": comp.model_a if mapping["left"] == "a" else comp.model_b,
-                    "right": comp.model_a if mapping["right"] == "a" else comp.model_b,
-                },
+                "revealed": _revealed_models(comp),
+            }
+        finally:
+            db.close()
+
+    @router.post("/{comp_id}/reveal")
+    def reveal_comparison(request: Request, comp_id: str):
+        """Reveal model names without recording a vote."""
+        user = get_current_user(request)
+        db = SessionLocal()
+        try:
+            comp = db.query(Comparison).filter(Comparison.id == comp_id).first()
+            if not comp:
+                raise HTTPException(404, "Comparison not found")
+            if user and comp.owner != user:
+                raise HTTPException(404, "Comparison not found")
+            return {
+                "model_a": comp.model_a,
+                "model_b": comp.model_b,
+                "revealed": _revealed_models(comp),
+                "winner": comp.winner,
             }
         finally:
             db.close()

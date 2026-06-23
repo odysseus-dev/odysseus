@@ -114,6 +114,16 @@
     --red: #3183d8; --green: #339076;
     --bg-effect-intensity: 1;
   }
+  /* shadcn "zinc" palette for the login screen (mirrors theme.js THEMES.shadcn /
+     'shadcn-light'). --red is Odysseus's accent slot — monochrome here. */
+  :root[data-theme="shadcn"] {
+    --bg: #09090b; --fg: #fafafa; --panel: #18181b; --border: #27272a;
+    --red: #e4e4e7; --green: #3dd68c;
+  }
+  :root[data-theme="shadcn-light"] {
+    --bg: #ffffff; --fg: #09090b; --panel: #ffffff; --border: #e4e4e7;
+    --red: #18181b; --green: #16a34a;
+  }
   /* Background patterns — mirrors static/style.css "Background Patterns"
      block so the theme's chosen bgPattern renders on login too. The
      canvas-based effects (rain, constellations, perlin-flow, petals,

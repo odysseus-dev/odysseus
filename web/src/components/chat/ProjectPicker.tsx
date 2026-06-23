@@ -33,7 +33,7 @@ export function ProjectPicker({ sessionId }: { sessionId: string }) {
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-20 mt-1 w-56 origin-top-right animate-pop-in rounded-xl border bg-popover p-1 shadow-lg">
+          <div className="absolute right-0 z-20 mt-1 w-[min(92vw,14rem)] origin-top-right animate-pop-in rounded-xl border bg-popover p-1 shadow-lg">
             <div className="max-h-64 overflow-y-auto">
               {projects.length === 0 && <p className="px-2 py-2 text-xs text-muted-foreground">No projects yet.</p>}
               {projects.map((p) => (

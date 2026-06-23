@@ -2808,6 +2808,49 @@ export function isGalleryOpen() {
   return _open;
 }
 
+function _galleryTabName(tab) {
+  const t = String(tab || '').toLowerCase();
+  if (t === 'photos' || t === 'images') return 'images';
+  if (t === 'albums') return 'albums';
+  if (t === 'editor' || t === 'edit') return 'editor';
+  if (t === 'settings') return 'settings';
+  return 'images';
+}
+
+async function _waitForGalleryModal() {
+  for (let i = 0; i < 20; i++) {
+    const modal = document.getElementById('gallery-modal');
+    if (modal) return modal;
+    await new Promise(r => setTimeout(r, 50));
+  }
+  return document.getElementById('gallery-modal');
+}
+
+export async function openGalleryTab(tab) {
+  openGallery();
+  const modal = await _waitForGalleryModal();
+  const target = _galleryTabName(tab);
+  modal?.querySelector(`.gallery-tab[data-tab="${target}"]`)?.click();
+  return !!modal;
+}
+
+export async function openGalleryEditorForImage(imageId) {
+  openGallery();
+  const modal = await _waitForGalleryModal();
+  modal?.querySelector('.gallery-tab[data-tab="editor"]')?.click();
+  const editorContainer = document.getElementById('gallery-editor-container');
+  if (editorContainer) editorContainer.style.display = 'flex';
+  let img = _items.find(i => i.id === imageId);
+  if (!img && imageId) {
+    const res = await fetch(`${API_BASE}/api/gallery/${encodeURIComponent(imageId)}`, { credentials: 'same-origin' });
+    if (res.ok) img = await res.json();
+  }
+  if (!img) return false;
+  const label = (img.prompt || img.filename || 'Gallery image').trim().slice(0, 60);
+  openEditor(img.url, img.id, null, label);
+  return true;
+}
+
 // ---- Utilities ----
 
 function _esc(str) {
@@ -2828,6 +2871,8 @@ function _humanSize(bytes) {
 
 const galleryModule = {
   openGallery,
+  openGalleryTab,
+  openGalleryEditorForImage,
   closeGallery,
   isGalleryOpen,
 };

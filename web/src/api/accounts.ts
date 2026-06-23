@@ -85,3 +85,27 @@ export function useContactsCount() {
   return useQuery({ queryKey: ["contacts-count"], retry: false, queryFn: async () => { try { const r = await apiJson<{ contacts?: unknown[]; items?: unknown[] }>("/api/contacts/list"); return (r.contacts || r.items || []).length } catch { return 0 } } })
 }
 export async function clearContacts() { const r = await jx("DELETE", "/api/contacts/clear"); return r.json().catch(() => ({})) }
+export interface Contact {
+  uid: string; name: string; emails: string[]; phones: string[]; address?: string
+}
+export interface CardDavConfig { url?: string; username?: string; password?: string }
+export function useContactList() {
+  return useQuery({ queryKey: ["contacts-list"], retry: false, queryFn: async () => {
+    try { return (await apiJson<{ contacts: Contact[] }>("/api/contacts/list")).contacts || [] } catch { return [] }
+  } })
+}
+export function useCardDavConfig() {
+  return useQuery({ queryKey: ["carddav-config"], retry: false, queryFn: async () => {
+    try { return await apiJson<CardDavConfig>("/api/contacts/config") } catch { return {} }
+  } })
+}
+export function useContactMutations() {
+  const qc = useQueryClient()
+  const inv = () => { qc.invalidateQueries({ queryKey: ["contacts-list"] }); qc.invalidateQueries({ queryKey: ["contacts-count"] }) }
+  return {
+    add: useMutation({ mutationFn: async (v: { name: string; email: string; phone?: string; address?: string }) => { const r = await jx("POST", "/api/contacts/add", v); const d = await r.json(); if (!r.ok || d.success === false) throw new Error(d.error || "Add failed"); return d }, onSuccess: inv }),
+    update: useMutation({ mutationFn: async (v: Contact) => { const r = await jx("PUT", `/api/contacts/${encodeURIComponent(v.uid)}`, v); const d = await r.json(); if (!r.ok || d.success === false) throw new Error(d.error || "Update failed"); return d }, onSuccess: inv }),
+    remove: useMutation({ mutationFn: async (uid: string) => { const r = await jx("DELETE", `/api/contacts/${encodeURIComponent(uid)}`); const d = await r.json(); if (!r.ok || d.success === false) throw new Error(d.error || "Delete failed"); return d }, onSuccess: inv }),
+    saveConfig: useMutation({ mutationFn: async (v: { carddav_url: string; carddav_username: string; carddav_password?: string }) => { const r = await jx("PUT", "/api/contacts/config", v); if (!r.ok) throw new Error("Couldn't save CardDAV settings"); return r.json() }, onSuccess: () => { qc.invalidateQueries({ queryKey: ["carddav-config"] }); inv() } }),
+  }
+}

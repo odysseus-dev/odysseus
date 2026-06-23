@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { useRef, useState, type KeyboardEvent } from "react"
 import { Plus, Trash2, Pencil, Copy, Check, X, Upload } from "lucide-react"
 import { useSettings, useSaveSettings, type Settings } from "@/api/settings"
 import { useModels } from "@/api/models"
@@ -8,7 +8,9 @@ import { usePrefs, useSetPref } from "@/api/prefs"
 import { PRIMARY, WORKSPACE } from "@/components/shell/nav"
 import { DEFAULT_KEYBINDS } from "@/lib/useHotkeys"
 import { apiFetch } from "@/lib/api"
+import { useBuiltinTools, useSetBuiltinTools } from "@/api/tools"
 import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 import { SectionCard, Row, FieldRow, SettingSwitch, SettingSelect, SettingText, SettingNumber, SettingTextarea, StringListEditor } from "./fields"
 
 interface ModelRef { endpoint_id: string; model: string }
@@ -65,6 +67,62 @@ function useModelOptions() {
 
 const H = "mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
 
+// Preview/test the configured TTS voice. Synthesizes a short phrase via
+// /api/tts/synthesize (routes/tts_routes.py) and plays it inline. 503 = TTS off.
+function TtsPreview() {
+  const [state, setState] = useState<"idle" | "loading" | "playing" | "error">("idle")
+  const [msg, setMsg] = useState("")
+  const test = async () => {
+    setState("loading"); setMsg("")
+    try {
+      const r = await apiFetch("/api/tts/synthesize", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: "This is a preview of the configured voice.", format: "audio" }) })
+      if (r.status === 503) { setState("error"); setMsg("TTS service is not available — check the provider settings."); return }
+      if (!r.ok) { setState("error"); setMsg(`Synthesis failed (${r.status}).`); return }
+      const url = URL.createObjectURL(await r.blob())
+      const audio = new Audio(url)
+      audio.addEventListener("ended", () => { URL.revokeObjectURL(url); setState("idle") }, { once: true })
+      audio.addEventListener("error", () => { URL.revokeObjectURL(url); setState("error"); setMsg("Playback failed.") }, { once: true })
+      setState("playing")
+      await audio.play()
+    } catch {
+      setState("error"); setMsg("Could not reach the TTS service.")
+    }
+  }
+  const clearCache = async () => {
+    setMsg("Clearing…")
+    try {
+      const response = await apiFetch("/api/tts/clear-cache", { method: "POST" })
+      setMsg(response.ok ? "Cache cleared." : `Clear failed (${response.status}).`)
+    } catch { setMsg("Could not clear the TTS cache.") }
+  }
+  return (
+    <Row label="Preview voice" hint="Synthesize a short phrase with the current settings">
+      <span className="flex items-center gap-2">
+        {msg && <span className="text-xs text-muted-foreground">{msg}</span>}
+        <Button variant="outline" size="sm" disabled={state === "loading" || state === "playing"} onClick={test}>
+          {state === "loading" ? "Synthesizing…" : state === "playing" ? "Playing…" : "Test"}
+        </Button>
+        <Button variant="outline" size="sm" onClick={clearCache}>Clear cache</Button>
+      </span>
+    </Row>
+  )
+}
+
+const SEARCH_PROVIDER_OPTIONS = [
+  { value: "searxng", label: "SearXNG" },
+  { value: "duckduckgo", label: "DuckDuckGo" },
+  { value: "brave", label: "Brave Search" },
+  { value: "google_pse", label: "Google PSE" },
+  { value: "tavily", label: "Tavily" },
+  { value: "serper", label: "Serper" },
+  { value: "disabled", label: "Disabled" },
+]
+
+const RESEARCH_SEARCH_OPTIONS = [
+  { value: "", label: "Same as web search" },
+  ...SEARCH_PROVIDER_OPTIONS.filter((p) => p.value !== "disabled"),
+]
+
 // ─────────────────────────── Search ───────────────────────────
 export function SearchSettings() {
   const { str, num, set, list } = useStore()
@@ -72,9 +130,10 @@ export function SearchSettings() {
   const [testing, setTesting] = useState(false)
   const provider = str("search_provider", "searxng")
   const runTest = async () => {
+    if (!provider || provider === "disabled") { setTest("Pick a search provider first"); return }
     setTesting(true); setTest("Searching…")
     try {
-      const r = await apiFetch("/api/search/query", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: "odysseus test", count: 3 }) })
+      const r = await apiFetch("/api/search/query", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: "odysseus test", provider, count: 3 }) })
       const j = await r.json().catch(() => ({}))
       const n = (j.results || j.items || []).length
       setTest(r.ok ? `OK · ${n} results via ${j.provider || provider}` : `Failed: ${j.detail || j.error || r.status}`)
@@ -89,8 +148,8 @@ export function SearchSettings() {
       <h2 className={H}>Search</h2>
       <SectionCard>
         <SettingSelect label="Provider" value={provider} onChange={(v) => set({ search_provider: v })}
-          options={["searxng", "duckduckgo", "brave", "google_pse", "tavily", "serper", "disabled"].map((p) => ({ value: p, label: p }))} />
-        <SettingNumber label="Results per query" value={num("search_result_count", 5)} onCommit={(v) => set({ search_result_count: v })} min={1} max={20} />
+          options={SEARCH_PROVIDER_OPTIONS} />
+        <SettingNumber label="Results per query" value={num("search_result_count", 5)} onCommit={(v) => set({ search_result_count: v })} min={1} max={100} />
         <SettingSelect label="SafeSearch" value={str("search_safesearch", "strict")} onChange={(v) => set({ search_safesearch: v })}
           options={["strict", "moderate", "off"].map((p) => ({ value: p, label: p }))} />
         <SettingText label="Search URL" hint="Self-hosted SearXNG or custom backend (optional)" value={str("search_url")} onCommit={(v) => set({ search_url: v })} placeholder="https://searx.example.com" />
@@ -98,6 +157,8 @@ export function SearchSettings() {
           <SettingText key={k} label={k.replace(/_/g, " ")} value={str(k)} onCommit={(v) => set({ [k]: v })} type="password" placeholder="API key" />
         ))}
         <StringListEditor label="Fallback chain" hint="Providers tried if the primary fails" value={list("search_fallback_chain")} onChange={(v) => set({ search_fallback_chain: v })} placeholder="e.g. duckduckgo" />
+        <SettingSelect label="Research search" hint="Provider used only for Deep Research" value={str("research_search_provider")} onChange={(v) => set({ research_search_provider: v })}
+          options={RESEARCH_SEARCH_OPTIONS} />
         <Row label="Test search"><Button size="sm" variant="outline" onClick={runTest} disabled={testing}>Run test</Button></Row>
         {test && <p className="text-xs text-muted-foreground">{test}</p>}
       </SectionCard>
@@ -143,6 +204,11 @@ export function RemindersSettings() {
 // ─────────────────────── Agent / Tools (admin) ───────────────────────
 export function AgentToolsSettings() {
   const { num, bool, set, list } = useStore()
+  const { data: tools = [], isLoading } = useBuiltinTools()
+  const saveTools = useSetBuiltinTools()
+  const [toolSearch, setToolSearch] = useState("")
+  const visibleTools = tools.filter((tool) => tool.id.toLowerCase().includes(toolSearch.trim().toLowerCase()))
+  const toggleTool = (id: string, enabled: boolean) => saveTools.mutate(tools.map((tool) => tool.id === id ? { ...tool, enabled } : tool))
   return (
     <section>
       <h2 className={H}>Agent &amp; tools <span className="normal-case text-muted-foreground/70">(admin)</span></h2>
@@ -155,6 +221,22 @@ export function AgentToolsSettings() {
         <SettingSwitch label="Confirm before sending email" hint="Agent stages emails for review instead of sending directly" value={bool("agent_email_confirm")} onChange={(v) => set({ agent_email_confirm: v })} />
         <StringListEditor label="Extra file path roots" hint="Absolute paths read_file/write_file may also access" value={list("tool_path_extra_roots")} onChange={(v) => set({ tool_path_extra_roots: v })} placeholder="/abs/path" />
       </SectionCard>
+      <div className="mt-3"><SectionCard>
+        <div className="space-y-3">
+          <div><div className="text-sm font-medium">Built-in tool registry</div><p className="text-xs text-muted-foreground">Disabled tools are removed from Agent mode for every user.</p></div>
+          <input value={toolSearch} onChange={(e) => setToolSearch(e.target.value)} placeholder="Search tools…" className={tokInp} />
+          <div className="max-h-96 divide-y overflow-y-auto rounded-lg border">
+            {visibleTools.map((tool) => <label key={tool.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+              <span className="min-w-0"><span className="block truncate text-sm font-medium">{tool.id.replaceAll("_", " ")}</span><code className="text-[11px] text-muted-foreground">{tool.id}</code></span>
+              <input type="checkbox" checked={tool.enabled} disabled={saveTools.isPending} onChange={(e) => toggleTool(tool.id, e.target.checked)} aria-label={`Enable ${tool.id}`} />
+            </label>)}
+            {!isLoading && visibleTools.length === 0 && <p className="p-4 text-center text-sm text-muted-foreground">No matching tools.</p>}
+            {isLoading && <p className="p-4 text-center text-sm text-muted-foreground">Loading tools…</p>}
+          </div>
+          {saveTools.error && <p className="text-xs text-destructive">{saveTools.error.message}</p>}
+          <p className="text-xs text-muted-foreground">{tools.filter((tool) => tool.enabled).length}/{tools.length} enabled</p>
+        </div>
+      </SectionCard></div>
     </section>
   )
 }
@@ -162,9 +244,26 @@ export function AgentToolsSettings() {
 // ─────────────────────── AI / Models (admin) ───────────────────────
 export function AiModelsSettings() {
   const { s, str, num, bool, set } = useStore()
+  const { data: modelData } = useModels()
   const models = useModelOptions()
   const choices = useModelsWithEndpoint()
   const fb = (k: string): ModelRef[] => (Array.isArray(s[k]) ? (s[k] as ModelRef[]) : [])
+  const endpoints = modelData?.items || []
+  const researchEndpointId = str("research_endpoint_id")
+  const researchEndpoint = endpoints.find((e) => e.endpoint_id === researchEndpointId)
+  const researchModelNames = Array.from(new Set(
+    (researchEndpointId && researchEndpoint
+      ? [...(researchEndpoint.models || []), ...(researchEndpoint.models_extra || [])]
+      : endpoints.flatMap((e) => [...(e.models || []), ...(e.models_extra || [])])),
+  ))
+  const researchModelOptions = [
+    { value: "", label: "— (same as chat)" },
+    ...researchModelNames.map((m) => ({ value: m, label: m })),
+  ]
+  const researchEndpointOptions = [
+    { value: "", label: "Same as chat" },
+    ...endpoints.filter((e) => e.endpoint_id).map((e) => ({ value: e.endpoint_id, label: e.endpoint_name || e.url || e.endpoint_id })),
+  ]
   return (
     <section>
       <h2 className={H}>AI models <span className="normal-case text-muted-foreground/70">(admin)</span></h2>
@@ -183,7 +282,8 @@ export function AiModelsSettings() {
         <SettingSelect label="Image model" value={str("image_model")} onChange={(v) => set({ image_model: v })} options={models} />
         <SettingSelect label="Image quality" value={str("image_quality", "medium")} onChange={(v) => set({ image_quality: v })} options={["low", "medium", "high"].map((q) => ({ value: q, label: q }))} />
         <div className="border-t pt-2 text-xs font-medium text-muted-foreground">Deep research</div>
-        <SettingSelect label="Research model" value={str("research_model")} onChange={(v) => set({ research_model: v })} options={models} />
+        <SettingSelect label="Research endpoint" value={researchEndpointId} onChange={(v) => set({ research_endpoint_id: v, research_model: "" })} options={researchEndpointOptions} />
+        <SettingSelect label="Research model" value={str("research_model")} onChange={(v) => set({ research_model: v })} options={researchModelOptions} />
         <SettingNumber label="Research max tokens" value={num("research_max_tokens", 16384)} onCommit={(v) => set({ research_max_tokens: v })} min={256} />
         <SettingNumber label="Research run timeout (s)" hint="0 = unlimited" value={num("research_run_timeout_seconds", 1800)} onCommit={(v) => set({ research_run_timeout_seconds: v })} min={0} />
         <SettingNumber label="Research extraction timeout (s)" value={num("research_extraction_timeout_seconds", 90)} onCommit={(v) => set({ research_extraction_timeout_seconds: v })} min={5} />
@@ -201,9 +301,11 @@ export function AiModelsSettings() {
         <SettingText label="TTS model" value={str("tts_model")} onCommit={(v) => set({ tts_model: v })} placeholder="tts-1" />
         <SettingText label="TTS voice" value={str("tts_voice")} onCommit={(v) => set({ tts_voice: v })} placeholder="alloy" />
         <SettingText label="TTS speed" value={str("tts_speed", "1")} onCommit={(v) => set({ tts_speed: v })} placeholder="1.0" />
+        <TtsPreview />
         <SettingSwitch label="STT enabled" value={bool("stt_enabled")} onChange={(v) => set({ stt_enabled: v })} />
         <SettingText label="STT provider" value={str("stt_provider", "disabled")} onCommit={(v) => set({ stt_provider: v })} placeholder="openai · whisper · disabled" />
         <SettingText label="STT model" value={str("stt_model")} onCommit={(v) => set({ stt_model: v })} placeholder="base" />
+        <SettingText label="STT language" hint="ISO code, e.g. en — blank = auto-detect" value={str("stt_language")} onCommit={(v) => set({ stt_language: v })} placeholder="auto" />
       </SectionCard>
     </section>
   )
@@ -346,22 +448,38 @@ export function SidebarItemsSettings() {
 
 // ─────────────────────── Keyboard shortcuts (admin) ───────────────────────
 const KEYBIND_LABELS: Record<string, string> = {
-  search: "Search / new chat", toggle_sidebar: "Toggle sidebar", new_session: "New chat",
-  star_session: "Star session", delete_session: "Delete session", admin_panel: "Open settings", cancel: "Cancel / close",
+  search: "Search conversations", toggle_sidebar: "Toggle sidebar", new_session: "New chat",
+  fav_session: "Favorite chat", delete_session: "Delete chat", cancel: "Cancel / close",
+  tts: "Read aloud", incognito: "Toggle incognito", settings: "Open settings", focus_input: "Focus chat input",
+  open_calendar: "Open Calendar", open_compare: "Open Compare", open_cookbook: "Open Cookbook",
+  open_research: "Open Research", open_gallery: "Open Gallery", open_library: "Open Library",
+  open_memory: "Open Memory", open_notes: "Open Notes", open_tasks: "Open Tasks", open_theme: "Toggle theme",
 }
 export function KeybindsSection() {
   const { data } = useSettings()
   const save = useSaveSettings()
   const kb = { ...DEFAULT_KEYBINDS, ...((data?.keybinds as Record<string, string>) || {}) }
   const setBind = (action: string, combo: string) => save.mutate({ keybinds: { ...kb, [action]: combo } })
+  const conflicts = Object.entries(kb).reduce<Record<string, string[]>>((all, [action, combo]) => {
+    if (combo) (all[combo] ||= []).push(action)
+    return all
+  }, {})
+  const capture = (event: KeyboardEvent<HTMLInputElement>, action: string) => {
+    event.preventDefault(); event.stopPropagation()
+    if (["Control", "Alt", "Shift", "Meta"].includes(event.key)) return
+    const key = event.key === " " ? "space" : event.key.toLowerCase()
+    const parts = [event.ctrlKey && "ctrl", event.altKey && "alt", event.shiftKey && "shift", event.metaKey && "meta", key].filter(Boolean)
+    setBind(action, parts.join("+"))
+  }
   return (
     <section>
       <h2 className={H}>Keyboard shortcuts <span className="normal-case text-muted-foreground/70">(admin)</span></h2>
       <SectionCard>
         {Object.keys(DEFAULT_KEYBINDS).map((action) => (
           <FieldRow key={action} label={KEYBIND_LABELS[action] || action}>
-            <input key={kb[action]} defaultValue={kb[action]} placeholder="e.g. ctrl+b" className="h-9 w-full rounded-md border bg-background px-3 font-mono text-sm outline-none focus-visible:border-ring"
-              onBlur={(e) => { const v = e.target.value.trim().toLowerCase(); if (v && v !== kb[action]) setBind(action, v) }} />
+            <div className="w-full"><input value={kb[action]} readOnly onKeyDown={(event) => capture(event, action)} onFocus={(event) => event.currentTarget.select()} placeholder="Press a shortcut" title="Focus, then press the desired key combination" className={cn("h-9 w-full rounded-md border bg-background px-3 font-mono text-sm outline-none focus-visible:border-ring", (conflicts[kb[action]]?.length || 0) > 1 && "border-destructive")} />
+              {(conflicts[kb[action]]?.length || 0) > 1 && <p className="mt-1 text-[11px] text-destructive">Also used by {conflicts[kb[action]].filter((item) => item !== action).map((item) => KEYBIND_LABELS[item] || item).join(", ")}</p>}
+            </div>
           </FieldRow>
         ))}
         <div className="flex justify-end pt-1"><Button size="sm" variant="outline" onClick={() => save.mutate({ keybinds: DEFAULT_KEYBINDS })}>Reset to defaults</Button></div>

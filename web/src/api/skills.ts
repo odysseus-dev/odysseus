@@ -1,9 +1,25 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { apiJson, apiFetch } from "@/lib/api"
-import type { Skill, BuiltinSkill } from "@/types"
+import type { Skill as BaseSkill, BuiltinSkill } from "@/types"
+
+// Extended view of a skill that includes the usage/audit metadata the backend
+// returns from GET /api/skills (uses, last_used, audit_verdict, …). The shared
+// `Skill` type in @/types is the minimal contract; we widen it locally rather
+// than editing the shared file.
+// Omit `audit_verdict` from the base type so we can widen it to allow null
+// (the backend returns null when a skill has never been audited).
+export interface SkillRow extends Omit<BaseSkill, "audit_verdict"> {
+  category?: string
+  tags?: string[]
+  uses?: number
+  last_used?: number | null
+  audit_verdict?: string | null
+  audited_at?: number | null
+  created?: string | null
+}
 
 export function useSkills() {
-  return useQuery({ queryKey: ["skills"], queryFn: async () => (await apiJson<{ skills: Skill[] }>("/api/skills")).skills })
+  return useQuery({ queryKey: ["skills"], queryFn: async () => (await apiJson<{ skills: SkillRow[] }>("/api/skills")).skills })
 }
 export function useBuiltinSkills() {
   return useQuery({ queryKey: ["builtin-skills"], queryFn: async () => (await apiJson<{ builtin: BuiltinSkill[] }>("/api/skills/builtin")).builtin })
@@ -105,6 +121,51 @@ export function useSkillTestStatus(id: string | null, poll: boolean) {
   })
 }
 
+// ── Audit-all (bulk) progress + cancel ──────────────────────────────────────
+export interface AuditResult {
+  skill: string
+  result: "skipped" | "pass" | "inconclusive" | "pass_after_self_edit" | "pass_after_teacher" | "flagged" | "error"
+  reason?: string
+  confidence?: number
+  status?: string
+  verdict?: SkillVerdict | null
+  skill_state?: { name?: string; status?: string; confidence?: number; audit_verdict?: string }
+}
+export interface AuditAllStatus {
+  status: "none" | "running" | "done" | "cancelled"
+  scope?: string
+  total?: number
+  done?: number
+  current?: string | null
+  model?: string
+  teacher?: string | null
+  results?: AuditResult[]
+  log?: string[]
+  started?: number
+  finished?: number
+}
+
+export function useAuditAllStatus(poll: boolean) {
+  return useQuery({
+    queryKey: ["skill-audit-status"],
+    refetchInterval: poll ? 1500 : false,
+    queryFn: () => apiJson<AuditAllStatus>("/api/skills/audit-all/status"),
+  })
+}
+
+export function useCancelAuditAll() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async () => {
+      const r = await apiFetch("/api/skills/audit-all/cancel", { method: "POST" })
+      if (!r.ok) throw new Error("cancel failed")
+      return r.json()
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["skill-audit-status"] }); qc.invalidateQueries({ queryKey: ["skills"] }) },
+    meta: { silent: true },
+  })
+}
+
 // ── Built-in tool override (admin-gated PUT/DELETE) ──────────────────────────
 export interface BuiltinDetail { name: string; text: string; default: string; is_overridden: boolean }
 export function useBuiltinSkill(name: string | null) {
@@ -129,7 +190,7 @@ export function useSkillMutations() {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }),
         })
         if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || "Import failed") }
-        return r.json() as Promise<{ ok: boolean; skill: Skill; files: number }>
+        return r.json() as Promise<{ ok: boolean; skill: BaseSkill; files: number }>
       },
       onSuccess: inv,
       meta: { silent: true },
@@ -169,12 +230,28 @@ export function useSkillMutations() {
       onSuccess: (_d, v) => { qc.invalidateQueries({ queryKey: ["skill-md", v.id] }); inv() },
       meta: { silent: true },
     }),
-    auditAll: useMutation({
-      mutationFn: async () => {
-        const r = await apiFetch("/api/skills/audit-all", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scope: "all" }) })
-        if (!r.ok) throw new Error("audit failed"); return r.json()
+    // Publish / unpublish (or any status flip) via PUT /api/skills/{id}.
+    setStatus: useMutation({
+      mutationFn: async (v: { id: string; status: "published" | "draft" }) => {
+        const r = await apiFetch(`/api/skills/${encodeURIComponent(v.id)}`, {
+          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: v.status }),
+        })
+        if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || "Update failed") }
+        return r.json()
       },
       onSuccess: inv,
+      meta: { silent: true },
+    }),
+    auditAll: useMutation({
+      // Pass {names} to audit a selected subset (scope "selected" audits even
+      // already-published skills); omit for a full audit of every skill.
+      mutationFn: async (v?: { names?: string[]; scope?: string }) => {
+        const body = v?.names?.length ? { scope: v.scope || "selected", names: v.names } : { scope: v?.scope || "all" }
+        const r = await apiFetch("/api/skills/audit-all", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+        if (!r.ok) throw new Error("audit failed"); return r.json() as Promise<{ ok: boolean; status: string; total: number; model?: string }>
+      },
+      onSuccess: inv,
+      meta: { silent: true },
     }),
     create: useMutation({
       mutationFn: async (v: { name: string; description: string; procedure: string; when_to_use?: string }) => {

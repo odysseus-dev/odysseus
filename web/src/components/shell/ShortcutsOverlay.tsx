@@ -1,14 +1,14 @@
 import { X } from "lucide-react"
 
 const GROUPS: { title: string; rows: [string, string][] }[] = [
-  { title: "General", rows: [["⌘/Ctrl K", "New chat"], ["⌘/Ctrl B", "Toggle sidebar"], ["⌘/Ctrl J", "Toggle theme"], ["?", "Show this help"], ["Esc", "Close"]] },
+  { title: "General", rows: [["⌘/Ctrl K", "Search conversations"], ["⌘/Ctrl Alt N", "New chat"], ["⌘/Ctrl B", "Toggle sidebar"], ["⌘/Ctrl J", "Toggle theme"], ["?", "Show this help"], ["Esc", "Close"]] },
   { title: "Go to (press g, then…)", rows: [["g c", "Chat"], ["g k", "Compare"], ["g r", "Research"], ["g i", "Gallery"], ["g m", "Memory"], ["g a", "Calendar"], ["g e", "Email"], ["g n", "Notes"], ["g t", "Tasks"], ["g l", "Library"], ["g p", "Personal files"], ["g d", "Knowledge"], ["g b", "Cookbook"], ["g s", "Skills"], ["g ,", "Settings"]] },
 ]
 
 export function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex animate-fade-in items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-md animate-pop-in rounded-xl border bg-popover p-4 shadow-lg" onClick={(e) => e.stopPropagation()}>
+      <div className="max-h-[88vh] w-full max-w-[min(92vw,28rem)] animate-pop-in overflow-y-auto rounded-xl border bg-popover p-4 shadow-lg" onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-center justify-between">
           <div className="text-sm font-semibold">Keyboard shortcuts</div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-4" /></button>

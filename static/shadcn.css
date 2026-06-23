@@ -1,0 +1,2094 @@
+/* ============================================================================
+   shadcn.css — faithful shadcn/ui "zinc" skin for Odysseus (dark + light).
+   Comprehensive port of the Odysseus structural skin, re-tokened to zinc with a
+   MONOCHROME accent, the shadcn 0.625rem radius scale, and expressive motion.
+   Scoped to [data-theme^="shadcn"] — mutually exclusive with codex.css.
+   theme.js sets --bg/--fg/--panel/--border/--red inline from THEMES.shadcn.
+   Token suffixes mirror codex's --cdx-* so structural rules map 1:1.
+   ========================================================================== */
+
+/* ───────────────────────────────  DARK tokens  ──────────────────────────── */
+:root[data-theme="shadcn"]{
+  --shad-surface-1:#18181b; --shad-surface-2:#1c1c1f; --shad-surface-3:#27272a; --shad-surface-4:#313135;
+  --shad-hover:rgba(255,255,255,.06); --shad-active:#27272a;
+  --shad-border:#27272a; --shad-border-soft:rgba(255,255,255,.08); --shad-border-composer:#27272a;
+  --shad-divider:#27272a;
+  --shad-muted:#a1a1aa; --shad-faint:#71717b; --shad-icon:#a1a1aa;
+  --shad-item-fg:#d4d4d8; --shad-section-fg:#71717b; --shad-time-fg:#8b8b8b; --shad-fg-strong:#fafafa;
+  /* MONOCHROME accent */
+  --shad-accent:#e4e4e7; --shad-accent-hover:#ffffff;
+  --shad-primary-bg:#e4e4e7; --shad-primary-bg-hover:#ffffff; --shad-primary-fg:#18181b;
+  --shad-btn-secondary-bg:#27272a; --shad-btn-secondary-hover:#313135;
+  --shad-green:#3dd68c; --shad-red:#ff6467; --shad-amber:#e0a93f; --shad-amber-soft:rgba(224,169,63,.16);
+  --shad-badge-bg:#27272a; --shad-toggle-off:#3f3f46; --shad-quote-bar:#3f3f46; --shad-cite-ring:#8b8b93;
+  --shad-diff-add:#14321f; --shad-diff-add-fg:#4ade80; --shad-diff-rem:#3a1d1d; --shad-diff-rem-fg:#ff8585;
+  --shad-code-inline-bg:#27272a; --shad-code-inline-fg:#e4e4e7; --shad-code-block-bg:#18181b;
+  --shad-input-bg:#18181b;
+  --shad-popover:#18181b; --shad-popover-border:#27272a; --shad-popover-hover:#27272a;
+  --shad-tooltip-bg:#18181b; --shad-tooltip-fg:#fafafa; --shad-tooltip-border:#27272a;
+  --shad-scroll:rgba(255,255,255,.16); --shad-scroll-hover:rgba(255,255,255,.30);
+  --shad-shadow:0 1px 3px 0 rgba(0,0,0,.45),0 1px 2px -1px rgba(0,0,0,.45);
+  --shad-shadow-pop:0 10px 24px -6px rgba(0,0,0,.6),0 4px 8px -4px rgba(0,0,0,.5);
+  /* aliases used by the expressive tail */
+  --shad-bg:#09090b; --shad-fg:#fafafa; --shad-card:#18181b; --shad-popover-bg:#18181b;
+  --shad-primary:#e4e4e7; --shad-primary-hover:#ffffff; --shad-ring:#71717b;
+  --shad-border-strong:#27272a; --shad-destructive:#ff6467; --shad-destructive-fg:#fafafa;
+  --shad-glow-ring:0 0 0 1px rgba(255,255,255,.14);
+  --shad-spot-1:rgba(255,255,255,.55); --shad-spot-2:rgba(255,255,255,.10);
+}
+
+/* ───────────────────────────────  LIGHT tokens  ─────────────────────────── */
+:root[data-theme="shadcn-light"]{
+  --shad-surface-1:#fafafa; --shad-surface-2:#f7f7f8; --shad-surface-3:#f4f4f5; --shad-surface-4:#ffffff;
+  --shad-hover:rgba(0,0,0,.05); --shad-active:#f4f4f5;
+  --shad-border:#e4e4e7; --shad-border-soft:rgba(0,0,0,.08); --shad-border-composer:#e4e4e7;
+  --shad-divider:#ececee;
+  --shad-muted:#71717b; --shad-faint:#a1a1aa; --shad-icon:#71717b;
+  --shad-item-fg:#3f3f46; --shad-section-fg:#a1a1aa; --shad-time-fg:#9a9a9a; --shad-fg-strong:#09090b;
+  --shad-accent:#18181b; --shad-accent-hover:#000000;
+  --shad-primary-bg:#18181b; --shad-primary-bg-hover:#000000; --shad-primary-fg:#fafafa;
+  --shad-btn-secondary-bg:#f4f4f5; --shad-btn-secondary-hover:#e9e9ec;
+  --shad-green:#16a34a; --shad-red:#e7000b; --shad-amber:#b45309; --shad-amber-soft:rgba(180,83,9,.12);
+  --shad-badge-bg:#f4f4f5; --shad-toggle-off:#d4d4d8; --shad-quote-bar:#d4d4d8; --shad-cite-ring:#9f9fa9;
+  --shad-diff-add:#e6f4ec; --shad-diff-add-fg:#0f6b49; --shad-diff-rem:#fdecea; --shad-diff-rem-fg:#b3331f;
+  --shad-code-inline-bg:#f4f4f5; --shad-code-inline-fg:#18181b; --shad-code-block-bg:#fafafa;
+  --shad-input-bg:#ffffff;
+  --shad-popover:#ffffff; --shad-popover-border:#e4e4e7; --shad-popover-hover:#f4f4f5;
+  --shad-tooltip-bg:#18181b; --shad-tooltip-fg:#fafafa; --shad-tooltip-border:#27272a;
+  --shad-scroll:rgba(0,0,0,.18); --shad-scroll-hover:rgba(0,0,0,.32);
+  --shad-shadow:0 1px 3px 0 rgba(0,0,0,.10),0 1px 2px -1px rgba(0,0,0,.10);
+  --shad-shadow-pop:0 10px 24px -6px rgba(0,0,0,.14),0 4px 8px -4px rgba(0,0,0,.10);
+  --shad-bg:#ffffff; --shad-fg:#09090b; --shad-card:#ffffff; --shad-popover-bg:#ffffff;
+  --shad-primary:#18181b; --shad-primary-hover:#000000; --shad-ring:#9f9fa9;
+  --shad-border-strong:#e4e4e7; --shad-destructive:#e7000b; --shad-destructive-fg:#fafafa;
+  --shad-glow-ring:0 0 0 1px rgba(0,0,0,.10);
+  --shad-spot-1:rgba(9,9,11,.45); --shad-spot-2:rgba(9,9,11,.06);
+}
+
+/* ─────────────────────────  shared tokens + base remaps  ─────────────────── */
+:root[data-theme^="shadcn"]{
+  --font-ui:'Inter',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  --font-mono:'Geist Mono','JetBrains Mono','Fira Code',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  --shad-r:0.625rem; --shad-r-sm:calc(var(--shad-r) - 4px); --shad-r-md:calc(var(--shad-r) - 2px);
+  --shad-r-lg:var(--shad-r); --shad-r-xl:calc(var(--shad-r) + 4px); --shad-r-full:9999px;
+  --shad-ease-spring:cubic-bezier(.34,1.56,.64,1); --shad-ease-smooth:cubic-bezier(.22,1,.36,1);
+  --shad-dur-1:120ms; --shad-dur-2:200ms; --shad-dur-3:360ms;
+  /* base tokens the app's CSS/JS read directly (theme.js sets only bg/fg/panel/border/red inline) */
+  --accent:var(--shad-accent); --accent-primary:var(--shad-accent); --accent-warm:var(--shad-amber);
+  --color-accent:var(--shad-accent); --color-brand-blue:var(--shad-accent); --color-link-hover:var(--shad-accent-hover);
+  --color-subheader:var(--shad-faint);
+  --green:var(--shad-green); --color-success:var(--shad-green); --color-save-green:var(--shad-green);
+  --warn:var(--shad-amber); --orange:var(--shad-amber); --yellow:var(--shad-amber);
+  --color-warning:var(--shad-amber); --color-blind-orange:var(--shad-amber);
+  --color-danger:var(--shad-red); --color-error:var(--shad-red); --color-error-light:var(--shad-diff-rem-fg);
+  --select-bg:var(--shad-popover); --select-fg:var(--shad-fg);
+  --select-option-bg:var(--shad-popover); --select-option-fg:var(--shad-fg);
+  --select-option-active-bg:var(--shad-active);
+  scrollbar-color:var(--shad-scroll) transparent;
+}
+:root[data-theme^="shadcn"] body{ font-family:var(--font-ui); -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }
+
+/* universal shadcn focus ring (box-shadow + border-color, not outline) */
+:root[data-theme^="shadcn"] :is(button,a,input,textarea,select,[role="button"],[role="menuitem"],[role="option"],[role="tab"],[role="switch"],.list-item,.icon-btn,.tool-btn,.send-btn,.switch):focus-visible{
+  outline:none; border-color:var(--shad-ring);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--shad-ring) 45%, transparent);
+}
+
+/* ===== Ported structural rules (re-scoped + re-tokened from codex.css) ===== */
+/* ── Typography ──────────────────────────────────────────────────────────── */
+:root[data-theme^="shadcn"] body {
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  letter-spacing: -0.006em;   /* Codex UI runs tighter than default Inter */
+}
+:root[data-theme^="shadcn"] pre,
+:root[data-theme^="shadcn"] code,
+:root[data-theme^="shadcn"] kbd,
+:root[data-theme^="shadcn"] samp,
+:root[data-theme^="shadcn"] tt,
+:root[data-theme^="shadcn"] .hljs,
+:root[data-theme^="shadcn"] .code-block,
+:root[data-theme^="shadcn"] .mono { font-family: var(--font-mono); }
+
+/* ── Scrollbars ──────────────────────────────────────────────────────────── */
+:root[data-theme^="shadcn"] ::-webkit-scrollbar-thumb {
+  background-color: var(--shad-scroll);
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background-clip: padding-box;
+}
+:root[data-theme^="shadcn"] ::-webkit-scrollbar-thumb:hover { background-color: var(--shad-scroll-hover); }
+:root[data-theme^="shadcn"] ::-webkit-scrollbar-track { background: transparent; }
+
+/* ── Links ───────────────────────────────────────────────────────────────── */
+:root[data-theme^="shadcn"] a:not(.list-item):not(.theme-swatch):not(.btn) {
+  color: var(--shad-accent);
+  text-decoration: none;
+}
+:root[data-theme^="shadcn"] a:not(.list-item):not(.theme-swatch):not(.btn):hover {
+  color: var(--shad-accent-hover);
+  text-decoration: underline;
+}
+
+/* ── Headings/titles use --fg (accent is reserved for controls/links) ─────── */
+:root[data-theme^="shadcn"] h1,
+:root[data-theme^="shadcn"] h2,
+:root[data-theme^="shadcn"] h3,
+:root[data-theme^="shadcn"] h4,
+:root[data-theme^="shadcn"] .modal-header h4,
+:root[data-theme^="shadcn"] .modal-title,
+:root[data-theme^="shadcn"] .pane-title,
+:root[data-theme^="shadcn"] .pane-header h4,
+:root[data-theme^="shadcn"] .settings-modal-content h4 {
+  color: var(--shad-fg-strong);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+:root[data-theme^="shadcn"] .settings-nav .list-item.active,
+:root[data-theme^="shadcn"] .settings-nav-item.active,
+:root[data-theme^="shadcn"] .settings-nav .list-item.active *,
+:root[data-theme^="shadcn"] .settings-nav-item.active * { color: var(--fg) !important; }
+
+/* ── Sidebar ─────────────────────────────────────────────────────────────── */
+:root[data-theme^="shadcn"] .sidebar {
+  background: var(--shad-surface-1) !important;
+  border-right: 1px solid var(--shad-border-soft);
+}
+:root[data-theme^="shadcn"] .sidebar-header,
+:root[data-theme^="shadcn"] .sidebar-user-bar { background: transparent; }
+:root[data-theme^="shadcn"] .sidebar-brand-title {
+  color: var(--fg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+:root[data-theme^="shadcn"] .list-item {
+  color: var(--shad-item-fg);
+  font-size: 13px; padding: 4px 8px; min-height: 28px; line-height: 1.3;
+  border-radius: 6px; margin: 0 4px;
+  transition: background .12s ease, color .12s ease;
+}
+:root[data-theme^="shadcn"] .list-item:hover { background: var(--shad-hover); }
+:root[data-theme^="shadcn"] .list-item.active,
+:root[data-theme^="shadcn"] .list-item.selected,
+:root[data-theme^="shadcn"] .list-item[aria-current="true"],
+:root[data-theme^="shadcn"] .list-item.active-session,
+:root[data-theme^="shadcn"] .session-item.active {
+  background: var(--shad-active);
+  color: var(--fg);
+  border-color: transparent;   /* base .active-session tints border var(--red)=accent — flatten to the neutral Codex pill */
+}
+:root[data-theme^="shadcn"] .section-title,
+:root[data-theme^="shadcn"] .section-title-label {
+  color: var(--shad-section-fg);   /* Codex de-emphasized group labels (fidelity over strict AA) */
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+:root[data-theme^="shadcn"] .sidebar-action-icon,
+:root[data-theme^="shadcn"] .section-icon,
+:root[data-theme^="shadcn"] .session-icon {
+  color: var(--shad-icon) !important;
+  stroke: var(--shad-icon) !important;
+  opacity: 1;
+}
+:root[data-theme^="shadcn"] .user-bar-left:hover { background: var(--shad-hover); }
+
+/* ── Top bar ─────────────────────────────────────────────────────────────── */
+:root[data-theme^="shadcn"] .chat-top-bar {
+  border-bottom: 1px solid var(--shad-border-soft);
+  min-height: 42px;
+  padding: 6px 14px 0;
+}
+:root[data-theme^="shadcn"] #current-meta { font-weight: 600; color: var(--fg); }
+:root[data-theme^="shadcn"] .chat-meta-count,
+:root[data-theme^="shadcn"] .chat-meta { color: var(--shad-muted); }
+
+/* ── Welcome / home — single centered prompt ─────────────────────────────── */
+:root[data-theme^="shadcn"] #welcome-screen .welcome-name {
+  background: none !important;
+  -webkit-background-clip: border-box !important;
+  background-clip: border-box !important;
+  font-weight: 400;
+  font-size: 1.375rem;
+  letter-spacing: -0.01em;
+  display: block;
+}
+:root[data-theme="shadcn"] #welcome-screen .welcome-name { -webkit-text-fill-color: #d9d9d8 !important; color: #d9d9d8 !important; }
+:root[data-theme="shadcn-light"] #welcome-screen .welcome-name { -webkit-text-fill-color: #3a3a3a !important; color: #3a3a3a !important; }
+:root[data-theme^="shadcn"] #welcome-screen .welcome-name svg,
+:root[data-theme^="shadcn"] #welcome-screen .welcome-tip,
+:root[data-theme^="shadcn"] #welcome-screen .welcome-sub,
+:root[data-theme^="shadcn"] #welcome-screen .welcome-version,
+:root[data-theme^="shadcn"] #welcome-screen .welcome-presence,
+:root[data-theme^="shadcn"] #welcome-screen .incognito-btn { display: none !important; }
+/* center heading + composer as one group */
+:root[data-theme^="shadcn"] .chat-container.welcome-active { justify-content: center; }
+:root[data-theme^="shadcn"] .chat-container.welcome-active #chat-history { flex: 0 0 auto; min-height: 0; margin: 0; }
+:root[data-theme^="shadcn"] .chat-container.welcome-active #welcome-screen {
+  position: static; transform: none; top: auto; left: auto;
+  margin: 0 auto 22px; pointer-events: auto; animation: none;
+}
+:root[data-theme^="shadcn"] .chat-container.welcome-active .chat-input-bar {
+  margin-top: 0 !important; margin-bottom: 0 !important;
+}
+
+/* ── Chat messages — user pill, bubble-less assistant, monochrome labels ──── */
+:root[data-theme^="shadcn"] .msg-user {
+  background: var(--shad-surface-3);
+  border: none;
+  border-radius: 18px;
+  padding: 10px 16px;
+}
+:root[data-theme^="shadcn"] .msg-ai {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0;
+  padding: 2px 2px;
+}
+:root[data-theme^="shadcn"] .msg .role { color: var(--shad-muted) !important; font-weight: 600; letter-spacing: 0.01em; }
+:root[data-theme^="shadcn"] .msg-ai .role { font-weight: 500; font-size: 12.5px; color: var(--shad-faint) !important; }
+:root[data-theme^="shadcn"] .msg .role::before { background: color-mix(in srgb, var(--fg) 30%, transparent) !important; }
+:root[data-theme^="shadcn"] .role-provider-logo svg { color: var(--shad-muted); }
+
+/* ── Composer — Codex card + control row ─────────────────────────────────── */
+:root[data-theme^="shadcn"] .chat-input-bar {
+  background: var(--shad-surface-3);
+  border: 1px solid var(--shad-border-composer);
+  border-radius: 22px;
+  padding: 16px 16px 12px;
+  box-shadow: var(--shad-shadow);
+}
+:root[data-theme^="shadcn"] .chat-input-bar textarea#message { font-size: 15px; padding: 2px 4px; }
+/* Composer focus affordance — subtle border brighten + ring when the textarea
+   is focused (matches Codex; the base bar has no :focus-within state). */
+:root[data-theme^="shadcn"] .chat-input-bar:focus-within {
+  border-color: color-mix(in srgb, var(--shad-accent) 45%, var(--shad-border-composer));
+  box-shadow: var(--shad-shadow), 0 0 0 1px color-mix(in srgb, var(--shad-accent) 30%, transparent);
+}
+:root[data-theme="shadcn"] .chat-input-bar textarea#message::placeholder { color: #6e6e6e; }
+:root[data-theme="shadcn-light"] .chat-input-bar textarea#message::placeholder { color: color-mix(in srgb, var(--fg) 36%, transparent); }
+:root[data-theme^="shadcn"] .chat-input-bottom { margin-top: 6px; }
+:root[data-theme^="shadcn"] .chat-input-left,
+:root[data-theme^="shadcn"] .chat-input-right { gap: 6px; align-items: center; }
+
+:root[data-theme^="shadcn"] .input-icon-btn {
+  width: 30px; height: 30px; min-width: 30px;
+  border-radius: 999px; background: transparent; border: none;
+  color: var(--shad-muted);
+  opacity: 1;   /* base .input-icon-btn is opacity:0.5 (style.css L2372); codex manages strength via --shad-muted color, so reset to full */
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background .12s, color .12s, opacity .12s;
+}
+:root[data-theme^="shadcn"] .input-icon-btn:hover { background: var(--shad-hover); color: var(--fg); }
+:root[data-theme^="shadcn"] .input-icon-btn.active { background: var(--shad-active); color: var(--fg); }
+:root[data-theme^="shadcn"] .input-icon-btn svg { width: 16px; height: 16px; }
+
+:root[data-theme^="shadcn"] #model-picker-wrap,
+:root[data-theme^="shadcn"] #model-picker-wrap.model-picker-autohide {
+  /* `relative` (not `static`) so the wrap stays the containing block for its
+     absolutely-positioned .model-picker-menu — otherwise the dropdown anchors to
+     the whole composer bar (which is a container-type containing block) instead of
+     the picker button. Inline placement comes from the codex.js move + flex row. */
+  position: relative !important; transform: none !important; opacity: 1 !important; pointer-events: auto !important;
+}
+:root[data-theme^="shadcn"] .model-picker-btn {
+  background: transparent; border: none; border-radius: 999px;
+  padding: 6px 10px; color: var(--shad-muted); font-size: 13px;
+  display: inline-flex; align-items: center; gap: 6px;
+  transition: background .12s, color .12s;
+}
+:root[data-theme^="shadcn"] .model-picker-btn:hover { background: var(--shad-hover); color: var(--fg); }
+:root[data-theme^="shadcn"] .model-picker-btn #model-picker-label { color: var(--fg); font-weight: 500; }
+
+:root[data-theme^="shadcn"] .mode-toggle {
+  background: var(--shad-hover);
+  border: none;                 /* drop the base 1px solid var(--border) hard ring */
+  border-radius: 999px; padding: 2px; height: 30px; display: inline-flex; align-items: center; gap: 2px;
+}
+/* The codex active state is the button's own .active fill — hide the base sliding
+   ::before pill so we don't stack two indicators with mismatched 9px/999px radii. */
+:root[data-theme^="shadcn"] .mode-toggle::before { display: none; }
+:root[data-theme^="shadcn"] .mode-toggle-btn {
+  border-radius: 999px; padding: 5px 12px; color: var(--shad-muted);
+  font-size: 13px; background: transparent; transition: background .12s, color .12s;
+}
+:root[data-theme^="shadcn"] .mode-toggle-btn.active { background: var(--shad-surface-4); color: var(--fg); }
+
+:root[data-theme^="shadcn"] .send-btn {
+  background: var(--shad-primary-bg);
+  color: var(--shad-primary-fg);
+  border-radius: 999px; width: 30px; height: 30px !important; min-width: 30px;
+}
+:root[data-theme^="shadcn"] .send-btn:hover { background: var(--shad-primary-bg-hover); }
+:root[data-theme^="shadcn"] .send-btn svg { stroke: var(--shad-primary-fg); color: var(--shad-primary-fg); }
+/* Mic (voice) state — base style.css blends var(--red 30%, --panel) into a muddy
+   blue disc with a stray --border ring. Snap it to the same neutral idle disc as
+   data-mode="idle" so the resting composer button is consistent across states. */
+:root[data-theme^="shadcn"] .send-btn.mic-mode {
+  background: var(--shad-surface-3);
+  border: 1px solid var(--shad-border);
+  color: var(--shad-icon);
+}
+:root[data-theme^="shadcn"] .send-btn.mic-mode:hover {
+  background: var(--shad-popover-hover);
+  color: var(--fg);
+}
+:root[data-theme^="shadcn"] .send-btn.mic-mode svg { stroke: var(--shad-icon); color: var(--shad-icon); }
+:root[data-theme^="shadcn"] .send-btn.mic-mode:hover svg { stroke: var(--fg); color: var(--fg); }
+
+
+/* ── Dropdowns / popovers / menus ────────────────────────────────────────── */
+:root[data-theme^="shadcn"] .export-dropdown-menu,
+:root[data-theme^="shadcn"] .model-picker-dropdown,
+:root[data-theme^="shadcn"] .model-picker-menu,
+:root[data-theme^="shadcn"] .dropdown-menu,
+:root[data-theme^="shadcn"] [class*="dropdown-menu"],
+:root[data-theme^="shadcn"] [role="menu"],
+:root[data-theme^="shadcn"] [role="listbox"],
+:root[data-theme^="shadcn"] .context-menu,
+:root[data-theme^="shadcn"] .popover {
+  background: var(--shad-popover);
+  border: 1px solid var(--shad-popover-border);
+  border-radius: 10px;
+  box-shadow: var(--shad-shadow-pop);
+  padding: 4px;
+}
+:root[data-theme^="shadcn"] .export-dropdown-item:hover,
+:root[data-theme^="shadcn"] [role="menuitem"]:hover,
+:root[data-theme^="shadcn"] [role="option"]:hover,
+:root[data-theme^="shadcn"] .model-picker-list .model-switch-item:hover,
+:root[data-theme^="shadcn"] .model-picker-list .model-switch-item.kb-active,
+:root[data-theme^="shadcn"] .dropdown-item:hover { background: var(--shad-popover-hover); border-radius: 7px; }
+/* menu section labels + dividers (real .mp-section-label / provider header only) */
+:root[data-theme^="shadcn"] .model-picker-list .mp-section-label,
+:root[data-theme^="shadcn"] [role="menu"] .menu-section-label {
+  color: var(--shad-muted); font-size: 11px; font-weight: 500; letter-spacing: .01em; padding: 6px 10px 2px;
+}
+:root[data-theme^="shadcn"] .model-picker-menu hr,
+:root[data-theme^="shadcn"] [role="menu"] hr,
+:root[data-theme^="shadcn"] .dropdown-divider,
+:root[data-theme^="shadcn"] [role="menu"] [role="separator"] {
+  border: none; height: 1px; background: var(--shad-divider); margin: 4px 0;
+}
+
+/* ── Surfaces: modals, panes, cards ──────────────────────────────────────── */
+:root[data-theme^="shadcn"] .modal-content,
+:root[data-theme^="shadcn"] .settings-modal-content,
+:root[data-theme^="shadcn"] .doclib-modal-content,
+:root[data-theme^="shadcn"] .gallery-modal-content,
+:root[data-theme^="shadcn"] .notes-pane,
+:root[data-theme^="shadcn"] .calendar-pane,
+:root[data-theme^="shadcn"] .cookbook-pane,
+:root[data-theme^="shadcn"] .research-pane,
+:root[data-theme^="shadcn"] .doc-pane,
+:root[data-theme^="shadcn"] .doc-pane-floating {
+  background: var(--shad-surface-1);
+  border: 1px solid var(--shad-border);
+  border-radius: 16px;
+}
+:root[data-theme^="shadcn"] .admin-card,
+:root[data-theme^="shadcn"] .card,
+:root[data-theme^="shadcn"] .panel-card,
+:root[data-theme^="shadcn"] .settings-card {
+  background: var(--shad-surface-2);
+  border: 1px solid var(--shad-border-soft);
+  border-radius: 12px;
+}
+:root[data-theme^="shadcn"] .admin-card h2 { border-bottom: 1px solid var(--shad-divider); font-weight: 600; letter-spacing: -.01em; }
+
+/* ── Settings ────────────────────────────────────────────────────────────── */
+:root[data-theme^="shadcn"] .settings-modal-content { background: var(--shad-surface-1); }
+:root[data-theme^="shadcn"] .settings-nav,
+:root[data-theme^="shadcn"] .settings-sidebar {
+  background: color-mix(in srgb, #000 28%, var(--shad-surface-1));
+  border-right: 1px solid var(--shad-border-soft);
+}
+/* Light: 28% black recess inverts to a muddy mid-gray rail — nest only a hair below the panel. */
+:root[data-theme="shadcn-light"] .settings-nav,
+:root[data-theme="shadcn-light"] .settings-sidebar {
+  background: color-mix(in srgb, #000 4%, var(--shad-surface-1));
+}
+:root[data-theme^="shadcn"] .settings-nav .list-item.active,
+:root[data-theme^="shadcn"] .settings-nav-item.active { background: var(--shad-active); color: var(--fg); }
+:root[data-theme^="shadcn"] .settings-nav-item.active svg { color: var(--fg); opacity: .9; }
+:root[data-theme^="shadcn"] .settings-nav-item:hover { background: var(--shad-hover); color: var(--fg); }
+:root[data-theme^="shadcn"] .settings-sidebar-label {
+  font-size: 11px; letter-spacing: .01em; text-transform: none; opacity: 1;
+  color: var(--shad-muted); font-weight: 500; padding: 8px 10px 3px;
+}
+:root[data-theme^="shadcn"] .settings-row,
+:root[data-theme^="shadcn"] .settings-fallback-row { border-color: var(--shad-border-soft); }
+
+/* ── Toggles — blue when on (real .admin-switch component + legacy) ───────── */
+:root[data-theme^="shadcn"] .toggle input:checked + .slider,
+:root[data-theme^="shadcn"] .toggle-switch input:checked + .toggle-slider { background: var(--shad-accent); }
+:root[data-theme^="shadcn"] .admin-slider { background: var(--shad-toggle-off); }
+:root[data-theme^="shadcn"] .admin-switch input:checked + .admin-slider { background: var(--shad-accent); }
+:root[data-theme^="shadcn"] .admin-slider::before { background: #ffffff; }
+
+/* ── Form controls ───────────────────────────────────────────────────────── */
+:root[data-theme^="shadcn"] input[type="text"],
+:root[data-theme^="shadcn"] input[type="search"],
+:root[data-theme^="shadcn"] input[type="password"],
+:root[data-theme^="shadcn"] input[type="email"],
+:root[data-theme^="shadcn"] input[type="url"],
+:root[data-theme^="shadcn"] input[type="number"],
+:root[data-theme^="shadcn"] input:not([type]),
+:root[data-theme^="shadcn"] select,
+:root[data-theme^="shadcn"] textarea:not(#message) {
+  background: var(--shad-input-bg);
+  border: 1px solid var(--shad-border);
+  border-radius: 10px;
+  color: var(--fg);
+}
+:root[data-theme^="shadcn"] input[type="text"]:focus,
+:root[data-theme^="shadcn"] input[type="search"]:focus,
+:root[data-theme^="shadcn"] input[type="password"]:focus,
+:root[data-theme^="shadcn"] input[type="email"]:focus,
+:root[data-theme^="shadcn"] input[type="url"]:focus,
+:root[data-theme^="shadcn"] input[type="number"]:focus,
+:root[data-theme^="shadcn"] input:not([type]):focus,
+:root[data-theme^="shadcn"] select:focus,
+:root[data-theme^="shadcn"] textarea:not(#message):focus {
+  border-color: var(--shad-accent);
+  outline: none;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--shad-accent) 45%, transparent);
+}
+
+/* ── Code blocks ─────────────────────────────────────────────────────────── */
+:root[data-theme^="shadcn"] pre,
+:root[data-theme^="shadcn"] pre code,
+:root[data-theme^="shadcn"] .hljs { background: var(--shad-surface-3); }
+:root[data-theme^="shadcn"] pre { border: 1px solid var(--shad-border-soft); border-radius: 12px; }
+
+/* ── Diffs / git ─────────────────────────────────────────────────────────── */
+:root[data-theme^="shadcn"] .diff-add,
+:root[data-theme^="shadcn"] .diff-added,
+:root[data-theme^="shadcn"] .addition,
+:root[data-theme^="shadcn"] ins,
+:root[data-theme^="shadcn"] .hljs-addition { background: var(--shad-diff-add); color: var(--shad-diff-add-fg); text-decoration: none; }
+:root[data-theme^="shadcn"] .diff-remove,
+:root[data-theme^="shadcn"] .diff-removed,
+:root[data-theme^="shadcn"] .deletion,
+:root[data-theme^="shadcn"] del,
+:root[data-theme^="shadcn"] .hljs-deletion { background: var(--shad-diff-rem); color: var(--shad-diff-rem-fg); text-decoration: none; }
+/* Real renderer diff-line classes (.diff-add/.diff-del) + inline code chips + summary stats */
+:root[data-theme^="shadcn"] .msg code:not(pre code) {
+  color: var(--shad-code-inline-fg); background: var(--shad-code-inline-bg);
+  padding: 1px 6px; border-radius: 5px; font-size: 0.86em;
+}
+:root[data-theme^="shadcn"] .diff-pre .diff-add,
+:root[data-theme^="shadcn"] .diff-add { background: var(--shad-diff-add); color: var(--shad-diff-add-fg); }
+:root[data-theme^="shadcn"] .diff-pre .diff-del,
+:root[data-theme^="shadcn"] .diff-del { background: var(--shad-diff-rem); color: var(--shad-diff-rem-fg); text-decoration: none; }
+:root[data-theme^="shadcn"] .diff-pre .diff-hunk { color: var(--shad-muted); opacity: 1; }
+:root[data-theme^="shadcn"] .agent-tool-diff .diff-summary-stats .diff-stat-add { color: var(--shad-diff-add-fg); }
+:root[data-theme^="shadcn"] .agent-tool-diff .diff-summary-stats .diff-stat-del { color: var(--shad-diff-rem-fg); }
+
+/* ── Tables ──────────────────────────────────────────────────────────────── */
+:root[data-theme^="shadcn"] table { border-color: var(--shad-border-soft); }
+:root[data-theme^="shadcn"] th { color: var(--shad-muted); font-weight: 600; }
+:root[data-theme^="shadcn"] th,
+:root[data-theme^="shadcn"] td { border-color: var(--shad-border-soft); }
+
+/* ── Compare mode toggles — monochrome ───────────────────────────────────── */
+:root[data-theme^="shadcn"] .compare-blind-toggle.active,
+:root[data-theme^="shadcn"] .compare-parallel-toggle,
+:root[data-theme^="shadcn"] .compare-parallel-toggle.active {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--fg) 40%, transparent);
+  background: var(--shad-hover);
+}
+
+/* ── Modal header controls — subtle ghost buttons ────────────────────────── */
+:root[data-theme^="shadcn"] .modal-close,
+:root[data-theme^="shadcn"] .modal-minimize-btn,
+:root[data-theme^="shadcn"] .minimize-btn,
+:root[data-theme^="shadcn"] .close-btn {
+  background: transparent; border: none; color: var(--shad-muted);
+}
+:root[data-theme^="shadcn"] .modal-close:hover,
+:root[data-theme^="shadcn"] .modal-minimize-btn:hover,
+:root[data-theme^="shadcn"] .minimize-btn:hover,
+:root[data-theme^="shadcn"] .close-btn:hover { background: var(--shad-hover); color: var(--fg); }
+
+/* ── Conversation — reasoning expander as a subtle Codex collapsible ──────── */
+:root[data-theme^="shadcn"] .thinking-section { border: 1px solid var(--shad-border-soft); background: transparent; border-radius: 12px; }
+:root[data-theme^="shadcn"] .thinking-header { background: transparent; border-bottom: none; color: var(--shad-muted); }
+:root[data-theme^="shadcn"] .thinking-header:hover { background: var(--shad-hover); }
+:root[data-theme^="shadcn"] .thinking-header-left span { color: var(--shad-muted); font-size: 13px; font-weight: 500; }
+:root[data-theme^="shadcn"] .thinking-section:has(.thinking-content.expanded) { border-color: color-mix(in srgb, var(--shad-cite-ring) 55%, transparent); }
+
+/* ── Conversation — citations/sources expander: same quiet Codex collapsible as
+   .thinking-section (base style.css L8605-8666 hard-codes --red, which theme.js
+   maps to the accent blue under codex → the sources box reads as a loud blue
+   panel, inconsistent with the neutralized reasoning expander above it). ─────── */
+:root[data-theme^="shadcn"] .sources-section { border: 1px solid var(--shad-border-soft); border-radius: 12px; }
+:root[data-theme^="shadcn"] .sources-header { background: transparent; border-bottom: none; }
+:root[data-theme^="shadcn"] .sources-header:hover { background: var(--shad-hover); }
+:root[data-theme^="shadcn"] .sources-header-left,
+:root[data-theme^="shadcn"] .sources-header-left svg,
+:root[data-theme^="shadcn"] .sources-toggle { color: var(--shad-muted); opacity: 1; }
+:root[data-theme^="shadcn"] .sources-content.expanded { border-top: 1px solid var(--shad-border-soft); }
+:root[data-theme^="shadcn"] .source-link { background: var(--shad-surface-3); }
+:root[data-theme^="shadcn"] .source-link:hover { background: var(--shad-surface-4); }
+:root[data-theme^="shadcn"] .source-num { background: var(--shad-hover); color: var(--shad-item-fg); }
+:root[data-theme^="shadcn"] .source-domain { color: var(--shad-faint); opacity: 1; }
+
+/* ── Misc ghost buttons ──────────────────────────────────────────────────── */
+:root[data-theme^="shadcn"] .icon-btn:hover,
+:root[data-theme^="shadcn"] .tool-btn:hover { background: var(--shad-hover); }
+
+/* ════════════════════════ LAYOUT — match Codex structure ═══════════════════ */
+/* Codex sidebar has no brand wordmark: traffic lights (injected at .sidebar top)
+   then the nav directly. Hide Odysseus's brand header. */
+:root[data-theme^="shadcn"] .sidebar-header { display: none !important; }
+:root[data-theme^="shadcn"] .sidebar-inner { padding-top: 6px; }
+
+/* Sidebar width + item sizing to Codex proportions */
+:root[data-theme^="shadcn"] .sidebar { width: 220px; min-width: 220px; }
+:root[data-theme^="shadcn"] #tools-section .list-item,
+:root[data-theme^="shadcn"] #sidebar-new-chat-btn,
+:root[data-theme^="shadcn"] #sidebar-search-btn { padding: 4px 8px; }
+:root[data-theme^="shadcn"] .list-item .sidebar-action-icon,
+:root[data-theme^="shadcn"] .list-item svg { width: 16px; height: 16px; }
+/* Section spacing: add the group gap on the section CONTAINER, not the centered
+   label span inside the fixed-height flex header (margin-top there shoved the
+   label below its sibling sort/manage buttons + notif-dot). */
+:root[data-theme^="shadcn"] .section { margin-top: 12px; }
+:root[data-theme^="shadcn"] .section-title { margin-top: 0; }
+/* Section-header hover: base uses color-mix(var(--red) 8%) → blue tint in Codex
+   (--red is remapped to the accent). Match the neutral row hover used everywhere
+   else in the sidebar. */
+:root[data-theme^="shadcn"] .section-header-flex:hover { background: var(--shad-hover); }
+
+/* NOTE: there are NO injected "traffic lights" in the CSS/JS — that comment was
+   stale. The in-sidebar #sidebar-toggle-btn is already hidden by the base rule
+   (.sidebar-hamburger { display:none !important } in style.css:541-542, since the
+   external #hamburger-btn is the only toggle), so this override is redundant but
+   harmless. The element that actually overlapped #sidebar-new-chat-btn is the
+   GLOBAL fixed #hamburger-btn — handled by the .sidebar-inner padding-top:44px
+   rule (see "Polish v4" block below). */
+:root[data-theme^="shadcn"] #sidebar-toggle-btn { display: none !important; }
+
+/* Project/chat folder headers read as normal rows, not bold mini-headings */
+:root[data-theme^="shadcn"] .session-folder-header {
+  font-size: 13px; font-weight: 400; color: var(--shad-item-fg);
+  padding: 4px 8px; border-radius: 6px; gap: 8px;
+}
+:root[data-theme^="shadcn"] .session-folder-header:hover { background: var(--shad-hover); color: var(--fg); }
+:root[data-theme^="shadcn"] .folder-toggle { color: var(--shad-section-fg); }
+:root[data-theme^="shadcn"] .session-folder-content .list-item { padding-left: 24px; border-bottom: none; }
+
+/* Relative timestamps on session rows (node wired in sessions.js; inert if absent),
+   and reveal the row menu only on hover (Codex behaviour) */
+:root[data-theme^="shadcn"] .session-time {
+  margin-left: auto; font-size: 11px; color: var(--shad-time-fg); flex: 0 0 auto; padding-left: 8px;
+}
+:root[data-theme^="shadcn"] .session-item .session-menu-btn { opacity: 0; }
+:root[data-theme^="shadcn"] .session-item:hover .session-menu-btn { opacity: 1; }
+
+/* Composer — Codex width (~720px) */
+:root[data-theme^="shadcn"] .chat-input-bar { max-width: 720px; }
+:root[data-theme^="shadcn"] .chat-history { --chat-max: 760px; }
+
+/* Subtle radial vignette behind the welcome composer (dark only) */
+:root[data-theme="shadcn"] .chat-container.welcome-active {
+  background: radial-gradient(120% 80% at 50% 42%, #1e1e1e 0%, #191919 70%);
+}
+
+/* User bar at sidebar bottom — Codex "Settings" row sizing */
+:root[data-theme^="shadcn"] .sidebar-user-bar { padding: 6px 8px; min-height: 40px; border-top: none; }
+:root[data-theme^="shadcn"] .user-bar-name { font-size: 13px; color: var(--shad-item-fg); }
+:root[data-theme^="shadcn"] .user-bar-btn { color: var(--shad-icon); opacity: 1; }
+:root[data-theme^="shadcn"] .user-bar-btn:hover { color: var(--fg); background: var(--shad-hover); opacity: 1; }
+:root[data-theme^="shadcn"] .user-bar-btn svg { width: 16px; height: 16px; }
+
+/* Collapsed icon-rail: base .icon-rail-btn paints icons in var(--accent) (blue).
+   Match the expanded sidebar's neutral grey icons; keep the accent-tint hover/active
+   bg from the base rule for the affordance. */
+:root[data-theme^="shadcn"] .icon-rail-btn { color: var(--shad-icon); }
+:root[data-theme^="shadcn"] .icon-rail-btn:hover { color: var(--fg); }
+:root[data-theme^="shadcn"] .icon-rail-btn.active-section { color: var(--fg); }
+
+/* Codex home: the top bar is empty on a new chat (chat title appears only once
+   a conversation exists) — hide the centered "New Chat" meta on welcome. */
+:root[data-theme^="shadcn"] .chat-container.welcome-active .chat-top-bar { display: none !important; }
+/* Slightly looser sidebar rhythm to match Codex */
+:root[data-theme^="shadcn"] .sidebar-inner { gap: 1px; }
+:root[data-theme^="shadcn"] .list-item { min-height: 32px; }
+
+
+/* Modal SHELL polish — soft shadow + clipped corners so the header hairline and
+   tab underline meet the 16px corner cleanly. Extends the L386 surface rule;
+   does NOT redefine background/border already set there. */
+:root[data-theme^="shadcn"] .modal-content,
+:root[data-theme^="shadcn"] .settings-modal-content,
+:root[data-theme^="shadcn"] .doclib-modal-content,
+:root[data-theme^="shadcn"] .gallery-modal-content,
+:root[data-theme^="shadcn"] .research-pane {
+  box-shadow: var(--shad-shadow-pop);
+  overflow: hidden;
+}
+/* dimmed scrim behind centered modals — skip side-docked tool windows,
+   which coexist with a readable chat (matches base .modal background:none
+   intent and the docked .notes-pane-backdrop transparent pattern). */
+:root[data-theme^="shadcn"] .modal:not(.hidden):not(.modal-right-docked):not(.modal-left-docked) {
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+}
+
+/* Modal/pane HEADER bar — quiet Codex chrome: hairline divider, tight padding. */
+:root[data-theme^="shadcn"] .modal-header,
+:root[data-theme^="shadcn"] .research-pane-header,
+:root[data-theme^="shadcn"] .notes-pane-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--shad-border-soft);
+  background: transparent;
+  min-height: 0;
+}
+:root[data-theme^="shadcn"] .modal-header h4,
+:root[data-theme^="shadcn"] .research-pane-header h4,
+:root[data-theme^="shadcn"] .notes-pane-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.2;
+}
+/* subtitle counts ("0 photos", "2 documents") read as quiet metadata */
+:root[data-theme^="shadcn"] .modal-header h4 .memory-count,
+:root[data-theme^="shadcn"] .research-pane-header h4 .memory-count,
+:root[data-theme^="shadcn"] .memory-count {
+  color: var(--shad-faint);
+  font-weight: 400;
+  opacity: 1;
+  letter-spacing: 0;
+}
+/* header action cluster sits flush-right with even spacing */
+:root[data-theme^="shadcn"] .research-pane-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* In-pane TAB BAR — Codex quiet underline tabs (Brain/Tasks/Gallery/Cookbook/Library).
+   CONFLICT RESOLVED: the native markup (style.css L10108) gives every *-tab a
+   `border-bottom: 2px solid transparent` whose color becomes accent on .active.
+   The modal-pane spec proposed a SECOND ::after underline → would double-line.
+   We adopt the native border-bottom mechanism (one underline), unify all four
+   families, and override the base `opacity:0.5`. */
+:root[data-theme^="shadcn"] .memory-tabs,
+:root[data-theme^="shadcn"] .gallery-tabs,
+:root[data-theme^="shadcn"] .cookbook-tabs,
+:root[data-theme^="shadcn"] .lib-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--shad-border-soft);
+  background: transparent;
+}
+:root[data-theme^="shadcn"] .memory-tab,
+:root[data-theme^="shadcn"] .gallery-tab,
+:root[data-theme^="shadcn"] .cookbook-tab,
+:root[data-theme^="shadcn"] .lib-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 9px 10px;
+  margin: 0;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;   /* the active underline track */
+  border-radius: 0;
+  color: var(--shad-muted);
+  opacity: 1;                              /* override .memory-tab base opacity:0.5 */
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  box-shadow: none;
+  transition: color .12s ease, border-color .12s ease;
+}
+:root[data-theme^="shadcn"] .memory-tab:hover,
+:root[data-theme^="shadcn"] .gallery-tab:hover,
+:root[data-theme^="shadcn"] .cookbook-tab:hover,
+:root[data-theme^="shadcn"] .lib-tab:hover {
+  color: var(--shad-item-fg);
+  opacity: 1;
+  background: transparent;                 /* drop the base fg-5% hover fill */
+}
+:root[data-theme^="shadcn"] .memory-tab.active,
+:root[data-theme^="shadcn"] .gallery-tab.active,
+:root[data-theme^="shadcn"] .cookbook-tab.active,
+:root[data-theme^="shadcn"] .lib-tab.active {
+  color: var(--shad-accent);
+  opacity: 1;
+  background: transparent;
+  border-bottom-color: var(--shad-accent);
+}
+/* tab icons inherit the muted/accent label color (not hard white) */
+:root[data-theme^="shadcn"] .gallery-tab .gallery-tab-icon svg,
+:root[data-theme^="shadcn"] .memory-tab svg,
+:root[data-theme^="shadcn"] .cookbook-tab svg,
+:root[data-theme^="shadcn"] .lib-tab svg { opacity: .9; }
+/* in-tab badges (counts / error dots) stay subtle */
+:root[data-theme^="shadcn"] .cookbook-tab .cookbook-tab-count,
+:root[data-theme^="shadcn"] .memory-tab .memory-count { color: var(--shad-faint); font-weight: 400; }
+/* gallery Edit-tab close affordance — quiet ghost */
+:root[data-theme^="shadcn"] .gallery-tab-close { color: var(--shad-faint); border-radius: 4px; }
+:root[data-theme^="shadcn"] .gallery-tab-close:hover { color: var(--fg); background: var(--shad-hover); }
+
+/* Calendar view-toggle — Codex segmented control (shared surface-3 track,
+   raised surface-4 active segment). */
+:root[data-theme^="shadcn"] .cal-view-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--shad-surface-3);
+  border: 1px solid var(--shad-border-soft);
+}
+:root[data-theme^="shadcn"] .cal-view-btn {
+  padding: 4px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--shad-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease;
+}
+:root[data-theme^="shadcn"] .cal-view-btn:hover { color: var(--shad-item-fg); }
+:root[data-theme^="shadcn"] .cal-view-btn.active {
+  background: var(--shad-surface-4);
+  color: var(--fg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+/* Pane section descriptions + admin-card seams — quiet body text. */
+:root[data-theme^="shadcn"] .memory-desc,
+:root[data-theme^="shadcn"] .doclib-desc {
+  color: var(--shad-muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+:root[data-theme^="shadcn"] .memory-desc a,
+:root[data-theme^="shadcn"] .doclib-desc a { color: var(--shad-accent); text-decoration: none; }
+:root[data-theme^="shadcn"] .memory-desc a:hover,
+:root[data-theme^="shadcn"] .doclib-desc a:hover { text-decoration: underline; }
+
+
+/* ═════════════ LISTS · ROWS · BADGES · CHIPS · SEARCH ════════════════════ */
+
+/* Search fields — softer rounded field, subtle fill, calm accent focus ring.
+   .memory-search-input = Tasks/Notes/Chats-library/Doclib; .gallery-search = Gallery. */
+:root[data-theme^="shadcn"] .memory-search-input,
+:root[data-theme^="shadcn"] .gallery-search {
+  background: var(--shad-input-bg);
+  border: 1px solid var(--shad-border-soft);
+  border-radius: 9px;
+  color: var(--fg);
+  transition: border-color .14s ease, box-shadow .14s ease, background .14s ease;
+}
+:root[data-theme^="shadcn"] .memory-search-input::placeholder,
+:root[data-theme^="shadcn"] .gallery-search::placeholder { color: var(--shad-faint); }
+:root[data-theme^="shadcn"] .memory-search-input:hover,
+:root[data-theme^="shadcn"] .gallery-search:hover { border-color: var(--shad-border); }
+:root[data-theme^="shadcn"] .memory-search-input:focus,
+:root[data-theme^="shadcn"] .gallery-search:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--shad-accent) 60%, var(--shad-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--shad-accent) 18%, transparent);
+}
+:root[data-theme^="shadcn"] .gallery-search-wrap { overflow: visible; }
+
+/* Filter CHIPS — flat, fully-rounded, muted idle; active = accent-tint fill +
+   hairline accent border. CONFLICT RESOLVED: modal-pane gave .memory-cat-chip a
+   surface-3 idle fill, lists gave transparent. We adopt TRANSPARENT idle so the
+   chip matches its siblings .gallery-chip / .notes-label-chip, and fold in the
+   modal-pane 4px-11px padding + .research-cat / .research-category-row grouping. */
+:root[data-theme^="shadcn"] .research-category-row { display: flex; gap: 4px; flex-wrap: wrap; }
+:root[data-theme^="shadcn"] .memory-cat-chip,
+:root[data-theme^="shadcn"] .research-cat,
+:root[data-theme^="shadcn"] .gallery-chip {
+  padding: 4px 11px;
+  background: transparent;
+  border: 1px solid var(--shad-border-soft);
+  color: var(--shad-muted);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background .14s ease, border-color .14s ease, color .14s ease;
+}
+:root[data-theme^="shadcn"] .memory-cat-chip:hover,
+:root[data-theme^="shadcn"] .research-cat:hover,
+:root[data-theme^="shadcn"] .gallery-chip:hover {
+  background: var(--shad-hover);
+  border-color: var(--shad-border);
+  color: var(--shad-item-fg);
+}
+:root[data-theme^="shadcn"] .memory-cat-chip.active,
+:root[data-theme^="shadcn"] .research-cat.active,
+:root[data-theme^="shadcn"] .gallery-chip.active {
+  background: color-mix(in srgb, var(--shad-accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--shad-accent) 45%, transparent);
+  color: color-mix(in srgb, var(--shad-accent) 78%, var(--fg));
+  font-weight: 550;
+}
+/* Favorites heart chip + active-tag indicator — same accent-tint family. */
+:root[data-theme^="shadcn"] .gallery-chip-fav { color: var(--shad-muted); }
+:root[data-theme^="shadcn"] .gallery-chip-fav.active {
+  color: color-mix(in srgb, var(--shad-accent) 78%, var(--fg));
+  background: color-mix(in srgb, var(--shad-accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--shad-accent) 45%, transparent);
+}
+:root[data-theme^="shadcn"] .gallery-chip-active-album {
+  background: color-mix(in srgb, var(--shad-accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--shad-accent) 40%, transparent);
+}
+/* Notes label chips inherit the same pill system. */
+:root[data-theme^="shadcn"] .notes-label-chip {
+  border: 1px solid var(--shad-border-soft);
+  color: var(--shad-muted);
+  border-radius: 999px;
+  transition: background .14s ease, border-color .14s ease, color .14s ease;
+}
+:root[data-theme^="shadcn"] .notes-label-chip:hover {
+  color: var(--shad-item-fg);
+  background: var(--shad-hover);
+  border-color: color-mix(in srgb, var(--shad-accent) 35%, var(--shad-border));
+}
+/* chip-row rhythm on the 4/6px grid */
+:root[data-theme^="shadcn"] .memory-category-filters,
+:root[data-theme^="shadcn"] .tasks-activity-filters { gap: 6px; }
+
+/* List ROWS — surface-3 tier, hairline soft border, quiet hover lift (no hue shift).
+   .memory-item covers .task-card; .doclib-card covers Chats/Documents/Research/Archive. */
+:root[data-theme^="shadcn"] .memory-item,
+:root[data-theme^="shadcn"] .doclib-card {
+  background: var(--shad-surface-3);
+  border: 1px solid var(--shad-border-soft);
+  border-radius: 10px;
+  transition: background .14s ease, border-color .14s ease;
+}
+:root[data-theme^="shadcn"] .memory-item:hover,
+:root[data-theme^="shadcn"] .doclib-card:hover {
+  background: var(--shad-surface-4);
+  border-color: var(--shad-border);
+}
+/* Paused task rows: Codex dims rather than stripes — kill the barber-pole. */
+:root[data-theme^="shadcn"] .memory-item.task-paused {
+  background: var(--shad-surface-2) !important;
+  filter: none;
+  opacity: 0.6 !important;
+}
+:root[data-theme^="shadcn"] .memory-item.task-paused:hover { opacity: 0.9 !important; }
+/* Gallery tiles: hairline border + accent ring on hover. */
+:root[data-theme^="shadcn"] .gallery-card {
+  border: 1px solid var(--shad-border-soft);
+  border-radius: 10px;
+}
+:root[data-theme^="shadcn"] .gallery-card:hover {
+  border-color: color-mix(in srgb, var(--shad-accent) 45%, var(--shad-border));
+  /* neutralize the base blue glow (box-shadow uses var(--red)=accent) so gallery
+     tiles hover as quietly as the other codex cards; keep a faint neutral lift */
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+/* Status BADGES — restrained colors: active=teal, paused=amber, built-in/run-now=accent. */
+:root[data-theme^="shadcn"] .task-status-badge,
+:root[data-theme^="shadcn"] .task-builtin-badge {
+  border-radius: 6px;
+  letter-spacing: 0.4px;
+  font-family: var(--font-mono);
+}
+:root[data-theme^="shadcn"] .task-active-badge {
+  color: var(--shad-green);
+  background: color-mix(in srgb, var(--shad-green) 16%, transparent);
+  border-color: color-mix(in srgb, var(--shad-green) 38%, transparent);
+}
+:root[data-theme^="shadcn"] .task-active-badge:hover {
+  background: color-mix(in srgb, var(--shad-green) 24%, transparent);
+  border-color: color-mix(in srgb, var(--shad-green) 52%, transparent);
+}
+:root[data-theme^="shadcn"] .task-paused-badge {
+  color: var(--shad-amber);
+  background: var(--shad-amber-soft);
+  border-color: color-mix(in srgb, var(--shad-amber) 38%, transparent);
+}
+:root[data-theme^="shadcn"] .task-paused-badge:hover {
+  background: color-mix(in srgb, var(--shad-amber) 26%, transparent);
+  border-color: color-mix(in srgb, var(--shad-amber) 52%, transparent);
+}
+:root[data-theme^="shadcn"] .task-builtin-badge {
+  color: color-mix(in srgb, var(--shad-accent) 85%, var(--fg));
+  background: color-mix(in srgb, var(--shad-accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--shad-accent) 42%, transparent);
+}
+:root[data-theme^="shadcn"] .task-builtin-badge.modified {
+  color: var(--shad-amber);
+  background: var(--shad-amber-soft);
+  border-color: color-mix(in srgb, var(--shad-amber) 42%, transparent);
+}
+:root[data-theme^="shadcn"] .task-run-now-badge {
+  color: color-mix(in srgb, var(--shad-accent) 88%, var(--fg));
+  background: color-mix(in srgb, var(--shad-accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--shad-accent) 40%, transparent);
+}
+:root[data-theme^="shadcn"] .task-run-now-badge:hover {
+  background: color-mix(in srgb, var(--shad-accent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--shad-accent) 55%, transparent);
+}
+
+/* Toolbar SEGMENT / Select toggle buttons — soft border, muted label, accent-tint
+   when toggled. CONFLICT RESOLVED: modal-pane (14%/42%) vs lists (16%/45%) active
+   tint → unified to 16%/45% (matches the chip active state above). */
+:root[data-theme^="shadcn"] .memory-toolbar-btn,
+:root[data-theme^="shadcn"] .gallery-select-btn {
+  background: var(--shad-surface-3);
+  border: 1px solid var(--shad-border-soft);
+  color: var(--shad-muted);
+  border-radius: 8px;
+  opacity: 1;
+  font-size: 12px;
+  font-weight: 500;
+  transition: background .14s ease, border-color .14s ease, color .14s ease;
+}
+:root[data-theme^="shadcn"] .memory-toolbar-btn:hover,
+:root[data-theme^="shadcn"] .gallery-select-btn:hover {
+  background: var(--shad-surface-4);
+  border-color: var(--shad-border);
+  color: var(--shad-item-fg);
+  opacity: 1;
+}
+:root[data-theme^="shadcn"] .memory-toolbar-btn.active,
+:root[data-theme^="shadcn"] .gallery-select-btn.active {
+  background: color-mix(in srgb, var(--shad-accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--shad-accent) 45%, transparent);
+  color: color-mix(in srgb, var(--shad-accent) 80%, var(--fg));
+  font-weight: 550;
+}
+
+
+/* ═══════════ SETTINGS · FORMS · TABLES · BUTTONS · INPUTS ════════════════ */
+
+/* Settings cards — extend the L400 .admin-card rule with rhythm + header weight.
+   CONFLICT RESOLVED: both this cluster and modal-pane styled .admin-card h2;
+   merged into one h2 rule (hairline seam + 13–14px heading + fg-strong). */
+:root[data-theme^="shadcn"] .admin-card {
+  padding: 16px;
+  margin-bottom: 12px;
+}
+:root[data-theme^="shadcn"] .admin-card h2 {
+  font-size: 14px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom-color: var(--shad-border-soft);
+  color: var(--shad-fg-strong);
+}
+:root[data-theme^="shadcn"] .admin-card > h2 > svg { opacity: 0.6; color: var(--shad-icon); }
+:root[data-theme^="shadcn"] .admin-toggle-sub { color: var(--shad-muted); font-size: 11.5px; }
+:root[data-theme^="shadcn"] .admin-toggle-label { color: var(--fg); font-weight: 500; }
+:root[data-theme^="shadcn"] .admin-card.admin-danger-card {
+  border-color: color-mix(in srgb, var(--shad-red) 38%, transparent);
+}
+:root[data-theme^="shadcn"] .adm-ep-section-head { color: var(--shad-muted); opacity: 1; letter-spacing: 0.05em; }
+
+/* Form rows + labels + selects/inputs (AI Defaults, Search, Reminders, Add-Models). */
+:root[data-theme^="shadcn"] .settings-label { color: var(--shad-muted); font-weight: 500; }
+:root[data-theme^="shadcn"] .settings-select,
+:root[data-theme^="shadcn"] .admin-model-form input,
+:root[data-theme^="shadcn"] .admin-model-form select,
+:root[data-theme^="shadcn"] .admin-add-form input {
+  background: var(--shad-input-bg);
+  border: 1px solid var(--shad-border);
+  border-radius: 8px;
+  color: var(--fg);
+}
+:root[data-theme^="shadcn"] .settings-select:focus,
+:root[data-theme^="shadcn"] .admin-model-form input:focus,
+:root[data-theme^="shadcn"] .admin-model-form select:focus,
+:root[data-theme^="shadcn"] .admin-add-form input:focus {
+  border-color: var(--shad-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--shad-accent) 45%, transparent);
+  outline: none;
+}
+/* native select caret → Codex chevron (selects use appearance:none) */
+:root[data-theme^="shadcn"] .settings-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237d7d7d' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 26px;
+}
+:root[data-theme^="shadcn"] .adm-fused-group > select { border-radius: 8px 0 0 8px; }
+:root[data-theme^="shadcn"] .adm-fused-group > input  { border-radius: 0 8px 8px 0; }
+
+/* Provider combo picker (Add API Models). */
+:root[data-theme^="shadcn"] .adm-provider-btn {
+  background: var(--shad-input-bg);
+  border: 1px solid var(--shad-border);
+  border-radius: 8px;
+  color: var(--fg);
+}
+:root[data-theme^="shadcn"] .adm-provider-combo .adm-provider-btn { border-radius: 8px 0 0 8px; }
+:root[data-theme^="shadcn"] .adm-provider-btn:hover { border-color: var(--shad-accent); background: var(--shad-hover); }
+:root[data-theme^="shadcn"] .adm-provider-name { color: var(--fg); }
+:root[data-theme^="shadcn"] .adm-provider-menu {
+  background: var(--shad-popover);
+  border: 1px solid var(--shad-popover-border);
+  border-radius: 10px;
+  box-shadow: var(--shad-shadow-pop);
+}
+
+/* Buttons — primary (accent) / secondary (neutral chip) / danger (red ghost). */
+:root[data-theme^="shadcn"] .admin-btn-add,
+:root[data-theme^="shadcn"] .confirm-btn-primary {
+  background: var(--shad-accent);
+  border: 1px solid var(--shad-accent);
+  color: #fff;
+  border-radius: 8px;
+  font-weight: 600;
+}
+:root[data-theme^="shadcn"] .admin-btn-add:hover,
+:root[data-theme^="shadcn"] .confirm-btn-primary:hover {
+  background: var(--shad-accent-hover);
+  border-color: var(--shad-accent-hover);
+  filter: none;
+}
+:root[data-theme^="shadcn"] .admin-btn-add:disabled { opacity: 0.45; }
+:root[data-theme^="shadcn"] .admin-btn-sm,
+:root[data-theme^="shadcn"] .confirm-btn-secondary {
+  background: var(--shad-btn-secondary-bg);
+  border: 1px solid var(--shad-border-soft);
+  color: var(--shad-item-fg);
+  border-radius: 8px;
+}
+:root[data-theme^="shadcn"] .admin-btn-sm:hover,
+:root[data-theme^="shadcn"] .confirm-btn-secondary:hover {
+  background: var(--shad-btn-secondary-hover);
+  border-color: var(--shad-border);
+  color: var(--fg);
+}
+:root[data-theme^="shadcn"] .admin-btn-sm.adm-more-item { background: none; border: 0; color: var(--shad-item-fg); }
+:root[data-theme^="shadcn"] .admin-btn-sm.adm-more-item:hover { background: var(--shad-popover-hover); border: 0; }
+:root[data-theme^="shadcn"] .admin-btn-delete,
+:root[data-theme^="shadcn"] .confirm-btn-danger {
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--shad-red) 45%, transparent);
+  color: var(--shad-red);
+  border-radius: 8px;
+}
+:root[data-theme^="shadcn"] .admin-btn-delete:hover,
+:root[data-theme^="shadcn"] .confirm-btn-danger:hover {
+  background: var(--shad-red);
+  border-color: var(--shad-red);
+  color: #fff;
+}
+:root[data-theme^="shadcn"] .settings-fallback-add {
+  border: 1px dashed var(--shad-border);
+  border-radius: 8px;
+  color: var(--shad-muted);
+  background: transparent;
+}
+:root[data-theme^="shadcn"] .settings-fallback-add:hover { border-color: var(--shad-accent); color: var(--shad-accent); }
+:root[data-theme^="shadcn"] .adm-section-toggle {
+  border: 1px solid var(--shad-border-soft);
+  border-radius: 8px;
+  background: var(--shad-surface-3);
+}
+:root[data-theme^="shadcn"] .adm-section-toggle:hover { border-color: var(--shad-accent); background: var(--shad-hover); }
+
+/* Pills/badges (ADMIN, LOCAL/API, "N/N models enabled", disabled). */
+:root[data-theme^="shadcn"] .admin-badge {
+  background: var(--shad-badge-bg);
+  color: var(--shad-accent);
+  border-radius: 6px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+:root[data-theme^="shadcn"] .admin-badge.admin-badge-off {
+  background: color-mix(in srgb, var(--shad-red) 20%, transparent);
+  color: var(--shad-red);
+}
+
+/* User rows + endpoint rows (both use .admin-user-row). */
+:root[data-theme^="shadcn"] .admin-user-row {
+  background: var(--shad-surface-3);
+  border: 1px solid var(--shad-border-soft);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+}
+:root[data-theme^="shadcn"] .admin-user-row:hover {
+  border-color: color-mix(in srgb, var(--shad-accent) 40%, var(--shad-border));
+}
+:root[data-theme^="shadcn"] .admin-user-name,
+:root[data-theme^="shadcn"] .admin-ep-name { color: var(--fg); font-weight: 500; }
+:root[data-theme^="shadcn"] .admin-ep-detail { color: var(--shad-muted); }
+:root[data-theme^="shadcn"] .admin-user-chevron { color: var(--shad-icon); }
+:root[data-theme^="shadcn"] .admin-ep-copy-btn { color: var(--shad-muted); }
+:root[data-theme^="shadcn"] .admin-ep-copy-btn:hover { color: var(--fg); }
+:root[data-theme^="shadcn"] .admin-empty { color: var(--shad-faint); }
+:root[data-theme^="shadcn"] .adm-ep-inline-msg { color: var(--shad-muted); }
+:root[data-theme^="shadcn"] .admin-switch-inline { color: var(--shad-muted); }
+:root[data-theme^="shadcn"] .admin-toggle-state { color: var(--shad-muted); font-size: 11px; }
+:root[data-theme^="shadcn"] .admin-user-row.admin-ep-disabled { opacity: 0.55; }
+
+
+/* ═══════════════ MENUS · TOOLTIPS · TOGGLES · CONTROLS ═══════════════════ */
+
+/* First-open coachmark chip (.tour-hint family). */
+:root[data-theme^="shadcn"] .tour-hint {
+  background: var(--shad-tooltip-bg);
+  color: var(--shad-tooltip-fg);
+  border: 1px solid var(--shad-tooltip-border);
+  border-radius: 10px;
+  padding: 11px 13px 9px;
+  width: 248px;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  box-shadow: var(--shad-shadow-pop);
+}
+:root[data-theme^="shadcn"] .tour-hint-text { opacity: 1; color: var(--shad-item-fg); }
+:root[data-theme^="shadcn"] .tour-hint-text b { color: var(--shad-accent); font-weight: 600; }
+:root[data-theme^="shadcn"] .tour-hint-visual { color: var(--shad-accent); }
+:root[data-theme^="shadcn"] .tour-hint-dismiss {
+  background: var(--shad-surface-4);
+  border: 1px solid var(--shad-border-soft);
+  color: var(--shad-item-fg);
+  border-radius: 7px;
+  padding: 4px 13px;
+  font-size: 0.72rem;
+  opacity: 1;
+  transition: background .12s, color .12s;
+}
+:root[data-theme^="shadcn"] .tour-hint-dismiss:hover { background: var(--shad-popover-hover); color: var(--fg); }
+
+/* Guided-tour stepper tooltip (#tour-tooltip + arrow + nav). id+theme specificity
+   overrides the inline <style id="tour-styles"> injected by slashCommands.js. */
+:root[data-theme^="shadcn"] #tour-tooltip {
+  background: var(--shad-tooltip-bg);
+  color: var(--shad-tooltip-fg);
+  border: 1px solid var(--shad-tooltip-border);
+  border-radius: 10px;
+  padding: 11px 13px;
+  max-width: 280px;
+  font-size: 0.8rem;
+  box-shadow: var(--shad-shadow-pop);
+}
+:root[data-theme^="shadcn"] #tour-tooltip .tour-text { opacity: 1; color: var(--shad-item-fg); }
+:root[data-theme^="shadcn"] #tour-tooltip .tour-text b { color: var(--shad-accent); font-weight: 600; }
+:root[data-theme^="shadcn"] .tour-arrow {
+  background: var(--shad-tooltip-bg);
+  border: 1px solid var(--shad-tooltip-border);
+}
+:root[data-theme^="shadcn"] .tour-nav button {
+  border: 1px solid var(--shad-border-soft);
+  color: var(--shad-item-fg);
+  border-radius: 7px;
+  transition: background .12s, color .12s, border-color .12s;
+}
+:root[data-theme^="shadcn"] .tour-nav button:hover { background: var(--shad-popover-hover); color: var(--fg); }
+:root[data-theme^="shadcn"] .tour-btn-skip { color: var(--shad-faint); }
+:root[data-theme^="shadcn"] .tour-btn-skip:hover { color: var(--shad-muted); }
+:root[data-theme^="shadcn"] .tour-btn-arrow { color: var(--shad-muted); }
+:root[data-theme^="shadcn"] .tour-btn-arrow:hover { color: var(--fg); }
+:root[data-theme^="shadcn"] .tour-btn-arrow-pulse { color: var(--shad-accent); border-color: var(--shad-accent); }
+
+/* Model-picker dropdown list polish (cx02). The popover shell + hover are already
+   styled at L352/L370; this only fixes row radius, section-label casing, search row. */
+:root[data-theme^="shadcn"] .model-picker-list .model-switch-item {
+  border-radius: 7px;
+  padding: 6px 9px;
+  color: var(--shad-item-fg);
+}
+:root[data-theme^="shadcn"] .model-picker-list .mp-section-label {
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 1;
+  color: var(--shad-muted);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 7px 9px 3px;
+}
+:root[data-theme^="shadcn"] .model-picker-list .model-switch-item .model-switch-ep { color: var(--shad-faint); opacity: 1; }
+:root[data-theme^="shadcn"] .model-picker-list .mp-provider-header { border-radius: 7px; }
+:root[data-theme^="shadcn"] .model-picker-list .mp-provider-header:hover { background: var(--shad-popover-hover); }
+:root[data-theme^="shadcn"] .model-picker-list .mp-provider-chevron { color: var(--shad-faint); }
+:root[data-theme^="shadcn"] .model-picker-search-row input,
+:root[data-theme^="shadcn"] #model-picker-search {
+  background: var(--shad-input-bg);
+  border: 1px solid var(--shad-border-soft);
+  border-radius: 8px;
+  color: var(--fg);
+  padding: 7px 9px;
+}
+:root[data-theme^="shadcn"] .model-picker-search-row input::placeholder { color: var(--shad-faint); }
+:root[data-theme^="shadcn"] .model-picker-search-row input:focus,
+:root[data-theme^="shadcn"] #model-picker-search:focus { border-color: var(--shad-accent); outline: none; }
+:root[data-theme^="shadcn"] .model-picker-action-btn {
+  background: var(--shad-surface-4);
+  border: 1px solid var(--shad-border-soft);
+  border-radius: 8px;
+  color: var(--shad-muted);
+  transition: background .12s, color .12s, border-color .12s;
+}
+:root[data-theme^="shadcn"] .model-picker-action-btn:hover { background: var(--shad-popover-hover); color: var(--fg); border-color: var(--shad-divider); }
+:root[data-theme^="shadcn"] .model-picker-action-btn.primary:hover { color: var(--shad-accent); }
+
+/* Composer overflow "+" menu — no ARIA role, so it falls through the generic
+   [role=menu] popover rule; give it the Codex shell explicitly. */
+:root[data-theme^="shadcn"] .overflow-menu {
+  background: var(--shad-popover);
+  border: 1px solid var(--shad-popover-border);
+  border-radius: 10px;
+  box-shadow: var(--shad-shadow-pop);
+  padding: 4px;
+}
+:root[data-theme^="shadcn"] .overflow-menu-item {
+  border-radius: 7px;
+  padding: 7px 9px;
+  color: var(--shad-item-fg);
+  gap: 9px;
+  transition: background .12s, color .12s;
+}
+:root[data-theme^="shadcn"] .overflow-menu-item:hover { background: var(--shad-popover-hover); color: var(--fg); }
+:root[data-theme^="shadcn"] .overflow-menu-item svg { color: var(--shad-icon); }
+:root[data-theme^="shadcn"] .overflow-menu-item .overflow-active-dot { background: var(--shad-accent); }
+
+/* Composer control row. NOTE: .mode-toggle / .mode-toggle-btn.active are already
+   set at L323/L331; this ADDS only the active box-shadow + letter-spacing and the
+   .send-btn.newchat-mode variant (which style.css re-tints blue) → snap it back to
+   the Codex primary chip. */
+:root[data-theme^="shadcn"] .mode-toggle-btn { font-weight: 500; letter-spacing: -0.01em; }
+:root[data-theme^="shadcn"] .mode-toggle-btn.active { box-shadow: 0 1px 2px rgba(0, 0, 0, .28); }
+:root[data-theme="shadcn-light"] .mode-toggle-btn.active { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
+:root[data-theme^="shadcn"] .send-btn.newchat-mode {
+  background: var(--shad-primary-bg);
+  color: var(--shad-primary-fg);
+  border: none;
+}
+:root[data-theme^="shadcn"] .send-btn.newchat-mode:hover { background: var(--shad-primary-bg-hover); color: var(--shad-primary-fg); }
+:root[data-theme^="shadcn"] .send-btn.newchat-mode svg { stroke: var(--shad-primary-fg); }
+:root[data-theme^="shadcn"] .send-btn-label { font-weight: 500; letter-spacing: 0.2px; color: var(--shad-primary-fg); }
+
+
+/* ═══════════════════════════ CONVERSATION ═══════════════════════════════ */
+
+/* Assistant reading rhythm — comfortable line-height, restrained heading scale. */
+:root[data-theme^="shadcn"] .msg-ai .body {
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--fg);
+}
+:root[data-theme^="shadcn"] .msg-ai .body > * { margin-top: 12px; margin-bottom: 12px; }
+:root[data-theme^="shadcn"] .msg-ai .body > *:first-child { margin-top: 0; }
+:root[data-theme^="shadcn"] .msg-ai .body > *:last-child { margin-bottom: 0; }
+:root[data-theme^="shadcn"] .msg-ai .body h1,
+:root[data-theme^="shadcn"] .msg-ai .body h2,
+:root[data-theme^="shadcn"] .msg-ai .body h3 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  margin-top: 20px;
+  margin-bottom: 8px;
+}
+:root[data-theme^="shadcn"] .msg-ai .body h1 { font-size: 1.4em; }
+:root[data-theme^="shadcn"] .msg-ai .body h2 { font-size: 1.22em; }
+:root[data-theme^="shadcn"] .msg-ai .body h3 { font-size: 1.08em; }
+:root[data-theme^="shadcn"] .msg-ai .body p { margin: 12px 0; }
+:root[data-theme^="shadcn"] .msg-user .body { font-size: 15px; line-height: 1.5; }
+
+/* Lists + rules — muted markers instead of the app's blue. */
+:root[data-theme^="shadcn"] .msg ul,
+:root[data-theme^="shadcn"] .msg ol { margin: 8px 0 8px 1.4em; }
+:root[data-theme^="shadcn"] .msg li { margin: 4px 0; }
+:root[data-theme^="shadcn"] .msg li::marker { color: var(--shad-muted); }
+:root[data-theme^="shadcn"] .msg hr { background: var(--shad-border-soft); height: 1px; margin: 20px 0; border: 0; }
+
+/* Blockquote — neutral Codex bar (was app default blue --hl-function). */
+:root[data-theme^="shadcn"] .msg blockquote {
+  border-left: 2px solid var(--shad-quote-bar);
+  background: transparent;
+  color: var(--shad-muted);
+  border-radius: 0;
+  padding: 2px 0 2px 14px;
+  margin: 12px 0;
+}
+:root[data-theme^="shadcn"] .msg blockquote p { margin: 4px 0; }
+
+/* Code blocks in conversation — recessed dark card. Refines the generic L465-468
+   pre rule for the in-message context (darker recessed surface + 10px radius). */
+:root[data-theme^="shadcn"] .msg pre {
+  background: var(--shad-code-block-bg);
+  border: 1px solid var(--shad-border-soft);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 12px 0;
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-x: auto;
+}
+:root[data-theme^="shadcn"] .msg pre code { background: transparent; padding: 0; font-size: inherit; }
+:root[data-theme^="shadcn"] .msg pre::-webkit-scrollbar { height: 8px; }
+:root[data-theme^="shadcn"] .msg pre::-webkit-scrollbar-thumb { background: var(--shad-scroll); border-radius: 8px; }
+:root[data-theme^="shadcn"] .msg pre::-webkit-scrollbar-track { background: transparent; }
+
+/* Code-block action buttons (.copy-code/.run-code/.edit-code, absolutely positioned
+   inside <pre> by markdown.js). */
+:root[data-theme^="shadcn"] .msg pre .copy-code,
+:root[data-theme^="shadcn"] .msg pre .run-code,
+:root[data-theme^="shadcn"] .msg pre .edit-code {
+  background: var(--shad-surface-4);
+  border: 1px solid var(--shad-border-soft);
+  color: var(--shad-icon);
+  border-radius: 7px;
+  width: 26px;
+  height: 26px;
+}
+:root[data-theme^="shadcn"] .msg pre:hover .copy-code,
+:root[data-theme^="shadcn"] .msg pre:hover .run-code,
+:root[data-theme^="shadcn"] .msg pre:hover .edit-code { opacity: 0.85; }
+:root[data-theme^="shadcn"] .msg pre .copy-code:hover,
+:root[data-theme^="shadcn"] .msg pre .run-code:hover,
+:root[data-theme^="shadcn"] .msg pre .edit-code:hover {
+  opacity: 1;
+  background: var(--shad-popover-hover);
+  color: var(--fg);
+  border-color: var(--shad-border);
+}
+
+/* Reasoning block residual accents (section+header already styled at L521-526). */
+:root[data-theme^="shadcn"] .thinking-toggle,
+:root[data-theme^="shadcn"] .thinking-icon { color: var(--shad-muted); }
+:root[data-theme^="shadcn"] .thinking-content.expanded {
+  background: transparent;
+  border-top: 1px solid var(--shad-border-soft);
+}
+:root[data-theme^="shadcn"] .thinking-content-inner {
+  color: var(--shad-muted);
+  opacity: 1;
+  font-size: 13px;
+  line-height: 1.6;
+}
+:root[data-theme^="shadcn"] .thinking-content.expanded::-webkit-scrollbar { width: 8px; }
+:root[data-theme^="shadcn"] .thinking-content.expanded::-webkit-scrollbar-thumb { background: var(--shad-scroll); border-radius: 8px; }
+
+/* Agent tool-call output — same recessed code surface as .msg pre. */
+:root[data-theme^="shadcn"] .agent-thread-cmd,
+:root[data-theme^="shadcn"] .agent-tool-output pre {
+  background: var(--shad-code-block-bg);
+  border: 1px solid var(--shad-border-soft);
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+:root[data-theme^="shadcn"] .agent-thread-tool { color: var(--shad-item-fg); font-weight: 500; }
+
+/* Message footer + hover actions. */
+:root[data-theme^="shadcn"] .msg-footer .timestamp,
+:root[data-theme^="shadcn"] .msg-footer .response-metrics { color: var(--shad-faint); font-size: 12px; }
+:root[data-theme^="shadcn"] .msg-footer .response-metrics:hover { color: var(--shad-muted); }
+:root[data-theme^="shadcn"] .msg-action-btn {
+  color: var(--shad-icon);
+  border-radius: 7px;
+  background: transparent;
+  border: none;
+}
+:root[data-theme^="shadcn"] .msg-action-btn:hover { background: var(--shad-hover); color: var(--fg); }
+
+/* In-message tables — soft grid, muted header, rounded frame. Complements the
+   generic table border rule at L495-498 by SCOPING to .msg (no global table reflow). */
+:root[data-theme^="shadcn"] .msg table {
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--shad-border-soft);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 13px;
+  margin: 12px 0;
+}
+:root[data-theme^="shadcn"] .msg th {
+  background: var(--shad-surface-3);
+  color: var(--shad-muted);
+  font-weight: 600;
+  text-align: left;
+}
+:root[data-theme^="shadcn"] .msg th,
+:root[data-theme^="shadcn"] .msg td {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--shad-border-soft);
+}
+:root[data-theme^="shadcn"] .msg tr:last-child td { border-bottom: none; }
+
+
+/* ═══════════ DERIVED — codex-light legibility nudges (no light Codex ref) ═══ */
+:root[data-theme="shadcn-light"] .memory-cat-chip.active,
+:root[data-theme="shadcn-light"] .research-cat.active,
+:root[data-theme="shadcn-light"] .gallery-chip.active,
+:root[data-theme="shadcn-light"] .memory-toolbar-btn.active,
+:root[data-theme="shadcn-light"] .gallery-select-btn.active {
+  background: color-mix(in srgb, var(--shad-accent) 12%, #ffffff);
+  color: var(--shad-accent);
+}
+:root[data-theme="shadcn-light"] .cal-view-btn.active { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
+
+/* ── Conversation polish — cleanest thread experience ── */
+/* Bold inherits text color — Odysseus tints <strong>/<b> teal; Codex = weight only. */
+:root[data-theme^="shadcn"] .msg strong,
+:root[data-theme^="shadcn"] .msg b { color: inherit; font-weight: 600; }
+/* User turn: content-width right-aligned pill (short messages stay tight), no "You" label. */
+:root[data-theme^="shadcn"] .msg-user {
+  width: fit-content;
+  max-width: 76%;
+  margin-left: auto;
+  padding: 9px 15px;
+}
+:root[data-theme^="shadcn"] .msg-user .role { display: none; }
+/* User-turn action icons (edit/delete/…) on hover only — keeps the resting bubble tight. */
+:root[data-theme^="shadcn"] .msg-user .msg-footer { display: none; }
+:root[data-theme^="shadcn"] .msg-user:hover .msg-footer { display: flex; justify-content: flex-end; gap: 2px; }
+/* Comfortable rhythm between turns + tighter assistant role→body. */
+:root[data-theme^="shadcn"] .msg + .msg { margin-top: 18px; }
+:root[data-theme^="shadcn"] .msg-ai .role { margin-bottom: 5px; }
+:root[data-theme^="shadcn"] .msg-action-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; }
+
+/* ── Polish v4 (user-flagged) ── */
+/* The codex theme removes .sidebar-header (L526), which in the base layout
+   reserved top/left room for the GLOBAL fixed hamburger (#hamburger-btn:
+   position:fixed; top:12px; left:9px; 30x30 -> bottom edge ~y=42, style.css:607).
+   With only 8px of top padding the first nav row (#sidebar-new-chat-btn
+   "New Chat") slid up underneath that hamburger. Reserve ~44px so it clears.
+   (Collapsed rail already pads 48px via .icon-rail; mobile uses @media rules.) */
+:root[data-theme^="shadcn"] .sidebar-inner { padding-top: 44px; }
+/* Composer must not sit flush against the bottom edge in a conversation
+   (welcome state keeps margin-bottom:0 via the .welcome-active rule). */
+:root[data-theme^="shadcn"] .chat-input-bar { margin-bottom: 14px; }
+/* Agent/Chat segment text vertically centered (was display:block, baseline-aligned). */
+:root[data-theme^="shadcn"] .mode-toggle-btn {
+  display: inline-flex; align-items: center; justify-content: center; line-height: 1;
+}
+/* Sidebar labels inherit the item's 13px (kill any sub-em shrink for consistent sizing). */
+:root[data-theme^="shadcn"] .list-item .grow { font-size: inherit; font-weight: inherit; }
+/* Long chat/session titles ellipsize instead of hard-clipping mid-glyph
+   (base .grow uses text-overflow:clip). */
+:root[data-theme^="shadcn"] .list-item .grow { text-overflow: ellipsis; }
+
+
+/* ============================================================
+   CODEX SKIN — CONSOLIDATED POLISH (append to end)
+   ============================================================ */
+
+/* ---- CORE CHROME ---------------------------------------- */
+
+/* Welcome hero: bump weight/size to match Codex. EDIT IN PLACE at
+   codex.css L238-240 (font-weight:400→500, font-size:1.375rem→1.625rem);
+   appending here works too ONLY because this block is AFTER L242. */
+:root[data-theme^="shadcn"] #welcome-screen .welcome-name {
+  font-size: 1.625rem;
+  font-weight: 500;
+  line-height: 1.25;
+  margin-bottom: 0;
+}
+
+/* Composer control row: cluster left controls, push right cluster to edge.
+   Supersedes the space-between gap from style.css .chat-input-bottom (L2314). */
+:root[data-theme^="shadcn"] .chat-input-left  { flex: 0 1 auto; }
+:root[data-theme^="shadcn"] .chat-input-bottom{ justify-content: flex-start; gap: 8px; }
+:root[data-theme^="shadcn"] .chat-input-right { margin-left: auto; }
+
+/* Composer overflow trigger: swap up-chevron glyph for a "+" via mask. */
+:root[data-theme^="shadcn"] .overflow-plus-btn svg { display: none; }
+:root[data-theme^="shadcn"] .overflow-plus-btn::before {
+  content: ""; width: 16px; height: 16px; color: var(--shad-muted);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M12 5v14M5 12h14'/%3E%3C/svg%3E") center/16px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M12 5v14M5 12h14'/%3E%3C/svg%3E") center/16px no-repeat;
+  background: currentColor;
+}
+
+/* Send button: mute the idle disc; bright tint only for the real "+ New" action.
+   SUPERSEDES the blanket rule at codex.css L1292 (.send-btn.newchat-mode bright).
+   Replace L1292's body with these data-mode-scoped rules. */
+:root[data-theme^="shadcn"] .send-btn.newchat-mode[data-mode="newchat"] {
+  background: var(--shad-primary-bg); color: var(--shad-primary-fg); border: none;
+}
+:root[data-theme^="shadcn"] .send-btn.newchat-mode[data-mode="newchat"]:hover {
+  background: var(--shad-primary-bg-hover); color: var(--shad-primary-fg);
+}
+:root[data-theme^="shadcn"] .send-btn.newchat-mode[data-mode="newchat"] svg { stroke: var(--shad-primary-fg); }
+:root[data-theme^="shadcn"] .send-btn.newchat-mode[data-mode="idle"] {
+  background: var(--shad-surface-3); border: 1px solid var(--shad-border);
+}
+:root[data-theme^="shadcn"] .send-btn.newchat-mode[data-mode="idle"] svg {
+  stroke: var(--shad-icon); color: var(--shad-icon);
+}
+
+/* Sidebar rows: one uniform 8px icon→label gap; kill per-row pixel nudges. */
+:root[data-theme^="shadcn"] .list-item { gap: 8px; }
+:root[data-theme^="shadcn"] .list-item .sidebar-action-icon,
+:root[data-theme^="shadcn"] .list-item .grow { left: 0 !important; }
+
+/* Sidebar notif dot: force codex accent over inline urgency reds; kill the pulse glow. */
+:root[data-theme^="shadcn"] .sidebar-notif-dot { background: var(--shad-accent) !important; box-shadow: none; }
+:root[data-theme^="shadcn"] #email-unread-dot.sidebar-notif-dot { animation: none; box-shadow: none; }
+
+/* ---- PANES (tool windows) ------------------------------- */
+
+/* Search magnifier: kill the baked coral #e06c75 glyph on EVERY search field.
+   ID-scoped variants = (1,3,0) beat style.css (1,1,0); attr variants = (0,4,0)
+   beat source (0,2,0) and codex.css L813 (0,3,0). Gray = #959595 / #8a8a8a. */
+:root[data-theme="shadcn"] #doclib-panel-chats .memory-search-input,
+:root[data-theme="shadcn"] #doclib-panel-archive .memory-search-input,
+:root[data-theme="shadcn"] #doclib-panel-research .memory-search-input,
+:root[data-theme="shadcn"] [data-doclib-panel="documents"] .memory-search-input,
+:root[data-theme="shadcn"] #memory-modal .memory-search-input,
+:root[data-theme="shadcn"] #tasks-modal .memory-search-input,
+:root[data-theme="shadcn"] .notes-search-bar .memory-search-input {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23959595' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='8'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg>");
+  background-repeat: no-repeat; background-position: 9px center; padding-left: 28px;
+}
+:root[data-theme="shadcn-light"] #doclib-panel-chats .memory-search-input,
+:root[data-theme="shadcn-light"] #doclib-panel-archive .memory-search-input,
+:root[data-theme="shadcn-light"] #doclib-panel-research .memory-search-input,
+:root[data-theme="shadcn-light"] [data-doclib-panel="documents"] .memory-search-input,
+:root[data-theme="shadcn-light"] #memory-modal .memory-search-input,
+:root[data-theme="shadcn-light"] #tasks-modal .memory-search-input,
+:root[data-theme="shadcn-light"] .notes-search-bar .memory-search-input {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a8a8a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='8'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg>");
+  background-repeat: no-repeat; background-position: 9px center; padding-left: 28px;
+}
+
+/* Calendar weekday header row: was opacity:0.4 (style.css L34885) → invisible. */
+:root[data-theme^="shadcn"] .cal-weekday {
+  opacity: 1; color: var(--shad-section-fg); background: var(--shad-surface-3);
+  font-weight: 600; letter-spacing: .04em;
+}
+
+/* Calendar bare var(--accent) (undefined) → real focus ring + hover border. */
+:root[data-theme^="shadcn"] .cal-search-input:focus {
+  border-color: var(--shad-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--shad-accent) 18%, transparent);
+}
+:root[data-theme^="shadcn"] button.cal-add-btn.cal-add-btn-text:hover {
+  border-color: color-mix(in srgb, var(--shad-accent) 55%, var(--shad-border));
+}
+
+/* Memory/Research section-heading icons: quiet grey (handled CSS-side, no inline edits). */
+:root[data-theme^="shadcn"] .admin-card > h2 > svg[style] { color: var(--shad-icon) !important; }
+:root[data-theme^="shadcn"] .research-new-job > div > h2 > svg { stroke: var(--shad-icon) !important; opacity: .6; }
+
+/* Compare/Cookbook primary CTAs: skin button radius/weight (color already #3183d8). */
+:root[data-theme^="shadcn"] .research-start-btn,
+:root[data-theme^="shadcn"] .cookbook-dl-btn { background: var(--shad-accent); border-radius: 8px; font-weight: 600; }
+:root[data-theme^="shadcn"] .research-start-btn:hover,
+:root[data-theme^="shadcn"] .cookbook-dl-btn:hover { background: var(--shad-accent-hover); opacity: 1; }
+
+/* Deep-Research selects: native OS arrow → codex chevron. */
+:root[data-theme^="shadcn"] .research-setting select {
+  -webkit-appearance: none; appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237d7d7d' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 8px center; padding-right: 26px;
+}
+
+/* Compare timeout input + Scoreboard button: skin tokens over inline 4px/raw --bg. */
+:root[data-theme^="shadcn"] #compare-model-overlay input[type="number"] {
+  background: var(--shad-input-bg) !important; border: 1px solid var(--shad-border) !important; border-radius: 10px !important;
+}
+:root[data-theme^="shadcn"] #compare-model-overlay .modal-body > div > button[type="button"] { border-radius: 8px !important; }
+
+/* Compare MODE/TYPE controls → segmented track (matches .cal-view-toggle). */
+:root[data-theme^="shadcn"] .compare-mode-tabs,
+:root[data-theme^="shadcn"] .compare-section > div:has(> .compare-blind-toggle) {
+  background: var(--shad-surface-3); border: 1px solid var(--shad-border-soft);
+  border-radius: 8px; padding: 2px; gap: 2px !important; flex-wrap: nowrap;
+}
+:root[data-theme^="shadcn"] .compare-blind-toggle,
+:root[data-theme^="shadcn"] .compare-parallel-toggle,
+:root[data-theme^="shadcn"] .compare-dice-toggle,
+:root[data-theme^="shadcn"] .compare-save-toggle,
+:root[data-theme^="shadcn"] .compare-reset-toggle,
+:root[data-theme^="shadcn"] .compare-mode-tab { border: none; border-radius: 6px; background: transparent; }
+:root[data-theme^="shadcn"] .compare-mode-tab.active,
+:root[data-theme^="shadcn"] .compare-blind-toggle.active,
+:root[data-theme^="shadcn"] .compare-parallel-toggle.active,
+:root[data-theme^="shadcn"] .compare-save-toggle.active,
+:root[data-theme^="shadcn"] .compare-dice-toggle.active {
+  background: var(--shad-surface-4); color: var(--fg); border: none; box-shadow: 0 1px 2px rgba(0,0,0,.25); opacity: 1;
+}
+:root[data-theme="shadcn-light"] .compare-mode-tab.active,
+:root[data-theme="shadcn-light"] .compare-blind-toggle.active,
+:root[data-theme="shadcn-light"] .compare-parallel-toggle.active,
+:root[data-theme="shadcn-light"] .compare-save-toggle.active,
+:root[data-theme="shadcn-light"] .compare-dice-toggle.active { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
+
+/* Notes to-do composer: calm hairline at rest, accent on focus only.
+   SUPERSEDES the always-on 35% blue border from style.css .notes-quick-add (L32090). */
+:root[data-theme^="shadcn"] .notes-quick-add { background: var(--shad-input-bg); border-color: var(--shad-border-soft); animation: none; }
+:root[data-theme^="shadcn"] .notes-quick-add:hover { border-color: var(--shad-border); box-shadow: none; }
+:root[data-theme^="shadcn"] .notes-quick-add:focus-within {
+  border-color: color-mix(in srgb, var(--shad-accent) 55%, var(--shad-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--shad-accent) 18%, transparent);
+}
+:root[data-theme^="shadcn"] .notes-quick-add::before { color: var(--shad-faint); animation: none; opacity: .6; }
+:root[data-theme^="shadcn"] .notes-quick-input { caret-color: var(--shad-accent); }
+
+/* Notes Note/To-do segmented toggle: codex raised-thumb track. */
+:root[data-theme^="shadcn"] .notes-quick-type-seg { border-color: var(--shad-border-soft); background: var(--shad-surface-3); }
+:root[data-theme^="shadcn"] .notes-quick-type-seg::before { background: var(--shad-surface-4); }
+
+/* ---- SETTINGS / MENUS ----------------------------------- */
+
+/* Theme dialog tabs (.admin-tabs/.admin-tab) → unified in-pane tab spec.
+   PREFER editing the existing tab-bar lists at codex.css L705-760 to add these
+   selectors; this standalone block reproduces the same metrics if appended. */
+:root[data-theme^="shadcn"] .admin-tabs { display: flex; gap: 5px; border-bottom: 1px solid var(--shad-border-soft); }
+:root[data-theme^="shadcn"] .admin-tab {
+  font-size: 13px; padding: 9px 10px; letter-spacing: -0.01em; opacity: 1; color: var(--shad-muted);
+}
+:root[data-theme^="shadcn"] .admin-tab:hover { color: var(--fg); }
+:root[data-theme^="shadcn"] .admin-tab.active { color: var(--shad-accent); }
+:root[data-theme^="shadcn"] .admin-tab svg { width: 14px; height: 14px; }
+
+/* Settings nav rail: 12px → 13px, preserve compact narrow-mode. */
+:root[data-theme^="shadcn"] .settings-nav-item { font-size: 13px; padding: 7px 10px; gap: 9px; }
+@container settings-modal (max-width: 620px) {
+  :root[data-theme^="shadcn"] .settings-nav-item { font-size: 11px; padding: 6px 10px; gap: 8px; }
+}
+
+/* Settings cards: firmer #2f2f2f edge for separation; keep danger-card red edge. */
+:root[data-theme^="shadcn"] .settings-panels .admin-card:not(.admin-danger-card) { border-color: var(--shad-border); }
+
+/* Settings sidebar divider: softer, shorter inset. */
+:root[data-theme^="shadcn"] .settings-sidebar-divider { background: var(--shad-border-soft); margin: 6px 10px; }
+
+/* Modal close glyph weight: lighten heavy ✖ until SVG swap lands (see §3 note). */
+:root[data-theme^="shadcn"] .close-btn { font-size: 13px; font-weight: 300; }
+
+/* ---- CONVERSATION --------------------------------------- */
+
+/* User pill max-width 76% → 68%. EDIT IN PLACE at codex.css L1469 (max-width)
+   rather than appending — L1467-1472 already defines .msg-user. */
+:root[data-theme^="shadcn"] .msg-user { max-width: 68%; }
+
+/* Assistant prose line-height 1.65 → 1.55 (do NOT touch p margins). */
+:root[data-theme^="shadcn"] .msg-ai .body { line-height: 1.55; }
+
+/* Code block radius 10px → 8px to match tool-output pre / tables. */
+:root[data-theme^="shadcn"] .msg pre { border-radius: 8px; }
+
+/* status-alias additions (Cookbook FIT good, Logout danger, error surfaces) */
+:root[data-theme^="shadcn"] {
+  --yellow:            var(--shad-amber);   /* Cookbook FIT 'good' + .hwfit-panel-note */
+  --color-danger:      var(--shad-red);
+  --color-error:       var(--shad-red);
+  --color-error-light: var(--shad-diff-rem-fg);
+}
+
+/* ---- EMPTY-STATE PLACEHOLDERS -------------------------------------------
+   Base .memory-empty / .doclib-empty / .gallery-empty inherit
+   color:color-mix(--fg 35%) + font-style:italic. At 35% the dark text is
+   ~2.4:1 (below AA) and the italic drifts from the Codex flat-sans look.
+   Re-scope to the quiet --shad-faint token (legible, on-palette) and drop the
+   italic — a legibility + fidelity improvement (still short of strict AA). */
+:root[data-theme^="shadcn"] .memory-empty,
+:root[data-theme^="shadcn"] .doclib-empty,
+:root[data-theme^="shadcn"] .gallery-empty {
+  color: var(--shad-faint);
+  font-style: normal;
+}
+
+/* ---- COMPOSER — mobile touch targets ----------------------
+   The codex .send-btn / .input-icon-btn / .mode-toggle sizing is declared
+   OUTSIDE any media query, and codex.css loads AFTER style.css, so it defeats
+   the base @media(max-width:768px) enlargements (style.css L4096/4281/4388),
+   collapsing the send button to 30px (< 44px min touch target) on phones.
+   Re-apply Codex-scoped phone sizing so the controls stay tappable. */
+@media (max-width: 768px) {
+  :root[data-theme^="shadcn"] .send-btn {
+    width: 44px; min-width: 44px; height: 44px !important; border-radius: 999px;
+  }
+  :root[data-theme^="shadcn"] .send-btn svg { width: 20px; height: 20px; }
+  :root[data-theme^="shadcn"] .input-icon-btn {
+    width: 40px; height: 40px; min-width: 40px;
+  }
+  :root[data-theme^="shadcn"] .mode-toggle { height: 38px; }
+  :root[data-theme^="shadcn"] .mode-toggle-btn { padding: 0 14px; font-size: 12px; }
+}
+
+/* ── shadcn radius normalization (tighten codex's rounder values) ─────────── */
+:root[data-theme^="shadcn"] .chat-input-bar{ border-radius:var(--shad-r-xl); }
+:root[data-theme^="shadcn"] .modal-content,:root[data-theme^="shadcn"] .settings-modal-content,:root[data-theme^="shadcn"] .doclib-modal-content,:root[data-theme^="shadcn"] .gallery-modal-content,:root[data-theme^="shadcn"] .research-pane,:root[data-theme^="shadcn"] .notes-pane,:root[data-theme^="shadcn"] .calendar-pane,:root[data-theme^="shadcn"] .cookbook-pane,:root[data-theme^="shadcn"] .doc-pane,:root[data-theme^="shadcn"] .doc-pane-floating{ border-radius:var(--shad-r-lg); }
+:root[data-theme^="shadcn"] .admin-card,:root[data-theme^="shadcn"] .card,:root[data-theme^="shadcn"] .panel-card,:root[data-theme^="shadcn"] .settings-card{ border-radius:var(--shad-r-xl); }
+/* ══════════════════════════  EXPRESSIVE LAYER (applied last)  ═══════════════
+   Monochrome cursor-spotlight cards + springy micro-interactions. shadcn.js
+   feeds --shad-mx/--shad-my. Layers on top of the ported structural rules. */
+
+/* springy presses / lifts */
+:root[data-theme^="shadcn"] .admin-btn-add,
+:root[data-theme^="shadcn"] .confirm-btn-primary,
+:root[data-theme^="shadcn"] .admin-btn-sm,
+:root[data-theme^="shadcn"] .confirm-btn-secondary,
+:root[data-theme^="shadcn"] .research-start-btn,
+:root[data-theme^="shadcn"] .cookbook-dl-btn{
+  transition:transform var(--shad-dur-1) var(--shad-ease-spring),
+             background var(--shad-dur-2) var(--shad-ease-smooth),
+             box-shadow var(--shad-dur-2) var(--shad-ease-smooth),
+             border-color var(--shad-dur-2) var(--shad-ease-smooth);
+}
+:root[data-theme^="shadcn"] .admin-btn-add:active,
+:root[data-theme^="shadcn"] .confirm-btn-primary:active,
+:root[data-theme^="shadcn"] .admin-btn-sm:active,
+:root[data-theme^="shadcn"] .confirm-btn-secondary:active{ transform:scale(.97); }
+
+:root[data-theme^="shadcn"] .send-btn{ transition:transform var(--shad-dur-1) var(--shad-ease-spring), background var(--shad-dur-2) var(--shad-ease-smooth); }
+:root[data-theme^="shadcn"] .send-btn:hover{ transform:scale(1.06); }
+:root[data-theme^="shadcn"] .send-btn:active{ transform:scale(.9); }
+
+/* sidebar item nudge */
+:root[data-theme^="shadcn"] .list-item{ transition:background var(--shad-dur-2) var(--shad-ease-smooth), color var(--shad-dur-2) var(--shad-ease-smooth), transform var(--shad-dur-2) var(--shad-ease-spring); }
+:root[data-theme^="shadcn"] .list-item:hover:not(.active):not(.selected):not(.active-session){ transform:translateX(2px); }
+
+/* card lift + monochrome cursor spotlight */
+:root[data-theme^="shadcn"] .admin-card,
+:root[data-theme^="shadcn"] .gallery-card,
+:root[data-theme^="shadcn"] .memory-item,
+:root[data-theme^="shadcn"] .doclib-card{ --shad-mx:50%; --shad-my:50%; position:relative; transition:transform var(--shad-dur-2) var(--shad-ease-smooth), box-shadow var(--shad-dur-2) var(--shad-ease-smooth), background var(--shad-dur-2) var(--shad-ease-smooth); }
+:root[data-theme^="shadcn"] .admin-card:hover,
+:root[data-theme^="shadcn"] .gallery-card:hover,
+:root[data-theme^="shadcn"] .memory-item:hover,
+:root[data-theme^="shadcn"] .doclib-card:hover{ transform:translateY(-2px); box-shadow:var(--shad-shadow-pop); }
+:root[data-theme^="shadcn"] .admin-card::before,
+:root[data-theme^="shadcn"] .gallery-card::before,
+:root[data-theme^="shadcn"] .memory-item::before,
+:root[data-theme^="shadcn"] .doclib-card::before{ content:""; position:absolute; inset:0; border-radius:inherit; padding:1px;
+  background:radial-gradient(200px circle at var(--shad-mx) var(--shad-my), var(--shad-spot-1), transparent 72%);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0); -webkit-mask-composite:xor; mask-composite:exclude;
+  opacity:0; transition:opacity var(--shad-dur-2) var(--shad-ease-smooth); pointer-events:none; z-index:1; }
+:root[data-theme^="shadcn"] .admin-card::after,
+:root[data-theme^="shadcn"] .gallery-card::after,
+:root[data-theme^="shadcn"] .memory-item::after,
+:root[data-theme^="shadcn"] .doclib-card::after{ content:""; position:absolute; inset:0; border-radius:inherit; pointer-events:none;
+  background:radial-gradient(240px circle at var(--shad-mx) var(--shad-my), var(--shad-spot-2), transparent 60%);
+  opacity:0; transition:opacity var(--shad-dur-2) var(--shad-ease-smooth); }
+:root[data-theme^="shadcn"] .admin-card:hover::before,:root[data-theme^="shadcn"] .admin-card:hover::after,
+:root[data-theme^="shadcn"] .gallery-card:hover::before,:root[data-theme^="shadcn"] .gallery-card:hover::after,
+:root[data-theme^="shadcn"] .memory-item:hover::before,:root[data-theme^="shadcn"] .memory-item:hover::after,
+:root[data-theme^="shadcn"] .doclib-card:hover::before,:root[data-theme^="shadcn"] .doclib-card:hover::after{ opacity:1; }
+
+@keyframes shad-pop-in{ from{ opacity:0; transform:scale(.97);} to{ opacity:1; transform:none;} }
+
+@media (prefers-reduced-motion:reduce){
+  :root[data-theme^="shadcn"] *,:root[data-theme^="shadcn"] *::before,:root[data-theme^="shadcn"] *::after{ transition-duration:.01ms!important; animation-duration:.01ms!important; }
+  :root[data-theme^="shadcn"] .list-item:hover,:root[data-theme^="shadcn"] .admin-card:hover,:root[data-theme^="shadcn"] .gallery-card:hover,:root[data-theme^="shadcn"] .memory-item:hover,:root[data-theme^="shadcn"] .doclib-card:hover,:root[data-theme^="shadcn"] .send-btn:hover{ transform:none; }
+}
+/* ══════════════════════════════════════════════════════════════════════════
+   PREVIEW PARITY — exact shadcn-preview.html treatments on real selectors,
+   plus Mobbin-informed AI-chat layout (reading column, asymmetric bubbles,
+   two-row composer). Appended last so it wins on the key surfaces; the port
+   above keeps full coverage for everything else. Maps preview tokens →
+   existing --shad-* tokens (see header).
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── shadow aliases to match the preview's xs/sm/md scale ─────────────────── */
+:root[data-theme="shadcn"]{ --shad-shadow-xs:0 1px 2px 0 rgba(0,0,0,.30); --shad-shadow-md:0 4px 6px -1px rgba(0,0,0,.5),0 2px 4px -2px rgba(0,0,0,.5); }
+:root[data-theme="shadcn-light"]{ --shad-shadow-xs:0 1px 2px 0 rgba(0,0,0,.05); --shad-shadow-md:0 4px 6px -1px rgba(0,0,0,.10),0 2px 4px -2px rgba(0,0,0,.10); }
+
+/* ════════════════════════════════  BUTTONS  ═════════════════════════════════ */
+/* default (primary) */
+:root[data-theme^="shadcn"] .confirm-btn-primary,
+:root[data-theme^="shadcn"] .admin-btn-add,
+:root[data-theme^="shadcn"] .research-start-btn,
+:root[data-theme^="shadcn"] .cookbook-dl-btn{
+  height:36px; padding:0 16px; display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  border:1px solid transparent; border-radius:var(--shad-r-md);
+  background:var(--shad-primary-bg); color:var(--shad-primary-fg);
+  font-size:14px; font-weight:500; box-shadow:var(--shad-shadow-xs); white-space:nowrap;
+}
+:root[data-theme^="shadcn"] .confirm-btn-primary:hover,
+:root[data-theme^="shadcn"] .admin-btn-add:hover,
+:root[data-theme^="shadcn"] .research-start-btn:hover,
+:root[data-theme^="shadcn"] .cookbook-dl-btn:hover{ background:color-mix(in srgb, var(--shad-primary-bg) 90%, var(--shad-bg)); }
+
+/* secondary */
+:root[data-theme^="shadcn"] .confirm-btn-secondary,
+:root[data-theme^="shadcn"] .admin-btn-sm{
+  height:36px; padding:0 16px; display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  border:1px solid transparent; border-radius:var(--shad-r-md);
+  background:var(--shad-surface-3); color:var(--shad-fg); font-size:14px; font-weight:500; white-space:nowrap;
+}
+:root[data-theme^="shadcn"] .confirm-btn-secondary:hover,
+:root[data-theme^="shadcn"] .admin-btn-sm:hover{ background:color-mix(in srgb, var(--shad-surface-3) 80%, var(--shad-bg)); }
+:root[data-theme^="shadcn"] .admin-btn-sm.adm-more-item{ background:transparent; }
+:root[data-theme^="shadcn"] .admin-btn-sm.adm-more-item:hover{ background:var(--shad-surface-3); }
+
+/* destructive (solid, matches preview .btn-destructive) */
+:root[data-theme^="shadcn"] .confirm-btn-danger,
+:root[data-theme^="shadcn"] .admin-btn-delete{
+  height:36px; padding:0 16px; display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  border:1px solid transparent; border-radius:var(--shad-r-md);
+  background:var(--shad-destructive); color:#fff; font-size:14px; font-weight:500; box-shadow:var(--shad-shadow-xs); white-space:nowrap;
+}
+:root[data-theme^="shadcn"] .confirm-btn-danger:hover,
+:root[data-theme^="shadcn"] .admin-btn-delete:hover{ background:color-mix(in srgb, var(--shad-destructive) 90%, #000); color:#fff; }
+
+/* ghost / icon */
+:root[data-theme^="shadcn"] .icon-btn,
+:root[data-theme^="shadcn"] .tool-btn,
+:root[data-theme^="shadcn"] .input-icon-btn,
+:root[data-theme^="shadcn"] .msg-action-btn,
+:root[data-theme^="shadcn"] .modal-close,
+:root[data-theme^="shadcn"] .close-btn,
+:root[data-theme^="shadcn"] .minimize-btn,
+:root[data-theme^="shadcn"] .modal-minimize-btn,
+:root[data-theme^="shadcn"] .user-bar-btn,
+:root[data-theme^="shadcn"] .gallery-tab-close{
+  background:transparent; color:var(--shad-muted); border:1px solid transparent;
+  border-radius:var(--shad-r-md); opacity:1; transition:background .2s var(--shad-ease-smooth), color .2s var(--shad-ease-smooth);
+}
+:root[data-theme^="shadcn"] .icon-btn:hover,
+:root[data-theme^="shadcn"] .tool-btn:hover,
+:root[data-theme^="shadcn"] .input-icon-btn:hover,
+:root[data-theme^="shadcn"] .input-icon-btn.active,
+:root[data-theme^="shadcn"] .msg-action-btn:hover,
+:root[data-theme^="shadcn"] .modal-close:hover,
+:root[data-theme^="shadcn"] .close-btn:hover,
+:root[data-theme^="shadcn"] .minimize-btn:hover,
+:root[data-theme^="shadcn"] .modal-minimize-btn:hover,
+:root[data-theme^="shadcn"] .user-bar-btn:hover{ background:var(--shad-surface-3); color:var(--shad-fg); }
+
+/* ════════════════════════════════  INPUTS  ═════════════════════════════════ */
+:root[data-theme^="shadcn"] input[type="text"],
+:root[data-theme^="shadcn"] input[type="search"],
+:root[data-theme^="shadcn"] input[type="password"],
+:root[data-theme^="shadcn"] input[type="email"],
+:root[data-theme^="shadcn"] input[type="url"],
+:root[data-theme^="shadcn"] input[type="number"],
+:root[data-theme^="shadcn"] input:not([type]),
+:root[data-theme^="shadcn"] select,
+:root[data-theme^="shadcn"] textarea:not(#message),
+:root[data-theme^="shadcn"] .settings-select,
+:root[data-theme^="shadcn"] .memory-search-input,
+:root[data-theme^="shadcn"] .gallery-search,
+:root[data-theme^="shadcn"] .cal-search-input,
+:root[data-theme^="shadcn"] #model-picker-search{
+  min-height:36px; border:1px solid var(--shad-border-strong); border-radius:var(--shad-r-md);
+  background:var(--shad-input-bg); color:var(--shad-fg); padding:0 12px; font-size:14px; box-shadow:var(--shad-shadow-xs);
+  transition:border-color .2s var(--shad-ease-smooth), box-shadow .2s var(--shad-ease-smooth);
+}
+:root[data-theme^="shadcn"] textarea:not(#message){ padding:8px 12px; }
+:root[data-theme^="shadcn"] input[type="text"]:focus,
+:root[data-theme^="shadcn"] input[type="search"]:focus,
+:root[data-theme^="shadcn"] input[type="password"]:focus,
+:root[data-theme^="shadcn"] input[type="email"]:focus,
+:root[data-theme^="shadcn"] input[type="url"]:focus,
+:root[data-theme^="shadcn"] input[type="number"]:focus,
+:root[data-theme^="shadcn"] input:not([type]):focus,
+:root[data-theme^="shadcn"] select:focus,
+:root[data-theme^="shadcn"] textarea:not(#message):focus,
+:root[data-theme^="shadcn"] .settings-select:focus,
+:root[data-theme^="shadcn"] .memory-search-input:focus,
+:root[data-theme^="shadcn"] .gallery-search:focus,
+:root[data-theme^="shadcn"] #model-picker-search:focus{
+  outline:none; border-color:var(--shad-ring); box-shadow:0 0 0 3px color-mix(in srgb, var(--shad-ring) 40%, transparent);
+}
+:root[data-theme^="shadcn"] ::placeholder{ color:var(--shad-muted); }
+
+/* ════════════════════════════════  COMPOSER  ═══════════════════════════════ */
+:root[data-theme^="shadcn"] .chat-input-bar{
+  background:var(--shad-card); border:1px solid var(--shad-border-strong); border-radius:var(--shad-r-xl);
+  box-shadow:var(--shad-shadow); max-width:768px; margin-left:auto; margin-right:auto;
+  transition:border-color .3s var(--shad-ease-smooth), box-shadow .3s var(--shad-ease-smooth);
+}
+:root[data-theme^="shadcn"] .chat-input-bar:focus-within{
+  border-color:var(--shad-ring); box-shadow:0 0 0 3px color-mix(in srgb, var(--shad-ring) 35%, transparent), var(--shad-shadow);
+}
+:root[data-theme^="shadcn"] .chat-input-bar textarea#message{ background:transparent; color:var(--shad-fg); font-size:15px; line-height:1.5; }
+:root[data-theme^="shadcn"] .chat-input-bar textarea#message::placeholder{ color:var(--shad-muted); }
+/* send = primary ink disc */
+:root[data-theme^="shadcn"] .send-btn{
+  background:var(--shad-primary-bg); color:var(--shad-primary-fg); border:0; border-radius:var(--shad-r-md);
+}
+:root[data-theme^="shadcn"] .send-btn svg{ color:var(--shad-primary-fg); stroke:var(--shad-primary-fg); }
+:root[data-theme^="shadcn"] .send-btn.mic-mode,
+:root[data-theme^="shadcn"] .send-btn.newchat-mode[data-mode="idle"]{ background:var(--shad-surface-3); }
+:root[data-theme^="shadcn"] .send-btn.mic-mode svg{ color:var(--shad-fg); stroke:var(--shad-fg); }
+/* model picker = ghost text-button */
+:root[data-theme^="shadcn"] .model-picker-btn{ background:transparent; border:1px solid transparent; border-radius:var(--shad-r-md); color:var(--shad-muted); }
+:root[data-theme^="shadcn"] .model-picker-btn:hover{ background:var(--shad-surface-3); color:var(--shad-fg); }
+/* mode segment (Agent/Chat) = shadcn TabsList */
+:root[data-theme^="shadcn"] .mode-toggle{ background:var(--shad-surface-3); border:1px solid var(--shad-border); border-radius:var(--shad-r-lg); padding:3px; }
+:root[data-theme^="shadcn"] .mode-toggle-btn{ background:transparent; color:var(--shad-muted); border:1px solid transparent; border-radius:var(--shad-r-md); font-weight:500; }
+:root[data-theme^="shadcn"] .mode-toggle-btn:hover{ color:var(--shad-fg); }
+:root[data-theme^="shadcn"] .mode-toggle-btn.active{ background:var(--shad-bg); color:var(--shad-fg); box-shadow:var(--shad-shadow); }
+
+/* ════════════════════════════════  SIDEBAR  ════════════════════════════════ */
+:root[data-theme^="shadcn"] .sidebar{ background:var(--shad-surface-1); border-right:1px solid var(--shad-border); }
+:root[data-theme^="shadcn"] .list-item{ color:var(--shad-item-fg); border-radius:var(--shad-r-md); }
+:root[data-theme^="shadcn"] .list-item:hover{ background:var(--shad-surface-3); color:var(--shad-fg); }
+:root[data-theme^="shadcn"] .list-item.active,
+:root[data-theme^="shadcn"] .list-item.selected,
+:root[data-theme^="shadcn"] .list-item[aria-current="true"],
+:root[data-theme^="shadcn"] .list-item.active-session,
+:root[data-theme^="shadcn"] .session-item.active{ background:var(--shad-surface-3); color:var(--shad-fg); border-color:transparent; }
+:root[data-theme^="shadcn"] .section-title,
+:root[data-theme^="shadcn"] .section-title-label,
+:root[data-theme^="shadcn"] .settings-sidebar-label{ color:var(--shad-faint); font-size:11px; text-transform:uppercase; letter-spacing:.08em; font-weight:600; }
+:root[data-theme^="shadcn"] .sidebar-action-icon,
+:root[data-theme^="shadcn"] .section-icon,
+:root[data-theme^="shadcn"] .session-icon,
+:root[data-theme^="shadcn"] .list-item svg{ color:var(--shad-icon); }
+:root[data-theme^="shadcn"] .icon-rail-btn{ color:var(--shad-icon); border-radius:var(--shad-r-md); }
+:root[data-theme^="shadcn"] .icon-rail-btn:hover{ background:var(--shad-surface-3); color:var(--shad-fg); }
+:root[data-theme^="shadcn"] .icon-rail-btn.active-section{ background:var(--shad-surface-3); color:var(--shad-fg); }
+:root[data-theme^="shadcn"] .sidebar-notif-dot{ background:var(--shad-primary-bg); }
+
+/* ════════════════════════════  MODALS / PANES  ═════════════════════════════ */
+:root[data-theme^="shadcn"] .modal-content,
+:root[data-theme^="shadcn"] .settings-modal-content,
+:root[data-theme^="shadcn"] .doclib-modal-content,
+:root[data-theme^="shadcn"] .gallery-modal-content,
+:root[data-theme^="shadcn"] .notes-pane,
+:root[data-theme^="shadcn"] .cookbook-pane,
+:root[data-theme^="shadcn"] .research-pane,
+:root[data-theme^="shadcn"] .doc-pane{
+  background:var(--shad-popover); border:1px solid var(--shad-border-strong); border-radius:var(--shad-r-lg); box-shadow:var(--shad-shadow-pop);
+}
+:root[data-theme^="shadcn"] .modal-header,
+:root[data-theme^="shadcn"] .research-pane-header,
+:root[data-theme^="shadcn"] .notes-pane-header{ border-bottom:1px solid var(--shad-border); }
+:root[data-theme^="shadcn"] .modal-header h4,
+:root[data-theme^="shadcn"] .research-pane-header h4,
+:root[data-theme^="shadcn"] .notes-pane-title{ color:var(--shad-fg-strong); font-weight:600; }
+
+/* ════════════════════════  DROPDOWN / MENU / POPOVER  ══════════════════════ */
+:root[data-theme^="shadcn"] .export-dropdown-menu,
+:root[data-theme^="shadcn"] .model-picker-menu,
+:root[data-theme^="shadcn"] .model-picker-dropdown,
+:root[data-theme^="shadcn"] .overflow-menu,
+:root[data-theme^="shadcn"] .adm-provider-menu,
+:root[data-theme^="shadcn"] [role="menu"],
+:root[data-theme^="shadcn"] [role="listbox"]{
+  background:var(--shad-popover); color:var(--shad-fg); border:1px solid var(--shad-border-strong);
+  border-radius:var(--shad-r-md); box-shadow:var(--shad-shadow-md); padding:4px;
+}
+:root[data-theme^="shadcn"] .export-dropdown-item,
+:root[data-theme^="shadcn"] .overflow-menu-item,
+:root[data-theme^="shadcn"] .model-switch-item,
+:root[data-theme^="shadcn"] [role="menuitem"],
+:root[data-theme^="shadcn"] [role="option"]{ border-radius:var(--shad-r-sm); }
+:root[data-theme^="shadcn"] .export-dropdown-item:hover,
+:root[data-theme^="shadcn"] .overflow-menu-item:hover,
+:root[data-theme^="shadcn"] .model-switch-item:hover,
+:root[data-theme^="shadcn"] .model-switch-item.kb-active,
+:root[data-theme^="shadcn"] [role="menuitem"]:hover,
+:root[data-theme^="shadcn"] [role="option"]:hover{ background:var(--shad-surface-3); color:var(--shad-fg); }
+
+/* ════════════════════════════  SWITCH / TABS / CHIPS  ══════════════════════ */
+:root[data-theme^="shadcn"] .admin-switch input:checked + .admin-slider{ background:var(--shad-primary-bg); }
+:root[data-theme^="shadcn"] .admin-slider{ background:var(--shad-toggle-off); }
+:root[data-theme^="shadcn"] .admin-slider::before{ background:var(--shad-bg); }
+/* in-pane underline tabs */
+:root[data-theme^="shadcn"] .memory-tab,
+:root[data-theme^="shadcn"] .gallery-tab,
+:root[data-theme^="shadcn"] .cookbook-tab,
+:root[data-theme^="shadcn"] .lib-tab,
+:root[data-theme^="shadcn"] .admin-tab{ background:transparent; color:var(--shad-muted); border:none; font-weight:500; }
+:root[data-theme^="shadcn"] .memory-tab:hover,
+:root[data-theme^="shadcn"] .gallery-tab:hover,
+:root[data-theme^="shadcn"] .cookbook-tab:hover,
+:root[data-theme^="shadcn"] .lib-tab:hover,
+:root[data-theme^="shadcn"] .admin-tab:hover{ color:var(--shad-fg); }
+:root[data-theme^="shadcn"] .memory-tab.active,
+:root[data-theme^="shadcn"] .gallery-tab.active,
+:root[data-theme^="shadcn"] .cookbook-tab.active,
+:root[data-theme^="shadcn"] .lib-tab.active,
+:root[data-theme^="shadcn"] .admin-tab.active{ color:var(--shad-fg); border-bottom:2px solid var(--shad-primary-bg); }
+/* raised-thumb segment (calendar) */
+:root[data-theme^="shadcn"] .cal-view-toggle{ background:var(--shad-surface-3); border-radius:var(--shad-r-lg); padding:3px; }
+:root[data-theme^="shadcn"] .cal-view-btn{ background:transparent; color:var(--shad-muted); border-radius:var(--shad-r-md); }
+:root[data-theme^="shadcn"] .cal-view-btn.active{ background:var(--shad-bg); color:var(--shad-fg); box-shadow:var(--shad-shadow); }
+/* filter chips → outline→fill pills */
+:root[data-theme^="shadcn"] .memory-cat-chip,
+:root[data-theme^="shadcn"] .gallery-chip,
+:root[data-theme^="shadcn"] .notes-label-chip,
+:root[data-theme^="shadcn"] .memory-toolbar-btn,
+:root[data-theme^="shadcn"] .gallery-select-btn{ background:transparent; color:var(--shad-muted); border:1px solid var(--shad-border-strong); border-radius:var(--shad-r-full); }
+:root[data-theme^="shadcn"] .memory-cat-chip:hover,
+:root[data-theme^="shadcn"] .gallery-chip:hover,
+:root[data-theme^="shadcn"] .notes-label-chip:hover,
+:root[data-theme^="shadcn"] .memory-toolbar-btn:hover,
+:root[data-theme^="shadcn"] .gallery-select-btn:hover{ background:var(--shad-surface-3); color:var(--shad-fg); }
+:root[data-theme^="shadcn"] .memory-cat-chip.active,
+:root[data-theme^="shadcn"] .gallery-chip.active,
+:root[data-theme^="shadcn"] .memory-toolbar-btn.active,
+:root[data-theme^="shadcn"] .gallery-select-btn.active{ background:var(--shad-primary-bg); color:var(--shad-primary-fg); border-color:transparent; }
+
+/* ══════════════════════════  CARDS / ROWS / TILES  ═════════════════════════ */
+:root[data-theme^="shadcn"] .admin-card,
+:root[data-theme^="shadcn"] .card{ background:var(--shad-card); border:1px solid var(--shad-border-strong); border-radius:var(--shad-r-xl); box-shadow:var(--shad-shadow); padding:22px; }
+:root[data-theme^="shadcn"] .admin-card h2{ color:var(--shad-fg-strong); font-weight:600; }
+:root[data-theme^="shadcn"] .memory-item,
+:root[data-theme^="shadcn"] .doclib-card{ background:var(--shad-surface-3); border:1px solid var(--shad-border); border-radius:var(--shad-r-lg); }
+:root[data-theme^="shadcn"] .admin-user-row{ border-radius:var(--shad-r-md); }
+:root[data-theme^="shadcn"] .admin-user-row:hover{ background:var(--shad-surface-3); }
+
+/* ════════════════════  CHAT — Mobbin asymmetric reading column  ════════════ */
+/* center the conversation in a ~768px reading column */
+:root[data-theme^="shadcn"] .msg{ max-width:768px; margin-left:auto; margin-right:auto; }
+/* user = right-aligned secondary pill, hugs content */
+:root[data-theme^="shadcn"] .msg-user{ background:var(--shad-surface-3); color:var(--shad-fg); border:none; border-radius:16px; padding:10px 14px; width:fit-content; max-width:75%; margin-left:auto; }
+:root[data-theme^="shadcn"] .msg-user .role{ display:none; }
+/* assistant = bubble-less, full reading width, airy line-height */
+:root[data-theme^="shadcn"] .msg-ai{ background:transparent!important; border:none!important; }
+:root[data-theme^="shadcn"] .msg-ai .body{ color:var(--shad-fg); line-height:1.7; font-size:15px; }
+/* role / model labels = quiet monochrome (kills the green) */
+:root[data-theme^="shadcn"] .msg .role,
+:root[data-theme^="shadcn"] .msg-ai .role,
+:root[data-theme^="shadcn"] .role-timestamp{ color:var(--shad-faint); font-weight:500; }
+:root[data-theme^="shadcn"] .msg .role::before{ background:var(--shad-muted); }
+/* tool chips (BASH/agent) → monochrome */
+:root[data-theme^="shadcn"] .agent-thread-tool,
+:root[data-theme^="shadcn"] .agent-thread-header,
+:root[data-theme^="shadcn"] .agent-thread-cmd{ color:var(--shad-muted); }
+:root[data-theme^="shadcn"] .agent-thread-icon{ color:var(--shad-muted); }
+/* inline + block code */
+:root[data-theme^="shadcn"] .msg code:not(pre code){ background:var(--shad-surface-3); color:var(--shad-fg); border-radius:var(--shad-r-sm); padding:.12em .36em; font-size:.9em; }
+:root[data-theme^="shadcn"] .msg pre{ background:var(--shad-card); border:1px solid var(--shad-border-strong); border-radius:var(--shad-r-md); }
+:root[data-theme^="shadcn"] .msg pre code{ background:transparent; }
+/* tables — zinc bordered */
+:root[data-theme^="shadcn"] .msg table{ border:1px solid var(--shad-border-strong); border-radius:var(--shad-r-md); border-collapse:separate; border-spacing:0; overflow:hidden; }
+:root[data-theme^="shadcn"] .msg th{ background:var(--shad-surface-3); color:var(--shad-fg); border-bottom:1px solid var(--shad-border-strong); }
+:root[data-theme^="shadcn"] .msg td{ border-bottom:1px solid var(--shad-border); }
+:root[data-theme^="shadcn"] .msg tr:last-child td{ border-bottom:none; }
+
+/* ════════════════════════════  BADGES / STATUS  ═══════════════════════════ */
+:root[data-theme^="shadcn"] .task-status-badge,
+:root[data-theme^="shadcn"] .task-builtin-badge,
+:root[data-theme^="shadcn"] .admin-badge,
+:root[data-theme^="shadcn"] .task-active-badge,
+:root[data-theme^="shadcn"] .task-paused-badge,
+:root[data-theme^="shadcn"] .task-run-now-badge{ border-radius:var(--shad-r-full); font-size:12px; font-weight:500; border:1px solid transparent; padding:2px 9px; }
+:root[data-theme^="shadcn"] .task-active-badge{ background:color-mix(in srgb, var(--shad-green) 16%, transparent); color:var(--shad-green); }
+:root[data-theme^="shadcn"] .task-paused-badge{ background:color-mix(in srgb, var(--shad-amber) 16%, transparent); color:var(--shad-amber); }
+:root[data-theme^="shadcn"] .task-builtin-badge,
+:root[data-theme^="shadcn"] .admin-badge{ background:var(--shad-surface-3); color:var(--shad-fg); border-color:var(--shad-border-strong); }
+:root[data-theme^="shadcn"] .admin-badge.admin-badge-off{ background:color-mix(in srgb, var(--shad-destructive) 16%, transparent); color:var(--shad-destructive); }
+
+/* ════════════════════════════  TOP BAR / WELCOME  ═════════════════════════ */
+:root[data-theme^="shadcn"] .chat-top-bar{ border-bottom:1px solid var(--shad-border); }
+:root[data-theme^="shadcn"] #current-meta{ color:var(--shad-fg-strong); font-weight:600; }
+:root[data-theme^="shadcn"] .chat-meta-count,
+:root[data-theme^="shadcn"] .chat-meta{ color:var(--shad-faint); }
+:root[data-theme^="shadcn"] #welcome-screen .welcome-name{ color:var(--shad-fg-strong); font-weight:600; letter-spacing:-.02em; }
+
+/* ════════════════════════════  TOOLTIPS  ══════════════════════════════════ */
+:root[data-theme^="shadcn"] .tour-hint,
+:root[data-theme^="shadcn"] #tour-tooltip{ background:var(--shad-popover); color:var(--shad-fg); border:1px solid var(--shad-border-strong); border-radius:var(--shad-r-lg); box-shadow:var(--shad-shadow-pop); }

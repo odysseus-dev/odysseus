@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
-import { useParams } from "react-router-dom"
-import { MoreHorizontal, Download, Copy, EyeOff, FileText } from "lucide-react"
+import { useParams, useSearchParams } from "react-router-dom"
+import { MoreHorizontal, Download, Copy, EyeOff, FileText, Users, ArrowDown } from "lucide-react"
 import { useChat } from "@/lib/useChat"
 import { useComposer } from "@/stores/composer"
 import { useSessions } from "@/api/sessions"
@@ -8,6 +8,7 @@ import { useSessionDocuments } from "@/api/documents"
 import { useAuthStatus } from "@/api/auth"
 import { usePersonalization } from "@/api/prefs"
 import { greeting } from "@/lib/personalization"
+import { getPersistentPersonaName } from "@/lib/persistentPersona"
 import { usePanel } from "@/stores/panel"
 import { Message } from "@/components/chat/Message"
 import { Composer } from "@/components/chat/Composer"
@@ -15,8 +16,11 @@ import { ContextPanel } from "@/components/chat/ContextPanel"
 import { ShareMenu } from "@/components/chat/ShareMenu"
 import { ProjectPicker } from "@/components/chat/ProjectPicker"
 import { Mascot } from "@/components/ui/Mascot"
+import { apiJson } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { ChatMessage } from "@/types"
+
+const LAST_CHAT_SESSION_KEY = "odysseus-last-chat-session"
 
 function ExportMenu({ sid, messages }: { sid: string; messages: ChatMessage[] }) {
   const [open, setOpen] = useState(false)
@@ -51,7 +55,9 @@ const SUGGESTIONS = [
 
 export function ChatConsole() {
   const { sessionId } = useParams()
-  const { messages, streaming, send, stop, regenerate } = useChat(sessionId)
+  const [searchParams] = useSearchParams()
+  const requestedDocId = searchParams.get("doc")
+  const { messages, streaming, send, stop, regenerate, editResend, editAssistant, deleteMessage, forkFrom, rewriteMessage, localReply, clearLocalMessages } = useChat(sessionId)
   const { data: sessions } = useSessions()
   const { data: auth } = useAuthStatus()
   const { data: personalization } = usePersonalization()
@@ -62,8 +68,21 @@ export function ChatConsole() {
   const filesPanelOpen = panelOpen && panelKind === "files"
   const docCount = threadDocs?.length || 0
   const title = sessions?.find((s) => s.id === sessionId)?.name
+  const persistentPersonaName = getPersistentPersonaName(sessionId)
   const scrollRef = useRef<HTMLDivElement>(null)
-  useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }) }, [messages])
+  const queryDocOpenedRef = useRef<string | null>(null)
+  const [atBottom, setAtBottom] = useState(true)
+  const [editingIndex, setEditingIndex] = useState<number | null>(null)
+  // Stick to the bottom as tokens stream in — but ONLY when the user is already
+  // there. If they scrolled up to read, don't yank them back down every token.
+  useEffect(() => { if (atBottom && scrollRef.current) scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight }) }, [messages, atBottom])
+  const onScroll = () => { const el = scrollRef.current; if (el) setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 96) }
+  // Reset transient view state when switching threads.
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional reset on thread change
+  useEffect(() => { setEditingIndex(null); setAtBottom(true) }, [sessionId])
+  useEffect(() => {
+    if (sessionId) window.localStorage.setItem(LAST_CHAT_SESSION_KEY, sessionId)
+  }, [sessionId])
 
   // The panel is global; reset it when switching threads so a doc/files panel
   // from the previous thread doesn't linger over a different conversation.
@@ -85,6 +104,33 @@ export function ChatConsole() {
     if (!usePanel.getState().open) usePanel.getState().showFiles(threadDocs || [])
   }, [sessionId, docCount, threadDocs])
 
+  // Library links use /chat/:sessionId?doc=:docId to mirror Original's
+  // "open in original session" action and surface the selected file immediately.
+  useEffect(() => {
+    if (!sessionId || !requestedDocId || !threadDocs) return
+    const key = `${sessionId}:${requestedDocId}`
+    if (queryDocOpenedRef.current === key) return
+    queryDocOpenedRef.current = key
+    const linkedDoc = threadDocs.find((doc) => doc.id === requestedDocId)
+    const panel = usePanel.getState()
+    if (threadDocs.length > 0) panel.showFiles(threadDocs)
+    panel.showDoc(linkedDoc?.title || linkedDoc?.name || "Document", linkedDoc?.language)
+    panel.setDocId(requestedDocId)
+    let cancelled = false
+    void apiJson<{ title?: string; language?: string; current_content?: string }>(`/api/document/${requestedDocId}`)
+      .then((full) => {
+        if (cancelled || usePanel.getState().doc?.docId !== requestedDocId) return
+        const p = usePanel.getState()
+        p.showDoc(full.title || linkedDoc?.title || linkedDoc?.name || "Document", full.language || linkedDoc?.language)
+        p.setDocId(requestedDocId)
+        p.setDocContent(full.current_content || "")
+      })
+      .catch(() => {
+        if (!cancelled && usePanel.getState().doc?.docId === requestedDocId) usePanel.getState().setDocError("Couldn't load this document.")
+      })
+    return () => { cancelled = true }
+  }, [sessionId, requestedDocId, threadDocs])
+
   const toggleFiles = () => {
     if (filesPanelOpen) usePanel.getState().close()
     else usePanel.getState().showFiles(threadDocs || [])
@@ -92,13 +138,19 @@ export function ChatConsole() {
 
   return (
     <div className="flex h-full min-w-0 flex-1">
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-13 shrink-0 items-center justify-between border-b px-4 text-sm font-medium text-foreground">
+      <div className="relative flex min-w-0 flex-1 flex-col">
+        <header className="flex h-13 shrink-0 items-center justify-between border-b px-4 text-sm font-medium text-foreground" data-tour="chat-header">
           <span className="flex min-w-0 items-center gap-2">
             <span className="truncate">{incognito ? "Incognito chat" : (title || "New chat")}</span>
             {incognito && (
               <span className="inline-flex shrink-0 items-center gap-1 rounded-full border bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
                 <EyeOff className="size-3" /> Not saved
+              </span>
+            )}
+            {persistentPersonaName && !incognito && (
+              <span className="inline-flex max-w-40 shrink-0 items-center gap-1 rounded-full border bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                <Users className="size-3" />
+                <span className="truncate">{persistentPersonaName}</span>
               </span>
             )}
           </span>
@@ -118,10 +170,10 @@ export function ChatConsole() {
             {sessionId && messages.length > 0 && <ExportMenu sid={sessionId} messages={messages} />}
           </div>
         </header>
-        <div ref={scrollRef} className="flex-1 overflow-y-auto">
+        <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto">
           {messages.length === 0 ? (
             <div className="flex h-full items-center justify-center p-8">
-              <div className="w-full max-w-[768px] text-center">
+              <div className="w-full max-w-[768px] text-center" data-tour="chat-welcome">
                 <Mascot size={20} className="mx-auto mb-6 animate-pop-in" title="Odysseus" />
                 <h1 className="text-2xl font-semibold tracking-tight">
                   {greeting(personalization.nickname || auth?.username || auth?.user)}
@@ -141,14 +193,31 @@ export function ChatConsole() {
             <div className="mx-auto w-full max-w-[768px] space-y-6 px-4 py-6">{messages.map((m, i) => (
               <Message key={i} m={m}
                 onRegenerate={m.role === "assistant" && !streaming ? () => {
-                  for (let j = i - 1; j >= 0; j--) { if (messages[j].role === "user") { regenerate(messages[j].content, j); break } }
+                  for (let j = i - 1; j >= 0; j--) { if (messages[j].role === "user") { regenerate(j); break } }
                 } : undefined}
-                onEdit={m.role === "user" && !streaming ? () => window.dispatchEvent(new CustomEvent("odysseus:set-composer", { detail: m.content })) : undefined}
+                onRespond={m.role === "assistant" && !streaming ? (text) => send(text) : undefined}
+                editing={editingIndex === i}
+                onEdit={!streaming ? () => setEditingIndex(i) : undefined}
+                onDelete={!streaming ? () => deleteMessage(i) : undefined}
+                onFork={!streaming && !incognito ? () => forkFrom(i) : undefined}
+                onRewrite={m.role === "assistant" && !streaming ? (instruction) => rewriteMessage(i, instruction) : undefined}
+                onEditSubmit={(text) => {
+                  if (m.role === "assistant") void editAssistant(i, text).then((saved) => { if (saved) setEditingIndex(null) })
+                  else { setEditingIndex(null); editResend(i, text) }
+                }}
+                onEditCancel={() => setEditingIndex(null)}
               />
             ))}</div>
           )}
         </div>
-        <Composer onSend={send} onStop={stop} streaming={streaming} />
+        {!atBottom && messages.length > 0 && (
+          <button onClick={() => { const el = scrollRef.current; if (el) { el.scrollTo({ top: el.scrollHeight, behavior: "smooth" }); setAtBottom(true) } }}
+            title="Jump to latest"
+            className="absolute bottom-28 left-1/2 z-10 -translate-x-1/2 animate-fade-in rounded-full border bg-popover p-2 text-muted-foreground shadow-md transition-colors hover:text-foreground">
+            <ArrowDown className="size-4" />
+          </button>
+        )}
+        <Composer onSend={send} onLocalReply={localReply} onClearMessages={clearLocalMessages} onStop={stop} streaming={streaming} sessionId={sessionId} />
       </div>
       <ContextPanel />
     </div>

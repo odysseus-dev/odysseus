@@ -8,6 +8,7 @@ build/
 !static/js/editor/build/
 venv/
 .venv/
+.venv-test/
 *.egg
 
 # Environment
@@ -65,6 +66,12 @@ Thumbs.db
 *.cache
 cache/
 output.txt.txt
+
+# Built v2 frontend SPA — produced by `npm run build` / the Docker multi-stage build
+static-v2/
+
+# Local QA capture artifacts (screenshots, acceptance runs, capture manifests)
+qa/
 
 # Media (uploaded/generated)
 *.jpg

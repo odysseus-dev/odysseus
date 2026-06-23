@@ -1296,12 +1296,14 @@ def setup_chat_routes(
                                     web_sources = data.get("data", [])
                                     yield chunk
                                 elif data.get("type") in (
-                                    "tool_start", "tool_output", "agent_step",
+                                    "tool_start", "tool_output", "tool_progress", "agent_step",
                                     "doc_stream_open", "doc_stream_delta",
                                     "doc_update", "doc_suggestions", "ui_control",
                                     "rounds_exhausted",
                                     "ask_user",
                                     "plan_update",
+                                    "budget_exceeded", "teacher_takeover", "skill_saved",
+                                    "escalation_failed", "skill_save_failed",
                                 ):
                                     if data.get("type") == "agent_step":
                                         _agent_rounds = max(_agent_rounds, data.get("round", 1))
@@ -1513,6 +1515,7 @@ def setup_chat_routes(
             raise HTTPException(400, "Invalid JSON")
 
         session_id = body.get("session_id")
+        message_id = body.get("msg_id")
         original_text = body.get("original_text", "")
         instruction = body.get("instruction", "")
 
@@ -1578,24 +1581,38 @@ def setup_chat_routes(
                         full_response = strip_thinking(full_response).strip() or full_response
                         if full_response:
                             for msg in reversed(sess.history):
-                                if (isinstance(msg, ChatMessage) and msg.role == 'assistant') or \
-                                   (isinstance(msg, dict) and msg.get('role') == 'assistant'):
-                                    if isinstance(msg, ChatMessage):
-                                        msg.content = full_response
-                                    else:
-                                        msg['content'] = full_response
-                                    break
+                                role = msg.role if isinstance(msg, ChatMessage) else msg.get('role')
+                                meta = msg.metadata if isinstance(msg, ChatMessage) else msg.get('metadata')
+                                if role != 'assistant':
+                                    continue
+                                if message_id and (not isinstance(meta, dict) or meta.get('_db_id') != message_id):
+                                    continue
+                                if isinstance(msg, ChatMessage):
+                                    msg.content = full_response
+                                    if isinstance(msg.metadata, dict):
+                                        msg.metadata['edited'] = True
+                                else:
+                                    msg['content'] = full_response
+                                    if isinstance(meta, dict):
+                                        meta['edited'] = True
+                                break
                             # Update in DB too
                             db = SessionLocal()
                             try:
-                                db_msg = (
-                                    db.query(DBChatMessage)
-                                    .filter(DBChatMessage.session_id == session_id, DBChatMessage.role == 'assistant')
-                                    .order_by(DBChatMessage.timestamp.desc())
-                                    .first()
+                                query = db.query(DBChatMessage).filter(
+                                    DBChatMessage.session_id == session_id,
+                                    DBChatMessage.role == 'assistant',
                                 )
+                                db_msg = (query.filter(DBChatMessage.id == message_id).first()
+                                          if message_id else query.order_by(DBChatMessage.timestamp.desc()).first())
                                 if db_msg:
                                     db_msg.content = full_response
+                                    try:
+                                        meta = json.loads(db_msg.meta_data or '{}')
+                                    except (json.JSONDecodeError, TypeError, ValueError):
+                                        meta = {}
+                                    meta['edited'] = True
+                                    db_msg.meta_data = json.dumps(meta)
                                     db.commit()
                             except Exception as e:
                                 logger.warning("Failed to update rewritten message in DB: %s", e)

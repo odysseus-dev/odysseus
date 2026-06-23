@@ -118,6 +118,20 @@
   .prose-chat th, .prose-chat td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
   .prose-chat th { background: var(--muted); }
   .prose-chat hr { border: 0; border-top: 1px solid var(--border); margin: 1em 0; }
+
+  .task-run-markdown .prose-chat { font-size: 12px; line-height: 1.55; color: inherit; }
+  .task-run-markdown .prose-chat > * + * { margin-top: 0.55em; }
+  .task-run-markdown .prose-chat h1,
+  .task-run-markdown .prose-chat h2,
+  .task-run-markdown .prose-chat h3,
+  .task-run-markdown .prose-chat h4 { font-size: 1em; margin-top: 0.7em; }
+  .task-run-markdown .prose-chat ul,
+  .task-run-markdown .prose-chat ol { padding-left: 1.2em; }
+  .task-run-markdown .prose-chat pre { border-radius: 6px; margin: 0.4em 0 0; max-height: 18rem; padding: 8px 10px; }
+  .task-run-markdown .prose-chat pre code { font-size: 11px; }
+  .task-run-markdown .prose-chat table { font-size: 0.95em; }
+  .task-run-markdown .prose-chat th,
+  .task-run-markdown .prose-chat td { padding: 4px 6px; }
 }
 
 /* ---- Micro-interactions / motion ----
@@ -131,6 +145,22 @@
 @keyframes odys-pop-in { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
 @keyframes odys-pop-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(0.96); } }
 @keyframes odys-pulse-soft { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+@keyframes odys-note-reminder-glow {
+  0%, 100% {
+    box-shadow:
+      0 0 0 2px color-mix(in srgb, var(--primary) 18%, transparent),
+      0 0 16px color-mix(in srgb, var(--primary) 16%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 5px color-mix(in srgb, var(--primary) 24%, transparent),
+      0 0 24px color-mix(in srgb, var(--primary) 22%, transparent);
+  }
+}
+@keyframes odys-nav-reminder-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px var(--background), 0 0 0 0 color-mix(in srgb, var(--destructive) 50%, transparent); }
+  50% { box-shadow: 0 0 0 1px var(--background), 0 0 0 4px color-mix(in srgb, var(--destructive) 18%, transparent); }
+}
 /* Odysseus mascot ripple — a cell fills its colour then fades, with a gentle
    pop in scale, so the 3×3 grid pulses along a diagonal wave. */
 @keyframes odys-ripple {
@@ -155,6 +185,36 @@
   .animate-pop-in { animation: odys-pop-in var(--motion-base) var(--ease-out) both; }
   .animate-pop-out { animation: odys-pop-out var(--motion-fast) var(--ease-in) both; }
   .animate-pulse-soft { animation: odys-pulse-soft 1.6s ease-in-out infinite; }
+}
+
+@layer components {
+  .notes-nav-reminder-badge {
+    display: inline-flex;
+    min-width: 1rem;
+    height: 1rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    background: var(--destructive);
+    color: white;
+    padding: 0 0.25rem;
+    font-size: 0.625rem;
+    font-weight: 700;
+    line-height: 1;
+    animation: odys-nav-reminder-pulse 1.6s ease-in-out infinite;
+  }
+
+  .notes-nav-reminder-badge-icon {
+    position: absolute;
+    right: -0.55rem;
+    top: -0.55rem;
+  }
+
+  .note-reminder-fired-sticky {
+    animation: odys-note-reminder-glow 1.6s ease-in-out infinite;
+    outline: 1px solid color-mix(in srgb, var(--primary) 35%, transparent);
+    outline-offset: 2px;
+  }
 }
 
 /* ---- Odysseus mascot — themed ripple loader (adapted from 21st.dev loader-4
@@ -191,6 +251,56 @@
   .mascot .cell:nth-child(9) { animation-delay: 360ms; --cell-color: color-mix(in srgb, var(--primary), transparent 32%); }
 }
 
+@keyframes odys-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* ---- Chat thread streaming polish ---- */
+@layer components {
+  /* "Thinking…" shimmer for the live reasoning / loading labels. */
+  .shimmer-text {
+    background: linear-gradient(90deg,
+      var(--muted-foreground) 0%, var(--muted-foreground) 35%,
+      var(--foreground) 50%,
+      var(--muted-foreground) 65%, var(--muted-foreground) 100%);
+    background-size: 200% 100%;
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent; color: transparent;
+    animation: odys-shimmer 2s linear infinite;
+  }
+
+  /* Fenced code block: a header bar (language + copy) over a flush <pre>. */
+  .prose-chat .code-block {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--card);
+  }
+  .prose-chat .code-block > .code-block-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 5px 10px;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--muted) 55%, transparent);
+  }
+  .code-block .code-lang {
+    font-size: 11px; font-weight: 500; letter-spacing: 0.02em;
+    color: var(--muted-foreground); text-transform: lowercase;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  .code-block .code-copy {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; color: var(--muted-foreground);
+    padding: 2px 6px; border-radius: 5px;
+    opacity: 0; transition: opacity var(--motion-fast) var(--ease-out), color var(--motion-fast);
+  }
+  .code-block:hover .code-copy, .code-block:focus-within .code-copy { opacity: 1; }
+  .code-block .code-copy:hover { color: var(--foreground); background: var(--accent); }
+  /* Touch devices have no hover — keep the copy/run controls always visible. */
+  @media (hover: none) {
+    .code-block .code-copy { opacity: 1; }
+  }
+  /* The header owns the rounded top; the <pre> sits flush inside the wrapper. */
+  .prose-chat .code-block > pre { margin: 0; border: 0; border-radius: 0; max-height: 420px; }
+}
+
 /* Reduced motion: opacity is vestibular-safe, movement is not. Swap the
    slide/scale enters & exits for plain fades, keep the mascot alive as a
    working indicator (opacity-only ripple), and snap hover/transform transitions
@@ -199,5 +309,6 @@
   .animate-msg-in, .animate-panel-in, .animate-pop-in { animation: odys-fade-in var(--motion-base) var(--ease-out) both !important; }
   .animate-panel-out, .animate-pop-out { animation: odys-fade-out var(--motion-fast) var(--ease-in) both !important; }
   .mascot .cell { animation-name: odys-ripple-rm !important; }
+  .shimmer-text { animation: none !important; -webkit-text-fill-color: var(--muted-foreground); color: var(--muted-foreground); }
   * { transition-duration: 0.01ms !important; }
 }

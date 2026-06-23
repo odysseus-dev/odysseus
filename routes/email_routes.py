@@ -1092,6 +1092,26 @@ def setup_email_routes():
             logger.error(f"contacts list failed: {e}")
             return {"contacts": [], "error": "Mail operation failed"}
 
+    @router.post("/sender-contact")
+    async def save_sender_contact(req: dict, owner: str = Depends(require_owner)):
+        """Save an email sender to contacts from the normal Email surface."""
+        email_addr = (req.get("email") or "").strip()
+        name = (req.get("name") or "").strip() or (email_addr.split("@")[0] if email_addr else "")
+        if not email_addr:
+            return {"success": False, "error": "Email required"}
+        try:
+            from routes.contacts_routes import _fetch_contacts, _create_contact
+            contacts = _fetch_contacts()
+            email_lower = email_addr.lower()
+            for contact in contacts:
+                if email_lower in [str(e or "").lower() for e in contact.get("emails", [])]:
+                    return {"success": True, "message": "Already exists", "contact": contact}
+            ok = _create_contact(name, email_addr)
+            return {"success": bool(ok), "message": "Saved" if ok else "Failed"}
+        except Exception as e:
+            logger.error(f"save_sender_contact failed for {email_addr!r}: {e}")
+            return {"success": False, "error": "Mail operation failed"}
+
     @router.get("/search")
     # Sync def: the body is blocking IMAP I/O with no awaits. As `async def` it ran
     # directly on the event loop and stalled the whole app during a search; as a sync
@@ -1100,6 +1120,7 @@ def setup_email_routes():
         q: str = Query(""),
         folder: str = Query("INBOX"),
         limit: int = Query(50),
+        offset: int = Query(0),
         account_id: str | None = Query(None),
         owner: str = Depends(require_owner),
     ):
@@ -1148,7 +1169,9 @@ def setup_email_routes():
 
                 uid_list = data[0].split()
                 total = len(uid_list)
-                uid_list = list(reversed(uid_list))[:limit]
+                # Newest-first, then page. `total` stays the full match count so
+                # the client knows when to stop loading (offset + limit >= total).
+                uid_list = list(reversed(uid_list))[offset:offset + limit]
 
                 emails = []
                 for uid in uid_list:
@@ -2147,12 +2170,21 @@ def setup_email_routes():
         import sqlite3
         try:
             conn = sqlite3.connect(SCHEDULED_DB)
+            row = conn.execute(
+                "SELECT attachments FROM scheduled_emails WHERE id = ? AND status IN ('pending', 'failed') AND owner = ?",
+                (sid, owner or ""),
+            ).fetchone()
             conn.execute(
-                "DELETE FROM scheduled_emails WHERE id = ? AND status = 'pending' AND owner = ?",
+                "DELETE FROM scheduled_emails WHERE id = ? AND status IN ('pending', 'failed') AND owner = ?",
                 (sid, owner or ""),
             )
             conn.commit()
             conn.close()
+            if row:
+                try:
+                    _cleanup_compose_uploads(json.loads(row[0] or "[]"))
+                except Exception:
+                    logger.debug("Failed to cleanup scheduled compose uploads", exc_info=True)
             return {"success": True}
         except Exception as e:
             logger.error(f"cancel_scheduled {sid!r} failed: {e}")
@@ -2478,14 +2510,22 @@ def setup_email_routes():
         cfg = _get_email_config(req.account_id, owner=owner)
 
         # Multipart plain+HTML when the WYSIWYG composer supplied HTML, so a
-        # reopened draft keeps its formatting; plain MIMEText otherwise.
+        # reopened draft keeps its formatting; wrap in multipart/mixed when
+        # compose uploads should be preserved with the IMAP draft.
         _draft_html = _sanitize_email_html(req.body_html) if req.body_html else None
+        has_attachments = bool(req.attachments)
         if _draft_html:
-            msg = MIMEMultipart("alternative")
-            msg.attach(MIMEText(req.body, "plain", "utf-8"))
-            msg.attach(MIMEText(_draft_html, "html", "utf-8"))
+            body_container = MIMEMultipart("alternative")
+            body_container.attach(MIMEText(req.body, "plain", "utf-8"))
+            body_container.attach(MIMEText(_draft_html, "html", "utf-8"))
         else:
-            msg = MIMEText(req.body, "plain", "utf-8")
+            body_container = MIMEText(req.body, "plain", "utf-8")
+        if has_attachments:
+            msg = MIMEMultipart("mixed")
+            msg.attach(body_container)
+            _attach_compose_uploads(msg, req.attachments)
+        else:
+            msg = body_container
         msg["From"] = email.utils.formataddr((cfg.get("display_name") or "", cfg["from_address"]))
         msg["To"] = req.to
         if req.cc:
@@ -2515,6 +2555,8 @@ def setup_email_routes():
         if err:
             logger.error(f"Failed to save draft: {err}")
             return {"success": False, "error": err}
+        if has_attachments:
+            _cleanup_compose_uploads(req.attachments)
         logger.info(f"Draft saved: {req.subject}")
         return {"success": True, "message": "Draft saved"}
 

@@ -86,3 +86,17 @@ export function parseArtifact(raw: string): { display: string; artifact?: Artifa
   const display = [pre, post].filter(Boolean).join("\n\n")
   return { display, artifact: { title, language, content, closed } }
 }
+
+// The non-create_document tool fences (edit/update/suggest) carry raw
+// <<<FIND>>>/<<<REPLACE>>>/<<<END>>> machinery that must never reach the chat
+// bubble. The backend strips these from `round_texts`, but the live stream and
+// the raw saved `content` still contain them — so strip on the client too.
+const TOOL_FENCE_RE = /```(?:edit_document|update_document|suggest_document)[\s\S]*?\n```/g
+
+// Clean one agent round's text for display: drop the create_document fence (it
+// opens in the side panel) and remove the other tool fences entirely. Returns
+// the display text plus any create_document artifact found.
+export function cleanRoundText(raw: string): { display: string; artifact?: Artifact } {
+  const { display, artifact } = parseArtifact(raw)
+  return { display: display.replace(TOOL_FENCE_RE, "").replace(/\n{3,}/g, "\n\n").trim(), artifact }
+}

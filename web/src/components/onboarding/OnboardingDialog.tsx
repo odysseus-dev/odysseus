@@ -40,7 +40,7 @@ export function OnboardingDialog() {
 
   return (
     <div className="fixed inset-0 z-50 flex animate-fade-in items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-md animate-pop-in rounded-xl border bg-popover p-6 shadow-lg">
+      <div className="max-h-[90vh] w-full max-w-[min(92vw,28rem)] animate-pop-in overflow-y-auto rounded-xl border bg-popover p-6 shadow-lg">
         <div className="flex flex-col items-center text-center">
           <Mascot size={18} className="mb-4 animate-pop-in" title="Odysseus" />
           <h2 className="text-xl font-semibold tracking-tight">Welcome to Odysseus</h2>

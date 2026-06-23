@@ -48,24 +48,37 @@ function UploadBar() {
   const { upload, reload } = useRagMutations()
   const fileRef = useRef<HTMLInputElement>(null)
   const [msg, setMsg] = useState("")
-  const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || [])
+  const [dragging, setDragging] = useState(false)
+  const onFiles = (input: FileList | File[] | null) => {
+    const files = Array.from(input || [])
     if (!files.length) return
     setMsg("")
     upload.mutate(files, {
-      onSuccess: (r) => setMsg(`Indexed ${r.indexed_count ?? 0} chunks from ${r.uploaded?.length ?? files.length} file(s)${r.failed_count ? `, ${r.failed_count} failed` : ""}.`),
+      onSuccess: (r) => setMsg(`Indexed ${r.indexed_count ?? 0} chunk${r.indexed_count === 1 ? "" : "s"} from ${r.uploaded?.length ?? files.length} file${(r.uploaded?.length ?? files.length) === 1 ? "" : "s"}${r.failed_count ? `, ${r.failed_count} failed` : ""}.`),
       onError: (err) => setMsg(err instanceof Error ? err.message : "Upload failed"),
     })
     if (fileRef.current) fileRef.current.value = ""
   }
   return (
-    <div className="space-y-2 rounded-lg border bg-card p-3">
-      <div className="flex items-center gap-2">
-        <input ref={fileRef} type="file" multiple accept=".txt,.md,.pdf,.json,.csv" onChange={onPick} className="hidden" />
-        <Button size="sm" disabled={upload.isPending} onClick={() => fileRef.current?.click()}><Upload className="size-4" />{upload.isPending ? "Uploading…" : "Upload documents"}</Button>
+    <div
+      onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false) }}
+      onDrop={(e) => { e.preventDefault(); setDragging(false); onFiles(e.dataTransfer.files) }}
+      className={cn("space-y-2 rounded-lg border bg-card p-3 transition-colors", dragging && "border-ring bg-accent/40 ring-[3px] ring-ring/25")}
+    >
+      <input ref={fileRef} type="file" multiple accept=".txt,.md,.pdf,.json,.csv" onChange={(e) => onFiles(e.target.files)} className="hidden" />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <div className="rounded-md border bg-background p-2 text-muted-foreground"><Upload className="size-4" /></div>
+          <div className="min-w-0">
+            <div className="text-sm font-medium">{upload.isPending ? "Uploading…" : dragging ? "Drop to index documents" : "Drop files here or click to upload"}</div>
+            <p className="mt-0.5 text-xs text-muted-foreground">Text and PDF files are chunked and embedded into the knowledge base.</p>
+          </div>
+        </div>
+        <Button size="sm" disabled={upload.isPending} onClick={() => fileRef.current?.click()}><Upload className="size-4" />Choose files</Button>
         <Button size="sm" variant="outline" disabled={reload.isPending} onClick={() => reload.mutate()}><RefreshCw className={cn("size-4", reload.isPending && "animate-spin")} />Reload index</Button>
       </div>
-      <p className="text-xs text-muted-foreground">{msg || "Text and PDF files are chunked and embedded into the knowledge base."}</p>
+      {msg && <p className="text-xs text-muted-foreground">{msg}</p>}
     </div>
   )
 }

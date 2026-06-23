@@ -1,0 +1,6 @@
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "registries": {
+    "@cult-ui": "https://cult-ui.com/r/{name}.json"
+  }
+}

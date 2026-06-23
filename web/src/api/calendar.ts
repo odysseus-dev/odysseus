@@ -5,6 +5,7 @@ export interface CalEvent {
   uid: string; summary?: string; title?: string; dtstart?: string; dtend?: string;
   all_day?: boolean; location?: string; description?: string; calendar?: string;
   calendar_href?: string; color?: string; rrule?: string; series_uid?: string;
+  event_type?: string; importance?: string;
   is_recurrence?: boolean;
 }
 export function useEvents(start: string, end: string) {
@@ -27,10 +28,12 @@ export function useCalendars() {
 export interface EventInput {
   summary: string; dtstart: string; dtend?: string; all_day?: boolean; location?: string;
   description?: string; calendar_href?: string; rrule?: string; color?: string;
+  event_type?: string; importance?: string;
 }
 export interface EventPatch {
   summary?: string; dtstart?: string; dtend?: string; all_day?: boolean; location?: string;
   description?: string; rrule?: string; color?: string;
+  event_type?: string; importance?: string;
 }
 export function useEventMutations() {
   const qc = useQueryClient()
@@ -62,7 +65,10 @@ export function useEventMutations() {
 
 export function useCalendarMutations() {
   const qc = useQueryClient()
-  const inv = () => qc.invalidateQueries({ queryKey: ["calendars"] })
+  const inv = () => {
+    qc.invalidateQueries({ queryKey: ["calendars"] })
+    qc.invalidateQueries({ queryKey: ["calendar"] })
+  }
   return {
     create: useMutation({
       mutationFn: async (v: { name: string; color?: string }) => {
@@ -73,7 +79,61 @@ export function useCalendarMutations() {
       },
       onSuccess: inv,
     }),
+    update: useMutation({
+      mutationFn: async (v: { href: string; name?: string; color?: string }) => {
+        const q = new URLSearchParams()
+        if (v.name !== undefined) q.set("name", v.name)
+        if (v.color !== undefined) q.set("color", v.color)
+        const r = await apiFetch(`/api/calendar/calendars/${encodeURIComponent(v.href)}?${q.toString()}`, { method: "PUT" })
+        if (!r.ok) throw new Error("Couldn't update calendar"); return r.json()
+      },
+      onSuccess: inv,
+    }),
+    remove: useMutation({
+      mutationFn: async (href: string) => {
+        const r = await apiFetch(`/api/calendar/calendars/${encodeURIComponent(href)}`, { method: "DELETE" })
+        if (!r.ok) throw new Error("Couldn't delete calendar")
+      },
+      onSuccess: inv,
+    }),
   }
+}
+
+// Extract a cookbook task id from an event description. Cookbook-generated
+// calendar events embed `cookbook_task_id:<id>` so we can link back to Tasks.
+export function cookbookTaskId(description?: string): string | null {
+  if (!description) return null
+  const m = description.match(/cookbook_task_id:\s*([A-Za-z0-9._-]+)/)
+  return m ? m[1] : null
+}
+
+export async function createCalendarReminder(v: { title: string; content: string; dueDate: string; eventStart?: string; color?: string }): Promise<void> {
+  const r = await apiFetch("/api/notes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: v.title,
+      content: v.eventStart ? `${v.content}\n\nEvent starts: ${v.eventStart}` : v.content,
+      note_type: "note",
+      label: "calendar",
+      color: v.color || "#5b8abf",
+      due_date: v.dueDate,
+      source: "calendar",
+    }),
+  })
+  if (!r.ok) throw new Error("Couldn't create reminder")
+}
+
+export async function uploadCalendarBackgroundImage(file: File): Promise<string> {
+  const fd = new FormData()
+  fd.append("files", file, file.name)
+  const r = await apiFetch("/api/upload", { method: "POST", body: fd })
+  if (!r.ok) throw new Error("Couldn't upload image")
+  const data = (await r.json()) as { files?: { id?: string }[] }
+  const fileId = data.files?.[0]?.id
+  if (!fileId) throw new Error("Couldn't upload image")
+  const origin = typeof window !== "undefined" ? window.location.origin : ""
+  return `${origin}/api/upload/${encodeURIComponent(fileId)}`
 }
 
 export interface SyncResult { calendars?: number; events?: number; deleted?: number; errors?: string[] }

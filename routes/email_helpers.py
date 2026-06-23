@@ -397,6 +397,32 @@ def _cleanup_compose_uploads(tokens) -> None:
             pass
 
 
+def sweep_compose_uploads(ttl_seconds: int = 7 * 24 * 3600) -> int:
+    """Delete staged compose attachments older than ``ttl_seconds``.
+
+    Uploads are normally removed when a draft/email is sent, saved, or
+    scheduled (see ``_cleanup_compose_uploads``). Attachments uploaded and then
+    abandoned (the user closes the composer without sending) are never
+    referenced again and would otherwise persist until the process restarts.
+    Called once on startup so orphans don't accumulate. Returns the count
+    removed. ``COMPOSE_UPLOADS_DIR`` is resolved at call time (defined below).
+    """
+    import time
+    removed = 0
+    try:
+        cutoff = time.time() - max(0, ttl_seconds)
+        for path in COMPOSE_UPLOADS_DIR.glob("*"):
+            try:
+                if path.is_file() and path.stat().st_mtime < cutoff:
+                    path.unlink(missing_ok=True)
+                    removed += 1
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return removed
+
+
 from src.constants import DATA_DIR as _DATA_DIR, MAIL_ATTACHMENTS_DIR, SETTINGS_FILE as _SETTINGS_FILE, SCHEDULED_EMAILS_DB
 DATA_DIR = Path(_DATA_DIR)
 SETTINGS_FILE = Path(_SETTINGS_FILE)

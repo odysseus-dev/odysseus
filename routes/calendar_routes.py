@@ -176,6 +176,30 @@ def _record_caldav_delete_tombstone(db, ev: CalendarEvent, owner: str) -> None:
 
 # ── Pydantic models ──
 
+VALID_EVENT_TYPES = {"work", "personal", "health", "travel", "meal", "social", "admin", "other"}
+VALID_IMPORTANCE = {"low", "normal", "high", "critical"}
+
+
+def _clean_event_type(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    cleaned = value.strip().lower()
+    if not cleaned:
+        return None
+    if cleaned not in VALID_EVENT_TYPES:
+        raise HTTPException(400, "Invalid event type")
+    return cleaned
+
+
+def _clean_importance(value: Optional[str]) -> str:
+    cleaned = (value or "normal").strip().lower()
+    if not cleaned:
+        cleaned = "normal"
+    if cleaned not in VALID_IMPORTANCE:
+        raise HTTPException(400, "Invalid importance")
+    return cleaned
+
+
 class EventCreate(BaseModel):
     summary: str
     dtstart: str  # ISO 8601
@@ -186,6 +210,8 @@ class EventCreate(BaseModel):
     calendar_href: Optional[str] = None  # calendar id
     rrule: Optional[str] = None
     color: Optional[str] = None  # per-event color override
+    event_type: Optional[str] = None
+    importance: Optional[str] = None
 
 
 class EventUpdate(BaseModel):
@@ -197,6 +223,8 @@ class EventUpdate(BaseModel):
     location: Optional[str] = None
     rrule: Optional[str] = None
     color: Optional[str] = None
+    event_type: Optional[str] = None
+    importance: Optional[str] = None
 
 
 # ── Helpers ──
@@ -1050,6 +1078,8 @@ def setup_calendar_routes() -> APIRouter:
                 is_utc=_is_utc and not data.all_day,
                 rrule=data.rrule or "",
                 color=data.color or None,
+                event_type=_clean_event_type(data.event_type),
+                importance=_clean_importance(data.importance),
                 caldav_sync_pending="create" if cal.source == "caldav" else None,
             )
             db.add(ev)
@@ -1101,6 +1131,10 @@ def setup_calendar_routes() -> APIRouter:
                 ev.rrule = data.rrule
             if data.color is not None:
                 ev.color = data.color if data.color else None
+            if data.event_type is not None:
+                ev.event_type = _clean_event_type(data.event_type)
+            if data.importance is not None:
+                ev.importance = _clean_importance(data.importance)
             is_caldav = ev.calendar and ev.calendar.source == "caldav"
             if is_caldav:
                 ev.caldav_sync_pending = "update"

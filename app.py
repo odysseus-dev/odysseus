@@ -855,6 +855,19 @@ async def serve_tasks(request: Request):
 async def serve_library(request: Request):
     return await serve_index(request)
 
+@app.get("/v2/gallery-editor-frame")
+async def serve_v2_gallery_editor(request: Request):
+    """Isolated host for the mature canvas editor inside the v2 Gallery.
+
+    The iframe keeps the legacy editor stylesheet from leaking into the v2
+    design system while the editor itself continues to use the same backend
+    image and persisted-draft APIs.
+    """
+    frame = abs_join(BASE_DIR, "static-v2/gallery-editor.html")
+    if os.path.exists(frame):
+        return _serve_html_with_nonce(request, frame)
+    raise HTTPException(404, "v2 gallery editor build not found")
+
 @app.get("/v2")
 @app.get("/v2/{full_path:path}")
 async def serve_v2(request: Request, full_path: str = ""):
@@ -952,6 +965,15 @@ async def _startup_event():
             _db.close()
     except Exception as e:
         logger.debug(f"Incognito purge skipped: {e}")
+    # Sweep compose-attachment uploads that were staged but never sent (the user
+    # closed the composer without delivering). Blocking file I/O → run off-loop.
+    try:
+        from routes.email_helpers import sweep_compose_uploads
+        _swept = await asyncio.to_thread(sweep_compose_uploads)
+        if _swept:
+            logger.info(f"Swept {_swept} orphaned compose upload(s)")
+    except Exception as e:
+        logger.debug(f"Compose-upload sweep skipped: {e}")
     # Strong refs to fire-and-forget startup tasks. Without this, Python may
     # GC tasks created with `asyncio.create_task(...)` before they finish.
     _startup_tasks: list[asyncio.Task] = getattr(app.state, "_startup_tasks", [])

@@ -94,8 +94,19 @@ export function wireAIModelSelectors({ container, apiBase, openCookbookForImg2im
       const selectBaseUrl = opts.selectBaseUrl || '';
       const prevGenValue = aiGenSelect?.value || '';
       const prevInpaintValue = aiInpaintSelect?.value || '';
-      const res = await fetch(`${apiBase}/api/model-endpoints`);
-      const endpoints = await res.json();
+      // Use the caller-scoped model catalog, not the admin-only endpoint
+      // configuration API. This keeps editor choices aligned with each user's
+      // model allowlist and avoids exposing endpoint-management metadata.
+      const res = await fetch(`${apiBase}/api/models`, { credentials: 'same-origin' });
+      if (!res.ok) throw new Error(`Model catalog request failed (${res.status})`);
+      const payload = await res.json();
+      const endpoints = (payload.items || []).map(ep => ({
+        ...ep,
+        name: ep.endpoint_name || ep.name || ep.url,
+        base_url: ep.url || ep.base_url,
+        is_enabled: true,
+        online: true,
+      }));
       if (aiGenSelect) aiGenSelect.innerHTML = '<option value="">None</option>';
       if (aiInpaintSelect) aiInpaintSelect.innerHTML = '<option value="">Auto</option>';
       const perToolSelects = Array.from(document.querySelectorAll('select.ge-tool-model'));

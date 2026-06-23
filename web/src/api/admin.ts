@@ -3,7 +3,9 @@ import { apiFetch, apiJson } from "@/lib/api"
 
 export interface McpServer {
   id: string; name: string; transport: string; command?: string; url?: string;
-  is_enabled?: boolean; status?: string; tool_count?: number; error?: string; needs_oauth?: boolean;
+  args?: string[]; env?: Record<string, string>;
+  is_enabled?: boolean; status?: string; tool_count?: number; error?: string;
+  needs_oauth?: boolean; has_oauth?: boolean;
 }
 export interface Webhook {
   id: string; name: string; url: string; events: string[]; is_active?: boolean;
@@ -49,17 +51,25 @@ export function useAdminMutations() {
   }
   return {
     addServer: useMutation({
-      mutationFn: async (v: { name: string; transport: string; command?: string; url?: string }) => {
-        const r = await form("/api/mcp/servers", { name: v.name, transport: v.transport, command: v.command || "", url: v.url || "" })
+      mutationFn: async (v: { name: string; transport: string; command?: string; url?: string; args?: string; env?: string }) => {
+        const r = await form("/api/mcp/servers", { name: v.name, transport: v.transport, command: v.command || "", url: v.url || "", args: v.args || "[]", env: v.env || "{}" })
         if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || "Add failed") }
         return r.json()
       }, onSuccess: invMcp,
     }),
     reconnectServer: useMutation({ mutationFn: async (id: string) => { const r = await apiFetch(`/api/mcp/servers/${id}/reconnect`, { method: "POST" }); if (!r.ok) throw new Error("Couldn't reconnect the server") }, onSuccess: invMcp }),
+    // Enable/disable an MCP server. Backend: PATCH /api/mcp/servers/{id} (form is_enabled).
+    toggleServer: useMutation({
+      mutationFn: async (v: { id: string; is_enabled: boolean }) => {
+        const fd = new FormData(); fd.set("is_enabled", String(v.is_enabled))
+        const r = await apiFetch(`/api/mcp/servers/${v.id}`, { method: "PATCH", body: fd })
+        if (!r.ok) throw new Error("Couldn't update the server")
+      }, onSuccess: invMcp,
+    }),
     removeServer: useMutation({ mutationFn: async (id: string) => { const r = await apiFetch(`/api/mcp/servers/${id}`, { method: "DELETE" }); if (!r.ok) throw new Error("Couldn't remove the server") }, onSuccess: invMcp }),
     addWebhook: useMutation({
-      mutationFn: async (v: { name: string; url: string; events: string }) => {
-        const r = await form("/api/webhooks", { name: v.name, url: v.url, events: v.events })
+      mutationFn: async (v: { name: string; url: string; events: string; secret?: string }) => {
+        const r = await form("/api/webhooks", { name: v.name, url: v.url, events: v.events, secret: v.secret || "" })
         if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || "Add failed") }
         return r.json()
       }, onSuccess: invHook,

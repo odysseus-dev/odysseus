@@ -42,6 +42,20 @@ export const THEMES = {
                             sidebarBg:'#f7f7f7', brandColor:'#0d0d0d',
                             inputBg:'#f2f2f2', inputBorder:'#e0e0e0',
                             sendBtnBg:'#0d0d0d', sendBtnHover:'#000000', toggleActive:'#3183d8' } },
+  // shadcn/ui "zinc" — cool near-monochrome surfaces, monochrome accent (primary
+  // = zinc-200 on dark / zinc-900 on light), 0.625rem radius, expressive motion.
+  // Base palette here is set inline by applyColors(); all structural styling lives
+  // in static/shadcn.css (scoped to [data-theme^="shadcn"]) + static/shadcn.js.
+  shadcn:     { bg:'#09090b', fg:'#fafafa', panel:'#18181b', border:'#27272a', red:'#e4e4e7',
+                advanced: { userBubbleBg:'#27272a', aiBubbleBg:'#09090b', bubbleBorder:'#27272a',
+                            sidebarBg:'#18181b', brandColor:'#fafafa',
+                            inputBg:'#18181b', inputBorder:'#27272a',
+                            sendBtnBg:'#e4e4e7', sendBtnHover:'#ffffff', toggleActive:'#e4e4e7' } },
+  'shadcn-light': { bg:'#ffffff', fg:'#09090b', panel:'#f7f7f8', border:'#e4e4e7', red:'#18181b',
+                advanced: { userBubbleBg:'#f4f4f5', aiBubbleBg:'#ffffff', bubbleBorder:'#e4e4e7',
+                            sidebarBg:'#fafafa', brandColor:'#18181b',
+                            inputBg:'#ffffff', inputBorder:'#e4e4e7',
+                            sendBtnBg:'#18181b', sendBtnHover:'#000000', toggleActive:'#18181b' } },
 };
 
 const DEFAULT_THEME = 'codex';
@@ -649,7 +663,7 @@ export function initThemeUI() {
         <span style="background:${c.fg}"></span>
         <span style="background:${c.red}"></span>
       </div>
-      ${name === 'dark' ? 'original' : (name === 'gpt' ? 'GPT' : (name === 'codex' ? 'Codex' : (name === 'codex-light' ? 'Codex Light' : name)))}
+      ${name === 'dark' ? 'original' : (name === 'gpt' ? 'GPT' : (name === 'codex' ? 'Codex' : (name === 'codex-light' ? 'Codex Light' : (name === 'shadcn' ? 'shadcn' : (name === 'shadcn-light' ? 'shadcn Light' : name)))))}
     </div>
   `).join('');
 

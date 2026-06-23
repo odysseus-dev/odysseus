@@ -1,5 +1,5 @@
 import { useRef, useState } from "react"
-import { X, ExternalLink, Copy, Check, FileText, FileCode2, Eye, Code2, ArrowLeft, Pencil, History, Loader2 } from "lucide-react"
+import { X, ExternalLink, Copy, Check, FileText, FileCode2, Eye, Code2, ArrowLeft, Pencil, History, Loader2, Pin, SkipForward, CheckCheck } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 import { usePanel, type PanelFile } from "@/stores/panel"
 import { HtmlPreview } from "@/components/ui/HtmlPreview"
@@ -46,6 +46,9 @@ export function ContextPanel() {
   const [view, setView] = useState<"preview" | "code">("preview")
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState("")
+  const [pendingSelection, setPendingSelection] = useState<{ start: number; end: number } | null>(null)
+  const [dragTab, setDragTab] = useState<string | null>(null)
+  const editorRef = useRef<HTMLTextAreaElement>(null)
   const [mode, setMode] = useState<"view" | "history">("view")
   const { update } = useDocMutations()
   // Reset transient panel state whenever a different document opens (render-time
@@ -56,7 +59,7 @@ export function ContextPanel() {
 
   if (!render) return null
   const editable = kind === "doc" && !!doc?.docId && !doc?.error
-  const startEdit = () => { setDraft(doc?.content || ""); setMode("view"); setEditing(true) }
+  const startEdit = () => { setDraft(doc?.content || ""); setMode("view"); setPendingSelection(null); setEditing(true) }
   const saveEdit = () => {
     if (!doc?.docId) return
     update.mutate({ id: doc.docId, content: draft }, { onSuccess: () => { usePanel.getState().setDocContent(draft); setEditing(false) } })
@@ -65,12 +68,35 @@ export function ContextPanel() {
   const hasFileList = !!files && files.length > 0
   const copy = async () => { try { await navigator.clipboard.writeText(doc?.content || ""); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch { /* ignore */ } }
   const showPreview = kind === "doc" && renderable && view === "preview" && !editing && mode === "view"
+  const pinSelection = () => {
+    if (!pendingSelection || pendingSelection.end <= pendingSelection.start) return
+    const text = draft.slice(pendingSelection.start, pendingSelection.end)
+    if (!text.trim()) return
+    const startLine = draft.slice(0, pendingSelection.start).split("\n").length
+    const endLine = startLine + text.split("\n").length - 1
+    const next = [...(doc?.selections || []), { text, startLine, endLine, start: pendingSelection.start, end: pendingSelection.end }]
+    usePanel.getState().setDocSelections(next)
+    setPendingSelection(null)
+    editorRef.current?.focus()
+  }
+  const applySuggestions = (all: boolean) => {
+    const suggestions = doc?.suggestions || []
+    const chosen = all ? suggestions : suggestions.slice(0, 1)
+    let content = doc?.content || ""
+    for (const suggestion of chosen) content = content.replace(suggestion.find, suggestion.replace)
+    if (!doc?.docId) return
+    update.mutate({ id: doc.docId, content }, { onSuccess: () => {
+      usePanel.getState().setDocContent(content)
+      usePanel.getState().setDocSuggestions(suggestions.slice(chosen.length))
+      if (editing) setDraft(content)
+    } })
+  }
   const headerTitle = kind === "doc" ? doc?.title || "Document"
     : kind === "files" ? `Files${files?.length ? ` · ${files.length}` : ""}`
     : title || "Details"
 
   return (
-    <aside className={cn("hidden w-[44%] max-w-[560px] shrink-0 flex-col border-l bg-card lg:flex", closing ? "animate-panel-out" : "animate-panel-in")}>
+    <aside className={cn("fixed inset-0 z-40 flex w-full flex-col bg-card lg:static lg:inset-auto lg:z-auto lg:w-[44%] lg:max-w-[560px] lg:shrink-0 lg:border-l", closing ? "animate-panel-out" : "animate-panel-in")}>
       <header className="flex h-13 shrink-0 items-center justify-between gap-2 border-b px-4">
         <span className="flex min-w-0 items-center gap-2 text-sm font-semibold">
           {kind === "doc" && hasFileList && (
@@ -83,6 +109,7 @@ export function ContextPanel() {
         <div className="flex shrink-0 items-center gap-1">
           {editing ? (
             <>
+              <Button size="sm" variant="ghost" onClick={pinSelection} disabled={!pendingSelection}><Pin className="size-3.5" />Pin selection</Button>
               <Button size="sm" variant="ghost" onClick={() => setEditing(false)} disabled={update.isPending}>Cancel</Button>
               <Button size="sm" onClick={saveEdit} disabled={update.isPending}>{update.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}Save</Button>
             </>
@@ -103,6 +130,24 @@ export function ContextPanel() {
         </div>
       </header>
 
+      {kind === "doc" && (files?.length || 0) > 1 && (
+        <div className="flex shrink-0 gap-1 overflow-x-auto border-b bg-muted/20 px-2 pt-1.5">
+          {(files || []).map((file) => <button key={file.id} draggable onDragStart={() => setDragTab(file.id)} onDragEnd={() => setDragTab(null)} onDragOver={(e) => e.preventDefault()} onDrop={() => {
+            if (!dragTab || dragTab === file.id) return
+            const ordered = [...(files || [])]
+            const from = ordered.findIndex((item) => item.id === dragTab), to = ordered.findIndex((item) => item.id === file.id)
+            if (from >= 0 && to >= 0) { const [moved] = ordered.splice(from, 1); ordered.splice(to, 0, moved); usePanel.getState().setFiles(ordered) }
+          }} onClick={() => openFile(file)} className={cn("max-w-40 shrink-0 truncate rounded-t-md border border-b-0 px-2.5 py-1.5 text-xs", doc?.docId === file.id ? "bg-background text-foreground" : "bg-card text-muted-foreground hover:text-foreground")}>{file.title || file.name || "Untitled"}</button>)}
+        </div>
+      )}
+
+      {kind === "doc" && !!doc?.selections?.length && (
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b bg-muted/20 px-3 py-2 text-xs">
+          <Pin className="size-3.5 text-muted-foreground" /><span className="text-muted-foreground">Send with chat:</span>
+          {doc.selections.map((selection, i) => <button key={`${selection.start}-${i}`} onClick={() => usePanel.getState().setDocSelections((doc.selections || []).filter((_, j) => j !== i))} title="Remove pinned selection" className="rounded-full border bg-background px-2 py-0.5">{selection.startLine === selection.endLine ? `line ${selection.startLine}` : `lines ${selection.startLine}–${selection.endLine}`} ×</button>)}
+        </div>
+      )}
+
       {kind === "files" ? (
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
           <div className="space-y-1.5">
@@ -122,7 +167,7 @@ export function ContextPanel() {
         <DocHistory docId={doc.docId} onBack={() => setMode("view")}
           onRestored={(content) => { usePanel.getState().setDocContent(content); setMode("view") }} />
       ) : kind === "doc" && editing ? (
-        <textarea value={draft} onChange={(e) => setDraft(e.target.value)} spellCheck={false} autoFocus
+        <textarea ref={editorRef} value={draft} onChange={(e) => setDraft(e.target.value)} onSelect={(e) => { const el = e.currentTarget; setPendingSelection(el.selectionEnd > el.selectionStart ? { start: el.selectionStart, end: el.selectionEnd } : null) }} spellCheck={false} autoFocus
           className="min-h-0 flex-1 resize-none border-0 bg-background p-4 font-mono text-[13px] leading-relaxed text-foreground outline-none" />
       ) : kind === "doc" && doc?.error ? (
         <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-center text-sm text-destructive">{doc.error}</div>
@@ -149,10 +194,18 @@ export function ContextPanel() {
         </div>
       )}
 
+      {kind === "doc" && !!doc?.suggestions?.length && !editing && mode === "view" && (
+        <div className="shrink-0 space-y-2 border-t bg-muted/20 p-3">
+          <div className="flex items-center justify-between gap-2"><span className="text-xs font-semibold">AI suggestion · 1 of {doc.suggestions.length}</span><span className="flex gap-1"><Button size="sm" variant="ghost" onClick={() => usePanel.getState().setDocSuggestions((doc.suggestions || []).slice(1))}><SkipForward className="size-3.5" />Skip</Button><Button size="sm" variant="outline" onClick={() => applySuggestions(true)}><CheckCheck className="size-3.5" />Accept all</Button><Button size="sm" onClick={() => applySuggestions(false)}><Check className="size-3.5" />Accept</Button></span></div>
+          {doc.suggestions[0].reason && <p className="text-xs text-muted-foreground">{doc.suggestions[0].reason}</p>}
+          <div className="grid gap-1 text-xs"><pre className="max-h-20 overflow-auto whitespace-pre-wrap rounded border bg-destructive/5 p-2 line-through">{doc.suggestions[0].find}</pre><pre className="max-h-20 overflow-auto whitespace-pre-wrap rounded border bg-emerald-500/5 p-2">{doc.suggestions[0].replace}</pre></div>
+        </div>
+      )}
+
       {kind === "doc" && doc?.docId && !editing && mode === "view" && (
         <div className="flex shrink-0 items-center gap-2 border-t p-3">
           <ShareMenu resourceType="document" resourceId={doc.docId} placement="up" />
-          <Button variant="outline" size="sm" className="ml-auto" onClick={() => { close(); navigate("/library") }}>Open in Library</Button>
+          <Button variant="outline" size="sm" className="ml-auto" onClick={() => { close(); navigate(`/library?doc=${encodeURIComponent(doc.docId || "")}`) }}>Open in Library</Button>
         </div>
       )}
     </aside>

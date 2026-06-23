@@ -5,7 +5,12 @@ import type { ToolEvent } from "@/types"
 
 function ToolRow({ t }: { t: ToolEvent }) {
   const err = t.exitCode != null && t.exitCode !== 0
-  const cmd = t.command || (typeof t.input === "string" ? t.input : "")
+  const rawCmd = t.command || (typeof t.input === "string" ? t.input : "")
+  // Doc-edit tools carry their FIND/REPLACE body as the command; its first line
+  // is a `<<<FIND>>>` marker — raw tool syntax that shouldn't surface. Hide it.
+  const cmd = rawCmd.startsWith("<<<") ? "" : rawCmd
+  const image = t.imageUrl || t.screenshot
+  const diff = t.diff?.text
   return (
     <div className="animate-fade-in">
       <div className="flex items-center gap-1.5">
@@ -15,18 +20,25 @@ function ToolRow({ t }: { t: ToolEvent }) {
             ? <X className="size-3.5 shrink-0 text-destructive" />
             : <Check className="size-3.5 shrink-0 text-emerald-500" />}
         <span className="font-medium text-foreground">{t.name}</span>
-        {cmd && <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">{cmd.split("\n")[0].slice(0, 90)}</span>}
+        {cmd && !diff && <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">{cmd.split("\n")[0].slice(0, 90)}</span>}
       </div>
       {t.running && t.progress && <div className="mt-1 truncate pl-5 font-mono text-[11px] text-muted-foreground">{t.progress}</div>}
-      {t.output && <pre className="mt-1 max-h-48 overflow-auto rounded bg-muted p-2 text-[11px] leading-relaxed">{String(t.output).slice(0, 4000)}</pre>}
+      {/* File-write/edit diff — re-rendered from the persisted tool event. */}
+      {diff && <pre className="mt-1 max-h-48 overflow-auto rounded bg-muted p-2 text-[11px] leading-relaxed">
+        {(t.diff?.file ? `${t.diff.file}\n` : "") + diff.split("\n").map((l) => l).join("\n").slice(0, 4000)}
+      </pre>}
+      {t.output && !diff && <pre className="mt-1 max-h-48 overflow-auto rounded bg-muted p-2 text-[11px] leading-relaxed">{String(t.output).slice(0, 4000)}</pre>}
+      {/* Generated image / browser screenshot. */}
+      {image && <img src={image} alt={t.imagePrompt || t.name} className="mt-1 max-h-64 rounded border" />}
     </div>
   )
 }
 
-export function ToolThread({ tools }: { tools: ToolEvent[] }) {
+export function ToolThread({ tools, defaultOpen = false }: { tools: ToolEvent[]; defaultOpen?: boolean }) {
   const anyRunning = tools.some((t) => t.running)
-  // Starts expanded so the "flow of thought" is visible as tools stream in.
-  const [open, setOpen] = useState(true)
+  // Collapsed by default — expand to inspect each step's command and output.
+  // Agent turns pass defaultOpen so the steps are visible like the legacy UI.
+  const [open, setOpen] = useState(defaultOpen)
   return (
     <div className="rounded-lg border bg-card text-xs">
       <button onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-2 px-3 py-2 text-muted-foreground transition-colors hover:text-foreground">

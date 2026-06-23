@@ -2245,6 +2245,7 @@ async def stream_agent_loop(
         re.IGNORECASE,
     )
     _awaiting_user = False  # set by ask_user → end the turn and wait for a choice
+    _ask_user_prompt = None
 
     # Document streaming state (persists across rounds)
     _doc_acc = ""          # accumulated tool-call JSON arguments
@@ -2922,6 +2923,7 @@ async def stream_agent_loop(
                 # text (once) so it persists and is replayed. The card shows the
                 # options only, so this is the single visible copy of the question.
                 _auq = result["ask_user"]
+                _ask_user_prompt = _auq
                 _auq_q = (_auq.get("question") or "").strip()
                 if _auq_q and _auq_q not in full_response:
                     _auq_delta = ("\n\n" if full_response.strip() else "") + _auq_q
@@ -3137,6 +3139,10 @@ async def stream_agent_loop(
         backend_prefill_tps=backend_prefill_tps,
     )
     metrics["requested_model"] = requested_model
+    if _exhausted_rounds:
+        metrics["rounds_exhausted"] = max_rounds
+    if _ask_user_prompt:
+        metrics["ask_user"] = _ask_user_prompt
     yield f"data: {json.dumps({'type': 'metrics', 'data': metrics})}\n\n"
 
     # Teacher-escalation: inline takeover visible in the chat stream.
