@@ -2957,33 +2957,41 @@ function _rerenderCachedModels() {
             && ((t.remoteHost || '') === _hostStr || (t.remoteServerKey || '') === _serverKeyStr)
             && (t.status === 'running' || t.status === 'ready' || t._serveReady)
           );
+          // Only block when the new model's port genuinely collides with
+          // a running serve. Different ports coexist fine (issue #4507).
           if (_active.length) {
-            const _names = _active.map(t => t.payload?.repo_id || t.repo || t.name || '?').filter(Boolean);
-            const _ok = await window.styledConfirm(
-              `${_active.length} model${_active.length === 1 ? '' : 's'} already serving on ${_hostStr || 'local'} (${_names.join(', ')}). Port 8000 will collide. Stop the running model and launch this one?`,
-              { title: 'Server already running', confirmText: 'Stop & launch', cancelText: 'Cancel' },
-            );
-            if (!_ok) { _restoreLaunchBtn(); return; }
-            // Kill each active serve; prefer the rendered Stop button so
-            // endpoint cleanup + Ollama unload run normally. Fall back to
-            // a raw tmux kill when the Active tab isn't in the DOM.
-            for (const t of _active) {
-              try {
-                const _el = document.querySelector(`.cookbook-task[data-task-id="${t.sessionId}"]`);
-                const _btn = _el?.querySelector('.cookbook-task-action-stop');
-                if (_btn) {
-                  _btn.click();
-                } else if (_runningMod._tmuxGracefulKill) {
-                  await fetch('/api/shell/exec', {
-                    method: 'POST', credentials: 'same-origin',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ command: _runningMod._tmuxGracefulKill(t) }),
-                  });
-                }
-              } catch (_killErr) { /* best-effort */ }
+            const _newPort = (launchCmd.match(/--port[=\s]+(\d+)/) || [])[1] || '';
+            const _clashing = _newPort
+              ? _active.filter(t => ((t.payload?._cmd || '').match(/--port[=\s]+(\d+)/) || [])[1] === _newPort)
+              : _active;
+            if (_clashing.length) {
+              const _names = _clashing.map(t => t.payload?.repo_id || t.repo || t.name || '?').filter(Boolean);
+              const _portNote = _newPort ? ` on port ${_newPort}` : '';
+              const _ok = await window.styledConfirm(
+                `${_clashing.length} model${_clashing.length === 1 ? '' : 's'} already serving on ${_hostStr || 'local'} (${_names.join(', ')})${_portNote}. Stop it and launch this one?`,
+                { title: _newPort ? `Port ${_newPort} in use` : 'Server already running', confirmText: 'Stop & launch', cancelText: 'Cancel' },
+              );
+              if (!_ok) { _restoreLaunchBtn(); return; }
+              // Kill each clashing serve; prefer the rendered Stop button so
+              // endpoint cleanup + Ollama unload run normally. Fall back to
+              // a raw tmux kill when the Active tab isn't in the DOM.
+              for (const t of _clashing) {
+                try {
+                  const _el = document.querySelector(`.cookbook-task[data-task-id="${t.sessionId}"]`);
+                  const _btn = _el?.querySelector('.cookbook-task-action-stop');
+                  if (_btn) {
+                    _btn.click();
+                  } else if (_runningMod._tmuxGracefulKill) {
+                    await fetch('/api/shell/exec', {
+                      method: 'POST', credentials: 'same-origin',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ command: _runningMod._tmuxGracefulKill(t) }),
+                    });
+                  }
+                } catch (_killErr) { /* best-effort */ }
+              }
+              await new Promise(r => setTimeout(r, 2500));
             }
-            // Give the OS a beat to release port 8000.
-            await new Promise(r => setTimeout(r, 2500));
           }
         } catch (_e) { /* best-effort */ }
 
