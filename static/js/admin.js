@@ -347,17 +347,18 @@ function initShareDefaultsToggle() {
   const toggle = el('adm-shareDefaultsToggle');
   fetch('/api/settings', { credentials: 'same-origin' })
     .then(r => r.json())
-    .then(d => { toggle.checked = d.share_defaults_with_users !== false; })
+    .then(d => { toggle.checked = !!d.share_defaults_with_users; })
     .catch(e => console.warn('Settings fetch failed:', e));
   toggle.addEventListener('change', async () => {
     try {
       const res = await fetch('/api/settings', {
-        method: 'PUT',
+        method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ share_defaults_with_users: toggle.checked }),
       });
-      if (!res.ok) throw new Error('Failed to save');
+      const data = await res.json();
+      toggle.checked = data.share_defaults_with_users;
     } catch (e) { toggle.checked = !toggle.checked; }
   });
 }
