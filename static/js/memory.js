@@ -6,6 +6,7 @@ import sessionModule from './sessions.js';
 import spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
+import { topPortalZ } from './toolWindowZOrder.js';
 
 var escapeHtml = uiModule.esc;
 
@@ -869,12 +870,9 @@ export function renderMemoryList() {
         // Tool modals get a monotonically increasing z-index from modalManager's
         // bring-to-front counter, which climbs unbounded over a long session —
         // once it passed the old hardcoded 10001 the menu rendered behind the
-        // panel (#4720). Derive the z from the owning modal so it always sits
-        // just above, however high the counter has climbed (10001 floor kept
-        // for the common low-counter case).
-        const ownerModal = menuBtn.closest('.modal');
-        const ownerZ = ownerModal ? parseInt(getComputedStyle(ownerModal).zIndex, 10) : NaN;
-        dropdown.style.zIndex = String(Math.max(10001, (Number.isFinite(ownerZ) ? ownerZ : 0) + 1));
+        // panel (#4720). topPortalZ() derives the value from the live tool-window
+        // stack so the menu always sits just above, however high it has climbed.
+        dropdown.style.zIndex = String(topPortalZ());
         dropdown.style.display = 'block';
         document.body.appendChild(dropdown);
         // Keep on-screen (mobile): flip above the button if it overflows the
