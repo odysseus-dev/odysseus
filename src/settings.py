@@ -200,6 +200,9 @@ DEFAULT_FEATURES = {
     "rag": True,
     "sensitive_filter": True,
     "gallery": True,
+    # Projects: ship behind a flag per spec §7. Phase 1 default OFF;
+    # flip in data/features.json once stable.
+    "projects_enabled": False,
 }
 
 
