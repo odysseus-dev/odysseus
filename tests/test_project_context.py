@@ -32,3 +32,16 @@ def test_isolated_mode_builds_per_project_handles(tmp_path):
     assert ctx.memory_service is not None
     assert ctx.memory_manager is not None
     assert ctx.memory_manager.memory_file == os.path.join(str(tmp_path / "prj_y"), "memory.json")
+
+
+# ────────────────────────────────────── T16 rag + resource_store ──────────────────────────────
+
+def test_isolated_context_exposes_resource_store(file_backed_db, monkeypatch, tmp_path):
+    """ProjectContext must wire the rag adapter + resource store for every mode."""
+    monkeypatch.setenv("ODYSSEUS_DATA_DIR", str(tmp_path))
+    from services.project.service import ProjectService
+    svc = ProjectService()
+    proj = svc.create(owner="alice", name="RS", icon=None, description=None, memory_mode="isolated")
+    ctx = svc.open_context(proj.id, "alice", global_memory_service=None)
+    assert ctx.resource_store is not None
+    assert ctx.rag is not None

@@ -25,12 +25,22 @@ class ProjectContext:
     memory_mode: str
     global_memory_service: Optional[MemoryService]
 
-    # Lazily populated below.
     memory_manager: Optional[MemoryManager] = None
     memory_vector: Optional[MemoryVectorStore] = None
     memory_service: Optional[MemoryService] = None
+    rag: Optional["ProjectRagAdapter"] = None
+    resource_store: Optional["ProjectResourceStore"] = None
 
     def __post_init__(self) -> None:
+        # ResourceStore + RAG adapter exist for every mode (Shared projects
+        # can still upload resources; they just alias the global memory).
+        from services.project.rag import ProjectRagAdapter
+        from services.project.resources import ProjectResourceStore
+        self.rag = ProjectRagAdapter(project_id=self.project_id)
+        self.resource_store = ProjectResourceStore(
+            project_id=self.project_id, data_dir=self.data_dir, rag=self.rag,
+        )
+
         if self.memory_mode == "shared":
             # Alias to the global brain. No per-project memory files.
             self.memory_service = self.global_memory_service
