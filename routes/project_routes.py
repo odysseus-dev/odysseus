@@ -265,5 +265,23 @@ def setup_project_routes(app, project_service=None, memory_service=None) -> APIR
             db.commit()
         return row.to_dict()
 
+    # ───────────────────────────── Messages (T21) ─────────────────────────────
+
+    @router.post("/{pid}/sessions/{sid}/messages")
+    async def post_message(
+        request: Request, pid: str, sid: str, body: dict,
+    ):
+        if not _features_enabled():
+            raise HTTPException(404)
+        row = _load_session(sid, pid, _owner(request))
+        global_ms = getattr(request.app.state, "memory_service", None)
+        ctx = svc.open_context(pid, _owner(request), global_memory_service=global_ms)
+        # Forward the project_ctx so the chat pipeline can swap memory_service + RAG.
+        body = {"project_ctx": ctx, **body}
+        pipeline = getattr(request.app.state, "project_chat_pipeline", None)
+        if pipeline is None:
+            raise HTTPException(501, {"error": "chat_pipeline_unavailable"})
+        return await pipeline(row, body, ctx=ctx)
+
     app.include_router(router)
     return router

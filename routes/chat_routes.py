@@ -1220,6 +1220,7 @@ def setup_chat_routes(
                                     character_name=ctx.preset.character_name,
                                     owner=_user,
                                     allow_background_extraction=not tool_policy.block_all_tool_calls,
+                                    body=body,
                                 )
                             _stream_set(session, status="done")
                             yield chunk
@@ -1354,6 +1355,7 @@ def setup_chat_routes(
                                     owner=_user,
                                     extract_skills=user_requested_agent,
                                     allow_background_extraction=not tool_policy.block_all_tool_calls,
+                                    body=body,
                                 )
                             _stream_set(session, status="done")
                             yield chunk
@@ -1611,3 +1613,10 @@ def setup_chat_routes(
         return StreamingResponse(stream_rewrite(), media_type="text/event-stream")
 
     return router
+
+
+def _resolve_chat_pipeline(request: Request):
+    """Return the async chat handler from app state, or None if no
+    pipeline is registered. The route returns 501 when None so the UI
+    knows it's a server config gap, not a 404 (missing route)."""
+    return getattr(request.app.state, "project_chat_pipeline", None)

@@ -159,3 +159,39 @@ def test_session_with_mismatched_project_404s(app_and_client):
     res = client.get(f"/api/projects/{pid_b}/sessions/{sid}",
                      headers={"X-Owner": "alice"})
     assert res.status_code == 404
+
+
+# ────────────────────────────────────── T21 messages route ─────────────────────────────────────
+
+def test_post_message_attaches_project_ctx(app_and_client):
+    """The project-scoped message endpoint must exist and forward the
+    project_ctx into the chat pipeline. The test registers a fake
+    pipeline on app.state so we can assert it was called with the right ctx."""
+    _app, client = app_and_client
+
+    captured = {}
+    async def fake_pipeline(session_row, body, ctx=None):
+        captured["ctx"] = ctx
+        captured["project_id"] = session_row.project_id
+        return {"ok": True}
+
+    _app.state.project_chat_pipeline = fake_pipeline
+
+    res = client.post("/api/projects",
+                      json={"name": "MemExt", "memory_mode": "isolated"},
+                      headers={"X-Owner": "alice"})
+    pid = res.json()["id"]
+    res = client.post(
+        f"/api/projects/{pid}/sessions",
+        json={"name": "s", "endpoint_url": "http://x", "model": "m"},
+        headers={"X-Owner": "alice"},
+    )
+    sid = res.json()["id"]
+    res = client.post(
+        f"/api/projects/{pid}/sessions/{sid}/messages",
+        json={"role": "user", "content": "hi"},
+        headers={"X-Owner": "alice"},
+    )
+    assert res.status_code == 200, res.text
+    assert captured["project_id"] == pid
+    assert captured["ctx"].project_id == pid
