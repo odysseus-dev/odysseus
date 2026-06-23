@@ -1351,7 +1351,16 @@ export async function loadSessions() {
     let fetched;
     if (prefetched) {
       sessionStorage.removeItem('ody-prefetch-sessions');
-      fetched = JSON.parse(prefetched);
+      // Guard against stale / non-JSON prefetch values left over from a
+      // previous app version (the format may have changed). If parse
+      // fails, fall through to a fresh fetch instead of crashing the
+      // whole loadSessions() flow.
+      try {
+        fetched = JSON.parse(prefetched);
+      } catch (_) {
+        const res = await fetch(`${API_BASE}/api/sessions`);
+        fetched = await res.json();
+      }
     } else {
       const res = await fetch(`${API_BASE}/api/sessions`);
       fetched = await res.json();
