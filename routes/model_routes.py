@@ -755,10 +755,12 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         r = httpx_get_kimi_aware(url, headers, timeout=timeout, verify=llm_verify())
         r.raise_for_status()
         data = r.json()
-        # OpenAI format: {"data": [{"id": "model-name"}]}
-        models = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+        # OpenAI returns {"data": [{"id": ...}]}, but some compatible providers
+        # (e.g. Together) return a bare list [{"id": ...}] — accept both.
+        items = data if isinstance(data, list) else (data.get("data") or [])
+        models = [m.get("id") for m in items if isinstance(m, dict) and m.get("id")]
         # Ollama format: {"models": [{"name": "model-name"}]}
-        if not models:
+        if not models and isinstance(data, dict):
             models = [m.get("name") or m.get("model") for m in (data.get("models") or []) if m.get("name") or m.get("model")]
         if models:
             # Z.AI coding plan omits some working models from /models;

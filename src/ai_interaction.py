@@ -134,7 +134,8 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
                         r = httpx.get(models_url, headers=headers, timeout=5)
                         r.raise_for_status()
                         data = r.json()
-                        model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+                        items = data if isinstance(data, list) else (data.get("data") or [])
+                        model_ids = [m.get("id") for m in items if isinstance(m, dict) and m.get("id")]
                         if not model_ids:
                             model_ids = [
                                 m.get("name") or m.get("model")
@@ -453,6 +454,76 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         return {"error": f"Unknown action '{action}'. Use: list, add, edit, delete, search"}
 
 
+# ---------------------------------------------------------------------------
+# List models tool
+# ---------------------------------------------------------------------------
+
+async def do_list_models(content: str, session_id: Optional[str] = None) -> Dict:
+    """List all available models across configured endpoints.
+
+    Content = optional filter keyword.
+    """
+    import httpx
+    from src.database import SessionLocal, ModelEndpoint
+    from src.llm_core import _detect_provider, ANTHROPIC_MODELS
+
+    keyword = content.strip().lower() if content.strip() else None
+
+    db = SessionLocal()
+    try:
+        endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+        if not endpoints:
+            return {"results": "No enabled model endpoints configured."}
+
+        result_lines = []
+        total_models = 0
+
+        for ep in endpoints:
+            base = _normalize_base(ep.base_url)
+            provider = _detect_provider(base)
+            headers = build_headers(ep.api_key, base)
+
+            model_ids = []
+            if provider == "anthropic":
+                model_ids = list(ANTHROPIC_MODELS)
+            else:
+                try:
+                    models_url = build_models_url(base)
+                    if models_url:
+                        r = httpx.get(models_url, headers=headers, timeout=5)
+                        r.raise_for_status()
+                        data = r.json()
+                        model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+                        if not model_ids:
+                            model_ids = [
+                                m.get("name") or m.get("model")
+                                for m in (data.get("models") or [])
+                                if m.get("name") or m.get("model")
+                            ]
+                    else:
+                        model_ids = json.loads(ep.cached_models or "[]")
+                except Exception:
+                    model_ids = ["(endpoint offline)"]
+
+            if keyword:
+                model_ids = [m for m in model_ids if keyword in m.lower() or keyword in (ep.name or "").lower()]
+
+            if model_ids:
+                result_lines.append(f"\n**{ep.name or base}** ({provider}):")
+                for mid in model_ids:
+                    result_lines.append(f"  - `{mid}`")
+                    total_models += 1
+
+        if not result_lines:
+            return {"results": "No models found" + (f" matching '{keyword}'" if keyword else "") + "."}
+
+        header = f"Available models ({total_models} total):"
+        return {"results": header + "\n".join(result_lines)}
+    except Exception as e:
+        logger.error(f"list_models failed: {e}")
+        return {"error": str(e)}
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -942,7 +1013,9 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                         try:
                             _r = _req.get(_ibase + "/models", timeout=3)
                             _r.raise_for_status()
-                            _mids = [m.get("id") for m in (_r.json().get("data") or []) if m.get("id")]
+                            _data = _r.json()
+                            _ditems = _data if isinstance(_data, list) else (_data.get("data") or [])
+                            _mids = [m.get("id") for m in _ditems if isinstance(m, dict) and m.get("id")]
                             if _mids:
                                 model_spec = _mids[0]
                                 break

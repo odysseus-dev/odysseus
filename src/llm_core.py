@@ -1335,8 +1335,10 @@ def list_model_ids(
         r = httpx_get_kimi_aware(models_url, h, timeout=timeout)
         r.raise_for_status()
         data = r.json()
-        model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
-        if not model_ids:
+        # Some OpenAI-compatible APIs (e.g. Together) return a bare list here.
+        items = data if isinstance(data, list) else (data.get("data") or [])
+        model_ids = [m.get("id") for m in items if isinstance(m, dict) and m.get("id")]
+        if not model_ids and isinstance(data, dict):
             model_ids = [
                 m.get("name") or m.get("model")
                 for m in (data.get("models") or [])
