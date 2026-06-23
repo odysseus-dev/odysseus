@@ -523,6 +523,10 @@ _NON_CHAT_EXACT_PREFIXES = (
 
 def _is_chat_model(model_id: str) -> bool:
     """Return True if the model ID looks like a chat/completions-capable model."""
+    if not isinstance(model_id, str):
+        # Non-compliant upstreams can return non-string IDs (e.g. int/None);
+        # treat them as chat-capable rather than crashing on .lower().
+        return True
     mid = model_id.lower()
     for prefix in _NON_CHAT_PREFIXES:
         if mid.startswith(prefix):
@@ -748,7 +752,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
             r = httpx.get(url, headers=headers, timeout=timeout, verify=llm_verify())
             r.raise_for_status()
             data = r.json()
-            models = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+            models = [m.get("id") for m in ((data.get("data") if isinstance(data, dict) else None) or []) if isinstance(m, dict) and isinstance(m.get("id"), str) and m.get("id")]
             if models:
                 return models
         except httpx.HTTPStatusError as e:
@@ -770,10 +774,10 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         r.raise_for_status()
         data = r.json()
         # OpenAI format: {"data": [{"id": "model-name"}]}
-        models = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+        models = [m.get("id") for m in ((data.get("data") if isinstance(data, dict) else None) or []) if isinstance(m, dict) and isinstance(m.get("id"), str) and m.get("id")]
         # Ollama format: {"models": [{"name": "model-name"}]}
         if not models:
-            models = [m.get("name") or m.get("model") for m in (data.get("models") or []) if m.get("name") or m.get("model")]
+            models = [v for m in ((data.get("models") if isinstance(data, dict) else None) or []) if isinstance(m, dict) for v in (m.get("name") or m.get("model"),) if isinstance(v, str) and v]
         if models:
             # Z.AI coding plan omits some working models from /models;
             # append curated-only entries for that endpoint only.
@@ -812,7 +816,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
             r = httpx.get(root + "/api/tags", timeout=timeout, verify=llm_verify())
             r.raise_for_status()
             data = r.json()
-            models = [m.get("name") or m.get("model") for m in (data.get("models") or []) if m.get("name") or m.get("model")]
+            models = [v for m in ((data.get("models") if isinstance(data, dict) else None) or []) if isinstance(m, dict) for v in (m.get("name") or m.get("model"),) if isinstance(v, str) and v]
             if models:
                 return [m for m in models if _is_chat_model(m)]
     except Exception as e:
