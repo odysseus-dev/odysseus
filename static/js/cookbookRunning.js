@@ -267,7 +267,7 @@ function _taskHostLabel(task) {
 
 function _taskPort(task) {
   const cmd = task?.payload?._cmd || '';
-  const match = cmd.match(/--port[=\s]+(\d+)/);
+  const match = cmd.match(/--port[=\s]+(\d+)/) || cmd.match(/(?:^|\s)-p[=\s]+(\d+)/);
   return match ? match[1] : '';
 }
 
