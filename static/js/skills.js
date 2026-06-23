@@ -8,6 +8,7 @@
 import uiModule from './ui.js';
 import * as spinnerModule from './spinner.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
+import { topPortalZ } from './toolWindowZOrder.js';
 
 const API = window.location.origin;
 let skills = [];
@@ -437,6 +438,10 @@ function _openSkillMenu(btn, card, sk, name, isPublished) {
   menu.appendChild(cancelItem);
 
   document.body.appendChild(menu);
+  // Override the CSS z-index (100002) with a value derived from the live
+  // tool-window stack so the kebab menu stays above its modal even after the
+  // bring-to-front counter climbs past the static value (#4720).
+  menu.style.zIndex = String(topPortalZ());
   const r = btn.getBoundingClientRect();
   menu.style.top = (r.bottom + 4) + 'px';
   menu.style.right = Math.max(6, window.innerWidth - r.right) + 'px';

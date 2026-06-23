@@ -6,6 +6,7 @@ import uiModule from './ui.js';
 import markdownModule from './markdown.js';
 import * as spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
+import { topPortalZ } from './toolWindowZOrder.js';
 import { sortModelIds } from './modelSort.js';
 import { ordinalSuffix } from './util/ordinal.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
@@ -903,7 +904,7 @@ function _showTaskDropdown(anchor, items) {
   document.querySelectorAll('.task-dropdown').forEach(dismissOrRemove);
   const dd = document.createElement('div');
   dd.className = 'task-dropdown';
-  dd.style.cssText = 'position:fixed;z-index:100000;background:var(--panel);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.3);padding:4px;min-width:120px;';
+  dd.style.cssText = 'position:fixed;background:var(--panel);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.3);padding:4px;min-width:120px;';
   items.forEach(item => {
     const btn = document.createElement('button');
     btn.style.cssText = 'display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:6px 10px;border:none;background:none;color:var(--fg);font-size:11px;font-family:inherit;cursor:pointer;border-radius:4px;transition:background 0.1s;';
@@ -919,6 +920,10 @@ function _showTaskDropdown(anchor, items) {
     dd.appendChild(btn);
   });
   document.body.appendChild(dd);
+  // Sit above the currently-raised tool modal at any stack depth (#4720): the
+  // modal bring-to-front counter climbs unbounded, so a hardcoded z eventually
+  // loses. topPortalZ() derives the value from the live tool-window stack.
+  dd.style.zIndex = String(topPortalZ());
   const rect = anchor.getBoundingClientRect();
   let top = rect.bottom + 4;
   let left = rect.right - dd.offsetWidth;
