@@ -755,6 +755,46 @@ def _extract_last_user_message(messages: List[Dict]) -> str:
     return ""
 
 
+def _insert_before_latest_user(messages: List[Dict], context_msg: Dict) -> List[Dict]:
+    """Insert a context message immediately before the latest user turn."""
+    out = list(messages or [])
+    for idx in range(len(out) - 1, -1, -1):
+        if out[idx].get("role") == "user":
+            out.insert(idx, context_msg)
+            return out
+    out.append(context_msg)
+    return out
+
+
+def _uploaded_files_context_message(uploaded_files: Optional[List[Dict]]) -> Optional[Dict]:
+    if not uploaded_files:
+        return None
+
+    lines = [
+        "Uploaded files attached to the latest user turn:",
+    ]
+    for item in uploaded_files[:20]:
+        name = str(item.get("name") or item.get("id") or "upload")
+        bits = [
+            f"id={item.get('id', '')}",
+            f"name={name}",
+        ]
+        if item.get("mime"):
+            bits.append(f"mime={item.get('mime')}")
+        if item.get("size") is not None:
+            bits.append(f"size={item.get('size')} bytes")
+        if item.get("path"):
+            bits.append(f"path={item.get('path')}")
+        lines.append("- " + "; ".join(bits))
+    if len(uploaded_files) > 20:
+        lines.append(f"- ... {len(uploaded_files) - 20} more upload(s) omitted from this manifest")
+    lines.extend([
+        "",
+        "The attachment contents may already be in the latest user message. If an attachment is marked truncated or omitted, read its listed path with `read_file` when that tool is available. Do not say uploaded files are undiscoverable when they are listed here.",
+    ])
+    return untrusted_context_message("current chat uploaded files", "\n".join(lines))
+
+
 _LOW_SIGNAL_RE = re.compile(r"^[\W_]*$", re.UNICODE)
 _CASUAL_OPENING_RE = re.compile(
     r"^\s*(?:h+i+|hey+|hello+|yo+|sup+|what'?s up|wass?up|hiya|howdy|"
@@ -1954,6 +1994,7 @@ async def stream_agent_loop(
     tool_policy: Optional[ToolPolicy] = None,
     workspace: Optional[str] = None,
     forced_tools: Optional[Set[str]] = None,
+    uploaded_files: Optional[List[Dict]] = None,
     _is_teacher_run: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
@@ -1988,6 +2029,11 @@ async def stream_agent_loop(
         # the loop is safe regardless of caller. MCP stays available but is
         # filtered to read-only tools below (after the disabled map is loaded).
         disabled_tools.update(plan_mode_disabled_tools())
+
+    uploaded_files = uploaded_files or []
+    _upload_msg = _uploaded_files_context_message(uploaded_files)
+    if _upload_msg:
+        messages = _insert_before_latest_user(messages, _upload_msg)
 
     _t0 = time.time()
     _needs_admin = _detect_admin_intent(messages)
@@ -2199,6 +2245,15 @@ async def stream_agent_loop(
     # or what keywords were in the latest user message.
     if _relevant_tools is not None and active_document is not None:
         _relevant_tools.update({"edit_document", "update_document", "suggest_document"})
+
+    # Current-turn chat uploads are real files under the upload/data root. Make
+    # the read-side file/document tools visible immediately so the agent can
+    # inspect files whose inline text was truncated or omitted.
+    if not guide_only and uploaded_files:
+        if _relevant_tools is None:
+            from src.tool_index import ALWAYS_AVAILABLE
+            _relevant_tools = set(ALWAYS_AVAILABLE)
+        _relevant_tools.update({"read_file", "grep", "ls", "manage_documents"})
 
     # Per-request UI toggles are stronger than retrieval. If the user turns on
     # Search, the model must see the search tools even when the latest text is a
