@@ -36,8 +36,8 @@
     }
 
     function show() {
-        const tab = document.getElementById(PROJECTS_TAB_ID);
-        if (tab) tab.style.display = '';
+        const section = document.getElementById('projects-section');
+        if (section) section.style.display = '';
         const panel = document.getElementById(MAIN_PANEL_ID);
         if (panel) panel.style.display = '';
     }

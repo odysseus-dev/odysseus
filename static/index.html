@@ -709,12 +709,17 @@
            assistant session is still maintained for log_to_assistant()
            writes from scheduled tasks. -->
 
-      <!-- Projects tab — sibling to the Chats section. Hidden by default
-           (inline display:none) until FEATURES.projects_enabled flips on;
-           projects.js reveals it via getElementById('projects-tab'). -->
-      <div class="section" id="projects-section">
+      <!-- Projects section — sibling to Chats. Hidden by default (inline
+           display:none) until projects.js probes /api/projects on bootstrap
+           and confirms FEATURES.projects_enabled is on. Matches the visual
+           pattern of other sidebar sections (icon + label). -->
+      <div class="section" id="projects-section" style="display:none">
         <div class="section-header-flex">
-          <button class="tab" id="projects-tab" data-tab="projects" style="display:none">Projects</button>
+          <span class="section-title" id="projects-section-title" style="cursor:pointer;" title="Projects">
+            <svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-7L9 3H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/><polyline points="3 9 10 9 13 12 21 12"/></svg>
+            <span id="projects-section-label" class="section-title-label">Projects</span>
+            <span id="projects-notif-dot" class="sidebar-notif-dot" style="display:none"></span>
+          </span>
         </div>
       </div>
 
