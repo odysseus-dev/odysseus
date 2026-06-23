@@ -1048,6 +1048,7 @@ def run_post_response_tasks(
     owner: str = None,
     extract_skills: bool = True,
     allow_background_extraction: bool = True,
+    body=None,
 ):
     """Fire background tasks after a completed response: memory extraction, webhooks, auto-name, skill extraction.
 
@@ -1064,6 +1065,15 @@ def run_post_response_tasks(
     turn's request too.
     """
     _extraction_jobs: list = []
+
+    # Project chat wiring (spec §3): if the body carries a project_ctx,
+    # prefer its memory_manager + memory_vector so post-response extraction
+    # writes to the project's own memory store rather than the main brain.
+    _body = body if isinstance(body, dict) else {}
+    _project_ctx = _body.get("project_ctx") if _body else None
+    if _project_ctx is not None:
+        memory_manager = _project_ctx.memory_manager or memory_manager
+        memory_vector = _project_ctx.memory_vector or memory_vector
 
     # Memory extraction — only every 4th message pair to avoid excess LLM calls
     _msg_count = len(sess.history) if hasattr(sess, 'history') else 0

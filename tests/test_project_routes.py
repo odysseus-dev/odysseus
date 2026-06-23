@@ -255,3 +255,38 @@ def test_isolated_project_memory_list(app_and_client):
                      headers={"X-Owner": "alice"})
     assert res.status_code == 200
     assert res.json() == []
+
+
+# ────────────────────────────────────── T25b memory_extractor wiring ──────────────────────────
+
+def test_post_message_stuffs_project_ctx_in_body(app_and_client):
+    """The post_message route must stuff `project_ctx` into the body so
+    chat_helpers.py can detect a project chat and swap memory_service + RAG."""
+    _app, client = app_and_client
+
+    captured = {}
+    async def fake_pipeline(session_row, body, ctx=None):
+        captured["body_keys"] = sorted(body.keys())
+        captured["ctx"] = ctx
+        return {"ok": True}
+
+    _app.state.project_chat_pipeline = fake_pipeline
+
+    res = client.post("/api/projects",
+                      json={"name": "Ctx", "memory_mode": "isolated"},
+                      headers={"X-Owner": "alice"})
+    pid = res.json()["id"]
+    res = client.post(
+        f"/api/projects/{pid}/sessions",
+        json={"name": "s", "endpoint_url": "http://x", "model": "m"},
+        headers={"X-Owner": "alice"},
+    )
+    sid = res.json()["id"]
+    res = client.post(
+        f"/api/projects/{pid}/sessions/{sid}/messages",
+        json={"role": "user", "content": "hi"},
+        headers={"X-Owner": "alice"},
+    )
+    assert res.status_code == 200
+    assert "project_ctx" in captured["body_keys"]
+    assert captured["ctx"].project_id == pid
