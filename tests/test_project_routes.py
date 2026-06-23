@@ -227,3 +227,31 @@ def test_upload_list_remove_resource(app_and_client, tmp_path):
     res = client.delete(f"/api/projects/{pid}/resources/{rid}",
                         headers={"X-Owner": "alice"})
     assert res.status_code == 200
+
+
+# ────────────────────────────────────── T23 memory routes ─────────────────────────────────────
+
+def test_shared_project_memory_returns_409(app_and_client):
+    _app, client = app_and_client
+    res = client.post("/api/projects",
+                      json={"name": "Shared", "memory_mode": "shared"},
+                      headers={"X-Owner": "alice"})
+    pid = res.json()["id"]
+    res = client.get(f"/api/projects/{pid}/memory",
+                     headers={"X-Owner": "alice"})
+    assert res.status_code == 409
+    body = res.json()
+    detail = body.get("detail", body)
+    assert detail.get("error") == "mode_shared"
+
+
+def test_isolated_project_memory_list(app_and_client):
+    _app, client = app_and_client
+    res = client.post("/api/projects",
+                      json={"name": "Iso", "memory_mode": "isolated"},
+                      headers={"X-Owner": "alice"})
+    pid = res.json()["id"]
+    res = client.get(f"/api/projects/{pid}/memory",
+                     headers={"X-Owner": "alice"})
+    assert res.status_code == 200
+    assert res.json() == []

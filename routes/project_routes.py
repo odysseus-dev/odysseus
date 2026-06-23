@@ -378,5 +378,93 @@ def setup_project_routes(app, project_service=None, memory_service=None) -> APIR
         from fastapi.responses import FileResponse
         return FileResponse(fpath, filename=rec.filename, media_type=rec.mime)
 
+    # ─────────────────────────────── Memory (T23) ─────────────────────────────
+
+    def _reject_if_shared(pid: str, owner: str):
+        proj = svc.get(pid, owner)
+        if proj.memory_mode == "shared":
+            raise HTTPException(409, {"error": "mode_shared"})
+        return proj
+
+    @router.get("/{pid}/memory")
+    def list_memory(request: Request, pid: str):
+        if not _features_enabled():
+            raise HTTPException(404)
+        owner = _owner(request)
+        _reject_if_shared(pid, owner)
+        ctx = svc.open_context(pid, owner, global_memory_service=None)
+        return [m.__dict__ for m in ctx.memory_service.get_all()]
+
+    @router.post("/{pid}/memory")
+    async def add_memory(request: Request, pid: str, body: dict):
+        if not _features_enabled():
+            raise HTTPException(404)
+        owner = _owner(request)
+        _reject_if_shared(pid, owner)
+        ctx = svc.open_context(pid, owner, global_memory_service=None)
+        text = body.get("text", "").strip()
+        if not text:
+            raise HTTPException(422, {"error": "text_required"})
+        m = await ctx.memory_service.remember(text)
+        return m.__dict__
+
+    @router.post("/{pid}/memory/search")
+    async def search_memory(request: Request, pid: str, body: dict):
+        if not _features_enabled():
+            raise HTTPException(404)
+        owner = _owner(request)
+        _reject_if_shared(pid, owner)
+        ctx = svc.open_context(pid, owner, global_memory_service=None)
+        q = body.get("query", "")
+        result = await ctx.memory_service.recall(q)
+        return {
+            "memories": [m.__dict__ for m in result.memories],
+            "total": result.total,
+        }
+
+    @router.delete("/{pid}/memory/{mid}")
+    def delete_memory(request: Request, pid: str, mid: str):
+        if not _features_enabled():
+            raise HTTPException(404)
+        owner = _owner(request)
+        _reject_if_shared(pid, owner)
+        ctx = svc.open_context(pid, owner, global_memory_service=None)
+        ok = ctx.memory_service.delete(mid)
+        if not ok:
+            raise HTTPException(404, {"error": "memory_not_found"})
+        return {"ok": True}
+
+    @router.get("/{pid}/memory/export")
+    def export_memory(request: Request, pid: str):
+        if not _features_enabled():
+            raise HTTPException(404)
+        owner = _owner(request)
+        _reject_if_shared(pid, owner)
+        ctx = svc.open_context(pid, owner, global_memory_service=None)
+        entries = ctx.memory_service.get_all(limit=10_000)
+        from fastapi.responses import JSONResponse
+        return JSONResponse({
+            "version": 1,
+            "project_id": pid,
+            "memories": [m.__dict__ for m in entries],
+        })
+
+    @router.post("/{pid}/memory/import")
+    async def import_memory(request: Request, pid: str, body: dict, confirm: int = 0):
+        if not _features_enabled():
+            raise HTTPException(404)
+        owner = _owner(request)
+        _reject_if_shared(pid, owner)
+        # Preview mode (no confirm) returns a diff without writing.
+        if not confirm:
+            return {"preview": True, "incoming_count": len(body.get("memories", []))}
+        ctx = svc.open_context(pid, owner, global_memory_service=None)
+        # Overwrite: clear existing JSON then import.
+        for m in ctx.memory_service.get_all():
+            ctx.memory_service.delete(m.id)
+        for entry in body.get("memories", []):
+            await ctx.memory_service.remember(entry["text"])
+        return {"ok": True, "imported": len(body.get("memories", []))}
+
     app.include_router(router)
     return router
