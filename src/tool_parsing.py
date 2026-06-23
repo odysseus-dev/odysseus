@@ -39,6 +39,10 @@ _XML_TOOL_CALL_RE = re.compile(
     r"<(?:[\w]+:)?(?:tool_call|function_call)>\s*([\s\S]*?)</(?:[\w]+:)?(?:tool_call|function_call)>",
     re.IGNORECASE,
 )
+_XML_OPEN_TOOL_CALL_RE = re.compile(
+    r"<(?:[\w]+:)?(?:tool_call|function_call)>\s*([\s\S]*)\Z",
+    re.IGNORECASE,
+)
 _XML_INVOKE_RE = re.compile(
     r'<invoke\s+name=["\'](\w+)["\']>\s*([\s\S]*?)</invoke>',
     re.IGNORECASE,
@@ -47,6 +51,21 @@ _XML_PARAM_RE = re.compile(
     r'<parameter\s+name=["\'](\w+)["\']>([\s\S]*?)</parameter>',
     re.IGNORECASE,
 )
+_XML_DIRECT_TOOL_RE = re.compile(
+    r"<\s*([A-Za-z_][\w-]*)\s*>([\s\S]*?)</\s*\1\s*>",
+    re.IGNORECASE,
+)
+
+# Pattern 3b: StepFun Step-3.x native tool-call tokens. The tokenizer defines:
+#   <｜tool▁calls▁begin｜> ... <｜tool▁calls▁end｜>
+#   <｜tool▁call▁begin｜>tool_name<｜tool▁sep｜>{...}<｜tool▁call▁end｜>
+# These can leak as text through llama.cpp/Ollama-style endpoints when the
+# engine does not return structured OpenAI tool_calls.
+_STEPFUN_CALL_BEGIN = "<｜tool▁call▁begin｜>"
+_STEPFUN_CALL_SEP = "<｜tool▁sep｜>"
+_STEPFUN_CALL_END = "<｜tool▁call▁end｜>"
+_STEPFUN_CALLS_BEGIN = "<｜tool▁calls▁begin｜>"
+_STEPFUN_CALLS_END = "<｜tool▁calls▁end｜>"
 
 # Pattern 4: <tool_code> blocks (MiniMax-M2.5 style)
 # {tool => 'tool_name', args => '<param>value</param>'}
@@ -446,6 +465,138 @@ def _parse_xml_invoke(inv_match) -> Optional[ToolBlock]:
     return function_call_to_tool_block(tool_name, json.dumps(params))
 
 
+def _parse_xml_direct_tool(tool_match) -> Optional[ToolBlock]:
+    """Parse direct XML tool tags inside <tool_call>.
+
+    Some local models emit:
+      <tool_call><web_search>query</web_search></tool_call>
+    instead of the invoke/parameter shape:
+      <tool_call><invoke name="web_search"><parameter name="query">query</parameter></invoke></tool_call>
+    Keep this as an adapter to the canonical function-call converter so aliases
+    and per-tool argument formatting stay in one place.
+    """
+    tool_name = tool_match.group(1).lower().replace("-", "_")
+    if tool_name in {"invoke", "parameter", "tool_call", "function_call"}:
+        return None
+    mapped = _TOOL_NAME_MAP.get(tool_name) or (tool_name if tool_name in TOOL_TAGS else None)
+    if not mapped:
+        return None
+    body = tool_match.group(2).strip()
+    if not body:
+        return None
+    try:
+        params = json.loads(body)
+        if not isinstance(params, dict):
+            params = {}
+    except json.JSONDecodeError:
+        if mapped == "web_search":
+            params = {"query": body}
+        elif mapped == "web_fetch":
+            params = {"url": body}
+        elif mapped == "bash":
+            params = {"command": body}
+        elif mapped == "python":
+            params = {"code": body}
+        elif mapped in ("read_file", "write_file"):
+            params = {"path": body}
+        else:
+            params = {"content": body}
+    from src.tool_schemas import function_call_to_tool_block
+    return function_call_to_tool_block(mapped, json.dumps(params))
+
+
+def _iter_stepfun_tool_calls(text: str):
+    """Yield StepFun native tool-call token bodies without regex backtracking."""
+    pos = 0
+    while True:
+        start = text.find(_STEPFUN_CALL_BEGIN, pos)
+        if start < 0:
+            return
+        name_start = start + len(_STEPFUN_CALL_BEGIN)
+        sep = text.find(_STEPFUN_CALL_SEP, name_start)
+        if sep < 0:
+            return
+        end = text.find(_STEPFUN_CALL_END, sep + len(_STEPFUN_CALL_SEP))
+        if end < 0:
+            return
+        raw_name = text[name_start:sep].strip()
+        body = text[sep + len(_STEPFUN_CALL_SEP):end].strip()
+        if raw_name and len(raw_name) <= 128:
+            yield raw_name, body
+        pos = end + len(_STEPFUN_CALL_END)
+
+
+def _strip_stepfun_tool_markup(text: str) -> str:
+    """Remove StepFun tool-call token blocks and wrappers using literal scans."""
+    out = []
+    pos = 0
+    while True:
+        start = text.find(_STEPFUN_CALL_BEGIN, pos)
+        if start < 0:
+            out.append(text[pos:])
+            break
+        end = text.find(_STEPFUN_CALL_END, start + len(_STEPFUN_CALL_BEGIN))
+        if end < 0:
+            out.append(text[pos:])
+            break
+        out.append(text[pos:start])
+        pos = end + len(_STEPFUN_CALL_END)
+    cleaned = "".join(out)
+    return cleaned.replace(_STEPFUN_CALLS_BEGIN, "").replace(_STEPFUN_CALLS_END, "")
+
+
+def _strip_bare_invoke_markup(text: str) -> str:
+    """Remove bare <invoke ...>...</invoke> blocks without regex backtracking."""
+    out = []
+    pos = 0
+    while True:
+        start = text.lower().find("<invoke", pos)
+        if start < 0:
+            out.append(text[pos:])
+            break
+        tag_end = text.find(">", start)
+        if tag_end < 0:
+            out.append(text[pos:])
+            break
+        close = text.lower().find("</invoke>", tag_end + 1)
+        if close < 0:
+            out.append(text[pos:])
+            break
+        out.append(text[pos:start])
+        pos = close + len("</invoke>")
+    return "".join(out)
+
+
+def _parse_stepfun_tool_call(tool_name: str, body: str) -> Optional[ToolBlock]:
+    """Parse StepFun native tool-call tokens into an Odysseus ToolBlock."""
+    tool_name = tool_name.lower().replace("-", "_").replace(".", "_")
+    mapped = _TOOL_NAME_MAP.get(tool_name) or (tool_name if tool_name in TOOL_TAGS else None)
+    if not mapped:
+        return None
+    body = (body or "").strip()
+    if not body:
+        return None
+    try:
+        params = json.loads(body)
+        if not isinstance(params, dict):
+            params = {}
+    except json.JSONDecodeError:
+        if mapped == "web_search":
+            params = {"query": body}
+        elif mapped == "web_fetch":
+            params = {"url": body}
+        elif mapped == "bash":
+            params = {"command": body}
+        elif mapped == "python":
+            params = {"code": body}
+        elif mapped in ("read_file", "write_file"):
+            params = {"path": body}
+        else:
+            params = {"content": body}
+    from src.tool_schemas import function_call_to_tool_block
+    return function_call_to_tool_block(mapped, json.dumps(params))
+
+
 def _parse_tool_code_block(raw: str) -> Optional[ToolBlock]:
     """Parse a <tool_code>{tool => 'name', args => '...'}</tool_code> block (MiniMax style)."""
     # Extract tool name
@@ -511,8 +662,9 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
     2. [TOOL_CALL] ... [/TOOL_CALL] blocks (some models)
     3. XML-style <tool_call>/<invoke> blocks
     4. <tool_code> blocks (MiniMax-M2.5 style)
-    5. DeepSeek DSML markup (normalized to <invoke> first)
-    6. Non-native local model fallback: prose mentioning web_search followed by
+    5. StepFun Step-3 native <｜tool▁call▁begin｜> tokens
+    6. DeepSeek DSML markup (normalized to <invoke> first)
+    7. Non-native local model fallback: prose mentioning web_search followed by
        bare JSON args, e.g. {"query":"...", "time_filter":"week"}
 
     `skip_fenced`: when True, Pattern 1 (fenced ```bash/```python/```json code
@@ -567,12 +719,38 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
 
     # Pattern 3: XML-style <tool_call>/<invoke> blocks
     if not blocks:
+        for tool_name, body in _iter_stepfun_tool_calls(text):
+            block = _parse_stepfun_tool_call(tool_name, body)
+            if block:
+                blocks.append(block)
+        if blocks:
+            return blocks
         # Try wrapped: <tool_call><invoke ...>...</invoke></tool_call>
         for m in _XML_TOOL_CALL_RE.finditer(text):
             for inv in _XML_INVOKE_RE.finditer(m.group(1)):
                 block = _parse_xml_invoke(inv)
                 if block:
                     blocks.append(block)
+            if not blocks:
+                for direct in _XML_DIRECT_TOOL_RE.finditer(m.group(1)):
+                    block = _parse_xml_direct_tool(direct)
+                    if block:
+                        blocks.append(block)
+        # Some local models stream an opening <tool_call> wrapper and a
+        # complete inner tool tag, but forget the closing </tool_call>.
+        if not blocks:
+            for m in _XML_OPEN_TOOL_CALL_RE.finditer(text):
+                body = m.group(1)
+                for inv in _XML_INVOKE_RE.finditer(body):
+                    block = _parse_xml_invoke(inv)
+                    if block:
+                        blocks.append(block)
+                if blocks:
+                    break
+                for direct in _XML_DIRECT_TOOL_RE.finditer(body):
+                    block = _parse_xml_direct_tool(direct)
+                    if block:
+                        blocks.append(block)
         # Try bare <invoke> without wrapper
         if not blocks:
             for inv in _XML_INVOKE_RE.finditer(text):
@@ -614,7 +792,9 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
     text = _normalize_dsml(text)
     cleaned = text if skip_fenced else _TOOL_BLOCK_RE.sub('', text)
     cleaned = _TOOL_CALL_RE.sub('', cleaned)
+    cleaned = _strip_stepfun_tool_markup(cleaned)
     cleaned = _XML_TOOL_CALL_RE.sub('', cleaned)
+    cleaned = _XML_OPEN_TOOL_CALL_RE.sub('', cleaned)
     cleaned = _TOOL_CODE_RE.sub('', cleaned)
     if not skip_fenced:
         raw_web_json = _parse_raw_web_json_lookup(cleaned)
@@ -622,6 +802,6 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
             _, (start, end) = raw_web_json
             cleaned = cleaned[:start] + cleaned[end:]
     # Strip bare <invoke> blocks not wrapped in <tool_call>
-    cleaned = re.sub(r'<invoke\s+name=["\'].*?</invoke>', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = _strip_bare_invoke_markup(cleaned)
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
     return cleaned.strip()

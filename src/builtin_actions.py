@@ -76,8 +76,7 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
         import json
         import re
         from src.constants import DATA_DIR
-        from src.endpoint_resolver import resolve_endpoint
-        from src.llm_core import llm_call_async
+        from src.llm_core import llm_call_async_with_fallback
         from src.memory import MemoryManager
 
         manager = MemoryManager(DATA_DIR)
@@ -116,10 +115,9 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
             if len(group_memories) < 2:
                 return False
 
-            url, model, headers = resolve_endpoint("utility", owner=group_owner or None)
-            if not url or not model:
-                url, model, headers = resolve_endpoint("default", owner=group_owner or None)
-            if not url or not model:
+            from src.task_endpoint import resolve_task_candidates
+            candidates = resolve_task_candidates(owner=group_owner or None)
+            if not candidates:
                 return False
 
             try:
@@ -147,13 +145,11 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                     "\"drop\":[{\"id\":\"existing id\",\"reason\":\"short reason\"}]}\n\n"
                     f"MEMORIES:\n{json.dumps(items, ensure_ascii=False)}"
                 )
-                raw = await llm_call_async(
-                    url=url,
-                    model=model,
+                raw = await llm_call_async_with_fallback(
+                    candidates,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.0,
                     max_tokens=4096,
-                    headers=headers,
                     timeout=120,
                 )
                 from src.text_helpers import strip_think
@@ -604,8 +600,7 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
     try:
         from datetime import timedelta
         from core.database import SessionLocal, CalendarEvent
-        from src.endpoint_resolver import resolve_endpoint
-        from src.llm_core import llm_call_async
+        from src.llm_core import llm_call_async_with_fallback
         import re as _re, json as _json
 
         db = SessionLocal()
@@ -620,10 +615,9 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
             if not events:
                 return "No upcoming events to classify", True
 
-            llm_url, llm_model, llm_headers = resolve_endpoint("utility", owner=owner)
-            if not llm_url:
-                llm_url, llm_model, llm_headers = resolve_endpoint("default", owner=owner)
-            llm_available = bool(llm_url and llm_model)
+            from src.task_endpoint import resolve_task_candidates
+            llm_candidates = resolve_task_candidates(owner=owner)
+            llm_available = bool(llm_candidates)
 
             # Pull user memories so the LLM has personal context (relationships,
             # job, hobbies). Helps it know e.g. "<name> is your spouse" so their
@@ -699,11 +693,11 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
                     f"EVENTS: {_json.dumps(items)}"
                 )
                 try:
-                    raw = await llm_call_async(
-                        url=llm_url, model=llm_model,
+                    raw = await llm_call_async_with_fallback(
+                        llm_candidates,
                         messages=[{"role": "user", "content": prompt}],
                         temperature=0.1, max_tokens=16384,
-                        headers=llm_headers, timeout=180,
+                        timeout=180,
                     )
                     from src.text_helpers import strip_think as _st
                     raw = _st(raw or "", prose=False, prompt_echo=False)
@@ -810,8 +804,7 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
         import asyncio as _aio
         from datetime import datetime as _dt, timedelta as _td
         from routes.email_helpers import _email_cache_owner_clause, _imap_connect, SCHEDULED_DB
-        from src.endpoint_resolver import resolve_endpoint
-        from src.llm_core import llm_call_async
+        from src.llm_core import llm_call_async_with_fallback
 
         # 1. Pull recent UIDs + From headers cheaply (header-only fetch).
         def _pull_headers():
@@ -891,11 +884,11 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
         if not eligible:
             return "All sender sigs already cached (or no eligible senders)", True
 
-        url, model, headers = resolve_endpoint("utility", owner=owner)
-        if not url or not model:
-            url, model, headers = resolve_endpoint("default", owner=owner)
-        if not url or not model:
+        from src.task_endpoint import resolve_task_candidates
+        candidates = resolve_task_candidates(owner=owner)
+        if not candidates:
             return "No LLM endpoint available", False
+        model = candidates[0][1]
 
         analyzed = 0
         no_sig = 0
@@ -949,11 +942,11 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
             )
 
             try:
-                raw = await llm_call_async(
-                    url=url, model=model,
+                raw = await llm_call_async_with_fallback(
+                    candidates,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.0, max_tokens=600,
-                    headers=headers, timeout=60,
+                    timeout=60,
                 )
                 from src.text_helpers import strip_think as _st
                 sig = _st(raw or "", prose=False, prompt_echo=False).strip()
@@ -1137,7 +1130,6 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
         from services.memory.skills import SkillsManager
         from src.constants import DATA_DIR
         from routes.skills_routes import _run_skill_test_once, _skill_test_task
-        from src.endpoint_resolver import resolve_endpoint
 
         # #3 SCOPE GUARD: refuse to run on a None/empty owner — otherwise
         # `sm.load(owner=None)` returns every user's skills and we'd cross-
@@ -1152,27 +1144,40 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
         if not names:
             raise TaskNoop("no skills to test")
 
-        url, model, headers = resolve_endpoint("default", owner=owner)
-        if not url or not model:
+        from src.task_endpoint import resolve_task_candidates
+        candidates = resolve_task_candidates(owner=owner)
+        if not candidates:
             return "No Default/Utility model configured — set one in Settings.", False
 
         # #2 NO SILENT MODEL SWAP: if the configured model isn't served by the
         # endpoint, try a basename match — but fail loudly instead of grabbing
         # `avail[0]` which could be an embedding-only model and produce 36
         # garbage transcripts → 36 'unknown' verdicts with no hint why.
+        url, model, headers = candidates[0]
         try:
             from src.llm_core import list_model_ids
-            avail = list_model_ids(url, headers=headers)
-            if avail and model not in avail:
-                import os as _os
-                base = _os.path.basename((model or "").rstrip("/"))
-                m = next((a for a in avail if _os.path.basename(a.rstrip("/")) == base), None)
-                if m:
-                    model = m
-                else:
-                    return (f"Default model '{model}' not served by endpoint {url}. "
-                            f"Available: {', '.join(avail[:8])}{'…' if len(avail) > 8 else ''}. "
-                            "Set a valid Default model in Settings."), False
+            import os as _os
+
+            selected = None
+            mismatch_notes = []
+            for cand_url, cand_model, cand_headers in candidates:
+                avail = list_model_ids(cand_url, headers=cand_headers)
+                if not avail or cand_model in avail:
+                    selected = (cand_url, cand_model, cand_headers)
+                    break
+                base = _os.path.basename((cand_model or "").rstrip("/"))
+                matched = next((a for a in avail if _os.path.basename(a.rstrip("/")) == base), None)
+                if matched:
+                    selected = (cand_url, matched, cand_headers)
+                    break
+                mismatch_notes.append(
+                    f"{cand_model} not served by {cand_url}; available: "
+                    f"{', '.join(avail[:8])}{'...' if len(avail) > 8 else ''}"
+                )
+            if selected:
+                url, model, headers = selected
+            elif mismatch_notes:
+                return "No configured task fallback model is served. " + " | ".join(mismatch_notes[:3]), False
         except Exception as _e:
             logger.warning(f"test_skills model resolve check failed (continuing): {_e}")
 
@@ -1483,7 +1488,6 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         from pathlib import Path as _P
         from core.database import SessionLocal as _SL, EmailAccount as _EA
         from routes.email_helpers import _imap_connect, _decode_header
-        from src.endpoint_resolver import resolve_endpoint, resolve_utility_fallback_candidates
         from src.llm_core import llm_call_async_with_fallback
 
         # Per-owner state file so multi-user runs don't clobber each other's
@@ -1505,12 +1509,10 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
 
         # ── 1. Resolve LLM candidates (utility primary + utility fallbacks; fall
         # through to default chat as a last resort).
-        url, model, headers = resolve_endpoint("utility", owner=owner)
-        if not url or not model:
-            url, model, headers = resolve_endpoint("default", owner=owner)
-        if not url or not model:
+        from src.task_endpoint import resolve_task_candidates
+        candidates = resolve_task_candidates(owner=owner)
+        if not candidates:
             return "No LLM endpoint available", False
-        candidates = [(url, model, headers)] + resolve_utility_fallback_candidates(owner=owner)
 
         # ── 2. Enumerate enabled accounts. Match this task's owner AND fall
         # back to the legacy "unowned account whose imap_user / from_address
