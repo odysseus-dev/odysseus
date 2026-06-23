@@ -276,8 +276,28 @@ def setup_project_routes(app, project_service=None, memory_service=None) -> APIR
         row = _load_session(sid, pid, _owner(request))
         global_ms = getattr(request.app.state, "memory_service", None)
         ctx = svc.open_context(pid, _owner(request), global_memory_service=global_ms)
-        # Forward the project_ctx so the chat pipeline can swap memory_service + RAG.
-        body = {"project_ctx": ctx, **body}
+
+        # Assemble system messages per spec §3 (independent override modes).
+        from services.project.context_assembly import assemble_system_messages
+        proj = svc.get(pid, _owner(request))
+        main_instructions = ""  # main-brain system instructions (from settings.json in prod)
+        main_prompt = ""        # main-brain system prompt (from settings.json in prod)
+        system_msgs = assemble_system_messages(
+            main_instructions=main_instructions,
+            main_prompt=main_prompt,
+            project_instructions=proj.custom_instructions,
+            project_prompt=proj.custom_prompt,
+            instructions_override_mode=proj.instructions_override_mode,
+            prompt_override_mode=proj.prompt_override_mode,
+        )
+
+        # Forward project_ctx + assembled system messages so the chat pipeline
+        # can swap memory_service + RAG.
+        body = {
+            "project_ctx": ctx,
+            "system_messages": system_msgs,
+            **body,
+        }
         pipeline = getattr(request.app.state, "project_chat_pipeline", None)
         if pipeline is None:
             raise HTTPException(501, {"error": "chat_pipeline_unavailable"})

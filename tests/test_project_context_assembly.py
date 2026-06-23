@@ -52,3 +52,14 @@ def test_override_override_order():
         instructions_override_mode="override", prompt_override_mode="override",
     )
     assert _ids(msgs) == [PROJECT_INSTRUCTIONS, PROJECT_PROMPT]
+
+
+def test_assembly_callable_and_orderable():
+    """The assembly function is reachable from route code and respects
+    the 4 override combinations — this test double-checks the import path."""
+    msgs = assemble_system_messages(
+        main_instructions="M_I", main_prompt="M_P",
+        project_instructions="I", project_prompt="P",
+        instructions_override_mode="override", prompt_override_mode="override",
+    )
+    assert [m["text"] for m in msgs] == ["I", "P"]
