@@ -3,6 +3,7 @@ import sys
 import os
 import types
 import importlib.util
+import pytest
 from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -59,6 +60,47 @@ if "src.database" not in sys.modules:
 # run (it replaces sys.modules['core.models'] with a MagicMock during
 # collection, which breaks session import in subsequent tests).
 import core.models  # noqa: E402
+
+
+@pytest.fixture
+def file_backed_db(tmp_path, monkeypatch):
+    """Point the ORM at a tmp_path SQLite file so the
+    `sessions.project_id` ALTER-TABLE migration (which uses the file
+    path, not the SQLAlchemy engine) actually runs.
+
+    Service modules snapshot `SessionLocal` at import time, so we patch
+    the attribute on both ``core.database`` and ``services.project.service``.
+    Shared across the project test suite (test_project_service.py and
+    test_project_context.py).
+    """
+    import sqlalchemy
+    from core import database as dbmod
+    from services.project import service as svc_mod
+
+    db_file = tmp_path / "app.db"
+    db_url = f"sqlite:///{db_file}"
+    monkeypatch.setenv("DATABASE_URL", db_url)
+
+    dbmod.DATABASE_URL = db_url
+    new_engine = sqlalchemy.create_engine(
+        db_url,
+        connect_args={"check_same_thread": False},
+    )
+    new_session_local = sqlalchemy.orm.sessionmaker(
+        autocommit=False, autoflush=False, bind=new_engine,
+    )
+    dbmod.engine = new_engine
+    dbmod.SessionLocal = new_session_local
+    svc_mod.SessionLocal = new_session_local
+    dbmod.Base.metadata.create_all(bind=new_engine)
+    dbmod.init_db()
+    yield
+    try:
+        import os
+        os.remove(str(db_file))
+    except FileNotFoundError:
+        pass
+
 
 def pytest_configure(config):
     """Register the dynamic taxonomy ``sub_*`` markers before collection.
