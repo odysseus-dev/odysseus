@@ -305,6 +305,36 @@ class ProjectService:
                 db.commit()
             logger.warning("FS wipe failed for %s; tombstone inserted", project_id)
 
+    # ────────────────────────────── open_context (lazy cache) ────────────────────────────────
+
+    def open_context(
+        self,
+        project_id: str,
+        owner: str,
+        global_memory_service,
+    ) -> "ProjectContext":
+        """Return the cached ProjectContext, building it on first access.
+
+        The caller passes the global MemoryService so Shared-mode projects
+        can alias it without importing app state.
+        """
+        cached = self._contexts.get(project_id)
+        if cached is not None and cached.owner == owner:
+            return cached
+
+        # Fetch + build.
+        proj = self.get(project_id, owner)
+        from services.project.context import ProjectContext
+        ctx = ProjectContext(
+            project_id=proj.id,
+            owner=proj.owner,
+            data_dir=project_data_dir(proj.owner, proj.id),
+            memory_mode=proj.memory_mode,
+            global_memory_service=global_memory_service,
+        )
+        self._contexts[proj.id] = ctx
+        return ctx
+
     # ────────────────────────────────────── internals ─────────────────────────────────────────
 
     def _check_soft_cap(self, owner: str) -> None:

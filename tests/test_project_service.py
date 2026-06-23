@@ -8,7 +8,8 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from services.project.service import ProjectService, ProjectNotFound
+from services.project.service import ProjectService, ProjectNotFound, ProjectLimitReached, ProjectNameConflict
+from services.project.context import ProjectContext
 
 
 @pytest.fixture
@@ -93,3 +94,68 @@ def test_delete_writes_tombstone_on_filesystem_failure(file_backed_db, monkeypat
             select(DbProject).where(DbProject.id == proj.id)
         ).scalar_one()
     assert row.deleted_at is not None
+
+
+# ────────────────────────────────────── T12 soft cap + duplicate name ─────────────────────────
+
+def test_soft_cap_rejects_51st_project(file_backed_db, monkeypatch, tmp_path):
+    """Creating > 50 projects for the same owner raises ProjectLimitReached."""
+    monkeypatch.setenv("ODYSSEUS_DATA_DIR", str(tmp_path))
+    svc = ProjectService()
+    for i in range(50):
+        svc.create(owner="alice", name=f"P{i}", icon=None, description=None, memory_mode="isolated")
+
+    with pytest.raises(ProjectLimitReached) as exc:
+        svc.create(owner="alice", name="P51", icon=None, description=None, memory_mode="isolated")
+    assert exc.value.maximum == 50
+
+
+def test_duplicate_name_rejected(file_backed_db, monkeypatch, tmp_path):
+    """Same (owner, name) cannot be created twice."""
+    monkeypatch.setenv("ODYSSEUS_DATA_DIR", str(tmp_path))
+    svc = ProjectService()
+    svc.create(owner="alice", name="Same", icon=None, description=None, memory_mode="isolated")
+    with pytest.raises(ProjectNameConflict):
+        svc.create(owner="alice", name="Same", icon=None, description=None, memory_mode="isolated")
+
+
+def test_soft_cap_does_not_apply_to_other_owners(file_backed_db, monkeypatch, tmp_path):
+    """Bob's projects don't count against Alice's cap."""
+    monkeypatch.setenv("ODYSSEUS_DATA_DIR", str(tmp_path))
+    svc = ProjectService()
+    for i in range(50):
+        svc.create(owner="alice", name=f"A{i}", icon=None, description=None, memory_mode="isolated")
+    # Bob is unaffected.
+    svc.create(owner="bob", name="B0", icon=None, description=None, memory_mode="isolated")
+
+
+# ────────────────────────────────────── T13 open_context ──────────────────────────────────────
+
+def test_open_context_returns_cached_instance(file_backed_db, monkeypatch, tmp_path):
+    monkeypatch.setenv("ODYSSEUS_DATA_DIR", str(tmp_path))
+    svc = ProjectService()
+    proj = svc.create(owner="alice", name="Ctx", icon=None, description=None, memory_mode="isolated")
+
+    ctx1 = svc.open_context(proj.id, "alice", global_memory_service=None)
+    ctx2 = svc.open_context(proj.id, "alice", global_memory_service=None)
+    assert ctx1 is ctx2
+
+
+def test_open_context_isolated_builds_handles(file_backed_db, monkeypatch, tmp_path):
+    monkeypatch.setenv("ODYSSEUS_DATA_DIR", str(tmp_path))
+    svc = ProjectService()
+    proj = svc.create(owner="alice", name="Iso", icon=None, description=None, memory_mode="isolated")
+    ctx = svc.open_context(proj.id, "alice", global_memory_service=None)
+    assert isinstance(ctx, ProjectContext)
+    assert ctx.memory_manager is not None
+    assert ctx.memory_vector is not None
+    assert ctx.memory_service is not None
+
+
+def test_open_context_shared_aliases_global(file_backed_db, monkeypatch, tmp_path):
+    monkeypatch.setenv("ODYSSEUS_DATA_DIR", str(tmp_path))
+    svc = ProjectService()
+    proj = svc.create(owner="alice", name="Shared", icon=None, description=None, memory_mode="shared")
+    sentinel = object()
+    ctx = svc.open_context(proj.id, "alice", global_memory_service=sentinel)
+    assert ctx.memory_service is sentinel
