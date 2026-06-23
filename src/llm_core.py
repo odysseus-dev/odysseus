@@ -497,6 +497,12 @@ def _build_ollama_payload(
         options["num_predict"] = max_tokens
     if num_ctx is not None and num_ctx > 0 and num_ctx != DEFAULT_CONTEXT:
         options["num_ctx"] = num_ctx
+    # Gemma 4 repetition collapse mitigation (native Ollama path).
+    # repeat_penalty + repeat_last_n are native Ollama sampling params that
+    # penalize repeated tokens within a sliding window.
+    if _is_gemma4_model(model):
+        options.setdefault("repeat_penalty", 1.3)
+        options.setdefault("repeat_last_n", 256)
     if options:
         payload["options"] = options
     if tools:
@@ -507,6 +513,30 @@ def _build_ollama_payload(
 def _parse_ollama_response(data: dict) -> str:
     message = data.get("message") or {}
     return message.get("content") or data.get("response") or ""
+
+
+def _check_response_collapse(response: str, model: str) -> str:
+    """Detect and truncate repetition collapse in a non-streaming LLM response.
+
+    For Gemma 4 (and other collapse-prone models), runs the
+    RepetitionCollapseDetector on the full response text.  If collapse is
+    found, truncates to the good prefix and logs a warning.  Returns the
+    (possibly truncated) response.
+    """
+    if not response or len(response) < 200:
+        return response
+    from src.repetition_detector import RepetitionCollapseDetector, truncate_before_collapse
+    detector = RepetitionCollapseDetector(check_every_chars=len(response))
+    detector.feed(response)
+    if detector.check():
+        truncated = truncate_before_collapse(response, detector.trigger_phrase)
+        logger.warning(
+            "Repetition collapse detected in non-streaming response from %s "
+            "(trigger=%r, original=%d chars, truncated=%d chars)",
+            model, detector.trigger_phrase, len(response), len(truncated),
+        )
+        return truncated
+    return response
 
 
 def _host_match(url: str, *domains: str) -> bool:
@@ -1052,6 +1082,34 @@ def _normalize_mistral_content(content):
             elif isinstance(inner, str):
                 thinking_parts.append(inner)
     return "".join(text_parts), "".join(thinking_parts)
+
+def _is_gemma4_model(model: str) -> bool:
+    """Return True if model is a Gemma 4 variant (prone to repetition collapse)."""
+    if not model:
+        return False
+    m = model.lower()
+    return "gemma4" in m or "gemma-4" in m
+
+
+_GEMMA4_FREQUENCY_PENALTY = 0.3
+_GEMMA4_PRESENCE_PENALTY = 0.3
+
+
+def _apply_gemma4_repetition_mitigation(payload: dict, url: str, model: str) -> None:
+    """Inject frequency/presence penalties for Gemma 4 on Ollama's /v1 endpoint.
+
+    These penalties reduce the probability of token repetition at the sampling
+    layer, mitigating the model-level repetition collapse bug (gemma#622).
+    Only applied when the caller hasn't already set these values.
+    """
+    if not _is_gemma4_model(model):
+        return
+    if not _is_ollama_openai_compat_url(url):
+        return
+    if "frequency_penalty" not in payload:
+        payload["frequency_penalty"] = _GEMMA4_FREQUENCY_PENALTY
+    if "presence_penalty" not in payload:
+        payload["presence_penalty"] = _GEMMA4_PRESENCE_PENALTY
 
 
 def _convert_openai_content_to_anthropic(content):
@@ -1812,6 +1870,7 @@ async def llm_call_async(
             payload["think"] = False
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
+        _apply_gemma4_repetition_mitigation(payload, url, model)
         _apply_local_cache_affinity(payload, url, session_id)
 
     if _is_host_dead(target_url):
@@ -1848,6 +1907,7 @@ async def llm_call_async(
                 else:
                     msg = data["choices"][0]["message"]
                     response = msg.get("content") or msg.get("reasoning_content") or ""
+                response = _check_response_collapse(response, model)
                 _set_cached_response(cache_key, response)
                 return response
             except Exception:
@@ -1871,7 +1931,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                      max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                      timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
                      tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
-                     tool_choice_none: bool = False):
+                     seed: Optional[int] = None, tool_choice_none: bool = False):
     """Stream LLM responses with improved error handling.
 
     Yields SSE chunks:
@@ -1944,6 +2004,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         # <think> blocks. Ollama /v1 accepts "think": false as a top-level param.
         if _is_ollama_openai_compat_url(url) and _supports_thinking(model):
             payload["think"] = False
+        _apply_gemma4_repetition_mitigation(payload, url, model)
         _apply_local_cache_affinity(payload, url, session_id)
         h = _provider_headers(provider, headers)
         if provider == "copilot":
@@ -1956,6 +2017,12 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     # connect blip (offshore/public endpoints) surfacing as a 503 on this stream
     # path, which -- unlike llm_call -- does not retry the connect.
     stream_timeout = _stream_timeout(timeout)
+
+    if seed is not None:
+        if provider == "ollama" and "options" in payload:
+            payload["options"]["seed"] = seed
+        else:
+            payload["seed"] = seed
 
     if _is_host_dead(target_url):
         yield f'event: error\ndata: {json.dumps({"error": f"Upstream {_host_key(target_url)} unreachable (cooldown active)", "status": 503})}\n\n'

@@ -18,6 +18,7 @@ from src.llm_core import llm_call_async, stream_llm, stream_llm_with_fallback
 from src.agent_loop import stream_agent_loop
 from src import agent_runs
 from src.model_context import estimate_tokens
+from src.repetition_detector import RepetitionCollapseDetector, truncate_before_collapse
 from src.chat_helpers import coerce_message_and_session
 from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
 from src.session_search import search_session_messages
@@ -1127,93 +1128,155 @@ def setup_chat_routes(
                 _requested_model = sess.model
                 _actual_model = None
                 # ── Chat mode: call stream_llm directly, NO tools, NO document access ──
+                # Repetition collapse detection + retry-with-perturbation (gemma#622).
+                # On first collapse, abort and retry with bumped temperature + new seed.
+                _rep_detector = RepetitionCollapseDetector()
+                _rep_retry_attempted = False
+                _rep_collapse_this_attempt = False
+                _chat_temperature = ctx.preset.temperature
+
                 try:
-                    _chat_candidates = [(sess.endpoint_url, sess.model, sess.headers)] + _fallback_candidates
-                    async for chunk in stream_llm_with_fallback(
-                        _chat_candidates,
-                        messages,
-                        temperature=ctx.preset.temperature,
-                        # Respect the preset; 0/unset = let the server decide (no
-                        # cap), matching agent mode. The old hard 4096 fallback
-                        # truncated reasoning models mid-<think> — they'd burn the
-                        # whole budget thinking and never emit the answer (seen in
-                        # Compare on heavy generation prompts).
-                        max_tokens=ctx.preset.max_tokens,
-                        prompt_type=preset_id,
-                        tools=None,
-                        session_id=session,
-                    ):
-                        if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
-                            try:
-                                data = json.loads(chunk[6:])
-                                if "delta" in data:
-                                    # Reasoning tokens arrive flagged thinking:true.
-                                    # Forward them so the client can show a thinking
-                                    # indicator, but don't fold them into the saved
-                                    # reply (mirrors the rewrite path below).
-                                    if not data.get("thinking"):
-                                        full_response += data["delta"]
-                                        _stream_set(session, partial=full_response)
+                    for _attempt_idx in range(2):  # at most 1 retry
+                        if _attempt_idx > 0:
+                            # Retry: perturb sampling to escape the collapse attractor
+                            import random
+                            _chat_temperature = min((_chat_temperature or 0.7) + 0.2, 1.5)
+                            _retry_seed = random.randint(1, 2**31)
+                            _rep_detector.reset()
+                            _rep_collapse_this_attempt = False
+                            full_response = ""
+                            logger.info(
+                                "Repetition collapse retry for session %s (temp=%.2f, seed=%d)",
+                                session, _chat_temperature, _retry_seed,
+                            )
+                        else:
+                            _retry_seed = None
+
+                        _chat_candidates = [(sess.endpoint_url, sess.model, sess.headers)] + _fallback_candidates
+                        _stream_kwargs = dict(
+                            temperature=_chat_temperature,
+                            max_tokens=ctx.preset.max_tokens,
+                            prompt_type=preset_id,
+                            tools=None,
+                            session_id=session,
+                        )
+                        if _retry_seed is not None:
+                            _stream_kwargs["seed"] = _retry_seed
+                        async for chunk in stream_llm_with_fallback(
+                            _chat_candidates,
+                            messages,
+                            **_stream_kwargs,
+                        ):
+                            if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
+                                try:
+                                    data = json.loads(chunk[6:])
+                                    if "delta" in data:
+                                        if not data.get("thinking"):
+                                            full_response += data["delta"]
+                                            _stream_set(session, partial=full_response)
+                                            if _rep_detector.feed(data["delta"]):
+                                                _rep_collapse_this_attempt = True
+                                                break
+                                        yield chunk
+                                    elif data.get("type") == "fallback":
+                                        _answered_by = data.get("answered_by") or _answered_by
+                                        _actual_model = _actual_model or _answered_by
+                                        data["selected_model"] = data.get("selected_model") or _requested_model
+                                        yield chunk
+                                    elif data.get("type") == "model_actual":
+                                        _actual_model = data.get("model") or _actual_model
+                                        data["requested_model"] = _requested_model
+                                        yield f'data: {json.dumps(data)}\n\n'
+                                    elif data.get("type") == "usage":
+                                        last_metrics = data.get("data", {})
+                                        _reported_model = last_metrics.get("model")
+                                        last_metrics["requested_model"] = _requested_model
+                                        last_metrics["model"] = _reported_model or _actual_model or _answered_by or _requested_model
+                                        if ctx.context_length and last_metrics.get("input_tokens"):
+                                            pct = min(round((last_metrics["input_tokens"] / ctx.context_length) * 100, 1), 100.0)
+                                            last_metrics["context_percent"] = pct
+                                            last_metrics["context_length"] = ctx.context_length
+                                        if last_metrics.get("gen_tps") and not last_metrics.get("tokens_per_second"):
+                                            last_metrics["tokens_per_second"] = last_metrics["gen_tps"]
+                                            last_metrics["tps_source"] = "backend"
+                                        last_metrics.setdefault("response_time", round(time.time() - _chat_start, 2))
+                                        yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
+                                except json.JSONDecodeError:
                                     yield chunk
-                                elif data.get("type") == "fallback":
-                                    # Selected model failed; a fallback answered.
-                                    # Forward the notice and remember the real model.
-                                    _answered_by = data.get("answered_by") or _answered_by
-                                    _actual_model = _actual_model or _answered_by
-                                    data["selected_model"] = data.get("selected_model") or _requested_model
-                                    yield chunk
-                                elif data.get("type") == "model_actual":
-                                    _actual_model = data.get("model") or _actual_model
-                                    data["requested_model"] = _requested_model
-                                    yield f'data: {json.dumps(data)}\n\n'
-                                elif data.get("type") == "usage":
-                                    last_metrics = data.get("data", {})
-                                    _reported_model = last_metrics.get("model")
-                                    last_metrics["requested_model"] = _requested_model
-                                    last_metrics["model"] = _reported_model or _actual_model or _answered_by or _requested_model
-                                    if ctx.context_length and last_metrics.get("input_tokens"):
-                                        pct = min(round((last_metrics["input_tokens"] / ctx.context_length) * 100, 1), 100.0)
-                                        last_metrics["context_percent"] = pct
-                                        last_metrics["context_length"] = ctx.context_length
-                                    # The frontend reads `tokens_per_second`; the raw usage event
-                                    # carries the backend's true gen speed as `gen_tps` (llama.cpp
-                                    # timings). Map it through so this direct-chat path shows real
-                                    # t/s instead of "n/a" → falling back to a bare token count.
-                                    if last_metrics.get("gen_tps") and not last_metrics.get("tokens_per_second"):
-                                        last_metrics["tokens_per_second"] = last_metrics["gen_tps"]
-                                        last_metrics["tps_source"] = "backend"
-                                    # Wall-clock response time for the stats popup ("Time").
-                                    last_metrics.setdefault("response_time", round(time.time() - _chat_start, 2))
-                                    yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
-                            except json.JSONDecodeError:
+                            elif chunk.startswith("event: error"):
+                                logger.warning(f"Stream error for {sess.model} on {sess.endpoint_url}: {chunk!r}")
                                 yield chunk
-                        elif chunk.startswith("event: error"):
-                            logger.warning(f"Stream error for {sess.model} on {sess.endpoint_url}: {chunk!r}")
-                            yield chunk
-                        elif chunk.startswith("event: "):
-                            yield chunk
-                        elif chunk == "data: [DONE]\n\n":
-                            # Generate fallback metrics if LLM didn't send usage
-                            if not last_metrics and full_response:
-                                _elapsed = time.time() - _chat_start
-                                _est_in = estimate_tokens(messages)
-                                _est_out = len(full_response) // 4
-                                _tps = round(_est_out / _elapsed, 2) if _elapsed > 0 else 0
-                                _ctx_pct = min(round((_est_in / ctx.context_length) * 100, 1), 100.0) if ctx.context_length else 0
-                                last_metrics = {
-                                    "response_time": round(_elapsed, 2),
-                                    "input_tokens": _est_in,
-                                    "output_tokens": _est_out,
-                                    "tokens_per_second": _tps,
-                                    "context_percent": _ctx_pct,
-                                    "context_length": ctx.context_length,
-                                    "model": _actual_model or _answered_by or _requested_model,
-                                    "requested_model": _requested_model,
-                                    "usage_source": "estimated",
-                                }
-                                yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
+                            elif chunk.startswith("event: "):
+                                yield chunk
+                            elif chunk == "data: [DONE]\n\n":
+                                if not last_metrics and full_response:
+                                    _elapsed = time.time() - _chat_start
+                                    _est_in = estimate_tokens(messages)
+                                    _est_out = len(full_response) // 4
+                                    _tps = round(_est_out / _elapsed, 2) if _elapsed > 0 else 0
+                                    _ctx_pct = min(round((_est_in / ctx.context_length) * 100, 1), 100.0) if ctx.context_length else 0
+                                    last_metrics = {
+                                        "response_time": round(_elapsed, 2),
+                                        "input_tokens": _est_in,
+                                        "output_tokens": _est_out,
+                                        "tokens_per_second": _tps,
+                                        "context_percent": _ctx_pct,
+                                        "context_length": ctx.context_length,
+                                        "model": _actual_model or _answered_by or _requested_model,
+                                        "requested_model": _requested_model,
+                                        "usage_source": "estimated",
+                                    }
+                                    yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
+                                if full_response:
+                                    _saved_id = save_assistant_response(
+                                        sess, session_manager, session, full_response, last_metrics,
+                                        character_name=ctx.preset.character_name,
+                                        web_sources=web_sources,
+                                        rag_sources=ctx.rag_sources,
+                                        research_sources=research_sources,
+                                        used_memories=ctx.used_memories,
+                                        do_research=effective_do_research,
+                                        incognito=incognito,
+                                    )
+                                    if _saved_id:
+                                        yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
+                                    run_post_response_tasks(
+                                        sess, session_manager, session, message, full_response,
+                                        last_metrics, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
+                                        incognito=incognito, compare_mode=compare_mode,
+                                        character_name=ctx.preset.character_name,
+                                        owner=_user,
+                                        allow_background_extraction=not tool_policy.block_all_tool_calls,
+                                    )
+                                _stream_set(session, status="done")
+                                yield chunk
+
+                        # If collapse detected and this is first attempt, retry
+                        if _rep_collapse_this_attempt and _attempt_idx == 0:
+                            _rep_retry_attempted = True
+                            logger.warning(
+                                "Repetition collapse in chat stream (session=%s, trigger=%r) — retrying with perturbation",
+                                session, _rep_detector.trigger_phrase,
+                            )
+                            continue  # next iteration of the retry for-loop
+
+                        # Collapse on second attempt — truncate and warn the user
+                        if _rep_collapse_this_attempt:
+                            full_response = truncate_before_collapse(
+                                full_response, _rep_detector.trigger_phrase
+                            )
+                            _collapse_warning = (
+                                "\n\n*[Generation aborted: repetition collapse detected "
+                                f"(repeated \"{_rep_detector.trigger_phrase}\"). "
+                                "This is a known model bug — see "
+                                "[gemma#622](https://github.com/google-deepmind/gemma/issues/622). "
+                                "Try rephrasing your request or switching models.]*"
+                            )
+                            full_response += _collapse_warning
+                            yield f'data: {json.dumps({"delta": _collapse_warning})}\n\n'
+                            _stream_set(session, partial=full_response)
                             if full_response:
-                                _saved_id = save_assistant_response(
+                                save_assistant_response(
                                     sess, session_manager, session, full_response, last_metrics,
                                     character_name=ctx.preset.character_name,
                                     web_sources=web_sources,
@@ -1223,18 +1286,11 @@ def setup_chat_routes(
                                     do_research=effective_do_research,
                                     incognito=incognito,
                                 )
-                                if _saved_id:
-                                    yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
-                                run_post_response_tasks(
-                                    sess, session_manager, session, message, full_response,
-                                    last_metrics, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
-                                    incognito=incognito, compare_mode=compare_mode,
-                                    character_name=ctx.preset.character_name,
-                                    owner=_user,
-                                    allow_background_extraction=not tool_policy.block_all_tool_calls,
-                                )
                             _stream_set(session, status="done")
-                            yield chunk
+                            yield "data: [DONE]\n\n"
+
+                        # No collapse or finished — done
+                        break
                 except (asyncio.CancelledError, GeneratorExit):
                     if full_response:
                         logger.info("Client disconnected mid-stream (chat mode) for session %s, saving partial (%d chars)", session, len(full_response))
