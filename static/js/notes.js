@@ -10,7 +10,7 @@ import { attachColorPicker } from './colorPicker.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
 import { applyEdgeDock, clearDockSide } from './modalSnap.js';
-import { topToolWindowZ } from './toolWindowZOrder.js';
+import { topToolWindowZ, topPortalZ } from './toolWindowZOrder.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
 const API_BASE = window.location.origin;
@@ -4335,7 +4335,7 @@ function _openNoteCornerMenu(btn) {
   const mh = menu.offsetHeight || 96;
   const below = window.innerHeight - r.bottom;
   const top = (below < mh + 8 && r.top > mh + 8) ? (r.top - mh - 4) : (r.bottom + 4);
-  menu.style.cssText += `position:fixed;z-index:11000;top:${Math.round(top)}px;left:${Math.round(left)}px;`;
+  menu.style.cssText += `position:fixed;z-index:${topPortalZ()};top:${Math.round(top)}px;left:${Math.round(left)}px;`;
   const close = bindMenuDismiss(menu, () => { menu.remove(); });
   menu.querySelector('[data-act="copy"]').addEventListener('click', () => { close(); _copyNote(id, btn); });
   menu.querySelector('[data-act="agent"]').addEventListener('click', () => { close(); _agentSolveNote(id); });
@@ -4349,7 +4349,7 @@ function _positionNoteMenu(menu, btn, width = 196) {
   const mh = menu.offsetHeight || 112;
   const below = window.innerHeight - r.bottom;
   const top = (below < mh + 8 && r.top > mh + 8) ? (r.top - mh - 4) : (r.bottom + 4);
-  menu.style.cssText += `position:fixed;z-index:11000;top:${Math.round(top)}px;left:${Math.round(left)}px;min-width:${width}px;`;
+  menu.style.cssText += `position:fixed;z-index:${topPortalZ()};top:${Math.round(top)}px;left:${Math.round(left)}px;min-width:${width}px;`;
   const close = (ev) => {
     if (ev && menu.contains(ev.target)) return;
     menu.remove();
