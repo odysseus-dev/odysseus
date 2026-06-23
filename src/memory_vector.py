@@ -27,7 +27,11 @@ class MemoryVectorStore:
 
     COLLECTION_NAME = "odysseus_memories"
 
-    def __init__(self, data_dir: str, embedding_model=None):
+    def __init__(self, data_dir: str, embedding_model=None, collection_name: str = None):
+        # Per-instance override (used by Projects for per-project collections
+        # like `project_resources_<pid>`). Falls back to the class default so
+        # every existing caller is unchanged.
+        self.COLLECTION_NAME = collection_name or self.COLLECTION_NAME
         self._model = embedding_model
         self._collection = None
         self._lanes = []
