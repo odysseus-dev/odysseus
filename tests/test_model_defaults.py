@@ -83,9 +83,7 @@ def _make_request(user=None, auth_manager=None):
 
 ### Shared test logic
 def _run_get_default_chat_test(monkeypatch, share_defaults_enabled, second_endpoint_only=False):
-    """
-    Helper function that runs get_default_chat with the given share_defaults_with_users setting.
-    """
+    """Helper function that runs get_default_chat with the given share_defaults_with_users setting."""
     
     global_settings = {
         "default_endpoint_id": "global-ep-123",
