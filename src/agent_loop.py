@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 
 from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
 from src.model_context import estimate_tokens
+from src.context_compactor import SMALL_CONTEXT_LIMIT
 from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
 from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
@@ -37,6 +38,17 @@ from src.agent_tools import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _tool_limit_for_context(context_length: int) -> int:
+    """Max RAG tools to retrieve, scaled down for small context windows."""
+    if context_length <= 0 or context_length > 16384:
+        return 8
+    if context_length <= 4096:
+        return 3
+    if context_length <= 8192:
+        return 5
+    return 6  # 8192 < context_length <= 16384
 
 
 def _load_mcp_disabled_map() -> Dict[str, set]:
@@ -2145,7 +2157,7 @@ async def stream_agent_loop(
                 if _retrieval_query:
                     try:
                         _relevant_tools = await asyncio.wait_for(
-                            asyncio.to_thread(tool_idx.get_tools_for_query, _retrieval_query, 8),
+                            asyncio.to_thread(tool_idx.get_tools_for_query, _retrieval_query, _tool_limit_for_context(context_length)),
                             timeout=_TOOL_SELECTION_TIMEOUT_SECONDS,
                         )
                         logger.info(f"[tool-rag] Retrieved tools for query: {sorted(_relevant_tools - ALWAYS_AVAILABLE)}")
@@ -2323,7 +2335,10 @@ async def stream_agent_loop(
         _is_api_model = False
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
-    _compact_agent_prompt = _is_api_model or _is_ollama_native or _ollama_openai_compat
+    _compact_agent_prompt = (
+        _is_api_model or _is_ollama_native or _ollama_openai_compat
+        or (0 < context_length <= SMALL_CONTEXT_LIMIT)
+    )
     messages, mcp_schemas = _build_system_prompt(
         messages, model, active_document, mcp_mgr, disabled_tools,
         needs_admin=_needs_admin, relevant_tools=_relevant_tools,
@@ -2331,7 +2346,7 @@ async def stream_agent_loop(
         compact=_compact_agent_prompt,
         owner=owner,
         suppress_local_context=guide_only,
-        suppress_skills=_low_signal_turn,
+        suppress_skills=_low_signal_turn or (0 < context_length <= 4096),
         active_email=active_email,
     )
     if plan_mode and not guide_only:
