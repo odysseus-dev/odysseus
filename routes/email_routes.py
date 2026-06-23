@@ -3507,6 +3507,11 @@ def setup_email_routes():
                     "smtp_security": _smtp_security_mode({"smtp_security": getattr(row, "smtp_security", ""), "smtp_port": row.smtp_port}),
                     "smtp_user": row.smtp_user or "",
                     "smtp_password": _decrypt(row.smtp_password or ""),
+                    "oauth_provider": row.oauth_provider or "",
+                    "oauth_access_token": row.oauth_access_token or "",
+                    "oauth_refresh_token": row.oauth_refresh_token or "",
+                    "oauth_token_expiry": row.oauth_token_expiry or "",
+                    "account_id": acc_id,
                 }
                 for key, value in body.items():
                     if key == "account_id":
@@ -3525,10 +3530,11 @@ def setup_email_routes():
         imap_user = (body.get("imap_user") or "").strip()
         imap_pass = body.get("imap_password") or ""
         imap_starttls = bool(body.get("imap_starttls"))
+        oauth_provider = body.get("oauth_provider") or ""
 
         if imap_port_err:
             imap_result = {"ok": False, "error": imap_port_err}
-        elif not (imap_host and imap_user and imap_pass):
+        elif not (imap_host and imap_user and (imap_pass or oauth_provider == "google")):
             imap_result = {"ok": False, "error": "Need IMAP host, username, and password"}
         else:
             # Connection mode resolution:
@@ -3546,7 +3552,14 @@ def setup_email_routes():
                     timeout=_IMAP_TIMEOUT_SECONDS,
                 )
                 try:
-                    conn.login(imap_user, imap_pass)
+                    if oauth_provider == "google":
+                        from routes.email_helpers import _get_valid_google_token, _xoauth2_bytes
+                        token = _get_valid_google_token(body.get("account_id"), body)
+                        if not token:
+                            raise RuntimeError("Google OAuth token unavailable — reconnect the account")
+                        conn.authenticate("XOAUTH2", lambda x: _xoauth2_bytes(imap_user, token))
+                    else:
+                        conn.login(imap_user, imap_pass)
                     imap_result = {"ok": True}
                 finally:
                     try: conn.logout()
@@ -3570,7 +3583,15 @@ def setup_email_routes():
                     if smtp_security == "starttls":
                         smtp.starttls()
                 try:
-                    smtp.login(smtp_user, smtp_pass)
+                    if oauth_provider == "google":
+                        from routes.email_helpers import _get_valid_google_token, _xoauth2_raw
+                        token = _get_valid_google_token(body.get("account_id"), body)
+                        if not token:
+                            raise RuntimeError("Google OAuth token unavailable — reconnect the account")
+                        smtp.ehlo()
+                        smtp.auth("XOAUTH2", lambda challenge=None: _xoauth2_raw(smtp_user, token), initial_response_ok=True)
+                    else:
+                        smtp.login(smtp_user, smtp_pass)
                     smtp_result = {"ok": True}
                 finally:
                     try: smtp.quit()
