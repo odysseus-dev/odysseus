@@ -4,7 +4,7 @@ import os
 
 from src.runtime_paths import get_app_root, get_default_data_dir
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 
 # Base paths
 BASE_DIR = os.path.join(get_app_root(), "")
@@ -101,6 +101,9 @@ SEARXNG_INSTANCE = os.getenv("SEARXNG_INSTANCE", "http://localhost:8080")
 # Cleanup configuration
 CLEANUP_ENABLED = os.getenv("CLEANUP_ENABLED", "True").lower() == "true"
 CLEANUP_INTERVAL_HOURS = int(os.getenv("CLEANUP_INTERVAL_HOURS", "24"))
+
+# Auth policy
+PASSWORD_MIN_LENGTH = 8
 
 # Default parameters
 DEFAULT_TEMPERATURE = 1.0

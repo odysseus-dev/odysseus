@@ -12,11 +12,23 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
+from fastapi import HTTPException
 from src.constants import MAX_READ_CHARS, DEEP_RESEARCH_DIR, VAULT_FILE
 from src.tool_utils import get_mcp_manager
 from core.constants import internal_api_base
+from routes._validators import validate_remote_host, validate_ssh_port
 
 logger = logging.getLogger(__name__)
+
+
+def _string_arg(value: Any) -> str:
+    return "" if value is None else str(value).strip()
+
+
+def _validate_cookbook_ssh_target(remote_host: Any, ssh_port: Any = "") -> tuple[str, str]:
+    remote = validate_remote_host(_string_arg(remote_host) or None) or ""
+    sport = validate_ssh_port(_string_arg(ssh_port) or None) or ""
+    return remote, sport
 
 # ---------------------------------------------------------------------------
 # Active email state
@@ -645,6 +657,137 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
 # MCP server management tool
 # ---------------------------------------------------------------------------
 
+# Parallel to routes/cookbook_helpers._validate_serve_cmd but deliberately the
+# opposite policy: that gate guards an admin-only serve command and allows
+# interpreters (python3/etc) because model-serving needs them, whereas this is
+# the model/prompt-injection-reachable manage_mcp path, so interpreters and
+# runners are denied here.
+#
+# Commands that can execute arbitrary code regardless of their arguments. These
+# are NEVER accepted on the manage_mcp agent path, even if an operator lists one
+# in ODYSSEUS_MCP_ALLOWED_COMMANDS -- a stdio server that genuinely needs an
+# interpreter or package runner must be registered via the trusted admin route.
+_MCP_DENIED_COMMANDS = frozenset({
+    "sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "ash", "busybox",
+    "cmd", "command.com", "powershell", "pwsh",
+    "python", "pypy", "node", "nodejs", "deno", "bun", "ruby", "jruby",
+    "perl", "raku", "php", "lua", "luajit", "tclsh", "wish", "expect", "rscript",
+    "groovy", "scala", "elixir", "erl", "iex", "java", "javac", "jshell", "jbang",
+    "kotlin", "kotlinc", "dotnet", "mono", "swift", "osascript", "tsx", "ts-node",
+    "npx", "bunx", "uvx", "pipx", "npm", "pnpm", "yarn", "pip", "uv",
+    "gem", "cargo", "go", "bundle", "poetry", "conda", "mamba", "brew",
+    "apt", "apt-get", "yum", "dnf", "pacman", "apk",
+    "env", "xargs", "nohup", "setsid", "nice", "ionice", "time", "timeout",
+    "watch", "stdbuf", "unbuffer", "script", "ssh", "scp", "sshpass", "sudo",
+    "doas", "su", "make", "cmake", "docker", "podman", "kubectl", "find",
+    "awk", "gawk", "sed", "vi", "vim", "nvim", "emacs", "ed", "tee", "eval",
+})
+
+# Argv flags that make even an allowlisted binary execute inline code. Matched
+# by prefix so glued forms (-cimport os, --eval=...) are caught, not just the
+# exact-token form.
+_MCP_CODE_EXEC_SHORT_FLAGS = ("-c", "-e", "-m")
+_MCP_CODE_EXEC_LONG_FLAGS = ("--eval", "--exec", "--print", "--module", "--command", "--require")
+
+_MCP_URL_SCHEMES = ("http://", "https://", "ftp://", "ftps://", "file://", "data:", "jar:", "blob:")
+
+# Shell metacharacters refused in command/args. Args are passed as an argv list
+# (no shell), but refusing these keeps the surface narrow and obvious.
+_MCP_SHELL_METACHARS = set(";|&$`><\n\r")
+
+# Env vars that let a child process load attacker-supplied code before main().
+_MCP_DANGEROUS_ENV = frozenset({
+    "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "DYLD_INSERT_LIBRARIES",
+    "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH", "PYTHONPATH", "PYTHONSTARTUP",
+    "PYTHONHOME", "PYTHONEXECUTABLE", "NODE_OPTIONS", "NODE_PATH", "BASH_ENV",
+    "ENV", "SHELLOPTS", "PERL5LIB", "PERL5OPT", "RUBYOPT", "RUBYLIB", "GEM_PATH",
+    "R_PROFILE", "R_HOME", "PATH", "IFS", "PROMPT_COMMAND",
+})
+
+
+def _mcp_allowed_commands() -> set:
+    """Operator-configured allowlist of safe MCP launcher basenames for the agent
+    path. Empty by default; set ODYSSEUS_MCP_ALLOWED_COMMANDS (comma-separated)
+    to opt specific trusted binaries in. Denied commands are rejected even if
+    listed here."""
+    raw = os.environ.get("ODYSSEUS_MCP_ALLOWED_COMMANDS", "")
+    return {c.strip().lower() for c in raw.split(",") if c.strip()}
+
+
+def _validate_mcp_command(command, args, env) -> Optional[str]:
+    """Validate a model-supplied stdio MCP registration. Returns an error string
+    if it must be rejected, else None.
+
+    Closes the RCE where manage_mcp 'add' passed prompt-injection-controlled
+    command/args/env straight to a subprocess spawn (issue #438): a payload
+    smuggled into a skill description, memory entry, fetched page, or email body
+    could register a stdio server running arbitrary code as the app UID.
+    """
+    if not isinstance(command, str) or not command.strip():
+        return "command must be a non-empty string"
+    command = command.strip()
+    if "/" in command or "\\" in command:
+        return "command must be a bare executable name, not a path"
+    if any(ch in _MCP_SHELL_METACHARS for ch in command):
+        return "command contains shell metacharacters"
+    base = command.lower()
+    if base.endswith(".exe") or base.endswith(".cmd") or base.endswith(".bat"):
+        base = base.rsplit(".", 1)[0]
+    # Canonicalize a trailing version suffix so versioned aliases collapse to the
+    # family name (python3.11 -> python, node18 -> node, pip3 -> pip); both the
+    # raw basename and the canonical form are denied, so an operator cannot
+    # accidentally allowlist a runtime alias back into the path.
+    canon = re.sub(r"[-_.]?\d+(?:\.\d+)*$", "", base)
+    if base in _MCP_DENIED_COMMANDS or canon in _MCP_DENIED_COMMANDS:
+        return (
+            f"command '{command}' is not allowed on the agent MCP path: "
+            "interpreters, runtimes, package runners, and shells can execute "
+            "arbitrary code. Register such a server via the admin route instead."
+        )
+    if base not in _mcp_allowed_commands():
+        return (
+            f"command '{command}' is not in the MCP allowlist. Add it to "
+            "ODYSSEUS_MCP_ALLOWED_COMMANDS if you trust it, or register the "
+            "server via the admin route."
+        )
+
+    if args is not None:
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except Exception:
+                return "args must be a JSON list"
+        if not isinstance(args, list):
+            return "args must be a list"
+        for a in args:
+            if not isinstance(a, str):
+                return "args must all be strings"
+            s = a.strip()
+            low = s.lower()
+            if any(s == f or s.startswith(f) for f in _MCP_CODE_EXEC_SHORT_FLAGS):
+                return f"arg '{a}' is a code-execution flag and is not allowed"
+            if any(low == f or low.startswith(f + "=") for f in _MCP_CODE_EXEC_LONG_FLAGS):
+                return f"arg '{a}' is a code-execution flag and is not allowed"
+            if any(low.startswith(u) for u in _MCP_URL_SCHEMES):
+                return f"arg '{a}' is a remote URL and is not allowed"
+            if any(ch in _MCP_SHELL_METACHARS for ch in a):
+                return f"arg '{a}' contains shell metacharacters"
+
+    if env:
+        if isinstance(env, str):
+            try:
+                env = json.loads(env)
+            except Exception:
+                return "env must be a JSON object"
+        if not isinstance(env, dict):
+            return "env must be an object"
+        for k in env:
+            if str(k).strip().upper() in _MCP_DANGEROUS_ENV:
+                return f"env var '{k}' can inject code into the child process and is not allowed"
+
+    return None
+
+
 async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
     """Manage MCP servers: list, add, delete, enable, disable, reconnect."""
     try:
@@ -684,6 +827,12 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
         env = args.get("env", {})
         if not name or not command:
             return {"error": "name and command are required", "exit_code": 1}
+        # Validate BEFORE any DB write or spawn: a rejected registration must
+        # leave no enabled row (which would otherwise auto-reconnect on restart)
+        # and must not attempt a connection.
+        _mcp_err = _validate_mcp_command(command, cmd_args, env)
+        if _mcp_err:
+            return {"error": f"manage_mcp: refused unsafe server registration: {_mcp_err}", "exit_code": 1}
         sid = str(_uuid.uuid4())[:8]
         db = SessionLocal()
         try:
@@ -1119,8 +1268,8 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             _ALIASES = {
                 "shell": ["bash"],
                 "terminal": ["bash"],
-                "search": ["web_search"],
-                "web": ["web_search"],
+                "search": ["web_search", "web_fetch"],
+                "web": ["web_search", "web_fetch"],
                 "browser": ["builtin_browser"],
                 "documents": ["create_document", "edit_document", "update_document", "suggest_document"],
                 "doc": ["create_document", "edit_document", "update_document", "suggest_document"],
@@ -1132,7 +1281,7 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
                 "notes": ["manage_notes"],
                 "calendar": ["manage_calendar"],
                 "email": ["mcp__email__list_emails", "mcp__email__read_email", "mcp__email__send_email"],
-                "research": ["web_search"],  # research is a per-request flag, not a tool — closest analog
+                "research": ["web_search", "web_fetch"],  # research is a per-request flag, not a tool — closest analog
             }
 
             if action == "list_tools":
@@ -2714,13 +2863,25 @@ async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
                 endpoint_added=endpoint_added, endpoint_id=endpoint_id or "",
             )
             note = "" if registered else " (state-write failed — task may not show in UI)"
+            where = host or "local"
+            log_path = f"/tmp/odysseus-tmux/{sid}.log"
             return {
-                "output": f"Serving {repo_id} (session: {sid}){note}",
+                "output": (
+                    f"Serving {repo_id} on {where} (session: {sid}){note}\n"
+                    f"Next required check: call list_served_models. If this task is not ready, "
+                    f"call tail_serve_output with session_id={sid} and tail=400 before answering. "
+                    f"Do not tell the user to check logs; you have the log tool."
+                ),
                 "session_id": sid,
                 "task_type": "serve",
                 "phase": "running",
                 "host": host,
                 "endpoint_id": endpoint_id,
+                "log_path": log_path,
+                "next_tools": [
+                    {"name": "list_served_models", "arguments": {}},
+                    {"name": "tail_serve_output", "arguments": {"session_id": sid, "tail": 400}},
+                ],
                 "exit_code": 0,
             }
         # FastAPI HTTPException puts the message under `detail`, not `error`.
@@ -2888,6 +3049,10 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
             break
 
     if remote:
+        try:
+            remote, sport = _validate_cookbook_ssh_target(remote, sport)
+        except HTTPException as e:
+            return {"error": str(getattr(e, "detail", e)), "exit_code": 1}
         _pf = f"-p {shlex.quote(str(sport))} " if sport and str(sport) != "22" else ""
         cmd = (
             f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "
@@ -2976,8 +3141,8 @@ async def do_tail_serve_output(content: str, owner: Optional[str] = None) -> Dic
         tail = 400
     tail = max(20, min(tail, 4000))
     headers = _internal_headers()
-    remote = (args.get("remote_host") or args.get("host") or "").strip()
-    sport = (args.get("ssh_port") or "").strip()
+    remote = _string_arg(args.get("remote_host") or args.get("host"))
+    sport = _string_arg(args.get("ssh_port"))
     # Resolve host from cookbook state if caller didn't pass one — same
     # lookup _cookbook_kill_session uses.
     if not remote:
@@ -2995,6 +3160,12 @@ async def do_tail_serve_output(content: str, owner: Optional[str] = None) -> Dic
                     if not sport:
                         sport = t.get("sshPort") or ""
                     break
+    if remote:
+        try:
+            remote, sport = _validate_cookbook_ssh_target(remote, sport)
+        except HTTPException as e:
+            return {"error": str(getattr(e, "detail", e)), "exit_code": 1}
+
     # Prefer the persisted /tmp/odysseus-tmux/SESSION.log file over the
     # live tmux pane. The pane is what the user would see scrolling on
     # their screen — including the post-crash neofetch banner and the
@@ -3057,8 +3228,17 @@ async def do_tail_serve_output(content: str, owner: Optional[str] = None) -> Dic
         MAX_CHARS = 8000
         if len(output_text) > MAX_CHARS:
             output_text = "…(earlier output truncated)…\n" + output_text[-MAX_CHARS:]
+        if not output_text:
+            output_text = (
+                f"No log output captured yet for {session_id} on {host_label}. "
+                "This usually means the tmux wrapper has started but the model process "
+                "has not printed anything yet. Do not stop here: call list_served_models "
+                "again to check whether it is still loading, ready, or crashed; if it is "
+                "still not ready, call tail_serve_output again with a larger tail after "
+                "the next status check."
+            )
         return {
-            "output": output_text or "(empty pane)",
+            "output": output_text,
             "session_id": session_id,
             "host": host_label,
             "tail_lines": tail,
@@ -3172,7 +3352,7 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
 
-    host = (args.get("host") or args.get("remote_host") or "").strip()
+    host = _string_arg(args.get("host") or args.get("remote_host"))
     sess = (args.get("tmux_session") or args.get("session_id") or "").strip()
     model = (args.get("model") or args.get("repo_id") or "").strip()
     port = args.get("port") or 8000
@@ -3183,6 +3363,12 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
         return {"error": "tmux_session and model are required", "exit_code": 1}
 
     # Verify tmux session exists on the target host
+    if host:
+        try:
+            host, _ = _validate_cookbook_ssh_target(host)
+        except HTTPException as e:
+            return {"error": str(getattr(e, "detail", e)), "exit_code": 1}
+
     headers = _internal_headers()
     if host:
         check = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no {shlex.quote(host)} 'tmux has-session -t {shlex.quote(sess)} 2>&1'"

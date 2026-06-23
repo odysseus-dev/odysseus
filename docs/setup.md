@@ -15,7 +15,7 @@ On first setup, Odysseus creates an admin account (`admin` unless
 For Docker installs, the same line is in `docker compose logs odysseus`.
 Use that for the first login, then change it in **Settings**.
 
-Contributing? See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing, and
+Contributing? See [CONTRIBUTING.md](../CONTRIBUTING.md) for setup, testing, and
 pull request guidelines.
 
 ### Docker (recommended)
@@ -249,6 +249,19 @@ python -m uvicorn app:app --host 127.0.0.1 --port 7000
 
 If `python` points at an older interpreter, use `py -3.12` (or another installed
 3.11+ version) for the venv step.
+
+**Exposing on a LAN/Tailscale (Windows):** the launcher binds to `127.0.0.1` and
+does **not** read `APP_BIND` / `ODYSSEUS_HOST` from `.env`, so editing `.env`
+alone leaves the native Windows server on loopback. Pass the launcher's
+`-BindHost` flag instead:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1 -BindHost 0.0.0.0
+```
+
+The manual `uvicorn` command takes the same address as `--host 0.0.0.0`. Bind
+outside loopback only for a trusted LAN/VPN such as Tailscale: keep
+`AUTH_ENABLED=true` and do not expose the port directly to the public internet.
 
 **Requirements:** Python 3.11+. The core app (chat, agent, memory, documents,
 email, calendar, deep research) runs fully native. For full **Cookbook** background

@@ -165,6 +165,15 @@ def test_intel_mac_skipped(monkeypatch):
     assert hardware._detect_apple_silicon() is None
 
 
+def test_plain_arm_mac_skipped(monkeypatch):
+    """Only ARM64-class Macs should enter the Apple Silicon Metal path."""
+    monkeypatch.setattr(hardware, "_remote_host", None)
+    monkeypatch.setattr(hardware.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(hardware.platform, "machine", lambda: "armv7l")
+    monkeypatch.setattr(hardware, "_run", _fake_sysctl())
+    assert hardware._detect_apple_silicon() is None
+
+
 def test_detect_system_propagates_unified_memory(monkeypatch):
     """The unified_memory flag set by GPU detection must survive into the
     system dict so the API and UI can report it (it was being dropped)."""

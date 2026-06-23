@@ -328,6 +328,7 @@
 
   let mode = 'login'; // 'login' | 'signup' | 'setup'
   let signupAllowed = false;
+  let policy = { password_min_length: 8, reserved_usernames: [] };
 
   const rememberToggle = document.getElementById('rememberToggle');
 
@@ -360,10 +361,12 @@
     }
   }
 
-  // Check auth status
+  // Check auth status and fetch policy in parallel, but don't block the
+  // authenticated redirect on the policy response.
+  const policyPromise = fetch('/api/auth/policy', { credentials: 'same-origin' }).catch(() => null);
   try {
-    const res = await fetch('/api/auth/status', { credentials: 'same-origin' });
-    const data = await res.json();
+    const statusRes = await fetch('/api/auth/status', { credentials: 'same-origin' });
+    const data = await statusRes.json();
     if (data.authenticated) {
       window.location.replace('/');
       return;
@@ -373,6 +376,10 @@
       setMode('setup');
     } else {
       setMode('login');
+    }
+    const policyRes = await policyPromise;
+    if (policyRes && policyRes.ok) {
+      policy = await policyRes.json();
     }
   } catch (e) {
     setMode('login');
@@ -426,8 +433,14 @@
         submitBtn.disabled = false;
         return;
       }
-      if (password.length < 8) {
-        errEl.textContent = 'Password must be at least 8 characters';
+      if (password.length < policy.password_min_length) {
+        errEl.textContent = `Password must be at least ${policy.password_min_length} characters`;
+        errEl.style.display = 'block';
+        submitBtn.disabled = false;
+        return;
+      }
+      if (policy.reserved_usernames.includes(username.toLowerCase())) {
+        errEl.textContent = 'This username is reserved';
         errEl.style.display = 'block';
         submitBtn.disabled = false;
         return;
