@@ -806,10 +806,12 @@ async def serve_index(request: Request):
     static_path = abs_join(BASE_DIR, "static/index.html")
     if os.path.exists(static_path):
         return serve_html_with_nonce(request, static_path)
-    root_path = abs_join(BASE_DIR, "index.html")
-    if os.path.exists(root_path):
-        return serve_html_with_nonce(request, root_path)
-    raise HTTPException(404, "index.html not found")
+    # No static bundle — fall back to a root-level index.html if one is shipped.
+    # If neither exists, serve_html_with_nonce logs it and returns a generic 500:
+    # a missing index.html is a broken deployment (server fault), not a client
+    # "not found". This keeps the app-shell route consistent with the other
+    # bundled-template routes instead of mislabelling the fault as a 404.
+    return serve_html_with_nonce(request, abs_join(BASE_DIR, "index.html"))
 
 @app.get("/notes")
 async def serve_notes(request: Request):
