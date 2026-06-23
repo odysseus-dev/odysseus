@@ -184,4 +184,20 @@
         renderSettings, explainerFor,
         openBrainHover, exportMemory, importMemory, modeBadge,
     };
+
+    // Bootstrap: probe GET /api/projects to detect the feature flag and
+    // reveal the tab if the route is reachable. When FEATURES.projects_enabled
+    // is false the route returns 404 and the tab stays hidden (its
+    // inline display:none keeps the sidebar clean until opt-in).
+    (async () => {
+        try {
+            const res = await fetch(API_BASE, {
+                method: 'GET',
+                headers: owner() ? { 'X-Owner': owner() } : {},
+            });
+            if (res.ok) show();
+        } catch (_) {
+            // Network error or auth failure — leave the tab hidden.
+        }
+    })();
 })();
