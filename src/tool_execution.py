@@ -21,7 +21,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 
 
-from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
+from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user, BUILTIN_EMAIL_TOOLS
 from src.tool_policy import ToolPolicy
 from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES, DATA_DIR
 from src.tool_utils import _truncate, get_mcp_manager
@@ -640,6 +640,20 @@ async def _execute_tool_block_impl(
         }
         logger.warning("Public tool policy blocked owner=%r tool=%s", owner, tool)
         return desc, result
+
+    # Built-in email tools are dispatched via the internal email MCP, so they
+    # resolve under the mcp__email__ namespace below. A model may emit the call
+    # in either form: native function calls and <invoke>/<tool_code> already
+    # canonicalize to mcp__email__ (via function_call_to_tool_block), but the
+    # fenced ```list_emails / [TOOL_CALL] paths parse to the bare name (those
+    # names are also in TOOL_TAGS). The bare form had no dispatch case and fell
+    # through to "Unknown tool type: list_emails" (#4769). Normalize to the
+    # mcp__email__ form here — AFTER the security gates above, which match on the
+    # bare names in tool_security, so disable/plan-mode/admin/public checks still
+    # apply (is_public_blocked_tool gates the bare BUILTIN_EMAIL_TOOLS names too,
+    # so a non-admin can't reach the email MCP via the bare form).
+    if tool in BUILTIN_EMAIL_TOOLS:
+        tool = f"mcp__email__{tool}"
 
     # ask_user: the agent poses a multiple-choice question to the user to get a
     # decision/clarification. This is a pure UI-control marker — no subprocess,

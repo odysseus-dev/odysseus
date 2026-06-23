@@ -8,6 +8,24 @@ from typing import Optional, Set
 logger = logging.getLogger(__name__)
 
 
+# The built-in email tools, by their bare names. They are implemented as an
+# internal "email" MCP server, so at dispatch time they resolve under the
+# mcp__email__ namespace (see tool_execution). But depending on how a model
+# emits the call, a tool block can carry EITHER form:
+#   - mcp__email__list_emails — native function calls and <invoke>/<tool_code>
+#     parse paths, which canonicalize via function_call_to_tool_block; and
+#   - list_emails (bare) — fenced ```list_emails / [TOOL_CALL] parse paths,
+#     since these names are also in TOOL_TAGS so the bare form parses too.
+# Security gates (disabled_tools, plan mode, admin/public denylists) match on
+# these bare names, so keep them bare here; the dispatcher normalizes the bare
+# form to mcp__email__ only after those gates have run (#4769).
+BUILTIN_EMAIL_TOOLS = frozenset({
+    "list_email_accounts", "send_email", "list_emails", "read_email",
+    "reply_to_email", "archive_email", "delete_email", "mark_email_read",
+    "bulk_email", "download_attachment",
+})
+
+
 # Tools regular/public users must not execute directly. These either expose
 # server/runtime access, sensitive user data, external messaging, persistent
 # state changes, or generic loopback/integration surfaces.
@@ -163,7 +181,18 @@ def is_public_blocked_tool(tool_name: Optional[str]) -> bool:
         return False
     if not isinstance(tool_name, str):
         return True
-    return tool_name in NON_ADMIN_BLOCKED_TOOLS or tool_name.startswith("mcp__")
+    # Built-in email tools are admin-only. The dispatcher normalizes a bare email
+    # name (e.g. list_emails) to its mcp__email__ form only AFTER this gate runs,
+    # and the email MCP itself only owner-scopes the mailbox without re-checking
+    # admin — so a bare name must be blocked here too, otherwise a non-admin could
+    # emit the fenced/[TOOL_CALL] bare form to reach an email tool that the mcp__
+    # prefix rule below would have blocked in its canonical form. Gate on the same
+    # BUILTIN_EMAIL_TOOLS set the dispatcher normalizes, so the two cannot drift.
+    return (
+        tool_name in NON_ADMIN_BLOCKED_TOOLS
+        or tool_name in BUILTIN_EMAIL_TOOLS
+        or tool_name.startswith("mcp__")
+    )
 
 
 def owner_is_admin_or_single_user(owner: Optional[str]) -> bool:
