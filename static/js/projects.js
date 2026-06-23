@@ -170,9 +170,16 @@
     const newBtn = document.getElementById('projects-new-btn');
     if (newBtn) {
         newBtn.addEventListener('click', (ev) => {
+            console.log('[projects] + button clicked');
             ev.stopPropagation();
-            showCreateDialog();
+            try {
+                showCreateDialog();
+            } catch (e) {
+                console.error('[projects] showCreateDialog failed:', e);
+            }
         });
+    } else {
+        console.warn('[projects] #projects-new-btn not found at IIFE time');
     }
     const sectionTitle = document.getElementById('projects-section-title');
     if (sectionTitle) {
@@ -284,11 +291,15 @@
     // reveal the tab if the route is reachable. When FEATURES.projects_enabled
     // is false the route returns 404 and the tab stays hidden (its
     // inline display:none keeps the sidebar clean until opt-in).
+    //
+    // credentials:'include' is required so the session cookie is sent;
+    // without it the endpoint returns 401 and show() never fires.
     (async () => {
         try {
             const res = await fetch(API_BASE, {
                 method: 'GET',
-                headers: owner() ? { 'X-Owner': owner() } : {},
+                credentials: 'include',
+                headers: { 'Accept': 'application/json' },
             });
             if (res.ok) show();
         } catch (_) {
