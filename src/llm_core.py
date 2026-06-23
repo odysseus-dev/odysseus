@@ -722,9 +722,11 @@ def _provider_label(url: str) -> str:
     except Exception:
         return "provider"
     if host in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
-        if port == 8080: return "llama.cpp"
-        if port == 8000: return "vLLM"
-        if port == 1234: return "LM Studio"
+        # A port alone is not authoritative: vLLM, SGLang, llama.cpp and plain
+        # OpenAI-compatible servers all routinely share 8000/8080, so naming the
+        # serving tool from the port here would mislabel real setups. The tool is
+        # identified by probing llama-server's native /props endpoint during
+        # discovery (see ModelDiscovery._fingerprint_provider); this stays neutral.
         return "local endpoint"
     return host or "provider"
 
