@@ -24,3 +24,23 @@ def test_to_cc_bcc_combined_and_none_safe():
 
 def test_empty_and_none_fields():
     assert email_routes._envelope_recipients("", None) == []
+
+
+def test_trailing_comma_is_tolerated():
+    # Regression for #4562: a stray trailing comma in the To field made
+    # getaddresses emit a malformed tuple and the only recipient was dropped,
+    # so SMTP raised SMTPRecipientsRefused({}) and the UI surfaced "{}".
+    assert email_routes._envelope_recipients("alice@example.com,") == ["alice@example.com"]
+
+
+def test_leading_comma_is_tolerated():
+    assert email_routes._envelope_recipients(",alice@example.com") == ["alice@example.com"]
+
+
+def test_trailing_comma_with_display_name():
+    assert email_routes._envelope_recipients('"Smith, John" <john@corp.com>,') == ["john@corp.com"]
+
+
+def test_trailing_comma_across_to_cc_bcc():
+    got = email_routes._envelope_recipients("alice@example.com,", "bob@example.com,", "carol@example.com,")
+    assert got == ["alice@example.com", "bob@example.com", "carol@example.com"]

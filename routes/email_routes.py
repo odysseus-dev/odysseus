@@ -402,9 +402,14 @@ def _envelope_recipients(*fields: str) -> list:
     strings. A naive `field.split(",")` corrupts display names that contain a
     comma (e.g. `"Smith, John" <john@corp.com>`, the canonical Outlook form):
     it splits into `"Smith` and `John" <john@corp.com>`, breaking delivery.
-    email.utils.getaddresses parses the address grammar correctly."""
+    email.utils.getaddresses parses the address grammar correctly. We trim
+    leading/trailing whitespace and commas from each field first, so a stray
+    boundary comma (e.g. `"alice@x.com,"`) does not cause getaddresses to emit
+    a malformed entry that collapses to an empty address and silently drops
+    the recipient."""
     out = []
-    for _name, addr in email.utils.getaddresses([f for f in fields if f]):
+    cleaned = (f.strip(", \t\r\n") for f in fields if f)
+    for _name, addr in email.utils.getaddresses([f for f in cleaned if f]):
         addr = (addr or "").strip()
         if addr:
             out.append(addr)
