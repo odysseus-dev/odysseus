@@ -44,7 +44,7 @@ from typing import Dict
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -65,7 +65,7 @@ from core.exceptions import (
 
 import bcrypt as _bcrypt
 
-from src.app_helpers import abs_join
+from src.app_helpers import abs_join, serve_html_with_nonce
 from src.generated_images import GENERATED_IMAGE_HEADERS, resolve_generated_image_path
 from starlette.responses import RedirectResponse
 
@@ -791,28 +791,14 @@ app.include_router(setup_companion_routes())
 
 # ========= ROUTES (kept in app.py) =========
 
-def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
-    """Read an HTML file and inject the CSP nonce into inline <script> tags."""
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            html = f.read()
-    except FileNotFoundError:
-        raise HTTPException(404, "Page not found")
-    except OSError:
-        logger.exception("Failed to read page %s", file_path)
-        raise HTTPException(500, "Internal server error")
-    nonce = getattr(request.state, "csp_nonce", "")
-    html = html.replace("{{CSP_NONCE}}", nonce)
-    return HTMLResponse(html)
-
 @app.get("/")
 async def serve_index(request: Request):
     static_path = abs_join(BASE_DIR, "static/index.html")
     if os.path.exists(static_path):
-        return _serve_html_with_nonce(request, static_path)
+        return serve_html_with_nonce(request, static_path)
     root_path = abs_join(BASE_DIR, "index.html")
     if os.path.exists(root_path):
-        return _serve_html_with_nonce(request, root_path)
+        return serve_html_with_nonce(request, root_path)
     raise HTTPException(404, "index.html not found")
 
 @app.get("/notes")
@@ -854,13 +840,13 @@ async def serve_library(request: Request):
 @app.get("/backgrounds")
 async def serve_backgrounds(request: Request):
     """Sandbox page for prototyping background effects. No auth required."""
-    return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/backgrounds.html"))
+    return serve_html_with_nonce(request, abs_join(BASE_DIR, "static/backgrounds.html"))
 
 @app.get("/login")
 async def serve_login(request: Request):
     if not AUTH_ENABLED:
         return RedirectResponse(url="/", status_code=302)
-    return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/login.html"))
+    return serve_html_with_nonce(request, abs_join(BASE_DIR, "static/login.html"))
 
 @app.get("/api/version")
 async def get_version():
