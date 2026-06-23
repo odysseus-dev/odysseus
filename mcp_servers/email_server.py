@@ -174,10 +174,15 @@ def _read_accounts_from_db() -> list:
         columns = {r[1] for r in conn.execute("PRAGMA table_info(email_accounts)").fetchall()}
         owner_select = "owner" if "owner" in columns else "NULL AS owner"
         smtp_security_select = "smtp_security" if "smtp_security" in columns else "'' AS smtp_security"
+        oauth_selects = ", ".join(
+            col if col in columns else f"'' AS {col}"
+            for col in ("oauth_provider", "oauth_access_token", "oauth_refresh_token", "oauth_token_expiry")
+        )
         rows = conn.execute(f"""
             SELECT id, {owner_select}, name, is_default, enabled,
                    imap_host, imap_port, imap_user, imap_password, imap_starttls,
-                   smtp_host, smtp_port, {smtp_security_select}, smtp_user, smtp_password, from_address
+                   smtp_host, smtp_port, {smtp_security_select}, smtp_user, smtp_password, from_address,
+                   {oauth_selects}
             FROM email_accounts WHERE enabled = 1
             ORDER BY is_default DESC, created_at ASC
         """).fetchall()
@@ -309,6 +314,10 @@ def _load_config(account: str | None = None) -> dict:
         cfg["smtp_user"] = row["smtp_user"] or cfg["smtp_user"]
         cfg["smtp_password"] = _decrypt(row["smtp_password"]) if row["smtp_password"] else cfg["smtp_password"]
         cfg["from_address"] = row["from_address"] or row["imap_user"] or cfg["from_address"]
+        cfg["oauth_provider"] = row.get("oauth_provider") or ""
+        cfg["oauth_access_token"] = row.get("oauth_access_token") or ""
+        cfg["oauth_refresh_token"] = row.get("oauth_refresh_token") or ""
+        cfg["oauth_token_expiry"] = row.get("oauth_token_expiry") or ""
     else:
         # Legacy fallback: settings.json flat keys
         try:
@@ -364,7 +373,14 @@ def _imap_connect(account: str | None = None):
     if getattr(conn, "sock", None):
         conn.sock.settimeout(EMAIL_SOCKET_TIMEOUT)
     try:
-        conn.login(cfg["imap_user"], cfg["imap_password"])
+        if cfg.get("oauth_provider") == "google":
+            from routes.email_helpers import _get_valid_google_token, _xoauth2_bytes
+            token = _get_valid_google_token(cfg.get("account_id"), cfg)
+            if not token:
+                raise RuntimeError("Google OAuth token unavailable — reconnect the account in Settings → Integrations")
+            conn.authenticate("XOAUTH2", lambda x: _xoauth2_bytes(cfg["imap_user"], token))
+        else:
+            conn.login(cfg["imap_user"], cfg["imap_password"])
     except Exception:
         # A failed login otherwise orphans the connected socket; close it
         # before propagating (shutdown() is the pre-auth low-level close). (#3174)
@@ -924,17 +940,24 @@ def _smtp_connect(account=None, cfg=None):
             port,
             timeout=EMAIL_SOCKET_TIMEOUT,
         )
-    if cfg["smtp_user"] and cfg["smtp_password"]:
-        try:
+    try:
+        if cfg.get("oauth_provider") == "google":
+            from routes.email_helpers import _get_valid_google_token, _xoauth2_raw
+            token = _get_valid_google_token(cfg.get("account_id"), cfg)
+            if not token:
+                raise RuntimeError("Google OAuth token unavailable — reconnect the account in Settings → Integrations")
+            conn.ehlo()
+            conn.auth("XOAUTH2", lambda challenge=None: _xoauth2_raw(cfg["smtp_user"], token), initial_response_ok=True)
+        elif cfg["smtp_user"] and cfg["smtp_password"]:
             conn.login(cfg["smtp_user"], cfg["smtp_password"])
+    except Exception:
+        # A failed login otherwise orphans the connected socket; close it
+        # before propagating (SMTP has no shutdown(); close() = socket close). (#3174)
+        try:
+            conn.close()
         except Exception:
-            # A failed login otherwise orphans the connected socket; close it
-            # before propagating (SMTP has no shutdown(); close() = socket close). (#3174)
-            try:
-                conn.close()
-            except Exception:
-                pass
-            raise
+            pass
+        raise
     return conn
 
 
