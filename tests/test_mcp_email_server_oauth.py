@@ -33,8 +33,8 @@ def _make_sqlite_db_with_oauth_account(
     access_token_raw="ya29.test_access",
     refresh_token_raw="1//test_refresh",
     expiry_offset=7200,
-) -> str:
-    """Create an in-memory SQLite DB path with one OAuth email_accounts row.
+) -> "sqlite3.Connection":
+    """Create an in-memory SQLite DB with one OAuth email_accounts row.
 
     Returns the connection (kept open so :memory: survives).
     """
@@ -285,7 +285,6 @@ def test_mcp_imap_connect_uses_xoauth2_for_google_account():
 def test_mcp_imap_connect_uses_login_for_password_account():
     """Password accounts must still use conn.login(), not XOAUTH2."""
     import mcp_servers.email_server as es
-    from src.secret_storage import encrypt as _enc
 
     cfg = {
         "imap_host": "imap.example.com",
