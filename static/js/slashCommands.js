@@ -101,6 +101,8 @@ function _setupProviderFromInput(input) {
     xai: 'xai',
     grok: 'xai',
     nvidia: 'nvidia',
+    opencodezen: 'opencode-zen',
+    opencodego: 'opencode-go',
   };
   return SETUP_PROVIDER_URLS[aliases[raw] || raw] || null;
 }
@@ -129,6 +131,8 @@ function _extractSetupProviderCredential(input) {
     ['google', 'gemini'], ['gemini', 'gemini'],
     ['x ai', 'xai'], ['xai', 'xai'], ['grok', 'xai'],
     ['nvidia', 'nvidia'],
+    ['opencode zen', 'opencode-zen'], ['opencode-zen', 'opencode-zen'],
+    ['opencode go', 'opencode-go'], ['opencode-go', 'opencode-go'],
   ];
   for (const [alias, key] of providerAliases) {
     const re = new RegExp('(^|\\s|[,;:])(' + alias.replace(/\s+/g, '\\s+') + ')(?=$|\\s|[,;:])', 'i');

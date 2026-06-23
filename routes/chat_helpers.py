@@ -22,6 +22,31 @@ from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
+_CASUAL_OPENING_RE = re.compile(
+    r"^\s*(?:h+i+|hey+|hello+|yo+|sup+|what'?s up|wass?up|hiya|howdy|"
+    r"lol|lmao|haha+|hehe+|thanks?|thank you|ty|idk|dunno|meh|bruh|bro)\b(?P<tail>.*)$",
+    re.IGNORECASE,
+)
+_CASUAL_BLOCKLIST_RE = re.compile(
+    r"\b(?:cookbook|serve|serving|launch|start|vllm|sglang|llama\.?cpp|ollama|"
+    r"download|model|email|document|doc|note|calendar|task|search|web|research|"
+    r"file|folder|repo|git|settings?|endpoint|api|token|mcp)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_casual_low_signal(text: str) -> bool:
+    """Short greetings/slang should not pull memory, skills, RAG, or docs."""
+    s = str(text or "").strip()
+    m = _CASUAL_OPENING_RE.match(s)
+    if not m:
+        return False
+    tail = m.group("tail") or ""
+    if _CASUAL_BLOCKLIST_RE.search(tail):
+        return False
+    tail_words = re.findall(r"[A-Za-z0-9_'-]+", tail)
+    return len(tail_words) <= 2
+
 
 # Strong references to in-flight fire-and-forget tasks scheduled from this
 # module. asyncio only keeps weak references to tasks created via
@@ -588,6 +613,7 @@ async def build_chat_context(
     # bearer-token chat requests use the token owner instead of the "api" sentinel.
     user = effective_user(request)
     uprefs = load_prefs_for_user(user)
+    casual_low_signal = _is_casual_low_signal(message)
 
     # Memory enabled?
     mem_enabled = not incognito and not no_memory and uprefs.get("memory_enabled", True)
@@ -595,6 +621,9 @@ async def build_chat_context(
     # When off, the "Available skills" index is not added to the prompt.
     skills_enabled = not incognito and uprefs.get("skills_enabled", True)
     if not allow_tool_preprocessing:
+        mem_enabled = False
+        skills_enabled = False
+    if casual_low_signal:
         mem_enabled = False
         skills_enabled = False
     logger.debug(
@@ -612,11 +641,11 @@ async def build_chat_context(
 
     # Use RAG?
     use_rag_val = (str(use_rag).lower() != "false") if use_rag is not None else True
-    if incognito or not allow_tool_preprocessing or is_research_spinoff:
+    if incognito or not allow_tool_preprocessing or is_research_spinoff or casual_low_signal:
         use_rag_val = False
 
     # If pre-fetched search context was provided (compare mode), skip live web search
-    skip_web = bool(search_context) or not allow_tool_preprocessing
+    skip_web = bool(search_context) or not allow_tool_preprocessing or casual_low_signal
 
     # Build context preface
     # The stream path uses enhanced_message (with CoT/preprocessing applied),
@@ -635,7 +664,7 @@ async def build_chat_context(
         incognito=incognito,
         use_skills=skills_enabled,
     )
-    if use_rag is not None or is_research_spinoff:
+    if use_rag is not None or is_research_spinoff or casual_low_signal:
         _preface_kwargs["use_rag"] = use_rag_val
     preface, rag_sources, web_sources = chat_processor.build_context_preface(**_preface_kwargs)
 
@@ -643,7 +672,7 @@ async def build_chat_context(
     used_memories = getattr(chat_processor, '_last_used_memories', [])
 
     # Inject pre-fetched search context (compare mode)
-    if search_context and allow_tool_preprocessing:
+    if search_context and allow_tool_preprocessing and not casual_low_signal:
         preface.append(untrusted_context_message("prefetched search context", search_context))
 
     # YouTube transcripts

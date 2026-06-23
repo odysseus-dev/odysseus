@@ -16,6 +16,7 @@ import spinnerModule from './spinner.js';
 import { openLibrary, closeLibrary, isLibraryOpen, initLibrary } from './documentLibrary.js';
 import signatureModule from './signature.js';
 import * as Modals from './modalManager.js';
+import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
   let API_BASE = '';
   let isOpen = false;
@@ -24,6 +25,7 @@ import * as Modals from './modalManager.js';
   let _autoDetectDebounce = null;
   let _autoTitleDebounce = null;
   let _autoSaveDebounce = null;
+  let _lastAutoSaveErrorAt = 0;
   let _animationInProgress = false;
   let _animationCancel = null;      // function to cancel current animation
   let _htmlPreviewActive = false;   // true when inline HTML preview iframe is showing
@@ -154,6 +156,20 @@ import * as Modals from './modalManager.js';
       addDocToTabs,
       syncDocIndicator: _syncDocIndicator,
     });
+    const sidebarNewDocBtn = document.getElementById('library-new-doc-btn');
+    if (sidebarNewDocBtn && !sidebarNewDocBtn.dataset.docNewWired) {
+      sidebarNewDocBtn.dataset.docNewWired = '1';
+      sidebarNewDocBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          await newDocument();
+        } catch (err) {
+          console.error('Failed to create document from sidebar button:', err);
+          if (uiModule) uiModule.showError('Failed to create document');
+        }
+      });
+    }
     _maybeOpenDocFromHash();
     window.addEventListener('hashchange', _maybeOpenDocFromHash);
   }
@@ -651,7 +667,7 @@ import * as Modals from './modalManager.js';
     overlay.className = 'modal pdf-export-overlay';
     overlay.style.cssText = 'pointer-events:auto;background:rgba(0,0,0,0.5);backdrop-filter:blur(4px);';
     overlay.innerHTML = `
-      <div class="modal-content" style="width:min(780px,94vw);max-height:86vh;">
+      <div class="modal-content" style="width:min(780px,94vw);">
         <div class="modal-header">
           <h4>Export filled PDF</h4>
           <button id="pdf-export-close" class="modal-close" title="Close">×</button>
@@ -2686,6 +2702,104 @@ import * as Modals from './modalManager.js';
     await _uploadComposeFiles(files);
   }
 
+  function _isMarkdownImageFile(file) {
+    if (!file) return false;
+    if ((file.type || '').toLowerCase().startsWith('image/')) return true;
+    return /\.(avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(file.name || '');
+  }
+
+  function _markdownImageAlt(name) {
+    const base = String(name || 'image').replace(/\.[^.]+$/, '').trim() || 'image';
+    return base.replace(/[\[\]\n\r]/g, ' ').replace(/\s+/g, ' ').trim() || 'image';
+  }
+
+  function _activeDocLanguage() {
+    const doc = activeDocId && docs.get(activeDocId);
+    return ((doc && doc.language) || document.getElementById('doc-language-select')?.value || '').toLowerCase();
+  }
+
+  function _scheduleMarkdownImageAutosave(ta) {
+    updateLineNumbers(ta.value);
+    const codeEl = document.getElementById('doc-editor-code');
+    if (codeEl && !codeEl.dataset.hasDiff) {
+      codeEl.textContent = ta.value + '\n';
+      codeEl.style.minHeight = ta.scrollHeight + 'px';
+    }
+    clearTimeout(_hlDebounce);
+    _hlDebounce = setTimeout(syncHighlighting, 80);
+    clearTimeout(_autoTitleDebounce);
+    _autoTitleDebounce = setTimeout(() => autoTitleFromContent(ta.value), 600);
+    clearTimeout(_autoSaveDebounce);
+    _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 800);
+  }
+
+  function _insertMarkdownImages(uploadedFiles) {
+    const ta = document.getElementById('doc-editor-textarea');
+    if (!ta) return;
+    const files = Array.isArray(uploadedFiles) ? uploadedFiles : [];
+    if (!files.length) return;
+
+    const start = ta.selectionStart || 0;
+    const end = ta.selectionEnd || start;
+    const before = ta.value.slice(0, start);
+    const after = ta.value.slice(end);
+    const lines = files.map(file => {
+      const id = encodeURIComponent(file.id || file.file_id || '');
+      const alt = _markdownImageAlt(file.name || file.filename);
+      return id ? `![${alt}](/api/upload/${id})` : '';
+    }).filter(Boolean);
+    if (!lines.length) return;
+
+    const prefix = before && !before.endsWith('\n') ? '\n' : '';
+    const suffix = after && !after.startsWith('\n') ? '\n' : '';
+    const insert = `${prefix}${lines.join('\n\n')}${suffix}`;
+    _replaceRange(ta, start, end, insert);
+    const caret = start + insert.length;
+    ta.selectionStart = caret;
+    ta.selectionEnd = caret;
+    ta.focus();
+    _scheduleMarkdownImageAutosave(ta);
+    _refreshMarkdownPreviewIfVisible(activeDocId, ta.value);
+  }
+
+  async function _uploadMarkdownImages(files) {
+    const images = Array.from(files || []).filter(_isMarkdownImageFile);
+    if (!images.length) {
+      if (uiModule) uiModule.showError('Choose an image file');
+      return;
+    }
+    if (_activeDocLanguage() !== 'markdown') {
+      if (uiModule) uiModule.showError('Switch the document to markdown before inserting images');
+      return;
+    }
+
+    const fd = new FormData();
+    images.forEach(file => fd.append('files', file));
+    try {
+      const res = await fetch(`${API_BASE}/api/upload`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: fd,
+      });
+      let data = null;
+      try { data = await res.json(); } catch (_) {}
+      if (!res.ok) throw new Error((data && (data.error || data.detail)) || `HTTP ${res.status}`);
+      const uploaded = Array.isArray(data?.files) ? data.files : [];
+      if (!uploaded.length) throw new Error('No uploaded files returned');
+      _insertMarkdownImages(uploaded);
+      if (uiModule) uiModule.showToast(images.length === 1 ? 'Image inserted' : 'Images inserted');
+    } catch (err) {
+      console.error('Failed to insert markdown image:', err);
+      if (uiModule) uiModule.showError('Failed to insert image');
+    }
+  }
+
+  async function _handleMarkdownImageUpload(e) {
+    const files = e.target.files;
+    e.target.value = '';
+    await _uploadMarkdownImages(files);
+  }
+
   function _renderComposeAttachments() {
     const container = document.getElementById('doc-email-compose-atts');
     if (!container) return;
@@ -3218,7 +3332,10 @@ import * as Modals from './modalManager.js';
   let _docAiReplyChoiceMenu = null;
   function _closeDocAiReplyChoice() {
     if (_docAiReplyChoiceMenu) {
-      try { _docAiReplyChoiceMenu.remove(); } catch (_) {}
+      // Tear down through the menu's registered dismiss (drops its outside-click
+      // listener + Escape-stack entry) rather than orphaning them with a raw
+      // remove(); the onClose below nulls the ref.
+      try { dismissOrRemove(_docAiReplyChoiceMenu); } catch (_) {}
       _docAiReplyChoiceMenu = null;
     }
   }
@@ -3269,6 +3386,14 @@ import * as Modals from './modalManager.js';
     const noteInput = menu.querySelector('[data-note-input]');
     setTimeout(() => noteInput?.focus(), 0);
     menu.addEventListener('mousedown', (ev) => ev.stopPropagation());
+    document.body.appendChild(menu);
+    _docAiReplyChoiceMenu = menu;
+    // Outside-click AND Escape both route through the central esc-stack via
+    // bindMenuDismiss; onClose owns the actual teardown (node removal + state).
+    const close = bindMenuDismiss(menu, () => {
+      try { menu.remove(); } catch (_) {}
+      if (_docAiReplyChoiceMenu === menu) _docAiReplyChoiceMenu = null;
+    });
     menu.addEventListener('click', async (ev) => {
       const choice = ev.target.closest('[data-mode]');
       if (!choice) return;
@@ -3276,26 +3401,9 @@ import * as Modals from './modalManager.js';
       ev.stopPropagation();
       const mode = choice.getAttribute('data-mode') || 'ai-reply-fast';
       const noteHint = (noteInput?.value || '').trim();
-      _closeDocAiReplyChoice();
+      close();
       await _aiReply({ mode, noteHint });
     });
-    document.body.appendChild(menu);
-    _docAiReplyChoiceMenu = menu;
-    const outsideClose = (ev) => {
-      if (menu.contains(ev.target)) return;
-      document.removeEventListener('click', outsideClose, true);
-      _closeDocAiReplyChoice();
-    };
-    setTimeout(() => document.addEventListener('click', outsideClose, true), 0);
-    // Esc to close.
-    const escClose = (ev) => {
-      if (ev.key === 'Escape') {
-        ev.stopPropagation();
-        document.removeEventListener('keydown', escClose, true);
-        _closeDocAiReplyChoice();
-      }
-    };
-    document.addEventListener('keydown', escClose, true);
   }
 
   async function _aiReply(opts = {}) {
@@ -3752,9 +3860,12 @@ import * as Modals from './modalManager.js';
       const res = await fetch(`${API_BASE}/api/document`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify({ session_id: sessionId, title: '', content }),
       });
+      if (!res.ok) throw new Error(`Document create failed: HTTP ${res.status}`);
       const doc = await res.json();
+      if (!doc || !doc.id) throw new Error('Document create failed: missing id');
       addDocToTabs(doc, sessionId);
       // Set the content into the map so switchToDoc preserves it
       const d = docs.get(doc.id);
@@ -3981,6 +4092,7 @@ import * as Modals from './modalManager.js';
         <input type="hidden" id="doc-email-source-folder" />
         <input type="file" id="doc-email-file-input" multiple style="display:none" />
       </div>
+      <input type="file" id="doc-md-image-input" accept="image/*" multiple style="display:none" />
       <div class="doc-md-toolbar" id="doc-md-toolbar" style="display:none">
         <div class="md-toolbar-items" id="md-toolbar-items">
           <span class="md-view-toggle" id="doc-md-view-toggle" style="display:none" role="group" aria-label="Edit or preview">
@@ -4003,7 +4115,7 @@ import * as Modals from './modalManager.js';
           <button type="button" class="md-dd-toggle" data-dd="list" title="List"><span style="font-variant-numeric:tabular-nums;">1.</span><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           <span class="md-toolbar-sep"></span>
           <button type="button" data-md="link" title="Link"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
-          <button type="button" id="md-toolbar-attach-btn" class="md-toolbar-attach-btn" title="Attach files"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+          <button type="button" id="md-toolbar-attach-btn" class="md-toolbar-attach-btn" title="Insert image"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
           <button type="button" class="md-dd-toggle md-toolbar-email-hide" data-dd="code" title="Code">\`<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           <button type="button" data-md="hr" title="Horizontal rule">—</button>
           <span class="md-toolbar-sep"></span>
@@ -4602,9 +4714,14 @@ import * as Modals from './modalManager.js';
       document.getElementById('doc-email-file-input')?.click();
     });
     document.getElementById('md-toolbar-attach-btn')?.addEventListener('click', () => {
-      document.getElementById('doc-email-file-input')?.click();
+      if (_activeDocLanguage() === 'email') {
+        document.getElementById('doc-email-file-input')?.click();
+      } else {
+        document.getElementById('doc-md-image-input')?.click();
+      }
     });
     document.getElementById('doc-email-file-input')?.addEventListener('change', _handleAttachUpload);
+    document.getElementById('doc-md-image-input')?.addEventListener('change', _handleMarkdownImageUpload);
 
     // Cc/Bcc toggle
     document.getElementById('doc-email-show-cc')?.addEventListener('click', () => {
@@ -4839,6 +4956,26 @@ import * as Modals from './modalManager.js';
         _autoTitleDebounce = setTimeout(() => autoTitleFromContent(ta.value), 600);
         clearTimeout(_autoSaveDebounce);
         _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 2000);
+      });
+      ta.addEventListener('paste', (e) => {
+        if (_activeDocLanguage() !== 'markdown') return;
+        const files = Array.from(e.clipboardData?.files || []).filter(_isMarkdownImageFile);
+        if (!files.length) return;
+        e.preventDefault();
+        _uploadMarkdownImages(files);
+      });
+      ta.addEventListener('dragover', (e) => {
+        if (_activeDocLanguage() !== 'markdown') return;
+        const items = Array.from(e.dataTransfer?.items || []);
+        if (!items.some(item => item.kind === 'file' && /^image\//i.test(item.type || ''))) return;
+        e.preventDefault();
+      });
+      ta.addEventListener('drop', (e) => {
+        if (_activeDocLanguage() !== 'markdown') return;
+        const files = Array.from(e.dataTransfer?.files || []).filter(_isMarkdownImageFile);
+        if (!files.length) return;
+        e.preventDefault();
+        _uploadMarkdownImages(files);
       });
       ta.addEventListener('scroll', () => {
         const code = document.getElementById('doc-editor-code');
@@ -5548,7 +5685,7 @@ import * as Modals from './modalManager.js';
     // any dropdown that just opened. Preventing the default mousedown keeps the
     // textarea focused, so formatting hits the live selection and menus stay up.
     toolbar.addEventListener('mousedown', (e) => {
-      if (e.target.closest('[data-md], .md-dd-toggle, .emoji-picker-btn')) e.preventDefault();
+      if (e.target.closest('[data-md], .md-dd-toggle, .emoji-picker-btn, .md-toolbar-attach-btn')) e.preventDefault();
     });
 
     toolbar.addEventListener('click', (e) => {
@@ -5976,6 +6113,7 @@ import * as Modals from './modalManager.js';
       const res = await fetch(`${API_BASE}/api/document`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify({
           session_id: sessionId,
           title: '',
@@ -5983,7 +6121,9 @@ import * as Modals from './modalManager.js';
           language: 'markdown',
         }),
       });
+      if (!res.ok) throw new Error(`Document create failed: HTTP ${res.status}`);
       const doc = await res.json();
+      if (!doc || !doc.id) throw new Error('Document create failed: missing id');
       addDocToTabs(doc, sessionId);
       if (!isOpen) openPanel();
       // Re-enable editor if it was in empty state
@@ -8266,8 +8406,10 @@ import * as Modals from './modalManager.js';
       const res = await fetch(`${API_BASE}/api/document/${activeDocId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify({ content: textarea.value }),
       });
+      if (!res.ok) throw new Error(`Document save failed: HTTP ${res.status}`);
       const doc = await res.json();
       const badge = document.getElementById('doc-version-badge');
       if (badge) { const _v = doc.version_count || 1; badge.textContent = `v${_v}`; badge.style.display = _v > 1 ? '' : 'none'; }
@@ -8280,7 +8422,11 @@ import * as Modals from './modalManager.js';
       if (!silent && uiModule) uiModule.showToast('Document saved');
     } catch (e) {
       console.error('Failed to save document:', e);
-      if (!silent && uiModule) uiModule.showError('Failed to save document');
+      const now = Date.now();
+      if (uiModule && (!silent || now - _lastAutoSaveErrorAt > 10000)) {
+        uiModule.showError(silent ? 'Autosave failed' : 'Failed to save document');
+        _lastAutoSaveErrorAt = now;
+      }
     }
   }
 
@@ -8440,9 +8586,10 @@ import * as Modals from './modalManager.js';
 
   function showExportMenu(e, anchorRect) {
     if (e) e.stopPropagation();
-    // Remove existing menu if any
+    // Remove existing menu if any (toggle off) — tear it down through its
+    // registered dismiss so the outside-click listener + Escape-stack entry go.
     const existing = document.getElementById('doc-export-menu');
-    if (existing) { existing.remove(); return; }
+    if (existing) { dismissOrRemove(existing); return; }
 
     // Position from provided rect, clicked element, or fallback to language select
     const rect = anchorRect
@@ -8492,7 +8639,7 @@ import * as Modals from './modalManager.js';
       const item = document.createElement('button');
       item.className = 'doc-overflow-item';
       item.textContent = opt.label;
-      item.addEventListener('click', (ev) => { ev.stopPropagation(); menu.remove(); opt.fn(); });
+      item.addEventListener('click', (ev) => { ev.stopPropagation(); close(); opt.fn(); });
       menu.appendChild(item);
       if (opt._divider) {
         const sep = document.createElement('div');
@@ -8510,21 +8657,9 @@ import * as Modals from './modalManager.js';
       menu.style.top = 'auto';
       menu.style.bottom = (window.innerHeight - rect.top + 2) + 'px';
     }
-    const close = (ev) => {
-      if (ev && ev.type === 'keydown') {
-        if (ev.key !== 'Escape') return;
-        ev.preventDefault();
-        ev.stopPropagation();
-        ev.stopImmediatePropagation?.();
-      } else if (ev && menu.contains(ev.target)) {
-        return;
-      }
-      menu.remove();
-      document.removeEventListener('click', close);
-      document.removeEventListener('keydown', close, true);
-    };
-    setTimeout(() => document.addEventListener('click', close), 100);
-    document.addEventListener('keydown', close, true);
+    // Outside-click AND Escape both route through the central esc-stack via
+    // bindMenuDismiss; onClose owns the actual node removal.
+    const close = bindMenuDismiss(menu, () => { menu.remove(); });
   }
 
   function exportAsHtml() {

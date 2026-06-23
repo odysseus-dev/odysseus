@@ -5,6 +5,7 @@
 import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
 import * as Modals from './modalManager.js';
+import { topPortalZ } from './toolWindowZOrder.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { attachColorPicker } from './colorPicker.js';
 import { bindMenuDismiss } from './escMenuStack.js';
@@ -12,7 +13,7 @@ import {
   WEEKDAYS, WEEKDAYS_SUN, MONTHS, MON_SHORT,
   CAL_PALETTE, CAL_COLORS, _CAL_CUSTOM_GRADIENT, _TYPE_PALETTE,
   _trashIcon, _moreIcon, _bellIcon,
-  _isCalBgImage, _calBgImageUrl, _calBgCss,
+  _isCalBgImage, _calBgImageUrl, _calBgCss, _cssUrlEscape,
   _calReadableTextColor,
   _ds, _addDays, _shiftDT, _tzOffset, _localDateOf,
 } from './calendar/utils.js';
@@ -413,8 +414,8 @@ function _calEventFg(ev) {
 // Returns '' for normal solid-color events.
 function _calItemBgStyle(ev) {
   if (!_isCalBgImage(ev.color)) return '';
-  const url = _calBgImageUrl(ev.color).replace(/'/g, "\\'").replace(/"/g, "%22");
-  return `background-image: linear-gradient(color-mix(in srgb, var(--bg) 70%, transparent), color-mix(in srgb, var(--bg) 70%, transparent)), url('${url}'); background-size: cover; background-position: center;`;
+  const url = _calBgImageUrl(ev.color);
+  return `background-image: linear-gradient(color-mix(in srgb, var(--bg) 70%, transparent), color-mix(in srgb, var(--bg) 70%, transparent)), url('${_cssUrlEscape(url)}'); background-size: cover; background-position: center;`;
 }
 
 function _todayCount() {
@@ -470,7 +471,7 @@ function _showEventMoreMenu(ev, anchor) {
   dropdown.className = 'cal-event-dropdown';
   let closeMenu = () => dropdown.remove();
   const rect = anchor.getBoundingClientRect();
-  dropdown.style.cssText = `position:fixed;z-index:10001;min-width:180px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:12px;top:${rect.bottom + 4}px;left:0px;visibility:hidden;`;
+  dropdown.style.cssText = `position:fixed;z-index:${topPortalZ()};min-width:180px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:12px;top:${rect.bottom + 4}px;left:0px;visibility:hidden;`;
 
   const _item = (icon, label, onClick, danger) => {
     const it = document.createElement('div');
@@ -1260,8 +1261,8 @@ async function _renderWeek() {
       // events keep the original tinted treatment.
       let bgDecl;
       if (_isCalBgImage(ev.color)) {
-        const _url = _calBgImageUrl(ev.color).replace(/'/g, "\\'").replace(/"/g, "%22");
-        bgDecl = `background-image: linear-gradient(color-mix(in srgb, var(--bg) 55%, transparent), color-mix(in srgb, var(--bg) 55%, transparent)), url('${_url}'); background-size: cover; background-position: center;`;
+        const _url = _calBgImageUrl(ev.color);
+        bgDecl = `background-image: linear-gradient(color-mix(in srgb, var(--bg) 55%, transparent), color-mix(in srgb, var(--bg) 55%, transparent)), url('${_cssUrlEscape(_url)}'); background-size: cover; background-position: center;`;
       } else {
         bgDecl = `background:color-mix(in srgb, ${_calColor(ev)} 18%, var(--bg));`;
       }
@@ -2853,7 +2854,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
             let bg;
             if (isCustom) {
               const url = _calBgImageUrl(cur);
-              bg = url ? `center/cover no-repeat url('${url}')` : _CAL_CUSTOM_GRADIENT;
+              bg = url ? `center/cover no-repeat url('${_cssUrlEscape(url)}')` : _CAL_CUSTOM_GRADIENT;
             } else {
               bg = c.hex || 'var(--border)';
             }
@@ -2928,7 +2929,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
       // stays readable. Chrome accent falls back to the theme accent.
       const url = _calBgImageUrl(hex);
       _formCard.style.setProperty('--ev-color', 'var(--accent)');
-      _formCard.style.backgroundImage = `linear-gradient(color-mix(in srgb, var(--panel) 65%, transparent), color-mix(in srgb, var(--panel) 65%, transparent)), url('${url.replace(/'/g, "\\'")}')`;
+      _formCard.style.backgroundImage = `linear-gradient(color-mix(in srgb, var(--panel) 65%, transparent), color-mix(in srgb, var(--panel) 65%, transparent)), url('${_cssUrlEscape(url)}')`;
       _formCard.style.backgroundSize = 'cover';
       _formCard.style.backgroundPosition = 'center';
       _formCard.classList.add('cal-form-bg-image');
@@ -2950,7 +2951,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
         if (!url) return;
         const sentinel = 'bg:' + url;
         dot.dataset.color = sentinel;
-        dot.style.background = `center/cover no-repeat url('${url}')`;
+        dot.style.background = `center/cover no-repeat url('${_cssUrlEscape(url)}')`;
         document.querySelectorAll('#cal-f-colors .note-color-dot').forEach(d => d.classList.remove('active'));
         dot.classList.add('active');
         _applyFormTint(sentinel);

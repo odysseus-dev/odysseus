@@ -3,6 +3,7 @@
 
 import uiModule from './ui.js';
 import markdownModule from './markdown.js';
+import { svgifyEmoji } from './markdown.js';
 import { addAITTSButton } from './tts-ai.js';
 import { providerLogo, providerLabel } from './providers.js';
 import settingsModule from './settings.js';
@@ -406,8 +407,44 @@ function _openVisionEditor(att, userMsgEl) {
 
 // Tool call syntax patterns to strip from displayed text
 const TOOL_CALL_RE = /\[TOOL_CALL\][\s\S]*?\[\/TOOL_CALL\]/gi;
-// Only strip fenced tool-call blocks that look like structured invocations, not regular code examples
-const EXEC_FENCE_RE = /```(?:web_search|read_file|write_file|create_document|edit_document|update_document)\s*\n[\s\S]*?```/gi;
+// Strip fenced tool-call blocks that look like structured invocations, not
+// regular code examples. The tool tags are NOT hard-coded here — they are the
+// backend's authoritative TOOL_TAGS set, fetched once from GET /api/tools and
+// built into EXEC_FENCE_RE at load. TOOL_TAGS (src/agent_tools/__init__.py) is
+// thus the single source: the live-strip list can never drift from the backend
+// or miss a future tool (#3993). bash/python are carved out on purpose — they
+// are languages a user may legitimately have asked the model to show, not tool
+// invocations.
+//
+// Until the fetch resolves, EXEC_FENCE_RE stays null and exec fences aren't
+// stripped — normally a sub-second window before the first stream. If the fetch
+// fails it stays null for the rest of the session (logged below), so live exec
+// fences won't be stripped until reload. Either way the backend already strips
+// persisted history (src/tool_parsing.py builds the same regex from TOOL_TAGS),
+// so a reload always renders clean.
+let EXEC_FENCE_RE = null;
+const EXEC_FENCE_NON_TOOL = new Set(['bash', 'python']);
+
+async function loadExecFenceRegex() {
+  try {
+    const res = await fetch('/api/tools', { credentials: 'same-origin' });
+    const data = await res.json();
+    const tags = (data.tools || [])
+      .map((t) => t.id)
+      .filter((id) => id && !EXEC_FENCE_NON_TOOL.has(id));
+    if (tags.length) {
+      EXEC_FENCE_RE = new RegExp(
+        '```(?:' + tags.join('|') + ')\\s*\\n[\\s\\S]*?```', 'gi'
+      );
+    }
+  } catch (err) {
+    // Surface the failure rather than swallowing it: EXEC_FENCE_RE stays null,
+    // so this session won't strip live exec fences until reload (persisted path
+    // stays clean regardless).
+    console.warn('chatRenderer: /api/tools fetch failed; live exec-fence stripping disabled until reload', err);
+  }
+}
+loadExecFenceRegex();
 // XML-style tool calls: <minimax:tool_call>, <tool_call>, <function_call>, bare <invoke>
 const XML_TOOL_CALL_RE = /<(?:[\w]+:)?(?:tool_call|function_call)>[\s\S]*?<\/(?:[\w]+:)?(?:tool_call|function_call)>/gi;
 const XML_INVOKE_RE = /<invoke\s+name=['"][^'"]*['"]>[\s\S]*?<\/invoke>/gi;
@@ -852,7 +889,7 @@ export function roleTimestamp(when) {
  */
 export function stripToolBlocks(text) {
   let cleaned = text.replace(TOOL_CALL_RE, '');
-  cleaned = cleaned.replace(EXEC_FENCE_RE, '');
+  if (EXEC_FENCE_RE) cleaned = cleaned.replace(EXEC_FENCE_RE, '');
   cleaned = cleaned.replace(DSML_TOOL_RE, '');
   cleaned = cleaned.replace(DSML_STRAY_RE, '');
   cleaned = cleaned.replace(XML_TOOL_CALL_RE, '');
@@ -1974,6 +2011,142 @@ export function displayMetrics(messageElement, metrics) {
   if (uiModule) uiModule.scrollHistory();
 }
 
+/** Remove any unanswered multiple-choice cards currently in the chat. */
+export function removeAskUserCards(root) {
+  const scope = root || document.getElementById('chat-history') || document;
+  scope.querySelectorAll('.ask-user-card').forEach((node) => node.remove());
+}
+
+/**
+ * Render an ask_user payload as a durable choice card.
+ *
+ * This lives in the history renderer rather than the streaming loop so the
+ * same UI can be used both for a live SSE event and for a persisted tool event
+ * after a session reload.
+ */
+export function renderAskUserCard(payload, options) {
+  const aq = payload || {};
+  const opts = Array.isArray(aq.options) ? aq.options : [];
+  const chatBox = document.getElementById('chat-history');
+  if (!chatBox || !aq.question || opts.length < 2) return null;
+
+  const renderOptions = options || {};
+  removeAskUserCards(chatBox);
+
+  const card = document.createElement('div');
+  card.className = 'ask-user-card';
+  card.setAttribute('role', 'group');
+  card.tabIndex = -1;
+  const multi = !!aq.multi;
+  const emojiText = (value) => svgifyEmoji(uiModule.esc(String(value)));
+
+  const head = document.createElement('div');
+  head.className = 'ask-user-head';
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'modal-close ask-user-close';
+  closeBtn.setAttribute('aria-label', 'Dismiss question');
+  closeBtn.textContent = '×';
+  closeBtn.addEventListener('click', () => {
+    card.remove();
+    const input = uiModule.el('message');
+    if (input) input.focus();
+  });
+  head.appendChild(closeBtn);
+  card.appendChild(head);
+
+  const question = document.createElement('div');
+  question.className = 'ask-user-question';
+  question.id = `ask-user-q-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
+  question.innerHTML = emojiText(aq.question);
+  card.appendChild(question);
+  card.setAttribute('aria-labelledby', question.id);
+
+  const list = document.createElement('div');
+  list.className = 'ask-user-options';
+  card.appendChild(list);
+
+  const send = (text) => {
+    if (!text) return;
+    card.remove();
+    const input = uiModule.el('message');
+    if (input) input.value = text;
+    const sendButton = document.querySelector('.send-btn');
+    if (sendButton) sendButton.click();
+  };
+
+  opts.forEach((opt) => {
+    const label = (opt && opt.label) ? String(opt.label) : String(opt || '');
+    if (!label) return;
+    const description = (opt && opt.description) ? String(opt.description) : '';
+    const row = document.createElement(multi ? 'label' : 'button');
+    row.className = 'ask-user-option';
+    if (multi) {
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.value = label;
+      row.appendChild(checkbox);
+    }
+    const labelText = document.createElement('span');
+    labelText.className = 'ask-user-option-label';
+    labelText.innerHTML = emojiText(label);
+    row.appendChild(labelText);
+    if (description) {
+      const descriptionText = document.createElement('span');
+      descriptionText.className = 'ask-user-option-desc';
+      descriptionText.innerHTML = emojiText(description);
+      row.appendChild(descriptionText);
+    }
+    if (!multi) {
+      row.type = 'button';
+      row.addEventListener('click', () => send(label));
+    }
+    list.appendChild(row);
+  });
+
+  const other = document.createElement('div');
+  other.className = 'ask-user-other';
+  const otherInput = document.createElement('input');
+  otherInput.type = 'text';
+  otherInput.className = 'styled-prompt-input ask-user-other-input';
+  otherInput.placeholder = multi ? 'Other (added to selection)…' : 'Other… (type your own answer)';
+  otherInput.setAttribute('aria-label', multi ? 'Add a custom option' : 'Type a custom answer');
+  const otherSend = document.createElement('button');
+  otherSend.type = 'button';
+  otherSend.className = 'confirm-btn confirm-btn-primary ask-user-other-send';
+  otherSend.setAttribute('aria-label', 'Send answer');
+  otherSend.textContent = multi ? 'Send selection' : 'Send';
+  const submit = () => {
+    const freeText = otherInput.value.trim();
+    if (multi) {
+      const picked = Array.from(card.querySelectorAll('.ask-user-option input:checked')).map((input) => input.value);
+      if (freeText) picked.push(freeText);
+      if (picked.length) send(picked.join(', '));
+    } else if (freeText) {
+      send(freeText);
+    }
+  };
+  otherSend.addEventListener('click', submit);
+  otherInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      submit();
+    }
+  });
+  other.appendChild(otherInput);
+  other.appendChild(otherSend);
+  card.appendChild(other);
+
+  chatBox.appendChild(card);
+  if (renderOptions.scroll !== false) {
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  if (renderOptions.focus !== false) {
+    try { card.focus(); } catch (_) {}
+  }
+  return card;
+}
+
 /**
  * Add a message to the chat history.
  */
@@ -1983,6 +2156,11 @@ export function addMessage(role, content, modelName, metadata) {
     const box = document.getElementById('chat-history');
     if (!box) { console.error('Chat history element not found'); return; }
 
+    // Loading a later user message means any earlier ask_user card was
+    // answered.  This also removes the live card as soon as a manual reply is
+    // appended, even when the user did not click one of its buttons.
+    if (role === 'user') removeAskUserCards(box);
+
     var esc = uiModule.esc;
     const textRaw = Array.isArray(content) ? markdownModule.renderContent(content) : content;
 
@@ -1990,6 +2168,7 @@ export function addMessage(role, content, modelName, metadata) {
     if (role === 'assistant' && metadata && metadata.tool_events && metadata.tool_events.length > 0) {
       const roundTexts = metadata.round_texts || [];
       const toolEvents = metadata.tool_events;
+      let pendingAskUser = null;
       let lastWrap = null;
       let firstMsgAi = null;
       let lastMsgAi = null;
@@ -2066,6 +2245,7 @@ export function addMessage(role, content, modelName, metadata) {
             box.appendChild(threadWrap);
           }
           for (const ev of roundTools) {
+            if (ev.ask_user) pendingAskUser = ev.ask_user;
             const ok = (ev.exit_code === 0 || ev.exit_code == null);
             let outHtml = '';
             if (ev.output && ev.output.trim()) {
@@ -2129,6 +2309,12 @@ export function addMessage(role, content, modelName, metadata) {
         box.querySelectorAll('pre code:not(.hljs)').forEach(b => window.hljs.highlightElement(b));
       }
       if (markdownModule.renderMermaid) markdownModule.renderMermaid(box);
+      if (pendingAskUser) {
+        // Session history is rendered oldest-to-newest.  A later user message
+        // removes this card; if there is none, the pending choice survives a
+        // refresh.  Avoid stealing focus while the history is loading.
+        renderAskUserCard(pendingAskUser, { focus: false, scroll: false });
+      }
       return lastWrap;
     }
 
@@ -2461,6 +2647,8 @@ const chatRenderer = {
   copyMessageText,
   safeToolScreenshotSrc,
   safeDisplayImageSrc,
+  removeAskUserCards,
+  renderAskUserCard,
   buildSourcesBox,
   buildFindingsBox,
   appendReportButton,
