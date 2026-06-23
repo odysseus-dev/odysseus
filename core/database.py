@@ -179,6 +179,52 @@ class Session(TimestampMixin, Base):
             'crew_member_id': self.crew_member_id,
         }
 
+
+class DbProject(TimestampMixin, Base):
+    """A user-owned project workspace.
+
+    All project metadata (name, icon, description, memory_mode, settings)
+    lives on this row. The filesystem holds only the bulk data that
+    doesn't fit in a relational column (memory JSON, uploads, RAG index).
+    See docs/superpowers/specs/2026-06-22-projects-system-design.md §5.
+    """
+    __tablename__ = "projects"
+
+    id                         = Column(String, primary_key=True)        # UUID v4
+    owner                      = Column(String, nullable=False, index=True)
+    name                       = Column(String, nullable=False)          # 1..64 chars
+    icon                       = Column(String, nullable=True)           # <=16 chars
+    description                = Column(String, nullable=True)           # <=256 chars
+    memory_mode                = Column(String, nullable=False)          # "shared" | "inherit" | "isolated"
+    snapshot_meta              = Column(Text, nullable=True)              # JSON; only set when memory_mode == "inherit"
+    custom_prompt              = Column(Text, nullable=True)              # <=4000 chars when set
+    custom_instructions        = Column(Text, nullable=True)              # <=2000 chars when set
+    prompt_override_mode       = Column(String, nullable=False, default="append")   # "append" | "override"
+    instructions_override_mode = Column(String, nullable=False, default="append")   # "append" | "override"
+    # Tombstone for FS-wipe retry (see spec §1d). NULL on live rows.
+    deleted_at                 = Column(Integer, nullable=True)
+
+    __table_args__ = (
+        Index("ix_projects_owner_deleted_at", "owner", "deleted_at"),
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "owner": self.owner,
+            "name": self.name,
+            "icon": self.icon,
+            "description": self.description,
+            "memory_mode": self.memory_mode,
+            "snapshot_meta": self.snapshot_meta,
+            "custom_prompt": self.custom_prompt,
+            "custom_instructions": self.custom_instructions,
+            "prompt_override_mode": self.prompt_override_mode,
+            "instructions_override_mode": self.instructions_override_mode,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
 class ChatMessage(Base):
     """
     SQLAlchemy model for ChatMessage table.
