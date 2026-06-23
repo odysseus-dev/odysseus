@@ -619,7 +619,7 @@ def _detect_provider(url: str) -> str:
     if is_copilot_base(url):
         return "copilot"
     if _host_match(url, "mistral.ai"):
-        return "Mistral"
+        return "mistral"
     return "openai"
 
 
@@ -907,6 +907,12 @@ def _anthropic_rejects_temperature(model: str) -> bool:
     if not match:
         return False
     return (int(match.group(1)), int(match.group(2))) >= (4, 7)
+
+# Reasoning effort level sent to Mistral thinking-capable models. Mistral's
+# API accepts "high", "medium", "low", "none" — see
+# https://docs.mistral.ai/capabilities/reasoning/. Override via env var
+# ODYSSEUS_MISTRAL_REASONING_EFFORT (e.g. set to "medium" for cheaper chat).
+_MISTRAL_REASONING_EFFORT = os.getenv("ODYSSEUS_MISTRAL_REASONING_EFFORT", "high")
 
 # Models that support structured thinking — may output </think> without opening tag
 _THINKING_MODEL_PATTERNS = (
@@ -1476,6 +1482,8 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
+        if provider == "mistral" and _supports_thinking(model):
+            payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
     try:
         note_model_activity(target_url, model)
         r = httpx_post_kimi_aware(target_url, h, json=payload, timeout=timeout)
@@ -1682,6 +1690,8 @@ async def llm_call_async(
         # Suppress thinking for qwen3/gemma4 on Ollama /v1 — same as stream_llm.
         if _is_ollama_openai_compat_url(url) and _supports_thinking(model):
             payload["think"] = False
+        if provider == "mistral" and _supports_thinking(model):
+            payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
         _apply_local_cache_affinity(payload, url, session_id)
 
     if _is_host_dead(target_url):
@@ -1800,13 +1810,12 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             payload[tok_key] = max_tokens
         if tools:
             payload["tools"] = tools
-        if provider == "Mistral" and _supports_thinking(model):
-            payload["reasoning_effort"] = "high"
-        # Mistral thinking-capable models — enable reasoning output via
-        # reasoning_content in the streaming response. reasoning_effort=high
-        # for max quality (free-tier limits are generous for this user).
-        if provider == "Mistral" and _supports_thinking(model):
-            payload["reasoning_effort"] = "high"
+        # Mistral thinking-capable models — send reasoning_effort so Mistral
+        # activates thinking mode and returns structured reasoning_content.
+        # Effort level is configurable via ODYSSEUS_MISTRAL_REASONING_EFFORT
+        # (high / medium / low / none); default "high".
+        if provider == "mistral" and _supports_thinking(model):
+            payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
         # For Ollama's OpenAI-compat /v1 endpoint with thinking models (qwen3,
         # gemma4, etc.), suppress thinking so tool calls aren't swallowed inside
         # <think> blocks. Ollama /v1 accepts "think": false as a top-level param.
