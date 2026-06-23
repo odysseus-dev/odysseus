@@ -407,36 +407,39 @@ function _openVisionEditor(att, userMsgEl) {
 
 // Tool call syntax patterns to strip from displayed text
 const TOOL_CALL_RE = /\[TOOL_CALL\][\s\S]*?\[\/TOOL_CALL\]/gi;
-// Only strip fenced tool-call blocks that look like structured invocations, not regular code examples.
-// EXEC_TOOL_TAGS mirrors the backend TOOL_TAGS set (src/agent_tools/__init__.py)
-// MINUS bash/python. The backend strips every executed tool fence via TOOL_TAGS
-// (#3993), so the live stream must strip the same set to settle identically to a
-// history reload — listing only a hand-picked subset let any other (or future)
-// tool's executed fence linger as raw code until reload. bash/python stay out on
-// purpose: those are languages a user may legitimately have asked the model to
-// show, not tool invocations. Keep this in sync with TOOL_TAGS —
-// tests/test_live_strip_email_tool_fences.py::test_exec_fence_re_covers_all_executable_tools
-// fails on drift.
-const EXEC_TOOL_TAGS = [
-  'adopt_served_model', 'api_call', 'app_api', 'archive_email', 'ask_teacher',
-  'ask_user', 'bulk_email', 'cancel_download', 'chat_with_model',
-  'create_document', 'create_session', 'delete_email', 'download_model',
-  'edit_document', 'edit_file', 'edit_image', 'generate_image', 'get_workspace',
-  'glob', 'grep', 'list_cached_models', 'list_cookbook_servers', 'list_downloads',
-  'list_email_accounts', 'list_emails', 'list_models', 'list_serve_presets',
-  'list_served_models', 'list_sessions', 'ls', 'manage_bg_jobs', 'manage_calendar',
-  'manage_contact', 'manage_documents', 'manage_endpoints', 'manage_mcp',
-  'manage_memory', 'manage_notes', 'manage_research', 'manage_session',
-  'manage_settings', 'manage_skills', 'manage_tasks', 'manage_tokens',
-  'manage_webhooks', 'mark_email_read', 'pipeline', 'read_email', 'read_file',
-  'reply_to_email', 'resolve_contact', 'search_chats', 'search_hf_models',
-  'send_email', 'send_to_session', 'serve_model', 'serve_preset',
-  'stop_served_model', 'suggest_document', 'trigger_research', 'ui_control',
-  'update_document', 'update_plan', 'web_fetch', 'web_search', 'write_file',
-];
-const EXEC_FENCE_RE = new RegExp(
-  '```(?:' + EXEC_TOOL_TAGS.join('|') + ')\\s*\\n[\\s\\S]*?```', 'gi'
-);
+// Strip fenced tool-call blocks that look like structured invocations, not
+// regular code examples. The tool tags are NOT hard-coded here — they are the
+// backend's authoritative TOOL_TAGS set, fetched once from GET /api/tools and
+// built into EXEC_FENCE_RE at load. TOOL_TAGS (src/agent_tools/__init__.py) is
+// thus the single source: the live-strip list can never drift from the backend
+// or miss a future tool (#3993). bash/python are carved out on purpose — they
+// are languages a user may legitimately have asked the model to show, not tool
+// invocations.
+//
+// Until the fetch resolves, EXEC_FENCE_RE stays null and exec fences aren't
+// stripped — a sub-second window before the first stream. The backend already
+// strips persisted history (src/tool_parsing.py builds the same regex from
+// TOOL_TAGS), so a reload always renders clean.
+let EXEC_FENCE_RE = null;
+const EXEC_FENCE_NON_TOOL = new Set(['bash', 'python']);
+
+async function loadExecFenceRegex() {
+  try {
+    const res = await fetch('/api/tools', { credentials: 'same-origin' });
+    const data = await res.json();
+    const tags = (data.tools || [])
+      .map((t) => t.id)
+      .filter((id) => id && !EXEC_FENCE_NON_TOOL.has(id));
+    if (tags.length) {
+      EXEC_FENCE_RE = new RegExp(
+        '```(?:' + tags.join('|') + ')\\s*\\n[\\s\\S]*?```', 'gi'
+      );
+    }
+  } catch (_) {
+    // Leave EXEC_FENCE_RE null; persisted path stays clean regardless.
+  }
+}
+loadExecFenceRegex();
 // XML-style tool calls: <minimax:tool_call>, <tool_call>, <function_call>, bare <invoke>
 const XML_TOOL_CALL_RE = /<(?:[\w]+:)?(?:tool_call|function_call)>[\s\S]*?<\/(?:[\w]+:)?(?:tool_call|function_call)>/gi;
 const XML_INVOKE_RE = /<invoke\s+name=['"][^'"]*['"]>[\s\S]*?<\/invoke>/gi;
@@ -881,7 +884,7 @@ export function roleTimestamp(when) {
  */
 export function stripToolBlocks(text) {
   let cleaned = text.replace(TOOL_CALL_RE, '');
-  cleaned = cleaned.replace(EXEC_FENCE_RE, '');
+  if (EXEC_FENCE_RE) cleaned = cleaned.replace(EXEC_FENCE_RE, '');
   cleaned = cleaned.replace(DSML_TOOL_RE, '');
   cleaned = cleaned.replace(DSML_STRAY_RE, '');
   cleaned = cleaned.replace(XML_TOOL_CALL_RE, '');
