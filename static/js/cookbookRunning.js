@@ -267,7 +267,7 @@ function _taskHostLabel(task) {
 
 function _taskPort(task) {
   const cmd = task?.payload?._cmd || '';
-  const match = cmd.match(/--port\s+(\d+)/);
+  const match = cmd.match(/--port[=\s]+(\d+)/);
   return match ? match[1] : '';
 }
 
@@ -454,10 +454,10 @@ function _nextAvailablePort() {
   const presets = _loadPresets();
   const usedPorts = new Set();
   tasks.forEach(t => {
-    if (t.type === 'serve' && (t.status === 'running' || t.status === 'queued')) {
-      const m = t.payload?._cmd?.match(/--port\s+(\d+)/);
-      if (m) usedPorts.add(parseInt(m[1]));
-    }
+      if (t.type === 'serve' && (t.status === 'running' || t.status === 'queued')) {
+        const p = _taskPort(t);
+        if (p) usedPorts.add(parseInt(p));
+      }
   });
   presets.forEach(p => {
     if (p.port) usedPorts.add(parseInt(p.port));
@@ -3987,4 +3987,4 @@ export function initRunning(shared) {
 }
 
 // Also export _retryDownload and _nextAvailablePort for use by other modules
-export { _retryDownload, _nextAvailablePort, _processQueue };
+export { _retryDownload, _nextAvailablePort, _processQueue, _taskPort };

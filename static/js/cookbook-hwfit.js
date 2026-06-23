@@ -31,7 +31,7 @@ import {
 } from './cookbook.js';
 import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
-import { _loadTasks, _tmuxGracefulKill, _nextAvailablePort } from './cookbookRunning.js';
+import { _loadTasks, _tmuxGracefulKill, _nextAvailablePort, _taskPort } from './cookbookRunning.js';
 import { openCookbookDependencies } from './cookbook-diagnosis.js';
 
 // Map a serve-backend code (vllm / sglang / llamacpp) → the package name
@@ -1496,7 +1496,7 @@ export function _expandModelRow(row, modelData) {
       // Detect backend and port now — the pre-launch guard below needs them.
       const _qrBackendDetect = _detectBackend(modelData);
       const _qrRunBackend = _qrBackendDetect.backend || 'vllm';
-      const _qrPort = _qrRunBackend === 'llamacpp' ? '8080' : _nextAvailablePort();
+      const _qrPort = _nextAvailablePort();
 
       // ─── Pre-launch: stop colliding serves on the same port ───────
       // Different ports coexist fine (e.g. vLLM on 8000 + Qwen VL on
@@ -1509,10 +1509,7 @@ export function _expandModelRow(row, modelData) {
           && (t.remoteHost || '') === _qrHostStr
           && (t.status === 'running' || t.status === 'ready' || t._serveReady)
         );
-        const _clashing = _allServes.filter(t => {
-          const m = (t.payload?._cmd || '').match(/--port[=\s]+(\d+)/);
-          return m && m[1] === _qrPort;
-        });
+        const _clashing = _allServes.filter(t => _taskPort(t) === _qrPort);
         if (_clashing.length) {
           const _names = _clashing.map(t => t.payload?.repo_id || t.repo || t.name || '?').filter(Boolean);
           const _ok = await window.styledConfirm?.(
@@ -1673,7 +1670,7 @@ export function _expandModelRow(row, modelData) {
       } else if (runBackend === 'llamacpp') {
         const dir = `"$HOME/.cache/huggingface/hub/models--${modelData.name.replace(/\//g, '--')}/snapshots"`;
         const ggufPath = `$({ find ${dir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${dir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`;
-        cmd = `llama-server --model "${ggufPath}" --host 0.0.0.0 --port 8080 -ngl 99 -c ${maxCtx} --flash-attn auto`;
+        cmd = `llama-server --model "${ggufPath}" --host 0.0.0.0 --port ${port} -ngl 99 -c ${maxCtx} --flash-attn auto`;
       } else {
         cmd = `vllm serve ${modelData.name} --host 0.0.0.0 --port ${port}`;
         cmd += ` --tensor-parallel-size ${tp}`;

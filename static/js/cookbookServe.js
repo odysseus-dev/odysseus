@@ -2962,7 +2962,7 @@ function _rerenderCachedModels() {
           if (_active.length) {
             const _newPort = (launchCmd.match(/--port[=\s]+(\d+)/) || [])[1] || '';
             const _clashing = _newPort
-              ? _active.filter(t => ((t.payload?._cmd || '').match(/--port[=\s]+(\d+)/) || [])[1] === _newPort)
+              ? _active.filter(t => _runningMod._taskPort(t) === _newPort)
               : _active;
             if (_clashing.length) {
               const _names = _clashing.map(t => t.payload?.repo_id || t.repo || t.name || '?').filter(Boolean);
