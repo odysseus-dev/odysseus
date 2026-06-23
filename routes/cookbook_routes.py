@@ -1789,25 +1789,73 @@ def setup_cookbook_routes() -> APIRouter:
                     runner_lines,
                     keep_shell_open=not local_windows,
                 )
-                if "vllm serve" in req.cmd:
-                    runner_lines.append('eval "$ODYSSEUS_SERVE_CMD"')
+                # OOM retry for native llama-server on POSIX (tmux) runs.
+                # Windows detached process and remote PowerShell use different
+                # runners that don't support this bash loop.
+                _is_llamacpp_bash_retry = "llama-server" in req.cmd and not local_windows
+                if _is_llamacpp_bash_retry:
+                    # Extract the literal -ngl value so we can initialize the
+                    # bash variable with whatever the frontend computed (99 by
+                    # default, or a hardware-computed partial-offload value).
+                    _ngl_m = re.search(r'-ngl\s+(\d+)', req.cmd)
+                    _initial_ngl = int(_ngl_m.group(1)) if _ngl_m else 99
+                    # Replace all literal ngl numbers with a bash variable so
+                    # the retry loop can halve it without rebuilding the command.
+                    _cmd_tmpl = re.sub(r'(-ngl\s+)\d+', r'\1$_OOM_NGL', req.cmd)
+                    _cmd_tmpl = re.sub(r'(--n_gpu_layers\s+)\d+', r'\1$_OOM_NGL', _cmd_tmpl)
+                    _log_path = f'/tmp/odysseus-tmux/{session_id}.log'
+                    runner_lines.append(f'_OOM_NGL={_initial_ngl}')
+                    runner_lines.append('_OOM_RETRIES=0')
+                    runner_lines.append('while true; do')
+                    # Record the log size before this attempt so the OOM check
+                    # below only inspects THIS attempt's output. Without it, an
+                    # "out of memory" line from an earlier attempt stays in the
+                    # accumulating log and would make a later, unrelated failure
+                    # look like an OOM and trigger a bogus retry.
+                    runner_lines.append(f'  _OOM_LOG_OFF=$(wc -c < "{_log_path}" 2>/dev/null || echo 0)')
+                    runner_lines.append(f'  {_cmd_tmpl}')
+                    runner_lines.append('  _OOM_EC=$?')
+                    runner_lines.append('  [ $_OOM_EC -eq 0 ] && break')
+                    # 127 = command not found (llama-server missing); Python
+                    # bindings fallback already ran via ||; don't retry.
+                    runner_lines.append('  [ $_OOM_EC -eq 127 ] && break')
+                    runner_lines.append('  [ $_OOM_RETRIES -ge 3 ] && break')
+                    runner_lines.append(f'  if [ $_OOM_EC -eq 137 ] || tail -c +$((_OOM_LOG_OFF + 1)) "{_log_path}" 2>/dev/null | grep -qi "out of memory\\|failed to allocate"; then')
+                    runner_lines.append('    _OOM_NGL=$((_OOM_NGL / 2))')
+                    runner_lines.append('    _OOM_RETRIES=$((_OOM_RETRIES + 1))')
+                    runner_lines.append('    echo "[odysseus] OOM fallback: retrying with -ngl $_OOM_NGL (attempt $_OOM_RETRIES/3)"')
+                    runner_lines.append('    sleep 2')
+                    runner_lines.append('    continue')
+                    runner_lines.append('  fi')
+                    runner_lines.append('  break')
+                    runner_lines.append('done')
+                    # $? after the while loop is always 0 (from break); preserve
+                    # the actual serve exit code via _OOM_EC for the exit handler.
+                    runner_lines.append('ODYSSEUS_CMD_EXIT=$_OOM_EC')
+                    runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="')
+                    runner_lines.append('exec 1>&3 2>&4 3>&- 4>&- 2>/dev/null || true')
+                    runner_lines.append('sleep 0.2  # let tee child flush + exit')
+                    runner_lines.append('exec "${SHELL:-/bin/bash}"')
                 else:
-                    runner_lines.append(req.cmd)
-                if local_windows:
-                    # Detached background process — no interactive shell to keep open.
-                    # Print the exit marker the status poller looks for, then stop.
-                    _append_serve_exit_code_lines(
-                        runner_lines,
-                        keep_shell_open=False,
-                        is_pip_install=is_pip_install,
-                    )
-                else:
-                    # Keep shell open after exit so user can see errors
-                    _append_serve_exit_code_lines(
-                        runner_lines,
-                        keep_shell_open=True,
-                        is_pip_install=is_pip_install,
-                    )
+                    if "vllm serve" in req.cmd:
+                        runner_lines.append('eval "$ODYSSEUS_SERVE_CMD"')
+                    else:
+                        runner_lines.append(req.cmd)
+                    if local_windows:
+                        # Detached background process — no interactive shell to keep open.
+                        # Print the exit marker the status poller looks for, then stop.
+                        _append_serve_exit_code_lines(
+                            runner_lines,
+                            keep_shell_open=False,
+                            is_pip_install=is_pip_install,
+                        )
+                    else:
+                        # Keep shell open after exit so user can see errors
+                        _append_serve_exit_code_lines(
+                            runner_lines,
+                            keep_shell_open=True,
+                            is_pip_install=is_pip_install,
+                        )
 
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.sh"
             runner_path.write_text("\n".join(runner_lines) + "\n", encoding="utf-8")

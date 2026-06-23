@@ -779,6 +779,25 @@ def _append_serve_exit_code_lines(
         runner_lines.append('exit "$ODYSSEUS_CMD_EXIT"')
 
 
+def _compute_gpu_layers(run_mode: str, vram_gb, required_gb) -> int:
+    """Compute the initial -ngl value for llama.cpp based on hwfit analysis.
+
+    Returns 99 when the model fits fully on GPU, 0 when there is no GPU or the
+    model must run entirely in RAM, and a proportional layer count for partial
+    offload (cpu_offload) so the first serve attempt doesn't immediately OOM.
+    The runtime retry loop in the bash runner further halves the value on OOM.
+    """
+    if run_mode == "cpu_only":
+        return 0
+    if run_mode != "cpu_offload" or not vram_gb or not required_gb:
+        return 99
+    try:
+        frac = min(1.0, float(vram_gb) / float(required_gb))
+    except (TypeError, ZeroDivisionError, ValueError):
+        return 99
+    return max(1, int(frac * 99))
+
+
 def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     """Append Linux llama.cpp build lines that prefer ROCm/HIP when available.
 
