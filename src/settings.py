@@ -141,6 +141,10 @@ DEFAULT_SETTINGS = {
     # before producing output (endpoint offline / errors), the chat
     # dispatch retries the next entry in order.
     "default_model_fallbacks": [],
+    # When True, non-admin users inherit global default model/endpoint/fallbacks
+    # when they have no personal defaults. When False, users only use their
+    # personal defaults (no global fallback). Default is False.
+    "share_defaults_with_users": False,
     "utility_endpoint_id": "",
     "utility_model": "",
     # Ordered fallback chain for the Utility model (summarization, naming,

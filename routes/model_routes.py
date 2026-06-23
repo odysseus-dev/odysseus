@@ -2108,6 +2108,16 @@ def setup_model_routes(model_discovery):
             ep_id = (_user_prefs.get("default_endpoint_id") or "").strip()
             model = (_user_prefs.get("default_model") or "").strip()
             _fallbacks = _user_prefs.get("default_model_fallbacks") or []
+            # If user has no personal default, fall back to global default
+            # But only based on the "share_defaults_with_users" flag
+            # (only if share_defaults_with_users is enabled)
+            if settings.get("share_defaults_with_users", False):
+                if not ep_id:
+                    ep_id = settings.get("default_endpoint_id", "")
+                if not model:
+                    model = settings.get("default_model", "")
+                if not _fallbacks:
+                    _fallbacks = settings.get("default_model_fallbacks") or []
         else:
             ep_id = settings.get("default_endpoint_id", "")
             model = settings.get("default_model", "")

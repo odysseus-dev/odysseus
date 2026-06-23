@@ -8664,6 +8664,12 @@ button.hamburger {
 /* Hide thinking sections globally via settings toggle */
 body.hide-thinking .thinking-section { display: none !important; }
 
+/* Widen chat area via settings toggle */
+body.fullwidth-chat .chat-history {
+  padding-left: 0 !important;
+  padding-right: 12px !important;
+}
+
 /* Thinking process styles — colors follow theme accent */
 .msg .body .stream-content {
   width: 100%;
