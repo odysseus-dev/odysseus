@@ -72,6 +72,10 @@ def file_backed_db(tmp_path, monkeypatch):
     the attribute on both ``core.database`` and ``services.project.service``.
     Shared across the project test suite (test_project_service.py and
     test_project_context.py).
+
+    monkeypatch.setattr restores the original engine/SessionLocal on
+    teardown so subsequent tests using the default :memory: engine
+    aren't affected by leaked references.
     """
     import sqlalchemy
     from core import database as dbmod
@@ -81,7 +85,6 @@ def file_backed_db(tmp_path, monkeypatch):
     db_url = f"sqlite:///{db_file}"
     monkeypatch.setenv("DATABASE_URL", db_url)
 
-    dbmod.DATABASE_URL = db_url
     new_engine = sqlalchemy.create_engine(
         db_url,
         connect_args={"check_same_thread": False},
@@ -89,9 +92,12 @@ def file_backed_db(tmp_path, monkeypatch):
     new_session_local = sqlalchemy.orm.sessionmaker(
         autocommit=False, autoflush=False, bind=new_engine,
     )
-    dbmod.engine = new_engine
-    dbmod.SessionLocal = new_session_local
-    svc_mod.SessionLocal = new_session_local
+    # Use monkeypatch.setattr so all 5 attributes revert on teardown.
+    monkeypatch.setattr(dbmod, "DATABASE_URL", db_url)
+    monkeypatch.setattr(dbmod, "engine", new_engine)
+    monkeypatch.setattr(dbmod, "SessionLocal", new_session_local)
+    monkeypatch.setattr(svc_mod, "SessionLocal", new_session_local)
+
     dbmod.Base.metadata.create_all(bind=new_engine)
     dbmod.init_db()
     yield
