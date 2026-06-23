@@ -49,7 +49,8 @@ def safe_chmod(path, mode: int) -> bool:
         return False
     try:
         os.chmod(path, mode)
-        return True    except OSError:
+        return True
+    except OSError:
         return False
 
 
