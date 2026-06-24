@@ -854,7 +854,7 @@ def setup_calendar_routes() -> APIRouter:
         # Empty-string env vars (Docker Compose :- default) are falsy and fall through.
         _ca = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE") or _certifi.where()
         if not os.path.isfile(_ca):
-            return {"ok": False, "error": f"CA bundle not found: {_ca!r} — bind-mount the PEM into the container and verify SSL_CERT_FILE"}
+            return {"ok": False, "error": f"CA bundle not found: {_ca!r} — check that the file exists and SSL_CERT_FILE/REQUESTS_CA_BUNDLE points to a valid PEM"}
         try:
             _ssl_ctx = _ssl.create_default_context(cafile=_ca)
             # Match requests/urllib3 behaviour: don't enforce VERIFY_X509_STRICT
