@@ -92,3 +92,40 @@ jobs:
         if: steps.docs-check.outputs.docs_only != 'true'
       - run: python -m pytest -q
         if: steps.docs-check.outputs.docs_only != 'true'
+
+  python-tests-postgres:
+    name: Python tests (Postgres leg)
+    runs-on: ubuntu-latest
+    # Informational until a maintainer promotes it: proves the ORM schema +
+    # round-trip work on Postgres (tests/test_postgres_compat.py). The SQLite
+    # leg of that test already runs inside the python-tests job above.
+    continue-on-error: true
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: odysseus_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.11"
+          cache: pip
+      # Core deps + just the Postgres driver. The rest of requirements-optional
+      # (PyMuPDF, faster-whisper, markitdown) is irrelevant to the DB round-trip
+      # and would only slow down and flake this informational job.
+      - run: pip install -r requirements.txt psycopg2-binary
+      - run: mkdir -p data  # import-time init_db() uses the default sqlite DB at ./data/app.db
+      - env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/odysseus_test
+        run: python -m pytest -q tests/test_postgres_compat.py

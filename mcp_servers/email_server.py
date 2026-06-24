@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 server = Server("email")
 EMAIL_SOCKET_TIMEOUT = float(os.environ.get("EMAIL_SOCKET_TIMEOUT", "20"))
-from src.constants import DATA_DIR as _DATA_DIR, APP_DB, EMAIL_CACHE_DB, SETTINGS_FILE as _SETTINGS_FILE, MAIL_ATTACHMENTS_DIR
+from src.constants import DATA_DIR as _DATA_DIR, EMAIL_CACHE_DB, SETTINGS_FILE as _SETTINGS_FILE, MAIL_ATTACHMENTS_DIR
 DATA_DIR = Path(_DATA_DIR)
 
 
@@ -65,10 +65,6 @@ def _clean_header_value(value) -> str:
     if value is None:
         return ""
     return re.sub(r"[\r\n]+[ \t]*", " ", str(value)).strip()
-
-
-def _db_path() -> Path:
-    return Path(APP_DB)
 
 
 def _current_owner() -> str:
@@ -164,27 +160,47 @@ def _default_document_owner() -> str | None:
 
 
 def _read_accounts_from_db() -> list:
-    """Return all enabled email account rows. Empty list if missing. Never raises."""
-    path = _db_path()
-    if not path.exists():
-        return []
+    """Return all enabled email account rows. Empty list if missing. Never raises.
+
+    Routed through the app's SQLAlchemy engine (core.database) instead of opening
+    the SQLite file directly, so it follows DATABASE_URL — SQLite by default,
+    Postgres when configured. Lazy import keeps MCP module load light and mirrors
+    the document-tool import pattern elsewhere in this file. EmailAccount's
+    imap/smtp password columns are plain String (encryption is applied by the
+    startup migration, not the ORM type), so this returns the same stored values
+    the old raw-sqlite3 read did. Inspector-style optional-column probing is no
+    longer needed: create_all + the startup migrations guarantee the columns.
+    """
     try:
-        conn = sqlite3.connect(str(path))
-        conn.row_factory = sqlite3.Row
-        columns = {r[1] for r in conn.execute("PRAGMA table_info(email_accounts)").fetchall()}
-        owner_select = "owner" if "owner" in columns else "NULL AS owner"
-        smtp_security_select = "smtp_security" if "smtp_security" in columns else "'' AS smtp_security"
-        rows = conn.execute(f"""
-            SELECT id, {owner_select}, name, is_default, enabled,
-                   imap_host, imap_port, imap_user, imap_password, imap_starttls,
-                   smtp_host, smtp_port, {smtp_security_select}, smtp_user, smtp_password, from_address
-            FROM email_accounts WHERE enabled = 1
-            ORDER BY is_default DESC, created_at ASC
-        """).fetchall()
-        conn.close()
-        return [dict(r) for r in rows]
-    except sqlite3.OperationalError:
-        return []
+        from core.database import SessionLocal, EmailAccount
+        s = SessionLocal()
+        try:
+            rows = (
+                s.query(EmailAccount)
+                 .filter(EmailAccount.enabled.is_(True))
+                 .order_by(EmailAccount.is_default.desc(), EmailAccount.created_at.asc())
+                 .all()
+            )
+            return [{
+                "id": r.id,
+                "owner": r.owner,
+                "name": r.name,
+                "is_default": r.is_default,
+                "enabled": r.enabled,
+                "imap_host": r.imap_host,
+                "imap_port": r.imap_port,
+                "imap_user": r.imap_user,
+                "imap_password": r.imap_password,
+                "imap_starttls": r.imap_starttls,
+                "smtp_host": r.smtp_host,
+                "smtp_port": r.smtp_port,
+                "smtp_security": r.smtp_security or "",
+                "smtp_user": r.smtp_user,
+                "smtp_password": r.smtp_password,
+                "from_address": r.from_address,
+            } for r in rows]
+        finally:
+            s.close()
     except Exception:
         return []
 

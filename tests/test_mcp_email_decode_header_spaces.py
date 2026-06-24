@@ -16,47 +16,49 @@ pytest.importorskip("mcp")
 import mcp_servers.email_server as es
 
 
-def _init_accounts_db(path):
-    conn = sqlite3.connect(path)
-    conn.execute(
-        """
-        CREATE TABLE email_accounts (
-            id TEXT PRIMARY KEY,
-            owner TEXT,
-            name TEXT NOT NULL,
-            is_default INTEGER NOT NULL DEFAULT 0,
-            enabled INTEGER NOT NULL DEFAULT 1,
-            imap_host TEXT,
-            imap_port INTEGER,
-            imap_user TEXT,
-            imap_password TEXT,
-            imap_starttls INTEGER,
-            smtp_host TEXT,
-            smtp_port INTEGER,
-            smtp_security TEXT,
-            smtp_user TEXT,
-            smtp_password TEXT,
-            from_address TEXT,
-            created_at TEXT
-        )
-        """
-    )
-    conn.executemany(
-        """
-        INSERT INTO email_accounts
-        (id, owner, name, is_default, enabled, imap_host, imap_port, imap_user,
-         imap_password, imap_starttls, smtp_host, smtp_port, smtp_security,
-         smtp_user, smtp_password, from_address, created_at)
-        VALUES (?, ?, ?, ?, 1, 'imap.example.com', 993, ?, '', 1,
-                'smtp.example.com', 465, 'ssl', ?, '', ?, ?)
-        """,
-        [
-            ("acct-alice", "alice", "Alice Mail", 1, "alice@example.com", "alice@example.com", "alice@example.com", "2026-01-01"),
-            ("acct-bob", "bob", "Bob Mail", 1, "bob@example.com", "bob@example.com", "bob@example.com", "2026-01-02"),
-        ],
-    )
-    conn.commit()
-    conn.close()
+def _init_accounts_db(db_path, monkeypatch):
+    """Seed email_accounts and point the MCP account reader at the fixture DB.
+
+    _read_accounts_from_db() now reads via core.database.SessionLocal (so it
+    follows DATABASE_URL, incl. Postgres), so the test routes THAT — not the old
+    raw-sqlite3 ``APP_DB`` path — at a temp database seeded through the ORM.
+    """
+    from datetime import datetime
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    import core.database as db_mod
+
+    eng = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    db_mod.EmailAccount.__table__.create(eng, checkfirst=True)
+    Make = sessionmaker(bind=eng)
+    s = Make()
+    try:
+        s.add_all([
+            db_mod.EmailAccount(
+                id="acct-alice", owner="alice", name="Alice Mail",
+                is_default=True, enabled=True,
+                imap_host="imap.example.com", imap_port=993,
+                imap_user="alice@example.com", imap_password="", imap_starttls=True,
+                smtp_host="smtp.example.com", smtp_port=465, smtp_security="ssl",
+                smtp_user="alice@example.com", smtp_password="",
+                from_address="alice@example.com", created_at=datetime(2026, 1, 1),
+            ),
+            db_mod.EmailAccount(
+                id="acct-bob", owner="bob", name="Bob Mail",
+                is_default=True, enabled=True,
+                imap_host="imap.example.com", imap_port=993,
+                imap_user="bob@example.com", imap_password="", imap_starttls=True,
+                smtp_host="smtp.example.com", smtp_port=465, smtp_security="ssl",
+                smtp_user="bob@example.com", smtp_password="",
+                from_address="bob@example.com", created_at=datetime(2026, 1, 2),
+            ),
+        ])
+        s.commit()
+    finally:
+        s.close()
+    monkeypatch.setattr(db_mod, "SessionLocal", Make)
 
 
 def test_prefix_then_encoded_word_single_space():
@@ -83,8 +85,7 @@ def test_empty_header():
 @pytest.mark.asyncio
 async def test_mcp_email_accounts_are_filtered_by_hidden_owner(tmp_path, monkeypatch):
     db_path = tmp_path / "app.db"
-    _init_accounts_db(db_path)
-    monkeypatch.setattr(es, "APP_DB", str(db_path))
+    _init_accounts_db(db_path, monkeypatch)
     es._ACCOUNT_CACHE.clear()
 
     out = await es.call_tool("list_email_accounts", {"_odysseus_owner": "alice"})
@@ -97,8 +98,7 @@ async def test_mcp_email_accounts_are_filtered_by_hidden_owner(tmp_path, monkeyp
 @pytest.mark.asyncio
 async def test_mcp_email_requires_owner_when_multiple_account_owners_exist(tmp_path, monkeypatch):
     db_path = tmp_path / "app.db"
-    _init_accounts_db(db_path)
-    monkeypatch.setattr(es, "APP_DB", str(db_path))
+    _init_accounts_db(db_path, monkeypatch)
     es._ACCOUNT_CACHE.clear()
 
     out = await es.call_tool("list_email_accounts", {})
@@ -109,7 +109,7 @@ async def test_mcp_email_requires_owner_when_multiple_account_owners_exist(tmp_p
 def test_mcp_email_scoped_owner_without_visible_account_skips_legacy_fallback(tmp_path, monkeypatch):
     db_path = tmp_path / "app.db"
     settings_path = tmp_path / "settings.json"
-    _init_accounts_db(db_path)
+    _init_accounts_db(db_path, monkeypatch)
     settings_path.write_text(
         json.dumps(
             {
@@ -124,7 +124,6 @@ def test_mcp_email_scoped_owner_without_visible_account_skips_legacy_fallback(tm
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(es, "APP_DB", str(db_path))
     monkeypatch.setattr(es, "_SETTINGS_FILE", str(settings_path))
     es._ACCOUNT_CACHE.clear()
 

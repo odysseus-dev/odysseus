@@ -34,3 +34,11 @@ PyMuPDF
 # [all]/Azure/audio extras (cloud + heavy). Pinned to a release >30 days old per
 # the dependency-age discussion in issue #485.
 markitdown[docx,pptx,xlsx,xls]==0.1.6
+
+# PostgreSQL driver — only needed if DATABASE_URL points at Postgres
+# (postgresql://…). SQLite is the zero-config default and needs no driver.
+# psycopg2-binary ships prebuilt wheels, so no local C toolchain is required.
+# Pinned to a release well over 30 days old per the dependency-age convention
+# (see the markitdown note above / issue #485). If a maintainer prefers
+# psycopg v3 instead, the URL scheme becomes postgresql+psycopg://…
+psycopg2-binary==2.9.10

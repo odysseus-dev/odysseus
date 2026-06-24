@@ -59,6 +59,13 @@ engine = create_engine(
     connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
 )
 
+# Single source of truth for dialect-gating. Authoritative — asks the engine's
+# resolved dialect rather than string-sniffing DATABASE_URL. The legacy
+# raw-sqlite3 / PRAGMA / ALTER migrations in init_db() only make sense on
+# SQLite; a fresh Postgres DB gets its full schema from create_all() and never
+# had an old one to upgrade.
+IS_SQLITE = engine.dialect.name == "sqlite"
+
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -1791,53 +1798,76 @@ def init_db():
     """
     Initialize the database by creating all tables.
     Should be called when starting the application.
+
+    create_all() emits the full current schema on a fresh SQLite OR Postgres DB
+    (the ORM uses portable column types), so it runs unconditionally. The legacy
+    _migrate_* upgraders below patch PRE-EXISTING SQLite files up to today's
+    schema via raw sqlite3 / PRAGMA / ALTER, so they are gated behind IS_SQLITE
+    — a fresh Postgres DB never had an old schema. The encryption-at-rest
+    migrations use portable SELECT/UPDATE and MUST run on both dialects, so they
+    stay OUTSIDE the gate (or opt-in Postgres silently loses the at-rest
+    encryption SQLite users get).
+
+    Future contributors: new model columns reach Postgres automatically via
+    create_all. Do NOT add a data-backfill inside the IS_SQLITE gate if Postgres
+    needs it too — use the SQLAlchemy Inspector pattern (not PRAGMA) and place it
+    outside the gate.
     """
-    _migrate_model_endpoints()
+    # model_endpoints is checked BEFORE create_all: it drops a stale-schema table
+    # (legacy `url` column, no `base_url`) so create_all rebuilds it fresh in the
+    # same boot. SQLite-only (raw sqlite3 + PRAGMA).
+    if IS_SQLITE:
+        _migrate_model_endpoints()
+
     Base.metadata.create_all(bind=engine)
-    _migrate_add_hidden_models_column()
-    _migrate_add_cached_models_column()
-    _migrate_add_pinned_models_column()
-    _migrate_add_notes_sort_order()
-    _migrate_add_model_type_column()
-    _migrate_add_model_endpoint_refresh_columns()
-    _migrate_add_model_endpoint_owner_column()
-    _migrate_add_provider_auth_id_column()
-    _migrate_add_supports_tools_column()
-    _migrate_add_task_run_model_column()
-    _migrate_add_owner_column()
-    _migrate_add_document_archived_column()
-    _migrate_add_last_message_at_column()
-    _migrate_add_folder_column()
-    _migrate_add_token_columns()
-    _migrate_add_mode_column()
-    _migrate_add_multiuser_owner_columns()
-    _migrate_add_api_token_scopes_column()
-    _migrate_backfill_document_owner_from_session()
-    _migrate_assign_legacy_owner()
-    _migrate_add_tidy_verdict()
-    _migrate_add_doc_source_email_cols()
-    _migrate_add_oauth_config()
-    _migrate_add_email_oauth_columns()
-    _migrate_add_task_automation_columns()
-    _migrate_add_disabled_tools()
-    _migrate_add_mcp_oauth_tokens_column()
-    _migrate_add_task_v2_columns()
-    _migrate_add_notifications_enabled()
-    _migrate_drop_ping_notes_tasks()
-    _migrate_add_crew_member_id()
-    _migrate_add_assistant_columns()
-    _migrate_add_email_smtp_security()
-    _migrate_seed_email_account()
-    _migrate_add_calendar_metadata()
-    _migrate_add_calendar_is_utc()
-    _migrate_add_calendar_origin()
-    _migrate_add_calendar_account_id()
-    _migrate_add_caldav_sync_columns()
-    _migrate_chat_messages_fts()
+
+    if IS_SQLITE:
+        _migrate_add_hidden_models_column()
+        _migrate_add_cached_models_column()
+        _migrate_add_pinned_models_column()
+        _migrate_add_notes_sort_order()
+        _migrate_add_model_type_column()
+        _migrate_add_model_endpoint_refresh_columns()
+        _migrate_add_model_endpoint_owner_column()
+        _migrate_add_provider_auth_id_column()
+        _migrate_add_supports_tools_column()
+        _migrate_add_task_run_model_column()
+        _migrate_add_owner_column()
+        _migrate_add_document_archived_column()
+        _migrate_add_last_message_at_column()
+        _migrate_add_folder_column()
+        _migrate_add_token_columns()
+        _migrate_add_mode_column()
+        _migrate_add_multiuser_owner_columns()
+        _migrate_add_api_token_scopes_column()
+        _migrate_backfill_document_owner_from_session()
+        _migrate_assign_legacy_owner()
+        _migrate_add_tidy_verdict()
+        _migrate_add_doc_source_email_cols()
+        _migrate_add_oauth_config()
+        _migrate_add_email_oauth_columns()
+        _migrate_add_task_automation_columns()
+        _migrate_add_disabled_tools()
+        _migrate_add_mcp_oauth_tokens_column()
+        _migrate_add_task_v2_columns()
+        _migrate_add_notifications_enabled()
+        _migrate_drop_ping_notes_tasks()
+        _migrate_add_crew_member_id()
+        _migrate_add_assistant_columns()
+        _migrate_add_email_smtp_security()
+        _migrate_seed_email_account()
+        _migrate_add_calendar_metadata()
+        _migrate_add_calendar_is_utc()
+        _migrate_add_calendar_origin()
+        _migrate_add_calendar_account_id()
+        _migrate_add_caldav_sync_columns()
+        _migrate_chat_messages_fts()
+        _migrate_backfill_task_folders()
+
+    # Encryption-at-rest — portable SELECT/UPDATE, runs on BOTH dialects.
     _migrate_encrypt_email_passwords()
     _migrate_encrypt_signatures()
     _migrate_encrypt_endpoint_keys()
-    _migrate_backfill_task_folders()
 
 
 def _migrate_backfill_task_folders():

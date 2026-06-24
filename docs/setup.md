@@ -309,6 +309,35 @@ To expose Odysseus on a local network or Tailscale with HTTPS:
 | `PyMuPDF` | PDF page rendering in the side viewer panel and form-filling. (Note: AGPL-3.0) |
 | `markitdown` | Office/EPUB document text extraction (converts .docx/.xlsx/.pptx/.xls/.epub to Markdown). |
 
+### Using PostgreSQL (optional)
+
+SQLite is the zero-config default and needs no driver — leave `DATABASE_URL`
+unset and Odysseus stores everything in `data/app.db`. To run the **main
+application database** on PostgreSQL instead:
+
+1. Install the driver (it is intentionally not in `requirements.txt`):
+   ```bash
+   pip install -r requirements-optional.txt
+   ```
+2. Point `DATABASE_URL` at your database before first boot:
+   ```bash
+   DATABASE_URL=postgresql://user:pass@localhost:5432/odysseus
+   ```
+
+On startup Odysseus creates the full schema on the empty database automatically.
+
+**v1 behaviour (by design, not bugs):**
+
+- **Fresh installs only.** There is no SQLite→PostgreSQL data-copy tool yet, so
+  switching starts from an empty database. The legacy SQLite schema-upgrade and
+  data-backfill/seed migrations are skipped on Postgres (a fresh DB has no old
+  data to patch); only the portable schema creation and the encryption-at-rest
+  migrations run.
+- **Email side-DBs stay local SQLite.** `scheduled_emails.db` and
+  `email_cache.db` remain on-disk SQLite caches regardless of `DATABASE_URL`.
+- **Chat full-text search falls back to `LIKE`.** The SQLite FTS5 index is not
+  created on Postgres; transcript search still works via a `LIKE` scan.
+
 ### Faster, reproducible installs with uv (optional)
 [uv](https://docs.astral.sh/uv/) works as a drop-in replacement for the
 venv + pip steps in the native install guides, no project changes are needed but this change results in faster installs along with a lockfile for reproducible environments. After [installing `uv`](https://docs.astral.sh/uv/getting-started/installation/), use:
