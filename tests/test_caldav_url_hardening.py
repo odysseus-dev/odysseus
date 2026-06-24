@@ -180,5 +180,5 @@ def test_calendar_routes_use_hardened_caldav_client_and_secret_storage():
     assert "REQUESTS_CA_BUNDLE" in text
     assert "verify=_ssl_ctx" in text
     # certifi must be used as default CA bundle; VERIFY_X509_STRICT must be cleared.
-    assert "_certifi" in text
+    assert "_certifi.where()" in text
     assert "VERIFY_X509_STRICT" in text
