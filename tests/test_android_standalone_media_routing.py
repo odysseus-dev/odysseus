@@ -132,6 +132,44 @@ def test_android_routes_dashscope_z_image_to_native_multimodal_endpoint():
     assert "postOpenAiCompatibleImageGenerationPayload(base, apiKey, payload, 90000)" in openai_generation
 
 
+def test_android_routes_wan27_image_pro_as_image_not_video():
+    image_generation = ANDROID_SERVER.split("private boolean isImageGenerationModel", 1)[1].split(
+        "private boolean isVideoGenerationModel", 1
+    )[0]
+    video_generation = ANDROID_SERVER.split("private boolean isVideoGenerationModel", 1)[1].split(
+        "private boolean isDashScopeVideoModel", 1
+    )[0]
+    wan_detector = ANDROID_SERVER.split("private boolean isWanImageModel", 1)[1].split(
+        "private boolean isGeminiImageModel", 1
+    )[0]
+    dispatch = ANDROID_SERVER.split("private JSONObject postMobileImageGeneration", 1)[1].split(
+        "private JSONObject postOpenAiCompatibleImageGeneration", 1
+    )[0]
+    openai_generation = ANDROID_SERVER.split("private JSONObject postOpenAiCompatibleImageGeneration", 1)[1].split(
+        "private JSONObject postOpenAiCompatibleImageGenerationPayload", 1
+    )[0]
+    endpoint_guard = ANDROID_SERVER.split("private boolean endpointCanServeSelectedImageModel", 1)[1].split(
+        "private boolean endpointCanServeSelectedVideoModel", 1
+    )[0]
+    helper = ANDROID_SERVER.split("private String dashscopeWanImageModel", 1)[1].split(
+        "private JSONObject postQwenDashscopeImageGeneration", 1
+    )[0]
+
+    assert "isWanImageModel(m)" in image_generation
+    assert "if (isWanImageModel(m)) return false;" in video_generation
+    assert 'm.equals("wan2.7-image-pro")' in wan_detector
+    assert 'm.equals("wan2.7-image")' in wan_detector
+    assert "isWanImageModel(providerRequested) && isDashScopeImageEndpoint(base, endpoint)" in endpoint_guard
+    assert "postDashScopeWanImageGeneration(choice, prompt, size)" in dispatch
+    assert "postDashScopeWanImageGeneration(choice, prompt, size)" in openai_generation
+    assert '"wan2.7-image-pro"' in helper
+    assert '"wan2.7-image"' in helper
+    assert '"thinking_mode", true' in helper
+    assert '"watermark", false' in helper
+    assert '"n", 1' in helper
+    assert "qwenDashscopeGenerationUrl(base)" in helper
+
+
 def test_android_recognizes_gemini_banana_and_imagen_image_models():
     canonical = ANDROID_SERVER.split("private String canonicalGeminiImageModel", 1)[1].split(
         "private boolean isImagenModel", 1

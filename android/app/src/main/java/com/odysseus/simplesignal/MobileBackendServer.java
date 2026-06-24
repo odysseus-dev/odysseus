@@ -3689,6 +3689,7 @@ public class MobileBackendServer {
         String base = endpoint.optString("base_url", "");
         String lower = canonicalGeminiImageModel(providerRequested).toLowerCase(Locale.US);
         if (isGeminiImageModel(providerRequested) && isGeminiImageEndpoint(base, endpoint)) return true;
+        if (isWanImageModel(providerRequested) && isDashScopeImageEndpoint(base, endpoint)) return true;
         if (isQwenImageModel(providerRequested) && isDashScopeImageEndpoint(base, endpoint)) return true;
         if (isZImageModel(providerRequested) && isDashScopeImageEndpoint(base, endpoint)) return true;
         if ((lower.startsWith("gpt-image") || lower.contains("chatgpt-image") || lower.startsWith("dall-e"))
@@ -3869,6 +3870,7 @@ public class MobileBackendServer {
         if (m.contains("flux") || m.contains("kontext") || m.contains("sdxl") || m.contains("stable-diffusion") || m.contains("stable_diffusion")) return true;
         if (m.contains("qwen-image") || (m.contains("qwen") && m.contains("image"))) return true;
         if (isZImageModel(m)) return true;
+        if (isWanImageModel(m)) return true;
         if (m.contains("seedream") || m.contains("dreamshaper") || m.contains("realvis") || m.contains("juggernaut")) return true;
         return m.contains("diffusion") && !m.contains("embedding");
     }
@@ -3877,6 +3879,7 @@ public class MobileBackendServer {
         String m = valueOr(model, "").toLowerCase(Locale.US).trim();
         if (m.startsWith("models/")) m = m.substring("models/".length());
         if (m.isEmpty()) return false;
+        if (isWanImageModel(m)) return false;
         if (m.contains("text-to-video") || m.contains("image-to-video") || m.contains("video-generation")) return true;
         if (m.contains("t2v") || m.contains("i2v")) return true;
         if (m.startsWith("veo-") || m.startsWith("sora")) return true;
@@ -3920,6 +3923,20 @@ public class MobileBackendServer {
         return m.contains("z-image") || m.contains("z_image")
                 || m.contains("zai-image") || m.contains("zai_image")
                 || m.contains("z/image") || m.contains("zimage");
+    }
+
+    private boolean isWanImageModel(String model) {
+        String m = valueOr(model, "").toLowerCase(Locale.US).trim();
+        if (m.startsWith("models/")) m = m.substring("models/".length());
+        return (m.equals("wan2.7-image")
+                || m.equals("wan2.7-image-pro")
+                || m.equals("wan-2.7-image")
+                || m.equals("wan-2.7-image-pro")
+                || ((m.contains("wan2.7") || m.contains("wan-2.7"))
+                && m.contains("image")
+                && !m.contains("video")
+                && !m.contains("i2v")
+                && !m.contains("t2v")));
     }
 
     private boolean isGeminiImageModel(String model) {
@@ -4166,6 +4183,9 @@ public class MobileBackendServer {
         if (isGeminiImageEndpoint(base, choice) || isGeminiImageModel(model)) {
             return postGeminiImageGeneration(choice, prompt, size);
         }
+        if (isWanImageModel(model) && isDashScopeImageEndpoint(base, choice)) {
+            return postDashScopeWanImageGeneration(choice, prompt, size);
+        }
         if (isZImageModel(model) && isDashScopeImageEndpoint(base, choice)) {
             return postDashScopeZImageGeneration(choice, prompt, size);
         }
@@ -4192,6 +4212,9 @@ public class MobileBackendServer {
         if (model.isEmpty()) throw new IOException("Select an image generation model for this endpoint.");
 
         boolean zImageModel = isZImageModel(model);
+        if (isWanImageModel(model) && isDashScopeImageEndpoint(base, choice)) {
+            return postDashScopeWanImageGeneration(choice, prompt, size);
+        }
         if (zImageModel && isDashScopeImageEndpoint(base, choice)) {
             return postDashScopeZImageGeneration(choice, prompt, size);
         }
@@ -4482,6 +4505,78 @@ public class MobileBackendServer {
             throw new IOException("DashScope Z Image generation returned no image: " + providerNoImageDetail(response));
         }
         return normalized.put("method", "z-image-dashscope");
+    }
+
+    private String dashscopeWanImageModel(String model) {
+        String raw = valueOr(model, "").trim();
+        String lower = raw.toLowerCase(Locale.US);
+        if (lower.equals("wan2.7-image")
+                || lower.equals("wan-2.7-image")) {
+            return "wan2.7-image";
+        }
+        if (lower.equals("wan2.7-image-pro")
+                || lower.equals("wan-2.7-image-pro")) {
+            return "wan2.7-image-pro";
+        }
+        return raw.isEmpty() ? "wan2.7-image-pro" : raw;
+    }
+
+    private String dashscopeWanImageSize(String model, String size) {
+        String raw = valueOr(size, "").trim().toUpperCase(Locale.US);
+        if ("1K".equals(raw) || "2K".equals(raw) || ("4K".equals(raw) && valueOr(model, "").toLowerCase(Locale.US).contains("pro"))) {
+            return raw;
+        }
+        int[] dims = zImagePixelDimensions(size);
+        int max = Math.max(dims[0], dims[1]);
+        if (max <= 1200) return "1K";
+        if (max >= 3072 && valueOr(model, "").toLowerCase(Locale.US).contains("pro")) return "4K";
+        return "2K";
+    }
+
+    private JSONObject postDashScopeWanImageGeneration(JSONObject choice, String prompt, String size) throws Exception {
+        String base = normalizeBase(choice.optString("base_url"));
+        String apiKey = choice.optString("api_key", "").trim();
+        if (apiKey.isEmpty()) throw new IOException("DashScope Wan image endpoint has no API key stored in Settings.");
+        String model = dashscopeWanImageModel(providerModelId(choice, choice.optString("model", "")).trim());
+
+        JSONObject payload = new JSONObject()
+                .put("model", model)
+                .put("input", new JSONObject()
+                        .put("messages", new JSONArray()
+                                .put(new JSONObject()
+                                        .put("role", "user")
+                                        .put("content", new JSONArray()
+                                                .put(new JSONObject().put("text", prompt))))))
+                .put("parameters", new JSONObject()
+                        .put("size", dashscopeWanImageSize(model, size))
+                        .put("n", 1)
+                        .put("watermark", false)
+                        .put("thinking_mode", true));
+
+        HttpURLConnection conn = (HttpURLConnection) new URL(qwenDashscopeGenerationUrl(base)).openConnection();
+        conn.setRequestMethod("POST");
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(300000);
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("Accept", "application/json");
+        conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+        byte[] data = payload.toString().getBytes(StandardCharsets.UTF_8);
+        conn.setFixedLengthStreamingMode(data.length);
+        try (OutputStream body = conn.getOutputStream()) {
+            body.write(data);
+        }
+        int status = conn.getResponseCode();
+        String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
+        conn.disconnect();
+        if (status < 200 || status >= 300) {
+            throw new IOException("DashScope Wan image generation failed: " + formatProviderError(status, response));
+        }
+        JSONObject normalized = normalizeImageResponse(response);
+        if (normalized.optString("image", "").isEmpty()) {
+            throw new IOException("DashScope Wan image generation returned no image: " + providerNoImageDetail(response));
+        }
+        return normalized.put("method", "wan-image-dashscope");
     }
 
     private JSONObject postQwenDashscopeImageGeneration(JSONObject choice, String prompt, String size) throws Exception {
