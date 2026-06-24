@@ -118,6 +118,18 @@ def _find_endpoint(router: APIRouter | None, method: str, path: str):
     return None
 
 
+def _clamp_pagination(offset: Any, limit: Any, *, default_limit: int = 50, max_limit: int = 50) -> tuple[int, int]:
+    try:
+        parsed_offset = int(0 if offset in (None, "") else offset)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Invalid offset")
+    try:
+        parsed_limit = int(default_limit if limit in (None, "") else limit)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Invalid limit")
+    return max(0, parsed_offset), max(1, min(parsed_limit, max_limit))
+
+
 def setup_codex_routes(
     email_router: APIRouter | None = None,
     memory_router: APIRouter | None = None,
@@ -425,10 +437,18 @@ def setup_codex_routes(
         owner = _scope_owner(request, DOCS_READ_SCOPES)
         if documents_library_endpoint is None:
             raise HTTPException(503, "Documents integration is not available")
-        return await _as_owner(
+        offset, limit = _clamp_pagination(offset, limit)
+        result = await _as_owner(
             request, owner, documents_library_endpoint,
             request, search, language, sort, offset, limit, archived,
         )
+        if isinstance(result, dict):
+            docs = result.get("documents")
+            total = result.get("total")
+            if isinstance(docs, list) and isinstance(total, int):
+                next_offset = offset + len(docs)
+                result["next_offset"] = next_offset if next_offset < total else None
+        return result
 
     @router.get("/documents/{doc_id}")
     async def codex_documents_get(request: Request, doc_id: str):

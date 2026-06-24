@@ -100,6 +100,105 @@ def test_default_ssh_port_omits_flag():
     assert port_flag == ""
 
 
+def _documents_endpoint(total: int):
+    calls = []
+    document_router = APIRouter()
+
+    @document_router.get("/api/documents/library")
+    async def documents_library(
+        request: Request,
+        search=None,
+        language=None,
+        sort="recent",
+        offset=0,
+        limit=20,
+        archived=False,
+    ):
+        calls.append({
+            "owner": request.state.current_user,
+            "search": search,
+            "language": language,
+            "sort": sort,
+            "offset": offset,
+            "limit": limit,
+            "archived": archived,
+        })
+        end = min(offset + limit, total)
+        docs = [{"id": f"doc-{i}"} for i in range(offset, end)]
+        return {"documents": docs, "total": total}
+
+    router = codex_routes.setup_codex_routes(document_router=document_router)
+    return _route_endpoint("/api/codex/documents", "GET", router=router), calls
+
+
+@pytest.mark.asyncio
+async def test_documents_pagination_clamps_offset_and_limit():
+    endpoint, calls = _documents_endpoint(total=99)
+
+    result = await endpoint(_codex_request(["documents:read"]), offset=-10, limit=500)
+
+    assert calls[-1]["owner"] == "alice"
+    assert calls[-1]["offset"] == 0
+    assert calls[-1]["limit"] == 50
+    assert len(result["documents"]) == 50
+    assert result["next_offset"] == 50
+
+
+@pytest.mark.asyncio
+async def test_documents_pagination_clamps_zero_limit_to_one():
+    endpoint, calls = _documents_endpoint(total=3)
+
+    result = await endpoint(_codex_request(["documents:read"]), offset=0, limit=0)
+
+    assert calls[-1]["limit"] == 1
+    assert len(result["documents"]) == 1
+    assert result["next_offset"] == 1
+
+
+@pytest.mark.asyncio
+async def test_documents_pagination_returns_next_offset_when_truncated():
+    endpoint, _calls = _documents_endpoint(total=7)
+
+    result = await endpoint(_codex_request(["documents:read"]), offset=2, limit=3)
+
+    assert [doc["id"] for doc in result["documents"]] == ["doc-2", "doc-3", "doc-4"]
+    assert result["next_offset"] == 5
+
+
+@pytest.mark.asyncio
+async def test_documents_pagination_rejects_invalid_offset():
+    endpoint, _calls = _documents_endpoint(total=7)
+
+    with pytest.raises(HTTPException) as exc:
+        await endpoint(_codex_request(["documents:read"]), offset="soon", limit=3)
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "Invalid offset"
+
+
+@pytest.mark.asyncio
+async def test_documents_pagination_rejects_invalid_limit():
+    endpoint, _calls = _documents_endpoint(total=7)
+
+    with pytest.raises(HTTPException) as exc:
+        await endpoint(_codex_request(["documents:read"]), offset=0, limit="many")
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "Invalid limit"
+
+
+@pytest.mark.asyncio
+async def test_documents_pagination_out_of_range_offset_returns_empty_page():
+    endpoint, calls = _documents_endpoint(total=3)
+
+    result = await endpoint(_codex_request(["documents:read"]), offset=10, limit=2)
+
+    assert calls[-1]["offset"] == 10
+    assert calls[-1]["limit"] == 2
+    assert result["documents"] == []
+    assert result["next_offset"] is None
+
+
 def test_adopt_rejects_ssh_option_host_before_shell(monkeypatch):
     calls = []
 

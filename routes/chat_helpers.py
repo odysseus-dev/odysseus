@@ -381,6 +381,14 @@ def build_uploaded_file_manifest(att_ids: list, upload_handler, owner: Optional[
     if not att_ids or not upload_handler or not hasattr(upload_handler, "resolve_upload"):
         return []
 
+    def _read_file_can_open(path: str) -> bool:
+        try:
+            from src.tool_execution import _resolve_tool_path
+
+            return _resolve_tool_path(path) == os.path.realpath(path)
+        except Exception:
+            return False
+
     manifest: list[dict] = []
     for att_id in att_ids:
         try:
@@ -399,7 +407,7 @@ def build_uploaded_file_manifest(att_ids: list, upload_handler, owner: Optional[
                     inside = bool(upload_handler._inside_upload_dir(path))
                 elif hasattr(upload_handler, "inside_base_dir"):
                     inside = bool(upload_handler.inside_base_dir(path))
-                if not inside or not os.path.exists(path):
+                if not inside or not os.path.exists(path) or not _read_file_can_open(path):
                     path = None
             except Exception:
                 path = None
