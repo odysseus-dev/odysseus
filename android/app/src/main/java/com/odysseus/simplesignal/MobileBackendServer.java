@@ -3864,7 +3864,7 @@ public class MobileBackendServer {
         if (isKnownRembgModel(m)) return false;
         if (m.contains("embed") || m.startsWith("tts-") || m.startsWith("whisper")) return false;
         if (m.startsWith("gpt-image") || m.contains("chatgpt-image") || m.startsWith("dall-e")) return true;
-        if ((m.contains("gemini") && m.contains("image")) || m.startsWith("imagen") || m.startsWith("models/imagen")) return true;
+        if ((m.contains("gemini") && m.contains("image")) || isImagenModel(m)) return true;
         if (m.contains("flux") || m.contains("kontext") || m.contains("sdxl") || m.contains("stable-diffusion") || m.contains("stable_diffusion")) return true;
         if (m.contains("qwen-image") || (m.contains("qwen") && m.contains("image"))) return true;
         if (m.contains("z-image") || m.contains("z_image") || m.contains("zai-image") || m.contains("zai_image")) return true;
@@ -3896,13 +3896,22 @@ public class MobileBackendServer {
     private String canonicalGeminiImageModel(String model) {
         String raw = valueOr(model, "").trim();
         String lower = raw.toLowerCase(Locale.US);
+        if (lower.startsWith("models/")) lower = lower.substring("models/".length());
+        if ("nano-banana".equals(lower)) return "gemini-2.5-flash-image";
+        if ("nano-banana-2".equals(lower) || "nano-banana2".equals(lower)) return "gemini-3.1-flash-image";
+        if ("nano-banana-pro-preview".equals(lower)) return "gemini-3-pro-image-preview";
         if ("gemini-image-pro".equals(lower)
-                || "models/gemini-image-pro".equals(lower)
                 || "nano-banana-pro".equals(lower)
                 || "gemini-pro-image".equals(lower)) {
             return "gemini-3-pro-image";
         }
         return raw;
+    }
+
+    private boolean isImagenModel(String model) {
+        String m = valueOr(model, "").toLowerCase(Locale.US).trim();
+        if (m.startsWith("models/")) m = m.substring("models/".length());
+        return m.startsWith("imagen-");
     }
 
     private boolean isGeminiImageModel(String model) {
@@ -3965,6 +3974,21 @@ public class MobileBackendServer {
         return parsed.getProtocol() + "://" + parsed.getHost()
                 + (parsed.getPort() > 0 ? ":" + parsed.getPort() : "")
                 + "/" + version + "/models/" + encodedModel + ":generateContent";
+    }
+
+    private String imagenPredictUrl(String baseUrl, String model) throws Exception {
+        URL parsed = new URL(normalizeBase(baseUrl));
+        String version = "v1beta";
+        for (String part : valueOr(parsed.getPath(), "").split("/")) {
+            if (part.matches("v\\d+(?:beta)?")) {
+                version = part;
+                break;
+            }
+        }
+        String encodedModel = URLEncoder.encode(valueOr(model, "").trim(), "UTF-8").replace("+", "%20");
+        return parsed.getProtocol() + "://" + parsed.getHost()
+                + (parsed.getPort() > 0 ? ":" + parsed.getPort() : "")
+                + "/" + version + "/models/" + encodedModel + ":predict";
     }
 
     private String aspectRatioFromSize(String size) {
@@ -4128,6 +4152,9 @@ public class MobileBackendServer {
     private JSONObject postMobileImageGeneration(JSONObject choice, String prompt, String size, String quality) throws Exception {
         String base = normalizeBase(choice.optString("base_url"));
         String model = choice.optString("model", "").trim();
+        if (isImagenModel(model) && isGeminiImageEndpoint(base, choice)) {
+            return postImagenImageGeneration(choice, prompt, size);
+        }
         if (isGeminiImageEndpoint(base, choice) || isGeminiImageModel(model)) {
             return postGeminiImageGeneration(choice, prompt, size);
         }
@@ -4140,6 +4167,9 @@ public class MobileBackendServer {
     private JSONObject postOpenAiCompatibleImageGeneration(JSONObject choice, String prompt, String size, String quality) throws Exception {
         String base = normalizeBase(choice.optString("base_url"));
         String model = choice.optString("model", "").trim();
+        if (isImagenModel(model) && isGeminiImageEndpoint(base, choice)) {
+            return postImagenImageGeneration(choice, prompt, size);
+        }
         if (isGeminiImageEndpoint(base, choice) || isGeminiImageModel(model)) {
             return postGeminiImageGeneration(choice, prompt, size);
         }
@@ -4465,6 +4495,52 @@ public class MobileBackendServer {
         return normalized;
     }
 
+    private JSONObject postImagenImageGeneration(JSONObject choice, String prompt, String size) throws Exception {
+        String base = normalizeBase(choice.optString("base_url"));
+        String apiKey = choice.optString("api_key", "").trim();
+        if (apiKey.isEmpty()) throw new IOException("Imagen endpoint has no API key stored in Settings.");
+        String model = choice.optString("model", "").trim();
+        if (model.startsWith("models/")) model = model.substring("models/".length());
+        if (model.isEmpty()) model = "imagen-4.0-generate-001";
+
+        JSONObject parameters = new JSONObject()
+                .put("sampleCount", 1)
+                .put("aspectRatio", aspectRatioFromSize(size));
+        if (!model.toLowerCase(Locale.US).contains("-fast-")) {
+            parameters.put("imageSize", "1K");
+        }
+
+        JSONObject payload = new JSONObject()
+                .put("instances", new JSONArray()
+                        .put(new JSONObject().put("prompt", prompt)))
+                .put("parameters", parameters);
+
+        HttpURLConnection conn = (HttpURLConnection) new URL(imagenPredictUrl(base, model)).openConnection();
+        conn.setRequestMethod("POST");
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(300000);
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("Accept", "application/json");
+        conn.setRequestProperty("x-goog-api-key", apiKey);
+        byte[] data = payload.toString().getBytes(StandardCharsets.UTF_8);
+        conn.setFixedLengthStreamingMode(data.length);
+        try (OutputStream body = conn.getOutputStream()) {
+            body.write(data);
+        }
+        int status = conn.getResponseCode();
+        String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
+        conn.disconnect();
+        if (status < 200 || status >= 300) {
+            throw new IOException("Imagen image generation failed: " + formatProviderError(status, response));
+        }
+        JSONObject normalized = normalizeImageResponse(response);
+        if (normalized.optString("image", "").isEmpty()) {
+            throw new IOException("Imagen API returned no image data: " + providerNoImageDetail(response));
+        }
+        return normalized;
+    }
+
     private JSONObject postOpenAiImageEdit(JSONObject choice, Bitmap source, Bitmap editMask, String prompt,
                                           boolean compositeToMask, Bitmap alphaHint) throws Exception {
         String base = normalizeBase(choice.optString("base_url"));
@@ -4759,7 +4835,7 @@ public class MobileBackendServer {
         String[] preferred = new String[]{
                 "image", "b64_json", "base64", "image_base64", "imageBase64",
                 "url", "image_url", "imageUrl", "data", "bytesBase64Encoded", "bytes_base64_encoded",
-                "inlineData", "inline_data", "images",
+                "imageBytes", "image_bytes", "inlineData", "inline_data", "images", "generatedImages", "predictions",
                 "candidates", "parts", "content", "message", "choices", "output", "outputs", "result", "results", "artifact", "artifacts"
         };
         for (String key : preferred) {
