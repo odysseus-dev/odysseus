@@ -792,6 +792,9 @@ app.include_router(setup_claude_routes())
 from routes.vault_routes import setup_vault_routes
 app.include_router(setup_vault_routes())
 
+from routes.secret_store_routes import setup_secret_store_routes
+app.include_router(setup_secret_store_routes())
+
 # Contacts (CardDAV)
 from routes.contacts_routes import setup_contacts_routes
 app.include_router(setup_contacts_routes())

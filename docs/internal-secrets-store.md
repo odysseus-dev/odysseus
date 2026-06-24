@@ -37,6 +37,11 @@ ODYSSEUS_SECRET_STORE_MOUNT=secret
 ODYSSEUS_SECRET_STORE_PREFIX=odysseus/internal
 ```
 
+Administrators can configure the same values under Settings > System > Secret
+Vault. The UI stores only the backend choice, Integration ID, mount, and prefix
+in `data/secret-store.json`; it never copies the OpenBao token. Environment
+variables take precedence and lock the form while present.
+
 The Integration token remains in Odysseus's encrypted local integration store.
 This is intentional: storing the token in OpenBao would create a circular
 dependency where OpenBao access is required to retrieve the credential needed

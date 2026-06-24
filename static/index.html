@@ -2292,6 +2292,42 @@
         <!-- ═══ SYSTEM TAB ═══ -->
         <div data-settings-panel="system" class="hidden">
 
+          <div class="admin-card" id="settings-secret-store-card">
+            <h2>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1"/></svg>
+              Secret Vault
+            </h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Select the internal secret-store backend. OpenBao uses an existing OpenBao API Integration for its server URL and token.</div>
+            <div class="settings-col">
+              <div class="settings-row">
+                <label class="settings-label">Use OpenBao</label>
+                <label class="admin-switch">
+                  <input type="checkbox" id="secret-store-enabled">
+                  <span class="admin-slider"></span>
+                </label>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">Integration</label>
+                <select id="secret-store-integration" class="settings-select" style="flex:1"></select>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">KV mount</label>
+                <input id="secret-store-mount" class="settings-input" value="secret" placeholder="secret">
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">Path prefix</label>
+                <input id="secret-store-prefix" class="settings-input" value="odysseus/internal" placeholder="odysseus/internal">
+              </div>
+              <div id="secret-store-env-notice" class="admin-toggle-sub" style="display:none;margin-top:4px"></div>
+              <div class="admin-toggle-sub" style="margin-top:4px">Saved to <code>data/secret-store.json</code>. Matching <code>ODYSSEUS_SECRET_STORE_*</code> environment variables take precedence and lock this form.</div>
+              <div style="display:flex;align-items:center;gap:6px;justify-content:flex-end;margin-top:8px">
+                <span id="secret-store-status" style="font-size:11px;flex:1"></span>
+                <button class="admin-btn-sm" id="secret-store-test">Test</button>
+                <button class="admin-btn-add" id="secret-store-save">Save</button>
+              </div>
+            </div>
+          </div>
+
           <div class="admin-card" id="settings-system-logs-card">
             <h2>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="settings-system-logs-svg">

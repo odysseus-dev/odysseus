@@ -2763,6 +2763,115 @@ function initBackup() {
   });
 }
 
+/* ── Internal Secret Store ── */
+let _secretStoreLoaded = false;
+
+function _secretStorePayload() {
+  return {
+    enabled: !!el('secret-store-enabled')?.checked,
+    integration_id: el('secret-store-integration')?.value || '',
+    mount: el('secret-store-mount')?.value.trim() || 'secret',
+    prefix: el('secret-store-prefix')?.value.trim() || 'odysseus/internal',
+  };
+}
+
+function _syncSecretStoreFields() {
+  const enabled = !!el('secret-store-enabled')?.checked;
+  for (const id of ['secret-store-integration', 'secret-store-mount', 'secret-store-prefix']) {
+    const input = el(id);
+    if (input && !input.dataset.envLocked) input.disabled = !enabled;
+  }
+}
+
+async function loadSecretStoreSettings() {
+  const status = el('secret-store-status');
+  if (!status) return;
+  try {
+    const res = await fetch('/api/admin/secret-store', { credentials: 'same-origin' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    const cfg = data.effective || data.saved || {};
+    const select = el('secret-store-integration');
+    const integrations = Array.isArray(data.integrations) ? data.integrations : [];
+    select.innerHTML = integrations.length
+      ? integrations.map(item => {
+          const suffix = item.enabled ? '' : ' (disabled)';
+          return `<option value="${esc(item.id)}">${esc(item.name)} — ${esc(item.base_url || 'no URL')}${suffix}</option>`;
+        }).join('')
+      : '<option value="">No OpenBao integrations configured</option>';
+    el('secret-store-enabled').checked = cfg.backend === 'openbao';
+    select.value = cfg.integration_id || '';
+    el('secret-store-mount').value = cfg.mount || 'secret';
+    el('secret-store-prefix').value = cfg.prefix || 'odysseus/internal';
+    const overrides = Array.isArray(data.environment_overrides) ? data.environment_overrides : [];
+    const locked = overrides.length > 0;
+    const notice = el('secret-store-env-notice');
+    notice.style.display = locked ? '' : 'none';
+    notice.textContent = locked ? `Controlled by environment: ${overrides.join(', ')}` : '';
+    for (const id of ['secret-store-enabled', 'secret-store-integration', 'secret-store-mount', 'secret-store-prefix']) {
+      const input = el(id);
+      input.disabled = locked;
+      input.dataset.envLocked = locked ? '1' : '';
+    }
+    el('secret-store-save').disabled = locked;
+    _syncSecretStoreFields();
+    status.textContent = cfg.backend === 'openbao' ? 'OpenBao active' : 'Encrypted local storage active';
+    status.style.color = 'var(--green, #50fa7b)';
+    _secretStoreLoaded = true;
+  } catch (e) {
+    status.textContent = `Failed to load: ${e.message}`;
+    status.style.color = 'var(--red)';
+  }
+}
+
+function initSecretStoreSettings() {
+  const enabled = el('secret-store-enabled');
+  const testBtn = el('secret-store-test');
+  const saveBtn = el('secret-store-save');
+  const status = el('secret-store-status');
+  if (!enabled || !testBtn || !saveBtn || !status) return;
+  enabled.addEventListener('change', _syncSecretStoreFields);
+  testBtn.addEventListener('click', async () => {
+    status.textContent = 'Testing...';
+    status.style.color = '';
+    try {
+      const res = await fetch('/api/admin/secret-store/test', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(_secretStorePayload()),
+      });
+      const data = await res.json();
+      status.textContent = data.ok
+        ? (data.backend === 'openbao' ? `Connected${data.version ? ` — OpenBao ${data.version}` : ''}` : 'Local encrypted storage ready')
+        : (data.error || 'Test failed');
+      status.style.color = data.ok ? 'var(--green, #50fa7b)' : 'var(--red)';
+    } catch (e) {
+      status.textContent = `Test failed: ${e.message}`;
+      status.style.color = 'var(--red)';
+    }
+  });
+  saveBtn.addEventListener('click', async () => {
+    status.textContent = 'Saving...';
+    status.style.color = '';
+    try {
+      const res = await fetch('/api/admin/secret-store', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(_secretStorePayload()),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+      status.textContent = 'Saved and applied';
+      status.style.color = 'var(--green, #50fa7b)';
+      await loadSecretStoreSettings();
+    } catch (e) {
+      status.textContent = `Save failed: ${e.message}`;
+      status.style.color = 'var(--red)';
+    }
+  });
+  if (!_secretStoreLoaded) loadSecretStoreSettings();
+}
+
 /* ── Danger Zone ── */
 function initDangerZone() {
   // Per-category Danger Zone wipes. Each button declares its target
@@ -3026,7 +3135,7 @@ function initAll() {
   modalEl = el('settings-modal');
   const inits = [
     initSignupToggle, initShareDefaultsToggle, initAddUser, initEndpointForm, initMcpForm,
-    initCalDAV, initBackup, initDangerZone, initTokenForm, initLogsView,
+    initCalDAV, initBackup, initSecretStoreSettings, initDangerZone, initTokenForm, initLogsView,
     () => settingsModule.initIntegrations()
   ];
   for (const fn of inits) {
@@ -3042,6 +3151,7 @@ function refreshAll() {
   loadBuiltinTools();
   loadMcpServers();
   loadTokens();
+  loadSecretStoreSettings();
   loadLogs(false);
 }
 

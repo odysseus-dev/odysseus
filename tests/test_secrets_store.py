@@ -16,7 +16,10 @@ from src.secrets_store import (
     build_secret_store,
     configure_secret_store,
     get_secret_store,
+    load_secret_store_config,
     migrate_secrets,
+    resolve_secret_store_config,
+    save_secret_store_config,
 )
 
 
@@ -207,6 +210,65 @@ def test_factory_builds_openbao_from_integration():
     assert store._secret_url("mail", "password") == (
         "http://bao.local:8200/v1/kv/data/apps/odysseus/mail/password"
     )
+
+
+def test_secret_store_config_round_trip_and_environment_override(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "secret-store.json"
+    saved = save_secret_store_config(
+        {
+            "backend": "openbao",
+            "integration_id": "bao-1",
+            "mount": "kv",
+            "prefix": "apps/odysseus",
+        },
+        path,
+    )
+
+    assert load_secret_store_config(path) == saved
+    monkeypatch.setenv("ODYSSEUS_SECRET_STORE_MOUNT", "override")
+    effective, overrides = resolve_secret_store_config(path)
+    assert effective["mount"] == "override"
+    assert overrides == ["ODYSSEUS_SECRET_STORE_MOUNT"]
+
+
+def test_secret_store_config_rejects_invalid_values(tmp_path):
+    path = tmp_path / "secret-store.json"
+
+    with pytest.raises(SecretStoreConfigurationError):
+        save_secret_store_config(
+            {
+                "backend": "openbao",
+                "integration_id": "",
+                "mount": "secret",
+                "prefix": "odysseus/internal",
+            },
+            path,
+        )
+    with pytest.raises(ValueError):
+        save_secret_store_config(
+            {
+                "backend": "local",
+                "mount": "../bad",
+                "prefix": "odysseus/internal",
+            },
+            path,
+        )
+
+
+def test_openbao_probe_uses_health_endpoint():
+    store = OpenBaoSecretStore(url="http://bao.local:8200", token="token")
+
+    with patch(
+        "src.secrets_store.httpx.get",
+        return_value=_response(200, {"version": "2.3.2"}),
+    ) as get:
+        result = store.probe()
+
+    assert result == {"version": "2.3.2"}
+    assert "/v1/sys/health?" in get.call_args.args[0]
+    assert get.call_args.kwargs["headers"] == {"X-Vault-Token": "token"}
 
 
 def test_process_store_can_be_configured_explicitly(tmp_path):

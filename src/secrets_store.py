@@ -22,7 +22,7 @@ import httpx
 
 from core.atomic_io import atomic_write_json
 from core.platform_compat import safe_chmod
-from src.constants import SECRETS_FILE
+from src.constants import SECRET_STORE_CONFIG_FILE, SECRETS_FILE
 from src.secret_storage import decrypt, encrypt
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,13 @@ _INTEGRATION_ENV = "ODYSSEUS_SECRET_STORE_INTEGRATION_ID"
 _MOUNT_ENV = "ODYSSEUS_SECRET_STORE_MOUNT"
 _PREFIX_ENV = "ODYSSEUS_SECRET_STORE_PREFIX"
 _local_store_lock = threading.RLock()
+_config_lock = threading.RLock()
+_CONFIG_DEFAULTS = {
+    "backend": "local",
+    "integration_id": "",
+    "mount": "secret",
+    "prefix": "odysseus/internal",
+}
 
 
 class SecretStoreError(RuntimeError):
@@ -62,6 +69,95 @@ class SecretStore(Protocol):
 class SecretRef:
     namespace: str
     key: str
+
+
+def load_secret_store_config(
+    path: Path | str = SECRET_STORE_CONFIG_FILE,
+) -> dict[str, str]:
+    """Load non-secret backend selection from the protected config file."""
+
+    config_path = Path(path)
+    if not config_path.exists():
+        return dict(_CONFIG_DEFAULTS)
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SecretStoreConfigurationError(
+            "Could not read secret-store configuration"
+        ) from exc
+    if not isinstance(data, dict):
+        raise SecretStoreConfigurationError(
+            "Secret-store configuration must contain an object"
+        )
+    result = dict(_CONFIG_DEFAULTS)
+    for key in result:
+        if key in data:
+            result[key] = str(data[key] or "").strip()
+    return result
+
+
+def save_secret_store_config(
+    config: dict[str, str],
+    path: Path | str = SECRET_STORE_CONFIG_FILE,
+) -> dict[str, str]:
+    """Validate and atomically persist non-secret backend configuration."""
+
+    backend = str(config.get("backend") or "local").strip().lower()
+    if backend not in ("local", "openbao"):
+        raise SecretStoreConfigurationError(
+            f"Unsupported secret-store backend: {backend}"
+        )
+    integration_id = str(config.get("integration_id") or "").strip()
+    mount = str(config.get("mount") or "secret").strip()
+    prefix = str(config.get("prefix") or "odysseus/internal").strip().strip("/")
+    _validate_identifier(mount, "mount")
+    prefix_parts = [part for part in prefix.split("/") if part]
+    if not prefix_parts:
+        raise SecretStoreConfigurationError("OpenBao prefix is required")
+    for part in prefix_parts:
+        _validate_identifier(part, "prefix segment")
+    if backend == "openbao" and not integration_id:
+        raise SecretStoreConfigurationError(
+            "An OpenBao integration is required when the vault is enabled"
+        )
+    normalized = {
+        "backend": backend,
+        "integration_id": integration_id,
+        "mount": mount,
+        "prefix": "/".join(prefix_parts),
+    }
+    config_path = Path(path)
+    with _config_lock:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            atomic_write_json(str(config_path), normalized, indent=2)
+            safe_chmod(config_path, 0o600)
+        except OSError as exc:
+            raise SecretStoreConfigurationError(
+                "Could not write secret-store configuration"
+            ) from exc
+    return normalized
+
+
+def resolve_secret_store_config(
+    path: Path | str = SECRET_STORE_CONFIG_FILE,
+) -> tuple[dict[str, str], list[str]]:
+    """Return effective config and names of environment-backed overrides."""
+
+    config = load_secret_store_config(path)
+    env_map = {
+        "backend": _BACKEND_ENV,
+        "integration_id": _INTEGRATION_ENV,
+        "mount": _MOUNT_ENV,
+        "prefix": _PREFIX_ENV,
+    }
+    overrides: list[str] = []
+    for key, env_name in env_map.items():
+        if env_name in os.environ:
+            config[key] = str(os.environ.get(env_name) or "").strip()
+            overrides.append(env_name)
+    config["backend"] = str(config.get("backend") or "local").lower()
+    return config, overrides
 
 
 def _validate_identifier(value: str, label: str) -> str:
@@ -219,6 +315,31 @@ class OpenBaoSecretStore:
     def _headers(self) -> dict[str, str]:
         return {"X-Vault-Token": self._token}
 
+    def probe(self) -> dict[str, str]:
+        """Verify the configured server without reading application secrets."""
+
+        health_url = (
+            f"{self._url}/v1/sys/health"
+            "?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200"
+        )
+        try:
+            response = httpx.get(
+                health_url,
+                headers=self._headers,
+                timeout=self._timeout,
+            )
+        except httpx.RequestError as exc:
+            raise SecretStoreUnavailable("OpenBao health check failed") from exc
+        if response.status_code >= 400:
+            raise SecretStoreUnavailable(
+                f"OpenBao health check failed with HTTP {response.status_code}"
+            )
+        try:
+            body = response.json()
+        except ValueError:
+            body = {}
+        return {"version": str(body.get("version") or "")}
+
     def get(self, namespace: str, key: str) -> str | None:
         try:
             response = httpx.get(
@@ -281,10 +402,14 @@ def build_secret_store(
     mount: str | None = None,
     prefix: str | None = None,
     local_path: Path | str = SECRETS_FILE,
+    config_path: Path | str = SECRET_STORE_CONFIG_FILE,
 ) -> SecretStore:
     """Build the configured store without changing the default local behavior."""
 
-    selected = str(backend or os.getenv(_BACKEND_ENV, "local")).strip().lower()
+    effective, _ = resolve_secret_store_config(config_path)
+    selected = str(
+        backend if backend is not None else effective["backend"]
+    ).strip().lower()
     if selected in ("", "local"):
         return LocalEncryptedSecretStore(local_path)
     if selected != "openbao":
@@ -292,7 +417,9 @@ def build_secret_store(
             f"Unsupported secret-store backend: {selected}"
         )
     resolved_integration = str(
-        integration_id or os.getenv(_INTEGRATION_ENV, "")
+        integration_id
+        if integration_id is not None
+        else effective["integration_id"]
     ).strip()
     if not resolved_integration:
         raise SecretStoreConfigurationError(
@@ -300,8 +427,8 @@ def build_secret_store(
         )
     return OpenBaoSecretStore.from_integration(
         resolved_integration,
-        mount=mount or os.getenv(_MOUNT_ENV, "secret"),
-        prefix=prefix or os.getenv(_PREFIX_ENV, "odysseus/internal"),
+        mount=mount if mount is not None else effective["mount"],
+        prefix=prefix if prefix is not None else effective["prefix"],
     )
 
 
