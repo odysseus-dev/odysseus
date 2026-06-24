@@ -3867,6 +3867,7 @@ public class MobileBackendServer {
         if ((m.contains("gemini") && m.contains("image")) || m.startsWith("imagen") || m.startsWith("models/imagen")) return true;
         if (m.contains("flux") || m.contains("kontext") || m.contains("sdxl") || m.contains("stable-diffusion") || m.contains("stable_diffusion")) return true;
         if (m.contains("qwen-image") || (m.contains("qwen") && m.contains("image"))) return true;
+        if (m.contains("z-image") || m.contains("z_image") || m.contains("zai-image") || m.contains("zai_image")) return true;
         if (m.contains("seedream") || m.contains("dreamshaper") || m.contains("realvis") || m.contains("juggernaut")) return true;
         return m.contains("diffusion") && !m.contains("embedding");
     }

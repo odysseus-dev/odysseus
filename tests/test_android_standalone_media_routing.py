@@ -45,6 +45,17 @@ def test_android_selected_image_model_accepts_bare_descriptive_prompt():
     assert "looksLikeExistingMobileMediaQuestion(prompt)" in image_prompt
 
 
+def test_android_recognizes_z_image_turbo_as_image_generation_model():
+    detector = ANDROID_SERVER.split("private boolean isImageGenerationModel", 1)[1].split(
+        "private boolean isVideoGenerationModel", 1
+    )[0]
+
+    assert 'm.contains("z-image")' in detector
+    assert 'm.contains("z_image")' in detector
+    assert 'm.contains("zai-image")' in detector
+    assert 'm.contains("zai_image")' in detector
+
+
 def test_android_selected_video_model_accepts_bare_descriptive_prompt():
     video_prompt = ANDROID_SERVER.split("private String mobileVideoGenerationPrompt", 1)[1].split(
         "private String requestedMobileMediaGenerationKind", 1
