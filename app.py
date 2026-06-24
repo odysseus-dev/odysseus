@@ -1115,8 +1115,9 @@ async def _startup_event():
     # Nightly skill audit — at ~02:00 local, test + judge a batch of the
     # least-recently-checked skills, auto-fixing/escalating weak ones (never
     # deletes). Rotates through the library so each night covers different
-    # skills. Gated by the `skill_audit_nightly` setting (default on); hour via
-    # `skill_audit_hour` (default 2), batch size via `skill_audit_batch` (8).
+    # skills. Gated by the `skill_audit_nightly` setting (default off — opt-in,
+    # since it is unattended LLM work that can cost tokens on a paid endpoint);
+    # hour via `skill_audit_hour` (default 2), batch size via `skill_audit_batch` (8).
     async def _skill_audit_nightly_loop():
         from datetime import timedelta
         while True:
@@ -1132,7 +1133,7 @@ async def _startup_event():
             await asyncio.sleep(max(60, (nxt - now).total_seconds()))
             try:
                 from src.settings import get_setting
-                if not get_setting("skill_audit_nightly", True):
+                if not get_setting("skill_audit_nightly", False):
                     continue
                 batch = int(get_setting("skill_audit_batch", 8) or 8)
                 from routes.skills_routes import run_scheduled_skill_audit
