@@ -10,7 +10,9 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from core.database import SessionLocal, Note
-from src.auth_helpers import get_current_user
+from core.middleware import INTERNAL_TOOL_USER
+from src.auth_helpers import require_user
+from src.constants import DATA_DIR
 from sqlalchemy.orm.attributes import flag_modified
 
 logger = logging.getLogger(__name__)
@@ -95,6 +97,32 @@ def _note_to_dict(note: Note) -> Dict[str, Any]:
     }
 
 
+def _reminder_text_from_note(note: Note) -> tuple[str, str]:
+    """Return the reminder title/body from a stored note row."""
+    title = (note.title or "Note reminder").strip() or "Note reminder"
+    if note.items:
+        try:
+            items = json.loads(note.items)
+        except (json.JSONDecodeError, TypeError):
+            items = None
+        if isinstance(items, list):
+            pending: list[str] = []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("done") or item.get("checked"):
+                    continue
+                text = str(item.get("text") or "").strip()
+                if text:
+                    pending.append(text)
+            if pending:
+                shown = "\n".join(f"- {text}" for text in pending[:8])
+                extra = f"\n...and {len(pending) - 8} more" if len(pending) > 8 else ""
+                return title, f"Pending ({len(pending)}):\n{shown}{extra}"
+            return title, f"{len(items)} item{'s' if len(items) != 1 else ''}"
+    return title, (note.content or "").strip()[:400]
+
+
 
 # ---------------------------------------------------------------------------
 # Reminder dispatch — module-level so background tasks (built-in actions)
@@ -144,7 +172,7 @@ async def dispatch_reminder(
             from datetime import datetime as _dt, timezone as _tz, timedelta as _td
             from pathlib import Path as _P
             _slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (owner or "default"))
-            cache_path = _P(f"data/note_pings_{_slug}.json")
+            cache_path = _P(DATA_DIR) / f"note_pings_{_slug}.json"
             if cache_path.exists():
                 cache = _json.loads(cache_path.read_text(encoding="utf-8"))
             last = cache.get(cache_key)
@@ -181,14 +209,17 @@ async def dispatch_reminder(
         try:
             from src.endpoint_resolver import resolve_endpoint
             from src.llm_core import llm_call_async
-            url, model, headers = resolve_endpoint("utility")
+            from src.reminder_personas import synthesis_system_prompt
+            url, model, headers = resolve_endpoint("utility", owner=owner or None)
             if not url:
-                url, model, headers = resolve_endpoint("default")
+                url, model, headers = resolve_endpoint("default", owner=owner or None)
             if url and model:
+                persona_id = (settings.get("reminder_llm_persona") or "").strip()
+                sys_prompt = synthesis_system_prompt(persona_id)
                 raw = await llm_call_async(
                     url=url, model=model,
                     messages=[
-                        {"role": "system", "content": "You are a reminder assistant. Write a single short, warm, motivating sentence (max 25 words) reminding the user about the note below. Do not add greetings, preamble, or hashtags. Output only the sentence."},
+                        {"role": "system", "content": sys_prompt},
                         {"role": "user", "content": f"Title: {title}\n\n{note_body}".strip()},
                     ],
                     temperature=0.7, max_tokens=200, headers=headers, timeout=30,
@@ -304,10 +335,11 @@ async def dispatch_reminder(
             # Loud diagnostic so we can see WHY a reminder didn't send (the
             # previous "silently no-op when cfg has no smtp_host" was invisible).
             logger.info(
-                f"dispatch_reminder[email] note_id={note_id} owner={owner!r} "
-                f"smtp_host={cfg.get('smtp_host')!r} smtp_user={cfg.get('smtp_user')!r} "
-                f"from={from_addr!r} recipient={recipient!r} "
-                f"account_name={cfg.get('account_name')!r}"
+                "dispatch_reminder[email] note_id=%s owner=%r "
+                "has_smtp_host=%s has_smtp_user=%s has_from=%s has_recipient=%s",
+                note_id, owner,
+                bool(cfg.get("smtp_host")), bool(cfg.get("smtp_user")),
+                bool(from_addr), bool(recipient),
             )
             missing = []
             if not cfg.get("smtp_host"):
@@ -497,7 +529,7 @@ async def dispatch_reminder(
             _STATE = cache_path
             if _STATE is None:
                 _slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (owner or "default"))
-                _STATE = _P(f"data/note_pings_{_slug}.json")
+                _STATE = _P(DATA_DIR) / f"note_pings_{_slug}.json"
             _STATE.parent.mkdir(parents=True, exist_ok=True)
             try:
                 _cache = cache or (_json.loads(_STATE.read_text(encoding="utf-8")) if _STATE.exists() else {})
@@ -540,7 +572,33 @@ def setup_note_routes(task_scheduler=None):
     router = APIRouter(prefix="/api/notes", tags=["notes"])
 
     def _owner(request: Request) -> Optional[str]:
-        return get_current_user(request)
+        # require_user, not bare get_current_user: a request that reaches
+        # these owner-scoped routes with NO identity (auth-middleware
+        # regression, SSRF from a sibling service) must fail closed (401)
+        # when auth is configured — not be treated as the single-user mode
+        # and handed blanket access to every account's notes. The documented
+        # anonymous modes (AUTH_ENABLED=false, LOCALHOST_BYPASS on loopback,
+        # unconfigured first-run) still resolve to None, the single-user
+        # path. fire_reminder below already gated this way; the CRUD routes
+        # did not.
+        return require_user(request) or None
+
+    def _is_admin_or_single_user(request: Request, user: str | None) -> bool:
+        if user == INTERNAL_TOOL_USER:
+            return True
+        if not user:
+            # require_user() already admitted this request, which only happens
+            # for auth-disabled, loopback-bypass, or unconfigured single-user
+            # modes. There is no separate non-admin account boundary there.
+            return True
+        try:
+            from core.auth import AuthManager
+            auth_mgr = getattr(request.app.state, "auth_manager", None) or AuthManager()
+            if not getattr(auth_mgr, "is_configured", True):
+                return True
+            return bool(auth_mgr.is_admin(user))
+        except Exception:
+            return False
 
     # --- LIST ---
     @router.get("")
@@ -758,28 +816,50 @@ def setup_note_routes(task_scheduler=None):
         Returns {synthesis, email_sent}.
         """
         # Gate against anonymous callers — LLM synthesis can burn tokens.
-        from src.auth_helpers import require_user as _ru
-        _ru(request)
+        user = require_user(request)
         body = await request.json()
-        note_id = body.get("note_id")
-        title = (body.get("title") or "").strip()
-        note_body = (body.get("body") or "").strip()
+        note_id = str(body.get("note_id") or "").strip()
         if not note_id:
             raise HTTPException(400, "note_id required")
 
-        # Optional overrides let the test button pass the current UI values
-        # directly so the test never races against a pending settings save.
+        caller = _owner(request)
+        is_test = note_id.startswith("test-")
+        is_admin = _is_admin_or_single_user(request, user or caller)
         _override: dict = {}
-        if body.get("channel"):
-            _override["reminder_channel"] = body["channel"]
-        if body.get("webhook_integration_id"):
-            _override["reminder_webhook_integration_id"] = body["webhook_integration_id"]
-        if body.get("webhook_payload_template"):
-            _override["reminder_webhook_payload_template"] = body["webhook_payload_template"]
+        if is_test:
+            if not is_admin:
+                raise HTTPException(403, "Admin only")
+            title = (body.get("title") or "Test Reminder").strip() or "Test Reminder"
+            note_body = (body.get("body") or "").strip()
+            # Optional overrides let the admin settings test button pass the
+            # current UI values directly so it never races a pending save.
+            if body.get("channel"):
+                _override["reminder_channel"] = body["channel"]
+            if body.get("webhook_integration_id"):
+                _override["reminder_webhook_integration_id"] = body["webhook_integration_id"]
+            if body.get("webhook_payload_template"):
+                _override["reminder_webhook_payload_template"] = body["webhook_payload_template"]
+            # Mirror the in-UI AI Synthesis toggle + persona so the test
+            # actually exercises the synthesis path before/without a Save.
+            if "llm_synthesis" in body:
+                _override["reminder_llm_synthesis"] = bool(body["llm_synthesis"])
+            if "llm_persona" in body:
+                _override["reminder_llm_persona"] = str(body["llm_persona"] or "")
+        else:
+            db = SessionLocal()
+            try:
+                note = db.query(Note).filter(Note.id == note_id).first()
+                if not note:
+                    raise HTTPException(404, "Note not found")
+                if caller is not None and note.owner != caller:
+                    raise HTTPException(404, "Note not found")
+                title, note_body = _reminder_text_from_note(note)
+            finally:
+                db.close()
 
         return await dispatch_reminder(
             title=title, note_body=note_body, note_id=note_id,
-            owner=_owner(request) or "",
+            owner=caller or "",
             queue_browser=False,
             settings_override=_override or None,
         )

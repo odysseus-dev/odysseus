@@ -3,6 +3,7 @@
 
 import uiModule from './ui.js';
 import markdownModule from './markdown.js';
+import { svgifyEmoji } from './markdown.js';
 import { addAITTSButton } from './tts-ai.js';
 import { providerLogo, providerLabel } from './providers.js';
 import settingsModule from './settings.js';
@@ -362,7 +363,7 @@ function _openVisionEditor(att, userMsgEl) {
       await _saveVisionText();
       _closeVisionEditor();
       if (userMsgEl && window.chatModule?.resendUserMessage) {
-        window.chatModule.resendUserMessage(userMsgEl);
+        window.chatModule.resendUserMessage(userMsgEl, { replaceFromHere: true });
       } else if (uiModule?.showToast) {
         uiModule.showToast('Saved');
       }
@@ -406,8 +407,44 @@ function _openVisionEditor(att, userMsgEl) {
 
 // Tool call syntax patterns to strip from displayed text
 const TOOL_CALL_RE = /\[TOOL_CALL\][\s\S]*?\[\/TOOL_CALL\]/gi;
-// Only strip fenced tool-call blocks that look like structured invocations, not regular code examples
-const EXEC_FENCE_RE = /```(?:web_search|read_file|write_file|create_document|edit_document|update_document)\s*\n[\s\S]*?```/gi;
+// Strip fenced tool-call blocks that look like structured invocations, not
+// regular code examples. The tool tags are NOT hard-coded here — they are the
+// backend's authoritative TOOL_TAGS set, fetched once from GET /api/tools and
+// built into EXEC_FENCE_RE at load. TOOL_TAGS (src/agent_tools/__init__.py) is
+// thus the single source: the live-strip list can never drift from the backend
+// or miss a future tool (#3993). bash/python are carved out on purpose — they
+// are languages a user may legitimately have asked the model to show, not tool
+// invocations.
+//
+// Until the fetch resolves, EXEC_FENCE_RE stays null and exec fences aren't
+// stripped — normally a sub-second window before the first stream. If the fetch
+// fails it stays null for the rest of the session (logged below), so live exec
+// fences won't be stripped until reload. Either way the backend already strips
+// persisted history (src/tool_parsing.py builds the same regex from TOOL_TAGS),
+// so a reload always renders clean.
+let EXEC_FENCE_RE = null;
+const EXEC_FENCE_NON_TOOL = new Set(['bash', 'python']);
+
+async function loadExecFenceRegex() {
+  try {
+    const res = await fetch('/api/tools', { credentials: 'same-origin' });
+    const data = await res.json();
+    const tags = (data.tools || [])
+      .map((t) => t.id)
+      .filter((id) => id && !EXEC_FENCE_NON_TOOL.has(id));
+    if (tags.length) {
+      EXEC_FENCE_RE = new RegExp(
+        '```(?:' + tags.join('|') + ')\\s*\\n[\\s\\S]*?```', 'gi'
+      );
+    }
+  } catch (err) {
+    // Surface the failure rather than swallowing it: EXEC_FENCE_RE stays null,
+    // so this session won't strip live exec fences until reload (persisted path
+    // stays clean regardless).
+    console.warn('chatRenderer: /api/tools fetch failed; live exec-fence stripping disabled until reload', err);
+  }
+}
+loadExecFenceRegex();
 // XML-style tool calls: <minimax:tool_call>, <tool_call>, <function_call>, bare <invoke>
 const XML_TOOL_CALL_RE = /<(?:[\w]+:)?(?:tool_call|function_call)>[\s\S]*?<\/(?:[\w]+:)?(?:tool_call|function_call)>/gi;
 const XML_INVOKE_RE = /<invoke\s+name=['"][^'"]*['"]>[\s\S]*?<\/invoke>/gi;
@@ -537,6 +574,39 @@ export function shortModel(name) {
   return short;
 }
 
+function modelValue(name) {
+  if (name == null) return '';
+  return String(name).trim();
+}
+
+export function sameModelName(left, right) {
+  const a = modelValue(left);
+  const b = modelValue(right);
+  if (!a || !b) return false;
+  return a.toLowerCase() === b.toLowerCase()
+    || shortModel(a).toLowerCase() === shortModel(b).toLowerCase();
+}
+
+export function modelRouteLabel(requestedModel, actualModel) {
+  const requested = modelValue(requestedModel);
+  const actual = modelValue(actualModel) || requested;
+  if (!requested || sameModelName(requested, actual)) return shortModel(actual || requested);
+  return shortModel(requested) + ' -> ' + shortModel(actual);
+}
+
+export function replyModelPair(modelName, metadata) {
+  const meta = metadata || {};
+  const actualFromMeta = modelValue(meta.model || meta.actual_model);
+  const requestedFromMeta = modelValue(meta.requested_model || meta.selected_model);
+  if (actualFromMeta || requestedFromMeta) {
+    const actual = actualFromMeta || requestedFromMeta || modelValue(modelName);
+    const requested = requestedFromMeta || actual;
+    return { requestedModel: requested, actualModel: actual };
+  }
+  const fallback = modelValue(modelName);
+  return { requestedModel: fallback, actualModel: fallback };
+}
+
 /**
  * Generate a consistent HSL color for a model name.
  * Returns an hsl() string. The hue is derived from a string hash,
@@ -577,7 +647,11 @@ export function applyModelColor(roleEl, modelName) {
   }
   // Replace generic dot with provider logo if available
   const logo = providerLogo(modelName);
-  if (logo && !roleEl.querySelector('.role-provider-logo')) {
+  const existingLogo = roleEl.querySelector('.role-provider-logo');
+  if (!logo) {
+    if (existingLogo) existingLogo.remove();
+    roleEl.classList.remove('has-logo');
+  } else if (!existingLogo) {
     const span = document.createElement('span');
     span.className = 'role-provider-logo';
     span.innerHTML = logo;
@@ -598,8 +672,8 @@ export function applyModelColor(roleEl, modelName) {
       popup.className = 'ctx-popup';
       let html = '<div style="font-weight:600;margin-bottom:6px;color:var(--fg);display:flex;align-items:center;gap:6px;">';
       if (logoHtml) html += '<span class="role-provider-logo" style="opacity:0.7">' + logoHtml + '</span>';
-      html += short + '</div>';
-      html += '<div><span class="ctx-label">Model</span> ' + modelName.split('/').pop() + '</div>';
+      html += uiModule.esc(short) + '</div>';
+      html += '<div><span class="ctx-label">Model</span> ' + uiModule.esc(modelName.split('/').pop()) + '</div>';
       // Provider = the serving endpoint, distinct from the model vendor/logo
       // (e.g. the same model via OpenRouter vs Copilot vs Anthropic direct).
       const _epUrl = (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
@@ -643,9 +717,11 @@ export function applyModelColor(roleEl, modelName) {
           html += '<div><span class="ctx-label">Max tokens</span> ' + _mt.toLocaleString() + ' <span style="opacity:0.4">(configured)</span></div>';
         }
       }
-      if (info && info.input != null) html += '<div><span class="ctx-label">Input</span> $' + info.input.toFixed(2) + ' / 1M</div>';
-      if (info && info.output != null) html += '<div><span class="ctx-label">Output</span> $' + info.output.toFixed(2) + ' / 1M</div>';
-      if (!info) html += '<div style="opacity:0.4;font-size:0.85em;margin-top:4px;">No pricing data available</div>';
+      if (isCostTrackedEndpoint(_epUrl)) {
+        if (info && info.input != null) html += '<div><span class="ctx-label">Input</span> $' + info.input.toFixed(2) + ' / 1M</div>';
+        if (info && info.output != null) html += '<div><span class="ctx-label">Output</span> $' + info.output.toFixed(2) + ' / 1M</div>';
+        if (!info) html += '<div style="opacity:0.4;font-size:0.85em;margin-top:4px;">No pricing data available</div>';
+      }
       popup.innerHTML = html;
       const rect = roleEl.getBoundingClientRect();
       popup.style.top = (rect.bottom + 4) + 'px';
@@ -698,11 +774,31 @@ export function isLocalEndpoint(url) {
   return false;
 }
 
-/** Cost for the current turn, returning null (free) for local endpoints. */
-function _billableCost(model, inputTokens, outputTokens) {
-  const url = (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
+export function isSubscriptionEndpoint(url) {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname.replace(/\/+$/, '');
+    return parsed.hostname === 'chatgpt.com'
+      && (path === '/backend-api/codex' || path.startsWith('/backend-api/codex/'));
+  } catch (_e) {
+    return false;
+  }
+}
+
+function _currentEndpointUrl() {
+  return (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
     ? window.sessionModule.getCurrentEndpointUrl() : null;
-  if (isLocalEndpoint(url)) return null;
+}
+
+export function isCostTrackedEndpoint(url) {
+  return !isLocalEndpoint(url) && !isSubscriptionEndpoint(url);
+}
+
+/** Cost for the current turn, returning null for non-billable endpoints. */
+function _billableCost(model, inputTokens, outputTokens) {
+  const url = _currentEndpointUrl();
+  if (!isCostTrackedEndpoint(url)) return null;
   return getModelCost(model, inputTokens, outputTokens);
 }
 
@@ -747,11 +843,10 @@ export function resetSessionCost(sessionId) {
 export function updateSessionCostUI() {
   const el = document.getElementById('session-cost-display');
   if (!el) return;
-  // Local model? It's free — hide the badge and clear any stale cost that a
-  // previous (buggy) cloud-rate billing left in localStorage for this session.
-  const _url = (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
-    ? window.sessionModule.getCurrentEndpointUrl() : null;
-  if (isLocalEndpoint(_url)) {
+  // Non-billable endpoint? Hide the badge and clear stale cost that a previous
+  // cloud-rate calculation may have left in localStorage for this session.
+  const _url = _currentEndpointUrl();
+  if (!isCostTrackedEndpoint(_url)) {
     const sid = window.sessionModule && window.sessionModule.getCurrentSessionId();
     if (sid && getSessionCost(sid) > 0) {
       try {
@@ -794,7 +889,7 @@ export function roleTimestamp(when) {
  */
 export function stripToolBlocks(text) {
   let cleaned = text.replace(TOOL_CALL_RE, '');
-  cleaned = cleaned.replace(EXEC_FENCE_RE, '');
+  if (EXEC_FENCE_RE) cleaned = cleaned.replace(EXEC_FENCE_RE, '');
   cleaned = cleaned.replace(DSML_TOOL_RE, '');
   cleaned = cleaned.replace(DSML_STRAY_RE, '');
   cleaned = cleaned.replace(XML_TOOL_CALL_RE, '');
@@ -802,6 +897,20 @@ export function stripToolBlocks(text) {
   cleaned = cleaned.replace(TOOL_NARRATION_RE, '');
   cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
   return cleaned.trim();
+}
+
+/**
+ * Plain-text payload for the message copy buttons: the reply as the renderer
+ * displays it — tool blocks and <think> reasoning stripped. dataset.raw keeps
+ * the full model output (chat.js even embeds the elapsed time into the
+ * <think> tag for reload persistence), so copying it verbatim leaks the
+ * thinking block (#3722). Falls back to the raw text when stripping leaves
+ * nothing (e.g. turns interrupted mid-thinking).
+ */
+export function copyMessageText(msgElement) {
+  const raw = msgElement.dataset.raw || msgElement.querySelector('.body')?.textContent || '';
+  const { content } = markdownModule.extractThinkingBlocks(stripToolBlocks(raw));
+  return content || raw;
 }
 
 /**
@@ -1314,7 +1423,7 @@ export function createMsgFooter(msgElement) {
     { id: 'copy', icon: COPY_ICON, title: 'Copy message', cls: 'footer-copy-btn', html: true, handler(e) {
       e.stopPropagation();
       const btn = e.currentTarget;
-      uiModule.copyToClipboard(msgElement.dataset.raw || msgElement.querySelector('.body')?.textContent || '');
+      uiModule.copyToClipboard(copyMessageText(msgElement));
       btn.innerHTML = CHECK_ICON;
       setTimeout(() => { btn.innerHTML = COPY_ICON; }, 1500);
     }},
@@ -1671,7 +1780,8 @@ export function displayMetrics(messageElement, metrics) {
     e.stopPropagation();
     document.querySelectorAll('.ctx-popup').forEach(p => { if (typeof p._dismiss === 'function') p._dismiss(); else p.remove(); });
 
-    const costStr = cost !== null ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}` : 'n/a';
+    const costStr = cost !== null ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}` : '';
+    const costRows = costStr ? `<div><span class="ctx-label">Cost</span> ${costStr}</div>` : '';
     const speedStr = tps != null && tps !== 'undefined' ? `${tps} tok/s` : 'n/a';
     const totalTok = inputTokens + outputTokens;
     const ctxColor = ctxPct >= 85 ? 'var(--red, #e06c75)' : ctxPct >= 70 ? '#ff9900' : 'var(--color-muted-alt, #6b7280)';
@@ -1685,7 +1795,7 @@ export function displayMetrics(messageElement, metrics) {
     // Session total cost
     let sessionCostStr = '';
     const sc = getSessionCost();
-    if (sc > 0) {
+    if (costStr && sc > 0) {
       sessionCostStr = `<div><span class="ctx-label">Session</span> $${sc < 0.01 ? sc.toFixed(4) : sc.toFixed(3)}</div>`;
     }
 
@@ -1701,7 +1811,7 @@ export function displayMetrics(messageElement, metrics) {
       <div><span class="ctx-label">Time</span> ${responseTime}s</div>
       ${prepTime != null ? `<div><span class="ctx-label">Prep</span> ${prepTime}s</div>` : ''}
       ${modelWaitTime != null ? `<div><span class="ctx-label">Model wait</span> ${modelWaitTime}s</div>` : ''}
-      <div><span class="ctx-label">Cost</span> ${costStr}</div>
+      ${costRows}
       ${sessionCostStr}
       ${prepDetails ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:0.85em;opacity:0.8;">
         <div style="font-weight:600;margin-bottom:4px;color:var(--fg);">Agent prep</div>
@@ -1840,7 +1950,13 @@ export function displayMetrics(messageElement, metrics) {
                 }
               }, 200);
             } else {
-              compactBody.innerHTML = '<span style="color:var(--red);">Compaction failed. Try again later.</span>';
+              let detail = 'Compaction failed. Try again later.';
+              try {
+                const err = await res.json();
+                if (err.detail) detail = err.detail;
+              } catch {}
+              compactBody.textContent = detail;
+              compactBody.style.color = 'var(--red)';
             }
           } catch (err) {
             clearInterval(waveInterval);
@@ -1895,6 +2011,142 @@ export function displayMetrics(messageElement, metrics) {
   if (uiModule) uiModule.scrollHistory();
 }
 
+/** Remove any unanswered multiple-choice cards currently in the chat. */
+export function removeAskUserCards(root) {
+  const scope = root || document.getElementById('chat-history') || document;
+  scope.querySelectorAll('.ask-user-card').forEach((node) => node.remove());
+}
+
+/**
+ * Render an ask_user payload as a durable choice card.
+ *
+ * This lives in the history renderer rather than the streaming loop so the
+ * same UI can be used both for a live SSE event and for a persisted tool event
+ * after a session reload.
+ */
+export function renderAskUserCard(payload, options) {
+  const aq = payload || {};
+  const opts = Array.isArray(aq.options) ? aq.options : [];
+  const chatBox = document.getElementById('chat-history');
+  if (!chatBox || !aq.question || opts.length < 2) return null;
+
+  const renderOptions = options || {};
+  removeAskUserCards(chatBox);
+
+  const card = document.createElement('div');
+  card.className = 'ask-user-card';
+  card.setAttribute('role', 'group');
+  card.tabIndex = -1;
+  const multi = !!aq.multi;
+  const emojiText = (value) => svgifyEmoji(uiModule.esc(String(value)));
+
+  const head = document.createElement('div');
+  head.className = 'ask-user-head';
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'modal-close ask-user-close';
+  closeBtn.setAttribute('aria-label', 'Dismiss question');
+  closeBtn.textContent = '×';
+  closeBtn.addEventListener('click', () => {
+    card.remove();
+    const input = uiModule.el('message');
+    if (input) input.focus();
+  });
+  head.appendChild(closeBtn);
+  card.appendChild(head);
+
+  const question = document.createElement('div');
+  question.className = 'ask-user-question';
+  question.id = `ask-user-q-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
+  question.innerHTML = emojiText(aq.question);
+  card.appendChild(question);
+  card.setAttribute('aria-labelledby', question.id);
+
+  const list = document.createElement('div');
+  list.className = 'ask-user-options';
+  card.appendChild(list);
+
+  const send = (text) => {
+    if (!text) return;
+    card.remove();
+    const input = uiModule.el('message');
+    if (input) input.value = text;
+    const sendButton = document.querySelector('.send-btn');
+    if (sendButton) sendButton.click();
+  };
+
+  opts.forEach((opt) => {
+    const label = (opt && opt.label) ? String(opt.label) : String(opt || '');
+    if (!label) return;
+    const description = (opt && opt.description) ? String(opt.description) : '';
+    const row = document.createElement(multi ? 'label' : 'button');
+    row.className = 'ask-user-option';
+    if (multi) {
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.value = label;
+      row.appendChild(checkbox);
+    }
+    const labelText = document.createElement('span');
+    labelText.className = 'ask-user-option-label';
+    labelText.innerHTML = emojiText(label);
+    row.appendChild(labelText);
+    if (description) {
+      const descriptionText = document.createElement('span');
+      descriptionText.className = 'ask-user-option-desc';
+      descriptionText.innerHTML = emojiText(description);
+      row.appendChild(descriptionText);
+    }
+    if (!multi) {
+      row.type = 'button';
+      row.addEventListener('click', () => send(label));
+    }
+    list.appendChild(row);
+  });
+
+  const other = document.createElement('div');
+  other.className = 'ask-user-other';
+  const otherInput = document.createElement('input');
+  otherInput.type = 'text';
+  otherInput.className = 'styled-prompt-input ask-user-other-input';
+  otherInput.placeholder = multi ? 'Other (added to selection)…' : 'Other… (type your own answer)';
+  otherInput.setAttribute('aria-label', multi ? 'Add a custom option' : 'Type a custom answer');
+  const otherSend = document.createElement('button');
+  otherSend.type = 'button';
+  otherSend.className = 'confirm-btn confirm-btn-primary ask-user-other-send';
+  otherSend.setAttribute('aria-label', 'Send answer');
+  otherSend.textContent = multi ? 'Send selection' : 'Send';
+  const submit = () => {
+    const freeText = otherInput.value.trim();
+    if (multi) {
+      const picked = Array.from(card.querySelectorAll('.ask-user-option input:checked')).map((input) => input.value);
+      if (freeText) picked.push(freeText);
+      if (picked.length) send(picked.join(', '));
+    } else if (freeText) {
+      send(freeText);
+    }
+  };
+  otherSend.addEventListener('click', submit);
+  otherInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      submit();
+    }
+  });
+  other.appendChild(otherInput);
+  other.appendChild(otherSend);
+  card.appendChild(other);
+
+  chatBox.appendChild(card);
+  if (renderOptions.scroll !== false) {
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  if (renderOptions.focus !== false) {
+    try { card.focus(); } catch (_) {}
+  }
+  return card;
+}
+
 /**
  * Add a message to the chat history.
  */
@@ -1904,6 +2156,11 @@ export function addMessage(role, content, modelName, metadata) {
     const box = document.getElementById('chat-history');
     if (!box) { console.error('Chat history element not found'); return; }
 
+    // Loading a later user message means any earlier ask_user card was
+    // answered.  This also removes the live card as soon as a manual reply is
+    // appended, even when the user did not click one of its buttons.
+    if (role === 'user') removeAskUserCards(box);
+
     var esc = uiModule.esc;
     const textRaw = Array.isArray(content) ? markdownModule.renderContent(content) : content;
 
@@ -1911,6 +2168,7 @@ export function addMessage(role, content, modelName, metadata) {
     if (role === 'assistant' && metadata && metadata.tool_events && metadata.tool_events.length > 0) {
       const roundTexts = metadata.round_texts || [];
       const toolEvents = metadata.tool_events;
+      let pendingAskUser = null;
       let lastWrap = null;
       let firstMsgAi = null;
       let lastMsgAi = null;
@@ -1933,8 +2191,12 @@ export function addMessage(role, content, modelName, metadata) {
           wrap.className = 'msg msg-ai' + (r > 0 ? ' msg-continuation' : '');
           const roleEl = document.createElement('div');
           roleEl.className = 'role';
-          const contModel = modelName || metadata?.model;
-          roleEl.textContent = shortModel(contModel);
+          const pair = replyModelPair(modelName, metadata);
+          const contModel = pair.actualModel || pair.requestedModel;
+          roleEl.textContent = modelRouteLabel(pair.requestedModel, contModel);
+          if (pair.requestedModel && contModel && !sameModelName(pair.requestedModel, contModel)) {
+            roleEl.title = pair.requestedModel + ' -> ' + contModel;
+          }
           applyModelColor(roleEl, contModel);
           if (r === 0) roleEl.appendChild(roleTimestamp(metadata?.timestamp));
           wrap.appendChild(roleEl);
@@ -1983,6 +2245,7 @@ export function addMessage(role, content, modelName, metadata) {
             box.appendChild(threadWrap);
           }
           for (const ev of roundTools) {
+            if (ev.ask_user) pendingAskUser = ev.ask_user;
             const ok = (ev.exit_code === 0 || ev.exit_code == null);
             let outHtml = '';
             if (ev.output && ev.output.trim()) {
@@ -2046,7 +2309,35 @@ export function addMessage(role, content, modelName, metadata) {
         box.querySelectorAll('pre code:not(.hljs)').forEach(b => window.hljs.highlightElement(b));
       }
       if (markdownModule.renderMermaid) markdownModule.renderMermaid(box);
+      if (pendingAskUser) {
+        // Session history is rendered oldest-to-newest.  A later user message
+        // removes this card; if there is none, the pending choice survives a
+        // refresh.  Avoid stealing focus while the history is loading.
+        renderAskUserCard(pendingAskUser, { focus: false, scroll: false });
+      }
       return lastWrap;
+    }
+
+    // --- Wake-task / supervisor system check-in ---
+    // The self-wake mechanism injects "Did you finish?" as a user message
+    // (or persisted history shows a "[Task] Self-check: <id>" envelope)
+    // so the agent loop re-enters and re-checks status. Render as a
+    // normal user-style bubble — same chrome as a real user message,
+    // just with role "Supervisor" and a short summary body — instead of
+    // a slim system chip. Matches chat style and integrates cleanly
+    // into the conversation flow.
+    let _isWakeCheck = !!(metadata?.wake_check_in || metadata?.hidden_from_user_view);
+    if (!_isWakeCheck && typeof textRaw === 'string') {
+      // Also catch historical messages persisted as "[Task] Self-check: <sid>"
+      // (older wake tasks that didn't set wake_check_in metadata).
+      if (/^\s*\[Task\]\s+Self-check:/i.test(textRaw)) {
+        _isWakeCheck = true;
+      }
+    }
+    if (_isWakeCheck) {
+      // Supervisor self-check messages are an internal control signal —
+      // skip rendering entirely so they don't show up in the conversation.
+      return null;
     }
 
     // --- Standard single-bubble message ---
@@ -2057,8 +2348,9 @@ export function addMessage(role, content, modelName, metadata) {
     r.className = 'role';
     const isSlash = metadata?.source === 'slash';
     const isCompacted = metadata?.compacted;
-    const resolvedModel = modelName || metadata?.model;
-    var _roleText = role === 'user' ? 'You' : (isSlash || isCompacted) ? 'Odysseus' : shortModel(resolvedModel);
+    const replyModels = replyModelPair(modelName, metadata);
+    const resolvedModel = replyModels.actualModel || replyModels.requestedModel;
+    var _roleText = role === 'user' ? 'You' : (isSlash || isCompacted) ? 'Odysseus' : modelRouteLabel(replyModels.requestedModel, resolvedModel);
     if (role === 'assistant' && (metadata?.research || metadata?.research_clarification)) {
       _roleText += ' (Research)';
     }
@@ -2069,6 +2361,9 @@ export function addMessage(role, content, modelName, metadata) {
     }
     r.textContent = _roleText;
     if (role !== 'user') {
+      if (!isSlash && !isCompacted && replyModels.requestedModel && resolvedModel && !sameModelName(replyModels.requestedModel, resolvedModel)) {
+        r.title = replyModels.requestedModel + ' -> ' + resolvedModel;
+      }
       if (!isSlash && !isCompacted) applyModelColor(r, resolvedModel);
       r.appendChild(roleTimestamp(metadata?.timestamp));
     }
@@ -2335,17 +2630,25 @@ export function addMessage(role, content, modelName, metadata) {
 
 const chatRenderer = {
   shortModel,
+  sameModelName,
+  modelRouteLabel,
+  replyModelPair,
   modelColor,
   applyModelColor,
   getModelCost,
+  isCostTrackedEndpoint,
+  isSubscriptionEndpoint,
   getImageCost,
   getSessionCost,
   resetSessionCost,
   updateSessionCostUI,
   roleTimestamp,
   stripToolBlocks,
+  copyMessageText,
   safeToolScreenshotSrc,
   safeDisplayImageSrc,
+  removeAskUserCards,
+  renderAskUserCard,
   buildSourcesBox,
   buildFindingsBox,
   appendReportButton,

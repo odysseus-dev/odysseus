@@ -77,6 +77,7 @@ function _handlePickerKeydown(e, listEl, itemSelector, closeFn) {
 // Dependencies injected via initModelPicker()
 let _deps = null;
 let _autoSelectingDefault = false;
+let _defaultChatPickInFlight = false;
 
 function _modelExists(modelId, url) {
   if (!modelId || !window.modelsModule || !window.modelsModule.getCachedItems) return false;
@@ -89,6 +90,43 @@ function _modelExists(modelId, url) {
     const models = (item.models || []).concat(item.models_extra || []);
     return models.includes(modelId) && (!targetUrl || itemUrl === targetUrl);
   });
+}
+
+async function _ensureDefaultPendingChat() {
+  if (!_deps || _defaultChatPickInFlight) return;
+  if (_deps.getCurrentSessionId && _deps.getCurrentSessionId()) return;
+  const pending = _deps.getPendingChat && _deps.getPendingChat();
+  if (pending && pending.modelId) return;
+  _defaultChatPickInFlight = true;
+  try {
+    let dc = null;
+    try {
+      const res = await fetch(`${API_BASE}/api/default-chat`, { credentials: 'same-origin' });
+      if (res.ok) dc = await res.json();
+    } catch (_) {}
+    if (dc && dc.endpoint_url && dc.model) {
+      _deps.setPendingChat({
+        url: dc.endpoint_url,
+        modelId: dc.model,
+        endpointId: dc.endpoint_id || '',
+      });
+      try { window.__odysseusDefaultChat = dc; } catch (_) {}
+      updateModelPicker();
+      return;
+    }
+    // No configured default: preserve the old convenience fallback.
+    if (window.modelsModule && window.modelsModule.getCachedItems) {
+      const items = window.modelsModule.getCachedItems();
+      const first = items.find(item => !item.offline && ((item.models || []).length || (item.models_extra || []).length));
+      if (first) {
+        const models = (first.models || []).concat(first.models_extra || []);
+        _deps.setPendingChat({ url: first.url, modelId: models[0], endpointId: first.endpoint_id });
+        updateModelPicker();
+      }
+    }
+  } finally {
+    _defaultChatPickInFlight = false;
+  }
 }
 
 /**
@@ -112,6 +150,7 @@ function _initModelPickerDropdown() {
   const search = document.getElementById('model-picker-search');
   const listEl = document.getElementById('model-picker-list');
   const searchRow = menu ? menu.querySelector('.model-picker-search-row') : null;
+  const refreshBtn = document.getElementById('model-picker-refresh-btn');
   if (!wrap || !btn || !menu || !search || !listEl) return;
 
   function _close() {
@@ -323,14 +362,14 @@ function _initModelPickerDropdown() {
       const nameSpan = document.createElement('span');
       nameSpan.className = 'mp-model-name';
       nameSpan.textContent = m.display;
+      // Long model names are clipped with ellipsis — expose the full name on
+      // hover so the suffix/variant tag is still discoverable (#1982).
+      nameSpan.title = m.display;
       row.appendChild(nameSpan);
-      if (m.stale) {
-        const badge = document.createElement('span');
-        badge.className = 'model-switch-stale-badge';
-        badge.textContent = 'offline';
-        badge.style.cssText = 'font-size:10px;opacity:0.7;padding:1px 6px;border:1px solid var(--border);border-radius:8px;margin-left:6px;';
-        row.appendChild(badge);
-      }
+      // Offline state is already conveyed by the row's reduced opacity —
+      // a redundant "offline" pill on top of that just added clutter.
+      // (Class kept on `row` so the opacity rule still applies; the text
+      // badge is gone.)
       const epSpan = document.createElement('span');
       epSpan.className = 'model-switch-ep';
       // Don't show endpoint name if it matches the model name (local self-hosted)
@@ -608,6 +647,26 @@ function _initModelPickerDropdown() {
 
   search.addEventListener('input', () => _populate(search.value));
   search.addEventListener('click', (e) => e.stopPropagation());
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      refreshBtn.disabled = true;
+      refreshBtn.classList.add('spinning');
+      try {
+        if (window.modelsModule && window.modelsModule.refreshModels) {
+          await window.modelsModule.refreshModels(true);
+        }
+        await _refreshLocalProbe();
+        if (!menu.classList.contains('hidden')) _populate(search.value || '');
+        updateModelPicker();
+      } catch (_) {
+        uiModule.showToast('Model refresh failed');
+      } finally {
+        refreshBtn.disabled = false;
+        refreshBtn.classList.remove('spinning');
+      }
+    });
+  }
   search.addEventListener('keydown', (e) => {
     _handlePickerKeydown(e, listEl, '.model-switch-item', _close);
   });
@@ -689,28 +748,13 @@ export function updateModelPicker() {
     }
   }
   if (!modelId && !_autoSelectingDefault && window.modelsModule && window.modelsModule.getCachedItems) {
-    const items = window.modelsModule.getCachedItems();
-    const first = items.find(item => !item.offline && ((item.models || []).length || (item.models_extra || []).length));
-    if (first) {
-      const models = (first.models || []).concat(first.models_extra || []);
-      modelId = models[0];
-      if (!currentSessionId) {
-        _deps.setPendingChat({ url: first.url, modelId, endpointId: first.endpoint_id });
-      } else {
-        if (s) { s.model = modelId; s.endpoint_url = first.url; }
-        _autoSelectingDefault = true;
-        const fd = new FormData();
-        fd.append('model', modelId);
-        fd.append('endpoint_url', first.url || '');
-        if (first.endpoint_id) fd.append('endpoint_id', first.endpoint_id);
-        fetch(`${API_BASE}/api/session/${currentSessionId}`, { method: 'PATCH', body: fd })
-          .catch(() => {})
-          .finally(() => { _autoSelectingDefault = false; });
-      }
-    }
+    _ensureDefaultPendingChat();
   }
 
   const displayName = modelId ? modelId.split('/').pop() : 'Select model';
+  // The header indicator clips long names with ellipsis; show the full model
+  // identifier on hover (#1982). No tooltip on the "Select model" placeholder.
+  label.title = modelId || '';
   const logo = modelId ? providerLogo(modelId) : null;
   if (logo) {
     label.innerHTML = '<span class="model-picker-logo">' + logo + '</span> ' + displayName;

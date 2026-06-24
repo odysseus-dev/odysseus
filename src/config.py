@@ -4,6 +4,9 @@ from typing import List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator
 
+from src.constants import DATA_DIR as _DATA_DIR_CONST
+from src.runtime_paths import get_app_root
+
 # Cross-platform OS flag, exposed here so callers can `from src.config import
 # IS_WINDOWS`. Defined locally (a trivial `os.name == "nt"`) rather than imported
 # from core.platform_compat, to keep this dependency-light config module from
@@ -17,16 +20,16 @@ IS_WINDOWS = os.name == "nt"
 class DataConfig(BaseSettings):
     """Configuration for data storage and file handling."""
     # Base directory
-    base_dir: Path = Field(default=Path(__file__).parent.parent, description="Base directory for the application")
+    base_dir: Path = Field(default=Path(get_app_root()), description="Base directory for the application")
     
     # Data paths
-    data_dir: Path = Field(default=Path("data"), description="Main data directory")
-    uploads_dir: Path = Field(default=Path("data/uploads"), description="Directory for uploaded files")
-    sessions_file: Path = Field(default=Path("data/sessions.json"), description="Sessions storage file")
-    memory_file: Path = Field(default=Path("data/memory.json"), description="Memory storage file")
-    memory_doc: Path = Field(default=Path("data/memory_doc.md"), description="Memory document file")
-    personal_dir: Path = Field(default=Path("data/personal_docs"), description="Personal documents directory")
-    runbook_dir: Path = Field(default=Path("data/personal_docs/runbook"), description="Runbook directory")
+    data_dir: Path = Field(default=Path(_DATA_DIR_CONST), description="Main data directory")
+    uploads_dir: Path = Field(default=Path(_DATA_DIR_CONST) / "uploads", description="Directory for uploaded files")
+    sessions_file: Path = Field(default=Path(_DATA_DIR_CONST) / "sessions.json", description="Sessions storage file")
+    memory_file: Path = Field(default=Path(_DATA_DIR_CONST) / "memory.json", description="Memory storage file")
+    memory_doc: Path = Field(default=Path(_DATA_DIR_CONST) / "memory_doc.md", description="Memory document file")
+    personal_dir: Path = Field(default=Path(_DATA_DIR_CONST) / "personal_docs", description="Personal documents directory")
+    runbook_dir: Path = Field(default=Path(_DATA_DIR_CONST) / "personal_docs" / "runbook", description="Runbook directory")
     
     # Upload settings
     max_upload_size: int = Field(default=10 * 1024 * 1024, description="Maximum upload size in bytes (10MB)")
@@ -136,10 +139,10 @@ class AppConfig(BaseSettings):
         if isinstance(v, dict) and "base_dir" in v:
             base_dir = v["base_dir"]
         else:
-            base_dir = Path(__file__).parent.parent
+            base_dir = Path(get_app_root())
         
         # Convert string paths to Path objects relative to base_dir
-        data_dir = base_dir / "data"
+        data_dir = Path(_DATA_DIR_CONST)
         
         # Get values from the input dict or use defaults
         max_upload_size = v.get("max_upload_size", 10 * 1024 * 1024) if isinstance(v, dict) else 10 * 1024 * 1024

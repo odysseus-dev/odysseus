@@ -14,12 +14,14 @@ logger = logging.getLogger(__name__)
 NON_ADMIN_BLOCKED_TOOLS = {
     "bash",
     "python",
+    "manage_bg_jobs",
     "read_file",
     "write_file",
     "edit_file",
     "grep",
     "glob",
     "ls",
+    "get_workspace",
     "search_chats",
     "manage_memory",
     "manage_skills",
@@ -66,6 +68,7 @@ PLAN_MODE_READONLY_TOOLS = {
     "grep",
     "glob",
     "ls",
+    "get_workspace",
     "web_search",
     "web_fetch",
     "search_chats",
@@ -112,6 +115,8 @@ _PLAN_MODE_KNOWN_MUTATORS = {
     # Shell is never read-only-safe; block it explicitly so it stays out of plan
     # mode even if the schema list fails to load.
     "bash", "python",
+    # Controls shell processes (kill); plan mode can't run bash anyway.
+    "manage_bg_jobs",
 }
 
 
@@ -162,13 +167,29 @@ def is_public_blocked_tool(tool_name: Optional[str]) -> bool:
 
 
 def owner_is_admin_or_single_user(owner: Optional[str]) -> bool:
-    """Return True for admins, or when auth is not configured yet."""
+    """Return True for admins, or in intentional single-user mode.
+
+    Single-user mode means the operator explicitly disabled auth
+    (``AUTH_ENABLED=false``) — the local/self-host default where the owner has
+    full access to their own box.
+
+    The pre-setup window (auth ENABLED but no admin created yet) is treated as
+    NON-admin: returning True there would hand server-execution tools
+    (``bash``/``python``) to any caller before setup completes. The auth
+    middleware already 401s ``/api/`` requests pre-setup, so this is
+    defense-in-depth for callers that bypass it (e.g. trusted loopback).
+    """
     try:
+        from src.auth_helpers import _auth_disabled
+
+        if _auth_disabled():
+            return True
+
         from core.auth import AuthManager
 
         auth = AuthManager()
         if not auth.is_configured:
-            return True
+            return False
         return bool(owner and auth.is_admin(owner))
     except Exception as exc:
         logger.warning("Unable to evaluate owner admin status: %s", exc)

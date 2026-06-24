@@ -9,7 +9,7 @@ from services.hwfit.models import (
 GPU_BANDWIDTH = {
     "5090": 1792, "5080": 960, "5070 ti": 896, "5070": 672, "5060 ti": 448, "5060": 256,
     "4090": 1008, "4080 super": 736, "4080": 717, "4070 ti super": 672, "4070 ti": 504, "4070 super": 504, "4070": 504, "4060 ti": 288, "4060": 272,
-    "3090 ti": 1008, "3090": 936, "3080 ti": 912, "3080": 760, "3070 ti": 608, "3070": 448, "3060 ti": 448, "3060": 360,
+    "3090 ti": 1008, "3090": 936, "3080 ti": 912, "3080": 760, "3070 ti": 608, "3070": 448, "3060 ti": 448, "3060": 360, "3050 ti": 192, "3050": 224,
     "2080 ti": 616, "2080 super": 496, "2080": 448, "2070 super": 448, "2070": 448, "2060 super": 448, "2060": 336,
     "1660 ti": 288, "1660 super": 336, "1660": 192, "1650 super": 192, "1650": 128,
     "h100 sxm": 3350, "h100": 2039, "h200": 4800, "a100 sxm": 2039, "a100": 1555,
@@ -19,22 +19,36 @@ GPU_BANDWIDTH = {
     "6950 xt": 576, "6900 xt": 512, "6800 xt": 512, "6800": 512, "6700 xt": 384, "6600 xt": 256, "6600": 224,
     "mi300x": 5300, "mi300": 5300, "mi250x": 3277, "mi250": 3277, "mi210": 1638, "mi100": 1229,
     "9070 xt": 624, "9070": 488, "9060 xt": 322, "9060": 322,
-    # Apple Silicon unified-memory bandwidth (GB/s). Keyed off the chip name
-    # reported by sysctl machdep.cpu.brand_string (e.g. "Apple M4 Max"). Listed
-    # before the bare "m_" keys matters less than length-sorting (done below),
-    # which guarantees "m4 max" is tried before "m4".
-    "m1 ultra": 800, "m1 max": 400, "m1 pro": 200, "m1": 68,
-    "m2 ultra": 800, "m2 max": 400, "m2 pro": 200, "m2": 100,
-    "m3 ultra": 800, "m3 max": 300, "m3 pro": 150, "m3": 100,
-    "m4 max": 546, "m4 pro": 273, "m4": 120,
-    "m5 max": 546, "m5 pro": 273, "m5": 150,
+    # NVIDIA GB10 Grace-Blackwell superchip (DGX Spark). Unified LPDDR5X memory,
+    # not Apple Silicon, so it lives in the generic GPU table — the Apple-only
+    # lookup never matches it (its name carries no "apple").
+    "gb10": 273,
 }
 
 # Pre-sort keys by length descending for correct substring matching
 _BW_KEYS_SORTED = sorted(GPU_BANDWIDTH.keys(), key=len, reverse=True)
 
-# metal: backstop for Apple Silicon chips not in GPU_BANDWIDTH (e.g. a future
-# M5) — the named chips above take the accurate bandwidth path instead.
+# Apple Silicon unified-memory bandwidth (GB/s). For chip families with both
+# binned and full variants under the same "Apple Mx Max" brand string, prefer
+# GPU core count when hardware detection provides it; otherwise fall back to the
+# conservative tier so speed estimates do not over-promise.
+APPLE_BANDWIDTH_FIXED = {
+    "m1 ultra": 800, "m1 max": 400, "m1 pro": 200, "m1": 68,
+    "m2 ultra": 800, "m2 max": 400, "m2 pro": 200, "m2": 100,
+    "m3 ultra": 800, "m3 pro": 150, "m3": 100,
+    "m4 pro": 273, "m4": 120,
+    "m5 pro": 307, "m5": 153,
+}
+APPLE_BANDWIDTH_BY_CORES = {
+    "m3 max": {30: 300, 40: 400},
+    "m4 max": {32: 410, 40: 546},
+    "m5 max": {32: 460, 40: 614},
+}
+_APPLE_FIXED_KEYS_SORTED = sorted(APPLE_BANDWIDTH_FIXED.keys(), key=len, reverse=True)
+_APPLE_VARIANT_KEYS_SORTED = sorted(APPLE_BANDWIDTH_BY_CORES.keys(), key=len, reverse=True)
+
+# metal: backstop for Apple Silicon chips not in the explicit tables above
+# (e.g. a future M6) — use a conservative generic estimate when unknown.
 FALLBACK_K = {"cuda": 220, "rocm": 180, "metal": 150, "cpu_x86": 70, "cpu_arm": 90}
 
 USE_CASE_WEIGHTS = {
@@ -60,14 +74,98 @@ CONTEXT_TARGET = {
 }
 
 
-def _lookup_bandwidth(gpu_name):
+def _lookup_apple_bandwidth(system):
+    gpu_name = system.get("gpu_name")
     if not isinstance(gpu_name, str) or not gpu_name:
         return None
+    gn = gpu_name.lower()
+
+    # Guard against false matches on non-Apple GPUs whose names contain
+    # "m3"/"m4"/"m5" (e.g. NVIDIA Quadro M4 000).
+    if "apple" not in gn:
+        return None
+
+    raw_cores = system.get("gpu_cores")
+    try:
+        gpu_cores = int(raw_cores) if raw_cores is not None else None
+    except (TypeError, ValueError):
+        gpu_cores = None
+
+    for key in _APPLE_VARIANT_KEYS_SORTED:
+        if key not in gn:
+            continue
+        if gpu_cores in APPLE_BANDWIDTH_BY_CORES[key]:
+            return APPLE_BANDWIDTH_BY_CORES[key][gpu_cores]
+        return min(APPLE_BANDWIDTH_BY_CORES[key].values())
+
+    for key in _APPLE_FIXED_KEYS_SORTED:
+        if key in gn:
+            return APPLE_BANDWIDTH_FIXED[key]
+    return None
+
+
+def _lookup_bandwidth(system):
+    if isinstance(system, dict):
+        gpu_name = system.get("gpu_name")
+    else:
+        gpu_name = system
+
+    if not isinstance(gpu_name, str) or not gpu_name:
+        return None
+
+    # Apple tiers live only in the Apple-specific table now (#2564), so route
+    # BOTH dict and bare-string callers through it. A bare string carries no
+    # gpu_cores, so the helper falls back to the conservative (lowest) tier for
+    # that model -- before #2564 the generic table answered string lookups, and
+    # dropping that made _lookup_bandwidth("Apple M3 Max") return None.
+    apple_input = system if isinstance(system, dict) else {"gpu_name": gpu_name}
+    bw = _lookup_apple_bandwidth(apple_input)
+    if bw is not None:
+        return bw
+
     gn = gpu_name.lower()
     for key in _BW_KEYS_SORTED:
         if key in gn:
             return GPU_BANDWIDTH[key]
     return None
+
+
+def _canonical_cpu_backend(system):
+    """Return the canonical CPU backend for cpu_only speed estimation.
+
+    Normalizes CPU-architecture aliases separately from the GPU backend, and
+    overrides GPU-only backends (CUDA/ROCm/Metal) so they do not inherit a
+    discrete-GPU fallback constant when the model is actually running on CPU.
+    """
+    backend = (system.get("backend") or "").lower().strip()
+    cpu_arch = (system.get("cpu_arch") or "").lower().strip()
+    cpu_name = (system.get("cpu_name") or "").lower()
+    gpu_name = (system.get("gpu_name") or "").lower()
+
+    # Already-canonical CPU backends
+    if backend in ("cpu_x86", "cpu_arm"):
+        return backend
+
+    # Raw CPU-architecture aliases. Treat plain "arm" as 32-bit ARM, not the
+    # ARM64-class CPU fallback used for Apple Silicon/aarch64 machines.
+    if backend in ("x86_64", "amd64", "i386", "i686"):
+        return "cpu_x86"
+    if backend in ("arm64", "aarch64"):
+        return "cpu_arm"
+
+    # Prefer an explicit CPU architecture field when present
+    if cpu_arch:
+        if cpu_arch in ("x86_64", "amd64", "x86", "i386", "i686"):
+            return "cpu_x86"
+        if cpu_arch in ("arm64", "aarch64"):
+            return "cpu_arm"
+
+    # Apple Silicon enters ranking as backend="metal"; its CPU path is ARM.
+    if backend in ("metal", "mps", "apple") or "apple" in cpu_name or "apple" in gpu_name:
+        return "cpu_arm"
+
+    # Conservative default for CUDA/ROCm/discrete GPU backends and unknowns.
+    return "cpu_x86"
 
 
 def _estimate_speed(model, quant, run_mode, system, offload_frac=0.0):
@@ -84,8 +182,13 @@ def _estimate_speed(model, quant, run_mode, system, offload_frac=0.0):
     """
     pb = _active_params_b(model)
     is_moe = model.get("is_moe", False)
-    bw = _lookup_bandwidth(system.get("gpu_name"))
+    bw = _lookup_bandwidth(system)
     backend = system.get("backend", "cpu_x86")
+
+    # CPU-only inference must never inherit a GPU backend's fallback constant,
+    # even if the detected system happens to report a CUDA/Metal/ROCm backend.
+    if run_mode == "cpu_only":
+        backend = _canonical_cpu_backend(system)
 
     if bw and run_mode in ("gpu", "cpu_offload"):
         bpp = QUANT_BYTES_PER_PARAM.get(quant, 0.5)
