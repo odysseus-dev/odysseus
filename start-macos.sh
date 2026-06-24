@@ -130,11 +130,12 @@ fi
 # 3. Python environment + dependencies (kept inside the repo, in venv/).
 #    Named `venv` to match the manual steps and build-macos-app.sh, so the
 #    clickable .app reuses this same environment.
-if [ ! -d venv ]; then
+VENV_PY="./venv/bin/python3"
+if [ ! -x "$VENV_PY" ] || ! "$VENV_PY" -m pip --version >/dev/null 2>&1; then
+    [ -d venv ] && { echo "▶ Existing venv is incomplete (no working pip) — rebuilding…"; rm -rf venv; }
     echo "▶ Creating Python environment…"
     "$PY" -m venv venv
 fi
-VENV_PY="./venv/bin/python3"
 REQ_HASH="$(md5 -q requirements.txt 2>/dev/null || md5sum requirements.txt | cut -d' ' -f1)"
 REQ_HASH_FILE="venv/.requirements_hash"
 if [ ! -f "$REQ_HASH_FILE" ] || [ "$REQ_HASH" != "$(cat "$REQ_HASH_FILE" 2>/dev/null)" ]; then

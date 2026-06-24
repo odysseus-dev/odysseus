@@ -4,6 +4,7 @@
 // ============================================
 import Storage from './js/storage.js';
 import uiModule from './js/ui.js';
+import workspaceModule from './js/workspace.js';
 import fileHandlerModule from './js/fileHandler.js';
 import modelsModule from './js/models.js';
 import ragModule from './js/rag.js';
@@ -90,7 +91,7 @@ async function _createDirectChatFromPreferredModel() {
   if (!sessionModule) return false;
 
   const pending = sessionModule.getPendingChat && sessionModule.getPendingChat();
-  if (pending && pending.url && pending.modelId) {
+  if (pending && pending.url && pending.modelId && pending.endpointId) {
     sessionModule.createDirectChat(pending.url, pending.modelId, pending.endpointId);
     return true;
   }
@@ -98,7 +99,7 @@ async function _createDirectChatFromPreferredModel() {
   const sessions = sessionModule.getSessions();
   const currentId = sessionModule.getCurrentSessionId();
   const current = sessions.find(s => s.id === currentId);
-  if (current && current.endpoint_url && current.model) {
+  if (current && current.endpoint_url && current.model && current.endpoint_id) {
     sessionModule.createDirectChat(current.endpoint_url, current.model, current.endpoint_id);
     return true;
   }
@@ -1159,7 +1160,7 @@ function initializeEventListeners() {
         if (!p.can_use_bash) {
           const bashToggle = document.getElementById('bash-toggle');
           if (bashToggle) bashToggle.closest('.chat-input-toggle')?.style.setProperty('display', 'none');
-          const bashBtn = document.getElementById('tool-bash-btn');
+          const bashBtn = document.getElementById('bash-toggle-btn');
           if (bashBtn) bashBtn.style.display = 'none';
         }
         // Hide document button
@@ -1176,11 +1177,7 @@ function initializeEventListeners() {
           const resOverflow = document.getElementById('overflow-research-btn');
           if (resOverflow) resOverflow.style.display = 'none';
         }
-        // Hide image generation options
-        if (!p.can_generate_images) {
-          const imgBtn = document.getElementById('tool-image-btn');
-          if (imgBtn) imgBtn.style.display = 'none';
-        }
+
       }
     })
     .catch(() => {});
@@ -1221,7 +1218,7 @@ function initializeEventListeners() {
       sortDropdown.querySelectorAll('.sort-option').forEach(o => {
         const check = o.querySelector('.sort-check') || document.createElement('span');
         check.className = 'sort-check';
-        check.style.cssText = 'float:right;font-size:20px;line-height:1;position:relative;top:3px;color:var(--accent, var(--red));opacity:' + (o.dataset.sort === current ? '1' : '0');
+        check.style.cssText = 'float:right;font-size:20px;line-height:1;position:relative;top:1px;color:var(--accent, var(--red));opacity:' + (o.dataset.sort === current ? '1' : '0');
         check.textContent = '\u2022';
         if (!o.querySelector('.sort-check')) o.appendChild(check);
       });
@@ -1265,9 +1262,9 @@ function initializeEventListeners() {
             let msg;
             if (data.updated > 0) {
               msg = `Sorted ${data.updated} into ${data.folders.length} folder${data.folders.length === 1 ? '' : 's'}`;
-              if (remaining > 0) msg += ` — ${remaining} unfiled left, hit Tidy again`;
+              if (remaining > 0) msg += ` — ${remaining} unfiled left, hit Group again`;
             } else if (remaining > 0) {
-              msg = `${remaining} unfiled chats — hit Tidy again`;
+              msg = `${remaining} unfiled chats — hit Group again`;
             } else {
               msg = 'All sorted';
             }
@@ -1288,17 +1285,6 @@ function initializeEventListeners() {
 
     const autoSortBtn = el('auto-sort-sessions-btn');
     if (autoSortBtn) autoSortBtn.addEventListener('click', () => _runTidy(false));
-
-    // Chevron next to the Tidy row toggles the no-AI sub-item.
-    const autoSortMoreBtn = el('auto-sort-sessions-more');
-    const autoSortNoaiBtn = el('auto-sort-sessions-noai-btn');
-    if (autoSortMoreBtn && autoSortNoaiBtn) {
-      autoSortMoreBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        autoSortNoaiBtn.style.display = autoSortNoaiBtn.style.display === 'none' ? 'block' : 'none';
-      });
-      autoSortNoaiBtn.addEventListener('click', () => _runTidy(true));
-    }
   }
 
   // Model sort dropdown
@@ -1626,6 +1612,8 @@ function initializeEventListeners() {
       // Slide the pill to the active button
       const toggle = agentBtn.closest('.mode-toggle');
       if (toggle) toggle.classList.toggle('mode-chat', mode === 'chat');
+      // Workspace pill + overflow entry are agent-only - hide immediately (no flash).
+      try { workspaceModule.applyMode(mode); } catch (_) {}
       // Delay tool glow-up for a staggered effect
       setTimeout(() => applyModeToToggles(mode), 500);
     }
@@ -1701,6 +1689,7 @@ function initializeEventListeners() {
   }
   setupToggle('web-toggle-btn', 'web-toggle', 'web');
   setupToggle('bash-toggle-btn', 'bash-toggle', 'bash');
+  try { workspaceModule.initWorkspace(); } catch (_) {}
 
   // Document editor toggle (special: uses module panel, not a checkbox)
   const overflowDocBtn = el('overflow-doc-btn');
@@ -2429,7 +2418,7 @@ function initializeEventListeners() {
   };
 
   // Keys hidden by default on first run (no localStorage yet)
-  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn', 'text-emojis']);
+  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn', 'text-emojis', 'chat-fullwidth']);
 
   // Keys that need admin to toggle off (reserved for future use)
   const UI_VIS_ADMIN_ONLY = new Set([]);
@@ -2462,6 +2451,8 @@ function initializeEventListeners() {
     applyTextEmojis(state['text-emojis'] === true);
     // Hide thinking sections toggle (show-thinking: checked=show, unchecked=hide)
     document.body.classList.toggle('hide-thinking', state['show-thinking'] === false);
+    // Fullwidth chat toggle (chat-fullwidth: checked=fullwidth, unchecked=big-padding
+    document.body.classList.toggle('fullwidth-chat', state['chat-fullwidth'] === true);
   }
 
   // Rearrange toggles in session/model sort dropdowns
@@ -3135,7 +3126,9 @@ function initializeEventListeners() {
       setTimeout(() => uiModule.autoResize(textarea), 1);
     });
     textarea.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      const isMobile = window.innerWidth <= 768
+
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isMobile) {
         // If ghost autocomplete is active, accept the suggestion instead of submitting
         if (window._ghostAutocomplete && window._ghostAutocomplete.isActive()) {
           e.preventDefault();
@@ -3708,7 +3701,9 @@ function startOdysseusApp() {
   // Enter to send (shift+enter for newline), or new chat when empty
   if (messageInput) {
     messageInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      const isMobile = window.innerWidth <= 768
+
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isMobile) {
         e.preventDefault();
         // Flush the debounced icon update so dataset.mode reflects the current
         // text state. Without this, a fast type-and-Enter would still see the

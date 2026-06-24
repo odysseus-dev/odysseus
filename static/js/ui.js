@@ -8,6 +8,7 @@ import themeModule from './theme.js';
 import * as Modals from './modalManager.js';
 import spinnerModule from './spinner.js';
 import { registerMenuDismiss, dismissTopMenu, dismissOrRemove } from './escMenuStack.js';
+import { nextToolWindowZ, topToolWindowZ } from './toolWindowZOrder.js';
 
 let toastEl = null;
 let autoScrollEnabled = true;
@@ -1088,14 +1089,22 @@ if ('ontouchstart' in window) {
 
 // ---- Bring modal to front on click ----
 {
-  let topModalZ = 250;
+  const raiseModalToFront = (modal, floor = 250) => {
+    const z = nextToolWindowZ({
+      exclude: modal,
+      current: getComputedStyle(modal).zIndex,
+      floor,
+    });
+    modal.style.setProperty('z-index', String(z), 'important');
+    return z;
+  };
+
   document.addEventListener('mousedown', (e) => {
     const modalContent = e.target.closest('.modal-content');
     if (!modalContent) return;
     const modal = modalContent.closest('.modal');
     if (!modal) return;
-    topModalZ += 1;
-    modal.style.zIndex = topModalZ;
+    raiseModalToFront(modal);
   });
 
   // Backdrop tap to close — delegated for all modals
@@ -1190,9 +1199,15 @@ if (!window._odyEscExpandGuard) {
     // Re-entry guard: setting style.zIndex itself fires the observer that
     // calls us back. Skip if this element is already pinned to the top
     // (matches the current counter) so we don't spin into an infinite loop.
-    const cur = parseInt(m.style.zIndex, 10) || 0;
-    if (cur === _zCounter) return;
-    m.style.zIndex = String(++_zCounter);
+    const cur = parseInt(getComputedStyle(m).zIndex, 10) || 0;
+    if (cur === _zCounter && cur > topToolWindowZ({ exclude: m })) return;
+    const z = nextToolWindowZ({
+      exclude: m,
+      current: cur,
+      floor: _zCounter,
+    });
+    _zCounter = Math.max(_zCounter, z);
+    if (z !== cur) m.style.setProperty('z-index', String(z), 'important');
   };
   new MutationObserver((muts) => {
     for (const m of muts) {

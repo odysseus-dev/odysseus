@@ -17,6 +17,7 @@ import chatRenderer from './chatRenderer.js';
 import spinnerModule from './spinner.js';
 import themeModule from './theme.js';
 import documentModule from './document.js';
+import workspaceModule from './workspace.js';
 import settingsModule from './settings.js';
 import cookbookModule from './cookbook.js';
 import { EVAL_PROMPTS } from './compare/index.js';
@@ -100,6 +101,8 @@ function _setupProviderFromInput(input) {
     xai: 'xai',
     grok: 'xai',
     nvidia: 'nvidia',
+    opencodezen: 'opencode-zen',
+    opencodego: 'opencode-go',
   };
   return SETUP_PROVIDER_URLS[aliases[raw] || raw] || null;
 }
@@ -128,6 +131,8 @@ function _extractSetupProviderCredential(input) {
     ['google', 'gemini'], ['gemini', 'gemini'],
     ['x ai', 'xai'], ['xai', 'xai'], ['grok', 'xai'],
     ['nvidia', 'nvidia'],
+    ['opencode zen', 'opencode-zen'], ['opencode-zen', 'opencode-zen'],
+    ['opencode go', 'opencode-go'], ['opencode-go', 'opencode-go'],
   ];
   for (const [alias, key] of providerAliases) {
     const re = new RegExp('(^|\\s|[,;:])(' + alias.replace(/\s+/g, '\\s+') + ')(?=$|\\s|[,;:])', 'i');
@@ -203,6 +208,8 @@ function _showSetupEndpointChoices() {
         '<pre style="margin:4px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">http://localhost:11434/v1</code></pre>' +
         '<div style="margin-top:4px;">or</div>' +
         '<pre style="margin:2px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">http://llm-host.local:8000/v1</code></pre>' +
+        '<div style="margin-top:4px;">or llama.cpp (llama-server):</div>' +
+        '<pre style="margin:2px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">http://localhost:8080/v1</code></pre>' +
       '</div>' +
       '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:color-mix(in srgb,var(--bg) 88%,var(--fg) 12%);">' +
         '<div style="font-weight:700;margin-bottom:6px;">' + SETUP_API_ICON + 'API setup</div>' +
@@ -232,6 +239,12 @@ function _showSetupEndpointChoicesStreamed(options = {}) {
       kind: 'code',
       text: 'http://llm-host.local:8000/v1',
       copyText: 'http://llm-host.local:8000/v1',
+    },
+    { kind: 'p', text: 'or llama.cpp (llama-server):' },
+    {
+      kind: 'code',
+      text: 'http://localhost:8080/v1',
+      copyText: 'http://localhost:8080/v1',
     },
     { kind: 'heading', html: SETUP_API_ICON + 'API setup' },
     { kind: 'p', text: 'Paste provider name then API key (example):' },
@@ -338,10 +351,13 @@ function _submitComposedMessage(text) {
   const msgInput = document.getElementById('message');
   const form = document.getElementById('chat-form');
   if (!msgInput || !form) return false;
-  msgInput.value = text;
-  msgInput.dispatchEvent(new Event('input', { bubbles: true }));
-  if (typeof form.requestSubmit === 'function') form.requestSubmit();
-  else form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+  // The slash handler and app-level form debounce must both release before
+  // sending the pinned prompt, otherwise the follow-up submit is dropped.
+  setTimeout(() => {
+    msgInput.value = text;
+    msgInput.dispatchEvent(new Event('input', { bubbles: true }));
+    form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+  }, 350);
   return true;
 }
 
@@ -380,7 +396,7 @@ function _slashFooter(msgEl) {
   copyBtn.innerHTML = _copySvg;
   copyBtn.onclick = (e) => {
     e.stopPropagation();
-    uiModule.copyToClipboard(msgEl.dataset.raw || msgEl.querySelector('.body')?.textContent || '');
+    uiModule.copyToClipboard(chatRenderer.copyMessageText(msgEl));
     copyBtn.innerHTML = _checkSvg;
     setTimeout(() => { copyBtn.innerHTML = _copySvg; }, 1500);
   };
@@ -1226,6 +1242,40 @@ async function _cmdToggleDoc(args, ctx) {
       slashReply('Document editor: opened');
     }
   } else { slashReply('Document module not available'); }
+  return true;
+}
+
+// Workspace: confine the agent's file/shell tools to a folder. Not a boolean -
+// show / set <path> / clear / pick (open the directory browser).
+async function _cmdWorkspace(args, ctx) {
+  const sub = (args[0] || '').toLowerCase();
+  const rest = args.slice(1).join(' ').trim();
+  const cur = workspaceModule.getWorkspace();
+  if (!sub || sub === 'show' || sub === 'status' || sub === 'info') {
+    slashReply(cur ? `Workspace: <code>${uiModule.esc(cur)}</code>` : 'No workspace set. <code>/workspace pick</code> or <code>/workspace set /path</code>.');
+    return true;
+  }
+  if (sub === 'set' || sub === 'cd' || sub === 'use') {
+    if (!rest) { slashReply('Usage: <code>/workspace set /absolute/path</code>'); return true; }
+    // Validate server-side before persisting so the pill never claims a
+    // workspace the backend will refuse to bind (typo, file path, deleted
+    // folder, sensitive dir, filesystem root).
+    workspaceModule.vetAndSetWorkspace(rest).then(({ ok, path }) => {
+      if (ok) slashReply(`Workspace set: <code>${uiModule.esc(path)}</code>`);
+      else slashReply(`Not a usable workspace folder: <code>${uiModule.esc(rest)}</code>. It must be an existing directory, not a filesystem root or sensitive path.`);
+    });
+    return true;
+  }
+  if (sub === 'clear' || sub === 'off' || sub === 'none' || sub === 'unset') {
+    workspaceModule.clearWorkspace();
+    slashReply('Workspace cleared.');
+    return true;
+  }
+  if (sub === 'pick' || sub === 'browse' || sub === 'open') {
+    workspaceModule.openWorkspaceBrowser();
+    return true;
+  }
+  slashReply('Usage: <code>/workspace</code> · <code>set /path</code> · <code>clear</code> · <code>pick</code>');
   return true;
 }
 
@@ -5730,6 +5780,14 @@ const COMMANDS = {
       'sidebar':   { handler: _cmdToggleSidebar,   alias: ['sb'], help: 'Cycle sidebar (full/mini/off)', usage: '/toggle sidebar [1|2|3]' },
       '_show':     { handler: _cmdToggleShow,      alias: [],     help: 'Show all toggle states',  usage: '/toggle' }
     }
+  },
+  workspace: {
+    alias: ['ws'],
+    category: 'Agent',
+    help: 'Set the folder the agent works in',
+    handler: _cmdWorkspace,
+    noUserBubble: true,
+    usage: '/workspace [set <path> | clear | pick]',
   },
   memory: {
     alias: ['m'],

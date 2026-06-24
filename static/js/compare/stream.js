@@ -551,23 +551,46 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
       footer.className = 'msg-footer';
       const span = document.createElement('span');
       span.className = 'response-metrics';
-      let text = metrics.output_tokens + ' tokens | ' + metrics.tokens_per_second + ' tok/s';
+      const outputTokens = metrics.output_tokens;
+      const responseTime = metrics.response_time ?? metrics.total_time;
+      const explicitTps = metrics.tokens_per_second ?? metrics.gen_tps ?? metrics.tps;
+      const numericOutput = Number(outputTokens);
+      const numericTime = Number(responseTime);
+      const numericTps = Number(explicitTps);
+      const derivedTps = Number.isFinite(numericTps)
+        ? numericTps
+        : (Number.isFinite(numericOutput) && Number.isFinite(numericTime) && numericTime > 0)
+          ? numericOutput / numericTime
+          : null;
+      const tpsLabel = derivedTps != null
+        ? (derivedTps >= 100 ? String(Math.round(derivedTps)) : derivedTps.toFixed(2).replace(/\.?0+$/, ''))
+        : null;
+      const parts = [];
+      if (outputTokens != null && outputTokens !== 'undefined') {
+        parts.push(outputTokens + ' tokens');
+      }
+      if (tpsLabel != null) {
+        parts.push(tpsLabel + ' tok/s');
+      }
+      if (responseTime != null && responseTime !== 'undefined' && parts.length === 0) {
+        parts.push(responseTime + 's');
+      }
       // Add per-request cost and cost per 1000
       const _model = metrics.model || (state._selectedModels[paneIdx] && state._selectedModels[paneIdx].model) || '';
       const _cost = getModelCost(_model, metrics.input_tokens || 0, metrics.output_tokens || 0);
       // Build the metrics span with optional cost and context
-      span.textContent = text;
+      span.textContent = parts.join(' | ');
       if (_cost !== null) {
         const _cost1k = _cost * 1000;
         const costSpan = document.createElement('span');
         costSpan.style.color = 'var(--color-success, #4caf50)';
         costSpan.title = 'Estimated cost per 1,000 responses like this one';
-        costSpan.textContent = ' | $' + (_cost1k < 1 ? _cost1k.toFixed(2) : _cost1k.toFixed(0)) + '/1k';
+        costSpan.textContent = (span.textContent ? ' | ' : '') + '$' + (_cost1k < 1 ? _cost1k.toFixed(2) : _cost1k.toFixed(0)) + '/1k';
         span.appendChild(costSpan);
       }
       if (metrics.context_percent > 0) {
         const ctx = document.createElement('span');
-        ctx.textContent = ' | ' + metrics.context_percent + '% ctx';
+        ctx.textContent = (span.textContent ? ' | ' : '') + metrics.context_percent + '% ctx';
         if (metrics.context_percent >= 85) ctx.style.color = 'var(--color-error)';
         else if (metrics.context_percent >= 70) ctx.style.color = '#ff9900';
         span.appendChild(ctx);

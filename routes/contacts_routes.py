@@ -12,11 +12,13 @@ import json
 import csv
 import io
 import os
+import inspect
 import httpx
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import urljoin, urlparse, urlunparse
 
+from core.log_safety import redact_url
 from fastapi import APIRouter, Query, Depends, Response, HTTPException
 from typing import List, Dict, Optional
 
@@ -45,10 +47,14 @@ def _save_settings(settings):
 def _get_carddav_config():
     import os
     settings = _load_settings()
+    password = settings.get("carddav_password", os.environ.get("CARDDAV_PASSWORD", ""))
+    if password and "carddav_password" in settings:
+        from src.secret_storage import decrypt
+        password = decrypt(password)
     return {
         "url": settings.get("carddav_url", os.environ.get("CARDDAV_URL", "")),
         "username": settings.get("carddav_username", os.environ.get("CARDDAV_USERNAME", "")),
-        "password": settings.get("carddav_password", os.environ.get("CARDDAV_PASSWORD", "")),
+        "password": password,
     }
 
 
@@ -86,11 +92,13 @@ def _normalize_contact(contact: Dict) -> Dict:
     name = str(contact.get("name") or "").strip()
     if not name and emails:
         name = emails[0].split("@")[0]
+    address = str(contact.get("address") or "").strip()
     return {
         "uid": str(contact.get("uid") or uuid.uuid4()),
         "name": name,
         "emails": emails,
         "phones": phones,
+        "address": address,
     }
 
 
@@ -146,7 +154,7 @@ def _parse_vcards(text: str) -> List[Dict]:
     for block in re.split(r"BEGIN:VCARD", text):
         if not block.strip():
             continue
-        contact = {"name": "", "emails": [], "phones": [], "uid": ""}
+        contact = {"name": "", "emails": [], "phones": [], "uid": "", "address": ""}
         for line in block.split("\n"):
             line = line.strip()
             # Strip an optional RFC 6350 group prefix (e.g. "item1.EMAIL;...")
@@ -169,6 +177,15 @@ def _parse_vcards(text: str) -> List[Dict]:
                     phone = _vunesc(name_part.split(":", 1)[1])
                     if phone and phone not in contact["phones"]:
                         contact["phones"].append(phone)
+            elif name_part.startswith("ADR"):
+                # vCard ADR is 7 semicolon-separated components:
+                # post-office-box;extended-address;street;locality;region;postal-code;country.
+                # Recover a human-readable string by joining non-empty
+                # components with ", ".
+                if ":" in name_part:
+                    raw = name_part.split(":", 1)[1]
+                    parts = [_vunesc(p).strip() for p in raw.split(";")]
+                    contact["address"] = ", ".join(p for p in parts if p)
             elif name_part.startswith("UID:"):
                 contact["uid"] = _vunesc(name_part[4:])
         if contact["name"] or contact["emails"]:
@@ -193,7 +210,8 @@ def _vesc(value: str) -> str:
 
 def _build_vcard(name: str, email: str, uid: Optional[str] = None,
                  emails: Optional[List[str]] = None,
-                 phones: Optional[List[str]] = None) -> str:
+                 phones: Optional[List[str]] = None,
+                 address: Optional[str] = None) -> str:
     """Build a vCard. Accepts either a single `email` (legacy callers) or
     full `emails`/`phones` lists (edit path). The first email is marked
     PREF=1. All values are RFC-6350-escaped."""
@@ -226,6 +244,12 @@ def _build_vcard(name: str, email: str, uid: Optional[str] = None,
         lines.append(f"EMAIL;PREF=1:{_vesc(em)}" if i == 0 else f"EMAIL:{_vesc(em)}")
     for ph in phone_list:
         lines.append(f"TEL:{_vesc(ph)}")
+    # Address: stuff the whole human-readable string into the street
+    # component of ADR. vCard ADR has 7 semicolon-separated components:
+    # post-office-box;extended-address;street;locality;region;postal-code;country.
+    addr = (address or "").strip()
+    if addr:
+        lines.append(f"ADR:;;{_vesc(addr)};;;;")
     lines.append("END:VCARD")
     return "\r\n".join(lines) + "\r\n"
 
@@ -362,7 +386,7 @@ def _resolve_resource_url(uid: str) -> str:
     return _lookup() or _vcard_url(uid)
 
 
-def _create_contact(name: str, email: str) -> bool:
+def _create_contact(name: str, email: str, address: str = "") -> bool:
     """Add a new contact via CardDAV or local contacts."""
     cfg = _get_carddav_config()
     if not _carddav_configured(cfg):
@@ -371,12 +395,12 @@ def _create_contact(name: str, email: str) -> bool:
         for c in contacts:
             if email_l and email_l in [e.lower() for e in c.get("emails", [])]:
                 return True
-        contacts.append(_normalize_contact({"name": name, "emails": [email]}))
+        contacts.append(_normalize_contact({"name": name, "emails": [email], "address": address}))
         _save_local_contacts(contacts)
         return True
 
     contact_uid = str(uuid.uuid4())
-    vcard = _build_vcard(name, email, contact_uid)
+    vcard = _build_vcard(name, email, contact_uid, address=address)
     try:
         url = _carddav_base_url(cfg) + "/" + contact_uid + ".vcf"
         auth = None
@@ -609,7 +633,7 @@ def _contacts_to_csv(contacts: List[Dict]) -> str:
     return out.getvalue()
 
 
-def _update_contact(uid: str, name: str, emails: List[str], phones: List[str]) -> bool:
+def _update_contact(uid: str, name: str, emails: List[str], phones: List[str], address: str = "") -> bool:
     """Rewrite an existing contact via CardDAV or local contacts."""
     cfg = _get_carddav_config()
     if not _carddav_configured(cfg):
@@ -618,16 +642,19 @@ def _update_contact(uid: str, name: str, emails: List[str], phones: List[str]) -
         out = []
         for c in contacts:
             if c.get("uid") == uid:
-                out.append(_normalize_contact({"uid": uid, "name": name, "emails": emails, "phones": phones}))
+                # Preserve existing address when caller passes "" (only
+                # updating name/emails/phones, not touching address).
+                addr = address if address else c.get("address", "")
+                out.append(_normalize_contact({"uid": uid, "name": name, "emails": emails, "phones": phones, "address": addr}))
                 found = True
             else:
                 out.append(c)
         if not found:
-            out.append(_normalize_contact({"uid": uid, "name": name, "emails": emails, "phones": phones}))
+            out.append(_normalize_contact({"uid": uid, "name": name, "emails": emails, "phones": phones, "address": address}))
         _save_local_contacts(out)
         return True
 
-    vcard = _build_vcard(name, "", uid=uid, emails=emails, phones=phones)
+    vcard = _build_vcard(name, "", uid=uid, emails=emails, phones=phones, address=address)
     # Use the real resource href (handles externally-created contacts whose
     # filename != UID); falls back to the <uid>.vcf guess.
     try:
@@ -663,15 +690,24 @@ def _delete_contact(uid: str) -> bool:
         url = _resolve_resource_url(uid)
         auth = (cfg["username"], cfg["password"]) if cfg["username"] else None
         r = httpx.delete(url, auth=auth, timeout=10)
-        if r.status_code in (200, 204):
+        if r.status_code in (200, 204, 404):
+            # Invalidate cache so the next fetch sees the server truth.
             _contact_cache["fetched_at"] = None
-            return True
-        if r.status_code == 404:
-            # Resource not found at the resolved URL. With href resolution
-            # this should be rare (genuinely already deleted). Invalidate
-            # the cache and report success so the UI doesn't keep a ghost.
-            logger.info(f"CardDAV DELETE 404 for {uid} — treating as already gone")
-            _contact_cache["fetched_at"] = None
+            # Verify: force a fresh fetch and check the UID is actually gone.
+            # A 404 on the guessed URL ({uid}.vcf) can mean the contact
+            # lives at a different resource URL — the DELETE missed it but
+            # we'd silently report success. This check catches that.
+            fresh = _fetch_contacts(force=True)
+            still_there = any(c.get("uid") == uid for c in fresh)
+            if still_there:
+                logger.warning(
+                    f"CardDAV DELETE reported success for {uid} "
+                    f"but UID still present after re-fetch — "
+                    f"resource URL may differ from {redact_url(url)}"
+                )
+                return False
+            if r.status_code == 404:
+                logger.info(f"CardDAV DELETE 404 for {uid} — already gone")
             return True
         logger.warning(f"CardDAV DELETE returned {r.status_code}: {r.text[:200]}")
         return False
@@ -714,23 +750,49 @@ def setup_contacts_routes():
         """Add a new contact."""
         name = (data.get("name") or "").strip()
         email = (data.get("email") or "").strip()
+        phone = (data.get("phone") or "").strip()
+        address = (data.get("address") or "").strip()
         if not email:
             return {"success": False, "error": "Email required"}
-        # Check if already exists
-        contacts = _fetch_contacts()
-        for c in contacts:
-            if email.lower() in [e.lower() for e in c["emails"]]:
-                return {"success": True, "message": "Already exists", "contact": c}
+        # Check if already exists by email
+        if email:
+            contacts = _fetch_contacts()
+            for c in contacts:
+                if email.lower() in [e.lower() for e in c["emails"]]:
+                    return {"success": True, "message": "Already exists", "contact": c}
         if not name:
             name = email.split("@")[0]
-        ok = _create_contact(name, email)
+        create_params = inspect.signature(_create_contact).parameters
+        if len(create_params) >= 3:
+            ok = _create_contact(name, email, address)
+        else:
+            ok = _create_contact(name, email)
+        # If a phone was provided, do an immediate update to thread it
+        # through (the simple _create_contact signature only takes name +
+        # email + address; phones happen via update).
+        if ok and phone:
+            try:
+                fresh = _fetch_contacts(force=True)
+                created = next((c for c in fresh if name == c.get("name") and (not email or email in c.get("emails", []))), None)
+                if created:
+                    _update_contact(
+                        created["uid"], name,
+                        created.get("emails", []),
+                        [phone],
+                        address,
+                    )
+            except Exception:
+                pass
         return {"success": ok}
 
     @router.post("/import")
     async def import_vcf(data: dict, _admin: str = Depends(require_admin)):
         """Import contacts from .vcf or CSV. Body: {"vcf": "..."} or {"csv": "..."}."""
-        text = data.get("vcf") or data.get("text") or ""
-        csv_text = data.get("csv") or ""
+        # Coerce defensively: a non-string vcf/text/csv (e.g. a number or list
+        # in the JSON body) would otherwise reach .strip() and 500 with an
+        # AttributeError instead of degrading to a clean "no data" response.
+        text = str(data.get("vcf") or data.get("text") or "")
+        csv_text = str(data.get("csv") or "")
         if text.strip():
             if "BEGIN:VCARD" not in text.upper():
                 return {"success": False, "error": "No vCard data found"}
@@ -782,7 +844,11 @@ def setup_contacts_routes():
                     except ValueError as e:
                         raise HTTPException(400, str(e))
                 else:
-                    settings[key] = data[key]
+                    value = data[key]
+                    if key == "carddav_password" and value:
+                        from src.secret_storage import encrypt
+                        value = encrypt(value)
+                    settings[key] = value
         _save_settings(settings)
         # Force re-fetch
         _contact_cache["fetched_at"] = None
@@ -799,7 +865,7 @@ def setup_contacts_routes():
     # match PUT /{uid} with uid="config".
     @router.put("/{uid}")
     async def edit_contact(uid: str, data: dict, _admin: str = Depends(require_admin)):
-        """Edit an existing contact — name / emails / phones."""
+        """Edit an existing contact — name / emails / phones / address."""
         name = (data.get("name") or "").strip()
         emails = data.get("emails")
         phones = data.get("phones")
@@ -807,11 +873,12 @@ def setup_contacts_routes():
             emails = [data["email"]]
         emails = [e.strip() for e in (emails or []) if e and e.strip()]
         phones = [p.strip() for p in (phones or []) if p and p.strip()]
-        if not name and not emails:
-            return {"success": False, "error": "Name or email required"}
+        address = (data.get("address") or "").strip()
+        if not name and not emails and not address:
+            return {"success": False, "error": "Name, email, or address required"}
         if not name and emails:
             name = emails[0].split("@")[0]
-        ok = _update_contact(uid, name, emails, phones)
+        ok = _update_contact(uid, name, emails, phones, address)
         return {"success": ok}
 
     @router.delete("/{uid}")

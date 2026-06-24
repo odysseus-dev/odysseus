@@ -11,7 +11,7 @@ from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
 from core.database import Session as DbSession, SessionLocal, Document, GalleryImage, utcnow_naive
-from src.auth_helpers import get_current_user, effective_user, _auth_disabled
+from src.auth_helpers import effective_user, _auth_disabled, owner_filter
 from src.session_actions import is_session_recently_active
 
 
@@ -258,7 +258,9 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             last_msg_map = {}
             mode_map = {}
             msg_count_map = {}
-            rows = db.query(DbSession.id, DbSession.folder, DbSession.total_input_tokens, DbSession.total_output_tokens, DbSession.is_important, DbSession.created_at, DbSession.updated_at, DbSession.last_message_at, DbSession.mode, DbSession.message_count).filter(DbSession.archived == False, DbSession.owner == user).all()
+            q = db.query(DbSession.id, DbSession.folder, DbSession.total_input_tokens, DbSession.total_output_tokens, DbSession.is_important, DbSession.created_at, DbSession.updated_at, DbSession.last_message_at, DbSession.mode, DbSession.message_count).filter(DbSession.archived == False)
+            q = owner_filter(q, DbSession, user)
+            rows = q.all()
             for row in rows:
                 folder_map[row.id] = row.folder
                 token_map[row.id] = (row.total_input_tokens or 0) + (row.total_output_tokens or 0)
@@ -277,17 +279,19 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             # Sessions with active documents that have content
             from sqlalchemy import func
             doc_session_ids = set(
-                r[0] for r in db.query(Document.session_id)
-                .filter(Document.is_active == True,
-                        Document.current_content != None,
-                        func.trim(Document.current_content) != "",
-                        Document.owner == user)
+                r[0] for r in owner_filter(
+                    db.query(Document.session_id)
+                    .filter(Document.is_active == True,
+                            Document.current_content != None,
+                            func.trim(Document.current_content) != ""),
+                    Document, user)
                 .distinct().all()
             )
             img_session_ids = set(
-                r[0] for r in db.query(GalleryImage.session_id)
-                .filter(GalleryImage.session_id != None,
-                        GalleryImage.owner == user)
+                r[0] for r in owner_filter(
+                    db.query(GalleryImage.session_id)
+                    .filter(GalleryImage.session_id != None),
+                    GalleryImage, user)
                 .distinct().all()
             )
         finally:
@@ -324,7 +328,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         endpoint_id: str = Form(""),
     ):
         skip_val = str(skip_validation).lower() == "true"
-        user = get_current_user(request)
+        user = effective_user(request)
         endpoint_api_key = ""
         endpoint_base_url = ""
         _reject_raw_endpoint_url_for_non_admin(request, user, endpoint_id, endpoint_url)
@@ -473,7 +477,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 db.close()
         # Switch model/endpoint mid-session
         if model is not None and endpoint_url is not None:
-            user = get_current_user(request)
+            user = effective_user(request)
             _reject_raw_endpoint_url_for_non_admin(request, user, endpoint_id, endpoint_url)
             endpoint_api_key = ""
             endpoint_base_url = ""
@@ -1000,6 +1004,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         """
         from src.llm_core import llm_call
         user = effective_user(request)
+        single_user_mode = not user and _auth_disabled()
         user_sessions = session_manager.get_sessions_for_user(user)
 
         # Delete empty and throwaway sessions before sorting
@@ -1018,7 +1023,12 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         }
         _THROWAWAY_MAX_MESSAGES = 4  # only delete if <= this many messages
         try:
-            rows = db.query(DbSession).filter(DbSession.archived == False, DbSession.owner == user).limit(2000).all()
+            rows_q = db.query(DbSession).filter(DbSession.archived == False)
+            if user:
+                rows_q = rows_q.filter(DbSession.owner == user)
+            elif not single_user_mode:
+                rows_q = rows_q.filter(DbSession.owner == user)
+            rows = rows_q.limit(2000).all()
             folder_map = {r.id: r.folder for r in rows}
             # Precompute per-session message counts in TWO aggregate queries
             # instead of 1–3 queries PER session — with many chats the per-row
@@ -1238,7 +1248,12 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         db = SessionLocal()
         try:
             for sid, folder_name in assignments.items():
-                db_session = db.query(DbSession).filter(DbSession.id == sid, DbSession.owner == user).first()
+                db_session_q = db.query(DbSession).filter(DbSession.id == sid)
+                if user:
+                    db_session_q = db_session_q.filter(DbSession.owner == user)
+                elif not single_user_mode:
+                    db_session_q = db_session_q.filter(DbSession.owner == user)
+                db_session = db_session_q.first()
                 if db_session:
                     db_session.folder = folder_name
                     db_session.updated_at = datetime.utcnow()

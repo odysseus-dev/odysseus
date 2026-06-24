@@ -1,0 +1,71 @@
+# Supply-chain review
+#
+# Purpose: defend against "side-chain" / supply-chain attacks -- a pull request
+# that adds (or bumps) a dependency to a version with a known vulnerability or a
+# disallowed license. Two layers:
+#
+#   - dependency-review: runs ONLY on pull requests. It compares the
+#     dependencies before and after the PR and blocks the merge if the change
+#     pulls in a package with a known security advisory. This is the gate.
+#   - pip-audit: scans the project's current Python requirements against the
+#     advisory database. Advisory only (it never blocks a merge), because it can
+#     flag a pre-existing issue in an already-shipped dependency.
+
+name: Dependency review
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Default-deny token; jobs grant only read access.
+permissions: {}
+
+concurrency:
+  group: dependency-review-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-review:
+    name: dependency-review (PR gate)
+    # Only meaningful on a pull request -- it needs a base..head diff to review.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294  # v5.0.0
+        with:
+          # Fail the PR on any newly introduced moderate-or-worse advisory.
+          fail-on-severity: moderate
+
+  pip-audit:
+    name: pip-audit (advisory)
+    runs-on: ubuntu-latest
+    # Advisory: report known-vulnerable Python deps without blocking the merge.
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Run pip-audit on requirements
+        run: |
+          set -euo pipefail
+          pip install pip-audit==2.10.0
+          pip-audit -r requirements.txt -r requirements-optional.txt --strict
