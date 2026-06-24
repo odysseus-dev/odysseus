@@ -4188,15 +4188,21 @@ public class MobileBackendServer {
         if (model.isEmpty()) throw new IOException("Select an image generation model for this endpoint.");
 
         boolean zImageModel = isZImageModel(model);
-        boolean aimlZImage = zImageModel && isAimlApiEndpoint(base, choice);
+        if (zImageModel && isModelScopeEndpoint(base, choice)) {
+            return postModelScopeZImageGeneration(choice, prompt, size);
+        }
         JSONObject payload = new JSONObject()
-                .put("model", aimlZImage ? aimlApiZImageModel(model) : model)
-                .put("prompt", prompt)
-                .put("n", 1);
-        if (aimlZImage) {
-            payload.put("image_size", aimlApiZImageSize(size));
+                .put("model", zImageModel ? hostedZImageModel(base, choice, model) : model)
+                .put("prompt", prompt);
+        if (zImageModel) {
+            if (isAimlApiEndpoint(base, choice)) {
+                payload.put("image_size", aimlApiZImageSize(size));
+            } else {
+                payload.put("image_size", zImagePixelSize(size));
+            }
         } else {
-            payload.put("size", valueOr(size, "").isEmpty() ? "1024x1024" : size);
+            payload.put("n", 1)
+                    .put("size", valueOr(size, "").isEmpty() ? "1024x1024" : size);
         }
         String modelLower = model.toLowerCase(Locale.US);
         boolean gptImageModel = modelLower.startsWith("gpt-image") || modelLower.contains("chatgpt-image");
@@ -4264,12 +4270,32 @@ public class MobileBackendServer {
         return text.contains("aimlapi") || text.contains("ai/ml api") || text.contains("ai ml api");
     }
 
-    private String aimlApiZImageModel(String model) {
+    private boolean isSiliconFlowEndpoint(String baseUrl, JSONObject ep) {
+        String text = (valueOr(baseUrl, "") + " "
+                + (ep == null ? "" : ep.optString("name", "")) + " "
+                + (ep == null ? "" : ep.optString("provider", ""))).toLowerCase(Locale.US);
+        return text.contains("siliconflow") || text.contains("silicon flow");
+    }
+
+    private boolean isModelScopeEndpoint(String baseUrl, JSONObject ep) {
+        String text = (valueOr(baseUrl, "") + " "
+                + (ep == null ? "" : ep.optString("name", "")) + " "
+                + (ep == null ? "" : ep.optString("provider", ""))).toLowerCase(Locale.US);
+        return text.contains("modelscope") || text.contains("api-inference.modelscope.cn");
+    }
+
+    private String hostedZImageModel(String baseUrl, JSONObject ep, String model) {
         String raw = valueOr(model, "").trim();
         String lower = raw.toLowerCase(Locale.US);
-        if ("z-image-turbo".equals(lower) || "z_image_turbo".equals(lower)
-                || "zimage-turbo".equals(lower) || "zimage_turbo".equals(lower)) {
+        if (isAimlApiEndpoint(baseUrl, ep)
+                && ("z-image-turbo".equals(lower) || "z_image_turbo".equals(lower)
+                || "zimage-turbo".equals(lower) || "zimage_turbo".equals(lower))) {
             return "alibaba/z-image-turbo";
+        }
+        if (isSiliconFlowEndpoint(baseUrl, ep)
+                && ("z-image-turbo".equals(lower) || "z_image_turbo".equals(lower)
+                || "zimage-turbo".equals(lower) || "zimage_turbo".equals(lower))) {
+            return "Tongyi-MAI/Z-Image-Turbo";
         }
         return raw;
     }
@@ -4283,6 +4309,107 @@ public class MobileBackendServer {
         int height = parseInt(parts[1], 1);
         if (width == height) return "square";
         return width > height ? "landscape_16_9" : "portrait_9_16";
+    }
+
+    private String zImagePixelSize(String size) {
+        String raw = valueOr(size, "").trim().toLowerCase(Locale.US);
+        if (raw.isEmpty() || "auto".equals(raw)) return "1024x1024";
+        if (raw.matches("\\d+x\\d+")) return raw;
+        return "1024x1024";
+    }
+
+    private JSONObject postModelScopeZImageGeneration(JSONObject choice, String prompt, String size) throws Exception {
+        String base = normalizeBase(choice.optString("base_url"));
+        while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
+        if (!base.endsWith("/v1")) base += "/v1";
+        String apiKey = choice.optString("api_key", "").trim();
+        if (apiKey.isEmpty()) throw new IOException("ModelScope Z Image endpoint has no API key stored in Settings.");
+        int[] dims = zImagePixelDimensions(size);
+        JSONObject payload = new JSONObject()
+                .put("model", "Tongyi-MAI/Z-Image-Turbo")
+                .put("prompt", prompt)
+                .put("width", dims[0])
+                .put("height", dims[1])
+                .put("num_inference_steps", 9)
+                .put("guidance_scale", 0.0);
+
+        HttpURLConnection conn = (HttpURLConnection) new URL(base + "/images/generations").openConnection();
+        conn.setRequestMethod("POST");
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(45000);
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("Accept", "application/json");
+        conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+        conn.setRequestProperty("X-ModelScope-Async-Mode", "true");
+        byte[] data = payload.toString().getBytes(StandardCharsets.UTF_8);
+        conn.setFixedLengthStreamingMode(data.length);
+        try (OutputStream body = conn.getOutputStream()) {
+            body.write(data);
+        }
+        int status = conn.getResponseCode();
+        String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
+        conn.disconnect();
+        if (status < 200 || status >= 300) {
+            throw new IOException("ModelScope Z Image submit failed: " + formatProviderError(status, response));
+        }
+        String taskId = firstJsonStringForKey(new JSONObject(valueOr(response, "{}")), "task_id", 0);
+        if (taskId.isEmpty()) {
+            JSONObject immediate = normalizeImageResponse(response);
+            if (!immediate.optString("image", "").isEmpty()) return immediate;
+            throw new IOException("ModelScope Z Image returned no task_id or image: " + providerNoImageDetail(response));
+        }
+        return pollModelScopeImageTask(base, apiKey, taskId);
+    }
+
+    private JSONObject pollModelScopeImageTask(String base, String apiKey, String taskId) throws Exception {
+        long deadline = System.currentTimeMillis() + 90000L;
+        Exception last = null;
+        while (System.currentTimeMillis() < deadline) {
+            Thread.sleep(3000L);
+            HttpURLConnection conn = null;
+            try {
+                String encodedTask = URLEncoder.encode(taskId, "UTF-8").replace("+", "%20");
+                conn = (HttpURLConnection) new URL(base + "/tasks/" + encodedTask).openConnection();
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(15000);
+                conn.setReadTimeout(30000);
+                conn.setRequestProperty("Accept", "application/json");
+                conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+                conn.setRequestProperty("X-ModelScope-Task-Type", "image_generation");
+                int status = conn.getResponseCode();
+                String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
+                if (status < 200 || status >= 300) {
+                    last = new IOException("ModelScope Z Image status failed: " + formatProviderError(status, response));
+                    continue;
+                }
+                JSONObject normalized = normalizeImageResponse(response);
+                if (!normalized.optString("image", "").isEmpty()) return normalized;
+                JSONObject json = new JSONObject(valueOr(response, "{}"));
+                String taskStatus = firstJsonStringForKey(json, "task_status", 0);
+                if (taskStatus.isEmpty()) taskStatus = firstJsonStringForKey(json, "status", 0);
+                String lower = taskStatus.toLowerCase(Locale.US);
+                if (lower.contains("fail") || lower.contains("error") || lower.contains("cancel")) {
+                    throw new IOException("ModelScope Z Image task failed: " + providerNoImageDetail(response));
+                }
+            } catch (Exception ex) {
+                last = ex;
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }
+        throw new IOException(last == null
+                ? "ModelScope Z Image timed out waiting for task " + taskId
+                : "ModelScope Z Image timed out waiting for task " + taskId + ": " + last.getMessage());
+    }
+
+    private int[] zImagePixelDimensions(String size) {
+        String raw = valueOr(size, "").trim().toLowerCase(Locale.US);
+        if (raw.matches("\\d+x\\d+")) {
+            String[] parts = raw.split("x", 2);
+            return new int[]{parseInt(parts[0], 1024), parseInt(parts[1], 1024)};
+        }
+        return new int[]{1024, 1024};
     }
 
     private JSONObject postQwenDashscopeImageGeneration(JSONObject choice, String prompt, String size) throws Exception {
@@ -4884,7 +5011,7 @@ public class MobileBackendServer {
         String[] preferred = new String[]{
                 "image", "b64_json", "base64", "image_base64", "imageBase64",
                 "url", "image_url", "imageUrl", "data", "bytesBase64Encoded", "bytes_base64_encoded",
-                "imageBytes", "image_bytes", "inlineData", "inline_data", "images", "generatedImages", "predictions",
+                "imageBytes", "image_bytes", "inlineData", "inline_data", "images", "generatedImages", "output_images", "predictions",
                 "candidates", "parts", "content", "message", "choices", "output", "outputs", "result", "results", "artifact", "artifacts"
         };
         for (String key : preferred) {

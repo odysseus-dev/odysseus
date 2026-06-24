@@ -72,15 +72,35 @@ def test_android_adapts_aimlapi_z_image_payload_shape():
     )[0]
 
     assert 'm.contains("z/image")' in detector
-    assert "boolean aimlZImage = zImageModel && isAimlApiEndpoint(base, choice);" in openai_generation
-    assert 'put("model", aimlZImage ? aimlApiZImageModel(model) : model)' in openai_generation
+    assert "if (zImageModel && isModelScopeEndpoint(base, choice))" in openai_generation
+    assert 'put("model", zImageModel ? hostedZImageModel(base, choice, model) : model)' in openai_generation
     assert 'payload.put("image_size", aimlApiZImageSize(size));' in openai_generation
+    assert 'payload.put("image_size", zImagePixelSize(size));' in openai_generation
     assert 'payload.put("quality"' not in openai_generation.split("if (!zImageModel", 1)[0]
     assert "postOpenAiCompatibleImageGenerationPayload(base, apiKey, payload, 90000)" in openai_generation
     assert '"alibaba/z-image-turbo"' in helper
+    assert '"Tongyi-MAI/Z-Image-Turbo"' in helper
     assert '"landscape_16_9"' in helper
     assert '"portrait_9_16"' in helper
     assert '"square"' in helper
+
+
+def test_android_supports_modelscope_z_image_async_tasks():
+    openai_generation = ANDROID_SERVER.split("private JSONObject postOpenAiCompatibleImageGeneration", 1)[1].split(
+        "private JSONObject postOpenAiCompatibleImageGenerationPayload", 1
+    )[0]
+    helper = ANDROID_SERVER.split("private boolean isModelScopeEndpoint", 1)[1].split(
+        "private JSONObject postQwenDashscopeImageGeneration", 1
+    )[0]
+    parser = ANDROID_SERVER.split("private String firstProviderImageValue", 1)[1].split(
+        "private String firstProviderVideoValue", 1
+    )[0]
+
+    assert "postModelScopeZImageGeneration(choice, prompt, size)" in openai_generation
+    assert 'conn.setRequestProperty("X-ModelScope-Async-Mode", "true");' in helper
+    assert 'conn.setRequestProperty("X-ModelScope-Task-Type", "image_generation");' in helper
+    assert 'firstJsonStringForKey(new JSONObject(valueOr(response, "{}")), "task_id", 0)' in helper
+    assert '"output_images"' in parser
 
 
 def test_android_recognizes_gemini_banana_and_imagen_image_models():

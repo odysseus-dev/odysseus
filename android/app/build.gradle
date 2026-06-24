@@ -29,8 +29,8 @@ android {
         applicationId = "com.odysseus.simplesignal"
         minSdk = 26
         targetSdk = 34
-        versionCode = 12
-        versionName = "1.0.12"
+        versionCode = 13
+        versionName = "1.0.13"
 
         ndk {
             // Keep native payloads phone-sized when native modules are enabled.
