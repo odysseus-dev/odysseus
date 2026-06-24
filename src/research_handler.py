@@ -783,8 +783,8 @@ class ResearchHandler:
         # Probe the endpoint before committing to a long research run
         from src.settings import get_setting
         _probe_timeout = _bounded_int(
-            get_setting("research_planning_timeout_seconds", 90),
-            default=90,
+            get_setting("research_probe_timeout_seconds", 60),
+            default=60,
             minimum=15,
             maximum=3600,
         )

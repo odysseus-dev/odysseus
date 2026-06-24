@@ -97,6 +97,7 @@ DEFAULT_SETTINGS = {
     # Keep them separately tunable so slow local backends are not capped by
     # the old 30s/60s per-call defaults.
     "research_planning_timeout_seconds": 90,
+    "research_probe_timeout_seconds": 60,
     "research_query_timeout_seconds": 90,
     "research_extraction_concurrency": 3,
     # Hard wall-clock cap on a single deep-research run. The previous 600s
