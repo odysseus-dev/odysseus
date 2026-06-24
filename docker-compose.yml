@@ -72,6 +72,9 @@ services:
       - SERPER_API_KEY=${SERPER_API_KEY:-}
       - SSL_CERT_FILE=${SSL_CERT_FILE:-}
       - REQUESTS_CA_BUNDLE=${REQUESTS_CA_BUNDLE:-}
+      - GOOGLE_OAUTH_CLIENT_ID=${GOOGLE_OAUTH_CLIENT_ID:-}
+      - GOOGLE_OAUTH_CLIENT_SECRET=${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      - GOOGLE_OAUTH_REDIRECT_URI=${GOOGLE_OAUTH_REDIRECT_URI:-}
       # PUID / PGID — the user/group the container drops to before
       # running uvicorn (entrypoint also chowns /app/data + /app/logs
       # to match, so bind-mounted files stay editable from the host).
