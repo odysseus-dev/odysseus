@@ -234,6 +234,41 @@ def test_android_selected_video_model_accepts_bare_descriptive_prompt():
     assert "if (!looksLikeMobileNonGenerationQuestion(prompt)) return prompt;" in video_prompt
 
 
+def test_android_routes_veo_through_gemini_long_running_video_api():
+    video_generation = ANDROID_SERVER.split("private boolean isVideoGenerationModel", 1)[1].split(
+        "private boolean isGeminiVideoModel", 1
+    )[0]
+    detector = ANDROID_SERVER.split("private boolean isGeminiVideoModel", 1)[1].split(
+        "private boolean isDashScopeVideoModel", 1
+    )[0]
+    endpoint_guard = ANDROID_SERVER.split("private boolean endpointCanServeSelectedVideoModel", 1)[1].split(
+        "private boolean looksLikeImageGenerationEndpoint", 1
+    )[0]
+    dispatch = ANDROID_SERVER.split("private JSONObject postMobileVideoGeneration", 1)[1].split(
+        "private JSONObject postGeminiVeoVideoGeneration", 1
+    )[0]
+    helper = ANDROID_SERVER.split("private JSONObject postGeminiVeoVideoGeneration", 1)[1].split(
+        "private JSONObject postDashScopeVideoGeneration", 1
+    )[0]
+
+    assert 'm.startsWith("veo-")' in video_generation
+    assert 'm.startsWith("veo-")' in detector
+    assert "isGeminiVideoModel(providerRequested) && isGeminiImageEndpoint(base, endpoint)" in endpoint_guard
+    assert "isGeminiVideoModel(model) && isGeminiImageEndpoint(base, choice)" in dispatch
+    assert "postGeminiVeoVideoGeneration(choice, prompt, durationSeconds, aspectRatio, resolution)" in dispatch
+    assert '":predictLongRunning"' in helper
+    assert '"instances", new JSONArray()' in helper
+    assert '"prompt", prompt' in helper
+    assert '"aspectRatio", geminiVideoAspectRatio(aspectRatio)' in helper
+    assert '"durationSeconds", geminiVideoDurationSeconds(durationSeconds)' in helper
+    assert 'conn.setRequestProperty("x-goog-api-key", apiKey);' in helper
+    assert "pollGeminiVeoOperation(nativeBase, apiKey, operationName)" in helper
+    assert "normalizeGeminiVideoDownloadUrl(videoUrl, nativeBase)" in helper
+    assert "downloadMediaBytes(videoUrl, apiKey)" in helper
+    assert '"gemini-veo"' in helper
+    assert "return nativeBase + \"/models/\" + encodedModel + \":predictLongRunning\";" in helper
+
+
 def test_android_bare_media_prompt_guard_preserves_questions_and_local_tools():
     guard = ANDROID_SERVER.split("private boolean looksLikeMobileNonGenerationQuestion", 1)[1].split(
         "private String requestedMobileMediaGenerationKind", 1

@@ -3707,6 +3707,7 @@ public class MobileBackendServer {
         JSONArray models = endpoint.optJSONArray("models");
         boolean unknownModels = models == null || models.length() == 0;
         String base = endpoint.optString("base_url", "");
+        if (isGeminiVideoModel(providerRequested) && isGeminiImageEndpoint(base, endpoint)) return true;
         if (isDashScopeVideoModel(providerRequested) && isDashScopeVideoEndpoint(base, endpoint)) return true;
         return unknownModels && "video".equals(endpoint.optString("model_type", "").toLowerCase(Locale.US));
     }
@@ -3888,6 +3889,12 @@ public class MobileBackendServer {
         if (m.contains("vidu") || m.contains("pixverse") || m.contains("hailuo")) return true;
         if (m.contains("minimax") && m.contains("video")) return true;
         return m.contains("video") && !m.contains("embedding");
+    }
+
+    private boolean isGeminiVideoModel(String model) {
+        String m = valueOr(model, "").toLowerCase(Locale.US).trim();
+        if (m.startsWith("models/")) m = m.substring("models/".length());
+        return m.startsWith("veo-") || m.contains("gemini-veo");
     }
 
     private boolean isDashScopeVideoModel(String model) {
@@ -4629,10 +4636,181 @@ public class MobileBackendServer {
                                                  String aspectRatio, String resolution) throws Exception {
         String base = normalizeBase(choice.optString("base_url"));
         String model = choice.optString("model", "").trim();
+        if (isGeminiVideoModel(model) && isGeminiImageEndpoint(base, choice)) {
+            return postGeminiVeoVideoGeneration(choice, prompt, durationSeconds, aspectRatio, resolution);
+        }
         if (isDashScopeVideoModel(model) && isDashScopeVideoEndpoint(base, choice)) {
             return postDashScopeVideoGeneration(choice, prompt, durationSeconds, resolution);
         }
         return postOpenAiCompatibleVideoGeneration(choice, prompt, durationSeconds, aspectRatio, resolution);
+    }
+
+    private JSONObject postGeminiVeoVideoGeneration(JSONObject choice, String prompt, int durationSeconds,
+                                                   String aspectRatio, String resolution) throws Exception {
+        String base = normalizeBase(choice.optString("base_url"));
+        String apiKey = choice.optString("api_key", "").trim();
+        if (apiKey.isEmpty()) throw new IOException("Gemini/Veo video endpoint has no API key stored in Settings.");
+        String model = providerModelId(choice, choice.optString("model", "")).trim();
+        if (model.startsWith("models/")) model = model.substring("models/".length());
+        if (model.isEmpty()) model = "veo-3.1-generate-preview";
+
+        JSONObject parameters = new JSONObject()
+                .put("aspectRatio", geminiVideoAspectRatio(aspectRatio))
+                .put("durationSeconds", geminiVideoDurationSeconds(durationSeconds));
+        String geminiResolution = geminiVideoResolution(resolution);
+        if (!geminiResolution.isEmpty()) parameters.put("resolution", geminiResolution);
+
+        JSONObject payload = new JSONObject()
+                .put("instances", new JSONArray()
+                        .put(new JSONObject().put("prompt", prompt)))
+                .put("parameters", parameters);
+
+        String nativeBase = geminiNativeBaseUrl(base);
+        HttpURLConnection conn = (HttpURLConnection) new URL(geminiVideoPredictUrl(nativeBase, model)).openConnection();
+        conn.setRequestMethod("POST");
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(60000);
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("Accept", "application/json");
+        conn.setRequestProperty("x-goog-api-key", apiKey);
+        byte[] data = payload.toString().getBytes(StandardCharsets.UTF_8);
+        conn.setFixedLengthStreamingMode(data.length);
+        try (OutputStream body = conn.getOutputStream()) {
+            body.write(data);
+        }
+        int status = conn.getResponseCode();
+        String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
+        conn.disconnect();
+        if (status < 200 || status >= 300) {
+            throw new IOException("Gemini/Veo video generation failed: " + formatProviderError(status, response));
+        }
+
+        JSONObject created = new JSONObject(valueOr(response, "{}"));
+        String operationName = firstJsonStringForKey(created, "name", 0);
+        if (operationName.isEmpty()) {
+            throw new IOException("Gemini/Veo returned no operation name: " + providerNoVideoDetail(response));
+        }
+
+        JSONObject completed = pollGeminiVeoOperation(nativeBase, apiKey, operationName);
+        JSONObject normalized = normalizeVideoResponse(completed.toString());
+        String videoUrl = normalized.optString("video_url", "");
+        byte[] videoData;
+        if (!videoUrl.isEmpty()) {
+            videoUrl = normalizeGeminiVideoDownloadUrl(videoUrl, nativeBase);
+            videoData = downloadMediaBytes(videoUrl, apiKey);
+        } else if (!normalized.optString("video", "").isEmpty()) {
+            videoData = Base64.decode(stripDataUrl(normalized.optString("video", "")), Base64.DEFAULT);
+        } else {
+            throw new IOException("Gemini/Veo completed but returned no video URL: " + providerNoVideoDetail(completed.toString()));
+        }
+
+        if (videoData.length == 0) throw new IOException("Gemini/Veo video download returned no data.");
+        return new JSONObject()
+                .put("video", Base64.encodeToString(videoData, Base64.NO_WRAP))
+                .put("video_url", videoUrl)
+                .put("method", "gemini-veo")
+                .put("operation", operationName);
+    }
+
+    private JSONObject pollGeminiVeoOperation(String nativeBase, String apiKey, String operationName) throws Exception {
+        long deadline = System.currentTimeMillis() + 15L * 60L * 1000L;
+        JSONObject latest = new JSONObject().put("name", operationName);
+        while (System.currentTimeMillis() < deadline) {
+            if (latest.optBoolean("done", false)) {
+                JSONObject error = latest.optJSONObject("error");
+                if (error != null) throw new IOException("Gemini/Veo video generation failed: " + providerErrorText(error, 0));
+                return latest;
+            }
+            Thread.sleep(10000L);
+            HttpURLConnection conn = (HttpURLConnection) new URL(geminiOperationUrl(nativeBase, operationName)).openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(60000);
+            conn.setRequestProperty("Accept", "application/json");
+            conn.setRequestProperty("x-goog-api-key", apiKey);
+            int status = conn.getResponseCode();
+            String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
+            conn.disconnect();
+            if (status < 200 || status >= 300) {
+                throw new IOException("Gemini/Veo video status check failed: " + formatProviderError(status, response));
+            }
+            latest = new JSONObject(valueOr(response, "{}"));
+        }
+        throw new IOException("Gemini/Veo video generation timed out while polling operation " + operationName);
+    }
+
+    private String geminiNativeBaseUrl(String baseUrl) throws Exception {
+        URL parsed = new URL(normalizeBase(baseUrl));
+        String version = "v1beta";
+        for (String part : valueOr(parsed.getPath(), "").split("/")) {
+            if (part.matches("v\\d+(?:beta)?")) {
+                version = part;
+                break;
+            }
+        }
+        return parsed.getProtocol() + "://" + parsed.getHost()
+                + (parsed.getPort() > 0 ? ":" + parsed.getPort() : "")
+                + "/" + version;
+    }
+
+    private String geminiVideoPredictUrl(String nativeBase, String model) throws Exception {
+        String encodedModel = URLEncoder.encode(valueOr(model, "").trim(), "UTF-8").replace("+", "%20");
+        return nativeBase + "/models/" + encodedModel + ":predictLongRunning";
+    }
+
+    private String geminiOperationUrl(String nativeBase, String operationName) {
+        String op = valueOr(operationName, "").trim();
+        if (op.startsWith("http://") || op.startsWith("https://")) return op;
+        while (op.startsWith("/")) op = op.substring(1);
+        return nativeBase + "/" + op;
+    }
+
+    private String normalizeGeminiVideoDownloadUrl(String raw, String nativeBase) throws Exception {
+        String url = valueOr(raw, "").trim();
+        if (url.isEmpty()) return url;
+        URL parsed = new URL(url);
+        String host = valueOr(parsed.getHost(), "").toLowerCase(Locale.US);
+        if (!"generativelanguage.googleapis.com".equals(host)) return url;
+        String[] parts = valueOr(parsed.getPath(), "").split("/");
+        if (parts.length < 3 || !"files".equals(parts[2])) return url;
+        URL nativeParsed = new URL(nativeBase);
+        String version = "v1beta";
+        for (String part : valueOr(nativeParsed.getPath(), "").split("/")) {
+            if (part.matches("v\\d+(?:beta)?")) {
+                version = part;
+                break;
+            }
+        }
+        StringBuilder path = new StringBuilder("/").append(version);
+        for (int i = 2; i < parts.length; i++) {
+            path.append("/").append(parts[i]);
+        }
+        String query = parsed.getQuery();
+        return parsed.getProtocol() + "://" + parsed.getHost()
+                + (parsed.getPort() > 0 ? ":" + parsed.getPort() : "")
+                + path
+                + (query == null || query.isEmpty() ? "" : "?" + query);
+    }
+
+    private String geminiVideoAspectRatio(String raw) {
+        String value = valueOr(raw, "").trim();
+        return "9:16".equals(value) ? "9:16" : "16:9";
+    }
+
+    private int geminiVideoDurationSeconds(int raw) {
+        int duration = Math.max(4, Math.min(8, raw));
+        if (duration <= 4) return 4;
+        if (duration <= 6) return 6;
+        return 8;
+    }
+
+    private String geminiVideoResolution(String raw) {
+        String value = valueOr(raw, "").trim().toLowerCase(Locale.US);
+        if ("720".equals(value) || "720p".equals(value)) return "720p";
+        if ("1080".equals(value) || "1080p".equals(value)) return "1080p";
+        if ("4k".equals(value)) return "4k";
+        return "";
     }
 
     private JSONObject postDashScopeVideoGeneration(JSONObject choice, String prompt, int durationSeconds,
@@ -5441,10 +5619,16 @@ public class MobileBackendServer {
     }
 
     private byte[] downloadMediaBytes(String mediaUrl) throws Exception {
+        return downloadMediaBytes(mediaUrl, "");
+    }
+
+    private byte[] downloadMediaBytes(String mediaUrl, String apiKey) throws Exception {
         HttpURLConnection conn = (HttpURLConnection) new URL(mediaUrl).openConnection();
+        conn.setInstanceFollowRedirects(true);
         conn.setConnectTimeout(15000);
         conn.setReadTimeout(180000);
         conn.setRequestProperty("Accept", "video/mp4,video/*,*/*");
+        if (!valueOr(apiKey, "").trim().isEmpty()) conn.setRequestProperty("x-goog-api-key", apiKey.trim());
         int status = conn.getResponseCode();
         if (status < 200 || status >= 300) throw new IOException("Video download failed: HTTP " + status);
         byte[] data = readBytes(conn.getInputStream());
