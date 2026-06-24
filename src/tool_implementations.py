@@ -12,11 +12,23 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
+from fastapi import HTTPException
 from src.constants import MAX_READ_CHARS, DEEP_RESEARCH_DIR, VAULT_FILE
 from src.tool_utils import get_mcp_manager
 from core.constants import internal_api_base
+from routes._validators import validate_remote_host, validate_ssh_port
 
 logger = logging.getLogger(__name__)
+
+
+def _string_arg(value: Any) -> str:
+    return "" if value is None else str(value).strip()
+
+
+def _validate_cookbook_ssh_target(remote_host: Any, ssh_port: Any = "") -> tuple[str, str]:
+    remote = validate_remote_host(_string_arg(remote_host) or None) or ""
+    sport = validate_ssh_port(_string_arg(ssh_port) or None) or ""
+    return remote, sport
 
 # ---------------------------------------------------------------------------
 # Active email state
@@ -1256,8 +1268,8 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             _ALIASES = {
                 "shell": ["bash"],
                 "terminal": ["bash"],
-                "search": ["web_search"],
-                "web": ["web_search"],
+                "search": ["web_search", "web_fetch"],
+                "web": ["web_search", "web_fetch"],
                 "browser": ["builtin_browser"],
                 "documents": ["create_document", "edit_document", "update_document", "suggest_document"],
                 "doc": ["create_document", "edit_document", "update_document", "suggest_document"],
@@ -1269,7 +1281,7 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
                 "notes": ["manage_notes"],
                 "calendar": ["manage_calendar"],
                 "email": ["mcp__email__list_emails", "mcp__email__read_email", "mcp__email__send_email"],
-                "research": ["web_search"],  # research is a per-request flag, not a tool — closest analog
+                "research": ["web_search", "web_fetch"],  # research is a per-request flag, not a tool — closest analog
             }
 
             if action == "list_tools":
@@ -2851,13 +2863,25 @@ async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
                 endpoint_added=endpoint_added, endpoint_id=endpoint_id or "",
             )
             note = "" if registered else " (state-write failed — task may not show in UI)"
+            where = host or "local"
+            log_path = f"/tmp/odysseus-tmux/{sid}.log"
             return {
-                "output": f"Serving {repo_id} (session: {sid}){note}",
+                "output": (
+                    f"Serving {repo_id} on {where} (session: {sid}){note}\n"
+                    f"Next required check: call list_served_models. If this task is not ready, "
+                    f"call tail_serve_output with session_id={sid} and tail=400 before answering. "
+                    f"Do not tell the user to check logs; you have the log tool."
+                ),
                 "session_id": sid,
                 "task_type": "serve",
                 "phase": "running",
                 "host": host,
                 "endpoint_id": endpoint_id,
+                "log_path": log_path,
+                "next_tools": [
+                    {"name": "list_served_models", "arguments": {}},
+                    {"name": "tail_serve_output", "arguments": {"session_id": sid, "tail": 400}},
+                ],
                 "exit_code": 0,
             }
         # FastAPI HTTPException puts the message under `detail`, not `error`.
@@ -3025,6 +3049,10 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
             break
 
     if remote:
+        try:
+            remote, sport = _validate_cookbook_ssh_target(remote, sport)
+        except HTTPException as e:
+            return {"error": str(getattr(e, "detail", e)), "exit_code": 1}
         _pf = f"-p {shlex.quote(str(sport))} " if sport and str(sport) != "22" else ""
         cmd = (
             f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "
@@ -3113,8 +3141,8 @@ async def do_tail_serve_output(content: str, owner: Optional[str] = None) -> Dic
         tail = 400
     tail = max(20, min(tail, 4000))
     headers = _internal_headers()
-    remote = (args.get("remote_host") or args.get("host") or "").strip()
-    sport = (args.get("ssh_port") or "").strip()
+    remote = _string_arg(args.get("remote_host") or args.get("host"))
+    sport = _string_arg(args.get("ssh_port"))
     # Resolve host from cookbook state if caller didn't pass one — same
     # lookup _cookbook_kill_session uses.
     if not remote:
@@ -3132,6 +3160,12 @@ async def do_tail_serve_output(content: str, owner: Optional[str] = None) -> Dic
                     if not sport:
                         sport = t.get("sshPort") or ""
                     break
+    if remote:
+        try:
+            remote, sport = _validate_cookbook_ssh_target(remote, sport)
+        except HTTPException as e:
+            return {"error": str(getattr(e, "detail", e)), "exit_code": 1}
+
     # Prefer the persisted /tmp/odysseus-tmux/SESSION.log file over the
     # live tmux pane. The pane is what the user would see scrolling on
     # their screen — including the post-crash neofetch banner and the
@@ -3194,8 +3228,17 @@ async def do_tail_serve_output(content: str, owner: Optional[str] = None) -> Dic
         MAX_CHARS = 8000
         if len(output_text) > MAX_CHARS:
             output_text = "…(earlier output truncated)…\n" + output_text[-MAX_CHARS:]
+        if not output_text:
+            output_text = (
+                f"No log output captured yet for {session_id} on {host_label}. "
+                "This usually means the tmux wrapper has started but the model process "
+                "has not printed anything yet. Do not stop here: call list_served_models "
+                "again to check whether it is still loading, ready, or crashed; if it is "
+                "still not ready, call tail_serve_output again with a larger tail after "
+                "the next status check."
+            )
         return {
-            "output": output_text or "(empty pane)",
+            "output": output_text,
             "session_id": session_id,
             "host": host_label,
             "tail_lines": tail,
@@ -3309,7 +3352,7 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
 
-    host = (args.get("host") or args.get("remote_host") or "").strip()
+    host = _string_arg(args.get("host") or args.get("remote_host"))
     sess = (args.get("tmux_session") or args.get("session_id") or "").strip()
     model = (args.get("model") or args.get("repo_id") or "").strip()
     port = args.get("port") or 8000
@@ -3320,6 +3363,12 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
         return {"error": "tmux_session and model are required", "exit_code": 1}
 
     # Verify tmux session exists on the target host
+    if host:
+        try:
+            host, _ = _validate_cookbook_ssh_target(host)
+        except HTTPException as e:
+            return {"error": str(getattr(e, "detail", e)), "exit_code": 1}
+
     headers = _internal_headers()
     if host:
         check = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no {shlex.quote(host)} 'tmux has-session -t {shlex.quote(sess)} 2>&1'"

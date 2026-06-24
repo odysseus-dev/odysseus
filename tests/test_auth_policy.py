@@ -215,3 +215,58 @@ def test_setup_rejects_seven_char_password(tmp_path):
         asyncio.run(endpoint(body=body, request=request))
 
     assert exc.value.status_code == 400
+
+
+# ── Login "remember me" cookie lifetime ────────────────────────────────
+
+
+class _CapturingResponse:
+    """Stand-in for fastapi.Response that records set_cookie kwargs."""
+
+    def __init__(self):
+        self.cookie_kwargs = None
+
+    def set_cookie(self, **kwargs):
+        self.cookie_kwargs = kwargs
+
+
+def _login_endpoint(auth_manager):
+    sys.modules.pop("routes.auth_routes", None)
+    _real_core_package()
+    from routes.auth_routes import LoginRequest, setup_auth_routes
+
+    router = setup_auth_routes(auth_manager)
+    for route in router.routes:
+        if getattr(route, "path", None) == "/api/auth/login":
+            return route.endpoint, LoginRequest
+    raise AssertionError("login route not found")
+
+
+def test_remember_cookie_max_age_matches_token_ttl(tmp_path):
+    auth_mod = _auth_module()
+    mgr = _make_manager(tmp_path)
+    mgr.create_user("alice", "alice-password", is_admin=False)
+    endpoint, LoginRequest = _login_endpoint(mgr)
+    request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+    response = _CapturingResponse()
+    body = LoginRequest(username="alice", password="alice-password", remember=True)
+
+    result = asyncio.run(endpoint(body=body, request=request, response=response))
+
+    assert result == {"ok": True, "username": "alice"}
+    # The persistent cookie must outlive neither more nor less than the token.
+    assert response.cookie_kwargs["max_age"] == auth_mod.TOKEN_TTL
+
+
+def test_no_remember_omits_cookie_max_age(tmp_path):
+    mgr = _make_manager(tmp_path)
+    mgr.create_user("bob", "bob-password", is_admin=False)
+    endpoint, LoginRequest = _login_endpoint(mgr)
+    request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+    response = _CapturingResponse()
+    body = LoginRequest(username="bob", password="bob-password", remember=False)
+
+    asyncio.run(endpoint(body=body, request=request, response=response))
+
+    # Without "remember", the cookie is a session cookie (no max_age).
+    assert "max_age" not in response.cookie_kwargs

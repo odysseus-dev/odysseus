@@ -366,20 +366,13 @@ function _buildPanelHTML() {
     <div class="modal-body research-pane-body" data-no-swipe-dismiss>
       <div class="research-new-job">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
-          <h2 style="margin:0;padding:0;line-height:1;display:inline-flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent, var(--red))" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M6 18h8"/><path d="M3 22h18"/><path d="M14 22a7 7 0 1 0 0-14h-1"/><path d="M9 14h2"/><path d="M9 12a2 2 0 0 1-2-2V6h4v4a2 2 0 0 1-2 2Z"/><path d="M12 6V3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3"/></svg>Research <span id="research-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal;position:relative;top:4px;"></span></h2>
+          <h2 style="margin:0;padding:0;line-height:1;display:inline-flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent, var(--red))" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M6 18h8"/><path d="M3 22h18"/><path d="M14 22a7 7 0 1 0 0-14h-1"/><path d="M9 14h2"/><path d="M9 12a2 2 0 0 1-2-2V6h4v4a2 2 0 0 1-2 2Z"/><path d="M12 6V3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3"/></svg>Research <span id="research-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
         </div>
         <p class="memory-desc doclib-desc" style="margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
           <span>Multi-step web research with an LLM-in-the-loop agent</span>
-          <span id="research-no-past-hint" style="display:none;font-size:11px;opacity:0.7;position:relative;top:-4px;">— past runs in <button type="button" class="research-library-link" style="background:none;border:none;padding:0;font:inherit;color:var(--accent, var(--red));cursor:pointer;text-decoration:underline;">Library, Research</button></span>
+          <span id="research-no-past-hint" style="display:none;font:inherit;opacity:1;position:static;">— past runs in <button type="button" class="research-library-link" style="background:none;border:none;padding:0;font:inherit;color:var(--accent, var(--red));cursor:pointer;text-decoration:underline;">Library, Research</button></span>
         </p>
         <textarea id="research-query" class="research-query" placeholder="${_pickResearchHint()}" rows="4"></textarea>
-        <div class="research-category-row" id="research-category-row">
-          <button class="research-cat active" data-cat="" title="LLM auto-detects the best format">Auto</button>
-          <button class="research-cat" data-cat="product">Product</button>
-          <button class="research-cat" data-cat="comparison">Compare</button>
-          <button class="research-cat" data-cat="howto">How-to</button>
-          <button class="research-cat" data-cat="factcheck">Fact-check</button>
-        </div>
         <button id="research-settings-toggle" class="research-settings-toggle${chevronCls}">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;opacity:0.85;flex-shrink:0;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings<span class="research-settings-chevron">${_chevronIcon}</span>
         </button>
@@ -787,6 +780,21 @@ function _renderJobs() {
       +   '<span class="research-section-dot' + (dotPulse ? ' pulsing' : '') + '" style="background:' + dotColor + ';"></span>'
       +   '<svg class="research-section-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>'
       + '</span>';
+    if (key === 'past') {
+      const hint = document.createElement('span');
+      hint.className = 'research-library-hint';
+      hint.innerHTML = '<span>Multi-step web research with an LLM-in-the-loop agent</span> <button type="button" class="research-library-link">Library, Research</button>';
+      hint.querySelector('.research-library-link').addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Close the research panel first so the Library opens ABOVE it on mobile
+        // (otherwise it stacks under the full-screen panel).
+        closePanel();
+        if (window.documentModule && window.documentModule.openLibrary) {
+          window.documentModule.openLibrary({ tab: 'research' });
+        }
+      });
+      header.appendChild(hint);
+    }
     header.addEventListener('click', () => {
       const nowCollapsed = sec.classList.toggle('collapsed');
       if (nowCollapsed) _collapsedSections.add(key); else _collapsedSections.delete(key);
@@ -803,27 +811,6 @@ function _renderJobs() {
     });
     const body = document.createElement('div');
     body.className = 'research-section-body';
-    // Past Research header: link goes INLINE next to the title instead
-    // of on a second row. Append it to the title span as a small chip.
-    if (key === 'past') {
-      const titleEl = header.querySelector('.research-section-title');
-      if (titleEl) {
-        const hint = document.createElement('span');
-        hint.className = 'research-library-hint research-library-hint-inline';
-        hint.style.cssText = 'margin-left:8px;font-size:10.5px;opacity:0.65;font-weight:normal;';
-        hint.innerHTML = '— all in <button type="button" class="research-library-link" style="background:none;border:none;padding:0;font:inherit;color:var(--accent, var(--red));cursor:pointer;text-decoration:underline;">Library, Research</button>';
-        hint.querySelector('.research-library-link').addEventListener('click', (e) => {
-          e.stopPropagation();
-          // Close the research panel first so the Library opens ABOVE it on mobile
-          // (otherwise it stacks under the full-screen panel).
-          closePanel();
-          if (window.documentModule && window.documentModule.openLibrary) {
-            window.documentModule.openLibrary({ tab: 'research' });
-          }
-        });
-        titleEl.appendChild(hint);
-      }
-    }
     arr.forEach(j => body.appendChild(_buildJobCard(j)));
     sec.appendChild(header);
     sec.appendChild(body);
@@ -1014,9 +1001,9 @@ function _buildJobCard(job) {
       </div>
       ${failNote}
       <div class="research-job-actions">
-        <button class="research-job-action" data-action="copy" title="Copy report to clipboard">${_copyIcon}</button>
-        <button class="research-job-action" data-action="chat" title="Open follow-up chat with this research as context">${_chatIcon} Discuss</button>
         <button class="research-job-action research-job-action-report" data-action="report" title="Visual report">${_externalIcon} Visual Report</button>
+        <button class="research-job-action" data-action="chat" title="Open follow-up chat with this research as context">${_chatIcon} Discuss</button>
+        <button class="research-job-action research-job-action-dim" data-action="copy" title="Copy report to clipboard">${_copyIcon}</button>
         <button class="research-job-action research-job-action-dim" data-action="dismiss" title="Clear from list">${_cancelIcon}</button>
         <button class="research-job-action research-job-action-dim" data-action="delete" title="Delete from disk">${_trashIcon} Delete</button>
       </div>

@@ -282,7 +282,17 @@ def _detect_amd():
             "gpus": cards,
             "gpu_groups": groups,
             "homogeneous": len(groups) <= 1,
-            "backend": "rocm",
+            # Pick the actual runtime label: ROCm/HIP only when its
+            # toolchain is installed, otherwise Vulkan if vulkaninfo is
+            # present (mesa RADV works fine on RDNA/CDNA when ROCm
+            # packages are absent — see Strix Halo where ROCm support
+            # is still backporting). Reporting "rocm" on a Vulkan-only
+            # host misleads downstream env-var pinning
+            # (HIP_VISIBLE_DEVICES is a no-op there).
+            "backend": (
+                "rocm" if (_run(["which", "rocminfo"]) or _run(["which", "hipconfig"]))
+                else ("vulkan" if _run(["which", "vulkaninfo"]) else "rocm")
+            ),
             "unified_memory": is_apu,
             # AMD ISA/family so downstream can tell datacenter Instinct (CDNA,
             # where vLLM/SGLang run AWQ/GPTQ reliably) from consumer Radeon
@@ -320,7 +330,7 @@ def _detect_apple_silicon():
 
     # Only Apple Silicon (arm64) has a Metal GPU worth serving LLMs on; Intel
     # Macs fall through to the CPU path.
-    if "arm" not in arch and "aarch64" not in arch:
+    if _canonical_cpu_arch(arch) != "arm64":
         return None
 
     # Chip name, e.g. "Apple M4 Max" — carries the Pro/Max/Ultra variant that
@@ -503,11 +513,56 @@ def _get_cpu_count():
     return os.cpu_count() or 1
 
 
+def _canonical_cpu_arch(value):
+    arch = str(value or "").lower().strip().replace("-", "_")
+    if arch in ("x86_64", "amd64", "x64"):
+        return "x86_64"
+    if arch in ("i386", "i686", "x86"):
+        return "x86"
+    if arch in ("arm64", "aarch64"):
+        return "arm64"
+    if arch == "arm" or arch.startswith("armv"):
+        return "arm"
+    return arch
+
+
+def _get_cpu_arch():
+    if _remote_host:
+        return _canonical_cpu_arch(_run(["uname", "-m"]) or "")
+    return _canonical_cpu_arch(platform.machine())
+
+
 def _powershell_exe():
     """Pick the best PowerShell executable for LOCAL execution: prefer pwsh
     (PowerShell 7+), fall back to Windows PowerShell 5.1. Returns an absolute
     path so we don't depend on a particular PATH ordering."""
     return shutil.which("pwsh") or shutil.which("powershell") or "powershell"
+
+def _powershell_encoded_for_ssh(script: str):
+    """Run a PowerShell script on a remote Windows host over SSH.
+
+    Nested quotes in powershell -Command break when passed through Windows
+    OpenSSH's cmd wrapper; -EncodedCommand avoids that.
+    """
+    import base64
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    return _run(f"powershell -NoProfile -EncodedCommand {encoded}")
+
+
+def _probe_remote_platform():
+    """Best-effort OS detection over SSH when the caller didn't pass platform."""
+    out = _run("echo %OS%")
+    if out and "Windows_NT" in out:
+        return "windows"
+    uname = (_run(["uname", "-s"]) or "").strip().lower()
+    if uname == "darwin":
+        # Mac uses the linux detection path (_detect_apple_silicon over SSH).
+        return "linux"
+    if uname == "linux":
+        out = _run("test -d /data/data/com.termux && echo termux || echo linux")
+        if out and "termux" in out:
+            return "termux"
+    return "linux"
 
 
 def _detect_windows():
@@ -528,6 +583,7 @@ def _detect_windows():
         $r.cpu_name = $cpu.Name
         $r.cpu_cores = (Get-CimInstance Win32_Processor | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum
         $r.arch = $cpu.AddressWidth
+        $r.cpu_arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
         # GPU detection via nvidia-smi (fastest) or WMI fallback
         try { 
             $nv = nvidia-smi --query-gpu=memory.total,name --format=csv,noheader,nounits 2>$null
@@ -570,9 +626,8 @@ def _detect_windows():
     """
     )
     if _remote_host:
-        # Remote: ship a single command string over SSH. The remote shell parses
-        # the quoting; PowerShell on the far side runs the -Command payload.
-        out = _run(f'powershell -Command "{ps_cmd}"')
+        # Remote: use -EncodedCommand so OpenSSH/cmd quoting does not break the script.
+        out = _powershell_encoded_for_ssh(ps_cmd.strip())
     else:
         # Local: pass a LIST argv straight to subprocess so the OS hands ps_cmd
         # to PowerShell verbatim — no fragile string-level quote escaping. Prefer
@@ -599,6 +654,7 @@ def _detect_windows():
             "available_ram_gb": d.get("avail_gb", 0),
             "cpu_cores": _as_int(d.get("cpu_cores"), 1),
             "cpu_name": _cpu_name,
+            "cpu_arch": _canonical_cpu_arch(d.get("cpu_arch")),
             "has_gpu": bool(d.get("gpu_name")),
             "gpu_name": d.get("gpu_name"),
             "gpu_vram_gb": d.get("gpu_vram_gb"),
@@ -742,6 +798,13 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
     """
     global _remote_host, _remote_port, _remote_platform
 
+    if host and not platform:
+        _remote_host = host
+        _remote_port = ssh_port or None
+        platform = _probe_remote_platform()
+        _remote_host = None
+        _remote_port = None
+
     cache_key = _cache_key(host, ssh_port, platform)
     now = time.time()
     if not fresh and cache_key in _cache_by_host:
@@ -762,8 +825,8 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
             _remote_platform = None
             _cache_by_host[cache_key] = (now, result)
             return result
-        # If Windows detection failed, return error
-        result = {"error": f"Cannot connect to {host}", "host": host}
+        # SSH may work while the PowerShell hardware probe still fails.
+        result = {"error": f"Windows hardware probe failed for {host}", "host": host}
         _remote_host = None
         _remote_platform = None
         _cache_by_host[cache_key] = (now, result)
@@ -794,6 +857,7 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
     available_ram = round(_get_available_ram_gb(), 1)
     cpu_cores = _get_cpu_count()
     cpu_name = _get_cpu_name()
+    cpu_arch = _get_cpu_arch()
 
     gpu_info = _detect_apple_silicon() or _detect_nvidia() or _detect_amd()
 
@@ -803,6 +867,7 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
             "available_ram_gb": available_ram,
             "cpu_cores": cpu_cores,
             "cpu_name": cpu_name,
+            "cpu_arch": cpu_arch,
             "has_gpu": True,
             "gpu_name": gpu_info["gpu_name"],
             "gpu_vram_gb": gpu_info["gpu_vram_gb"],
@@ -817,17 +882,13 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
             "unified_memory": gpu_info.get("unified_memory", False),
         }
     else:
-        if _remote_host:
-            arch_out = _run(["uname", "-m"]) or ""
-        else:
-            import platform as _platform
-            arch_out = _platform.machine().lower()
-        backend = "cpu_arm" if "aarch64" in arch_out or "arm" in arch_out else "cpu_x86"
+        backend = "cpu_arm" if cpu_arch == "arm64" else "cpu_x86"
         result = {
             "total_ram_gb": total_ram,
             "available_ram_gb": available_ram,
             "cpu_cores": cpu_cores,
             "cpu_name": cpu_name,
+            "cpu_arch": cpu_arch,
             "has_gpu": False,
             "gpu_name": None,
             "gpu_vram_gb": None,
