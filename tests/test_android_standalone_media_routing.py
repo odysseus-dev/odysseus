@@ -35,6 +35,38 @@ def test_android_standalone_media_generation_bypasses_local_shortcuts():
     )
 
 
+def test_android_selected_image_model_accepts_bare_descriptive_prompt():
+    image_prompt = ANDROID_SERVER.split("private String mobileImageGenerationPrompt", 1)[1].split(
+        "private String mobileVideoGenerationPrompt", 1
+    )[0]
+
+    assert "boolean selectedImageModel = isImageGenerationModel(model);" in image_prompt
+    assert "if (!looksLikeMobileNonGenerationQuestion(prompt)) return prompt;" in image_prompt
+    assert "looksLikeExistingMobileMediaQuestion(prompt)" in image_prompt
+
+
+def test_android_selected_video_model_accepts_bare_descriptive_prompt():
+    video_prompt = ANDROID_SERVER.split("private String mobileVideoGenerationPrompt", 1)[1].split(
+        "private String requestedMobileMediaGenerationKind", 1
+    )[0]
+
+    assert "boolean selectedVideoModel = isVideoGenerationModel(model);" in video_prompt
+    assert "if (!looksLikeMobileNonGenerationQuestion(prompt)) return prompt;" in video_prompt
+
+
+def test_android_bare_media_prompt_guard_preserves_questions_and_local_tools():
+    guard = ANDROID_SERVER.split("private boolean looksLikeMobileNonGenerationQuestion", 1)[1].split(
+        "private String requestedMobileMediaGenerationKind", 1
+    )[0]
+
+    assert "raw.endsWith(\"?\")" in guard
+    assert "what|why|how|when|where|who|which" in guard
+    assert "will|would|should)\\\\b" in guard
+    assert "mentionsCalendarIntent(message)" in guard
+    assert "mobileMentionsWorkspaceOrFiles(message)" in guard
+    assert 'text.contains(" gallery ")' in guard
+
+
 def test_android_calendar_intent_does_not_match_classroom_substrings():
     detector = ANDROID_SERVER.split("private boolean mentionsCalendarIntent", 1)[1].split(
         "private List<JSONObject> activeCalendarEventsSorted", 1

@@ -10141,7 +10141,8 @@ public class MobileBackendServer {
         String kind = requestedMobileMediaGenerationKind(prompt);
         if ("video".equals(kind) || "music".equals(kind) || "audio".equals(kind)) return "";
         if ("image".equals(kind)) return prompt;
-        if (!isImageGenerationModel(model)) return "";
+        boolean selectedImageModel = isImageGenerationModel(model);
+        if (!selectedImageModel) return "";
         if (looksLikeExistingMobileMediaQuestion(prompt)) return "";
         String text = " " + prompt.toLowerCase(Locale.US).replaceAll("\\s+", " ") + " ";
         if (text.contains(" prompt ") || text.contains(" svg ") || text.contains(" html ")
@@ -10150,6 +10151,7 @@ public class MobileBackendServer {
                 .matcher(text).find()) return "";
         if (java.util.regex.Pattern.compile("\\b(?:generate|create|make|produce|render|draw|design|paint|illustrate)\\b")
                 .matcher(text).find()) return prompt;
+        if (!looksLikeMobileNonGenerationQuestion(prompt)) return prompt;
         return "";
     }
 
@@ -10159,7 +10161,8 @@ public class MobileBackendServer {
         String kind = requestedMobileMediaGenerationKind(prompt);
         if ("image".equals(kind) || "music".equals(kind) || "audio".equals(kind)) return "";
         if ("video".equals(kind)) return prompt;
-        if (!isVideoGenerationModel(model)) return "";
+        boolean selectedVideoModel = isVideoGenerationModel(model);
+        if (!selectedVideoModel) return "";
         String text = " " + prompt.toLowerCase(Locale.US).replaceAll("\\s+", " ") + " ";
         if (text.contains(" prompt ") || text.contains(" svg ") || text.contains(" html ")
                 || text.contains(" css ") || text.contains(" javascript ") || text.contains(" code ")) return "";
@@ -10167,7 +10170,30 @@ public class MobileBackendServer {
                 .matcher(text).find()) return "";
         if (java.util.regex.Pattern.compile("\\b(?:generate|create|make|produce|render|animate|film)\\b")
                 .matcher(text).find()) return prompt;
+        if (!looksLikeMobileNonGenerationQuestion(prompt)) return prompt;
         return "";
+    }
+
+    private boolean looksLikeMobileNonGenerationQuestion(String message) {
+        String raw = valueOr(message, "").trim().toLowerCase(Locale.US);
+        if (raw.isEmpty()) return false;
+        if (raw.endsWith("?")) return true;
+        if (java.util.regex.Pattern.compile("^(?:what|why|how|when|where|who|which|can|could|do|does|did|is|are|am|was|were|will|would|should)\\b")
+                .matcher(raw).find()) return true;
+
+        String text = " " + raw.replaceAll("[^a-z0-9']+", " ").replaceAll("\\s+", " ").trim() + " ";
+        boolean asksToInspect = java.util.regex.Pattern
+                .compile("\\b(?:show|list|check|read|open|view|see|inspect|describe|tell)\\b")
+                .matcher(text).find();
+        boolean mentionsGallery = text.contains(" gallery ")
+                || text.contains(" photo ")
+                || text.contains(" photos ")
+                || text.contains(" picture ")
+                || text.contains(" pictures ")
+                || text.contains(" camera roll ");
+        return asksToInspect && (mentionsCalendarIntent(message)
+                || mobileMentionsWorkspaceOrFiles(message)
+                || mentionsGallery);
     }
 
     private String requestedMobileMediaGenerationKind(String message) {
