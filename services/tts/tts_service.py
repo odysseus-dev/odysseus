@@ -9,7 +9,7 @@ import httpx
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-from src.constants import TTS_CACHE_DIR
+from src.constants import TTS_CACHE_DIR, TTS_CACHE_MAX_ENTRIES
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +88,28 @@ class TTSService:
     def _put_cache(self, key: str, data: bytes):
         ext = ".mp3" if (len(data) >= 3 and (data[:3] == b'ID3' or (data[0] == 0xff and (data[1] & 0xe0) == 0xe0))) else ".wav"
         (self.cache_dir / f"{key}{ext}").write_bytes(data)
+        self._evict_cache()
+
+    def _evict_cache(self):
+        """Keep the on-disk cache bounded to TTS_CACHE_MAX_ENTRIES files.
+
+        Every distinct synthesis writes a file and only the manual clear_cache()
+        ever removed them, so a long-running instance could fill the data disk.
+        Evict oldest-first by mtime once over the cap, mirroring the LRU policy
+        in services/search/cache.py. Best-effort: cache pruning must never break
+        synthesis, so filesystem errors are logged and swallowed.
+        """
+        try:
+            files = [p for p in self.cache_dir.glob("*.*") if p.suffix in (".mp3", ".wav")]
+            excess = len(files) - TTS_CACHE_MAX_ENTRIES
+            if excess <= 0:
+                return
+            files.sort(key=lambda p: p.stat().st_mtime)
+            for p in files[:excess]:
+                p.unlink(missing_ok=True)
+            logger.info(f"Evicted {excess} old TTS cache file(s) (cap {TTS_CACHE_MAX_ENTRIES})")
+        except OSError as e:
+            logger.warning(f"TTS cache eviction failed: {e}")
 
     def clear_cache(self):
         count = 0
