@@ -46,14 +46,41 @@ def test_android_selected_image_model_accepts_bare_descriptive_prompt():
 
 
 def test_android_recognizes_z_image_turbo_as_image_generation_model():
-    detector = ANDROID_SERVER.split("private boolean isImageGenerationModel", 1)[1].split(
+    detector = ANDROID_SERVER.split("private boolean isZImageModel", 1)[1].split(
+        "private boolean isGeminiImageModel", 1
+    )[0]
+    image_generation = ANDROID_SERVER.split("private boolean isImageGenerationModel", 1)[1].split(
         "private boolean isVideoGenerationModel", 1
     )[0]
 
+    assert "isZImageModel(m)" in image_generation
     assert 'm.contains("z-image")' in detector
     assert 'm.contains("z_image")' in detector
     assert 'm.contains("zai-image")' in detector
     assert 'm.contains("zai_image")' in detector
+
+
+def test_android_adapts_aimlapi_z_image_payload_shape():
+    detector = ANDROID_SERVER.split("private boolean isZImageModel", 1)[1].split(
+        "private boolean isGeminiImageModel", 1
+    )[0]
+    openai_generation = ANDROID_SERVER.split("private JSONObject postOpenAiCompatibleImageGeneration", 1)[1].split(
+        "private JSONObject postOpenAiCompatibleImageGenerationPayload", 1
+    )[0]
+    helper = ANDROID_SERVER.split("private boolean isAimlApiEndpoint", 1)[1].split(
+        "private JSONObject postQwenDashscopeImageGeneration", 1
+    )[0]
+
+    assert 'm.contains("z/image")' in detector
+    assert "boolean aimlZImage = zImageModel && isAimlApiEndpoint(base, choice);" in openai_generation
+    assert 'put("model", aimlZImage ? aimlApiZImageModel(model) : model)' in openai_generation
+    assert 'payload.put("image_size", aimlApiZImageSize(size));' in openai_generation
+    assert 'payload.put("quality"' not in openai_generation.split("if (!zImageModel", 1)[0]
+    assert "postOpenAiCompatibleImageGenerationPayload(base, apiKey, payload, 90000)" in openai_generation
+    assert '"alibaba/z-image-turbo"' in helper
+    assert '"landscape_16_9"' in helper
+    assert '"portrait_9_16"' in helper
+    assert '"square"' in helper
 
 
 def test_android_recognizes_gemini_banana_and_imagen_image_models():

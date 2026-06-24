@@ -3867,7 +3867,7 @@ public class MobileBackendServer {
         if ((m.contains("gemini") && m.contains("image")) || isImagenModel(m)) return true;
         if (m.contains("flux") || m.contains("kontext") || m.contains("sdxl") || m.contains("stable-diffusion") || m.contains("stable_diffusion")) return true;
         if (m.contains("qwen-image") || (m.contains("qwen") && m.contains("image"))) return true;
-        if (m.contains("z-image") || m.contains("z_image") || m.contains("zai-image") || m.contains("zai_image")) return true;
+        if (isZImageModel(m)) return true;
         if (m.contains("seedream") || m.contains("dreamshaper") || m.contains("realvis") || m.contains("juggernaut")) return true;
         return m.contains("diffusion") && !m.contains("embedding");
     }
@@ -3912,6 +3912,13 @@ public class MobileBackendServer {
         String m = valueOr(model, "").toLowerCase(Locale.US).trim();
         if (m.startsWith("models/")) m = m.substring("models/".length());
         return m.startsWith("imagen-");
+    }
+
+    private boolean isZImageModel(String model) {
+        String m = valueOr(model, "").toLowerCase(Locale.US).trim();
+        return m.contains("z-image") || m.contains("z_image")
+                || m.contains("zai-image") || m.contains("zai_image")
+                || m.contains("z/image") || m.contains("zimage");
     }
 
     private boolean isGeminiImageModel(String model) {
@@ -4180,20 +4187,29 @@ public class MobileBackendServer {
         if (model.isEmpty() && isOpenAIBase(base)) model = "gpt-image-1";
         if (model.isEmpty()) throw new IOException("Select an image generation model for this endpoint.");
 
+        boolean zImageModel = isZImageModel(model);
+        boolean aimlZImage = zImageModel && isAimlApiEndpoint(base, choice);
         JSONObject payload = new JSONObject()
-                .put("model", model)
+                .put("model", aimlZImage ? aimlApiZImageModel(model) : model)
                 .put("prompt", prompt)
-                .put("n", 1)
-                .put("size", valueOr(size, "").isEmpty() ? "1024x1024" : size);
+                .put("n", 1);
+        if (aimlZImage) {
+            payload.put("image_size", aimlApiZImageSize(size));
+        } else {
+            payload.put("size", valueOr(size, "").isEmpty() ? "1024x1024" : size);
+        }
         String modelLower = model.toLowerCase(Locale.US);
         boolean gptImageModel = modelLower.startsWith("gpt-image") || modelLower.contains("chatgpt-image");
         boolean dalleModel = modelLower.contains("dall-e");
         boolean localDiffusionModel = !gptImageModel && !dalleModel;
-        if (gptImageModel || localDiffusionModel) {
+        if (!zImageModel && (gptImageModel || localDiffusionModel)) {
             payload.put("quality", valueOr(quality, "").isEmpty() ? "medium" : quality);
         }
 
         try {
+            if (zImageModel) {
+                return postOpenAiCompatibleImageGenerationPayload(base, apiKey, payload, 90000);
+            }
             return postOpenAiCompatibleImageGenerationPayload(base, apiKey, payload);
         } catch (IOException ex) {
             if (localDiffusionModel && payload.has("quality")) {
@@ -4210,10 +4226,15 @@ public class MobileBackendServer {
     }
 
     private JSONObject postOpenAiCompatibleImageGenerationPayload(String base, String apiKey, JSONObject payload) throws Exception {
+        return postOpenAiCompatibleImageGenerationPayload(base, apiKey, payload, 300000);
+    }
+
+    private JSONObject postOpenAiCompatibleImageGenerationPayload(String base, String apiKey, JSONObject payload,
+                                                                 int readTimeoutMs) throws Exception {
         HttpURLConnection conn = (HttpURLConnection) new URL(base + "/images/generations").openConnection();
         conn.setRequestMethod("POST");
         conn.setConnectTimeout(15000);
-        conn.setReadTimeout(300000);
+        conn.setReadTimeout(readTimeoutMs);
         conn.setDoOutput(true);
         conn.setRequestProperty("Content-Type", "application/json");
         conn.setRequestProperty("Accept", "application/json");
@@ -4234,6 +4255,34 @@ public class MobileBackendServer {
             throw new IOException("Image generation returned no image: " + providerNoImageDetail(response));
         }
         return normalized;
+    }
+
+    private boolean isAimlApiEndpoint(String baseUrl, JSONObject ep) {
+        String text = (valueOr(baseUrl, "") + " "
+                + (ep == null ? "" : ep.optString("name", "")) + " "
+                + (ep == null ? "" : ep.optString("provider", ""))).toLowerCase(Locale.US);
+        return text.contains("aimlapi") || text.contains("ai/ml api") || text.contains("ai ml api");
+    }
+
+    private String aimlApiZImageModel(String model) {
+        String raw = valueOr(model, "").trim();
+        String lower = raw.toLowerCase(Locale.US);
+        if ("z-image-turbo".equals(lower) || "z_image_turbo".equals(lower)
+                || "zimage-turbo".equals(lower) || "zimage_turbo".equals(lower)) {
+            return "alibaba/z-image-turbo";
+        }
+        return raw;
+    }
+
+    private String aimlApiZImageSize(String size) {
+        String raw = valueOr(size, "").trim().toLowerCase(Locale.US);
+        if (raw.isEmpty() || "1024x1024".equals(raw) || "auto".equals(raw)) return "square";
+        String[] parts = raw.split("x", 2);
+        if (parts.length != 2) return "square";
+        int width = parseInt(parts[0], 1);
+        int height = parseInt(parts[1], 1);
+        if (width == height) return "square";
+        return width > height ? "landscape_16_9" : "portrait_9_16";
     }
 
     private JSONObject postQwenDashscopeImageGeneration(JSONObject choice, String prompt, String size) throws Exception {
