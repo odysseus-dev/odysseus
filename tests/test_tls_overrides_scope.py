@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import os
 import re
+import ssl
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -147,3 +148,85 @@ def test_llm_verify_falls_back_to_true_for_missing_bundle_file():
         assert mod.llm_verify() is True
     finally:
         os.environ.pop("LLM_CA_BUNDLE", None)
+
+
+# ── SearXNG (#4782) ──────────────────────────────────────────────────────
+# A parallel, independently-scoped extra CA bundle for a self-hosted SearXNG
+# instance behind a private / self-signed cert. Same guarantees as
+# llm_verify(): extend-only (no verify=off), safe default, and tightly scoped
+# to the SearXNG HTTP path — never the other (public) search providers.
+
+SEARXNG_ALLOWED_CALLERS = frozenset({
+    "services/search/providers.py",  # the two self-hosted SearXNG httpx.get calls
+})
+
+
+def test_searxng_verify_only_used_in_allowlisted_files():
+    """searxng_verify() must only be consumed by the self-hosted SearXNG path.
+
+    If a future PR threads it into web_fetch, the public search providers
+    (Brave / DuckDuckGo / Google PSE), embeddings, or any other arbitrary-URL
+    caller, that is a scope expansion and a security review. Adding a file to
+    SEARXNG_ALLOWED_CALLERS requires a written justification.
+    """
+    callers = _grep_files(r"\bsearxng_verify\s*\(")
+    unexpected = callers - SEARXNG_ALLOWED_CALLERS
+    missing = SEARXNG_ALLOWED_CALLERS - callers
+    assert not unexpected, (
+        f"searxng_verify() called from unexpected file(s): {sorted(unexpected)}. "
+        f"Expected scope: {sorted(SEARXNG_ALLOWED_CALLERS)}. The SearXNG CA "
+        "bundle must not be threaded into non-SearXNG outbound requests."
+    )
+    assert not missing, (
+        f"searxng_verify() no longer called from {sorted(missing)} — the "
+        "SearXNG CA bundle integration regressed or the allowlist is stale."
+    )
+
+
+def test_searxng_verify_default_is_true_when_env_unset():
+    """With SEARXNG_CA_BUNDLE unset, searxng_verify() must return True so httpx
+    falls through to its built-in trust store — operators opt in explicitly."""
+    os.environ.pop("SEARXNG_CA_BUNDLE", None)
+    import importlib
+
+    import src.tls_overrides as mod
+    importlib.reload(mod)
+    assert mod.searxng_verify() is True, (
+        f"Default searxng_verify() must be True (httpx built-in trust store); "
+        f"got {mod.searxng_verify()!r}."
+    )
+
+
+def test_searxng_verify_falls_back_to_true_for_missing_bundle_file():
+    """Pointing SEARXNG_CA_BUNDLE at a non-existent path must NOT raise and must
+    fall back to verify=True (system trust), never a TLS-disabled request."""
+    os.environ["SEARXNG_CA_BUNDLE"] = "/nonexistent/path/searxng-root.pem"
+    try:
+        import importlib
+
+        import src.tls_overrides as mod
+        importlib.reload(mod)
+        assert mod.searxng_verify() is True
+    finally:
+        os.environ.pop("SEARXNG_CA_BUNDLE", None)
+
+
+def test_searxng_verify_loads_real_bundle_returns_context():
+    """A valid SEARXNG_CA_BUNDLE must produce an extended-trust SSLContext (not
+    True), proving the bundle actually loads. certifi.where() is a real PEM that
+    always exists in the runtime, so this is deterministic and offline."""
+    import certifi
+
+    os.environ["SEARXNG_CA_BUNDLE"] = certifi.where()
+    try:
+        import importlib
+
+        import src.tls_overrides as mod
+        importlib.reload(mod)
+        assert isinstance(mod.searxng_verify(), ssl.SSLContext)
+    finally:
+        os.environ.pop("SEARXNG_CA_BUNDLE", None)
+        import importlib
+
+        import src.tls_overrides as mod
+        importlib.reload(mod)

@@ -10,6 +10,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from src.constants import SEARXNG_INSTANCE, REQUEST_TIMEOUT, WEB_FETCH_USER_AGENT
+from src.tls_overrides import searxng_verify
 from .analytics import RateLimitError, error_logger
 from .query import build_enhanced_query
 
@@ -189,6 +190,9 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
                 params=search_params,
                 headers=headers or None,
                 timeout=15,
+                # Self-hosted SearXNG may sit behind a private/self-signed CA;
+                # SEARXNG_CA_BUNDLE extends trust for it (default: verify on).
+                verify=searxng_verify(),
             )
             response.raise_for_status()
             data = response.json()
@@ -259,6 +263,9 @@ def searxng_search(query, max_results=10):
             params={"q": query, "safesearch": _safesearch_for("searxng")},
             headers=req_headers,
             timeout=10,
+            # Self-hosted SearXNG may sit behind a private/self-signed CA;
+            # SEARXNG_CA_BUNDLE extends trust for it (default: verify on).
+            verify=searxng_verify(),
         )
         if response.is_success:
             soup = BeautifulSoup(response.text, "html.parser")
