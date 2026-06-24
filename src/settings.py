@@ -44,6 +44,11 @@ DEFAULT_SETTINGS = {
     "vision_enabled": True,
     # Ordered fallback chain for the Vision model (image analysis, OCR, tagging).
     "vision_model_fallbacks": [],
+    "ocr_enabled": False,
+    "ocr_provider": "skill-ocr",
+    "ocr_quality_mode": "quality",
+    "ocr_service_url": "",
+    "ocr_api_key": "",
     # Public base URL used to build clickable deep-links in outgoing alerts
     # (e.g., urgency alert email). Example: "https://chat.example.com"
     "app_public_url": "",

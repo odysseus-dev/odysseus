@@ -17,6 +17,10 @@ def extract_pdf_text(file_path: str) -> str:
         from pypdf import PdfReader
         reader = PdfReader(file_path)
         text = "".join((page.extract_text() or "") for page in reader.pages)
+        if not text.strip():
+            from src.ocr_provider import extract_ocr_text_sync
+
+            text = extract_ocr_text_sync(file_path, purpose="odysseus.document", mode="quality")
         return text
     except ImportError:
         logger.warning("pypdf not installed, cannot extract PDF text")

@@ -145,6 +145,16 @@ def _process_pdf(path: str, owner: str | None = None) -> str:
                         logger.warning(f"Failed to analyze image in PDF: {e}")
                         continue
 
+        if not pdf_text.strip():
+            try:
+                from src.ocr_provider import extract_ocr_text_sync
+
+                ocr_text = extract_ocr_text_sync(path, purpose="odysseus.document", mode="quality")
+                if ocr_text:
+                    pdf_text += f"\n\n[PDF OCR content]:\n{ocr_text}"
+            except Exception as e:
+                logger.warning(f"PDF OCR fallback failed for {path}: {e}")
+
         if pdf_text:
             if len(pdf_text) > 15000:
                 pdf_text = pdf_text[:15000] + "\n[PDF content truncated]"
