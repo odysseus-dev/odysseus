@@ -53,6 +53,8 @@ with preserve_import_state("core.database", "src.database", "core.session_manage
         _resolve_probe_key,
         _classify_endpoint,
         _rewrite_loopback_for_docker,
+        _openai_model_ids,
+        _ollama_model_names,
         _PROVIDER_CURATED,
     )
 
@@ -72,6 +74,33 @@ def _resp(status, *, json=None, headers=None, url="https://api.example.com/v1/mo
     if headers is not None:
         kwargs["headers"] = headers
     return httpx.Response(status, **kwargs)
+
+
+# ── _openai_model_ids / _ollama_model_names: parsing helpers ──
+
+class TestModelListHelpers:
+    @pytest.mark.parametrize("data,expected", [
+        ({"data": [{"id": "gpt-4o"}, {"id": "gpt-4o-mini"}]}, ["gpt-4o", "gpt-4o-mini"]),
+        ({"data": [{"id": None}, {"id": 123}, {"id": "gpt-4o"}]}, ["gpt-4o"]),  # non-string ids dropped
+        ({"data": ["x", {"id": "ok"}]}, ["ok"]),                                # non-dict entries dropped
+        ({"data": []}, []),
+        ({"data": "oops"}, []),                                                 # non-list "data"
+        ([], []), ("nope", []), (None, []), (123, []),                          # non-dict body
+    ])
+    def test_openai_model_ids(self, data, expected):
+        assert _openai_model_ids(data) == expected
+
+    @pytest.mark.parametrize("data,expected", [
+        ({"models": [{"name": "llama3:8b"}, {"model": "qwen3:4b"}]}, ["llama3:8b", "qwen3:4b"]),
+        ({"models": [{"name": "a", "model": "b"}]}, ["a"]),                      # name precedence over model
+        ({"models": [{"name": 123}, {"model": None}, {"name": "ok"}]}, ["ok"]),  # non-string values dropped
+        ({"models": ["x", {"name": "ok"}]}, ["ok"]),                            # non-dict entries dropped
+        ({"models": []}, []),
+        ({"models": "oops"}, []),
+        ([], []), (None, []), (42, []),                                         # non-dict body
+    ])
+    def test_ollama_model_names(self, data, expected):
+        assert _ollama_model_names(data) == expected
 
 
 # ── _probe_endpoint: model-list parsing ──

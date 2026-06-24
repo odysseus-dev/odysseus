@@ -730,6 +730,34 @@ def _is_loading_model_response(resp: Any) -> bool:
 
 
 
+def _openai_model_ids(data: Any) -> List[str]:
+    """Extract OpenAI-style model IDs (``{"data": [{"id": ...}]}``).
+
+    Tolerates a non-dict body and non-string IDs from non-compliant upstreams,
+    returning only non-empty string IDs.
+    """
+    items = data.get("data") if isinstance(data, dict) else None
+    return [m["id"] for m in (items or [])
+            if isinstance(m, dict) and isinstance(m.get("id"), str) and m["id"]]
+
+
+def _ollama_model_names(data: Any) -> List[str]:
+    """Extract native-Ollama model names (``{"models": [{"name"|"model": ...}]}``).
+
+    Same tolerance as :func:`_openai_model_ids`: a non-dict body or non-string
+    value is skipped rather than crashing, preserving name-then-model precedence.
+    """
+    items = data.get("models") if isinstance(data, dict) else None
+    out: List[str] = []
+    for m in (items or []):
+        if not isinstance(m, dict):
+            continue
+        v = m.get("name") or m.get("model")
+        if isinstance(v, str) and v:
+            out.append(v)
+    return out
+
+
 def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> List[str]:
     """Probe a base URL's /models endpoint and return list of model IDs.
     For Anthropic, queries their /v1/models API, falling back to hardcoded list."""
@@ -752,7 +780,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
             r = httpx.get(url, headers=headers, timeout=timeout, verify=llm_verify())
             r.raise_for_status()
             data = r.json()
-            models = [m.get("id") for m in ((data.get("data") if isinstance(data, dict) else None) or []) if isinstance(m, dict) and isinstance(m.get("id"), str) and m.get("id")]
+            models = _openai_model_ids(data)
             if models:
                 return models
         except httpx.HTTPStatusError as e:
@@ -774,10 +802,10 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         r.raise_for_status()
         data = r.json()
         # OpenAI format: {"data": [{"id": "model-name"}]}
-        models = [m.get("id") for m in ((data.get("data") if isinstance(data, dict) else None) or []) if isinstance(m, dict) and isinstance(m.get("id"), str) and m.get("id")]
+        models = _openai_model_ids(data)
         # Ollama format: {"models": [{"name": "model-name"}]}
         if not models:
-            models = [v for m in ((data.get("models") if isinstance(data, dict) else None) or []) if isinstance(m, dict) for v in (m.get("name") or m.get("model"),) if isinstance(v, str) and v]
+            models = _ollama_model_names(data)
         if models:
             # Z.AI coding plan omits some working models from /models;
             # append curated-only entries for that endpoint only.
@@ -816,7 +844,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
             r = httpx.get(root + "/api/tags", timeout=timeout, verify=llm_verify())
             r.raise_for_status()
             data = r.json()
-            models = [v for m in ((data.get("models") if isinstance(data, dict) else None) or []) if isinstance(m, dict) for v in (m.get("name") or m.get("model"),) if isinstance(v, str) and v]
+            models = _ollama_model_names(data)
             if models:
                 return [m for m in models if _is_chat_model(m)]
     except Exception as e:
