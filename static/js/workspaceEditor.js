@@ -258,7 +258,10 @@ function _renderDir(data) {
   if (pathInput) pathInput.value = _cwd;
   _renderRoot();
   _renderEntries();
-  if (data.truncated) {
+  const storageWarning = String(data.storage_warning || '').trim();
+  if (storageWarning) {
+    _setStatus(storageWarning, true);
+  } else if (data.truncated) {
     _setStatus(`Showing first ${data.max_entries || _entries.length} entries. Use the filter or path box to narrow.`);
   } else {
     _setStatus(`${_entries.length} item${_entries.length === 1 ? '' : 's'}`);

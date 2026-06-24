@@ -21,6 +21,7 @@ import android.print.PrintAttributes;
 import android.print.PrintDocumentAdapter;
 import android.print.PrintManager;
 import android.provider.MediaStore;
+import android.provider.Settings;
 import android.util.Base64;
 import android.view.DisplayCutout;
 import android.view.Gravity;
@@ -54,6 +55,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
@@ -63,11 +65,13 @@ public class MainActivity extends Activity {
     private static final String PREFS_NAME = "odysseus_android";
     private static final String PREF_URL = "server_url";
     private static final String PREF_MODE = "app_mode";
+    private static final String PREF_STORAGE_ACCESS_PROMPTED = "storage_access_prompted";
     private static final String MODE_REMOTE = "remote";
     private static final String MODE_STANDALONE = "standalone";
     private static final String PC_TOOLS_LABEL = "ADB PC Tools";
     private static final int FILE_CHOOSER_REQUEST = 1001;
     private static final int NOTIFICATION_PERMISSION_REQUEST = 1002;
+    private static final int STORAGE_PERMISSION_REQUEST = 1003;
     private static final int COLOR_BG = Color.rgb(13, 15, 14);
     private static final int COLOR_PANEL = Color.rgb(21, 25, 23);
     private static final int COLOR_PANEL_SOFT = Color.rgb(26, 31, 29);
@@ -725,6 +729,7 @@ public class MainActivity extends Activity {
         buildLayout();
         configureWebView();
         ensureStandaloneBackgroundService();
+        ensureStandaloneStorageAccess();
         try {
             String baseUrl = MobileBackendServer.getInstance().start(this);
             loadUrl(baseUrl + "/static/index.html?mobile=standalone&v=" + System.currentTimeMillis());
@@ -746,6 +751,52 @@ public class MainActivity extends Activity {
                     new String[]{android.Manifest.permission.POST_NOTIFICATIONS},
                     NOTIFICATION_PERMISSION_REQUEST
             );
+        }
+    }
+
+    private void ensureStandaloneStorageAccess() {
+        ensureLegacyStoragePermission();
+        maybePromptAllFilesAccess();
+    }
+
+    private void ensureLegacyStoragePermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) return;
+        List<String> permissions = new ArrayList<>();
+        if (checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            permissions.add(android.Manifest.permission.READ_EXTERNAL_STORAGE);
+        }
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P
+                && checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            permissions.add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE);
+        }
+        if (!permissions.isEmpty()) {
+            requestPermissions(permissions.toArray(new String[0]), STORAGE_PERMISSION_REQUEST);
+        }
+    }
+
+    private void maybePromptAllFilesAccess() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return;
+        try {
+            if (Environment.isExternalStorageManager()) return;
+        } catch (Exception ignored) {
+            return;
+        }
+
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        if (prefs.getBoolean(PREF_STORAGE_ACCESS_PROMPTED, false)) return;
+        prefs.edit().putBoolean(PREF_STORAGE_ACCESS_PROMPTED, true).apply();
+        Toast.makeText(this, "Allow all files access so Odysseus can edit project files.", Toast.LENGTH_LONG).show();
+
+        Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+        intent.setData(Uri.parse("package:" + getPackageName()));
+        try {
+            startActivity(intent);
+        } catch (ActivityNotFoundException ex) {
+            try {
+                startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
+            } catch (ActivityNotFoundException ignored) {
+                Toast.makeText(this, "Open Android settings and allow Odysseus all files access.", Toast.LENGTH_LONG).show();
+            }
         }
     }
 

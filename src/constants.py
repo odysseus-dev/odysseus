@@ -2,7 +2,7 @@
 """Application-wide constants and configuration values."""
 import os
 
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 
 # Base paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + "/"

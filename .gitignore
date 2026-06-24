@@ -91,6 +91,14 @@ docs/windows-port/
 # Local config
 compound.config.json
 local.properties
+android/keystore.properties
+android/*.jks
+android/*.keystore
+android/*.p12
+*.jks
+*.keystore
+*.p12
+!android/keystore.properties.example
 *.error.log
 _scratch/
 /odysseus/

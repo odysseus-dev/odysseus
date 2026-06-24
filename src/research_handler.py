@@ -758,6 +758,7 @@ class ResearchHandler:
         category: str = None,
         extraction_timeout: int = None,
         extraction_concurrency: int = None,
+        include_source_sections: bool = False,
     ) -> str:
         """
         Run iterative deep research using the LLM-in-the-loop DeepResearcher.
@@ -856,7 +857,14 @@ class ResearchHandler:
                 _task_entry["raw_report"] = strip_thinking(report)
                 _task_entry["stats"] = stats
 
-            return self._format_research_report(query, report, stats, elapsed)
+            format_kwargs = {}
+            if include_source_sections:
+                format_kwargs = {
+                    "findings": researcher.findings,
+                    "evolving_report": researcher.evolving_report,
+                    "analyzed_urls": getattr(researcher, "analyzed_urls", None),
+                }
+            return self._format_research_report(query, report, stats, elapsed, **format_kwargs)
 
         except Exception as e:
             logger.error(f"DeepResearcher failed: {e}", exc_info=True)
@@ -902,8 +910,15 @@ class ResearchHandler:
 
     def _format_research_report(
         self, query: str, full_report: str, stats: dict, elapsed: float,
+        findings: Optional[list] = None, evolving_report: Optional[str] = None,
+        analyzed_urls: Optional[list] = None,
     ) -> str:
-        """Format research report (markdown only — sources/findings handled by frontend)."""
+        """Format research report.
+
+        Main app routes keep sources/findings as structured payloads. Service
+        callers can pass findings/analyzed_urls to embed those sections in the
+        markdown report for backward-compatible parsing.
+        """
         full_report = strip_thinking(full_report)
         summary_lines = [
             f"**Duration:** {elapsed:.1f}s",
@@ -912,6 +927,58 @@ class ResearchHandler:
             f"**URLs Analyzed:** {stats.get('URLs', '?')}",
         ]
         summary_text = " | ".join(summary_lines)
+
+        sources_section = ""
+        if findings:
+            source_lines = []
+            for source in self._extract_sources(findings):
+                if not isinstance(source, dict):
+                    continue
+                url = source.get("url", "")
+                title = source.get("title", "") or url
+                if url:
+                    source_lines.append(f"- [{title}]({url})")
+            if source_lines:
+                sources_section = "\n### Sources\n\n" + "\n".join(source_lines) + "\n"
+
+        analyzed_urls_section = ""
+        url_items = analyzed_urls if analyzed_urls is not None else findings
+        if url_items:
+            analyzed_seen = set()
+            analyzed_lines = []
+            for item in url_items:
+                if not isinstance(item, dict):
+                    continue
+                url = item.get("url", "")
+                title = item.get("title", "") or url
+                if url and url not in analyzed_seen:
+                    analyzed_seen.add(url)
+                    analyzed_lines.append(f"{len(analyzed_lines) + 1}. [{title}]({url})")
+            if analyzed_lines:
+                analyzed_urls_section = "\n### Analyzed URLs\n\n" + "\n".join(analyzed_lines) + "\n"
+
+        raw_findings_section = ""
+        if findings:
+            parts = []
+            for i, finding in enumerate(findings, 1):
+                if not isinstance(finding, dict):
+                    continue
+                url = finding.get("url", "")
+                title = finding.get("title", "") or "Untitled"
+                summary = finding.get("summary", "")
+                evidence = finding.get("evidence", "")
+                content = summary if summary else (evidence[:2000] if evidence else "(no content)")
+                parts.append(f"**{i}. [{title}]({url})**\n\n{content}")
+            raw_findings_section = "\n\n".join(parts)
+
+        collected_section = ""
+        if evolving_report or raw_findings_section:
+            collected_section = "\n<details>\n<summary><strong>Raw collected findings ({} sources)</strong></summary>\n\n".format(
+                len([f for f in findings or [] if isinstance(f, dict)])
+            )
+            if raw_findings_section:
+                collected_section += raw_findings_section + "\n"
+            collected_section += "\n</details>\n"
 
         formatted = f"""---
 
@@ -922,6 +989,10 @@ class ResearchHandler:
 ---
 
 {full_report}
+
+{sources_section}
+{analyzed_urls_section}
+{collected_section}
 """
         return formatted
 

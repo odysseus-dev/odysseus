@@ -66,6 +66,8 @@ def is_youtube_url(url: str) -> bool:
 
 def extract_youtube_id(url: str) -> Optional[str]:
     """Extract YouTube video ID from various URL formats."""
+    if not isinstance(url, str):
+        return None
     parsed = urllib.parse.urlparse(url)
     if parsed.hostname in ("www.youtube.com", "youtube.com", "m.youtube.com"):
         if parsed.path == "/watch":
@@ -267,6 +269,8 @@ def format_comments_for_context(comments_data: Dict[str, Any], url: str) -> str:
     ctx += f"URL: {url}\n\n"
 
     for i, c in enumerate(comments, 1):
+        if not isinstance(c, dict):
+            continue
         likes = c.get("likes", 0)
         likes_str = f" [{likes} likes]" if likes else ""
         ctx += f"{i}. @{c['author']}{likes_str}: {c['text']}\n\n"

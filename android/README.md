@@ -94,6 +94,25 @@ ODYSSEUS_ANDROID_URL=http://192.168.1.25:7000
 Put that in `android/local.properties` or pass it on the command line. The app
 also lets you change and save the URL at runtime if the first connection fails.
 
+## Direct-Sideload Release Builds
+
+Direct-sideload release APKs must be signed with a persistent local release
+keystore. Do not distribute debug APKs as releases.
+
+1. Copy `android/keystore.properties.example` to `android/keystore.properties`.
+2. Fill in `storeFile`, `storePassword`, `keyAlias`, and `keyPassword`.
+3. Keep both `android/keystore.properties` and the keystore file private.
+4. Build and verify the sideload APK from the repo root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-android-sideload.ps1
+```
+
+The script writes `release-assets/android/Odysseus-Simple-Signal-<version>-sideload.apk`,
+creates a SHA-256 checksum, and refuses unsigned or Android-debug-signed APKs.
+Keep using the same keystore for future sideload builds so Android and Play
+Protect see the same developer certificate over time.
+
 ## Current Scope
 
 Included now:
@@ -110,11 +129,11 @@ Included now:
   and file upload support
 - Error/fallback screen for configuring the Odysseus server URL
 - Development HTTP networking config
+- Local release signing config for direct-sideload APKs
 
 Still for Android Studio / next pass:
 
 - Generate or update the Gradle wrapper if desired
-- Add signing config for release builds
 - Move standalone API key storage to Android Keystore-backed encryption
 - Add import/export or sync between Standalone Mobile and PC Odysseus
 - Expand mobile backend coverage for documents, notes, gallery, calendar, and

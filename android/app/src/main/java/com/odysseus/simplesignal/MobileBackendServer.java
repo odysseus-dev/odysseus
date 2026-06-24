@@ -36,12 +36,15 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 import java.util.TimeZone;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 public class MobileBackendServer {
     private static final String TAG = "OdysseusMobileBackend";
@@ -83,8 +86,19 @@ public class MobileBackendServer {
     private static final int MAX_MOBILE_WORKSPACE_CONTEXT_DEPTH = 3;
     private static final int MAX_MOBILE_WORKSPACE_CONTEXT_PREVIEW_FILES = 6;
     private static final int MAX_MOBILE_WORKSPACE_CONTEXT_PREVIEW_BYTES = 3072;
+    private static final int MAX_MOBILE_AGENT_TOOL_ROUNDS = 200;
+    private static final int MAX_MOBILE_REPEATED_TOOL_CALLS = 2;
+    private static final int MAX_MOBILE_AGENT_TOOL_OUTPUT_CHARS = 18_000;
+    private static final int MAX_MOBILE_TOOL_SEARCH_RESULTS = 200;
+    private static final Set<String> MOBILE_TOOL_SKIP_DIRS = new LinkedHashSet<>(Arrays.asList(
+            ".git", ".hg", ".svn", "node_modules", "venv", ".venv", "__pycache__",
+            ".mypy_cache", ".pytest_cache", ".ruff_cache", "dist", "build",
+            ".next", ".cache", "site-packages", ".idea", ".tox"
+    ));
     private static final String MOBILE_PUBLIC_WORKSPACE_ACCESS_DETAIL =
-            "Android cannot read this public folder yet. Grant Odysseus All files access in Android settings, or choose App Workspace.";
+            "Android cannot read this public folder yet. Grant Odysseus All files access in Android settings, then reload the workspace, or choose App Workspace.";
+    private static final String MOBILE_PUBLIC_WORKSPACE_LIMITED_DETAIL =
+            "Android storage permission is hiding project files in this public folder. Grant Odysseus All files access in Android settings, then reload this workspace. Until then, directory names may appear while files are missing.";
     private static final String MOBILE_DEPRECATED_PRIVATE_WORKSPACE_DETAIL =
             "The old private Android Documents/Downloads workspace folder is no longer used. Choose Documents, Downloads, App Workspace, or Scratch.";
     private static final String CHATGPT_SUBSCRIPTION_PROVIDER = "chatgpt-subscription";
@@ -430,7 +444,7 @@ public class MobileBackendServer {
             return;
         }
         if ("GET".equals(request.method) && "/api/tools".equals(path)) {
-            sendJson(out, 200, new JSONObject().put("tools", new JSONArray()));
+            sendJson(out, 200, new JSONObject().put("tools", mobileBuiltInTools()));
             return;
         }
         if ("GET".equals(request.method) && "/api/presets".equals(path)) {
@@ -3396,6 +3410,365 @@ public class MobileBackendServer {
                 || (!model.isEmpty() && !isKnownRembgModel(model));
     }
 
+    private JSONObject generateMobileImageReply(String prompt, JSONObject preferredEndpoint,
+                                                String preferredModel, String sessionId) throws Exception {
+        JSONArray choices = mobileImageGenerationChoices(preferredEndpoint, preferredModel);
+        if (choices.length() == 0) {
+            String selected = valueOr(preferredModel, "").trim();
+            if (!selected.isEmpty() && isImageGenerationModel(selected)) {
+                throw new IOException("No enabled endpoint serves the selected image model '" + selected
+                        + "'. Refresh or add the endpoint that lists this model, then select it again.");
+            }
+            throw new IOException("No image generation backend is configured. Add an enabled image endpoint such as Gemini image, GPT-image, DALL-E, or a local diffusion /images/generations endpoint.");
+        }
+        Exception last = null;
+        JSONObject lastChoice = null;
+        List<String> attempts = new ArrayList<>();
+        for (int i = 0; i < choices.length(); i++) {
+            JSONObject choice = choices.getJSONObject(i);
+            try {
+                JSONObject provider = postMobileImageGeneration(choice, prompt, "1024x1024", "medium");
+                String imageB64 = provider.optString("image", "");
+                if (imageB64.isEmpty()) throw new IOException("Image backend returned no image data");
+                JSONObject saved = saveGeneratedGalleryImage(Base64.decode(stripDataUrl(imageB64), Base64.DEFAULT),
+                        prompt, choice.optString("model", ""), "1024x1024", "medium", sessionId);
+                String model = choice.optString("model", "");
+                String reply = "Generated image for: " + truncateError(prompt, 160)
+                        + "\nmodel: " + model
+                        + "\nDirect link: " + saved.optString("url", "");
+                if (i > 0 && lastChoice != null) {
+                    reply += "\n\nUsed fallback " + mobileProviderLabel(choice, model)
+                            + " after " + mobileProviderLabel(lastChoice, lastChoice.optString("model", ""))
+                            + " failed.";
+                }
+                return new JSONObject()
+                        .put("reply", reply)
+                        .put("results", "Generated image for: " + truncateError(prompt, 160))
+                        .put("image_url", saved.optString("url", ""))
+                        .put("image_id", saved.optString("id", ""))
+                        .put("image_prompt", prompt)
+                        .put("image_model", model)
+                        .put("image_size", "1024x1024")
+                        .put("image_quality", "medium");
+            } catch (Exception ex) {
+                last = ex;
+                lastChoice = choice;
+                attempts.add(mobileProviderLabel(choice, choice.optString("model", "")) + ": " + ex.getMessage());
+                if (!isQuotaOrProviderAvailabilityError(ex) && choices.length() == 1) break;
+            }
+        }
+        throw new IOException(mobileImageGenerationFailureDetail(last, attempts));
+    }
+
+    private JSONObject generateMobileVideoReply(String prompt, JSONObject preferredEndpoint,
+                                                String preferredModel, String sessionId) throws Exception {
+        JSONArray choices = mobileVideoGenerationChoices(preferredEndpoint, preferredModel);
+        if (choices.length() == 0) {
+            String selected = valueOr(preferredModel, "").trim();
+            if (!selected.isEmpty() && isVideoGenerationModel(selected)) {
+                throw new IOException("No enabled endpoint serves the selected video model '" + selected
+                        + "'. Refresh or add the endpoint that lists this model, then select it again.");
+            }
+            throw new IOException("No video generation backend is configured. Add an enabled video endpoint such as DashScope Wan, Vidu, PixVerse, Kling, or another endpoint that returns a video URL.");
+        }
+        Exception last = null;
+        JSONObject lastChoice = null;
+        List<String> attempts = new ArrayList<>();
+        for (int i = 0; i < choices.length(); i++) {
+            JSONObject choice = choices.getJSONObject(i);
+            try {
+                JSONObject provider = postMobileVideoGeneration(choice, prompt, 5, "16:9", "720P");
+                byte[] videoData = providerVideoBytes(provider);
+                if (videoData.length == 0) throw new IOException("Video backend returned no video data");
+                String ext = videoExtensionForProvider(provider);
+                JSONObject saved = saveGeneratedGalleryVideo(videoData, ext, prompt,
+                        choice.optString("model", ""), "5s", "720P", sessionId);
+                String model = choice.optString("model", "");
+                String reply = "Generated video for: " + truncateError(prompt, 160)
+                        + "\nmodel: " + model
+                        + "\nDirect link: " + saved.optString("url", "");
+                if (i > 0 && lastChoice != null) {
+                    reply += "\n\nUsed fallback " + mobileProviderLabel(choice, model)
+                            + " after " + mobileProviderLabel(lastChoice, lastChoice.optString("model", ""))
+                            + " failed.";
+                }
+                return new JSONObject()
+                        .put("reply", reply)
+                        .put("results", "Generated video for: " + truncateError(prompt, 160))
+                        .put("tool", "generate_video")
+                        .put("media_type", "video")
+                        .put("media_url", saved.optString("url", ""))
+                        .put("media_id", saved.optString("id", ""))
+                        .put("media_prompt", prompt)
+                        .put("media_model", model)
+                        .put("media_size", "5s")
+                        .put("media_quality", "720P")
+                        .put("video_url", saved.optString("url", ""))
+                        .put("video_id", saved.optString("id", ""))
+                        .put("video_prompt", prompt)
+                        .put("video_model", model)
+                        .put("video_duration", "5s")
+                        .put("video_quality", "720P");
+            } catch (Exception ex) {
+                last = ex;
+                lastChoice = choice;
+                attempts.add(mobileProviderLabel(choice, choice.optString("model", "")) + ": " + ex.getMessage());
+                if (!isQuotaOrProviderAvailabilityError(ex) && choices.length() == 1) break;
+            }
+        }
+        throw new IOException(mobileVideoGenerationFailureDetail(last, attempts));
+    }
+
+    private String mobileImageGenerationFailureDetail(Exception last, List<String> attempts) {
+        String detail;
+        if (attempts != null && !attempts.isEmpty()) {
+            detail = "Tried " + String.join("; ", attempts);
+        } else if (last != null && last.getMessage() != null) {
+            detail = last.getMessage();
+        } else {
+            detail = "Image generation failed";
+        }
+        String lower = detail.toLowerCase(Locale.US);
+        if ((lower.contains("failed to connect") || lower.contains("timed out") || lower.contains("timeout"))
+                && (lower.contains("192.168.") || lower.contains("10.") || lower.contains("172.")
+                || lower.contains("127.0.0.1") || lower.contains("localhost"))) {
+            detail += "\nAndroid standalone can only use endpoints reachable from the phone. "
+                    + "For loaded local PC models, LM Studio, ComfyUI, or Cookbook routing, switch Android to ADB PC Tools / Connect to PC so the PC backend resolves the selected model to its local endpoint.";
+        }
+        return detail;
+    }
+
+    private String mobileVideoGenerationFailureDetail(Exception last, List<String> attempts) {
+        String detail;
+        if (attempts != null && !attempts.isEmpty()) {
+            detail = "Tried " + String.join("; ", attempts);
+        } else if (last != null && last.getMessage() != null) {
+            detail = last.getMessage();
+        } else {
+            detail = "Video generation failed";
+        }
+        String lower = detail.toLowerCase(Locale.US);
+        if ((lower.contains("failed to connect") || lower.contains("timed out") || lower.contains("timeout"))
+                && (lower.contains("192.168.") || lower.contains("10.") || lower.contains("172.")
+                || lower.contains("127.0.0.1") || lower.contains("localhost"))) {
+            detail += "\nAndroid standalone can only use endpoints reachable from the phone. "
+                    + "For loaded local PC video models, ComfyUI, or Cookbook routing, switch Android to ADB PC Tools / Connect to PC so the PC backend resolves the selected model to its local endpoint.";
+        }
+        return detail;
+    }
+
+    private JSONArray mobileImageGenerationChoices(JSONObject preferredEndpoint, String preferredModel) throws Exception {
+        JSONArray choices = new JSONArray();
+        List<String> seen = new ArrayList<>();
+        String requestedModel = valueOr(preferredModel, "").trim();
+        boolean requestedImageModel = isImageGenerationModel(requestedModel);
+        if (requestedImageModel) {
+            addMobileImageChoice(choices, seen, endpointForImageGenerationModel(requestedModel), requestedModel);
+            if (endpointCanServeSelectedImageModel(preferredEndpoint, requestedModel)) {
+                addMobileImageChoice(choices, seen, preferredEndpoint, requestedModel);
+            }
+            return choices;
+        }
+        addMobileImageChoice(choices, seen, preferredEndpoint, "");
+        JSONArray endpoints = loadArray(PREF_ENDPOINTS);
+        for (int i = 0; i < endpoints.length(); i++) {
+            JSONObject ep = endpoints.optJSONObject(i);
+            if (ep == null || !ep.optBoolean("is_enabled", true)) continue;
+            addMobileImageChoice(choices, seen, ep, "");
+        }
+        return choices;
+    }
+
+    private JSONArray mobileVideoGenerationChoices(JSONObject preferredEndpoint, String preferredModel) throws Exception {
+        JSONArray choices = new JSONArray();
+        List<String> seen = new ArrayList<>();
+        String requestedModel = valueOr(preferredModel, "").trim();
+        boolean requestedVideoModel = isVideoGenerationModel(requestedModel);
+        if (requestedVideoModel) {
+            addMobileVideoChoice(choices, seen, endpointForVideoGenerationModel(requestedModel), requestedModel);
+            if (endpointCanServeSelectedVideoModel(preferredEndpoint, requestedModel)) {
+                addMobileVideoChoice(choices, seen, preferredEndpoint, requestedModel);
+            }
+            return choices;
+        }
+        addMobileVideoChoice(choices, seen, preferredEndpoint, "");
+        JSONArray endpoints = loadArray(PREF_ENDPOINTS);
+        for (int i = 0; i < endpoints.length(); i++) {
+            JSONObject ep = endpoints.optJSONObject(i);
+            if (ep == null || !ep.optBoolean("is_enabled", true)) continue;
+            addMobileVideoChoice(choices, seen, ep, "");
+        }
+        return choices;
+    }
+
+    private void addMobileImageChoice(JSONArray choices, List<String> seen, JSONObject endpoint, String requestedModel) throws Exception {
+        if (endpoint == null || !endpoint.optBoolean("is_enabled", true)) return;
+        String model = valueOr(requestedModel, "").trim();
+        boolean strictRequestedModel = !model.isEmpty();
+        if (strictRequestedModel) {
+            if (!endpointCanServeSelectedImageModel(endpoint, model)) return;
+            model = providerModelId(endpoint, model);
+        }
+        if (!strictRequestedModel && (model.isEmpty() || !isImageGenerationModel(model))) {
+            model = firstImageGenerationModel(endpoint);
+        }
+        if (model.isEmpty() || !looksLikeImageGenerationEndpoint(endpoint, model)) return;
+        String base = normalizeBase(endpoint.optString("base_url"));
+        String key = comparableBase(base) + "|" + model.toLowerCase(Locale.US);
+        if (seen.contains(key)) return;
+        seen.add(key);
+        choices.put(new JSONObject(endpoint.toString())
+                .put("base_url", base)
+                .put("model", model));
+    }
+
+    private void addMobileVideoChoice(JSONArray choices, List<String> seen, JSONObject endpoint, String requestedModel) throws Exception {
+        if (endpoint == null || !endpoint.optBoolean("is_enabled", true)) return;
+        String model = valueOr(requestedModel, "").trim();
+        boolean strictRequestedModel = !model.isEmpty();
+        if (strictRequestedModel) {
+            if (!endpointCanServeSelectedVideoModel(endpoint, model)) return;
+            model = providerModelId(endpoint, model);
+        }
+        if (!strictRequestedModel && (model.isEmpty() || !isVideoGenerationModel(model))) {
+            model = firstVideoGenerationModel(endpoint);
+        }
+        if (model.isEmpty() || !looksLikeVideoGenerationEndpoint(endpoint, model)) return;
+        String base = normalizeBase(endpoint.optString("base_url"));
+        String key = comparableBase(base) + "|" + model.toLowerCase(Locale.US);
+        if (seen.contains(key)) return;
+        seen.add(key);
+        choices.put(new JSONObject(endpoint.toString())
+                .put("base_url", base)
+                .put("model", model));
+    }
+
+    private JSONObject endpointForImageGenerationModel(String model) throws Exception {
+        String requested = valueOr(model, "").trim();
+        if (requested.isEmpty() || !isImageGenerationModel(requested)) return null;
+        JSONArray endpoints = loadArray(PREF_ENDPOINTS);
+        for (int i = 0; i < endpoints.length(); i++) {
+            JSONObject ep = endpoints.optJSONObject(i);
+            if (ep == null || !ep.optBoolean("is_enabled", true)) continue;
+            if (endpointHasModel(ep, requested) && endpointCanServeSelectedImageModel(ep, requested)) return ep;
+        }
+        for (int i = 0; i < endpoints.length(); i++) {
+            JSONObject ep = endpoints.optJSONObject(i);
+            if (ep == null || !ep.optBoolean("is_enabled", true)) continue;
+            if (endpointCanServeSelectedImageModel(ep, requested)) return ep;
+        }
+        return null;
+    }
+
+    private JSONObject endpointForVideoGenerationModel(String model) throws Exception {
+        String requested = valueOr(model, "").trim();
+        if (requested.isEmpty() || !isVideoGenerationModel(requested)) return null;
+        JSONArray endpoints = loadArray(PREF_ENDPOINTS);
+        for (int i = 0; i < endpoints.length(); i++) {
+            JSONObject ep = endpoints.optJSONObject(i);
+            if (ep == null || !ep.optBoolean("is_enabled", true)) continue;
+            if (endpointHasModel(ep, requested) && endpointCanServeSelectedVideoModel(ep, requested)) return ep;
+        }
+        for (int i = 0; i < endpoints.length(); i++) {
+            JSONObject ep = endpoints.optJSONObject(i);
+            if (ep == null || !ep.optBoolean("is_enabled", true)) continue;
+            if (endpointCanServeSelectedVideoModel(ep, requested)) return ep;
+        }
+        return null;
+    }
+
+    private boolean endpointCanServeSelectedImageModel(JSONObject endpoint, String model) {
+        if (endpoint == null || !endpoint.optBoolean("is_enabled", true)) return false;
+        String requested = valueOr(model, "").trim();
+        if (requested.isEmpty()) return false;
+        String providerRequested = providerModelId(endpoint, requested);
+        if (providerRequested.isEmpty() || !isImageGenerationModel(providerRequested)) return false;
+        if (endpointHasModel(endpoint, requested) || endpointHasModel(endpoint, providerRequested)) return true;
+        JSONArray models = endpoint.optJSONArray("models");
+        boolean unknownModels = models == null || models.length() == 0;
+        String base = endpoint.optString("base_url", "");
+        String lower = canonicalGeminiImageModel(providerRequested).toLowerCase(Locale.US);
+        if (isGeminiImageModel(providerRequested) && isGeminiImageEndpoint(base, endpoint)) return true;
+        if (isQwenImageModel(providerRequested) && isDashScopeImageEndpoint(base, endpoint)) return true;
+        if ((lower.startsWith("gpt-image") || lower.contains("chatgpt-image") || lower.startsWith("dall-e"))
+                && isOpenAIBase(base)) return true;
+        return unknownModels && "image".equals(endpoint.optString("model_type", "").toLowerCase(Locale.US));
+    }
+
+    private boolean endpointCanServeSelectedVideoModel(JSONObject endpoint, String model) {
+        if (endpoint == null || !endpoint.optBoolean("is_enabled", true)) return false;
+        String requested = valueOr(model, "").trim();
+        if (requested.isEmpty()) return false;
+        String providerRequested = providerModelId(endpoint, requested);
+        if (providerRequested.isEmpty() || !isVideoGenerationModel(providerRequested)) return false;
+        if (endpointHasModel(endpoint, requested) || endpointHasModel(endpoint, providerRequested)) return true;
+        JSONArray models = endpoint.optJSONArray("models");
+        boolean unknownModels = models == null || models.length() == 0;
+        String base = endpoint.optString("base_url", "");
+        if (isDashScopeVideoModel(providerRequested) && isDashScopeVideoEndpoint(base, endpoint)) return true;
+        return unknownModels && "video".equals(endpoint.optString("model_type", "").toLowerCase(Locale.US));
+    }
+
+    private boolean looksLikeImageGenerationEndpoint(JSONObject ep, String model) {
+        if (ep == null) return false;
+        if (isImageGenerationModel(model)) return true;
+        String base = ep.optString("base_url", "").toLowerCase(Locale.US);
+        if (isOpenAIBase(base) || base.contains("generativelanguage.googleapis.com")) return true;
+        String type = ep.optString("model_type", "").toLowerCase(Locale.US);
+        if (!"image".equals(type)) return false;
+        JSONArray models = ep.optJSONArray("models");
+        if (models == null || models.length() == 0) return false;
+        for (int i = 0; i < models.length(); i++) {
+            if (isImageGenerationModel(models.optString(i, ""))) return true;
+        }
+        return false;
+    }
+
+    private boolean looksLikeVideoGenerationEndpoint(JSONObject ep, String model) {
+        if (ep == null) return false;
+        if (isVideoGenerationModel(model)) return true;
+        String type = ep.optString("model_type", "").toLowerCase(Locale.US);
+        if ("video".equals(type)) return true;
+        String text = (ep.optString("base_url", "") + " "
+                + ep.optString("name", "") + " "
+                + ep.optString("provider", "")).toLowerCase(Locale.US);
+        if (text.contains("video") || text.contains("dashscope") || text.contains("wan")
+                || text.contains("kling") || text.contains("runway") || text.contains("luma")
+                || text.contains("vidu") || text.contains("pixverse") || text.contains("hailuo")) return true;
+        JSONArray models = ep.optJSONArray("models");
+        for (int i = 0; models != null && i < models.length(); i++) {
+            if (isVideoGenerationModel(models.optString(i, ""))) return true;
+        }
+        return false;
+    }
+
+    private String firstImageGenerationModel(JSONObject ep) {
+        if (ep == null) return "";
+        JSONArray models = ep.optJSONArray("models");
+        for (int i = 0; models != null && i < models.length(); i++) {
+            String model = models.optString(i, "").trim();
+            if (isImageGenerationModel(model)) return providerModelId(ep, model);
+        }
+        if (isOpenAIBase(ep.optString("base_url"))) return "gpt-image-1";
+        if (isGeminiImageEndpoint(ep.optString("base_url"), ep)) return "gemini-3-pro-image";
+        if (isDashScopeImageEndpoint(ep.optString("base_url"), ep)) return "qwen-image-plus";
+        return "";
+    }
+
+    private String firstVideoGenerationModel(JSONObject ep) {
+        if (ep == null) return "";
+        JSONArray models = ep.optJSONArray("models");
+        for (int i = 0; models != null && i < models.length(); i++) {
+            String model = models.optString(i, "").trim();
+            if (isVideoGenerationModel(model)) return providerModelId(ep, model);
+        }
+        if ("video".equals(ep.optString("model_type", "").toLowerCase(Locale.US)) && models != null && models.length() > 0) {
+            return providerModelId(ep, models.optString(0, "").trim());
+        }
+        if (isDashScopeVideoEndpoint(ep.optString("base_url"), ep)) return "wan2.7-t2v";
+        return "";
+    }
+
     private JSONObject firstEnabledImageEndpoint() throws Exception {
         JSONArray endpoints = loadArray(PREF_ENDPOINTS);
         for (int i = 0; i < endpoints.length(); i++) {
@@ -3437,7 +3810,8 @@ public class MobileBackendServer {
         JSONArray models = ep.optJSONArray("models");
         if (models != null) {
             for (int i = 0; i < models.length(); i++) {
-                if (isImageEditModel(models.optString(i, ""))) return true;
+                String model = models.optString(i, "");
+                if (isImageEditModel(model) || isImageGenerationModel(model)) return true;
             }
         }
         return false;
@@ -3482,6 +3856,212 @@ public class MobileBackendServer {
                 || (m.contains("seedream")
                     && editCue)
                 || editCue;
+    }
+
+    private boolean isImageGenerationModel(String model) {
+        String m = canonicalGeminiImageModel(valueOr(model, "")).toLowerCase(Locale.US);
+        if (m.isEmpty()) return false;
+        if (isKnownRembgModel(m)) return false;
+        if (m.contains("embed") || m.startsWith("tts-") || m.startsWith("whisper")) return false;
+        if (m.startsWith("gpt-image") || m.contains("chatgpt-image") || m.startsWith("dall-e")) return true;
+        if ((m.contains("gemini") && m.contains("image")) || m.startsWith("imagen") || m.startsWith("models/imagen")) return true;
+        if (m.contains("flux") || m.contains("kontext") || m.contains("sdxl") || m.contains("stable-diffusion") || m.contains("stable_diffusion")) return true;
+        if (m.contains("qwen-image") || (m.contains("qwen") && m.contains("image"))) return true;
+        if (m.contains("seedream") || m.contains("dreamshaper") || m.contains("realvis") || m.contains("juggernaut")) return true;
+        return m.contains("diffusion") && !m.contains("embedding");
+    }
+
+    private boolean isVideoGenerationModel(String model) {
+        String m = valueOr(model, "").toLowerCase(Locale.US).trim();
+        if (m.startsWith("models/")) m = m.substring("models/".length());
+        if (m.isEmpty()) return false;
+        if (m.contains("text-to-video") || m.contains("image-to-video") || m.contains("video-generation")) return true;
+        if (m.contains("t2v") || m.contains("i2v")) return true;
+        if (m.startsWith("veo-") || m.startsWith("sora")) return true;
+        if (m.contains("wan2") || m.contains("wanx") || m.contains("wan-ai")) return true;
+        if (m.contains("kling") || m.contains("runway") || m.contains("luma")) return true;
+        if (m.contains("vidu") || m.contains("pixverse") || m.contains("hailuo")) return true;
+        if (m.contains("minimax") && m.contains("video")) return true;
+        return m.contains("video") && !m.contains("embedding");
+    }
+
+    private boolean isDashScopeVideoModel(String model) {
+        String m = valueOr(model, "").toLowerCase(Locale.US);
+        return isVideoGenerationModel(m)
+                && (m.contains("wan") || m.contains("vidu") || m.contains("pixverse")
+                || m.contains("happyhorse") || m.contains("video"));
+    }
+
+    private String canonicalGeminiImageModel(String model) {
+        String raw = valueOr(model, "").trim();
+        String lower = raw.toLowerCase(Locale.US);
+        if ("gemini-image-pro".equals(lower)
+                || "models/gemini-image-pro".equals(lower)
+                || "nano-banana-pro".equals(lower)
+                || "gemini-pro-image".equals(lower)) {
+            return "gemini-3-pro-image";
+        }
+        return raw;
+    }
+
+    private boolean isGeminiImageModel(String model) {
+        String m = canonicalGeminiImageModel(valueOr(model, "")).toLowerCase(Locale.US);
+        if (m.startsWith("models/")) m = m.substring("models/".length());
+        return m.contains("gemini") && m.contains("image");
+    }
+
+    private boolean isQwenImageModel(String model) {
+        String m = valueOr(model, "").toLowerCase(Locale.US);
+        return m.contains("qwen-image") || (m.contains("qwen") && m.contains("image"));
+    }
+
+    private boolean isGeminiImageEndpoint(String baseUrl, JSONObject ep) {
+        String text = (valueOr(baseUrl, "") + " "
+                + (ep == null ? "" : ep.optString("name", "")) + " "
+                + (ep == null ? "" : ep.optString("provider", ""))).toLowerCase(Locale.US);
+        if (text.contains("generativelanguage.googleapis.com")) return true;
+        try {
+            String host = new URL(normalizeBase(baseUrl)).getHost().toLowerCase(Locale.US);
+            if (host.equals("generativelanguage.googleapis.com") || host.endsWith(".generativelanguage.googleapis.com")) return true;
+        } catch (Exception ignored) {
+        }
+        return text.contains("gemini") || text.contains("google");
+    }
+
+    private boolean isDashScopeEndpoint(String baseUrl, JSONObject ep) {
+        String text = (valueOr(baseUrl, "") + " "
+                + (ep == null ? "" : ep.optString("name", "")) + " "
+                + (ep == null ? "" : ep.optString("provider", ""))).toLowerCase(Locale.US);
+        if (text.contains("dashscope") || text.contains("aliyuncs.com")) return true;
+        try {
+            String host = new URL(normalizeBase(baseUrl)).getHost().toLowerCase(Locale.US);
+            return host.equals("dashscope.aliyuncs.com")
+                    || host.endsWith(".dashscope.aliyuncs.com")
+                    || host.endsWith(".aliyuncs.com");
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private boolean isDashScopeImageEndpoint(String baseUrl, JSONObject ep) {
+        return isDashScopeEndpoint(baseUrl, ep);
+    }
+
+    private boolean isDashScopeVideoEndpoint(String baseUrl, JSONObject ep) {
+        return isDashScopeEndpoint(baseUrl, ep);
+    }
+
+    private String geminiGenerateContentUrl(String baseUrl, String model) throws Exception {
+        URL parsed = new URL(normalizeBase(baseUrl));
+        String version = "v1beta";
+        for (String part : valueOr(parsed.getPath(), "").split("/")) {
+            if (part.matches("v\\d+(?:beta)?")) {
+                version = part;
+                break;
+            }
+        }
+        String encodedModel = URLEncoder.encode(valueOr(model, "").trim(), "UTF-8").replace("+", "%20");
+        return parsed.getProtocol() + "://" + parsed.getHost()
+                + (parsed.getPort() > 0 ? ":" + parsed.getPort() : "")
+                + "/" + version + "/models/" + encodedModel + ":generateContent";
+    }
+
+    private String aspectRatioFromSize(String size) {
+        String raw = valueOr(size, "").trim().toLowerCase(Locale.US);
+        if (raw.isEmpty() || "auto".equals(raw)) return "1:1";
+        String[] parts = raw.split("x", 2);
+        if (parts.length != 2) return "1:1";
+        int width = parseInt(parts[0], 1);
+        int height = parseInt(parts[1], 1);
+        if (width == height) return "1:1";
+        return width > height ? "16:9" : "9:16";
+    }
+
+    private String qwenDashscopeGenerationUrl(String baseUrl) throws Exception {
+        URL parsed = new URL(normalizeBase(baseUrl));
+        String path = valueOr(parsed.getPath(), "");
+        while (path.endsWith("/") && path.length() > 1) path = path.substring(0, path.length() - 1);
+        String lower = path.toLowerCase(Locale.US);
+        int compatible = lower.indexOf("/compatible-mode/v1");
+        int nativeApi = lower.indexOf("/api/v1");
+        if (compatible >= 0) {
+            path = path.substring(0, compatible) + "/api/v1";
+        } else if (nativeApi >= 0) {
+            path = path.substring(0, nativeApi + "/api/v1".length());
+        } else if (lower.endsWith("/v1")) {
+            path = path.substring(0, path.length() - 3);
+            while (path.endsWith("/") && path.length() > 1) path = path.substring(0, path.length() - 1);
+            path += "/api/v1";
+        } else {
+            path = (path.isEmpty() ? "" : path) + "/api/v1";
+        }
+        return parsed.getProtocol() + "://" + parsed.getHost()
+                + (parsed.getPort() > 0 ? ":" + parsed.getPort() : "")
+                + path + "/services/aigc/multimodal-generation/generation";
+    }
+
+    private String dashscopeApiRoot(String baseUrl) throws Exception {
+        URL parsed = new URL(normalizeBase(baseUrl));
+        String path = valueOr(parsed.getPath(), "");
+        while (path.endsWith("/") && path.length() > 1) path = path.substring(0, path.length() - 1);
+        String lower = path.toLowerCase(Locale.US);
+        int compatible = lower.indexOf("/compatible-mode/v1");
+        int nativeApi = lower.indexOf("/api/v1");
+        if (compatible >= 0) {
+            path = path.substring(0, compatible) + "/api/v1";
+        } else if (nativeApi >= 0) {
+            path = path.substring(0, nativeApi + "/api/v1".length());
+        } else if (lower.endsWith("/v1")) {
+            path = path.substring(0, path.length() - 3);
+            while (path.endsWith("/") && path.length() > 1) path = path.substring(0, path.length() - 1);
+            path += "/api/v1";
+        } else {
+            path = (path.isEmpty() ? "" : path) + "/api/v1";
+        }
+        return parsed.getProtocol() + "://" + parsed.getHost()
+                + (parsed.getPort() > 0 ? ":" + parsed.getPort() : "")
+                + path;
+    }
+
+    private String dashscopeVideoGenerationUrl(String baseUrl) throws Exception {
+        return dashscopeApiRoot(baseUrl) + "/services/aigc/video-generation/video-synthesis";
+    }
+
+    private String dashscopeTaskUrl(String baseUrl, String taskId) throws Exception {
+        String encoded = URLEncoder.encode(valueOr(taskId, ""), "UTF-8").replace("+", "%20");
+        return dashscopeApiRoot(baseUrl) + "/tasks/" + encoded;
+    }
+
+    private String qwenDashscopeSize(String model, String size) {
+        String m = valueOr(model, "").toLowerCase(Locale.US);
+        String raw = valueOr(size, "").trim().toLowerCase(Locale.US).replace('_', 'x').replace('*', 'x');
+        if (raw.isEmpty() || "auto".equals(raw)) return m.contains("2.0") ? "2048*2048" : "1328*1328";
+        String[] parts = raw.split("x", 2);
+        if (parts.length != 2) return m.contains("2.0") ? "2048*2048" : "1328*1328";
+        int width = Math.max(1, parseInt(parts[0], 1024));
+        int height = Math.max(1, parseInt(parts[1], 1024));
+        if (m.contains("2.0")) return width + "*" + height;
+
+        String requested = width + "*" + height;
+        List<String> supported = Arrays.asList("1664*928", "1472*1104", "1328*1328", "1104*1472", "928*1664");
+        if (supported.contains(requested)) return requested;
+        if (width == height) return "1328*1328";
+        double ratio = width / Math.max(1.0, (double) height);
+        if (ratio > 1.0) return ratio >= 1.55 ? "1664*928" : "1472*1104";
+        double inverseRatio = height / Math.max(1.0, (double) width);
+        return inverseRatio >= 1.55 ? "928*1664" : "1104*1472";
+    }
+
+    private boolean isQuotaOrProviderAvailabilityError(Exception ex) {
+        String text = valueOr(ex == null ? "" : ex.getMessage(), "").toLowerCase(Locale.US);
+        return text.contains("429")
+                || text.contains("quota")
+                || text.contains("rate limit")
+                || text.contains("rate_limit")
+                || text.contains("resource_exhausted")
+                || text.contains("unavailable")
+                || text.contains("overload")
+                || text.contains("temporarily");
     }
 
     private boolean isOpenAIBase(String baseUrl) {
@@ -3542,6 +4122,346 @@ public class MobileBackendServer {
             }
         }
         throw last == null ? new IOException("No compatible image edit route found") : last;
+    }
+
+    private JSONObject postMobileImageGeneration(JSONObject choice, String prompt, String size, String quality) throws Exception {
+        String base = normalizeBase(choice.optString("base_url"));
+        String model = choice.optString("model", "").trim();
+        if (isGeminiImageEndpoint(base, choice) || isGeminiImageModel(model)) {
+            return postGeminiImageGeneration(choice, prompt, size);
+        }
+        if (isQwenImageModel(model) && isDashScopeImageEndpoint(base, choice)) {
+            return postQwenDashscopeImageGeneration(choice, prompt, size);
+        }
+        return postOpenAiCompatibleImageGeneration(choice, prompt, size, quality);
+    }
+
+    private JSONObject postOpenAiCompatibleImageGeneration(JSONObject choice, String prompt, String size, String quality) throws Exception {
+        String base = normalizeBase(choice.optString("base_url"));
+        String model = choice.optString("model", "").trim();
+        if (isGeminiImageEndpoint(base, choice) || isGeminiImageModel(model)) {
+            return postGeminiImageGeneration(choice, prompt, size);
+        }
+        while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
+        if (!base.endsWith("/v1")) base += "/v1";
+        String apiKey = choice.optString("api_key", "");
+        if (apiKey.isEmpty() && isOpenAIBase(base)) throw new IOException("OpenAI endpoint has no API key stored in Settings.");
+        if (model.isEmpty() && isOpenAIBase(base)) model = "gpt-image-1";
+        if (model.isEmpty()) throw new IOException("Select an image generation model for this endpoint.");
+
+        JSONObject payload = new JSONObject()
+                .put("model", model)
+                .put("prompt", prompt)
+                .put("n", 1)
+                .put("size", valueOr(size, "").isEmpty() ? "1024x1024" : size);
+        String modelLower = model.toLowerCase(Locale.US);
+        boolean gptImageModel = modelLower.startsWith("gpt-image") || modelLower.contains("chatgpt-image");
+        boolean dalleModel = modelLower.contains("dall-e");
+        boolean localDiffusionModel = !gptImageModel && !dalleModel;
+        if (gptImageModel || localDiffusionModel) {
+            payload.put("quality", valueOr(quality, "").isEmpty() ? "medium" : quality);
+        }
+
+        try {
+            return postOpenAiCompatibleImageGenerationPayload(base, apiKey, payload);
+        } catch (IOException ex) {
+            if (localDiffusionModel && payload.has("quality")) {
+                JSONObject retryPayload = new JSONObject(payload.toString());
+                retryPayload.remove("quality");
+                try {
+                    return postOpenAiCompatibleImageGenerationPayload(base, apiKey, retryPayload);
+                } catch (Exception retryEx) {
+                    throw ex;
+                }
+            }
+            throw ex;
+        }
+    }
+
+    private JSONObject postOpenAiCompatibleImageGenerationPayload(String base, String apiKey, JSONObject payload) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(base + "/images/generations").openConnection();
+        conn.setRequestMethod("POST");
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(300000);
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("Accept", "application/json");
+        if (!apiKey.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+        byte[] data = payload.toString().getBytes(StandardCharsets.UTF_8);
+        conn.setFixedLengthStreamingMode(data.length);
+        try (OutputStream body = conn.getOutputStream()) {
+            body.write(data);
+        }
+        int status = conn.getResponseCode();
+        String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
+        conn.disconnect();
+        if (status < 200 || status >= 300) {
+            throw new IOException("Image generation failed at /v1/images/generations: " + formatProviderError(status, response));
+        }
+        JSONObject normalized = normalizeImageResponse(response);
+        if (normalized.optString("image", "").isEmpty()) {
+            throw new IOException("Image generation returned no image: " + providerNoImageDetail(response));
+        }
+        return normalized;
+    }
+
+    private JSONObject postQwenDashscopeImageGeneration(JSONObject choice, String prompt, String size) throws Exception {
+        String base = normalizeBase(choice.optString("base_url"));
+        String apiKey = choice.optString("api_key", "").trim();
+        if (apiKey.isEmpty()) throw new IOException("DashScope Qwen image endpoint has no API key stored in Settings.");
+        String model = choice.optString("model", "").trim();
+        if (model.isEmpty()) model = "qwen-image-plus";
+
+        JSONObject payload = new JSONObject()
+                .put("model", model)
+                .put("input", new JSONObject()
+                        .put("messages", new JSONArray()
+                                .put(new JSONObject()
+                                        .put("role", "user")
+                                        .put("content", new JSONArray()
+                                                .put(new JSONObject().put("text", prompt))))))
+                .put("parameters", new JSONObject()
+                        .put("n", 1)
+                        .put("watermark", false)
+                        .put("size", qwenDashscopeSize(model, size)));
+
+        HttpURLConnection conn = (HttpURLConnection) new URL(qwenDashscopeGenerationUrl(base)).openConnection();
+        conn.setRequestMethod("POST");
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(300000);
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("Accept", "application/json");
+        conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+        byte[] data = payload.toString().getBytes(StandardCharsets.UTF_8);
+        conn.setFixedLengthStreamingMode(data.length);
+        try (OutputStream body = conn.getOutputStream()) {
+            body.write(data);
+        }
+        int status = conn.getResponseCode();
+        String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
+        conn.disconnect();
+        if (status < 200 || status >= 300) {
+            throw new IOException("Qwen image generation failed: " + formatProviderError(status, response));
+        }
+        JSONObject normalized = normalizeImageResponse(response);
+        if (normalized.optString("image", "").isEmpty()) {
+            throw new IOException("Qwen image generation returned no image: " + providerNoImageDetail(response));
+        }
+        return normalized.put("method", "qwen-dashscope");
+    }
+
+    private JSONObject postMobileVideoGeneration(JSONObject choice, String prompt, int durationSeconds,
+                                                 String aspectRatio, String resolution) throws Exception {
+        String base = normalizeBase(choice.optString("base_url"));
+        String model = choice.optString("model", "").trim();
+        if (isDashScopeVideoModel(model) && isDashScopeVideoEndpoint(base, choice)) {
+            return postDashScopeVideoGeneration(choice, prompt, durationSeconds, resolution);
+        }
+        return postOpenAiCompatibleVideoGeneration(choice, prompt, durationSeconds, aspectRatio, resolution);
+    }
+
+    private JSONObject postDashScopeVideoGeneration(JSONObject choice, String prompt, int durationSeconds,
+                                                   String resolution) throws Exception {
+        String base = normalizeBase(choice.optString("base_url"));
+        String apiKey = choice.optString("api_key", "").trim();
+        if (apiKey.isEmpty()) throw new IOException("DashScope video endpoint has no API key stored in Settings.");
+        String model = providerModelId(choice, choice.optString("model", "")).trim();
+        if (model.isEmpty()) model = "wan2.7-t2v";
+
+        JSONObject payload = new JSONObject()
+                .put("model", model)
+                .put("input", new JSONObject().put("prompt", prompt))
+                .put("parameters", new JSONObject()
+                        .put("duration", Math.max(3, Math.min(15, durationSeconds)))
+                        .put("resolution", dashScopeVideoResolution(resolution))
+                        .put("prompt_extend", true)
+                        .put("watermark", false));
+
+        JSONObject created = dashScopePostAsyncTask(dashscopeVideoGenerationUrl(base), apiKey, payload);
+        String taskId = firstJsonStringForKey(created, "task_id", 0);
+        if (taskId.isEmpty()) throw new IOException("DashScope video generation did not return a task_id");
+
+        long deadline = System.currentTimeMillis() + 8L * 60L * 1000L;
+        while (System.currentTimeMillis() < deadline) {
+            Thread.sleep(5000L);
+            JSONObject status = dashScopeGetTask(dashscopeTaskUrl(base, taskId), apiKey);
+            String taskStatus = firstJsonStringForKey(status, "task_status", 0).toUpperCase(Locale.US);
+            if ("SUCCEEDED".equals(taskStatus)) {
+                JSONObject normalized = normalizeVideoResponse(status.toString());
+                if (!normalized.optString("video_url", "").isEmpty() || !normalized.optString("video", "").isEmpty()) {
+                    return normalized.put("method", "dashscope-video").put("task_id", taskId);
+                }
+                throw new IOException("DashScope video task succeeded but returned no video URL: " + providerNoVideoDetail(status.toString()));
+            }
+            if ("FAILED".equals(taskStatus) || "CANCELED".equals(taskStatus) || "UNKNOWN".equals(taskStatus)) {
+                String err = providerErrorText(status, 0);
+                throw new IOException("DashScope video task " + taskStatus.toLowerCase(Locale.US)
+                        + (err.isEmpty() ? "" : ": " + err));
+            }
+        }
+        throw new IOException("DashScope video generation timed out while polling task " + taskId);
+    }
+
+    private JSONObject dashScopePostAsyncTask(String target, String apiKey, JSONObject payload) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(target).openConnection();
+        conn.setRequestMethod("POST");
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(60000);
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("Accept", "application/json");
+        conn.setRequestProperty("X-DashScope-Async", "enable");
+        conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+        byte[] data = payload.toString().getBytes(StandardCharsets.UTF_8);
+        conn.setFixedLengthStreamingMode(data.length);
+        try (OutputStream body = conn.getOutputStream()) {
+            body.write(data);
+        }
+        int status = conn.getResponseCode();
+        String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
+        conn.disconnect();
+        if (status < 200 || status >= 300) {
+            throw new IOException("DashScope video task creation failed: " + formatProviderError(status, response));
+        }
+        return new JSONObject(valueOr(response, "{}"));
+    }
+
+    private JSONObject dashScopeGetTask(String target, String apiKey) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(target).openConnection();
+        conn.setRequestMethod("GET");
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(60000);
+        conn.setRequestProperty("Accept", "application/json");
+        conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+        int status = conn.getResponseCode();
+        String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
+        conn.disconnect();
+        if (status < 200 || status >= 300) {
+            throw new IOException("DashScope video task poll failed: " + formatProviderError(status, response));
+        }
+        return new JSONObject(valueOr(response, "{}"));
+    }
+
+    private JSONObject postOpenAiCompatibleVideoGeneration(JSONObject choice, String prompt, int durationSeconds,
+                                                          String aspectRatio, String resolution) throws Exception {
+        String base = normalizeBase(choice.optString("base_url"));
+        while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
+        String baseRoot = base;
+        if (baseRoot.endsWith("/v1") || baseRoot.endsWith("/v2")) baseRoot = baseRoot.substring(0, baseRoot.length() - 3);
+        while (baseRoot.endsWith("/")) baseRoot = baseRoot.substring(0, baseRoot.length() - 1);
+        String apiKey = choice.optString("api_key", "");
+        String model = providerModelId(choice, choice.optString("model", "")).trim();
+        if (model.isEmpty()) throw new IOException("Select a video generation model for this endpoint.");
+
+        JSONObject payload = new JSONObject()
+                .put("model", model)
+                .put("prompt", prompt)
+                .put("duration", Math.max(3, Math.min(15, durationSeconds)))
+                .put("aspect_ratio", valueOr(aspectRatio, "").isEmpty() ? "16:9" : aspectRatio)
+                .put("resolution", valueOr(resolution, "").isEmpty() ? "720P" : resolution);
+
+        IOException last = null;
+        String[] paths = new String[]{
+                "/video/generations",
+                "/videos/generations",
+                "/video/generate",
+                "/generate/video",
+                "/v2/video/generations",
+                "/v1/video/generations",
+                "/v1/videos/generations"
+        };
+        for (String path : paths) {
+            HttpURLConnection conn = null;
+            try {
+                String target = (path.startsWith("/v1/") || path.startsWith("/v2/"))
+                        ? baseRoot + path
+                        : base + path;
+                conn = (HttpURLConnection) new URL(target).openConnection();
+                conn.setRequestMethod("POST");
+                conn.setConnectTimeout(15000);
+                conn.setReadTimeout(600000);
+                conn.setDoOutput(true);
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setRequestProperty("Accept", "application/json");
+                if (!apiKey.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+                byte[] data = payload.toString().getBytes(StandardCharsets.UTF_8);
+                conn.setFixedLengthStreamingMode(data.length);
+                try (OutputStream body = conn.getOutputStream()) {
+                    body.write(data);
+                }
+                int status = conn.getResponseCode();
+                String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
+                if (status < 200 || status >= 300) {
+                    last = new IOException(path + ": " + formatProviderError(status, response));
+                    continue;
+                }
+                JSONObject normalized = normalizeVideoResponse(response);
+                if (!normalized.optString("video_url", "").isEmpty() || !normalized.optString("video", "").isEmpty()) {
+                    return normalized.put("method", "openai-compatible-video");
+                }
+                last = new IOException(path + ": " + providerNoVideoDetail(response));
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }
+        throw last == null ? new IOException("No compatible video generation route found") : last;
+    }
+
+    private String dashScopeVideoResolution(String raw) {
+        String value = valueOr(raw, "").trim().toUpperCase(Locale.US);
+        if ("1080P".equals(value) || "720P".equals(value) || "480P".equals(value)) return value;
+        if ("1080".equals(value)) return "1080P";
+        if ("720".equals(value)) return "720P";
+        if ("480".equals(value)) return "480P";
+        return "720P";
+    }
+
+    private JSONObject postGeminiImageGeneration(JSONObject choice, String prompt, String size) throws Exception {
+        String base = normalizeBase(choice.optString("base_url"));
+        String apiKey = choice.optString("api_key", "").trim();
+        if (apiKey.isEmpty()) throw new IOException("Gemini image endpoint has no API key stored in Settings.");
+        String model = canonicalGeminiImageModel(choice.optString("model", ""));
+        if (model.startsWith("models/")) model = model.substring("models/".length());
+        if (model.isEmpty()) model = "gemini-3-pro-image";
+
+        String target = geminiGenerateContentUrl(base, model);
+        JSONObject payload = new JSONObject()
+                .put("contents", new JSONArray()
+                        .put(new JSONObject()
+                                .put("role", "user")
+                                .put("parts", new JSONArray()
+                                        .put(new JSONObject().put("text", prompt)))))
+                .put("generationConfig", new JSONObject()
+                        .put("responseModalities", new JSONArray().put("TEXT").put("IMAGE"))
+                        .put("imageConfig", new JSONObject()
+                                .put("aspectRatio", aspectRatioFromSize(size))
+                                .put("imageSize", "1K")));
+
+        HttpURLConnection conn = (HttpURLConnection) new URL(target).openConnection();
+        conn.setRequestMethod("POST");
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(300000);
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("Accept", "application/json");
+        conn.setRequestProperty("x-goog-api-key", apiKey);
+        byte[] data = payload.toString().getBytes(StandardCharsets.UTF_8);
+        conn.setFixedLengthStreamingMode(data.length);
+        try (OutputStream body = conn.getOutputStream()) {
+            body.write(data);
+        }
+        int status = conn.getResponseCode();
+        String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
+        conn.disconnect();
+        if (status < 200 || status >= 300) {
+            throw new IOException("Gemini image generation failed: " + formatProviderError(status, response));
+        }
+        JSONObject normalized = normalizeImageResponse(response);
+        if (normalized.optString("image", "").isEmpty()) {
+            throw new IOException("Gemini image API returned no inline image data: " + providerNoImageDetail(response));
+        }
+        return normalized;
     }
 
     private JSONObject postOpenAiImageEdit(JSONObject choice, Bitmap source, Bitmap editMask, String prompt,
@@ -3761,8 +4681,55 @@ public class MobileBackendServer {
         return new JSONObject();
     }
 
+    private JSONObject normalizeVideoResponse(String response) throws Exception {
+        JSONObject json = new JSONObject(valueOr(response, "{}"));
+        String video = firstProviderVideoValue(json, 0);
+        if (video.isEmpty()) return new JSONObject();
+        String lower = video.toLowerCase(Locale.US);
+        if (lower.startsWith("http://") || lower.startsWith("https://")) {
+            return new JSONObject().put("video_url", video);
+        }
+        return new JSONObject().put("video", stripDataUrl(video));
+    }
+
+    private String firstJsonStringForKey(Object node, String wantedKey, int depth) {
+        if (node == null || node == JSONObject.NULL || depth > 10) return "";
+        if (node instanceof String) {
+            String value = ((String) node).trim();
+            if ((value.startsWith("{") && value.endsWith("}")) || (value.startsWith("[") && value.endsWith("]"))) {
+                try {
+                    Object parsed = value.startsWith("{") ? new JSONObject(value) : new JSONArray(value);
+                    return firstJsonStringForKey(parsed, wantedKey, depth + 1);
+                } catch (Exception ignored) {
+                }
+            }
+            return "";
+        }
+        if (node instanceof JSONArray) {
+            JSONArray arr = (JSONArray) node;
+            for (int i = 0; i < arr.length(); i++) {
+                String found = firstJsonStringForKey(arr.opt(i), wantedKey, depth + 1);
+                if (!found.isEmpty()) return found;
+            }
+            return "";
+        }
+        if (!(node instanceof JSONObject)) return "";
+        JSONObject json = (JSONObject) node;
+        if (json.has(wantedKey) && !json.isNull(wantedKey)) {
+            String value = json.optString(wantedKey, "").trim();
+            if (!value.isEmpty()) return value;
+        }
+        java.util.Iterator<String> keys = json.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            String found = firstJsonStringForKey(json.opt(key), wantedKey, depth + 1);
+            if (!found.isEmpty()) return found;
+        }
+        return "";
+    }
+
     private String firstProviderImageValue(Object node, int depth) {
-        if (node == null || node == JSONObject.NULL || depth > 5) return "";
+        if (node == null || node == JSONObject.NULL || depth > 10) return "";
         if (node instanceof String) {
             String value = ((String) node).trim();
             if (looksLikeProviderImageValue(value)) return value;
@@ -3790,8 +4757,9 @@ public class MobileBackendServer {
         JSONObject json = (JSONObject) node;
         String[] preferred = new String[]{
                 "image", "b64_json", "base64", "image_base64", "imageBase64",
-                "url", "image_url", "imageUrl", "data", "images",
-                "content", "message", "choices", "output", "outputs", "result", "results", "artifact", "artifacts"
+                "url", "image_url", "imageUrl", "data", "bytesBase64Encoded", "bytes_base64_encoded",
+                "inlineData", "inline_data", "images",
+                "candidates", "parts", "content", "message", "choices", "output", "outputs", "result", "results", "artifact", "artifacts"
         };
         for (String key : preferred) {
             if (!json.has(key) || json.isNull(key)) continue;
@@ -3802,6 +4770,52 @@ public class MobileBackendServer {
         while (keys.hasNext()) {
             String key = keys.next();
             String found = firstProviderImageValue(json.opt(key), depth + 1);
+            if (!found.isEmpty()) return found;
+        }
+        return "";
+    }
+
+    private String firstProviderVideoValue(Object node, int depth) {
+        if (node == null || node == JSONObject.NULL || depth > 10) return "";
+        if (node instanceof String) {
+            String value = ((String) node).trim();
+            if (looksLikeProviderVideoValue(value)) return value;
+            String embedded = providerVideoValueFromText(value);
+            if (!embedded.isEmpty()) return embedded;
+            if ((value.startsWith("{") && value.endsWith("}")) || (value.startsWith("[") && value.endsWith("]"))) {
+                try {
+                    Object parsed = value.startsWith("{") ? new JSONObject(value) : new JSONArray(value);
+                    return firstProviderVideoValue(parsed, depth + 1);
+                } catch (Exception ignored) {
+                }
+            }
+            return "";
+        }
+        if (node instanceof JSONArray) {
+            JSONArray arr = (JSONArray) node;
+            for (int i = 0; i < arr.length(); i++) {
+                String found = firstProviderVideoValue(arr.opt(i), depth + 1);
+                if (!found.isEmpty()) return found;
+            }
+            return "";
+        }
+        if (!(node instanceof JSONObject)) return "";
+
+        JSONObject json = (JSONObject) node;
+        String[] preferred = new String[]{
+                "video_url", "videoUrl", "media_url", "mediaUrl", "download_url", "downloadUrl",
+                "file_url", "fileUrl", "url", "uri", "video", "b64_json", "base64", "data",
+                "output", "outputs", "result", "results", "artifact", "artifacts", "content"
+        };
+        for (String key : preferred) {
+            if (!json.has(key) || json.isNull(key)) continue;
+            String found = firstProviderVideoValue(json.opt(key), depth + 1);
+            if (!found.isEmpty()) return found;
+        }
+        java.util.Iterator<String> keys = json.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            String found = firstProviderVideoValue(json.opt(key), depth + 1);
             if (!found.isEmpty()) return found;
         }
         return "";
@@ -3826,6 +4840,19 @@ public class MobileBackendServer {
         return "";
     }
 
+    private String providerVideoValueFromText(String raw) {
+        String text = valueOr(raw, "");
+        java.util.regex.Matcher dataUri = java.util.regex.Pattern
+                .compile("data:video/(?:mp4|webm|quicktime|x-matroska);base64,[A-Za-z0-9+/=\\r\\n]+", java.util.regex.Pattern.CASE_INSENSITIVE)
+                .matcher(text);
+        if (dataUri.find()) return dataUri.group();
+        java.util.regex.Matcher url = java.util.regex.Pattern
+                .compile("https?://[^\\s\\\"'<>]+\\.(?:mp4|webm|mov|mkv|m4v)(?:\\?[^\\s\\\"'<>]*)?", java.util.regex.Pattern.CASE_INSENSITIVE)
+                .matcher(text);
+        if (url.find()) return url.group();
+        return "";
+    }
+
     private boolean looksLikeProviderImageValue(String raw) {
         String value = valueOr(raw, "").trim();
         if (value.isEmpty()) return false;
@@ -3844,6 +4871,29 @@ public class MobileBackendServer {
         }
     }
 
+    private boolean looksLikeProviderVideoValue(String raw) {
+        String value = valueOr(raw, "").trim();
+        if (value.isEmpty()) return false;
+        String lower = value.toLowerCase(Locale.US);
+        if (lower.startsWith("data:video/")) return true;
+        if (lower.startsWith("http://") || lower.startsWith("https://")) return isLikelyVideoUrl(value);
+        String b64 = stripDataUrl(value);
+        return b64.length() > 512 && (b64.startsWith("AAAA") || b64.startsWith("GkX"));
+    }
+
+    private boolean isLikelyVideoUrl(String raw) {
+        try {
+            String path = new URL(raw).getPath().toLowerCase(Locale.US);
+            if (path.endsWith(".mp4") || path.endsWith(".webm") || path.endsWith(".mov")
+                    || path.endsWith(".mkv") || path.endsWith(".m4v")) return true;
+        } catch (Exception ignored) {
+        }
+        String lower = raw.toLowerCase(Locale.US);
+        return lower.contains(".mp4") || lower.contains(".webm") || lower.contains(".mov")
+                || lower.contains(".mkv") || lower.contains(".m4v")
+                || (lower.contains("video") && !lower.contains("image"));
+    }
+
     private String providerImageValueToBase64(String raw) throws Exception {
         String value = valueOr(raw, "").trim();
         String lower = value.toLowerCase(Locale.US);
@@ -3851,6 +4901,39 @@ public class MobileBackendServer {
             return downloadImageAsBase64(value);
         }
         return stripDataUrl(value);
+    }
+
+    private byte[] providerVideoBytes(JSONObject provider) throws Exception {
+        String b64 = provider == null ? "" : provider.optString("video", "");
+        if (!b64.isEmpty()) return Base64.decode(stripDataUrl(b64), Base64.DEFAULT);
+        String url = provider == null ? "" : provider.optString("video_url", "");
+        if (!url.isEmpty()) return downloadMediaBytes(url);
+        return new byte[0];
+    }
+
+    private String videoExtensionForProvider(JSONObject provider) {
+        String raw = provider == null ? "" : provider.optString("video", "");
+        String lower = raw.toLowerCase(Locale.US);
+        if (lower.startsWith("data:video/webm")) return "webm";
+        if (lower.startsWith("data:video/quicktime")) return "mov";
+        if (lower.startsWith("data:video/x-matroska")) return "mkv";
+        String url = provider == null ? "" : provider.optString("video_url", "");
+        String ext = videoExtensionFromUrl(url);
+        return ext.isEmpty() ? "mp4" : ext;
+    }
+
+    private String videoExtensionFromUrl(String raw) {
+        try {
+            String path = new URL(valueOr(raw, "")).getPath();
+            int dot = path.lastIndexOf('.');
+            if (dot >= 0 && dot < path.length() - 1) {
+                String ext = path.substring(dot + 1).toLowerCase(Locale.US);
+                if ("mp4".equals(ext) || "webm".equals(ext) || "mov".equals(ext)
+                        || "mkv".equals(ext) || "m4v".equals(ext)) return ext;
+            }
+        } catch (Exception ignored) {
+        }
+        return "";
     }
 
     private String providerNoImageDetail(String response) {
@@ -3870,6 +4953,28 @@ public class MobileBackendServer {
         } catch (Exception ignored) {
             String body = truncateError(response, 180);
             return body.isEmpty() ? "server returned no image" : "server returned no image: " + body;
+        }
+    }
+
+    private String providerNoVideoDetail(String response) {
+        try {
+            JSONObject json = new JSONObject(valueOr(response, "{}"));
+            String err = providerErrorText(json, 0);
+            if (!err.isEmpty()) return err;
+            String taskId = firstJsonStringForKey(json, "task_id", 0);
+            if (!taskId.isEmpty()) return "server returned a task_id but no completed video URL yet";
+            StringBuilder keys = new StringBuilder();
+            java.util.Iterator<String> it = json.keys();
+            while (it.hasNext() && keys.length() < 180) {
+                if (keys.length() > 0) keys.append(", ");
+                keys.append(it.next());
+            }
+            return keys.length() > 0
+                    ? "server returned no video (keys: " + keys + ")"
+                    : "server returned no video";
+        } catch (Exception ignored) {
+            String body = truncateError(response, 180);
+            return body.isEmpty() ? "server returned no video" : "server returned no video: " + body;
         }
     }
 
@@ -3913,6 +5018,18 @@ public class MobileBackendServer {
         byte[] data = readBytes(conn.getInputStream());
         conn.disconnect();
         return Base64.encodeToString(data, Base64.NO_WRAP);
+    }
+
+    private byte[] downloadMediaBytes(String mediaUrl) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(mediaUrl).openConnection();
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(180000);
+        conn.setRequestProperty("Accept", "video/mp4,video/*,*/*");
+        int status = conn.getResponseCode();
+        if (status < 200 || status >= 300) throw new IOException("Video download failed: HTTP " + status);
+        byte[] data = readBytes(conn.getInputStream());
+        conn.disconnect();
+        return data;
     }
 
     private void writeMultipartField(OutputStream os, String boundary, String name, String value) throws IOException {
@@ -6175,6 +7292,8 @@ public class MobileBackendServer {
                 .put("path", dir.getCanonicalPath())
                 .put("selectable", true)
                 .put("public_android_storage", mobileIsPublicExternalWorkspace(dir))
+                .put("all_files_access", mobileHasAllFilesAccess())
+                .put("storage_warning", mobilePublicWorkspaceWarning(dir))
                 .put("mobile_standalone", true);
     }
 
@@ -6217,6 +7336,9 @@ public class MobileBackendServer {
                 .put("dirs", dirs)
                 .put("truncated", truncated)
                 .put("selectable", true)
+                .put("public_android_storage", mobileIsPublicExternalWorkspace(target))
+                .put("all_files_access", mobileHasAllFilesAccess())
+                .put("storage_warning", mobilePublicWorkspaceWarning(target))
                 .put("mobile_standalone", true);
     }
 
@@ -6264,6 +7386,9 @@ public class MobileBackendServer {
                 .put("entries", entries)
                 .put("truncated", truncated)
                 .put("max_entries", limit)
+                .put("public_android_storage", mobileIsPublicExternalWorkspace(root))
+                .put("all_files_access", mobileHasAllFilesAccess())
+                .put("storage_warning", mobilePublicWorkspaceWarning(root))
                 .put("mobile_standalone", true);
     }
 
@@ -6484,6 +7609,22 @@ public class MobileBackendServer {
         }
     }
 
+    private boolean mobileHasAllFilesAccess() {
+        if (android.os.Build.VERSION.SDK_INT < 30) return true;
+        try {
+            return Environment.isExternalStorageManager();
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private String mobilePublicWorkspaceWarning(File target) {
+        if (mobileIsPublicExternalWorkspace(target) && !mobileHasAllFilesAccess()) {
+            return MOBILE_PUBLIC_WORKSPACE_LIMITED_DETAIL;
+        }
+        return "";
+    }
+
     private MobileHttpException mobileUnreadableWorkspace(File target) {
         if (mobileIsPublicExternalWorkspace(target)) return mobileHttp(403, MOBILE_PUBLIC_WORKSPACE_ACCESS_DETAIL);
         return mobileHttp(403, "Android cannot read this workspace folder.");
@@ -6601,6 +7742,115 @@ public class MobileBackendServer {
 
     private MobileHttpException mobileHttp(int status, String detail) {
         return new MobileHttpException(status, detail);
+    }
+
+    private JSONArray mobileBuiltInTools() throws Exception {
+        JSONArray tools = new JSONArray();
+        tools.put(mobileToolInfo("get_workspace", "Get Workspace", "Return the active Android workspace folder", "Code"));
+        tools.put(mobileToolInfo("ls", "List Files", "List Android workspace folder entries", "Code"));
+        tools.put(mobileToolInfo("glob", "Find Files", "Find files by glob pattern inside the Android workspace", "Code"));
+        tools.put(mobileToolInfo("grep", "Search Files", "Search Android workspace file contents", "Code"));
+        tools.put(mobileToolInfo("read_file", "Read File", "Read text files from the Android workspace", "Code"));
+        tools.put(mobileToolInfo("write_file", "Write File", "Write or create text files in the Android workspace", "Code"));
+        tools.put(mobileToolInfo("edit_file", "Edit File", "Edit Android workspace files by exact string replacement", "Code"));
+        return tools;
+    }
+
+    private JSONObject mobileToolInfo(String name, String label, String desc, String category) throws Exception {
+        return new JSONObject()
+                .put("name", name)
+                .put("label", label)
+                .put("description", desc)
+                .put("desc", desc)
+                .put("category", category)
+                .put("cat", category)
+                .put("enabled", true)
+                .put("mobile_standalone", true);
+    }
+
+    private JSONArray mobileWorkspaceToolSchemas() throws Exception {
+        JSONArray tools = new JSONArray();
+        tools.put(mobileFunctionTool(
+                "get_workspace",
+                "Return the absolute path of the active Android Workspace. File tools are confined to this folder.",
+                new JSONObject().put("type", "object").put("properties", new JSONObject()).put("required", new JSONArray())
+        ));
+        tools.put(mobileFunctionTool(
+                "ls",
+                "List entries of a folder inside the active Android Workspace. Use this instead of guessing file names.",
+                new JSONObject()
+                        .put("type", "object")
+                        .put("properties", new JSONObject()
+                                .put("path", new JSONObject().put("type", "string").put("description", "Folder path relative to the active Android Workspace. Empty means the workspace root.")))
+                        .put("required", new JSONArray())
+        ));
+        tools.put(mobileFunctionTool(
+                "glob",
+                "Find files by glob pattern inside the active Android Workspace, for example **/*.js or src/**/*.java.",
+                new JSONObject()
+                        .put("type", "object")
+                        .put("properties", new JSONObject()
+                                .put("pattern", new JSONObject().put("type", "string").put("description", "Glob pattern to match"))
+                                .put("path", new JSONObject().put("type", "string").put("description", "Optional folder inside the workspace to search from")))
+                        .put("required", new JSONArray().put("pattern"))
+        ));
+        tools.put(mobileFunctionTool(
+                "grep",
+                "Search text file contents with a regular expression inside the active Android Workspace.",
+                new JSONObject()
+                        .put("type", "object")
+                        .put("properties", new JSONObject()
+                                .put("pattern", new JSONObject().put("type", "string").put("description", "Regular expression to search for"))
+                                .put("path", new JSONObject().put("type", "string").put("description", "Optional file or folder inside the workspace"))
+                                .put("glob", new JSONObject().put("type", "string").put("description", "Optional file glob filter, for example *.js"))
+                                .put("ignore_case", new JSONObject().put("type", "boolean").put("description", "Whether matching should ignore case"))
+                                .put("max_results", new JSONObject().put("type", "integer").put("description", "Maximum matches to return")))
+                        .put("required", new JSONArray().put("pattern"))
+        ));
+        tools.put(mobileFunctionTool(
+                "read_file",
+                "Read a text file inside the active Android Workspace. Supports optional 1-based line offset and limit.",
+                new JSONObject()
+                        .put("type", "object")
+                        .put("properties", new JSONObject()
+                                .put("path", new JSONObject().put("type", "string").put("description", "File path relative to the active Android Workspace"))
+                                .put("offset", new JSONObject().put("type", "integer").put("description", "1-based line to start reading from"))
+                                .put("limit", new JSONObject().put("type", "integer").put("description", "Maximum number of lines to read")))
+                        .put("required", new JSONArray().put("path"))
+        ));
+        tools.put(mobileFunctionTool(
+                "write_file",
+                "Write or create a text file inside the active Android Workspace.",
+                new JSONObject()
+                        .put("type", "object")
+                        .put("properties", new JSONObject()
+                                .put("path", new JSONObject().put("type", "string").put("description", "File path relative to the active Android Workspace"))
+                                .put("content", new JSONObject().put("type", "string").put("description", "Full file content to write"))
+                                .put("create_parents", new JSONObject().put("type", "boolean").put("description", "Create missing parent folders")))
+                        .put("required", new JSONArray().put("path").put("content"))
+        ));
+        tools.put(mobileFunctionTool(
+                "edit_file",
+                "Edit an existing text file inside the active Android Workspace by exact string replacement.",
+                new JSONObject()
+                        .put("type", "object")
+                        .put("properties", new JSONObject()
+                                .put("path", new JSONObject().put("type", "string").put("description", "File path relative to the active Android Workspace"))
+                                .put("old_string", new JSONObject().put("type", "string").put("description", "Exact text to replace"))
+                                .put("new_string", new JSONObject().put("type", "string").put("description", "Replacement text"))
+                                .put("replace_all", new JSONObject().put("type", "boolean").put("description", "Replace all matches instead of requiring exactly one match")))
+                        .put("required", new JSONArray().put("path").put("old_string").put("new_string"))
+        ));
+        return tools;
+    }
+
+    private JSONObject mobileFunctionTool(String name, String description, JSONObject parameters) throws Exception {
+        return new JSONObject()
+                .put("type", "function")
+                .put("function", new JSONObject()
+                        .put("name", name)
+                        .put("description", description)
+                        .put("parameters", parameters));
     }
 
     private JSONArray mobileMcpServers() throws Exception {
@@ -7855,6 +9105,7 @@ public class MobileBackendServer {
                 .put("models", models == null ? new JSONArray() : models)
                 .put("cached_models", models == null ? new JSONArray() : models)
                 .put("model_count", models == null ? 0 : models.length())
+                .put("supports_tools", !isChatGptSubscriptionEndpoint(ep))
                 .put("has_api_key", !ep.optString("api_key").isEmpty()
                         || !ep.optString("access_token").isEmpty()
                         || !ep.optString("refresh_token").isEmpty())
@@ -8464,6 +9715,7 @@ public class MobileBackendServer {
         Map<String, String> form = parseForm(request);
         String sid = form.get("session");
         String userText = valueOr(form.get("message"), "");
+        boolean agentMode = "agent".equalsIgnoreCase(valueOr(form.get("mode"), ""));
         String rawWorkspace = valueOr(form.get("workspace"), "").trim();
         File activeWorkspace = null;
         String workspaceRejected = "";
@@ -8500,7 +9752,32 @@ public class MobileBackendServer {
             streamMobileImmediateReply(out, sid, history, "mobile-calendar", localCalendarReply, workspaceRejected);
             return;
         }
-        JSONObject endpoint = endpointForSession(session);
+        String videoPrompt = mobileVideoGenerationPrompt(userText, model);
+        String imagePrompt = mobileImageGenerationPrompt(userText, model);
+        JSONObject endpoint = null;
+        try {
+            endpoint = endpointForSession(session);
+        } catch (Exception ex) {
+            if (videoPrompt.isEmpty() && imagePrompt.isEmpty()) throw ex;
+        }
+        if (!videoPrompt.isEmpty()) {
+            JSONObject videoEndpoint = endpoint;
+            if (isVideoGenerationModel(model)) {
+                JSONObject modelEndpoint = endpointForVideoGenerationModel(model);
+                if (modelEndpoint != null) videoEndpoint = modelEndpoint;
+            }
+            streamMobileVideoGeneration(out, sid, history, videoPrompt, videoEndpoint, model, workspaceRejected);
+            return;
+        }
+        if (!imagePrompt.isEmpty()) {
+            JSONObject imageEndpoint = endpoint;
+            if (isImageGenerationModel(model)) {
+                JSONObject modelEndpoint = endpointForImageGenerationModel(model);
+                if (modelEndpoint != null) imageEndpoint = modelEndpoint;
+            }
+            streamMobileImageGeneration(out, sid, history, imagePrompt, imageEndpoint, model, workspaceRejected);
+            return;
+        }
         JSONArray modelMessages = history;
         String appContext = mobileAppContextForPrompt(userText, activeWorkspace, workspaceRejected);
         if (!appContext.isEmpty()) {
@@ -8512,6 +9789,10 @@ public class MobileBackendServer {
                 modelMessages.put(history.get(i));
             }
         }
+        if (agentMode && activeWorkspace != null && !isChatGptSubscriptionEndpoint(endpoint)) {
+            streamMobileWorkspaceAgent(out, sid, history, modelMessages, endpoint, model, activeWorkspace, workspaceRejected);
+            return;
+        }
 
         writeHeaders(out, 200, "text/event-stream; charset=utf-8", -1);
         if (!workspaceRejected.isEmpty()) writeSse(out, workspaceRejectedEvent(workspaceRejected));
@@ -8519,6 +9800,7 @@ public class MobileBackendServer {
         String reply;
         try {
             reply = callChat(endpoint, model, modelMessages);
+            reply = squashMobileReplySpacing(reply);
             if (reply.trim().isEmpty()) reply = "The model returned an empty response.";
         } catch (Exception ex) {
             reply = "Mobile backend request failed (" + mobileProviderLabel(endpoint, model) + "): " + ex.getMessage();
@@ -8527,6 +9809,310 @@ public class MobileBackendServer {
         saveSessionHistory(sid, history);
         writeSse(out, new JSONObject().put("delta", reply));
         writeSse(out, new JSONObject().put("type", "metrics").put("data", new JSONObject().put("total_time", 0).put("model", model)));
+        out.write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
+        out.flush();
+    }
+
+    private void streamMobileWorkspaceAgent(OutputStream out, String sid, JSONArray history,
+                                            JSONArray modelMessages, JSONObject endpoint, String model,
+                                            File activeWorkspace, String workspaceRejected) throws Exception {
+        writeHeaders(out, 200, "text/event-stream; charset=utf-8", -1);
+        if (!workspaceRejected.isEmpty()) writeSse(out, workspaceRejectedEvent(workspaceRejected));
+        writeSse(out, new JSONObject().put("type", "model_info").put("model", model));
+        String reply;
+        try {
+            reply = runMobileWorkspaceAgent(out, endpoint, model, modelMessages, activeWorkspace);
+            reply = squashMobileReplySpacing(reply);
+            if (reply.trim().isEmpty()) reply = "The model returned an empty response after using Android workspace tools.";
+        } catch (Exception ex) {
+            reply = "Android workspace agent failed (" + mobileProviderLabel(endpoint, model) + "): " + ex.getMessage();
+        }
+        history.put(new JSONObject().put("role", "assistant").put("content", reply).put("metadata", new JSONObject().put("model", model)));
+        saveSessionHistory(sid, history);
+        writeSse(out, new JSONObject().put("delta", reply));
+        writeSse(out, new JSONObject().put("type", "metrics").put("data", new JSONObject().put("total_time", 0).put("model", model)));
+        out.write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
+        out.flush();
+    }
+
+    private String runMobileWorkspaceAgent(OutputStream out, JSONObject endpoint, String model,
+                                           JSONArray modelMessages, File activeWorkspace) throws Exception {
+        JSONArray conversation = new JSONArray();
+        conversation.put(new JSONObject()
+                .put("role", "system")
+                .put("content", mobileWorkspaceAgentInstructions(activeWorkspace)));
+        JSONArray sanitized = sanitizeProviderMessages(modelMessages);
+        for (int i = 0; i < sanitized.length(); i++) conversation.put(sanitized.get(i));
+        JSONArray tools = mobileWorkspaceToolSchemas();
+        Map<String, Integer> repeatedCalls = new HashMap<>();
+        int totalToolCalls = 0;
+        String lastToolOutput = "";
+
+        for (int round = 0; round < MAX_MOBILE_AGENT_TOOL_ROUNDS; round++) {
+            if (round > 0) {
+                writeSse(out, new JSONObject()
+                        .put("type", "agent_step")
+                        .put("round", round + 1)
+                        .put("max_rounds", MAX_MOBILE_AGENT_TOOL_ROUNDS));
+            }
+            JSONObject message = callChatCompletionMessage(endpoint, model, conversation, tools);
+            JSONArray toolCalls = mobileExtractToolCalls(message);
+            if (toolCalls.length() == 0) {
+                return messageContentText(message.opt("content"));
+            }
+
+            conversation.put(message);
+            boolean forceFinalAnswer = false;
+            String stopReason = "";
+            for (int i = 0; i < toolCalls.length(); i++) {
+                JSONObject call = toolCalls.getJSONObject(i);
+                String callId = call.optString("id", "mobile_tool_" + round + "_" + i);
+                JSONObject fn = call.optJSONObject("function");
+                if (fn == null) fn = call;
+                String toolName = mobileNormalizeWorkspaceToolName(fn.optString("name", call.optString("name", "")));
+                JSONObject args = mobileToolArguments(fn.opt("arguments"));
+                String callKey = toolName + "\n" + args.toString();
+                int repeatCount = repeatedCalls.containsKey(callKey) ? repeatedCalls.get(callKey) + 1 : 1;
+                repeatedCalls.put(callKey, repeatCount);
+                JSONObject result;
+                boolean visibleToolRun = false;
+                if (forceFinalAnswer) {
+                    result = mobileToolError(toolName, "Tool execution already stopped. " + stopReason + " Answer the user now.");
+                } else if (repeatCount > MAX_MOBILE_REPEATED_TOOL_CALLS) {
+                    stopReason = "Repeated identical " + toolName + " call stopped after " + MAX_MOBILE_REPEATED_TOOL_CALLS + " executions.";
+                    result = mobileToolError(toolName, stopReason + " Use the existing output and answer the user now.");
+                    forceFinalAnswer = true;
+                } else {
+                    visibleToolRun = true;
+                    writeSse(out, new JSONObject()
+                            .put("type", "tool_start")
+                            .put("tool", toolName)
+                            .put("command", args.toString()));
+                    result = mobileWorkspaceToolResult(toolName, args, activeWorkspace);
+                    totalToolCalls++;
+                    lastToolOutput = result.optString("output", result.optString("error", lastToolOutput));
+                }
+                if (visibleToolRun) {
+                    JSONObject event = new JSONObject()
+                            .put("type", "tool_output")
+                            .put("tool", toolName)
+                            .put("output", result.optString("output", result.optString("error", "")))
+                            .put("exit_code", result.optInt("exit_code", 1));
+                    if (result.has("diff")) event.put("diff", result.get("diff"));
+                    writeSse(out, event);
+                }
+                conversation.put(new JSONObject()
+                        .put("role", "tool")
+                        .put("tool_call_id", callId)
+                        .put("name", toolName)
+                        .put("content", result.toString()));
+            }
+            if (forceFinalAnswer) {
+                return mobileWorkspaceFinalAnswer(endpoint, model, conversation, stopReason, lastToolOutput);
+            }
+        }
+        return mobileWorkspaceFinalAnswer(
+                endpoint,
+                model,
+                conversation,
+                "Android workspace agent round budget reached (" + MAX_MOBILE_AGENT_TOOL_ROUNDS + "/" + MAX_MOBILE_AGENT_TOOL_ROUNDS + ").",
+                lastToolOutput);
+    }
+
+    private String mobileWorkspaceAgentInstructions(File activeWorkspace) throws Exception {
+        return "You are Odysseus Android standalone running in Agent mode. "
+                + "Use the provided tools to inspect, search, read, write, and edit files in the active Android Workspace. "
+                + "Do not print tool-call JSON for the user; call the tools. "
+                + "All paths are confined to this Android-local workspace: " + activeWorkspace.getCanonicalPath() + ". "
+                + "Prefer get_workspace, ls, glob, grep, read_file, edit_file, and write_file the same way the PC agent uses file tools. "
+                + "Never repeat the same tool call with the same arguments after it already returned output; use that output and report back. "
+                + "After you have enough file context, stop calling tools and answer the user directly. "
+                + "Android cannot access arbitrary PC paths such as D:/ unless the user is connected to the PC backend; treat those as stale PC-only paths.";
+    }
+
+    private String mobileWorkspaceFinalAnswer(JSONObject endpoint, String model, JSONArray conversation,
+                                              String reason, String lastToolOutput) throws Exception {
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("Tool execution is now finished. Do not call more tools. ");
+        if (!valueOr(reason, "").trim().isEmpty()) {
+            prompt.append("Reason: ").append(reason).append(" ");
+        }
+        prompt.append("Report back to the user with a concise summary of what you found or changed.");
+        if (!valueOr(lastToolOutput, "").trim().isEmpty()) {
+            prompt.append("\n\nMost recent tool output:\n").append(mobileTruncateToolOutput(lastToolOutput));
+        }
+        conversation.put(new JSONObject().put("role", "system").put("content", prompt.toString()));
+        JSONObject finalMessage = callChatCompletionMessage(endpoint, model, conversation, null);
+        String finalText = messageContentText(finalMessage.opt("content")).trim();
+        if (!finalText.isEmpty()) return finalText;
+        String fallback = valueOr(reason, "Android workspace tool execution stopped.").trim();
+        if (!valueOr(lastToolOutput, "").trim().isEmpty()) {
+            fallback += "\n\nLast tool output:\n" + mobileTruncateToolOutput(lastToolOutput);
+        }
+        return fallback;
+    }
+
+    private JSONArray mobileExtractToolCalls(JSONObject message) throws Exception {
+        JSONArray raw = message.optJSONArray("tool_calls");
+        if (raw != null && raw.length() > 0) return raw;
+        JSONObject functionCall = message.optJSONObject("function_call");
+        if (functionCall != null && !functionCall.optString("name", "").isEmpty()) {
+            JSONObject call = new JSONObject()
+                    .put("id", "mobile_function_call")
+                    .put("type", "function")
+                    .put("function", functionCall);
+            JSONArray out = new JSONArray();
+            out.put(call);
+            message.put("tool_calls", out);
+            message.remove("function_call");
+            return out;
+        }
+        return new JSONArray();
+    }
+
+    private JSONObject mobileToolArguments(Object rawArguments) {
+        if (rawArguments instanceof JSONObject) return (JSONObject) rawArguments;
+        String text = rawArguments == null || rawArguments == JSONObject.NULL ? "" : String.valueOf(rawArguments).trim();
+        if (text.isEmpty()) return new JSONObject();
+        try {
+            return new JSONObject(text);
+        } catch (Exception ignored) {
+            return new JSONObject();
+        }
+    }
+
+    private void streamMobileImageGeneration(OutputStream out, String sid, JSONArray history,
+                                             String prompt, JSONObject imageEndpoint, String model,
+                                             String workspaceRejected) throws Exception {
+        String modelName = valueOr(model, "").isEmpty() ? "mobile-image" : model;
+        writeHeaders(out, 200, "text/event-stream; charset=utf-8", -1);
+        if (!workspaceRejected.isEmpty()) writeSse(out, workspaceRejectedEvent(workspaceRejected));
+        writeSse(out, new JSONObject().put("type", "model_info").put("model", modelName));
+        writeSse(out, new JSONObject()
+                .put("type", "tool_start")
+                .put("tool", "generate_image")
+                .put("command", truncateError(prompt, 100)));
+        out.write(": heartbeat\n\n".getBytes(StandardCharsets.UTF_8));
+        out.flush();
+
+        try {
+            JSONObject generated = generateMobileImageReply(prompt, imageEndpoint, model, sid);
+            writeMobileMediaResult(out, sid, history, generated);
+        } catch (Exception ex) {
+            String label = imageEndpoint == null ? model : mobileProviderLabel(imageEndpoint, model);
+            String reply = "Mobile image generation failed (" + label + "): " + ex.getMessage();
+            history.put(new JSONObject()
+                    .put("role", "assistant")
+                    .put("content", reply)
+                    .put("metadata", new JSONObject().put("model", modelName)));
+            saveSessionHistory(sid, history);
+            writeSse(out, new JSONObject().put("delta", reply));
+            writeSse(out, new JSONObject().put("type", "metrics").put("data", new JSONObject().put("total_time", 0).put("model", modelName)));
+            out.write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
+            out.flush();
+        }
+    }
+
+    private void streamMobileVideoGeneration(OutputStream out, String sid, JSONArray history,
+                                             String prompt, JSONObject videoEndpoint, String model,
+                                             String workspaceRejected) throws Exception {
+        String modelName = valueOr(model, "").isEmpty() ? "mobile-video" : model;
+        writeHeaders(out, 200, "text/event-stream; charset=utf-8", -1);
+        if (!workspaceRejected.isEmpty()) writeSse(out, workspaceRejectedEvent(workspaceRejected));
+        writeSse(out, new JSONObject().put("type", "model_info").put("model", modelName));
+        writeSse(out, new JSONObject()
+                .put("type", "tool_start")
+                .put("tool", "generate_video")
+                .put("command", truncateError(prompt, 100)));
+        out.write(": heartbeat\n\n".getBytes(StandardCharsets.UTF_8));
+        out.flush();
+
+        try {
+            JSONObject generated = generateMobileVideoReply(prompt, videoEndpoint, model, sid);
+            writeMobileMediaResult(out, sid, history, generated);
+        } catch (Exception ex) {
+            String label = videoEndpoint == null ? model : mobileProviderLabel(videoEndpoint, model);
+            String reply = "Mobile video generation failed (" + label + "): " + ex.getMessage();
+            history.put(new JSONObject()
+                    .put("role", "assistant")
+                    .put("content", reply)
+                    .put("metadata", new JSONObject().put("model", modelName)));
+            saveSessionHistory(sid, history);
+            writeSse(out, new JSONObject().put("delta", reply));
+            writeSse(out, new JSONObject().put("type", "metrics").put("data", new JSONObject().put("total_time", 0).put("model", modelName)));
+            out.write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
+            out.flush();
+        }
+    }
+
+    private void streamMobileMediaReply(OutputStream out, String sid, JSONArray history,
+                                        JSONObject media, String workspaceRejected) throws Exception {
+        String modelName = media.optString("media_model",
+                media.optString("image_model", media.optString("model", "mobile-media")));
+        writeHeaders(out, 200, "text/event-stream; charset=utf-8", -1);
+        if (!workspaceRejected.isEmpty()) writeSse(out, workspaceRejectedEvent(workspaceRejected));
+        writeSse(out, new JSONObject().put("type", "model_info").put("model", modelName));
+        writeMobileMediaResult(out, sid, history, media);
+    }
+
+    private void writeMobileMediaResult(OutputStream out, String sid, JSONArray history,
+                                        JSONObject media) throws Exception {
+        String mediaType = media.optString("media_type", media.has("media_url") ? "video" : "image").toLowerCase(Locale.US);
+        boolean video = "video".equals(mediaType);
+        String tool = media.optString("tool", video ? "generate_video" : "generate_image");
+        String reply = media.optString("reply", media.optString("results", video ? "Generated video." : "Generated image."));
+        String modelName = media.optString("media_model",
+                media.optString("image_model", media.optString("model", video ? "mobile-video" : "mobile-image")));
+        String prompt = media.optString("media_prompt", media.optString("image_prompt", ""));
+        String mediaUrl = media.optString("media_url", media.optString("image_url", ""));
+        String mediaId = media.optString("media_id", media.optString("image_id", ""));
+        String mediaSize = media.optString("media_size", media.optString("image_size", video ? "5s" : "1024x1024"));
+        String mediaQuality = media.optString("media_quality", media.optString("image_quality", video ? "720P" : "medium"));
+        JSONObject event = new JSONObject()
+                .put("round", 1)
+                .put("tool", tool)
+                .put("command", prompt)
+                .put("output", reply)
+                .put("exit_code", 0);
+        for (String key : new String[]{"image_url", "image_id", "image_prompt", "image_model", "image_size", "image_quality"}) {
+            if (media.has(key) && !media.optString(key, "").isEmpty()) event.put(key, media.optString(key));
+        }
+        if (!mediaUrl.isEmpty()) event.put("media_url", mediaUrl);
+        if (!mediaId.isEmpty()) event.put("media_id", mediaId);
+        if (!prompt.isEmpty()) event.put("media_prompt", prompt);
+        if (!modelName.isEmpty()) event.put("media_model", modelName);
+        if (!mediaSize.isEmpty()) event.put("media_size", mediaSize);
+        if (!mediaQuality.isEmpty()) event.put("media_quality", mediaQuality);
+        if (!mediaType.isEmpty()) event.put("media_type", mediaType);
+        history.put(new JSONObject()
+                .put("role", "assistant")
+                .put("content", reply)
+                .put("metadata", new JSONObject()
+                        .put("model", modelName)
+                        .put("tool_events", new JSONArray().put(event))));
+        saveSessionHistory(sid, history);
+        JSONObject mediaEvent = new JSONObject()
+                .put("type", "tool_output")
+                .put("tool", tool)
+                .put("command", prompt)
+                .put("output", reply)
+                .put("exit_code", 0)
+                .put("image_url", media.optString("image_url", ""))
+                .put("image_id", media.optString("image_id", ""))
+                .put("image_prompt", media.optString("image_prompt", ""))
+                .put("image_model", media.optString("image_model", modelName))
+                .put("image_size", media.optString("image_size", "1024x1024"))
+                .put("image_quality", media.optString("image_quality", "medium"))
+                .put("media_url", mediaUrl)
+                .put("media_id", mediaId)
+                .put("media_prompt", prompt)
+                .put("media_model", modelName)
+                .put("media_size", mediaSize)
+                .put("media_quality", mediaQuality)
+                .put("media_type", mediaType);
+        writeSse(out, mediaEvent);
+        writeSse(out, new JSONObject().put("delta", reply));
+        writeSse(out, new JSONObject().put("type", "metrics").put("data", new JSONObject().put("total_time", 0).put("model", modelName)));
         out.write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
         out.flush();
     }
@@ -8545,6 +10131,89 @@ public class MobileBackendServer {
         writeSse(out, new JSONObject().put("type", "metrics").put("data", new JSONObject().put("total_time", 0).put("model", modelName)));
         out.write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
         out.flush();
+    }
+
+    private String mobileImageGenerationPrompt(String userText, String model) {
+        String prompt = valueOr(userText, "").trim();
+        if (prompt.isEmpty()) return "";
+        String kind = requestedMobileMediaGenerationKind(prompt);
+        if ("video".equals(kind) || "music".equals(kind) || "audio".equals(kind)) return "";
+        if ("image".equals(kind)) return prompt;
+        if (!isImageGenerationModel(model)) return "";
+        if (looksLikeExistingMobileMediaQuestion(prompt)) return "";
+        String text = " " + prompt.toLowerCase(Locale.US).replaceAll("\\s+", " ") + " ";
+        if (text.contains(" prompt ") || text.contains(" svg ") || text.contains(" html ")
+                || text.contains(" css ") || text.contains(" javascript ") || text.contains(" code ")) return "";
+        if (java.util.regex.Pattern.compile("\\b(?:why|how)\\b.{0,70}\\b(?:generate|generated|create|created|make|made|render)\\b")
+                .matcher(text).find()) return "";
+        if (java.util.regex.Pattern.compile("\\b(?:generate|create|make|produce|render|draw|design|paint|illustrate)\\b")
+                .matcher(text).find()) return prompt;
+        return "";
+    }
+
+    private String mobileVideoGenerationPrompt(String userText, String model) {
+        String prompt = valueOr(userText, "").trim();
+        if (prompt.isEmpty()) return "";
+        String kind = requestedMobileMediaGenerationKind(prompt);
+        if ("image".equals(kind) || "music".equals(kind) || "audio".equals(kind)) return "";
+        if ("video".equals(kind)) return prompt;
+        if (!isVideoGenerationModel(model)) return "";
+        String text = " " + prompt.toLowerCase(Locale.US).replaceAll("\\s+", " ") + " ";
+        if (text.contains(" prompt ") || text.contains(" svg ") || text.contains(" html ")
+                || text.contains(" css ") || text.contains(" javascript ") || text.contains(" code ")) return "";
+        if (java.util.regex.Pattern.compile("\\b(?:why|how)\\b.{0,70}\\b(?:generate|generated|create|created|make|made|render)\\b")
+                .matcher(text).find()) return "";
+        if (java.util.regex.Pattern.compile("\\b(?:generate|create|make|produce|render|animate|film)\\b")
+                .matcher(text).find()) return prompt;
+        return "";
+    }
+
+    private String requestedMobileMediaGenerationKind(String message) {
+        String text = " " + valueOr(message, "").toLowerCase(Locale.US).replaceAll("\\s+", " ") + " ";
+        if (text.trim().isEmpty()) return "";
+        if (looksLikeExistingMobileMediaQuestion(text)) return "";
+        if (java.util.regex.Pattern.compile("\\b(?:instead\\s+of|why|how)\\b.{0,80}\\b(?:generat|creat|mak|render)")
+                .matcher(text).find()) return "";
+        if (java.util.regex.Pattern.compile("\\b(?:prompt\\s+for|image\\s+prompt|video\\s+prompt|music\\s+prompt|audio\\s+prompt)\\b")
+                .matcher(text).find()) return "";
+        if (java.util.regex.Pattern.compile("\\b(?:svg|html|css|javascript|react|code|markup|xml|mermaid)\\b")
+                .matcher(text).find()) return "";
+        String direct = "(?:generate|create|make|produce|render|draw|design|paint|illustrate|compose|write|record|animate)";
+        String request = "(?:i\\s+want|i\\s+need|give\\s+me)";
+        String image = "(?:image|picture|pic|photo|photograph|illustration|artwork|poster|logo|icon|avatar|thumbnail|wallpaper|graphic|concept\\s+art|visual)";
+        String video = "(?:video|movie|clip|animation|animated\\s+clip|gif|b-roll|footage)";
+        String music = "(?:music|song|track|audio|soundtrack|beat|jingle|voiceover|voice\\s+over|sound\\s+effect|sfx)";
+        if (matchesMobileMediaPattern(text, direct, video) || matchesMobileMediaPattern(text, request, video)) return "video";
+        if (matchesMobileMediaPattern(text, direct, music) || matchesMobileMediaPattern(text, request, music)) return "music";
+        if (matchesMobileMediaPattern(text, direct, image) || matchesMobileMediaPattern(text, request, image)) return "image";
+        if (java.util.regex.Pattern.compile("\\b(?:draw|paint|illustrate|sketch)\\b\\s+(?:me\\s+)?(?:an?\\s+|the\\s+)?[a-z0-9]")
+                .matcher(text).find()
+                && !java.util.regex.Pattern.compile("\\b(?:draw\\s+(?:a\\s+)?conclusion|draw\\s+up|draw\\s+me\\s+a\\s+bath)\\b")
+                .matcher(text).find()) return "image";
+        return "";
+    }
+
+    private boolean matchesMobileMediaPattern(String text, String action, String media) {
+        return java.util.regex.Pattern.compile("\\b" + action + "\\b.{0,90}\\b" + media + "\\b")
+                .matcher(text).find();
+    }
+
+    private boolean looksLikeExistingMobileMediaQuestion(String message) {
+        String text = " " + valueOr(message, "").toLowerCase(Locale.US).replaceAll("\\s+", " ") + " ";
+        if (text.trim().isEmpty()) return false;
+        String media = "(?:image|picture|pic|photo|photograph|screenshot|screen\\s*shot|gallery|photos)";
+        String reference = "(?:above|attached|uploaded|shown|visible|this|that|the|previous|last|my)";
+        String observe = "(?:see|view|look\\s+at|access|inspect|describe|analy[sz]e|read|check|recognize|tell\\s+me)";
+        if (java.util.regex.Pattern.compile("\\b(?:can|could|do|did)\\s+you\\b.{0,80}\\b" + observe + "\\b.{0,120}\\b" + media + "\\b")
+                .matcher(text).find()) return true;
+        if (java.util.regex.Pattern.compile("\\b" + observe + "\\b.{0,80}\\b" + reference + "\\s+" + media + "\\b")
+                .matcher(text).find()) return true;
+        if (java.util.regex.Pattern.compile("\\b" + media + "\\s+" + reference + "\\b")
+                .matcher(text).find()
+                && java.util.regex.Pattern.compile("\\b(?:can|could|do|did|what|who|where|why|how|is|are)\\b")
+                .matcher(text).find()) return true;
+        return java.util.regex.Pattern.compile("\\b(?:what(?:'s| is)|who|where|why|how)\\b.{0,120}\\b(?:in|on|inside|shown|visible)\\b.{0,80}\\b" + media + "\\b")
+                .matcher(text).find();
     }
 
     private JSONObject workspaceRejectedEvent(String path) throws Exception {
@@ -8654,6 +10323,11 @@ public class MobileBackendServer {
             return sb.toString();
         }
         sb.append("Active Android workspace: ").append(activeWorkspace.getCanonicalPath()).append("\n");
+        String publicWorkspaceWarning = mobilePublicWorkspaceWarning(activeWorkspace);
+        if (!publicWorkspaceWarning.isEmpty()) {
+            sb.append("Android storage warning: ").append(publicWorkspaceWarning).append("\n");
+            sb.append("Do not conclude the workspace has zero files from directory-only listings while this warning is active.\n");
+        }
         sb.append("Workspace summary: ").append(mobileWorkspaceOneLineSummary(activeWorkspace, 14)).append("\n");
         sb.append("Visible workspace tree, bounded for prompt size:\n");
         sb.append(mobileWorkspaceTreeSummary(
@@ -8717,13 +10391,14 @@ public class MobileBackendServer {
 
     private String mobileWorkspaceOneLineSummary(File root, int maxEntries) throws Exception {
         if (root == null || !root.isDirectory()) return "workspace folder is not available";
+        String storageWarning = mobilePublicWorkspaceWarning(root);
         File[] children = root.listFiles();
         if (children == null) {
             return mobileIsPublicExternalWorkspace(root)
                     ? MOBILE_PUBLIC_WORKSPACE_ACCESS_DETAIL
                     : "workspace folder is not readable";
         }
-        if (children.length == 0) return "empty";
+        if (children.length == 0) return storageWarning.isEmpty() ? "empty" : "empty; " + storageWarning;
         List<File> sorted = new ArrayList<>(Arrays.asList(children));
         Collections.sort(sorted, (a, b) -> {
             if (a.isDirectory() != b.isDirectory()) return a.isDirectory() ? -1 : 1;
@@ -8738,27 +10413,30 @@ public class MobileBackendServer {
             sb.append(child.isDirectory() ? "[folder] " : "[file] ").append(child.getName());
             shown++;
         }
-        if (shown == 0) return "empty";
+        if (shown == 0) return storageWarning.isEmpty() ? "empty" : "empty; " + storageWarning;
         int hidden = sorted.size() - shown;
         if (hidden > 0) sb.append(", ... ").append(hidden).append(" more");
+        if (!storageWarning.isEmpty()) sb.append("; warning: ").append(storageWarning);
         return sb.toString();
     }
 
     private String mobileWorkspaceTreeSummary(File root, int maxEntries, int maxDepth) throws Exception {
         if (root == null || !root.isDirectory()) return "workspace folder is not available";
+        String storageWarning = mobilePublicWorkspaceWarning(root);
         File[] children = root.listFiles();
         if (children == null) {
             return mobileIsPublicExternalWorkspace(root)
                     ? MOBILE_PUBLIC_WORKSPACE_ACCESS_DETAIL
                     : "workspace folder is not readable";
         }
-        if (children.length == 0) return "(empty)";
+        if (children.length == 0) return storageWarning.isEmpty() ? "(empty)" : "(empty)\n[warning] " + storageWarning;
         StringBuilder sb = new StringBuilder();
         int[] shown = new int[]{0};
         int[] hidden = new int[]{0};
         appendMobileWorkspaceTree(root, root, 0, Math.max(0, maxDepth), Math.max(1, maxEntries), shown, hidden, sb);
-        if (shown[0] == 0) return "(empty)";
+        if (shown[0] == 0) return storageWarning.isEmpty() ? "(empty)" : "(empty)\n[warning] " + storageWarning;
         if (hidden[0] > 0) sb.append("... ").append(hidden[0]).append(" more not shown\n");
+        if (!storageWarning.isEmpty()) sb.append("[warning] ").append(storageWarning).append("\n");
         return sb.toString().trim();
     }
 
@@ -8862,6 +10540,337 @@ public class MobileBackendServer {
         if (text.isEmpty()) return "";
         if (size > read) text += "\n...";
         return text;
+    }
+
+    private JSONObject mobileWorkspaceToolResult(String rawName, JSONObject args, File workspace) throws Exception {
+        String name = mobileNormalizeWorkspaceToolName(rawName);
+        if (workspace == null) return mobileToolError(name, "No active Android workspace is selected.");
+        if ("get_workspace".equals(name)) {
+            return mobileToolOk("Active Android workspace: " + workspace.getCanonicalPath());
+        }
+        if ("ls".equals(name)) return mobileToolLs(args, workspace);
+        if ("glob".equals(name)) return mobileToolGlob(args, workspace);
+        if ("grep".equals(name)) return mobileToolGrep(args, workspace);
+        if ("read_file".equals(name)) return mobileToolReadFile(args, workspace);
+        if ("write_file".equals(name)) return mobileToolWriteFile(args, workspace);
+        if ("edit_file".equals(name)) return mobileToolEditFile(args, workspace);
+        return mobileToolError(name, "Unsupported Android workspace tool: " + rawName);
+    }
+
+    private String mobileNormalizeWorkspaceToolName(String rawName) {
+        String name = valueOr(rawName, "").trim();
+        int idx = name.lastIndexOf("__");
+        if (idx >= 0 && idx + 2 < name.length()) name = name.substring(idx + 2);
+        name = name.toLowerCase(Locale.US).replace('-', '_');
+        if ("list_dir".equals(name) || "list_files".equals(name) || "dir".equals(name)) return "ls";
+        if ("find_files".equals(name)) return "glob";
+        if ("search_files".equals(name) || "search_file_contents".equals(name) || "rg".equals(name)) return "grep";
+        if ("read".equals(name) || "cat".equals(name)) return "read_file";
+        if ("write".equals(name) || "save".equals(name)) return "write_file";
+        if ("edit".equals(name)) return "edit_file";
+        return name;
+    }
+
+    private JSONObject mobileToolOk(String output) throws Exception {
+        return new JSONObject()
+                .put("output", mobileTruncateToolOutput(output))
+                .put("exit_code", 0)
+                .put("mobile_standalone", true);
+    }
+
+    private JSONObject mobileToolError(String tool, String error) throws Exception {
+        return new JSONObject()
+                .put("error", tool + ": " + error)
+                .put("output", tool + ": " + error)
+                .put("exit_code", 1)
+                .put("mobile_standalone", true);
+    }
+
+    private String mobileTruncateToolOutput(String raw) {
+        String text = valueOr(raw, "");
+        if (text.length() <= MAX_MOBILE_AGENT_TOOL_OUTPUT_CHARS) return text;
+        return text.substring(0, MAX_MOBILE_AGENT_TOOL_OUTPUT_CHARS)
+                + "\n... [truncated at " + MAX_MOBILE_AGENT_TOOL_OUTPUT_CHARS + " chars]";
+    }
+
+    private File mobileToolPath(File workspace, JSONObject args, String key, boolean allowRoot) throws Exception {
+        return mobileResolveInside(workspace, jsonString(args, key, ""), allowRoot);
+    }
+
+    private JSONObject mobileToolLs(JSONObject args, File workspace) throws Exception {
+        File target = mobileToolPath(workspace, args, "path", true);
+        if (!target.isDirectory()) return mobileToolError("ls", "Path is not a folder: " + jsonString(args, "path", ""));
+        File[] children = target.listFiles();
+        if (children == null) return mobileToolError("ls", "Folder is not readable: " + mobileWorkspaceRelPath(workspace, target));
+        List<File> sorted = new ArrayList<>(Arrays.asList(children));
+        Collections.sort(sorted, (a, b) -> {
+            if (a.isDirectory() != b.isDirectory()) return a.isDirectory() ? -1 : 1;
+            return a.getName().compareToIgnoreCase(b.getName());
+        });
+        StringBuilder sb = new StringBuilder();
+        sb.append(mobileWorkspaceRelPath(workspace, target));
+        if (sb.length() == 0) sb.append(".");
+        sb.append(":\n");
+        int shown = 0;
+        for (File child : sorted) {
+            if (child.getName().startsWith(".")) continue;
+            if (mobileIsDeprecatedPrivateWorkspaceFolder(child)) continue;
+            if (shown >= MAX_MOBILE_WORKSPACE_FILE_ENTRIES) break;
+            if (child.isDirectory()) {
+                sb.append("  ").append(child.getName()).append("/\n");
+            } else if (child.isFile()) {
+                sb.append("  ").append(child.getName()).append("  (").append(child.length()).append(" B)\n");
+            } else {
+                sb.append("  ").append(child.getName()).append("  (other)\n");
+            }
+            shown++;
+        }
+        if (shown == 0) sb.append("  (empty)\n");
+        if (sorted.size() > shown) sb.append("  ... [").append(sorted.size() - shown).append(" more]\n");
+        String storageWarning = mobilePublicWorkspaceWarning(target);
+        if (!storageWarning.isEmpty()) sb.append("  [warning] ").append(storageWarning).append("\n");
+        return mobileToolOk(sb.toString().trim());
+    }
+
+    private JSONObject mobileToolReadFile(JSONObject args, File workspace) throws Exception {
+        File target = mobileToolPath(workspace, args, "path", false);
+        String rel = mobileWorkspaceRelPath(workspace, target);
+        if (!target.exists()) return mobileToolError("read_file", rel + ": not found");
+        if (!target.isFile()) return mobileToolError("read_file", rel + ": not a file");
+        if (target.length() > MAX_MOBILE_WORKSPACE_TEXT_BYTES) {
+            return mobileToolError("read_file", rel + ": file is larger than " + MAX_MOBILE_WORKSPACE_TEXT_BYTES + " bytes");
+        }
+        if (!mobileWorkspaceEditableText(target)) {
+            return mobileToolError("read_file", rel + ": not an editable text file");
+        }
+        String data;
+        try (InputStream in = new FileInputStream(target)) {
+            data = new String(readBytes(in), StandardCharsets.UTF_8);
+        }
+        int offset = Math.max(0, jsonInt(args, "offset", 0));
+        int limit = Math.max(0, jsonInt(args, "limit", 0));
+        if (offset > 0 || limit > 0) {
+            String normalized = data.replace("\r\n", "\n").replace('\r', '\n');
+            String[] lines = normalized.split("\n", -1);
+            int start = offset > 0 ? Math.max(1, offset) : 1;
+            int end = limit > 0 ? Math.min(lines.length, start + limit - 1) : lines.length;
+            StringBuilder ranged = new StringBuilder();
+            for (int i = start; i <= end; i++) {
+                if (i > 0 && i <= lines.length) ranged.append(lines[i - 1]).append("\n");
+            }
+            data = ranged.toString();
+        }
+        return mobileToolOk(data);
+    }
+
+    private JSONObject mobileToolWriteFile(JSONObject args, File workspace) throws Exception {
+        String rawPath = jsonString(args, "path", "").trim();
+        if (rawPath.isEmpty()) return mobileToolError("write_file", "path is required");
+        File target = mobileToolPath(workspace, args, "path", false);
+        if (target.isDirectory()) return mobileToolError("write_file", "Path is a folder: " + rawPath);
+        String content = jsonString(args, "content", "");
+        byte[] encoded = content.getBytes(StandardCharsets.UTF_8);
+        if (encoded.length > MAX_MOBILE_WORKSPACE_TEXT_BYTES) {
+            return mobileToolError("write_file", "Content is larger than " + MAX_MOBILE_WORKSPACE_TEXT_BYTES + " bytes");
+        }
+        File parent = target.getParentFile();
+        if (parent == null || !mobileIsInside(workspace, parent)) return mobileToolError("write_file", "Parent folder is outside the workspace");
+        if (!parent.isDirectory()) {
+            if (jsonBoolean(args, "create_parents", false)) {
+                if (!parent.mkdirs() && !parent.isDirectory()) return mobileToolError("write_file", "Could not create parent folder");
+            } else {
+                return mobileToolError("write_file", "Parent folder does not exist");
+            }
+        }
+        try (FileOutputStream fos = new FileOutputStream(target)) {
+            fos.write(encoded);
+        }
+        return mobileToolOk("Wrote " + encoded.length + " bytes to " + mobileWorkspaceRelPath(workspace, target));
+    }
+
+    private JSONObject mobileToolEditFile(JSONObject args, File workspace) throws Exception {
+        String rawPath = jsonString(args, "path", "").trim();
+        String oldString = jsonString(args, "old_string", "");
+        String newString = jsonString(args, "new_string", "");
+        if (rawPath.isEmpty()) return mobileToolError("edit_file", "path is required");
+        if (oldString.isEmpty()) return mobileToolError("edit_file", "old_string is required");
+        if (oldString.equals(newString)) return mobileToolError("edit_file", "old_string and new_string are identical");
+        File target = mobileToolPath(workspace, args, "path", false);
+        String rel = mobileWorkspaceRelPath(workspace, target);
+        if (!target.exists()) return mobileToolError("edit_file", rel + ": not found");
+        if (!target.isFile()) return mobileToolError("edit_file", rel + ": not a file");
+        if (target.length() > MAX_MOBILE_WORKSPACE_TEXT_BYTES) {
+            return mobileToolError("edit_file", rel + ": file is larger than " + MAX_MOBILE_WORKSPACE_TEXT_BYTES + " bytes");
+        }
+        if (!mobileWorkspaceEditableText(target)) return mobileToolError("edit_file", rel + ": not an editable text file");
+        String original;
+        try (InputStream in = new FileInputStream(target)) {
+            original = new String(readBytes(in), StandardCharsets.UTF_8);
+        }
+        int count = mobileCountOccurrences(original, oldString);
+        if (count == 0) return mobileToolError("edit_file", "old_string not found in " + rel);
+        boolean replaceAll = jsonBoolean(args, "replace_all", false);
+        if (count > 1 && !replaceAll) {
+            return mobileToolError("edit_file", "old_string is not unique in " + rel + " (" + count + " matches)");
+        }
+        String updated = replaceAll
+                ? original.replace(oldString, newString)
+                : original.substring(0, original.indexOf(oldString)) + newString
+                + original.substring(original.indexOf(oldString) + oldString.length());
+        byte[] encoded = updated.getBytes(StandardCharsets.UTF_8);
+        if (encoded.length > MAX_MOBILE_WORKSPACE_TEXT_BYTES) {
+            return mobileToolError("edit_file", "Updated content is larger than " + MAX_MOBILE_WORKSPACE_TEXT_BYTES + " bytes");
+        }
+        try (FileOutputStream fos = new FileOutputStream(target)) {
+            fos.write(encoded);
+        }
+        return mobileToolOk("Edited " + rel + " (" + (replaceAll ? count : 1) + " replacement" + ((replaceAll ? count : 1) == 1 ? "" : "s") + ")");
+    }
+
+    private int mobileCountOccurrences(String haystack, String needle) {
+        if (needle == null || needle.isEmpty()) return 0;
+        int count = 0;
+        int idx = 0;
+        while ((idx = haystack.indexOf(needle, idx)) >= 0) {
+            count++;
+            idx += needle.length();
+        }
+        return count;
+    }
+
+    private JSONObject mobileToolGlob(JSONObject args, File workspace) throws Exception {
+        String pattern = jsonString(args, "pattern", "").trim();
+        if (pattern.isEmpty()) return mobileToolError("glob", "pattern is required");
+        File start = mobileToolPath(workspace, args, "path", true);
+        if (!start.exists()) return mobileToolError("glob", "path not found");
+        Pattern regex = Pattern.compile(mobileGlobToRegex(pattern));
+        List<String> matches = new ArrayList<>();
+        mobileCollectGlob(workspace, start, regex, matches);
+        if (matches.isEmpty()) {
+            String storageWarning = mobilePublicWorkspaceWarning(start);
+            if (!storageWarning.isEmpty()) return mobileToolOk("(no matches)\n[warning] " + storageWarning);
+            return mobileToolOk("(no matches)");
+        }
+        Collections.sort(matches, String::compareToIgnoreCase);
+        StringBuilder sb = new StringBuilder();
+        int max = Math.min(matches.size(), MAX_MOBILE_TOOL_SEARCH_RESULTS);
+        for (int i = 0; i < max; i++) sb.append(matches.get(i)).append("\n");
+        if (matches.size() > max) sb.append("... [").append(matches.size() - max).append(" more]\n");
+        return mobileToolOk(sb.toString().trim());
+    }
+
+    private void mobileCollectGlob(File workspace, File target, Pattern regex, List<String> out) throws Exception {
+        if (out.size() >= MAX_MOBILE_TOOL_SEARCH_RESULTS * 2) return;
+        if (target.isDirectory()) {
+            if (mobileShouldSkipToolDir(target)) return;
+            File[] children = target.listFiles();
+            if (children == null) return;
+            List<File> sorted = new ArrayList<>(Arrays.asList(children));
+            Collections.sort(sorted, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+            for (File child : sorted) mobileCollectGlob(workspace, child, regex, out);
+            return;
+        }
+        if (!target.isFile() || target.getName().startsWith(".")) return;
+        String rel = mobileWorkspaceRelPath(workspace, target).replace(File.separatorChar, '/');
+        if (regex.matcher(rel).matches() || regex.matcher(target.getName()).matches()) out.add(rel);
+    }
+
+    private JSONObject mobileToolGrep(JSONObject args, File workspace) throws Exception {
+        String pattern = jsonString(args, "pattern", "").trim();
+        if (pattern.isEmpty()) return mobileToolError("grep", "pattern is required");
+        int flags = jsonBoolean(args, "ignore_case", false) ? Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE : 0;
+        Pattern regex;
+        try {
+            regex = Pattern.compile(pattern, flags);
+        } catch (Exception ex) {
+            return mobileToolError("grep", "invalid regex: " + ex.getMessage());
+        }
+        Pattern glob = null;
+        String globRaw = jsonString(args, "glob", "").trim();
+        if (!globRaw.isEmpty()) glob = Pattern.compile(mobileGlobToRegex(globRaw));
+        int max = Math.max(1, Math.min(MAX_MOBILE_TOOL_SEARCH_RESULTS, jsonInt(args, "max_results", MAX_MOBILE_TOOL_SEARCH_RESULTS)));
+        File start = mobileToolPath(workspace, args, "path", true);
+        if (!start.exists()) return mobileToolError("grep", "path not found");
+        List<String> matches = new ArrayList<>();
+        mobileCollectGrep(workspace, start, regex, glob, max, matches);
+        if (matches.isEmpty()) {
+            String storageWarning = mobilePublicWorkspaceWarning(start);
+            if (!storageWarning.isEmpty()) return mobileToolOk("(no matches)\n[warning] " + storageWarning);
+            return mobileToolOk("(no matches)");
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String row : matches) sb.append(row).append("\n");
+        return mobileToolOk(sb.toString().trim());
+    }
+
+    private void mobileCollectGrep(File workspace, File target, Pattern regex, Pattern glob,
+                                   int max, List<String> out) throws Exception {
+        if (out.size() >= max) return;
+        if (target.isDirectory()) {
+            if (mobileShouldSkipToolDir(target)) return;
+            File[] children = target.listFiles();
+            if (children == null) return;
+            List<File> sorted = new ArrayList<>(Arrays.asList(children));
+            Collections.sort(sorted, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+            for (File child : sorted) mobileCollectGrep(workspace, child, regex, glob, max, out);
+            return;
+        }
+        if (!target.isFile() || target.getName().startsWith(".")) return;
+        String rel = mobileWorkspaceRelPath(workspace, target).replace(File.separatorChar, '/');
+        if (glob != null && !glob.matcher(rel).matches() && !glob.matcher(target.getName()).matches()) return;
+        if (target.length() > MAX_MOBILE_WORKSPACE_TEXT_BYTES || !mobileWorkspaceTextName(target.getName())) return;
+        try {
+            if (mobileWorkspaceIsProbablyBinary(target)) return;
+            String data;
+            try (InputStream in = new FileInputStream(target)) {
+                data = new String(readBytes(in), StandardCharsets.UTF_8);
+            }
+            String[] lines = data.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1);
+            for (int i = 0; i < lines.length && out.size() < max; i++) {
+                if (regex.matcher(lines[i]).find()) {
+                    out.add(rel + ":" + (i + 1) + ": " + lines[i]);
+                }
+            }
+        } catch (IOException ignored) {
+            // Skip unreadable files; the tool should keep searching other candidates.
+        }
+    }
+
+    private boolean mobileShouldSkipToolDir(File dir) {
+        String name = dir.getName();
+        if (name.startsWith(".") && !name.equals(".")) return true;
+        return MOBILE_TOOL_SKIP_DIRS.contains(name);
+    }
+
+    private String mobileGlobToRegex(String glob) {
+        StringBuilder out = new StringBuilder("^");
+        String normalized = valueOr(glob, "").replace('\\', '/');
+        for (int i = 0; i < normalized.length(); i++) {
+            char c = normalized.charAt(i);
+            if (c == '*') {
+                boolean doublestar = i + 1 < normalized.length() && normalized.charAt(i + 1) == '*';
+                if (doublestar) {
+                    boolean followedBySlash = i + 2 < normalized.length() && normalized.charAt(i + 2) == '/';
+                    if (followedBySlash) {
+                        out.append("(?:.*/)?");
+                        i += 2;
+                    } else {
+                        out.append(".*");
+                        i++;
+                    }
+                } else {
+                    out.append("[^/]*");
+                }
+            } else if (c == '?') {
+                out.append("[^/]");
+            } else if (".()[]{}+$^|".indexOf(c) >= 0) {
+                out.append('\\').append(c);
+            } else {
+                out.append(c);
+            }
+        }
+        out.append("$");
+        return out.toString();
     }
 
     private String mobilePersonalContextForPrompt(String userText) throws Exception {
@@ -9321,6 +11330,99 @@ public class MobileBackendServer {
         return image;
     }
 
+    private JSONObject saveGeneratedGalleryImage(byte[] rawData, String prompt, String model,
+                                                 String size, String quality, String sessionId) throws Exception {
+        Bitmap bitmap = BitmapFactory.decodeByteArray(rawData, 0, rawData.length);
+        if (bitmap == null) throw new IOException("Generated image bytes could not be decoded.");
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        bitmap.compress(Bitmap.CompressFormat.PNG, 100, baos);
+        byte[] data = baos.toByteArray();
+        String filename = UUID.randomUUID().toString().replace("-", "").substring(0, 12) + ".png";
+        File dst = new File(galleryDir(), filename);
+        try (FileOutputStream fos = new FileOutputStream(dst)) {
+            fos.write(data);
+        }
+
+        String now = isoTimestamp(System.currentTimeMillis());
+        JSONObject image = new JSONObject()
+                .put("id", UUID.randomUUID().toString())
+                .put("filename", filename)
+                .put("url", "/api/generated-image/" + filename)
+                .put("prompt", prompt)
+                .put("model", model)
+                .put("size", size)
+                .put("quality", quality)
+                .put("tags", "generated")
+                .put("ai_tags", "")
+                .put("user_tags", "generated")
+                .put("session_id", valueOr(sessionId, "").isEmpty() ? JSONObject.NULL : sessionId)
+                .put("session_name", JSONObject.NULL)
+                .put("album_id", JSONObject.NULL)
+                .put("is_active", true)
+                .put("favorite", false)
+                .put("taken_at", JSONObject.NULL)
+                .put("camera", JSONObject.NULL)
+                .put("gps", JSONObject.NULL)
+                .put("width", bitmap.getWidth())
+                .put("height", bitmap.getHeight())
+                .put("file_size", data.length)
+                .put("created_at", now)
+                .put("updated_at", now)
+                .put("owner", "mobile")
+                .put("file_hash", sha256Hex(data));
+        JSONArray images = loadArray(PREF_GALLERY_IMAGES);
+        images.put(image);
+        saveArray(PREF_GALLERY_IMAGES, images);
+        return image;
+    }
+
+    private JSONObject saveGeneratedGalleryVideo(byte[] data, String ext, String prompt, String model,
+                                                 String size, String quality, String sessionId) throws Exception {
+        if (data == null || data.length == 0) throw new IOException("Generated video bytes were empty.");
+        String safeExt = valueOr(ext, "mp4").toLowerCase(Locale.US);
+        if (!("mp4".equals(safeExt) || "webm".equals(safeExt) || "mov".equals(safeExt)
+                || "mkv".equals(safeExt) || "m4v".equals(safeExt))) {
+            safeExt = "mp4";
+        }
+        String filename = UUID.randomUUID().toString().replace("-", "").substring(0, 12) + "." + safeExt;
+        File dst = new File(galleryDir(), filename);
+        try (FileOutputStream fos = new FileOutputStream(dst)) {
+            fos.write(data);
+        }
+
+        String now = isoTimestamp(System.currentTimeMillis());
+        JSONObject video = new JSONObject()
+                .put("id", UUID.randomUUID().toString())
+                .put("filename", filename)
+                .put("url", "/api/generated-image/" + filename)
+                .put("prompt", prompt)
+                .put("model", model)
+                .put("size", size)
+                .put("quality", quality)
+                .put("tags", "generated,video")
+                .put("ai_tags", "")
+                .put("user_tags", "generated,video")
+                .put("session_id", valueOr(sessionId, "").isEmpty() ? JSONObject.NULL : sessionId)
+                .put("session_name", JSONObject.NULL)
+                .put("album_id", JSONObject.NULL)
+                .put("is_active", true)
+                .put("favorite", false)
+                .put("taken_at", JSONObject.NULL)
+                .put("camera", JSONObject.NULL)
+                .put("gps", JSONObject.NULL)
+                .put("width", JSONObject.NULL)
+                .put("height", JSONObject.NULL)
+                .put("file_size", data.length)
+                .put("created_at", now)
+                .put("updated_at", now)
+                .put("owner", "mobile")
+                .put("file_hash", sha256Hex(data));
+        JSONArray images = loadArray(PREF_GALLERY_IMAGES);
+        images.put(video);
+        saveArray(PREF_GALLERY_IMAGES, images);
+        return video;
+    }
+
     private String galleryActionLabel(String action) {
         if ("denoise".equals(action)) return "Denoised";
         if ("upscale".equals(action)) return "Upscaled";
@@ -9342,11 +11444,15 @@ public class MobileBackendServer {
         if (ep != null && (model.isEmpty() || endpointHasModel(ep, model))) return ep;
         String endpointUrl = session.optString("endpoint_url");
         JSONObject urlMatch = endpointForChatUrl(endpointUrl);
+        JSONObject modelMatch = model.isEmpty() ? null : endpointForModel(model);
+        if (modelMatch != null && (urlMatch == null || !endpointHasModel(urlMatch, model))) {
+            repairSessionEndpoint(session, modelMatch);
+            return modelMatch;
+        }
         if (urlMatch != null && (model.isEmpty() || endpointCanServeModel(urlMatch, model))) {
             repairSessionEndpoint(session, urlMatch);
             return urlMatch;
         }
-        JSONObject modelMatch = model.isEmpty() ? null : endpointForModel(model);
         if (modelMatch != null) {
             repairSessionEndpoint(session, modelMatch);
             return modelMatch;
@@ -9578,6 +11684,59 @@ public class MobileBackendServer {
         return choice.optString("text", "");
     }
 
+    private JSONObject callChatCompletionMessage(JSONObject endpoint, String model, JSONArray messages,
+                                                 JSONArray tools) throws Exception {
+        if (isChatGptSubscriptionEndpoint(endpoint)) {
+            throw new IOException(CHATGPT_SUBSCRIPTION_LABEL + " Android standalone tool calling is not implemented yet.");
+        }
+        JSONArray providerMessages = sanitizeProviderMessages(messages);
+        String providerModel = providerModelId(endpoint, model);
+        String baseUrl = endpoint.optString("base_url");
+        String apiKey = endpoint.optString("api_key");
+        URL url = new URL(chatUrl(baseUrl));
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(240000);
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("Accept", "application/json");
+        if (!apiKey.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+        JSONObject payload = new JSONObject()
+                .put("model", providerModel)
+                .put("messages", providerMessages)
+                .put("stream", false);
+        if (tools != null && tools.length() > 0) {
+            payload.put("tools", tools);
+            payload.put("tool_choice", "auto");
+        }
+        if (isDeepSeekV4(endpoint, providerModel)) {
+            payload.put("thinking", new JSONObject().put("type", "disabled"));
+        } else {
+            payload.put("temperature", 0.3);
+        }
+        byte[] data = payload.toString().getBytes(StandardCharsets.UTF_8);
+        conn.setFixedLengthStreamingMode(data.length);
+        try (OutputStream body = conn.getOutputStream()) {
+            body.write(data);
+        }
+        int status = conn.getResponseCode();
+        String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
+        if (status < 200 || status >= 300) {
+            throw new IOException(formatProviderError(status, response) + " | " + mobileRequestSummary(endpoint, providerModel, providerMessages));
+        }
+        JSONObject json = new JSONObject(response);
+        JSONArray choices = json.optJSONArray("choices");
+        if (choices == null || choices.length() == 0) {
+            return new JSONObject().put("role", "assistant").put("content", "");
+        }
+        JSONObject choice = choices.optJSONObject(0);
+        if (choice == null) return new JSONObject().put("role", "assistant").put("content", "");
+        JSONObject message = choice.optJSONObject("message");
+        if (message != null) return message;
+        return new JSONObject().put("role", "assistant").put("content", choice.optString("text", ""));
+    }
+
     private String mobileRequestSummary(JSONObject endpoint, String model, JSONArray messages) {
         String host = "unknown endpoint";
         try {
@@ -9694,14 +11853,74 @@ public class MobileBackendServer {
             if (msg == null || "system".equals(msg.optString("role"))) continue;
             String role = msg.optString("role", "user");
             if ("tool".equals(role)) role = "user";
-            String type = "assistant".equals(role) ? "output_text" : "input_text";
             input.put(new JSONObject()
                     .put("role", role)
-                    .put("content", new JSONArray().put(new JSONObject()
-                            .put("type", type)
-                            .put("text", messageContentText(msg.opt("content"))))));
+                    .put("content", chatGptResponsesContent(role, msg.opt("content"))));
         }
         return input;
+    }
+
+    private JSONArray chatGptResponsesContent(String role, Object content) throws Exception {
+        JSONArray blocks = new JSONArray();
+        String textType = "assistant".equals(role) ? "output_text" : "input_text";
+        boolean canSendImages = !"assistant".equals(role);
+        if (content instanceof JSONArray) {
+            JSONArray arr = (JSONArray) content;
+            for (int i = 0; i < arr.length(); i++) {
+                appendChatGptResponsesPart(blocks, textType, canSendImages, arr.opt(i));
+            }
+        } else {
+            appendChatGptResponsesPart(blocks, textType, canSendImages, content);
+        }
+        if (blocks.length() == 0) {
+            blocks.put(new JSONObject().put("type", textType).put("text", ""));
+        }
+        return blocks;
+    }
+
+    private void appendChatGptResponsesPart(JSONArray blocks, String textType, boolean canSendImages, Object part) throws Exception {
+        if (part == null || part == JSONObject.NULL) return;
+        if (part instanceof JSONObject) {
+            JSONObject obj = (JSONObject) part;
+            String partType = obj.optString("type", "").trim().toLowerCase(Locale.US);
+            if (canSendImages && ("image_url".equals(partType) || "input_image".equals(partType) || "image".equals(partType))) {
+                String imageUrl = chatGptResponsesImageUrl(obj);
+                if (!imageUrl.isEmpty()) {
+                    blocks.put(new JSONObject().put("type", "input_image").put("image_url", imageUrl));
+                    return;
+                }
+            }
+            String text = chatGptResponsesPartText(obj);
+            if (!text.isEmpty()) {
+                blocks.put(new JSONObject().put("type", textType).put("text", text));
+            }
+            return;
+        }
+        String text = String.valueOf(part);
+        if (!text.isEmpty()) {
+            blocks.put(new JSONObject().put("type", textType).put("text", text));
+        }
+    }
+
+    private String chatGptResponsesPartText(JSONObject obj) {
+        Object raw = obj.has("text") ? obj.opt("text") : obj.opt("content");
+        if (raw == null || raw == JSONObject.NULL) return "";
+        return String.valueOf(raw);
+    }
+
+    private String chatGptResponsesImageUrl(JSONObject obj) {
+        Object raw = obj.has("image_url") ? obj.opt("image_url")
+                : obj.has("imageUrl") ? obj.opt("imageUrl")
+                : obj.has("url") ? obj.opt("url")
+                : obj.opt("data");
+        if (raw instanceof JSONObject) {
+            JSONObject nested = (JSONObject) raw;
+            raw = nested.has("url") ? nested.opt("url")
+                    : nested.has("image_url") ? nested.opt("image_url")
+                    : nested.opt("data");
+        }
+        if (raw == null || raw == JSONObject.NULL) return "";
+        return String.valueOf(raw).trim();
     }
 
     private String messageContentText(Object content) {
@@ -9889,7 +12108,7 @@ public class MobileBackendServer {
             for (int i = 0; i < data.length(); i++) {
                 JSONObject item = data.optJSONObject(i);
                 String id = item == null ? data.optString(i) : item.optString("id", item.optString("name"));
-                if (!id.isEmpty() && (isChatModel(id) || isImageEditModel(id))) out.put(id);
+                if (!id.isEmpty() && (isChatModel(id) || isImageEditModel(id) || isImageGenerationModel(id))) out.put(id);
             }
         }
         JSONArray models = json.optJSONArray("models");
@@ -9897,7 +12116,7 @@ public class MobileBackendServer {
             for (int i = 0; i < models.length(); i++) {
                 JSONObject item = models.optJSONObject(i);
                 String id = item == null ? models.optString(i) : item.optString("name", item.optString("model"));
-                if (!id.isEmpty() && (isChatModel(id) || isImageEditModel(id))) out.put(id);
+                if (!id.isEmpty() && (isChatModel(id) || isImageEditModel(id) || isImageGenerationModel(id))) out.put(id);
             }
         }
         return out;
@@ -10359,6 +12578,37 @@ public class MobileBackendServer {
     private String truncateError(String raw, int max) {
         String text = valueOr(raw, "").replace('\n', ' ').trim();
         return text.length() > max ? text.substring(0, max) + "..." : text;
+    }
+
+    private String squashMobileReplySpacing(String raw) {
+        String text = valueOr(raw, "").replace("\r\n", "\n").replace('\r', '\n');
+        String[] parts = text.split("```", -1);
+        StringBuilder out = new StringBuilder(text.length());
+        for (int i = 0; i < parts.length; i++) {
+            if (i > 0) out.append("```");
+            if ((i % 2) == 1) {
+                out.append(parts[i]);
+                continue;
+            }
+            String part = parts[i]
+                    .replaceAll("[\\u00A0\\u1680\\u2000-\\u200A\\u202F\\u205F\\u3000]", " ")
+                    .replaceAll("[ \\t]+\\n", "\n")
+                    .replaceAll("\\n{3,}", "\n\n");
+            String[] lines = part.split("\n", -1);
+            for (int j = 0; j < lines.length; j++) {
+                if (j > 0) out.append('\n');
+                String line = lines[j];
+                int leading = 0;
+                while (leading < line.length()) {
+                    char ch = line.charAt(leading);
+                    if (ch != ' ' && ch != '\t') break;
+                    leading++;
+                }
+                out.append(line, 0, leading)
+                        .append(line.substring(leading).replaceAll("[ \\t]{2,}", " "));
+            }
+        }
+        return out.toString();
     }
 
     private Map<String, String> parseForm(Request request) throws Exception {

@@ -2,6 +2,7 @@
 """Research service — deep research with LLM-in-the-loop."""
 
 import re
+import inspect
 from dataclasses import dataclass, field
 from typing import List, Optional, Callable
 
@@ -70,12 +71,23 @@ class ResearchService:
         import time
         start = time.time()
 
+        call_kwargs = {
+            "max_time": max_time,
+            "progress_callback": on_progress,
+        }
+        try:
+            params = inspect.signature(self.handler.call_research_service).parameters
+            accepts_kwargs = any(p.kind == p.VAR_KEYWORD for p in params.values())
+            if accepts_kwargs or "include_source_sections" in params:
+                call_kwargs["include_source_sections"] = True
+        except (TypeError, ValueError):
+            pass
+
         result = await self.handler.call_research_service(
             topic,
             llm_endpoint,
             llm_model,
-            max_time=max_time,
-            progress_callback=on_progress,
+            **call_kwargs,
         )
 
         duration = time.time() - start

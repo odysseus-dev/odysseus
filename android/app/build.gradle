@@ -2,6 +2,18 @@ plugins {
     id "com.android.application"
 }
 
+def releaseKeystorePropertiesFile = rootProject.file("keystore.properties")
+def releaseKeystoreProperties = new Properties()
+if (releaseKeystorePropertiesFile.exists()) {
+    releaseKeystorePropertiesFile.withInputStream { stream ->
+        releaseKeystoreProperties.load(stream)
+    }
+}
+def releaseSigningKeys = ["storeFile", "storePassword", "keyAlias", "keyPassword"]
+def hasReleaseSigningConfig = releaseSigningKeys.every { key ->
+    releaseKeystoreProperties.getProperty(key)?.trim()
+}
+
 def odysseusDefaultUrl = providers.gradleProperty("ODYSSEUS_ANDROID_URL")
         .orElse("http://10.0.2.2:7000")
         .get()
@@ -17,8 +29,8 @@ android {
         applicationId = "com.odysseus.simplesignal"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.0.2"
+        versionCode = 7
+        versionName = "1.0.7"
 
         ndk {
             // Keep native payloads phone-sized when native modules are enabled.
@@ -27,6 +39,23 @@ android {
 
         buildConfigField "String", "ODYSSEUS_DEFAULT_URL", "\"${odysseusDefaultUrl}\""
         buildConfigField "String", "ODYSSEUS_ADB_REVERSE_URL", "\"${odysseusAdbReverseUrl}\""
+    }
+
+    signingConfigs {
+        release {
+            if (hasReleaseSigningConfig) {
+                storeFile = rootProject.file(releaseKeystoreProperties.getProperty("storeFile").trim())
+                storePassword = releaseKeystoreProperties.getProperty("storePassword").trim()
+                keyAlias = releaseKeystoreProperties.getProperty("keyAlias").trim()
+                keyPassword = releaseKeystoreProperties.getProperty("keyPassword").trim()
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.release
+        }
     }
 
     buildFeatures {
@@ -76,4 +105,17 @@ dependencies {
     // Classes-only ONNX Runtime jar with Android's forced System.loadLibrary
     // branch patched out. Native libs are installed by Cookbook on demand.
     implementation files("libs/onnxruntime-android-1.26.0-patched-loader.jar")
+}
+
+gradle.taskGraph.whenReady { graph ->
+    def releaseBuildRequested = graph.allTasks.any { task ->
+        def name = task.name.toLowerCase()
+        name.contains("release") && (name.startsWith("assemble")
+                || name.startsWith("bundle")
+                || name.startsWith("package")
+                || name.startsWith("sign"))
+    }
+    if (releaseBuildRequested && !hasReleaseSigningConfig) {
+        throw new GradleException("Release signing is not configured. Copy android/keystore.properties.example to android/keystore.properties and set storeFile, storePassword, keyAlias, and keyPassword.")
+    }
 }
