@@ -27,7 +27,7 @@ from src.tools.system import (  # noqa: F401
 _ADMIN_TOOL_SYMBOLS = (
     "do_manage_endpoints", "do_manage_mcp", "do_manage_webhooks",
     "do_manage_tokens", "do_manage_settings",
-    "_MCP_DENIED_COMMANDS", "_validate_mcp_command",
+    "_MCP_DENIED_COMMANDS", "_validate_mcp_command", "_mcp_allowed_commands",
 )
 
 
@@ -51,6 +51,7 @@ from src.tools.cookbook import (  # noqa: F401
     _cookbook_register_task, _cookbook_apply_retry_suggestion,
     _scan_running_model_processes, _cookbook_kill_session,
     _MODEL_PROCESS_PATTERNS,
+    _string_arg, _validate_cookbook_ssh_target,
 )
 # Search domain extracted to src/tools/search.py (slice 1, #4082/#4071).
 # Re-imported here so this module stays a working facade.

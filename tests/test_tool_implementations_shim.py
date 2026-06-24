@@ -25,13 +25,14 @@ _EXPECTED = [
     "do_serve_model", "do_serve_preset", "do_stop_served_model",
     "do_tail_serve_output", "do_trigger_research", "do_vault_get",
     "do_vault_search", "do_vault_unlock",
-    # 15 module-private helpers (importable by name too)
+    # module-private helpers (importable by name too)
     "_cookbook_apply_retry_suggestion", "_cookbook_env_for_host",
     "_cookbook_kill_session", "_cookbook_register_task", "_cookbook_servers",
     "_ensure_served_endpoint", "_infer_serve_host", "_infer_serve_port",
-    "_internal_headers", "_load_vault_config", "_parse_tool_args",
-    "_resolve_cookbook_host", "_run_bw", "_scan_running_model_processes",
-    "_skill_dump",
+    "_internal_headers", "_load_vault_config", "_mcp_allowed_commands",
+    "_parse_tool_args", "_resolve_cookbook_host", "_run_bw",
+    "_scan_running_model_processes", "_skill_dump", "_string_arg",
+    "_validate_cookbook_ssh_target",
 ]
 
 
