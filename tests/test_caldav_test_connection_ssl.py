@@ -31,36 +31,38 @@ def test_ssl_context_respects_requests_ca_bundle(monkeypatch, tmp_path):
     assert ca == str(fake_bundle)
 
 
-def test_ssl_context_no_override_is_none(monkeypatch):
-    """When neither env var is set, _ca must be None (not empty string)."""
+def test_ssl_context_no_override_falls_back_to_certifi(monkeypatch):
+    """When neither env var is set, _ca falls back to certifi's bundle (not None)."""
+    import certifi
     monkeypatch.delenv("SSL_CERT_FILE", raising=False)
     monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
 
-    ca = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE") or None
-    assert ca is None
+    ca = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE") or certifi.where()
+    assert ca == certifi.where()
+    assert os.path.isfile(ca)
 
 
-def test_ssl_context_empty_string_normalises_to_none(monkeypatch):
-    """Docker Compose :-default forwards empty strings; they must not reach cafile=."""
+def test_ssl_context_empty_string_falls_back_to_certifi(monkeypatch):
+    """Docker Compose :-default forwards empty strings; they must fall back to certifi."""
+    import certifi
     monkeypatch.setenv("SSL_CERT_FILE", "")
     monkeypatch.setenv("REQUESTS_CA_BUNDLE", "")
 
-    ca = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE") or None
-    assert ca is None
+    ca = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE") or certifi.where()
+    assert ca == certifi.where()
 
 
 def test_verify_x509_strict_cleared():
-    """The ssl context passed to httpx must not have VERIFY_X509_STRICT set.
+    """Python's ssl module supports clearing VERIFY_X509_STRICT on a default context.
 
-    This flag (Python 3.12+) rejects self-signed certs missing keyUsage, but
-    requests/urllib3 (used by the sync path) does not set it.
+    This tests the mechanism (the flag can be cleared). Whether the route actually
+    clears it is covered by the VERIFY_X509_STRICT source-text assertion in
+    test_caldav_url_hardening.py.
     """
     ctx = ssl.create_default_context()
     if hasattr(ssl, "VERIFY_X509_STRICT"):
         ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
-        assert not (ctx.verify_flags & ssl.VERIFY_X509_STRICT), (
-            "VERIFY_X509_STRICT must be cleared so self-signed certs are accepted"
-        )
+        assert not (ctx.verify_flags & ssl.VERIFY_X509_STRICT)
 
 
 def test_ssl_env_fallback_order(monkeypatch, tmp_path):

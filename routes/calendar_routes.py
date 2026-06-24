@@ -844,22 +844,21 @@ def setup_calendar_routes() -> APIRouter:
             url = validate_caldav_url(url)
         except ValueError as e:
             return {"ok": False, "error": str(e)}
-        import httpx, os, ssl as _ssl
+        import httpx, os, ssl as _ssl, certifi as _certifi
         propfind_body = (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/>'
             '</d:prop></d:propfind>'
         )
-        _ca = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE") or None
+        # Use explicit CA bundle to match the sync path (requests/urllib3 + certifi).
+        # Empty-string env vars (Docker Compose :- default) are falsy and fall through.
+        _ca = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE") or _certifi.where()
         try:
-            if _ca:
-                _ssl_ctx = _ssl.create_default_context(cafile=_ca)
-                # Match requests/urllib3 behaviour: don't enforce VERIFY_X509_STRICT
-                # (Python 3.12+), which rejects self-signed certs missing keyUsage.
-                if hasattr(_ssl, "VERIFY_X509_STRICT"):
-                    _ssl_ctx.verify_flags &= ~_ssl.VERIFY_X509_STRICT
-            else:
-                _ssl_ctx = True  # httpx default: certifi bundle, no flag changes
+            _ssl_ctx = _ssl.create_default_context(cafile=_ca)
+            # Match requests/urllib3 behaviour: don't enforce VERIFY_X509_STRICT
+            # (Python 3.12+), which rejects self-signed certs missing keyUsage.
+            if hasattr(_ssl, "VERIFY_X509_STRICT"):
+                _ssl_ctx.verify_flags &= ~_ssl.VERIFY_X509_STRICT
             async with httpx.AsyncClient(timeout=8.0, follow_redirects=False, trust_env=False, verify=_ssl_ctx) as cx:
                 r = await cx.request(
                     "PROPFIND", url,
