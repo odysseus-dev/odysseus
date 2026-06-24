@@ -844,7 +844,7 @@ def setup_calendar_routes() -> APIRouter:
             url = validate_caldav_url(url)
         except ValueError as e:
             return {"ok": False, "error": str(e)}
-        import httpx, os, ssl as _ssl, certifi as _certifi
+        import httpx, ssl as _ssl, certifi as _certifi
         propfind_body = (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/>'
@@ -852,8 +852,8 @@ def setup_calendar_routes() -> APIRouter:
         )
         # Use explicit CA bundle to match the sync path (requests/urllib3 + certifi).
         # Empty-string env vars (Docker Compose :- default) are falsy and fall through.
-        _ca = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE") or _certifi.where()
-        if not os.path.isfile(_ca):
+        _ca = _os.environ.get("SSL_CERT_FILE") or _os.environ.get("REQUESTS_CA_BUNDLE") or _certifi.where()
+        if not _os.path.isfile(_ca):
             return {"ok": False, "error": f"CA bundle not found: {_ca!r} — check that the file exists and SSL_CERT_FILE/REQUESTS_CA_BUNDLE points to a valid PEM"}
         try:
             _ssl_ctx = _ssl.create_default_context(cafile=_ca)
