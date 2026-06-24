@@ -269,6 +269,27 @@ def test_android_routes_veo_through_gemini_long_running_video_api():
     assert "return nativeBase + \"/models/\" + encodedModel + \":predictLongRunning\";" in helper
 
 
+def test_android_accepts_gemini_veo_file_download_uri_as_video():
+    parser = ANDROID_SERVER.split("private String providerVideoValueFromText", 1)[1].split(
+        "private boolean looksLikeProviderImageValue", 1
+    )[0]
+    url_detector = ANDROID_SERVER.split("private boolean isLikelyVideoUrl", 1)[1].split(
+        "private String providerImageValueToBase64", 1
+    )[0]
+    helper = ANDROID_SERVER.split("private String normalizeGeminiVideoDownloadUrl", 1)[1].split(
+        "private String geminiVideoAspectRatio", 1
+    )[0]
+
+    assert "generativelanguage\\\\.googleapis\\\\.com" in parser
+    assert "/files/" in parser
+    assert ":download\\\\?alt=media" in parser
+    assert '"generativelanguage.googleapis.com".equals(host)' in url_detector
+    assert 'path.contains("/files/")' in url_detector
+    assert 'path.contains(":download") || query.contains("alt=media")' in url_detector
+    assert "parts.length < 3" in helper
+    assert '"files".equals(parts[2])' in helper
+
+
 def test_android_bare_media_prompt_guard_preserves_questions_and_local_tools():
     guard = ANDROID_SERVER.split("private boolean looksLikeMobileNonGenerationQuestion", 1)[1].split(
         "private String requestedMobileMediaGenerationKind", 1

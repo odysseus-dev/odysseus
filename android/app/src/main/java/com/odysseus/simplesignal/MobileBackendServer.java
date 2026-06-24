@@ -5448,6 +5448,10 @@ public class MobileBackendServer {
                 .compile("https?://[^\\s\\\"'<>]+\\.(?:mp4|webm|mov|mkv|m4v)(?:\\?[^\\s\\\"'<>]*)?", java.util.regex.Pattern.CASE_INSENSITIVE)
                 .matcher(text);
         if (url.find()) return url.group();
+        java.util.regex.Matcher geminiFile = java.util.regex.Pattern
+                .compile("https?://generativelanguage\\.googleapis\\.com/[^\\s\\\"'<>]+/files/[^\\s\\\"'<>]+:download\\?alt=media", java.util.regex.Pattern.CASE_INSENSITIVE)
+                .matcher(text);
+        if (geminiFile.find()) return geminiFile.group();
         return "";
     }
 
@@ -5481,7 +5485,15 @@ public class MobileBackendServer {
 
     private boolean isLikelyVideoUrl(String raw) {
         try {
-            String path = new URL(raw).getPath().toLowerCase(Locale.US);
+            URL parsed = new URL(raw);
+            String host = valueOr(parsed.getHost(), "").toLowerCase(Locale.US);
+            String path = valueOr(parsed.getPath(), "").toLowerCase(Locale.US);
+            String query = valueOr(parsed.getQuery(), "").toLowerCase(Locale.US);
+            if ("generativelanguage.googleapis.com".equals(host)
+                    && path.contains("/files/")
+                    && (path.contains(":download") || query.contains("alt=media"))) {
+                return true;
+            }
             if (path.endsWith(".mp4") || path.endsWith(".webm") || path.endsWith(".mov")
                     || path.endsWith(".mkv") || path.endsWith(".m4v")) return true;
         } catch (Exception ignored) {
