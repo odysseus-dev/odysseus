@@ -9732,28 +9732,30 @@ public class MobileBackendServer {
         if (!userText.isEmpty()) {
             history.put(new JSONObject().put("role", "user").put("content", userText));
         }
-        String localWorkspaceReply = tryHandleMobileWorkspaceRequest(userText, activeWorkspace, workspaceRejected);
-        if (!localWorkspaceReply.isEmpty()) {
-            streamMobileImmediateReply(out, sid, history, "mobile-workspace", localWorkspaceReply, workspaceRejected);
-            return;
-        }
-        String localDateTimeReply = tryHandleMobileDateTimeRequest(userText);
-        if (!localDateTimeReply.isEmpty()) {
-            streamMobileImmediateReply(out, sid, history, "mobile-date", localDateTimeReply, workspaceRejected);
-            return;
-        }
-        String localGalleryReply = tryHandleMobileGalleryEditRequest(userText);
-        if (!localGalleryReply.isEmpty()) {
-            streamMobileImmediateReply(out, sid, history, "mobile-gallery", localGalleryReply, workspaceRejected);
-            return;
-        }
-        String localCalendarReply = tryHandleMobileCalendarReadRequest(userText);
-        if (!localCalendarReply.isEmpty()) {
-            streamMobileImmediateReply(out, sid, history, "mobile-calendar", localCalendarReply, workspaceRejected);
-            return;
-        }
         String videoPrompt = mobileVideoGenerationPrompt(userText, model);
         String imagePrompt = mobileImageGenerationPrompt(userText, model);
+        if (videoPrompt.isEmpty() && imagePrompt.isEmpty()) {
+            String localWorkspaceReply = tryHandleMobileWorkspaceRequest(userText, activeWorkspace, workspaceRejected);
+            if (!localWorkspaceReply.isEmpty()) {
+                streamMobileImmediateReply(out, sid, history, "mobile-workspace", localWorkspaceReply, workspaceRejected);
+                return;
+            }
+            String localDateTimeReply = tryHandleMobileDateTimeRequest(userText);
+            if (!localDateTimeReply.isEmpty()) {
+                streamMobileImmediateReply(out, sid, history, "mobile-date", localDateTimeReply, workspaceRejected);
+                return;
+            }
+            String localGalleryReply = tryHandleMobileGalleryEditRequest(userText);
+            if (!localGalleryReply.isEmpty()) {
+                streamMobileImmediateReply(out, sid, history, "mobile-gallery", localGalleryReply, workspaceRejected);
+                return;
+            }
+            String localCalendarReply = tryHandleMobileCalendarReadRequest(userText);
+            if (!localCalendarReply.isEmpty()) {
+                streamMobileImmediateReply(out, sid, history, "mobile-calendar", localCalendarReply, workspaceRejected);
+                return;
+            }
+        }
         JSONObject endpoint = null;
         try {
             endpoint = endpointForSession(session);
@@ -11078,20 +11080,23 @@ public class MobileBackendServer {
     }
 
     private boolean mentionsCalendarIntent(String userText) {
-        String q = valueOr(userText, "").toLowerCase(Locale.US);
-        return q.contains("calendar")
-                || q.contains("schedule")
-                || q.contains("agenda")
-                || q.contains("event")
-                || q.contains("events")
-                || q.contains("meeting")
-                || q.contains("meetings")
-                || q.contains("appointment")
-                || q.contains("appointments")
-                || q.contains("class")
-                || q.contains("classes")
-                || q.contains("what do i have today")
-                || q.contains("what do i have tomorrow");
+        String q = " " + valueOr(userText, "").toLowerCase(Locale.US)
+                .replaceAll("[^a-z0-9']+", " ")
+                .replaceAll("\\s+", " ")
+                .trim() + " ";
+        return q.contains(" calendar ")
+                || q.contains(" schedule ")
+                || q.contains(" agenda ")
+                || q.contains(" event ")
+                || q.contains(" events ")
+                || q.contains(" meeting ")
+                || q.contains(" meetings ")
+                || q.contains(" appointment ")
+                || q.contains(" appointments ")
+                || q.contains(" class ")
+                || q.contains(" classes ")
+                || q.contains(" what do i have today ")
+                || q.contains(" what do i have tomorrow ");
     }
 
     private List<JSONObject> activeCalendarEventsSorted() throws Exception {
