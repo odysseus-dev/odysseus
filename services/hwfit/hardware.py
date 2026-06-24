@@ -109,6 +109,16 @@ def _detect_nvidia():
                 out = _run([_p, "--query-gpu=memory.total,name", "--format=csv,noheader,nounits"])
             if out:
                 break
+    # Additionally verify CUDA runtime is loadable by llama.cpp
+    if out:
+        # Test if CUDA libraries can be found by checking with ldconfig or similar
+        cuda_check = _run("ldconfig -p 2>/dev/null | grep -q libcuda && echo 'ok'")
+        if not cuda_check:
+            # Also check common default paths
+            cuda_check = _run("test -f /usr/lib/x86_64-linux-gnu/libcuda.so.1 && echo 'ok'")
+        if not cuda_check:
+            _last_gpu_error = "CUDA runtime not found (libcuda.so missing). GPU detection succeeded but llama.cpp will fallback to CPU."
+            out = None  # Signal that GPU is not fully usable
     if not out:
         return None
 
