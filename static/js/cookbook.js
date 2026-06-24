@@ -643,8 +643,11 @@ export function _buildServeCmd(f, modelName, backend) {
     // GPU list — read from gpus (button strip); fall back to gpu_id for
     // backward-compat with older saved presets that pre-date the removal.
     const gpuId = (f.gpus || f.gpu_id || '').toString().trim();
-    const _isWin = _isWindows();
-    const _localWindows = _isWin && !_envState.remoteHost;
+    const _targetHost = Object.prototype.hasOwnProperty.call(f, 'host')
+      ? String(f.host || '').trim()
+      : String(_envState.remoteHost || '').trim();
+    const _isWin = _targetHost ? _isWindows(_targetHost) : _isWindows('local');
+    const _localWindows = _isWin && !_targetHost;
     const py = _isWin ? 'python' : 'python3';
     // CPU-only serve (-ngl 0): drop the GPU-only flags, otherwise the command
     // mixes "zero GPU layers" with CUDA unified-memory + flash-attn and fails to
@@ -667,7 +670,7 @@ export function _buildServeCmd(f, modelName, backend) {
     // with misleading prefixes.
     const _sb = String(_hwfitCache?.system?.backend || '').toLowerCase();
     const _hwfitHost = String(_hwfitCache?._scannedHost || '');
-    const _curHost = String(_envState.remoteHost || '');
+    const _curHost = _targetHost;
     const _isCudaTarget = (_sb === 'cuda') && (_hwfitHost === _curHost);
     const lcPrefix = (() => {
       let p = '';

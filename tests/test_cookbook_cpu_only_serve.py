@@ -121,12 +121,27 @@ def test_local_windows_llamacpp_prefers_native_llama_server():
     text = SRC.read_text(encoding="utf-8")
     helpers = (ROOT / "routes/cookbook_helpers.py").read_text(encoding="utf-8")
 
-    assert "const _localWindows = _isWin && !_envState.remoteHost;" in text
+    assert "Object.prototype.hasOwnProperty.call(f, 'host')" in text
+    assert "const _isWin = _targetHost ? _isWindows(_targetHost) : _isWindows('local');" in text
+    assert "const _localWindows = _isWin && !_targetHost;" in text
+    assert "const _curHost = _targetHost;" in text
+    assert "const _localWindows = _isWin && !_envState.remoteHost;" not in text
     assert "const gpuId = (f.gpus || f.gpu_id || '').toString().trim();" in text
     assert "const _lcServer = `${lcPrefix}llama-server --model" in text
     assert "if (_localWindows) {" in text
     assert "cmd += _lcServer;" in text
     assert '"llama-server.exe"' in helpers
+
+
+
+def test_serve_command_preview_uses_selected_target_host():
+    text = SERVE_SRC.read_text(encoding="utf-8")
+
+    assert "const buildTarget = _selectedServeTarget(panel);" in text
+    assert "f.host = buildTarget.host || '';" in text
+    assert "f.platform = buildTarget.platform || '';" in text
+    assert "const hostField = panel.querySelector('[data-field=\"host\"]');" in text
+    assert "if (hostField) hostField.value = f.host;" in text
 
 
 def test_local_windows_llama_server_skips_source_bootstrap():

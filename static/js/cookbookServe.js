@@ -1531,6 +1531,11 @@ function _rerenderCachedModels() {
           if (el.type === 'checkbox') f[el.dataset.field] = el.checked;
           else f[el.dataset.field] = el.value;
         });
+        const buildTarget = _selectedServeTarget(panel);
+        f.host = buildTarget.host || '';
+        f.platform = buildTarget.platform || '';
+        const hostField = panel.querySelector('[data-field="host"]');
+        if (hostField) hostField.value = f.host;
         const backend = f.backend || 'vllm';
         const serveModel = (f.model_path || '').trim() || (m.is_local_dir && m.path ? `${m.path}/${repo}` : repo);
         if (backend === 'llamacpp') {
