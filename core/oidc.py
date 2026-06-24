@@ -13,10 +13,13 @@ Configuration (env vars):
 
 State is carried inside a Fernet-encrypted token embedded in the OIDC
 ``state`` parameter, so no server-side storage is needed — callbacks are
-stateless and work across multiple uvicorn workers / processes.
+stateless and work across multiple uvicorn workers / processes.  The
+encryption key is the shared persistent app key (``data/.app_key``,
+managed by ``src.secret_storage``).
 
 JWKS keys are cached after first fetch and refreshed only when an unknown
-``kid`` is encountered, avoiding a live IdP round-trip on every login.
+``kid`` is encountered, avoiding a live IdP round-trip on every login.  A
+60-second cooldown throttles both successful and failed refreshes.
 """
 
 import json
@@ -48,11 +51,12 @@ _state_fernet = None
 def _get_state_fernet():
     """Lazily get or create a Fernet instance for state encryption.
 
-    Uses the persistent app key (data/.app_key) when available, falling
-    back to a per-process random key.  State tokens have a 10-minute TTL
-    so a process-local key is sufficient — a key rotation between workers
-    only affects in-flight logins (they'll restart the flow, which is the
-    expected UX for any transient failure).
+    Uses the shared persistent app key (data/.app_key) from
+    ``src.secret_storage._get_fernet()``, which creates the key file on
+    first access.  This guarantees the same Fernet key is available to
+    all uvicorn workers, even on a fresh data directory — the OIDC
+    authorization state encrypted by worker A can always be decrypted
+    by worker B on the callback.
     """
     global _state_fernet
     if _state_fernet is not None:
@@ -60,19 +64,8 @@ def _get_state_fernet():
     with _state_fernet_lock:
         if _state_fernet is not None:
             return _state_fernet
-        from cryptography.fernet import Fernet
-        from src.constants import APP_KEY_FILE
-        from pathlib import Path
-
-        key_path = Path(APP_KEY_FILE)
-        if key_path.exists():
-            try:
-                _state_fernet = Fernet(key_path.read_bytes())
-                return _state_fernet
-            except Exception:
-                logger.warning("Failed to read app key — using per-process key for OIDC state")
-        # Per-process fallback — state is short-lived (10 min TTL).
-        _state_fernet = Fernet(Fernet.generate_key())
+        from src.secret_storage import _get_fernet
+        _state_fernet = _get_fernet()
         return _state_fernet
 
 
@@ -397,8 +390,8 @@ class OidcManager:
             last_refresh = getattr(self, "_last_jwks_refresh", 0)
             if now - last_refresh >= 60:
                 logger.info("OIDC JWKS cache miss for kid=%r — refreshing", kid)
+                self._last_jwks_refresh = now  # record attempt before refresh so failed fetches are also throttled
                 jwks = self._refresh_jwks()
-                self._last_jwks_refresh = now
             else:
                 logger.warning(
                     "OIDC JWKS cache miss for kid=%r but refresh on cooldown "

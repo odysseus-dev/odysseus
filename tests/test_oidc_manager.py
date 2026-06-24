@@ -5,6 +5,25 @@ import time
 import pytest
 from unittest.mock import patch, MagicMock
 
+from cryptography.fernet import Fernet
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _isolate_state_fernet(request, monkeypatch):
+    """Ensure every test gets a fresh in-memory Fernet key for OIDC state
+    encryption so tests don't depend on the host filesystem (data/.app_key).
+    Skipped for TestStateKeyPersistence which tests the real key creation."""
+    if request.cls and request.cls.__name__ == "TestStateKeyPersistence":
+        return
+    import core.oidc as mod
+    fernet = Fernet(Fernet.generate_key())
+    monkeypatch.setattr(mod, "_state_fernet", None)
+    monkeypatch.setattr(mod, "_get_state_fernet", lambda: fernet)
+
 
 # ---------------------------------------------------------------------------
 # Helpers — fake OIDC provider
@@ -882,6 +901,137 @@ class TestJwksCache:
 
             with pytest.raises(mod.OidcError, match="JWKS fetch"):
                 mgr.exchange_code("code", state, "https://app.example.com/callback")
+
+
+class TestStateKeyPersistence:
+    """Regression: OIDC state encryption key must be shared across workers."""
+
+    def test_fresh_install_creates_shared_key(self, tmp_path, monkeypatch):
+        """On a fresh data dir (no .app_key), worker A's encrypted state
+        must be decryptable by worker B — proving the shared persistent
+        key was created on first use."""
+        import core.oidc as mod
+        from cryptography.fernet import Fernet
+
+        # Point APP_KEY_FILE at a temp location with no existing key
+        key_file = tmp_path / ".app_key"
+        monkeypatch.setattr(mod, "_state_fernet", None)
+        # Patch the secret_storage module's key path so _get_fernet
+        # writes to our temp dir.
+        import src.secret_storage as ss
+        monkeypatch.setattr(ss, "_KEY_PATH", key_file)
+        monkeypatch.setattr(ss, "_fernet", None)
+
+        # Sanity: no key file yet
+        assert not key_file.exists()
+
+        # Worker A: encode state (this must create the shared key)
+        state_a = mod._encode_state("nonce-abc", "https://app.example.com/callback")
+        assert key_file.exists(), "Shared app key must be created on first state encode"
+        assert key_file.stat().st_size > 0
+
+        # Simulate worker B: reset the in-process cache and decode
+        monkeypatch.setattr(mod, "_state_fernet", None)
+        monkeypatch.setattr(ss, "_fernet", None)
+
+        decoded_b = mod._decode_state(state_a)
+        assert decoded_b is not None, "Worker B must decode worker A's state"
+        assert decoded_b["nonce"] == "nonce-abc"
+        assert decoded_b["redirect_uri"] == "https://app.example.com/callback"
+
+
+class TestJwksCooldown:
+    """Regression: failed JWKS refreshes must be throttled by the 60-second cooldown."""
+
+    def test_failed_refresh_triggers_cooldown(self):
+        """A failed unknown-kid refresh must be throttled so a second
+        attempt inside the cooldown window does NOT call _refresh_jwks again."""
+        jwt_jwks, jwk = _make_test_jwks_and_key()
+        nonce = "z" * 64
+        # Kid "test-key-1" from _make_test_jwks_and_key
+        id_token_known_kid = _make_id_token("user123", nonce)
+        import core.oidc as mod
+
+        with patch.object(mod.httpx, "get") as mock_get, \
+             patch.object(mod.httpx, "post") as mock_post:
+            mock_get.side_effect = [
+                _mock_discovery_response(),
+                _mock_jwks_response(jwt_jwks),
+            ]
+            mgr = mod.OidcManager(
+                issuer=FAKE_ISSUER,
+                client_id=FAKE_CLIENT_ID,
+                client_secret=FAKE_CLIENT_SECRET,
+            )
+
+            # Step 1: do one successful exchange with "test-key-1" so the
+            # JWKS cache is populated and _fetch_jwks() returns cached data.
+            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            mock_post.return_value = _mock_token_response(id_token_known_kid)
+            mock_get.reset_mock()
+            mock_get.side_effect = [
+                _mock_jwks_response(jwt_jwks),  # _fetch_jwks on empty cache
+                _FakeResponse(200, {"sub": "user123"}),  # userinfo
+            ]
+            claims = mgr.exchange_code("code0", state, "https://app.example.com/callback")
+            assert claims["sub"] == "user123"
+
+            # Cache is now populated with kid="test-key-1".
+
+            # Step 2: craft an id_token with a DIFFERENT kid ("unknown-kid").
+            # This forces _verify_id_token into the unknown-kid branch.
+            from cryptography.hazmat.primitives import serialization
+            from cryptography.hazmat.primitives.asymmetric import rsa
+            from authlib.jose import jwt, JsonWebKey
+
+            # Generate a second key pair with kid "test-key-2"
+            key2 = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+            jwk2 = JsonWebKey.import_key(
+                key2.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption(),
+                ),
+                {"kty": "RSA", "alg": "RS256", "use": "sig", "kid": "test-key-2"},
+            )
+
+            id_token_unknown_kid = jwt.encode(
+                {"alg": "RS256", "kid": "test-key-2"},
+                {
+                    "iss": FAKE_ISSUER, "sub": "user123", "aud": FAKE_CLIENT_ID,
+                    "exp": int(time.time()) + 3600, "iat": int(time.time()),
+                    "nonce": nonce, "email": "user123@example.com",
+                },
+                jwk2,
+            ).decode()
+
+            # First unknown-kid attempt: JWKS refresh FAILS → cooldown set
+            state1 = mod._encode_state(nonce, "https://app.example.com/callback")
+            mock_post.return_value = _mock_token_response(id_token_unknown_kid)
+            mock_get.reset_mock()
+            mock_get.side_effect = [
+                ConnectionError("IdP is down"),  # _refresh_jwks fails
+            ]
+            with pytest.raises(mod.OidcError, match="JWKS fetch"):
+                mgr.exchange_code("code1", state1, "https://app.example.com/callback")
+
+            # The cooldown timestamp must now be set
+            assert getattr(mgr, "_last_jwks_refresh", 0) > time.time() - 2
+
+            # Second unknown-kid attempt: cooldown still active → throttled,
+            # _refresh_jwks must NOT be called.  The exchange will fail
+            # because the key for "test-key-2" is not in the stale cache.
+            state2 = mod._encode_state(nonce, "https://app.example.com/callback")
+            mock_post.return_value = _mock_token_response(id_token_unknown_kid)
+            mock_get.reset_mock()
+            # If _refresh_jwks were called, it would hit this side_effect.
+            mock_get.side_effect = [
+                RuntimeError("_refresh_jwks was called — cooldown broken!"),
+            ]
+            with pytest.raises(Exception):
+                mgr.exchange_code("code2", state2, "https://app.example.com/callback")
+            # No GET calls → error came from cooldown + stale cache, not a refresh
+            assert mock_get.call_count == 0
 
 
 class TestRedirectUriBinding:
