@@ -11,7 +11,7 @@ import os
 
 
 def test_ssl_context_respects_ssl_cert_file(monkeypatch, tmp_path):
-    """When SSL_CERT_FILE is set, create_default_context must receive that cafile."""
+    """When SSL_CERT_FILE is set, _ca resolves to that path (env-var selection logic)."""
     fake_bundle = tmp_path / "ca.pem"
     fake_bundle.write_text("# fake bundle")
     monkeypatch.setenv("SSL_CERT_FILE", str(fake_bundle))
