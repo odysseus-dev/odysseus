@@ -103,6 +103,35 @@ def test_android_supports_modelscope_z_image_async_tasks():
     assert '"output_images"' in parser
 
 
+def test_android_routes_dashscope_z_image_to_native_multimodal_endpoint():
+    dispatch = ANDROID_SERVER.split("private JSONObject postMobileImageGeneration", 1)[1].split(
+        "private JSONObject postOpenAiCompatibleImageGeneration", 1
+    )[0]
+    openai_generation = ANDROID_SERVER.split("private JSONObject postOpenAiCompatibleImageGeneration", 1)[1].split(
+        "private JSONObject postOpenAiCompatibleImageGenerationPayload", 1
+    )[0]
+    endpoint_guard = ANDROID_SERVER.split("private boolean endpointCanServeSelectedImageModel", 1)[1].split(
+        "private boolean endpointCanServeSelectedVideoModel", 1
+    )[0]
+    helper = ANDROID_SERVER.split("private String dashscopeZImageModel", 1)[1].split(
+        "private JSONObject postQwenDashscopeImageGeneration", 1
+    )[0]
+
+    assert "isZImageModel(providerRequested) && isDashScopeImageEndpoint(base, endpoint)" in endpoint_guard
+    assert "postDashScopeZImageGeneration(choice, prompt, size)" in dispatch
+    assert "postDashScopeZImageGeneration(choice, prompt, size)" in openai_generation
+    assert '"/services/aigc/multimodal-generation/generation"' in ANDROID_SERVER
+    assert '"z-image-turbo"' in helper
+    assert '"alibaba/z-image-turbo"' in helper
+    assert '"tongyi-mai/z-image-turbo"' in helper
+    assert '"input", new JSONObject()' in helper
+    assert '"messages", new JSONArray()' in helper
+    assert '"parameters", new JSONObject()' in helper
+    assert '"prompt_extend", false' in helper
+    assert 'return width + "*" + height;' in helper
+    assert "postOpenAiCompatibleImageGenerationPayload(base, apiKey, payload, 90000)" in openai_generation
+
+
 def test_android_recognizes_gemini_banana_and_imagen_image_models():
     canonical = ANDROID_SERVER.split("private String canonicalGeminiImageModel", 1)[1].split(
         "private boolean isImagenModel", 1

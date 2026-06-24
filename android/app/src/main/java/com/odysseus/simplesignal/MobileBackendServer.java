@@ -3690,6 +3690,7 @@ public class MobileBackendServer {
         String lower = canonicalGeminiImageModel(providerRequested).toLowerCase(Locale.US);
         if (isGeminiImageModel(providerRequested) && isGeminiImageEndpoint(base, endpoint)) return true;
         if (isQwenImageModel(providerRequested) && isDashScopeImageEndpoint(base, endpoint)) return true;
+        if (isZImageModel(providerRequested) && isDashScopeImageEndpoint(base, endpoint)) return true;
         if ((lower.startsWith("gpt-image") || lower.contains("chatgpt-image") || lower.startsWith("dall-e"))
                 && isOpenAIBase(base)) return true;
         return unknownModels && "image".equals(endpoint.optString("model_type", "").toLowerCase(Locale.US));
@@ -4165,6 +4166,9 @@ public class MobileBackendServer {
         if (isGeminiImageEndpoint(base, choice) || isGeminiImageModel(model)) {
             return postGeminiImageGeneration(choice, prompt, size);
         }
+        if (isZImageModel(model) && isDashScopeImageEndpoint(base, choice)) {
+            return postDashScopeZImageGeneration(choice, prompt, size);
+        }
         if (isQwenImageModel(model) && isDashScopeImageEndpoint(base, choice)) {
             return postQwenDashscopeImageGeneration(choice, prompt, size);
         }
@@ -4188,6 +4192,9 @@ public class MobileBackendServer {
         if (model.isEmpty()) throw new IOException("Select an image generation model for this endpoint.");
 
         boolean zImageModel = isZImageModel(model);
+        if (zImageModel && isDashScopeImageEndpoint(base, choice)) {
+            return postDashScopeZImageGeneration(choice, prompt, size);
+        }
         if (zImageModel && isModelScopeEndpoint(base, choice)) {
             return postModelScopeZImageGeneration(choice, prompt, size);
         }
@@ -4404,12 +4411,77 @@ public class MobileBackendServer {
     }
 
     private int[] zImagePixelDimensions(String size) {
-        String raw = valueOr(size, "").trim().toLowerCase(Locale.US);
+        String raw = valueOr(size, "").trim().toLowerCase(Locale.US).replace('*', 'x');
         if (raw.matches("\\d+x\\d+")) {
             String[] parts = raw.split("x", 2);
             return new int[]{parseInt(parts[0], 1024), parseInt(parts[1], 1024)};
         }
         return new int[]{1024, 1024};
+    }
+
+    private String dashscopeZImageModel(String model) {
+        String raw = valueOr(model, "").trim();
+        String lower = raw.toLowerCase(Locale.US);
+        if (lower.equals("z-image-turbo")
+                || lower.equals("z_image_turbo")
+                || lower.equals("zimage-turbo")
+                || lower.equals("zimage_turbo")
+                || lower.equals("alibaba/z-image-turbo")
+                || lower.equals("tongyi-mai/z-image-turbo")) {
+            return "z-image-turbo";
+        }
+        return raw.isEmpty() ? "z-image-turbo" : raw;
+    }
+
+    private String dashscopeZImageSize(String size) {
+        int[] dims = zImagePixelDimensions(size);
+        int width = Math.max(512, Math.min(2048, dims[0]));
+        int height = Math.max(512, Math.min(2048, dims[1]));
+        return width + "*" + height;
+    }
+
+    private JSONObject postDashScopeZImageGeneration(JSONObject choice, String prompt, String size) throws Exception {
+        String base = normalizeBase(choice.optString("base_url"));
+        String apiKey = choice.optString("api_key", "").trim();
+        if (apiKey.isEmpty()) throw new IOException("DashScope Z Image endpoint has no API key stored in Settings.");
+        String model = dashscopeZImageModel(providerModelId(choice, choice.optString("model", "")).trim());
+
+        JSONObject payload = new JSONObject()
+                .put("model", model)
+                .put("input", new JSONObject()
+                        .put("messages", new JSONArray()
+                                .put(new JSONObject()
+                                        .put("role", "user")
+                                        .put("content", new JSONArray()
+                                                .put(new JSONObject().put("text", prompt))))))
+                .put("parameters", new JSONObject()
+                        .put("prompt_extend", false)
+                        .put("size", dashscopeZImageSize(size)));
+
+        HttpURLConnection conn = (HttpURLConnection) new URL(qwenDashscopeGenerationUrl(base)).openConnection();
+        conn.setRequestMethod("POST");
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(90000);
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("Accept", "application/json");
+        conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+        byte[] data = payload.toString().getBytes(StandardCharsets.UTF_8);
+        conn.setFixedLengthStreamingMode(data.length);
+        try (OutputStream body = conn.getOutputStream()) {
+            body.write(data);
+        }
+        int status = conn.getResponseCode();
+        String response = readAll(status >= 400 ? conn.getErrorStream() : conn.getInputStream());
+        conn.disconnect();
+        if (status < 200 || status >= 300) {
+            throw new IOException("DashScope Z Image generation failed: " + formatProviderError(status, response));
+        }
+        JSONObject normalized = normalizeImageResponse(response);
+        if (normalized.optString("image", "").isEmpty()) {
+            throw new IOException("DashScope Z Image generation returned no image: " + providerNoImageDetail(response));
+        }
+        return normalized.put("method", "z-image-dashscope");
     }
 
     private JSONObject postQwenDashscopeImageGeneration(JSONObject choice, String prompt, String size) throws Exception {
