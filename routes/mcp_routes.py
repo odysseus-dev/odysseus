@@ -20,6 +20,32 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 
+def _parse_mcp_headers(raw_headers: str) -> dict:
+    """Validate static HTTP headers before encrypted persistence."""
+    if not raw_headers:
+        return {}
+    try:
+        headers = json.loads(raw_headers)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(400, "Headers must be a valid JSON object") from exc
+    if not isinstance(headers, dict):
+        raise HTTPException(400, "Headers must be a JSON object")
+    if len(headers) > 64:
+        raise HTTPException(400, "Too many HTTP headers")
+
+    normalized = {}
+    for name, value in headers.items():
+        if not isinstance(name, str) or not name.strip():
+            raise HTTPException(400, "Header names must be non-empty strings")
+        if not isinstance(value, str):
+            raise HTTPException(400, f"Header '{name}' value must be a string")
+        if len(name) > 256 or len(value) > 8192:
+            raise HTTPException(400, f"Header '{name}' is too long")
+        if "\r" in name or "\n" in name or "\r" in value or "\n" in value:
+            raise HTTPException(400, "Header names and values cannot contain newlines")
+        normalized[name.strip()] = value
+    return normalized
+
 
 def _mcp_oauth_base_dir() -> Path:
     """Directory that may contain OAuth files managed by Odysseus."""
@@ -150,6 +176,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                     "auth_url": status.get("auth_url"),
                     "has_oauth": oauth_cfg is not None,
                     "needs_oauth": needs_oauth,
+                    "has_headers": bool(getattr(srv, "headers", None)),
                 })
             return result
         finally:
@@ -164,6 +191,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
         args: str = Form("[]"),
         env: str = Form("{}"),
         url: str = Form(None),
+        headers: str = Form("{}"),
         oauth_file: str = Form(None),
         oauth_config: str = Form(None),
     ):
@@ -192,6 +220,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
             parsed_env = {}
         if not isinstance(parsed_env, dict):
             parsed_env = {}
+        parsed_headers = _parse_mcp_headers(headers)
 
         # Parse OAuth config
         parsed_oauth_config = None
@@ -247,6 +276,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 url=url,
                 is_enabled=True,
                 oauth_config=json.dumps(parsed_oauth_config) if parsed_oauth_config else None,
+                headers=json.dumps(parsed_headers) if parsed_headers else None,
             )
             db.add(srv)
             db.commit()
@@ -255,7 +285,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
 
         # Check if OAuth token already exists — skip connection attempt if not
         needs_oauth = False
-        if parsed_oauth_config:
+        if parsed_oauth_config and not parsed_headers:
             needs_oauth = _mcp_oauth_token_missing(parsed_oauth_config)
 
         connected = False
@@ -268,6 +298,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 args=parsed_args,
                 env=parsed_env,
                 url=url,
+                headers=parsed_headers,
             )
 
         status = mcp_manager.get_server_status(server_id)
@@ -298,6 +329,8 @@ def setup_mcp_routes(mcp_manager: McpManager):
 
             args = json.loads(srv.args) if srv.args else []
             env = json.loads(srv.env) if srv.env else {}
+            stored_headers = getattr(srv, "headers", None)
+            headers = json.loads(stored_headers) if stored_headers else {}
             connected = await mcp_manager.connect_server(
                 server_id=server_id,
                 name=srv.name,
@@ -306,6 +339,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 args=args,
                 env=env,
                 url=srv.url,
+                headers=headers,
             )
 
             status = mcp_manager.get_server_status(server_id)
@@ -337,6 +371,8 @@ def setup_mcp_routes(mcp_manager: McpManager):
             if enabled:
                 args = json.loads(srv.args) if srv.args else []
                 env = json.loads(srv.env) if srv.env else {}
+                stored_headers = getattr(srv, "headers", None)
+                headers = json.loads(stored_headers) if stored_headers else {}
                 await mcp_manager.connect_server(
                     server_id=server_id,
                     name=srv.name,
@@ -345,6 +381,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                     args=args,
                     env=env,
                     url=srv.url,
+                    headers=headers,
                 )
             else:
                 await mcp_manager.disconnect_server(server_id)
@@ -573,6 +610,8 @@ def setup_mcp_routes(mcp_manager: McpManager):
             # Attempt to connect the MCP server now
             args = json.loads(srv.args) if srv.args else []
             env = json.loads(srv.env) if srv.env else {}
+            stored_headers = getattr(srv, "headers", None)
+            headers = json.loads(stored_headers) if stored_headers else {}
             connected = await mcp_manager.connect_server(
                 server_id=server_id,
                 name=srv.name,
@@ -581,6 +620,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 args=args,
                 env=env,
                 url=srv.url,
+                headers=headers,
             )
 
             if connected:

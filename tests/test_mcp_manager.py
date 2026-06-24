@@ -32,10 +32,16 @@ def test_generic_mcp_connection_error_preserves_original_error():
 def test_http_transport_routes_to_start_http_connect():
     mgr = McpManager()
 
-    async def fake_start(server_id, name, url):
+    async def fake_start(server_id, name, url, headers=None):
         return "ROUTED"
 
     with patch.object(McpManager, "_start_http_connect", side_effect=fake_start) as m:
-        result = asyncio.run(mgr.connect_server("id1", "n", "http", url="https://x/mcp"))
+        result = asyncio.run(mgr.connect_server(
+            "id1", "n", "http", url="https://x/mcp",
+            headers={"Authorization": "Bearer secret"},
+        ))
     assert result == "ROUTED"
-    m.assert_called_once()
+    m.assert_called_once_with(
+        "id1", "n", "https://x/mcp",
+        headers={"Authorization": "Bearer secret"},
+    )

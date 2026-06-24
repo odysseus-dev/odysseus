@@ -5140,6 +5140,8 @@ async function initUnifiedIntegrations() {
             </div>
             <div id="uf-mcp-sse-fields" style="display:none;flex-direction:column;gap:6px;">
               <div class="settings-row"><label class="settings-label">URL</label><input id="uf-mcp-url" class="settings-input" placeholder="http://localhost:3001/sse"></div>
+              <div class="settings-row"><label class="settings-label">Headers</label><input id="uf-mcp-headers" type="password" autocomplete="off" class="settings-input" placeholder='{"Authorization": "Bearer token"}'></div>
+              <div style="font-size:10px;opacity:0.55">Header values are encrypted at rest and are not returned after saving.</div>
             </div>
             <div class="settings-row" style="margin-top:10px;align-items:center;justify-content:flex-end;gap:6px;">
               <span id="uf-mcp-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
@@ -5171,6 +5173,15 @@ async function initUnifiedIntegrations() {
           fd.append('env', env);
         } else {
           fd.append('url', el('uf-mcp-url').value);
+          let headers = {};
+          try {
+            headers = JSON.parse(el('uf-mcp-headers').value || '{}');
+            if (!headers || Array.isArray(headers) || typeof headers !== 'object') throw new Error();
+          } catch (_) {
+            el('uf-mcp-msg').textContent = 'Headers must be a valid JSON object';
+            return;
+          }
+          fd.append('headers', JSON.stringify(headers));
         }
         const saveBtn = el('uf-mcp-save'), cancelBtn = el('uf-mcp-cancel');
         const _origLabel = saveBtn.textContent;

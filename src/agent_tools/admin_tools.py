@@ -321,6 +321,8 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
                 if srv:
                     _args = json.loads(srv.args) if srv.args else []
                     _env = json.loads(srv.env) if srv.env else {}
+                    _stored_headers = getattr(srv, "headers", None)
+                    _headers = json.loads(_stored_headers) if _stored_headers else {}
                     await mcp.connect_server(
                         server_id=sid,
                         name=srv.name,
@@ -329,6 +331,7 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
                         args=_args,
                         env=_env,
                         url=srv.url,
+                        headers=_headers,
                     )
                     st = mcp.get_server_status(sid)
                     return {"response": f"Reconnected '{srv.name}' ({st.get('tool_count', 0)} tools)", "exit_code": 0}

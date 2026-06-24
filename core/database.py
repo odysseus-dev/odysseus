@@ -422,6 +422,7 @@ class McpServer(TimestampMixin, Base):
     oauth_config = Column(Text, nullable=True)   # JSON: provider, keys_file, token_file, scopes
     disabled_tools = Column(Text, nullable=True)  # JSON array of tool names to hide from LLM
     oauth_tokens = Column(EncryptedText, nullable=True)  # JSON {tokens, client_info} for generic MCP OAuth, encrypted at rest
+    headers = Column(EncryptedText, nullable=True)  # JSON HTTP headers for SSE/HTTP, encrypted at rest
 
 
 class Comparison(TimestampMixin, Base):
@@ -1514,6 +1515,18 @@ def _migrate_add_mcp_oauth_tokens_column():
     except Exception as e:
         logging.getLogger(__name__).warning(f"oauth_tokens migration: {e}")
 
+def _migrate_add_mcp_headers_column():
+    """Add encrypted-at-rest static HTTP headers to MCP server configs."""
+    try:
+        with engine.connect() as conn:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(mcp_servers)"))]
+            if "headers" not in cols:
+                conn.execute(text("ALTER TABLE mcp_servers ADD COLUMN headers TEXT"))
+                conn.commit()
+                logging.getLogger(__name__).info("Added headers column to mcp_servers")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"mcp headers migration: {e}")
+
 def _migrate_add_task_v2_columns():
     """Add cron_expression, then_task_id, webhook_token to scheduled_tasks."""
     new_cols = {
@@ -1821,6 +1834,7 @@ def init_db():
     _migrate_add_task_automation_columns()
     _migrate_add_disabled_tools()
     _migrate_add_mcp_oauth_tokens_column()
+    _migrate_add_mcp_headers_column()
     _migrate_add_task_v2_columns()
     _migrate_add_notifications_enabled()
     _migrate_drop_ping_notes_tasks()
@@ -1837,6 +1851,7 @@ def init_db():
     _migrate_encrypt_email_passwords()
     _migrate_encrypt_signatures()
     _migrate_encrypt_endpoint_keys()
+    _migrate_encrypt_mcp_headers()
     _migrate_backfill_task_folders()
 
 
@@ -1986,6 +2001,33 @@ def _migrate_encrypt_endpoint_keys():
                 logger.info(f"Encrypted plaintext API key on {migrated} endpoint row(s)")
     except Exception as e:
         logger.warning(f"Endpoint-key encryption migration skipped: {e}")
+
+def _migrate_encrypt_mcp_headers():
+    """Encrypt plaintext MCP header JSON left by earlier experimental builds."""
+    try:
+        from src.secret_storage import encrypt, is_encrypted
+    except Exception as e:
+        logger.warning(f"secret_storage import failed; skipping MCP header migration: {e}")
+        return
+    try:
+        with engine.connect() as conn:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(mcp_servers)"))]
+            if "headers" not in cols:
+                return
+            rows = conn.execute(text("SELECT id, headers FROM mcp_servers")).fetchall()
+            migrated = 0
+            for server_id, headers in rows:
+                if headers and not is_encrypted(headers):
+                    conn.execute(
+                        text("UPDATE mcp_servers SET headers = :headers WHERE id = :id"),
+                        {"headers": encrypt(headers), "id": server_id},
+                    )
+                    migrated += 1
+            if migrated:
+                conn.commit()
+                logger.info(f"Encrypted plaintext headers on {migrated} MCP server row(s)")
+    except Exception as e:
+        logger.warning(f"MCP header encryption migration skipped: {e}")
 
 
 def _migrate_encrypt_signatures():
