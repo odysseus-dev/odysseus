@@ -8,6 +8,7 @@ import uiModule from './ui.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
 import { registerMenuDismiss } from './escMenuStack.js';
 import { computeProgressSignal } from './cookbookProgressSignal.js';
+import { portOf, nextFreePort } from './cookbookPorts.js';
 
 // Human-friendly badge label for a task's internal status. Avoids surfacing
 // the word "error" in the sidebar — a server the user stopped or one that
@@ -266,9 +267,7 @@ function _taskHostLabel(task) {
 }
 
 function _taskPort(task) {
-  const cmd = task?.payload?._cmd || '';
-  const match = cmd.match(/--port[=\s]+(\d+)/) || cmd.match(/(?:^|\s)-p[=\s]+(\d+)/);
-  return match ? match[1] : '';
+  return portOf(task?.payload?._cmd || '');
 }
 
 function _buildCrashReport(task, outputText) {
@@ -454,17 +453,15 @@ function _nextAvailablePort() {
   const presets = _loadPresets();
   const usedPorts = new Set();
   tasks.forEach(t => {
-      if (t.type === 'serve' && (t.status === 'running' || t.status === 'queued')) {
-        const p = _taskPort(t);
-        if (p) usedPorts.add(parseInt(p));
-      }
+    if (t.type === 'serve' && (t.status === 'running' || t.status === 'queued')) {
+      const p = _taskPort(t);
+      if (p) usedPorts.add(parseInt(p));
+    }
   });
   presets.forEach(p => {
     if (p.port) usedPorts.add(parseInt(p.port));
   });
-  let port = 8000;
-  while (usedPorts.has(port)) port++;
-  return String(port);
+  return nextFreePort(usedPorts);
 }
 
 // ── Endpoint cleanup ──

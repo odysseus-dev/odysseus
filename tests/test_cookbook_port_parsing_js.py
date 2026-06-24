@@ -1,31 +1,53 @@
-"""Regression guards for Cookbook port parsing / collision logic (#4507)."""
+"""Behavioral tests for Cookbook port parsing / picking (#4507 follow-up).
+
+Driven through `node --input-type=module` (same approach as the other
+*_js.py tests); skips when `node` is not installed.
+"""
+import json
+import shutil
+import subprocess
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-RUNNING = (ROOT / "static/js/cookbookRunning.js").read_text(encoding="utf-8")
-HWFIT = (ROOT / "static/js/cookbook-hwfit.js").read_text(encoding="utf-8")
-SERVE = (ROOT / "static/js/cookbookServe.js").read_text(encoding="utf-8")
+import pytest
+
+_REPO = Path(__file__).resolve().parent.parent
+_HELPER = _REPO / "static" / "js" / "cookbookPorts.js"
+_HAS_NODE = shutil.which("node") is not None
 
 
-def test_task_port_is_single_reader_and_handles_all_forms():
-    # _taskPort must parse --port <n>, --port=<n>, and -p <n>
-    assert r"cmd.match(/--port[=\s]+(\d+)/) || cmd.match(/(?:^|\s)-p[=\s]+(\d+)/)" in RUNNING
-    # and it must be exported so the guards can share it
-    assert "_taskPort }" in RUNNING or "_taskPort," in RUNNING.split("export {", 1)[-1]
+def _run(expr):
+    js = (
+        f"import {{ portOf, nextFreePort }} from '{_HELPER.as_posix()}';"
+        f"console.log(JSON.stringify({expr}));"
+    )
+    proc = subprocess.run(
+        ["node", "--input-type=module"],
+        input=js, capture_output=True, text=True, cwd=str(_REPO), timeout=30,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout.strip())
 
 
-def test_next_available_port_uses_shared_reader():
-    assert "const p = _taskPort(t);" in RUNNING
-    assert "if (p) usedPorts.add(parseInt(p));" in RUNNING
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_port_of_handles_all_forms():
+    assert _run("portOf('vllm serve m --host 0.0.0.0 --port 8000')") == "8000"
+    assert _run("portOf('x --port=8001')") == "8001"
+    assert _run("portOf('llama-server -p 8002')") == "8002"
+    assert _run("portOf('llama-server -p=8003')") == "8003"
+    assert _run("portOf('serve with no port flag')") == ""
 
 
-def test_guards_reuse_shared_reader_not_inline_regex():
-    assert "_allServes.filter(t => _taskPort(t) === _qrPort)" in HWFIT
-    assert "_active.filter(t => _runningMod._taskPort(t) === _newPort)" in SERVE
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_next_free_port_skips_taken_including_eq_and_short_flag():
+    # a --port= serve and a -p serve are both 'taken'; picker skips them
+    taken = "[portOf('a --port=8000'), portOf('b -p 8001')]"
+    assert _run(f"nextFreePort({taken})") == "8002"
+    assert _run("nextFreePort([])") == "8000"
+    assert _run("nextFreePort(['8000', '8002'])") == "8001"
 
 
-def test_quickrun_llamacpp_autoassigns_port():
-    # no hardcoded 8080: port comes from _nextAvailablePort for every backend
-    assert "const _qrPort = _nextAvailablePort();" in HWFIT
-    assert "'llamacpp' ? '8080'" not in HWFIT
-    assert "--port 8080" not in HWFIT
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_clash_outcome_same_port_flagged_different_ignored():
+    # the guard's predicate is portOf(cmd) === target
+    assert _run("portOf('m --port 8000') === '8000'") is True
+    assert _run("portOf('m --port 8001') === '8000'") is False
