@@ -850,13 +850,13 @@ def setup_calendar_routes() -> APIRouter:
             '<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/>'
             '</d:prop></d:propfind>'
         )
-        _ca = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
-        _ssl_ctx = _ssl.create_default_context(cafile=_ca)
-        # Match requests/urllib3 behaviour: don't enforce VERIFY_X509_STRICT
-        # (Python 3.12+), which rejects self-signed certs missing keyUsage.
-        if hasattr(_ssl, "VERIFY_X509_STRICT"):
-            _ssl_ctx.verify_flags &= ~_ssl.VERIFY_X509_STRICT
+        _ca = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE") or None
         try:
+            _ssl_ctx = _ssl.create_default_context(cafile=_ca)
+            # Match requests/urllib3 behaviour: don't enforce VERIFY_X509_STRICT
+            # (Python 3.12+), which rejects self-signed certs missing keyUsage.
+            if hasattr(_ssl, "VERIFY_X509_STRICT"):
+                _ssl_ctx.verify_flags &= ~_ssl.VERIFY_X509_STRICT
             async with httpx.AsyncClient(timeout=8.0, follow_redirects=False, trust_env=False, verify=_ssl_ctx) as cx:
                 r = await cx.request(
                     "PROPFIND", url,

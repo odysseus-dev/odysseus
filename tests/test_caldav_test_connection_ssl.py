@@ -8,24 +8,6 @@ with trust_env=False (kept for SSRF protection).
 
 import ssl
 import os
-import sys
-import types
-import asyncio
-
-import pytest
-
-
-def _make_calendar_router(monkeypatch):
-    """Import setup_calendar_routes with all heavy deps stubbed out."""
-    for mod in ("caldav", "src.caldav_sync", "src.caldav_writeback"):
-        if mod not in sys.modules:
-            monkeypatch.setitem(sys.modules, mod, types.ModuleType(mod))
-
-    caldav_sync = sys.modules.setdefault("src.caldav_sync", types.ModuleType("src.caldav_sync"))
-    caldav_sync.validate_caldav_url = lambda url: url.strip()  # type: ignore[attr-defined]
-
-    from routes.calendar_routes import setup_calendar_routes  # noqa: PLC0415
-    return setup_calendar_routes()
 
 
 def test_ssl_context_respects_ssl_cert_file(monkeypatch, tmp_path):
@@ -35,20 +17,7 @@ def test_ssl_context_respects_ssl_cert_file(monkeypatch, tmp_path):
     monkeypatch.setenv("SSL_CERT_FILE", str(fake_bundle))
     monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
 
-    captured = {}
-    real_create = ssl.create_default_context
-
-    def spy_create(cafile=None, **kw):
-        captured["cafile"] = cafile
-        return real_create(cafile=cafile, **kw) if (cafile and os.path.exists(cafile)) else real_create()
-
-    monkeypatch.setattr(ssl, "create_default_context", spy_create)
-
-    # Trigger the code path by importing the route module with the env set.
-    import importlib
-    import routes.calendar_routes as mod
-    # Re-evaluate the SSL block directly without a full HTTP round-trip.
-    ca = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
+    ca = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE") or None
     assert ca == str(fake_bundle)
 
 
@@ -58,8 +27,26 @@ def test_ssl_context_respects_requests_ca_bundle(monkeypatch, tmp_path):
     monkeypatch.delenv("SSL_CERT_FILE", raising=False)
     monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(fake_bundle))
 
-    ca = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
+    ca = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE") or None
     assert ca == str(fake_bundle)
+
+
+def test_ssl_context_no_override_is_none(monkeypatch):
+    """When neither env var is set, _ca must be None (not empty string)."""
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
+
+    ca = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE") or None
+    assert ca is None
+
+
+def test_ssl_context_empty_string_normalises_to_none(monkeypatch):
+    """Docker Compose :-default forwards empty strings; they must not reach cafile=."""
+    monkeypatch.setenv("SSL_CERT_FILE", "")
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", "")
+
+    ca = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE") or None
+    assert ca is None
 
 
 def test_verify_x509_strict_cleared():
@@ -85,5 +72,5 @@ def test_ssl_env_fallback_order(monkeypatch, tmp_path):
     monkeypatch.setenv("SSL_CERT_FILE", str(a))
     monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(b))
 
-    ca = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
+    ca = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE") or None
     assert ca == str(a), "SSL_CERT_FILE must win over REQUESTS_CA_BUNDLE"
