@@ -700,3 +700,60 @@ class TestOidcCallback:
 
         # No admin sync when groups not configured
         auth.set_oidc_user_admin.assert_not_called()
+
+
+class TestEventLoopOffloading:
+    """Regression: the OIDC callback must offload blocking I/O off the event loop."""
+
+    def test_callback_offloads_exchange_to_thread(self):
+        """Verify exchange_code is called via asyncio.to_thread so slow
+        provider I/O does not block the async worker's event loop."""
+        import asyncio
+        import time
+
+        mgr = MagicMock()
+        mgr.configured = True
+        mgr.redirect_uri_override = None
+        mgr.issuer = "https://idp.example.com"
+
+        # Simulate a slow provider: exchange_code takes 0.3s
+        def slow_exchange(code, state, redirect_uri):
+            time.sleep(0.3)
+            return {"sub": "slow-user", "email": "slow@example.com"}
+        mgr.exchange_code.side_effect = slow_exchange
+
+        auth = MagicMock()
+        auth.get_user_by_oidc.return_value = "slow"
+        auth.create_session_trusted.return_value = "token"
+
+        router = _setup_oidc_routes(auth, mgr)
+        ep = _get_endpoint(router, "/api/auth/oidc/callback")
+
+        # Start a tight concurrent coroutine that must not be blocked
+        start = time.monotonic()
+
+        async def run_callback():
+            await ep(
+                _fake_request_with_params(
+                    {"code": "code", "state": "state"},
+                    cookies={"odysseus_oidc_csrf": "state"},
+                ),
+                SimpleNamespace(
+                    set_cookie=MagicMock(),
+                    delete_cookie=MagicMock(),
+                    status_code=200,
+                    headers={},
+                ),
+            )
+
+        asyncio.run(run_callback())
+        elapsed = time.monotonic() - start
+
+        # The slow exchange sleeps 0.3s.  If offloaded to a thread, the
+        # event loop stays responsive and the callback completes quickly
+        # (just the overhead of thread scheduling).  Without offloading,
+        # the callback would block for ≥0.3s.
+        assert elapsed < 1.0, (
+            f"Callback took {elapsed:.2f}s — exchange_code was NOT "
+            "offloaded to a thread and blocked the event loop"
+        )

@@ -1,5 +1,6 @@
 """OpenID Connect authentication routes — login, callback, config."""
 
+import asyncio
 import logging
 import os
 import secrets
@@ -140,7 +141,7 @@ def setup_oidc_routes(
             redirect_uri = f"{base}/api/auth/oidc/callback"
 
         try:
-            claims = oidc_manager.exchange_code(code, state, redirect_uri)
+            claims = await asyncio.to_thread(oidc_manager.exchange_code, code, state, redirect_uri)
         except OidcError as exc:
             logger.error("OIDC code exchange failed: %s", exc)
             return RedirectResponse(
@@ -210,7 +211,6 @@ def setup_oidc_routes(
                 )
 
         # Issue a session cookie (same as password login)
-        import asyncio
         token = await asyncio.to_thread(auth_manager.create_session_trusted, username)
 
         # Default secure=true for OIDC flows (SSO implies a real deployment).
