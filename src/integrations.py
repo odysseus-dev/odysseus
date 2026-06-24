@@ -139,6 +139,25 @@ INTEGRATION_PRESETS: Dict[str, Dict[str, Any]] = {
             "  that must be decrypted client-side with the user's master key."
         ),
     },
+    "openbao": {
+        "name": "OpenBao",
+        "auth_type": "header",
+        "auth_header": "X-Vault-Token",
+        "description": (
+            "OpenBao secrets manager (Vault HTTP API compatible). Use the server "
+            "origin as the Base URL, for example http://openbao.local:8200. Store "
+            "the OpenBao token as the API key; Odysseus sends it in X-Vault-Token.\n"
+            "Key endpoints:\n"
+            "  GET /v1/sys/health — server health, seal state, and version\n"
+            "  GET /v1/sys/mounts — list mounted secrets engines\n"
+            "  GET /v1/{mount}/data/{path} — read a KV v2 secret\n"
+            "  POST /v1/{mount}/data/{path} — write {\"data\": {...}} to KV v2\n"
+            "  DELETE /v1/{mount}/data/{path} — soft-delete the latest version\n"
+            "  GET /v1/{mount}/metadata/{path} — read KV v2 secret metadata\n"
+            "  LIST /v1/{mount}/metadata/{path} — list KV v2 keys\n"
+            "Access is limited by the policies attached to the configured token."
+        ),
+    },
     "freshrss": {
         "name": "FreshRSS",
         "auth_type": "header",

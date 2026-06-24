@@ -826,6 +826,10 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             "linkding": "/api/tags/",
             "homeassistant": "/api/",
             "home assistant": "/api/",
+            "openbao": (
+                "/v1/sys/health"
+                "?standbyok=true&perfstandbyok=true&sealedcode=200&uninitcode=200"
+            ),
         }
         path = health_paths.get(preset, "/")
         result = await execute_api_call(integration_id, "GET", path)
