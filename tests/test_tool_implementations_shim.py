@@ -50,3 +50,47 @@ def test_do_functions_remain_async_through_shim():
             assert inspect.iscoroutinefunction(obj), (
                 f"{name} is not async via shim (got {type(obj).__name__})"
             )
+
+
+# Domain modules that own tool implementations after the slice-1 split.
+# The shim must re-export every public do_* from each so existing
+# `from src.tool_implementations import do_X` imports keep resolving.
+_DOMAIN_MODULES = (
+    "src.tools.system",
+    "src.tools.cookbook",
+    "src.tools.search",
+    "src.tools.notes",
+    "src.tools.calendar",
+    "src.tools.image",
+    "src.tools.research",
+    "src.tools.contacts",
+    "src.tools.vault",
+    "src.agent_tools.admin_tools",  # admin manage_* tools migrated here (#3629)
+)
+
+
+def test_shim_reexports_every_domain_do_function():
+    """Auto-discovered guard: every do_* defined in a domain module must be
+    reachable through the shim.
+
+    The hand-maintained ``_EXPECTED`` list above can drift silently when a
+    new tool is added to a domain module but not re-exported by the facade
+    (exactly the omission a reviewer found post-split). This test discovers
+    the ground truth from the domain modules themselves, so a forgotten
+    re-export fails the build automatically. ``hasattr`` is used (not
+    ``dir(ti)``) because the admin symbols are re-exported lazily via
+    module ``__getattr__`` and therefore do not appear in ``dir(ti)``.
+    """
+    import importlib
+
+    dropped = []
+    for mod_name in _DOMAIN_MODULES:
+        mod = importlib.import_module(mod_name)
+        for name in dir(mod):
+            if not name.startswith("do_"):
+                continue
+            if not inspect.iscoroutinefunction(getattr(mod, name, None)):
+                continue
+            if not hasattr(ti, name):
+                dropped.append(f"{mod_name}.{name}")
+    assert not dropped, f"shim dropped domain do_* (re-export forgotten): {dropped}"
