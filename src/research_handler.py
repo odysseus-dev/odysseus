@@ -145,7 +145,7 @@ class ResearchHandler:
         convo += f"\nUser: {latest_message}"
 
         try:
-            from src.llm_core import llm_call_async
+            from src.llm_core import llm_call_async, LLMConfig
 
             response = await llm_call_async(
                 url=llm_endpoint,
@@ -159,7 +159,7 @@ class ResearchHandler:
                 temperature=0.1,
                 max_tokens=200,
                 headers=llm_headers,
-                timeout=15,
+                timeout=LLMConfig.background_timeout(15),
                 max_retries=1,
             )
             query = strip_thinking(response).strip().strip('"\'')
@@ -176,7 +176,7 @@ class ResearchHandler:
         """Generate a research plan for user review before starting research."""
         try:
             from src.deep_research import RESEARCH_PLAN_PROMPT, current_date_context
-            from src.llm_core import llm_call_async
+            from src.llm_core import llm_call_async, LLMConfig
 
             prompt = current_date_context() + RESEARCH_PLAN_PROMPT.format(question=query)
             response = await llm_call_async(
@@ -186,7 +186,7 @@ class ResearchHandler:
                 temperature=0.3,
                 max_tokens=1024,
                 headers=llm_headers,
-                timeout=30,
+                timeout=LLMConfig.background_timeout(30),
                 max_retries=1,
             )
             response = strip_thinking(response)

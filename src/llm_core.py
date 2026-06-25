@@ -32,6 +32,29 @@ class LLMConfig:
     # with env LLM_CONNECT_TIMEOUT (seconds).
     CONNECT_TIMEOUT = float(os.getenv('LLM_CONNECT_TIMEOUT', '10') or '10')
 
+    @staticmethod
+    def background_timeout(default: int) -> int:
+        """Read-timeout (seconds) for background, non-streaming LLM tasks —
+        memory skill-extraction and research query/plan synthesis.
+
+        These run on the same endpoint the user picked for chat, which may be a
+        slow local backend (llama.cpp / KoboldCPP on modest hardware). The old
+        hard-coded 30s/15s budgets let those tasks exhaust MAX_RETRIES and fail
+        with a 502 on such backends (#4610). Override all of them at once with
+        env LLM_BACKGROUND_TIMEOUT (seconds); when unset, each call keeps its
+        own default so nothing changes for fast endpoints.
+
+        Read per-call (not cached at import like CONNECT_TIMEOUT) so a runtime
+        env change applies without a restart and tests can monkeypatch it.
+        """
+        raw = os.getenv('LLM_BACKGROUND_TIMEOUT')
+        if raw:
+            try:
+                return max(1, int(float(raw)))
+            except ValueError:
+                pass
+        return default
+
 
 def _call_timeout(read_timeout) -> httpx.Timeout:
     """Per-request timeout for non-streaming LLM calls (connect from config)."""

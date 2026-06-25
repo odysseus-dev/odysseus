@@ -144,7 +144,7 @@ async def maybe_extract_skill(
         return None
 
     try:
-        from src.llm_core import llm_call_async
+        from src.llm_core import llm_call_async, LLMConfig
 
         # Get recent messages
         history = session.get_context_messages()
@@ -187,9 +187,10 @@ async def maybe_extract_skill(
 
         import time as _time
         _t0 = _time.monotonic()
+        extract_timeout = LLMConfig.background_timeout(30)
         logger.debug(
-            "[skill-extract] calling LLM (endpoint=%s, ctx=%d msgs, timeout=30s)",
-            endpoint_url, len(recent),
+            "[skill-extract] calling LLM (endpoint=%s, ctx=%d msgs, timeout=%ds)",
+            endpoint_url, len(recent), extract_timeout,
         )
         response = await llm_call_async(
             endpoint_url,
@@ -199,7 +200,7 @@ async def maybe_extract_skill(
                 {"role": "user", "content": f"Conversation:\n{conversation}"},
             ],
             headers=headers,
-            timeout=30,
+            timeout=extract_timeout,
         )
         logger.debug(
             "[skill-extract] LLM returned in %.1fs (len=%d, head=%r)",
