@@ -13,7 +13,9 @@ handlers need. The split is mechanical — no behavior change.
 """
 
 import asyncio
+import os
 import sqlite3 as _sql3
+import time
 import email as email_mod
 import email.header
 import email.utils
@@ -43,8 +45,9 @@ from routes.email_helpers import (
     _load_settings, _save_settings, _get_email_config,
     _send_smtp_message, _smtp_security_mode,
     _IMAP_TIMEOUT_SECONDS, _open_imap_connection,
+    make_oauth_state, verify_oauth_state,
     _imap_connect, _imap, _decode_header, _detect_sent_folder, _detect_drafts_folder,
-    _extract_attachment_text, _list_attachments_from_msg,
+    _extract_attachment_text, _list_attachments_from_msg, _has_visible_attachments, _is_likely_signature_image_attachment,
     _extract_attachment_to_disk, _extract_html, _extract_text,
     _fetch_sender_thread_context, _pre_retrieve_context,
     _EMAIL_REPLY_SYS_PROMPT_BASE, _POOL_HOOKS,
@@ -58,6 +61,7 @@ from routes.email_pollers import _start_poller
 logger = logging.getLogger(__name__)
 
 ODYSSEUS_MAIL_ORIGIN = "odysseus-ui"
+EMAIL_READ_ATTACHMENT_VERSION = 2
 
 
 def _email_tag_owner_aliases(account_id: str | None, owner: str = "") -> list[str]:
@@ -76,15 +80,16 @@ def _email_tag_owner_aliases(account_id: str | None, owner: str = "") -> list[st
                         cfg.get("smtp_user") or "",
                         cfg.get("from_address") or "",
                     ])
-                except Exception:
+                except Exception as _e:
+                    logger.warning("Failed to resolve email account alias", exc_info=_e)
                     resolved_account_id = None
             row = db.get(_EA, resolved_account_id) if resolved_account_id else None
             if row:
                 aliases.extend([row.owner or "", row.imap_user or "", row.from_address or ""])
         finally:
             db.close()
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.warning("Failed to load email aliases", exc_info=_e)
     out = []
     for a in aliases:
         a = (a or "").strip()
@@ -244,6 +249,21 @@ def _imap_uid_fetch(conn, uid_set: str | bytes, query: str):
     return conn.uid("FETCH", _uid_bytes(uid_set), query)
 
 
+def _imap_search_quote(value: str) -> str:
+    return '"' + str(value or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _message_id_chain(*values: str) -> list[str]:
+    seen = set()
+    out = []
+    for value in values:
+        for mid in re.findall(r"<[^>]+>", value or ""):
+            if mid not in seen:
+                seen.add(mid)
+                out.append(mid)
+    return out
+
+
 def _uid_from_fetch_meta(meta_b: bytes) -> str:
     m = re.search(rb"\bUID\s+(\d+)\b", meta_b)
     return m.group(1).decode() if m else ""
@@ -285,7 +305,9 @@ def _group_uid_fetch_records(msg_data) -> list:
 
 
 def _smtp_ready(cfg: dict) -> bool:
-    return bool(cfg.get("smtp_host") and cfg.get("smtp_user") and cfg.get("smtp_password"))
+    if not cfg.get("smtp_host") or not cfg.get("smtp_user"):
+        return False
+    return bool(cfg.get("smtp_password") or cfg.get("oauth_provider"))
 
 
 def _resolve_send_config(account_id: str | None = None, owner: str = "") -> dict:
@@ -358,6 +380,21 @@ def _apply_odysseus_headers(msg, kind: str | None = None, ref_id: str | None = N
         msg["X-Odysseus-Kind"] = re.sub(r"[^A-Za-z0-9_.-]", "-", kind)[:64]
     if ref_id:
         msg["X-Odysseus-Ref"] = re.sub(r"[^A-Za-z0-9_.:-]", "-", ref_id)[:128]
+
+
+def _normalize_addr_field(field: str) -> str:
+    """Strip the malformed-but-common trailing/leading commas and stray
+    whitespace from a To/Cc/Bcc string before it lands in the MIME header
+    or the SMTP envelope. Users often paste a single address with a
+    trailing comma (e.g. `felix@pewdiepie.com,`) and most MTAs reject the
+    resulting `To: felix@pewdiepie.com,` line as a syntax error. Collapse
+    any run of separator junk between addresses too."""
+    if not field:
+        return field
+    # Split on commas, drop empty tokens, rejoin with a single ', '.
+    parts = [p.strip() for p in field.split(",")]
+    parts = [p for p in parts if p]
+    return ", ".join(parts)
 
 
 def _envelope_recipients(*fields: str) -> list:
@@ -988,6 +1025,65 @@ def setup_email_routes():
                 except Exception:
                     pass
 
+    def _related_thread_attachments_sync(
+        folder: str,
+        account_id: str | None,
+        owner: str,
+        current_uid: str,
+        current_message_id: str,
+        in_reply_to: str,
+        references: str,
+        limit: int = 12,
+    ) -> list[dict]:
+        """Return visible attachments from referenced messages in this folder."""
+        wanted_ids = _message_id_chain(references, in_reply_to)
+        current_mid = (current_message_id or "").strip()
+        wanted_ids = [mid for mid in wanted_ids if mid and mid != current_mid]
+        if not wanted_ids:
+            return []
+
+        related: list[dict] = []
+        try:
+            with _imap(account_id, owner=owner) as conn:
+                conn.select(_q(folder), readonly=True)
+                # Search newest referenced messages first; cap work so opening
+                # a long thread stays bounded.
+                for mid in reversed(wanted_ids[-10:]):
+                    if len(related) >= limit:
+                        break
+                    status, data = _imap_uid_search(conn, f'(HEADER Message-ID {_imap_search_quote(mid)})')
+                    if status != "OK" or not data or not data[0]:
+                        continue
+                    for uid_b in reversed(data[0].split()[-3:]):
+                        source_uid = uid_b.decode(errors="ignore")
+                        if not source_uid or source_uid == str(current_uid):
+                            continue
+                        st2, msg_data = _imap_uid_fetch(conn, source_uid, "(BODY.PEEK[])")
+                        if st2 != "OK" or not msg_data or not isinstance(msg_data[0], tuple):
+                            continue
+                        msg = email_mod.message_from_bytes(msg_data[0][1])
+                        source_from = _decode_header(msg.get("From", ""))
+                        source_subject = _decode_header(msg.get("Subject", ""))
+                        source_date = msg.get("Date", "")
+                        for att in _list_attachments_from_msg(msg):
+                            if _is_likely_signature_image_attachment(att):
+                                continue
+                            enriched = dict(att)
+                            enriched.update({
+                                "source_uid": source_uid,
+                                "source_folder": folder,
+                                "source_message_id": (msg.get("Message-ID") or "").strip(),
+                                "source_from": source_from,
+                                "source_subject": source_subject,
+                                "source_date": source_date,
+                            })
+                            related.append(enriched)
+                            if len(related) >= limit:
+                                break
+        except Exception as e:
+            logger.debug(f"related thread attachment lookup failed uid={current_uid}: {e}")
+        return related
+
     @router.get("/list")
     async def list_emails(
         folder: str = Query("INBOX"),
@@ -1258,6 +1354,17 @@ def setup_email_routes():
             sender_name, sender_addr = email.utils.parseaddr(sender)
             parsed_date = email.utils.parsedate_to_datetime(date_str) if date_str else None
             attachments = _list_attachments_from_msg(msg)
+            related_attachments = []
+            if not _has_visible_attachments(msg):
+                related_attachments = _related_thread_attachments_sync(
+                    folder,
+                    account_id,
+                    owner,
+                    uid,
+                    message_id,
+                    in_reply_to,
+                    references,
+                )
 
             if mark_seen:
                 # Set \Seen in a separate readwrite session so concurrent reads
@@ -1366,6 +1473,8 @@ def setup_email_routes():
                 "body": body,
                 "body_html": body_html,
                 "attachments": attachments,
+                "related_attachments": related_attachments,
+                "attachment_version": EMAIL_READ_ATTACHMENT_VERSION,
                 "cached_summary": cached_summary,
                 "cached_ai_reply": cached_ai_reply,
                 "boundaries": cached_boundaries,
@@ -1396,6 +1505,12 @@ def setup_email_routes():
         """Read email body. Cached for 30m, sync IMAP work runs in a thread."""
         ck = _read_cache_key(account_id, folder, uid, owner=owner)
         cached = _read_cache_get(ck)
+        if cached is not None:
+            # Older cached read responses lack the thread-attachment fallback.
+            # Fetch once so replies that reference prior attachments can show
+            # those files without waiting for cache expiry.
+            if cached.get("attachment_version") != EMAIL_READ_ATTACHMENT_VERSION:
+                cached = None
         if cached is not None:
             if mark_seen:
                 try:
@@ -1530,6 +1645,12 @@ def setup_email_routes():
                 return {"error": f"Attachment index {index} not found"}
 
             from pathlib import Path as _Path
+            target_root = os.path.abspath(str(target_dir))
+            filepath_str = os.path.abspath(str(filepath))
+            if os.path.commonpath([target_root, filepath_str]) != target_root:
+                logger.warning("Rejected attachment path outside extraction dir: %s", filepath)
+                return {"error": "Invalid attachment path"}
+            filepath = _Path(filepath_str)
             base = _Path(filepath).name
             if base.startswith("."):
                 return {"error": "Invalid filename", "filename": base}
@@ -1584,6 +1705,65 @@ def setup_email_routes():
                     return None
             doc_session_id = _resolve_doc_session()
 
+            def _create_markdown_doc(content: str, summary: str):
+                from src.database import SessionLocal as _SL, Document as _Doc, DocumentVersion as _DV
+                doc_id = str(uuid.uuid4())
+                ver_id = str(uuid.uuid4())
+                _db = _SL()
+                try:
+                    _db.query(_Doc).filter(_Doc.is_active == True).update({"is_active": False})
+                    _db.add(_Doc(
+                        id=doc_id, session_id=doc_session_id, title=title,
+                        language="markdown", current_content=content,
+                        version_count=1, is_active=True,
+                    ))
+                    _db.add(_DV(
+                        id=ver_id, document_id=doc_id, version_number=1,
+                        content=content, summary=summary, source="upload",
+                    ))
+                    _db.commit()
+                finally:
+                    _db.close()
+                _tag_doc_with_source(doc_id)
+                return doc_id
+
+            def _attached_email_markdown(raw_bytes: bytes):
+                if not raw_bytes:
+                    return f"# Attached email: {base}\n\n_(empty email attachment)_"
+                try:
+                    attached_msg = email_mod.message_from_bytes(raw_bytes)
+                except Exception:
+                    logger.exception("Failed to parse attached email %s", base)
+                    return f"# Attached email: {base}\n\nCould not parse this email attachment."
+
+                attached_subject = _decode_header(attached_msg.get("Subject", "")) or base
+                attached_from = _decode_header(attached_msg.get("From", ""))
+                attached_to = _decode_header(attached_msg.get("To", ""))
+                attached_cc = _decode_header(attached_msg.get("Cc", ""))
+                attached_date = attached_msg.get("Date", "")
+                attached_body = _extract_text(attached_msg).strip()
+                attached_atts = _list_attachments_from_msg(attached_msg)
+
+                lines = [f"# Attached email: {attached_subject}", ""]
+                if attached_from:
+                    lines.append(f"**From:** {attached_from}")
+                if attached_to:
+                    lines.append(f"**To:** {attached_to}")
+                if attached_cc:
+                    lines.append(f"**Cc:** {attached_cc}")
+                if attached_date:
+                    lines.append(f"**Date:** {attached_date}")
+                lines.extend(["", "## Body", "", attached_body or "_(no readable body)_"])
+                if attached_atts:
+                    lines.extend(["", "## Attachments", ""])
+                    for att in attached_atts:
+                        size = int(att.get("size") or 0)
+                        size_label = f"{size} B" if size < 1024 else f"{round(size / 1024)} KB"
+                        name = att.get("filename") or f"attachment_{att.get('index', '')}"
+                        ctype = att.get("content_type") or "application/octet-stream"
+                        lines.append(f"- {name} ({ctype}, {size_label})")
+                return "\n".join(lines).strip()
+
             # ── PDF path (existing) ────────────────────────────────────
             if ext == ".pdf":
                 import shutil as _shutil
@@ -1630,6 +1810,39 @@ def setup_email_routes():
                 _tag_doc_with_source(doc_id)
                 return {"doc_id": doc_id, "filename": filepath.name}
 
+            # ── Attached email (.eml / message/rfc822) ────────────────
+            if ext == ".eml":
+                def _attachment_bytes_from_msg():
+                    if not msg.is_multipart():
+                        return b""
+                    idx = 0
+                    for part in msg.walk():
+                        cd = str(part.get("Content-Disposition", ""))
+                        ct = part.get_content_type()
+                        is_attached_email = ct == "message/rfc822" and ("attachment" in cd.lower() or part.get_filename())
+                        if part.is_multipart() and not is_attached_email:
+                            continue
+                        if ct in ("text/plain", "text/html") and "attachment" not in cd:
+                            continue
+                        if idx == index:
+                            payload = part.get_payload(decode=True)
+                            if payload is None and ct == "message/rfc822":
+                                try:
+                                    payload = part.as_bytes()
+                                except Exception:
+                                    payload = b""
+                            return payload or b""
+                        idx += 1
+                    return b""
+
+                try:
+                    content = _attached_email_markdown(_attachment_bytes_from_msg())
+                except Exception:
+                    logger.exception("Failed to read email attachment %s", base)
+                    return {"error": "Failed to read email attachment", "filename": base}
+                doc_id = _create_markdown_doc(content, "Imported attached email")
+                return {"doc_id": doc_id, "filename": filepath.name}
+
             # ── DOCX path: extract text → markdown document ───────────
             if ext == ".docx":
                 try:
@@ -1667,25 +1880,7 @@ def setup_email_routes():
                     lines.append("")
                 content = "\n".join(lines).strip() or f"_(empty {base})_"
 
-                from src.database import SessionLocal as _SL, Document as _Doc, DocumentVersion as _DV
-                doc_id = str(uuid.uuid4())
-                ver_id = str(uuid.uuid4())
-                _db = _SL()
-                try:
-                    _db.query(_Doc).filter(_Doc.is_active == True).update({"is_active": False})
-                    _db.add(_Doc(
-                        id=doc_id, session_id=doc_session_id, title=title,
-                        language="markdown", current_content=content,
-                        version_count=1, is_active=True,
-                    ))
-                    _db.add(_DV(
-                        id=ver_id, document_id=doc_id, version_number=1,
-                        content=content, summary="Imported from DOCX", source="upload",
-                    ))
-                    _db.commit()
-                finally:
-                    _db.close()
-                _tag_doc_with_source(doc_id)
+                doc_id = _create_markdown_doc(content, "Imported from DOCX")
                 return {"doc_id": doc_id, "filename": filepath.name}
 
             # ── Plain text / markdown ────────────────────────────────
@@ -1694,25 +1889,7 @@ def setup_email_routes():
                     content = filepath.read_text(encoding="utf-8", errors="replace")
                 except Exception as e:
                     return {"error": f"Failed to read text file: {e}", "filename": base}
-                from src.database import SessionLocal as _SL, Document as _Doc, DocumentVersion as _DV
-                doc_id = str(uuid.uuid4())
-                ver_id = str(uuid.uuid4())
-                _db = _SL()
-                try:
-                    _db.query(_Doc).filter(_Doc.is_active == True).update({"is_active": False})
-                    _db.add(_Doc(
-                        id=doc_id, session_id=doc_session_id, title=title,
-                        language="markdown", current_content=content,
-                        version_count=1, is_active=True,
-                    ))
-                    _db.add(_DV(
-                        id=ver_id, document_id=doc_id, version_number=1,
-                        content=content, summary="Imported from email attachment", source="upload",
-                    ))
-                    _db.commit()
-                finally:
-                    _db.close()
-                _tag_doc_with_source(doc_id)
+                doc_id = _create_markdown_doc(content, "Imported from email attachment")
                 return {"doc_id": doc_id, "filename": filepath.name}
 
             return {"error": f"Unsupported attachment type: {ext}", "filename": base}
@@ -2021,7 +2198,10 @@ def setup_email_routes():
             outer = MIMEMultipart("alternative")
             body_container = outer
 
-        outer["From"] = cfg["from_address"]
+        to = _normalize_addr_field(to or "")
+        cc = _normalize_addr_field(cc or "")
+        bcc = _normalize_addr_field(bcc or "")
+        outer["From"] = email.utils.formataddr((cfg.get("display_name") or "", cfg["from_address"]))
         outer["To"] = to
         if cc:
             outer["Cc"] = cc
@@ -2165,12 +2345,10 @@ def setup_email_routes():
         try:
             conn = sqlite3.connect(SCHEDULED_DB)
             conn.row_factory = sqlite3.Row
-            # The MCP server can't easily set owner, so it stores '' — fall
-            # back to those rows in addition to the caller's owner.
             rows = conn.execute(
                 """SELECT id, to_addr, subject, body, created_at, account_id
                    FROM scheduled_emails
-                   WHERE status = 'agent_draft' AND (owner = ? OR owner = '')
+                   WHERE status = 'agent_draft' AND owner = ?
                    ORDER BY created_at DESC""",
                 (owner or "",),
             ).fetchall()
@@ -2191,7 +2369,7 @@ def setup_email_routes():
             cur = conn.execute(
                 """UPDATE scheduled_emails
                    SET status = 'pending', send_at = ?
-                   WHERE id = ? AND status = 'agent_draft' AND (owner = ? OR owner = '')""",
+                   WHERE id = ? AND status = 'agent_draft' AND owner = ?""",
                 (datetime.utcnow().isoformat(), sid, owner or ""),
             )
             conn.commit()
@@ -2212,7 +2390,7 @@ def setup_email_routes():
             conn = sqlite3.connect(SCHEDULED_DB)
             cur = conn.execute(
                 """UPDATE scheduled_emails SET status = 'cancelled'
-                   WHERE id = ? AND status = 'agent_draft' AND (owner = ? OR owner = '')""",
+                   WHERE id = ? AND status = 'agent_draft' AND owner = ?""",
                 (sid, owner or ""),
             )
             conn.commit()
@@ -2285,6 +2463,7 @@ def setup_email_routes():
         try:
             cfg = _resolve_send_config(req.account_id, owner=owner)
         except Exception as e:
+            logger.warning(f"No SMTP-capable account resolved: {e}")
             return {"success": False, "error": str(e) or "No SMTP-capable email account configured"}
 
         # Use 'mixed' if we have attachments, 'alternative' otherwise
@@ -2297,7 +2476,10 @@ def setup_email_routes():
             outer = MIMEMultipart("alternative")
             body_container = outer
 
-        outer["From"] = cfg["from_address"]
+        req.to = _normalize_addr_field(req.to or "")
+        req.cc = _normalize_addr_field(req.cc or "")
+        req.bcc = _normalize_addr_field(req.bcc or "")
+        outer["From"] = email.utils.formataddr((cfg.get("display_name") or "", cfg["from_address"]))
         outer["To"] = req.to
         if req.cc:
             outer["Cc"] = req.cc
@@ -2348,6 +2530,10 @@ def setup_email_routes():
 
         _account_id = cfg.get("account_id") or req.account_id  # capture for the IMAP append in the closure
         _in_reply_to = (req.in_reply_to or "").strip()
+        _oauth_provider = cfg.get("oauth_provider") or ""
+        _oauth_access_token = cfg.get("oauth_access_token") or ""
+        _oauth_refresh_token = cfg.get("oauth_refresh_token") or ""
+        _oauth_token_expiry = cfg.get("oauth_token_expiry") or ""
 
         def _deliver():
             try:
@@ -2358,6 +2544,11 @@ def setup_email_routes():
                         "smtp_security": _smtp_security,
                         "smtp_user": _smtp_user,
                         "smtp_password": _smtp_pw,
+                        "account_id": _account_id,
+                        "oauth_provider": _oauth_provider,
+                        "oauth_access_token": _oauth_access_token,
+                        "oauth_refresh_token": _oauth_refresh_token,
+                        "oauth_token_expiry": _oauth_token_expiry,
                     },
                     _from,
                     _recipients,
@@ -2470,7 +2661,7 @@ def setup_email_routes():
             msg.attach(MIMEText(_draft_html, "html", "utf-8"))
         else:
             msg = MIMEText(req.body, "plain", "utf-8")
-        msg["From"] = cfg["from_address"]
+        msg["From"] = email.utils.formataddr((cfg.get("display_name") or "", cfg["from_address"]))
         msg["To"] = req.to
         if req.cc:
             msg["Cc"] = req.cc
@@ -3122,6 +3313,8 @@ def setup_email_routes():
                     "from_address": r.from_address or "",
                     "has_imap_password": bool(r.imap_password),
                     "has_smtp_password": bool(r.smtp_password),
+                    "oauth_provider": r.oauth_provider or "",
+                    "display_name": r.display_name or "",
                 })
             return {"accounts": out}
         finally:
@@ -3154,6 +3347,7 @@ def setup_email_routes():
                 smtp_user=(data.get("smtp_user") or "").strip(),
                 smtp_password=_enc(data.get("smtp_password") or ""),
                 from_address=(data.get("from_address") or "").strip(),
+                display_name=(data.get("display_name") or "").strip(),
                 # SECURITY: stamp the creator so all subsequent reads / mutations
                 # can filter by user. Without this every new account leaks to
                 # every other user.
@@ -3188,7 +3382,7 @@ def setup_email_routes():
             if not row:
                 return {"ok": False, "error": "Account not found"}
             # Simple fields
-            for key in ("name", "imap_host", "imap_user", "smtp_host", "smtp_user", "from_address"):
+            for key in ("name", "imap_host", "imap_user", "smtp_host", "smtp_user", "from_address", "display_name"):
                 if key in data:
                     setattr(row, key, (data[key] or "").strip())
             for key in ("imap_port", "smtp_port"):
@@ -3376,5 +3570,124 @@ def setup_email_routes():
             return {"ok": True}
         finally:
             db.close()
+
+    # ── Google OAuth2 routes ──
+
+    @router.get("/oauth/google/authorize")
+    async def google_oauth_authorize(account_id: str = Query(...), request: Request = None, owner: str = Depends(require_user)):
+        import urllib.parse
+        _assert_owns_account(account_id, owner)
+        client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+        if not client_id:
+            raise HTTPException(400, "GOOGLE_OAUTH_CLIENT_ID not set — add it to .env")
+        redirect_uri = (
+            os.environ.get("GOOGLE_OAUTH_REDIRECT_URI")
+            or f"http://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/google/callback"
+        )
+        state = make_oauth_state(account_id, owner)
+        params = urllib.parse.urlencode({
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": "https://mail.google.com/ email",
+            "access_type": "offline",
+            "prompt": "consent",
+            "state": state,
+        })
+        from fastapi.responses import RedirectResponse as _RR
+        return _RR(f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
+
+    @router.get("/oauth/google/callback")
+    async def google_oauth_callback(
+        code: str = Query(None),
+        state: str = Query(None),
+        error: str = Query(None),
+        request: Request = None,
+    ):
+        import urllib.parse
+        from fastapi.responses import RedirectResponse as _RR
+        if error:
+            return _RR("/?section=integrations&email_oauth_error=google_error")
+        if not code or not state:
+            return _RR("/?section=integrations&email_oauth_error=missing_code")
+        state_data = verify_oauth_state(state)
+        if not state_data:
+            return _RR("/?section=integrations&email_oauth_error=invalid_state")
+        account_id = state_data.get("a", "")
+        owner = state_data.get("o", "")
+        client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+        client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+        redirect_uri = (
+            os.environ.get("GOOGLE_OAUTH_REDIRECT_URI")
+            or f"http://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/google/callback"
+        )
+        import httpx as _httpx
+        try:
+            resp = _httpx.post("https://oauth2.googleapis.com/token", data={
+                "code": code,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            }, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception:
+            logger.warning("Google token exchange failed")
+            return _RR("/?section=integrations&email_oauth_error=token_exchange_failed")
+        access_token = data.get("access_token", "")
+        refresh_token = data.get("refresh_token", "")
+        expiry = str(int(time.time()) + data.get("expires_in", 3600))
+        # Fetch the email address from userinfo so we can auto-fill imap_user.
+        email_addr = ""
+        display_name = ""
+        try:
+            ui = _httpx.get("https://www.googleapis.com/oauth2/v1/userinfo",
+                            headers={"Authorization": f"Bearer {access_token}"}, timeout=10)
+            if ui.is_success:
+                ui_data = ui.json()
+                email_addr = ui_data.get("email", "")
+                display_name = ui_data.get("name", "")
+        except Exception:
+            pass
+        from core.database import SessionLocal, EmailAccount
+        from src.secret_storage import encrypt as _enc
+        db = SessionLocal()
+        try:
+            row = db.query(EmailAccount).filter(EmailAccount.id == account_id).first()
+            if not row:
+                return _RR("/?section=integrations&email_oauth_error=account_not_found")
+            # SECURITY: verify the account belongs to the initiating user.
+            if owner and row.owner and row.owner != owner:
+                logger.warning("OAuth callback owner mismatch — rejecting token write")
+                return _RR("/?section=integrations&email_oauth_error=ownership_error")
+            row.oauth_provider = "google"
+            row.oauth_access_token = _enc(access_token)
+            if refresh_token:
+                row.oauth_refresh_token = _enc(refresh_token)
+            row.oauth_token_expiry = expiry
+            # Auto-fill Google IMAP/SMTP settings if not already configured.
+            if not row.imap_host:
+                row.imap_host = "imap.gmail.com"
+                row.imap_port = 993
+                row.imap_starttls = False
+            if not row.smtp_host:
+                row.smtp_host = "smtp.gmail.com"
+                row.smtp_port = 587
+            if email_addr:
+                if not row.imap_user:
+                    row.imap_user = email_addr
+                if not row.smtp_user:
+                    row.smtp_user = email_addr
+                if not row.from_address:
+                    row.from_address = email_addr
+                if not row.name or row.name == row.id:
+                    row.name = email_addr
+            if display_name and not row.display_name:
+                row.display_name = display_name
+            db.commit()
+        finally:
+            db.close()
+        return _RR("/?section=integrations&email_oauth_success=1")
 
     return router

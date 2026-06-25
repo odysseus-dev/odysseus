@@ -163,6 +163,21 @@ class ModelDiscovery:
                     return "lmstudio"
         except Exception:
             pass
+        # llama.cpp's llama-server exposes a native /props endpoint (no /v1 prefix)
+        # describing the loaded model, slots, and chat template — distinct from
+        # LM Studio (/api/v1/models) and vLLM (/version, /metrics).
+        try:
+            r = httpx.get(f"http://{host}:{port}/props", timeout=1.5)
+            if r.is_success:
+                props = r.json() or {}
+                if isinstance(props, dict) and (
+                    "default_generation_settings" in props
+                    or "total_slots" in props
+                    or "chat_template" in props
+                ):
+                    return "llamacpp"
+        except Exception:
+            pass
         return None
 
     def _check_port(self, host: str, port: int) -> Optional[Dict[str, Any]]:
@@ -194,10 +209,11 @@ class ModelDiscovery:
 
         logger.info(f"Scanning {len(hosts)} hosts for models: {hosts}")
 
-        # Well-known ports: 8000-8020 (vLLM, llama.cpp, SGLang, Cookbook),
-        # 1234 (LM Studio), 11434 (Ollama), 11435 for APFEL as its default port is
-        # occupied by Ollama. The env vars can add more ports which will be merged in.
-        ports = list(range(8000, 8021)) + [1234, 11434, 11435]
+        # Well-known ports: 8000-8020 (vLLM, SGLang, Cookbook), 8080 (llama.cpp /
+        # llama-server default), 1234 (LM Studio), 11434 (Ollama), 11435 for APFEL
+        # as its default port is occupied by Ollama. The env vars can add more
+        # ports which will be merged in.
+        ports = list(range(8000, 8021)) + [8080, 1234, 11434, 11435]
         ports += [p for p in sorted(self._extra_ports) if p not in ports]
         targets = [(h, p) for h in hosts for p in ports]
 

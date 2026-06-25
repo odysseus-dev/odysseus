@@ -4,6 +4,7 @@ import uuid
 import logging
 import re
 from typing import Dict, List, Optional, Any
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
 from fastapi import HTTPException
@@ -202,6 +203,22 @@ def mask_integration_secret(integration: Dict[str, Any]) -> Dict[str, Any]:
     return safe
 
 
+def _normalize_integration_base_url(base_url: Any) -> str:
+    if not isinstance(base_url, str) or not base_url.strip():
+        raise ValueError("Integration base URL is required")
+    cleaned = base_url.strip().rstrip("/")
+    if "?" in cleaned or "#" in cleaned:
+        raise ValueError("Integration base URL must not include query or fragment")
+    parsed = urlparse(cleaned)
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname:
+        raise ValueError("Integration base URL must be an HTTP(S) URL")
+    return urlunparse(parsed._replace(scheme=parsed.scheme.lower(), query="", fragment="")).rstrip("/")
+
+
+def _join_integration_url(base_url: str, path: str) -> str:
+    return urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
+
+
 def load_integrations() -> List[Dict[str, Any]]:
     """Load all integrations from disk with secrets decrypted for runtime use."""
     if not os.path.exists(DATA_FILE):
@@ -261,8 +278,10 @@ def add_integration(data: Dict[str, Any]) -> Dict[str, Any]:
 
     if not isinstance(integration.get("name"), str) or not integration["name"].strip():
         raise HTTPException(400, "Integration name is required")
-    if not isinstance(integration.get("base_url"), str) or not integration["base_url"].strip():
-        raise HTTPException(400, "Integration base URL is required")
+    try:
+        integration["base_url"] = _normalize_integration_base_url(integration.get("base_url"))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
     integrations = load_integrations()
     integrations.append(integration)
@@ -272,10 +291,14 @@ def add_integration(data: Dict[str, Any]) -> Dict[str, Any]:
 
 def update_integration(integration_id: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Update fields on an existing integration. Returns updated integration or None."""
+    data = dict(data)
     if "name" in data and (not isinstance(data["name"], str) or not data["name"].strip()):
         raise HTTPException(400, "Integration name is required")
-    if "base_url" in data and (not isinstance(data["base_url"], str) or not data["base_url"].strip()):
-        raise HTTPException(400, "Integration base URL is required")
+    if "base_url" in data:
+        try:
+            data["base_url"] = _normalize_integration_base_url(data["base_url"])
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     integrations = load_integrations()
     for item in integrations:
@@ -341,9 +364,10 @@ async def execute_api_call(
     if not integration.get("enabled", True):
         return {"error": f"Integration '{integration.get('name')}' is disabled", "exit_code": 1}
 
-    base_url = integration.get("base_url", "").rstrip("/")
-    if not base_url:
-        return {"error": "Integration has no base_url configured", "exit_code": 1}
+    try:
+        base_url = _normalize_integration_base_url(integration.get("base_url", ""))
+    except ValueError as exc:
+        return {"error": str(exc), "exit_code": 1}
 
     # Strip common API path suffixes users might accidentally include
     # (e.g. "http://host/v1/" → "http://host"). The integration's preset
@@ -366,7 +390,10 @@ async def execute_api_call(
     if re.search(r"^https?://", path) or "://" in path:
         return {"error": "Path must not contain a protocol scheme", "exit_code": 1}
 
-    url = base_url + path
+    if "#" in path:
+        return {"error": "Path must not contain a fragment", "exit_code": 1}
+
+    url = _join_integration_url(base_url, path)
     method = method.upper()
 
     # Build headers

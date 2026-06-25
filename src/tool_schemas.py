@@ -68,11 +68,12 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "web_fetch",
-            "description": "Fetch and read the text content of a specific URL the user names (e.g. 'check example.com', 'what's on this page <url>'). Use when you already have a concrete URL/domain. NOT for open-ended searches (use web_search) or 'research X' jobs (use trigger_research).",
+            "description": "Fetch and read the text content of a specific URL the user names (e.g. 'check example.com', 'what's on this page <url>'). Use when you already have a concrete URL/domain. NOT for open-ended searches (use web_search) or 'research X' jobs (use trigger_research). Downloads are size-budgeted; a '[partial content: ...]' notice in the result means the body was cut short and you can re-call with full=true for the rest.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "url": {"type": "string", "description": "The URL or domain to fetch (http/https; a bare domain like example.com is fine)"}
+                    "url": {"type": "string", "description": "The URL or domain to fetch (http/https; a bare domain like example.com is fine)"},
+                    "full": {"type": "boolean", "description": "Raise the download budget to the hard cap for large pages/files. Use only after a result reported partial content."}
                 },
                 "required": ["url"]
             }
@@ -466,7 +467,7 @@ FUNCTION_TOOL_SCHEMAS = [
                     "question": {"type": "string", "description": "The question to ask. Be specific and self-contained."},
                     "options": {
                         "type": "array",
-                        "description": "2-6 mutually exclusive choices. Each is an object with a short `label` and an optional `description` explaining the trade-off.",
+                        "description": "2-6 choices. Each is an object with a short `label` and an optional `description` explaining the trade-off.",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -476,7 +477,7 @@ FUNCTION_TOOL_SCHEMAS = [
                             "required": ["label"]
                         }
                     },
-                    "multi": {"type": "boolean", "description": "Set true to let the user select multiple options instead of one. Default false."}
+                    "multi": {"type": "boolean", "description": "Set true ONLY when the question explicitly allows choosing more than one option. Otherwise omit it or set false. Default false."}
                 },
                 "required": ["question", "options"]
             }
@@ -1008,7 +1009,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "resolve_contact",
-            "description": "Look up a contact's email address by name. Searches CardDAV address book and sent email history. Use when the user says 'message [name]' or 'email [name]' without an email address.",
+            "description": "Look up a contact by name. Searches CardDAV address book and sent email history. Returns email addresses (when available) or phone numbers. Use when the user says 'message [name]', 'email [name]', or asks for someone's contact details.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1187,6 +1188,21 @@ FUNCTION_TOOL_SCHEMAS = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "manage_bg_jobs",
+            "description": "Inspect and control detached background `bash` jobs (started with the `#!bg` marker). action='list' shows this chat's jobs with id/status/age/command; action='output' returns a job's captured output so far (use for a still-running job, or to re-read a finished one); action='kill' terminates a runaway job's process tree instead of waiting out its max-runtime. output and kill need job_id from list.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "output", "kill"], "description": "list | output | kill (default: list)"},
+                    "job_id": {"type": "string", "description": "Background job id (required for output/kill; from action='list')"},
+                },
+                "required": ["action"]
+            }
+        }
+    },
 ]
 
 
@@ -1205,23 +1221,26 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         logger.error(f"Failed to parse function call arguments for {name}: {arguments}")
         return None
 
+    tool_type = _TOOL_NAME_MAP.get(name, name)
+    _BUILTIN_EMAIL_TOOLS = {"list_email_accounts", "send_email", "list_emails", "read_email", "reply_to_email",
+                            "archive_email", "delete_email", "mark_email_read", "bulk_email", "download_attachment"}
+
     # Some models emit valid JSON that isn't an object (e.g. a bare array
-    # ["ls -la"], string, or number) as the function arguments. Every branch
-    # below assumes a dict and calls args.get(...), so a non-dict would raise
-    # AttributeError and abort the whole agent stream. Coerce to {} instead.
+    # ["ls -la"], string, or number) as function arguments. Most local tools keep
+    # the legacy empty-object coercion for stream robustness, but email MCP tools
+    # must fail closed so a malformed call cannot read the default mailbox.
     if not isinstance(args, dict):
+        if tool_type.startswith("mcp__email__") or name in _BUILTIN_EMAIL_TOOLS:
+            logger.warning(f"Non-object email function call arguments for {name}: {args!r}; rejecting")
+            return None
         logger.warning(f"Non-object function call arguments for {name}: {args!r}; treating as empty")
         args = {}
-
-    tool_type = _TOOL_NAME_MAP.get(name, name)
 
     # Allow MCP tools through (namespaced as mcp__serverid__toolname)
     if tool_type.startswith("mcp__"):
         content = json.dumps(args) if args else "{}"
         return ToolBlock(tool_type, content)
     # Email tools are implemented as MCP — route them to email
-    _BUILTIN_EMAIL_TOOLS = {"list_email_accounts", "send_email", "list_emails", "read_email", "reply_to_email",
-                            "archive_email", "delete_email", "mark_email_read", "bulk_email", "download_attachment"}
     if name in _BUILTIN_EMAIL_TOOLS:
         return ToolBlock(f"mcp__email__{name}", json.dumps(args) if args else "{}")
     if tool_type not in TOOL_TAGS:
@@ -1387,6 +1406,12 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         content = json.dumps(args)
     elif tool_type == "ask_teacher":
         content = args.get("model", "auto") + "\n" + args.get("problem", "")
+    elif tool_type == "ask_user":
+        # Keep user-facing labels readable in the tool trace.  The outer SSE
+        # JSON encoder will escape them for transport and JSON.parse restores
+        # them once; pre-escaping here caused literal ``\u00f1`` sequences to
+        # remain visible in the debug panel.
+        content = json.dumps(args, ensure_ascii=False)
     else:
         content = json.dumps(args)
 

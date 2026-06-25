@@ -161,11 +161,13 @@ async def _tick() -> None:
     # Re-read state once before writing so we capture any updates from
     # concurrent UI syncs.
     stopped_any = False
+    successfully_stopped_sids = set()
     for sid, host, port in to_stop:
         ok = await _stop_serve(sid, host, port)
         logger.info(f"cookbook_serve_lifecycle: stop {sid} (host={host or 'local'}): {'ok' if ok else 'failed'}")
         if ok:
             stopped_any = True
+            successfully_stopped_sids.add(sid)
             # Drop the auto-registered endpoint so the model picker and
             # the chat router don't keep pointing at a dead server.
             for t in tasks:
@@ -188,12 +190,11 @@ async def _tick() -> None:
             except Exception:
                 fresh = state
                 fresh_tasks = tasks
-            stopped_sids = {sid for sid, _, _ in to_stop}
             for ft in fresh_tasks:
                 if not isinstance(ft, dict):
                     continue
                 ft_sid = ft.get("sessionId") or ft.get("id")
-                if ft_sid in stopped_sids:
+                if ft_sid in successfully_stopped_sids:
                     ft["status"] = "stopped"
                     ft["_scheduledStopAtMs"] = None
                     ft["_lastStatusFlipAt"] = now_ms

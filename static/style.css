@@ -114,6 +114,10 @@ body {
 @font-face { font-family: 'Fira Code'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Regular.woff2') format('woff2'); }
 @font-face { font-family: 'Fira Code'; font-weight: 600; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-SemiBold.woff2') format('woff2'); }
 
+/* Self-hosted OpenDyslexic — dyslexia-friendly accessibility font option (SIL OFL 1.1) */
+@font-face { font-family: 'OpenDyslexic'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/OpenDyslexic-Regular.woff2') format('woff2'); }
+@font-face { font-family: 'OpenDyslexic'; font-weight: 700; font-style: normal; font-display: swap; src: url('/static/fonts/OpenDyslexic-Bold.woff2') format('woff2'); }
+
 /* Code block baseline */
 pre, code, .hljs {
   font-size: 0.95em;
@@ -157,6 +161,39 @@ html {
 :root.density-spacious .msg { padding: 14px 18px; margin-bottom: 12px; }
 :root.density-spacious .list-item { padding: 8px 12px; }
 :root.density-spacious .sidebar .section { padding: 0; }
+
+/* ── UI text-size scale (accessibility) ──
+   Density only changes the root font-size, which can't move the many
+   hard-coded px sizes. `zoom` scales the whole UI uniformly (px text
+   included) while keeping layout intact, unlike `transform: scale`. */
+:root.ui-scale-125 { zoom: 1.25; }
+/* `zoom` makes the 100dvh shell render taller than the real viewport, which
+   pushes the bottom-pinned sidebar account/settings row below the fold (and
+   body's overflow:hidden then clips it). Shrink the shell by the same factor
+   so it fits the viewport exactly. */
+:root.ui-scale-125 body { height: calc(100dvh / 1.25); }
+/* Modals/panels under the 1.25x scale: zoom renders a centred, viewport-sized
+   panel ~1.25x taller, pushing its draggable header + close button off-screen
+   (a catch-22 — you can't reach the control to turn the size back down). Divide
+   each max-height by the same factor to keep the original on-screen footprint.
+   Desktop only — the mobile `!important` full-sheet rules win on small screens
+   and stay top-anchored, so their headers are already visible. */
+:root.ui-scale-125 .modal-content          { max-height: calc(85dvh / 1.25); }
+:root.ui-scale-125 .cal-modal-content      { max-height: calc(88dvh / 1.25); }
+:root.ui-scale-125 .settings-modal-content { max-height: calc(85dvh / 1.25); }
+:root.ui-scale-125 #theme-popup            { max-height: min(calc(85dvh / 1.25), 480px); }
+/* Cookbook is the one modal that set its height inline (94vh), which beat the
+   .modal-content compensation above and overflowed the viewport at 1.25x
+   (header + close button pushed off-screen). Own its height here so the same
+   zoom compensation applies. */
+#cookbook-modal .modal-content             { height: 94vh; max-height: 94vh; }
+:root.ui-scale-125 #cookbook-modal .modal-content { height: calc(94dvh / 1.25); max-height: calc(94dvh / 1.25); }
+/* PDF export modal also set its height inline (86vh) at v1.0; that inline cap
+   beat the .modal-content compensation above and shifted ~1vh at Default when
+   removed. Own its height here so Default is byte-for-byte 86vh and the same
+   1.25x compensation applies. */
+.pdf-export-overlay .modal-content { max-height: 86vh; }
+:root.ui-scale-125 .pdf-export-overlay .modal-content { max-height: calc(86dvh / 1.25); }
 
 /* ── Background Patterns ── */
 
@@ -2676,6 +2713,15 @@ body.bg-pattern-sparkles {
     .mode-toggle.mode-right::before {
       transform: translateX(100%);
     }
+    .mode-toggle.mode-toggle-three::before {
+      width: 33.3333%;
+    }
+    .mode-toggle.mode-toggle-three.mode-mid::before {
+      transform: translateX(100%);
+    }
+    .mode-toggle.mode-toggle-three.mode-third::before {
+      transform: translateX(200%);
+    }
     #mode-agent-btn {
       border-radius: 10px 0 0 10px;
     }
@@ -2714,6 +2760,15 @@ body.bg-pattern-sparkles {
     }
     .mode-toggle-btn + .mode-toggle-btn {
       border-left: none;
+    }
+    @media (max-width: 768px) {
+      .mode-toggle.mode-toggle-three [data-llama-mode="unified"] > span {
+        font-size: 0;
+      }
+      .mode-toggle.mode-toggle-three [data-llama-mode="unified"] > span::after {
+        content: 'Unif';
+        font-size: 11px;
+      }
     }
     /* Message count badge in the chat-meta header (next to the title).
        Auto-hides when empty so a brand-new chat doesn't show "0 msgs". */
@@ -2822,10 +2877,14 @@ body.bg-pattern-sparkles {
       transform: translateX(10px) scale(0.88);
       pointer-events: none;
     }
+    .model-picker-search-wrap {
+      position: relative;
+      min-width: 0;
+    }
     .model-picker-menu input[type="text"] {
       width: 100%;
       box-sizing: border-box;
-      padding: 6px 8px;
+      padding: 6px 30px 6px 8px;
       font-size: 0.82em;
       border: 1px solid var(--border);
       border-radius: 4px;
@@ -2841,6 +2900,37 @@ body.bg-pattern-sparkles {
     }
     .model-picker-menu input[type="text"]::placeholder {
       color: color-mix(in srgb, var(--fg) 30%, transparent);
+    }
+    .model-picker-refresh-btn {
+      appearance: none;
+      position: absolute;
+      top: 50%;
+      right: 4px;
+      transform: translateY(-50%);
+      width: 22px;
+      height: 22px;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      color: color-mix(in srgb, var(--fg) 54%, transparent);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      cursor: pointer;
+    }
+    .model-picker-refresh-btn:hover,
+    .model-picker-refresh-btn:focus-visible {
+      color: var(--fg);
+      background: color-mix(in srgb, var(--fg) 8%, transparent);
+      outline: none;
+    }
+    .model-picker-refresh-btn:disabled {
+      opacity: 0.7;
+      cursor: default;
+    }
+    .model-picker-refresh-btn.spinning svg {
+      animation: model-picker-refresh-spin 0.75s linear infinite;
     }
     .model-picker-action-btn {
       appearance: none;
@@ -4102,7 +4192,7 @@ body.bg-pattern-sparkles {
       .sidebar {
         position: fixed !important;
         top: 0; bottom: 0; left: 0;
-        z-index: 200;
+        z-index: 400;
         width: 80% !important;
         max-width: 340px;
         box-shadow: 4px 0 20px rgba(0,0,0,0.5);
@@ -4133,7 +4223,7 @@ body.bg-pattern-sparkles {
       #sidebar-backdrop {
         position: fixed;
         inset: 0;
-        z-index: 199;
+        z-index: 390;
         background: rgba(0,0,0,0.4);
         opacity: 0;
         pointer-events: none;
@@ -5271,6 +5361,84 @@ body.bg-pattern-sparkles {
     .confirm-btn-primary:hover { filter:brightness(1.15); }
     .confirm-btn-danger { background:var(--color-danger); color:#fff; border-color:transparent; }
     .confirm-btn-danger:hover { background:var(--color-error); }
+    #cookbook-gguf-delete-overlay {
+      background:rgba(0,0,0,0.5);
+      backdrop-filter:blur(4px);
+      pointer-events:auto !important;
+      z-index:99999 !important;
+      position:fixed !important;
+      inset:0 !important;
+    }
+    .cookbook-gguf-delete-box {
+      width:560px;
+      max-width:92vw;
+    }
+    .cookbook-gguf-delete-list {
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+      max-height:42vh;
+      overflow:auto;
+      padding:2px 2px 4px;
+    }
+    .cookbook-gguf-delete-row {
+      display:grid;
+      grid-template-columns:18px minmax(0,1fr);
+      gap:7px 8px;
+      align-items:start;
+      padding:7px 8px;
+      border:1px solid var(--border);
+      border-radius:7px;
+      background:color-mix(in srgb, var(--panel, var(--bg)) 92%, var(--fg) 8%);
+      cursor:pointer;
+    }
+    .cookbook-gguf-delete-row:hover {
+      border-color:color-mix(in srgb, var(--accent-primary, var(--fg)) 45%, var(--border));
+    }
+    .cookbook-gguf-delete-cb {
+      -webkit-appearance:none;
+      appearance:none;
+      width:8px !important;
+      height:8px !important;
+      min-width:8px;
+      min-height:8px;
+      padding:0;
+      margin:4px 0 0;
+      border:1px solid var(--border);
+      border-radius:50%;
+      background:transparent;
+      box-sizing:content-box;
+      cursor:pointer;
+      transition:background 0.15s, border-color 0.15s, transform 0.12s;
+    }
+    .cookbook-gguf-delete-cb:hover {
+      border-color:var(--accent, var(--red));
+      transform:scale(1.12);
+    }
+    .cookbook-gguf-delete-cb:checked {
+      background:var(--accent, var(--red));
+      border-color:var(--accent, var(--red));
+    }
+    .cookbook-gguf-delete-main,
+    .cookbook-gguf-delete-path {
+      min-width:0;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .cookbook-gguf-delete-main {
+      font-size:0.86rem;
+      color:var(--fg);
+    }
+    .cookbook-gguf-delete-path {
+      grid-column:2;
+      margin-top:-2px;
+      font-size:0.74rem;
+      opacity:0.58;
+    }
+    .cookbook-gguf-delete-actions {
+      flex-wrap:wrap;
+    }
     /* Styled prompt — text-input dialog (used in place of window.prompt) */
     #styled-prompt-overlay {
       background:rgba(0,0,0,0.5);
@@ -6882,7 +7050,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
        inside .chat-input-top, matching .model-picker-wrap's slot. */
     .chat-input-top > .cmp-eval-wrap {
       position: absolute;
-      top: 0; right: 0;
+      top: -2px; right: 0;
       z-index: 2;
     }
     .cmp-eval-btn {
@@ -7224,14 +7392,16 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       width: 100%; order: 99; margin-top: -4px; padding-bottom: 2px; padding-left: 2px;
     }
     .pane-finish-badge {
-      font-weight: 600; color: var(--red);
+      font-weight: 600; color: var(--green, #50fa7b);
+      position: relative;
+      top: 2px;
     }
     .compare-pane.winner .pane-header {
-      background: color-mix(in srgb, var(--red) 12%, transparent);
-      border-bottom-color: color-mix(in srgb, var(--red) 30%, var(--border));
+      background: color-mix(in srgb, var(--green, #50fa7b) 12%, transparent);
+      border-bottom-color: color-mix(in srgb, var(--green, #50fa7b) 30%, var(--border));
     }
     .compare-pane.winner .pane-title {
-      color: var(--red);
+      color: var(--green, #50fa7b);
     }
     .compare-pane.loser .pane-header {
       opacity: 0.5;
@@ -7500,6 +7670,33 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       .compare-header-bar {
         padding: 14px 8px 10px 8px !important;
         min-height: 44px;
+      }
+      .compare-pane .pane-header {
+        align-items: flex-start;
+        row-gap: 3px;
+      }
+      .compare-pane .pane-title-btn {
+        flex: 0 0 100%;
+        width: 100%;
+        order: 0;
+        padding-right: 2px;
+      }
+      .compare-pane .pane-timer,
+      .compare-pane .pane-finish-badge,
+      .compare-pane .pane-actions {
+        order: 1;
+      }
+      .compare-grid[data-cols="4"] .compare-pane .pane-timer,
+      .compare-grid[data-cols="5"] .compare-pane .pane-timer,
+      .compare-grid[data-cols="6"] .compare-pane .pane-timer {
+        width: auto;
+        order: 1;
+        margin-top: 0;
+        padding-bottom: 0;
+        padding-left: 0;
+      }
+      .compare-pane .pane-actions {
+        margin-left: auto;
       }
       /* Mode tabs: icons only, centered */
       .compare-mode-tab span { display: none; }
@@ -8466,6 +8663,12 @@ button.hamburger {
 
 /* Hide thinking sections globally via settings toggle */
 body.hide-thinking .thinking-section { display: none !important; }
+
+/* Widen chat area via settings toggle */
+body.fullwidth-chat .chat-history {
+  padding-left: 0 !important;
+  padding-right: 12px !important;
+}
 
 /* Thinking process styles — colors follow theme accent */
 .msg .body .stream-content {
@@ -15930,6 +16133,17 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
     flex: 0 0 auto !important;
     height: auto !important;
   }
+  /* Launch tab's cached-list normally has `flex: 1 1 0; min-height: 0`
+     (so it fills the modal on desktop). On mobile the parent now has
+     `height: auto`, which collapses `flex: 1 1 0` to ZERO PX —
+     models render but the list area is invisible because the flex
+     basis is 0 and there's no free space to grow into. Switch to
+     content-sized flex so the list grows with its children. */
+  #cookbook-modal .cookbook-group[data-backend-group="Serve"] > .admin-card > .hwfit-cached-list,
+  #cookbook-modal .cookbook-group[data-backend-group="Serve"] > .admin-card > #hwfit-cached-list {
+    flex: 0 0 auto !important;
+    overflow: visible !important;
+  }
 }
 #cookbook-modal .hwfit-cached-list {
   flex-shrink: 0;
@@ -16746,7 +16960,8 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 /* Kebab dropdown */
 .skill-kebab-menu {
   position: fixed;
-  z-index: 100002;
+  /* z-index is set inline via topPortalZ() at open time (#4720); a static
+     value here loses once the modal bring-to-front counter climbs past it. */
   min-width: 150px;
   padding: 4px;
   background: var(--panel, var(--bg));
@@ -18560,7 +18775,7 @@ body.gallery-selecting .gallery-dl-btn,
    label and center it vertically so the descenders don't clip. */
 #hwfit-cache-select {
   min-width: 58px;
-  height: 32px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -18858,7 +19073,7 @@ body.gallery-selecting .gallery-dl-btn,
   top: -6px;
 }
 #serve-bulk-bar #serve-bulk-cancel {
-  top: 0 !important;
+  top: -2px !important;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -19129,6 +19344,18 @@ body.gallery-selecting .gallery-dl-btn,
   background: color-mix(in srgb, var(--red) 20%, transparent);
 }
 .cookbook-gpu-kill:disabled { opacity: 0.4; cursor: wait; }
+.cookbook-serve-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.cookbook-serve-title-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .cookbook-hf-link {
   font-size: 9px;
   text-decoration: none;
@@ -19141,6 +19368,7 @@ body.gallery-selecting .gallery-dl-btn,
   vertical-align: 1px;
   letter-spacing: 0.3px;
   font-weight: 600;
+  flex-shrink: 0;
 }
 .cookbook-hf-link:hover {
   opacity: 0.8;
@@ -19200,6 +19428,14 @@ body.gallery-selecting .gallery-dl-btn,
   margin-left: 0;
   position: relative;
   top: -3px;
+}
+@media (max-width: 768px) {
+  .cookbook-section-header .cookbook-clear-btn {
+    top: -3px;
+  }
+  .cookbook-task-check {
+    top: 4px;
+  }
 }
 /* "Stop all" sits just left of "Clear finished"; it carries the auto margin so
    the pair is pushed together to the right of the section title. */
@@ -19316,7 +19552,7 @@ body.gallery-selecting .gallery-dl-btn,
   margin-bottom: 4px;
 }
 .cookbook-slot-btn {
-  min-width: 22px; height: 22px;
+  min-width: 22px; height: 28px;
   padding: 0 6px;
   font-size: 10px; font-weight: 600;
   border: 1px solid var(--border);
@@ -19344,24 +19580,67 @@ body.gallery-selecting .gallery-dl-btn,
 .cookbook-saved-save {
   padding: 0 10px;
   gap: 4px;
-  background: var(--red);
-  color: #fff;
-  border-color: var(--red);
+  background: var(--bg);
+  color: var(--fg);
+  border-color: var(--border);
   font-weight: 600;
   opacity: 1;
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
 }
 .cookbook-saved-save:hover {
-  background: color-mix(in srgb, var(--red) 80%, white);
-  border-color: color-mix(in srgb, var(--red) 80%, white);
+  background: var(--border);
+  border-color: var(--accent);
   opacity: 1;
 }
 .cookbook-saved-arrow {
   padding: 0 6px;
+  background: var(--bg);
+  color: var(--fg);
+  border-color: var(--border);
+  opacity: 1;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
   border-left: none;
+}
+.cookbook-saved-menu .cookbook-saved-favorite {
+  border-left: 3px solid var(--red);
+  background: color-mix(in srgb, var(--red) 4%, transparent);
+}
+.cookbook-saved-fav-btn {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--fg-muted);
+  opacity: 0.55;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.cookbook-saved-fav-btn:hover,
+.cookbook-saved-fav-btn.active {
+  color: var(--red);
+  opacity: 1;
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+}
+.cookbook-saved-fav-badge {
+  flex-shrink: 0;
+}
+.cookbook-serve-favorite-model {
+  border-left-color: var(--red) !important;
+  background: color-mix(in srgb, var(--red) 4%, transparent);
+}
+.cookbook-serve-fav-badge {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: 1px;
+  margin-left: 5px;
+  margin-right: 2px;
 }
 .cookbook-slot-saved { background: color-mix(in srgb, var(--accent) 10%, transparent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--accent); }
 .cookbook-slot-saved:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
@@ -19482,6 +19761,9 @@ body.gallery-selecting .gallery-dl-btn,
   position: relative;
   top: -2px;
 }
+.cookbook-dep-reinstall {
+  top: -3px;
+}
 .cookbook-dep-rebuild:hover {
   background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
   color: var(--accent, var(--red));
@@ -19491,9 +19773,9 @@ body.gallery-selecting .gallery-dl-btn,
   background: color-mix(in srgb, var(--green, #50fa7b) 18%, transparent);
   color: var(--green, #50fa7b);
   border: 1px solid color-mix(in srgb, var(--green, #50fa7b) 35%, transparent);
-  /* Match the Install button + Installed ▾ split width so all three variants
-     align in a mixed row. */
-  min-width: 75.85px;
+  /* Match Install + Installed ▾ so all three variants align in mixed rows. */
+  width: 87.7px;
+  min-width: 87.7px;
   padding: 0 10px;
   box-sizing: border-box;
 }
@@ -19516,9 +19798,8 @@ body.gallery-selecting .gallery-dl-btn,
   font-weight: 500;
   position: relative;
   top: -3px;
-  /* Width matches the measured Installed ▾ split button (75.85px) so a row of
-     mixed Install / Installed deps lines up. */
-  min-width: 75.85px;
+  width: 87.7px;
+  min-width: 87.7px;
   padding: 0 10px;
   /* Strip the native button box so it's the same height as the sibling tags
      (Firefox renders <button> taller otherwise); height comes from .cookbook-dep-tag. */
@@ -19563,6 +19844,8 @@ body.gallery-selecting .gallery-dl-btn,
    opens the actions menu (Update). Replaces the old ⋮ button. */
 .cookbook-dep-installed-btn {
   padding: 0;
+  width: 87.7px;
+  min-width: 87.7px;
   cursor: pointer;
   font-family: inherit;
   overflow: hidden;
@@ -19608,8 +19891,20 @@ body.gallery-selecting .gallery-dl-btn,
    padding now (16px → 8px) per follow-up tweak, brings the title back
    over the actual Save button instead of overshooting it. */
 .hwfit-serve-row label:has(> .cookbook-serve-slots) {
+  grid-column: -2 / -1;
+  justify-self: end;
   text-align: right;
-  padding-right: 8px;
+  padding-right: 0;
+}
+.hwfit-serve-row label:has(> .cookbook-serve-slots) > span {
+  display: inline-block;
+  position: relative;
+  left: -33px;
+}
+.hwfit-serve-preset-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 6px;
 }
 /* Expanded serve panel — make sure it can be scrolled past when it
    grows taller than the visible viewport. Caps panel height to viewport
@@ -19624,12 +19919,124 @@ body.gallery-selecting .gallery-dl-btn,
   .hwfit-cached-item .hwfit-serve-panel {
     max-height: calc(100svh - 120px);
   }
+  .hwfit-serve-preset-row {
+    justify-content: flex-end;
+    margin: -2px 0 6px;
+  }
 }
 .hwfit-serve-row label {
   font-size: 10px;
   color: var(--fg-muted);
   white-space: nowrap;
   letter-spacing: 0.3px;
+}
+.hwfit-serve-row-core .hwfit-context-label {
+  grid-column: span 2;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  justify-self: start;
+}
+.hwfit-context-control {
+  display: block;
+  position: relative;
+  align-items: center;
+  margin-top: 2px;
+  width: 100px;
+}
+.hwfit-context-control .hwfit-sf[data-field="ctx"] {
+  min-width: 0;
+  width: 100%;
+  padding-right: 40px;
+}
+.hwfit-serve-row-core label:has(.hwfit-sf[data-field="max_seqs"]) {
+  position: relative;
+  left: 0;
+}
+.hwfit-serve-row-core label:has(.hwfit-sf[data-field="gpu_mem"]) {
+  position: relative;
+  left: -1px;
+}
+.hwfit-serve-row-core .hwfit-gpus-label {
+  position: relative;
+  left: -69px;
+}
+.hwfit-context-calc-btn {
+  position: absolute;
+  right: 3px;
+  top: -4px;
+  width: 34px;
+  height: 28px;
+  min-width: 34px;
+  padding: 0;
+  font-size: 10px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.hwfit-context-calc-btn .spinner-whirlpool {
+  width: 12px !important;
+  height: 12px !important;
+  margin: 0 auto !important;
+}
+.hwfit-context-calc-btn .ai-spinner-whirlpool {
+  width: 12px !important;
+  height: 12px !important;
+}
+@media (min-width: 769px) {
+  [data-llama-mode-toggle].mode-toggle.mode-toggle-three .mode-toggle-btn > span {
+    top: -6px !important;
+  }
+  .mode-toggle.mode-toggle-three [data-llama-mode="unified"] > span {
+    font-size: 0;
+  }
+  .mode-toggle.mode-toggle-three [data-llama-mode="unified"] > span::after {
+    content: 'Unif';
+    font-size: 11px;
+  }
+}
+@media (max-width: 768px) {
+  .hwfit-serve-row-core .hwfit-context-label {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_env_preset"]),
+  details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="extra_env"]) {
+    grid-column: 1 / -1 !important;
+  }
+  .hwfit-context-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    width: auto;
+  }
+  .hwfit-context-control .hwfit-sf[data-field="ctx"] {
+    width: 100px;
+    padding-right: 6px;
+  }
+  .hwfit-context-calc-btn {
+    position: relative;
+    top: -2px;
+    left: 2px;
+    right: auto;
+    flex: 0 0 34px;
+    width: 34px;
+    min-width: 34px;
+  }
+}
+.hwfit-auto-ctx-note {
+  display: block;
+  margin-top: 3px;
+  font-size: 9px;
+  opacity: 0.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .hwfit-serve-row label select,
 .hwfit-serve-row label input {
@@ -19733,11 +20140,12 @@ body.gallery-selecting .gallery-dl-btn,
   font-size: 12px;
   padding: 0 6px;
   height: 28px;
+  box-sizing: border-box;
 }
 .hwfit-sf[data-field="backend"],
 .hwfit-sf[data-field="dtype"],
 .hwfit-sf[data-field="tp"] {
-  height: 32px;
+  height: 28px;
   box-sizing: border-box;
   width: 100%;
 }
@@ -19905,23 +20313,66 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-serve-extra .hwfit-sf {
   width: 100%;
 }
+.hwfit-serve-cmd-details {
+  margin: 6px 0 0;
+}
+.hwfit-serve-cmd-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  color: var(--fg-muted);
+  font-size: 10px;
+  letter-spacing: 0.3px;
+}
+.hwfit-serve-cmd-summary::-webkit-details-marker {
+  display: none;
+}
+.hwfit-serve-cmd-summary::after {
+  content: '';
+  margin-left: auto;
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  opacity: 0.6;
+  transform: rotate(0deg);
+  transition: transform 0.18s ease;
+}
+.hwfit-serve-cmd-details[open] > .hwfit-serve-cmd-summary::after {
+  transform: rotate(90deg);
+}
+.hwfit-serve-cmd-details[open] > .hwfit-serve-cmd-summary {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
 .hwfit-serve-cmd {
-  margin: 6px 0;
+  margin: 0;
   padding: 8px 10px;
   background: color-mix(in srgb, var(--fg) 4%, transparent);
   border: 1px solid var(--border);
+  border-top: none;
   border-radius: 4px;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
   font-family: 'Berkeley Mono', 'SF Mono', 'Fira Code', monospace;
   font-size: 10px;
-  white-space: pre-wrap;
-  word-break: break-all;
+  white-space: pre;
+  word-break: normal;
   width: 100%;
   box-sizing: border-box;
   resize: none;
   color: var(--fg);
   line-height: 1.5;
-  min-height: 36px;
-  overflow: hidden;
+  min-height: 112px;
+  overflow: auto;
 }
 .hwfit-serve-actions {
   display: flex;
@@ -19934,6 +20385,10 @@ body.gallery-selecting .gallery-dl-btn,
   font-size: 11px;
 }
 .hwfit-serve-actions-spacer { flex: 1 1 auto; }
+.hwfit-serve-actions .cookbook-serve-slots {
+  margin: 0;
+  align-self: stretch;
+}
 .hwfit-serve-launch {
   background: var(--accent-primary, var(--red));
   color: #fff;
@@ -20005,7 +20460,7 @@ body.gallery-selecting .gallery-dl-btn,
     width: 32px;
     height: 32px;
     min-width: 32px;
-    top: -5px;
+    top: -3px;
   }
   .cookbook-task .cookbook-task-menu-btn:active {
     opacity: 1;
@@ -20027,6 +20482,12 @@ body.gallery-selecting .gallery-dl-btn,
    corner of the field (chat run-output pattern). */
 .hwfit-serve-cmd-wrap {
   position: relative;
+}
+.hwfit-serve-cmd-title {
+  margin: 2px 0 3px;
+  font-size: 10px;
+  color: var(--fg-muted);
+  letter-spacing: 0.3px;
 }
 .hwfit-serve-cmd-wrap .hwfit-serve-cmd {
   /* Just enough breathing room so a cursor at line-end doesn't actually
@@ -20159,6 +20620,7 @@ body.gallery-selecting .gallery-dl-btn,
 }
 /* Status-driven left stripe via :has() — graceful fallback to neutral. */
 .cookbook-task:has(.cookbook-task-running) { border-left-color: var(--green, #50fa7b); }
+.cookbook-task:has(.cookbook-task-downloading) { border-left-color: var(--color-accent, #00aaff); }
 .cookbook-task:has(.cookbook-task-done)    { border-left-color: var(--green, #50fa7b); }
 .cookbook-task:has(.cookbook-task-error)   { border-left-color: var(--color-error, var(--warn, #f87171)); }
 .cookbook-task:has(.cookbook-task-queued)  { border-left-color: var(--color-warning, #f0ad4e); }
@@ -20209,6 +20671,10 @@ body.gallery-selecting .gallery-dl-btn,
 .cookbook-task-type[data-type="download"] {
   background: color-mix(in srgb, var(--fg) 10%, transparent);
   color: var(--fg-muted);
+}
+.cookbook-task[data-type="download"][data-status="running"] .cookbook-task-type[data-type="download"] {
+  background: color-mix(in srgb, var(--color-accent, #00aaff) 18%, transparent);
+  color: var(--color-accent, #00aaff);
 }
 /* Finished state — overrides the per-type colors so a completed download or
    serve task shows the same green FINISHED chip. */
@@ -20291,6 +20757,11 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .cookbook-task[data-status="done"] .cookbook-task-check-ico { display: inline; }
 .cookbook-task[data-status="done"] .cookbook-task-clear-ico { display: none; }
+@media (max-width: 820px) {
+  .cookbook-task-check {
+    top: 2px;
+  }
+}
 .cookbook-task-start-now {
   display: inline-flex;
   align-items: center;
@@ -20324,24 +20795,30 @@ body.gallery-selecting .gallery-dl-btn,
 /* "Serve" button on a finished download — green pill matching the "running" /
    finished badge (it sits next to the green FINISHED chip + check). */
 .cookbook-task-serve-btn {
-  font-size: 9px;
-  font-weight: 600;
-  padding: 1px 6px;
-  border: none;
-  border-radius: 3px;
-  line-height: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px 1px 4px;
+  border: 0;
+  border-radius: 9px;
+  line-height: 1;
   flex-shrink: 0;
   cursor: pointer;
   font-family: inherit;
-  background: color-mix(in srgb, var(--green, #50fa7b) 20%, transparent);
+  font-size: 9px;
+  text-transform: lowercase;
+  background: transparent;
   color: var(--green, #50fa7b);
   position: relative;
   top: -2px;
+  margin-right: 2px;
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
+  transition: background 0.15s;
 }
-.cookbook-task-serve-btn:hover { background: color-mix(in srgb, var(--green, #50fa7b) 32%, transparent); }
+.cookbook-task-serve-btn svg { flex-shrink: 0; }
+.cookbook-task-serve-btn:hover { background: color-mix(in srgb, var(--green, #50fa7b) 16%, transparent); }
 .cookbook-task-sub {
   padding: 1px 10px 4px;
   line-height: 1;
@@ -20378,6 +20855,7 @@ body.gallery-selecting .gallery-dl-btn,
   line-height: 16px;
 }
 .cookbook-task-running { background: color-mix(in srgb, var(--green, #50fa7b) 20%, transparent); color: var(--green, #50fa7b); }
+.cookbook-task-downloading { background: color-mix(in srgb, var(--color-accent, #00aaff) 20%, transparent); color: var(--color-accent, #00aaff); }
 /* Stopping: same pill treatment as "running" but orange. */
 .cookbook-task-stopping { background: color-mix(in srgb, var(--orange, #ffb86c) 22%, transparent); color: var(--orange, #ffb86c); }
 .cookbook-task-done { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); }
@@ -20421,6 +20899,16 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .cookbook-task-header {
   cursor: pointer;
+}
+.cookbook-task[data-type="serve"] .cookbook-task-header {
+  margin: 4px 4px 0;
+  border-radius: 6px;
+}
+.cookbook-task[data-type="serve"] .cookbook-output-wrap {
+  margin: 0 4px 4px;
+}
+.cookbook-task[data-type="serve"] .cookbook-output-pre {
+  border-radius: 6px;
 }
 
 /* Env bar — match admin-card */
@@ -20543,6 +21031,9 @@ body.gallery-selecting .gallery-dl-btn,
 
 /* Mobile cookbook sizing — kept in line with calendar/library modals. */
 @media (max-width: 768px) {
+  .hwfit-serve-row-core .hwfit-context-label {
+    grid-column: 1 / -1;
+  }
   /* The Speculative control (checkbox + method dropdown + token stepper)
      is too wide for a phone — the stepper ran off the right edge of the
      modal. Let the group wrap onto its own line, take full width, and
@@ -20550,10 +21041,19 @@ body.gallery-selecting .gallery-dl-btn,
   .hwfit-spec-group {
     flex-wrap: wrap;
     flex-basis: 100%;
+    column-gap: 4px;
     row-gap: 4px;
   }
-  .hwfit-spec-group .hwfit-spec-method { min-width: 0; flex: 1 1 auto; }
+  .hwfit-spec-group .hwfit-spec-method {
+    min-width: 0;
+    flex: 0 1 82px;
+    max-width: 82px;
+  }
   .hwfit-numstep { flex: 0 0 auto; }
+  .hwfit-spec-group .hwfit-help-chip-inline {
+    flex: 0 0 auto;
+    margin-left: 2px !important;
+  }
   .cookbook-card-title { font-size: 13px; }
   .cookbook-card-desc { font-size: 12px; }
   .cookbook-field-label { font-size: 12px; }
@@ -21096,6 +21596,31 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .cookbook-dl-btn:hover {
   opacity: 0.9;
+}
+.cookbook-dl-gguf-row {
+  margin-top: -1px;
+  gap: 5px;
+  align-items: center;
+  justify-content: flex-end;
+  font-size: 11px;
+  position: relative;
+  top: -2px;
+}
+.cookbook-dl-gguf-label {
+  opacity: 0.65;
+  flex-shrink: 0;
+}
+#cookbook-dl-gguf-quant {
+  height: 28px;
+  min-width: 118px;
+  flex: 0 0 auto;
+}
+#cookbook-dl-gguf-note {
+  opacity: 0.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 240px;
 }
 
 /* HF link in search panel */
@@ -22298,6 +22823,9 @@ body:not(.welcome-ready) #welcome-screen {
     transform: scaleY(0.4) translateY(8px);
   }
 }
+@keyframes model-picker-refresh-spin {
+  to { transform: rotate(360deg); }
+}
 
 @keyframes modal-enter {
   from {
@@ -22389,6 +22917,25 @@ body:not(.welcome-ready) #welcome-screen {
 }
 
 /* ── Tasks ── */
+#tool-tasks-btn.task-failure-pending,
+#rail-tasks.task-failure-pending {
+  color: var(--red, #f87171);
+}
+#tool-tasks-btn.task-failure-pending::after,
+#rail-tasks.task-failure-pending::after {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--red, #f87171);
+  box-shadow: 0 0 7px var(--red, #f87171), 0 0 3px var(--red, #f87171);
+  flex: 0 0 auto;
+}
+#rail-tasks.task-failure-pending::after {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+}
 .tasks-modal-content { max-width: 600px; width: min(600px, 92vw); background: var(--bg); font-size: 12px; }
 
 /* Tasks tabs reuse the .memory-tab look. The Brain window's tab bar is
@@ -22436,6 +22983,14 @@ body:not(.welcome-ready) #welcome-screen {
   /* Pull saturation from the per-row hue but mix with the foreground so the
      title still reads in dark mode. Lightness stays adaptive. */
   color: hsl(var(--cat-hue) 60% 60%);
+}
+.task-log-failed-tag {
+  color: var(--red, #f87171);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  margin-left: -2px;
 }
 .task-log-task-icon {
   display: inline-flex;
@@ -23140,6 +23695,8 @@ input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, tr
   gap: 6px;
   padding-left: 12px;
   border-left: 2px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .settings-fallback-num {
   font-size: 11px;
@@ -23147,7 +23704,24 @@ input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, tr
   min-width: 14px;
   text-align: right;
 }
-.settings-fallback-row .settings-select { flex: 1; min-width: 0; }
+.settings-fallback-row .settings-select {
+  width: 0;
+  min-width: 0;
+  min-inline-size: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-fallback-row .settings-select:first-of-type {
+  flex: 0 1 128px;
+  width: 128px;
+  max-width: 34%;
+}
+.settings-fallback-row .settings-select:nth-of-type(2) {
+  flex: 1 1 0;
+  width: 0;
+  max-width: 100%;
+}
 /* Cookbook Serve Advanced fold — wraps the rarely-touched tuning rows
    (KV/Attention/Swap/Env for vLLM, llama.cpp batch/cache/split, VRAM
    monitor, speculative, extra args). Matches the existing .hwfit-panel-
@@ -23228,6 +23802,40 @@ details.hwfit-serve-advanced > .hwfit-serve-row label select,
 details.hwfit-serve-advanced > .hwfit-serve-row label input {
   margin-top: 1px;
 }
+details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_attn_backend"]) {
+  position: relative;
+  left: -83px;
+}
+details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_block_size"]) {
+  position: relative;
+  left: -51px;
+}
+details.hwfit-serve-advanced .hwfit-sf[data-field="vllm_block_size"] {
+  width: calc(100% - 6px);
+}
+details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="swap"]) {
+  position: relative;
+  left: -45px;
+}
+details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_kv_cache_dtype"]) {
+  position: relative;
+  left: 2px;
+}
+@media (max-width: 768px) {
+  details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_block_size"]) {
+    left: 1px;
+  }
+  details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="swap"]) {
+    left: -3px;
+  }
+  details.hwfit-serve-advanced > .hwfit-serve-checks .hwfit-sf-cb {
+    flex: 1 1 100%;
+  }
+}
+details.hwfit-serve-advanced .hwfit-sf[data-field="vllm_kv_cache_dtype"] {
+  width: 60px;
+  min-width: 60px;
+}
 details.hwfit-serve-advanced > .hwfit-serve-checks {
   gap: 4px;
   row-gap: 4px;
@@ -23241,6 +23849,9 @@ details.hwfit-serve-advanced > .hwfit-serve-checks.hwfit-backend-sglang,
 details.hwfit-serve-advanced > .hwfit-serve-extra {
   margin-top: -8px;
 }
+details.hwfit-serve-advanced > .hwfit-serve-extra {
+  margin-top: -18px;
+}
 details.hwfit-serve-advanced > .hwfit-serve-row:last-of-type,
 details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   margin-bottom: 0;
@@ -23248,7 +23859,6 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 
 .settings-fallback-remove {
   flex-shrink: 0;
-  margin-right: 4px;
   width: 32px;
   height: 32px;
   display: inline-flex;
@@ -23569,7 +24179,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   width: 51px;
 }
 #serve-search {
-  height: 32px;
+  height: 28px;
 }
 #cookbook-dl-btn {
   position: relative;
@@ -29255,8 +29865,15 @@ button .spinner-whirlpool {
 .email-reader-atts-wrap > .email-reader-atts {
   border-bottom: none !important;
 }
-.email-reader-atts-wrap.collapsed > .email-reader-atts { display: none; }
+.email-reader-atts-wrap.collapsed > .email-reader-atts,
+.email-reader-atts-wrap.collapsed > .email-reader-atts-hidden-note { display: none; }
 .email-reader-atts-wrap.collapsed .email-summary-chevron { transform: rotate(-90deg); }
+.email-reader-atts-hidden-note {
+  padding: 0 14px 6px;
+  font-size: 10px;
+  color: var(--fg-muted);
+  opacity: 0.65;
+}
 
 /* Quote fold = neutral full-width band (matches attachments header). */
 .email-quote-fold {
@@ -30416,22 +31033,27 @@ body.doc-find-active mark.doc-find-mark.current {
      attribute tooltips were slow / unreliable, so we just grow the chip. */
   max-width: 90vw;
 }
-.email-attachment-chip > span:not(.att-size) {
+.email-attachment-chip > span:not(.att-size):not(.email-attachment-open) {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   flex: 1 1 auto; min-width: 0;
 }
-.email-attachment-chip:hover > span:not(.att-size) {
+.email-attachment-chip:hover > span:not(.att-size):not(.email-attachment-open) {
   overflow: visible;
   text-overflow: clip;
 }
 .email-attachment-chip .att-size { opacity: 0.5; font-size: 10px; flex-shrink: 0; }
+.email-attachment-chip-muted { opacity: 0.65; }
+.email-attachment-chip-muted:hover { opacity: 1; }
+.email-attachment-chip-related {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+}
 /* "Open in editor" launch icon — same prominent style on desktop AND mobile
    (was 24px / dim / no border on desktop, easy to miss). Accent-tinted
    background + border makes it read as a real action. */
 .email-attachment-open {
   display: inline-flex; align-items: center; gap: 4px;
-  height: 22px; padding: 0 9px; border-radius: 11px;
-  margin-left: 6px; flex-shrink: 0;
+  height: 22px; padding: 0 9px; border-radius: 999px;
+  margin-left: 6px; flex: 0 0 auto;
   font-size: 10px; font-weight: 500; letter-spacing: 0.02em;
   color: var(--accent-primary, var(--red));
   background: color-mix(in srgb, var(--accent-primary, var(--red)) 10%, transparent);
@@ -30454,7 +31076,8 @@ body.doc-find-active mark.doc-find-mark.current {
   display: none;
 }
 .email-attachment-chip:not(:hover) .email-attachment-open {
-  width: 22px;
+  width: 28px;
+  min-width: 28px;
   padding: 0;
   justify-content: center;
   gap: 0;
@@ -31471,24 +32094,34 @@ body.notes-drag-mode .note-card-pin svg {
 .note-corner-menu-dropdown .ncm-item:hover {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
 }
-/* "Agent" tag on a note that has a linked agent chat session */
-.note-agent-tag {
-  align-self: flex-start;
+.note-checkbox-agent {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  margin: 0 1px;
+  border: 0;
+  background: transparent;
   color: var(--accent, var(--red));
-  border-radius: 999px;
-  padding: 3px 10px 3px 8px;
-  font-size: 11px;
-  font-weight: 600;
+  box-shadow: none;
   cursor: pointer;
-  margin-top: 2px;
-  transition: background 0.12s;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s;
 }
-.note-agent-tag:hover { background: color-mix(in srgb, var(--accent, var(--red)) 24%, transparent); }
+.note-checkbox:hover .note-checkbox-agent { opacity: 0.55; }
+.note-checkbox-agent:hover {
+  background: transparent;
+  opacity: 1 !important;
+}
+.note-checkbox-agent.is-agent-stream-complete {
+  color: #50fa7b;
+  opacity: 0.9;
+}
+.note-checkbox-agent svg {
+  display: block;
+}
 
 .note-card {
   /* Same tint that .doclib-card uses so a default (uncolored) note
@@ -35918,6 +36551,13 @@ body.research-panel-view #research-divider { display:none; }
   font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.03em;
+  position: relative;
+  top: 2px;
+}
+.research-new-job > .doclib-desc {
+  position: relative;
+  top: 4px;
+  margin-bottom: 6px;
 }
 @media (max-width: 600px) {
   /* Keep the "Research" title visible on mobile (matches the Cookbook tab
@@ -35957,6 +36597,10 @@ body.research-panel-view #research-divider { display:none; }
 }
 .research-setting {
   display:flex; flex-direction:column; flex:1; min-width:90px;
+}
+.research-settings-row .research-setting:nth-last-child(-n + 3) {
+  position: relative;
+  top: 3px;
 }
 .research-setting-label {
   font-size:9px; text-transform:uppercase; letter-spacing:0.5px;
@@ -36406,6 +37050,7 @@ body.research-panel-view #research-divider { display:none; }
 }
 .research-section:not(.collapsed) > .research-section-header { border-bottom: 1px solid var(--border); }
 .research-section-header:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.research-section-header:has(.research-library-hint) { padding-bottom: 4px; }
 .research-section-title { font-size: 14px; font-weight: 600; letter-spacing: -0.03em; }
 .research-section-chevron { flex-shrink: 0; opacity: 0.55; transition: transform 0.2s ease; }
 .research-section.collapsed .research-section-chevron { transform: rotate(-90deg); }
@@ -37053,7 +37698,8 @@ body.theme-frosted .modal {
 .research-library-hint {
   /* full-width line in the header, pulled up with negative MARGIN (collapses
      the gap so it moves up without making the header taller). */
-  width: 100%; flex-basis: 100%; margin: -22px 0 0; line-height: 1.2;
+  width: 100%; flex-basis: 100%; margin: -26px 0 0; line-height: 1.2;
+  font-size: calc(1em - 2px); opacity: 0.55;
 }
 .research-library-link {
   background: none; border: none; padding: 0; cursor: pointer;

@@ -13,6 +13,7 @@ let modalEl = null;
 // the endpoints list can flash a glow on that row. Cleared once the
 // animation fires.
 let _recentlyAddedEpId = null;
+let _authPolicy = { password_min_length: 8, reserved_usernames: [] };
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
@@ -342,7 +343,38 @@ function initSignupToggle() {
   });
 }
 
+function initShareDefaultsToggle() {
+  const toggle = el('adm-shareDefaultsToggle');
+  fetch('/api/auth/settings', { credentials: 'same-origin' })
+    .then(r => r.json())
+    .then(d => { toggle.checked = !!d.share_defaults_with_users; })
+    .catch(e => console.warn('Settings fetch failed:', e));
+  toggle.addEventListener('change', async () => {
+    try {
+      const res = await fetch('/api/auth/settings', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ share_defaults_with_users: toggle.checked }),
+      });
+      const data = await res.json();
+      toggle.checked = !!data.share_defaults_with_users;
+    } catch (e) {
+      toggle.checked = !toggle.checked;
+    }
+  });
+}
+
 function initAddUser() {
+  fetch('/api/auth/policy', { credentials: 'same-origin' })
+    .then(r => r.ok ? r.json() : null)
+    .then(policy => {
+      if (!policy) return;
+      _authPolicy = policy;
+      const admPw = el('adm-newPassword');
+      if (admPw) admPw.placeholder = `Password (min ${policy.password_min_length})`;
+    })
+    .catch(() => {});
   el('adm-addBtn').addEventListener('click', async () => {
     const msg = el('adm-addMsg');
     msg.textContent = ''; msg.className = '';
@@ -350,7 +382,8 @@ function initAddUser() {
     const password = el('adm-newPassword').value;
     const is_admin = el('adm-newIsAdmin').checked;
     if (!username) { msg.textContent = 'Username required'; msg.className = 'admin-error'; return; }
-    if (password.length < 8) { msg.textContent = 'Password must be at least 8 characters'; msg.className = 'admin-error'; return; }
+    if (password.length < _authPolicy.password_min_length) { msg.textContent = `Password must be at least ${_authPolicy.password_min_length} characters`; msg.className = 'admin-error'; return; }
+    if (_authPolicy.reserved_usernames.includes(username.toLowerCase())) { msg.textContent = 'This username is reserved'; msg.className = 'admin-error'; return; }
     el('adm-addBtn').disabled = true;
     try {
       const res = await fetch('/api/auth/users', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password, is_admin }) });
@@ -1570,8 +1603,8 @@ function initEndpointForm() {
         wrap.style.cssText = 'display:flex;align-items:center;padding:8px 0;';
         wrap.appendChild(wp.element);
         const txt = document.createElement('span');
-        txt.textContent = 'Scanning ports 8000-8020 and 11434 for model servers...';
-        txt.style.cssText = 'opacity:0.7;';
+        txt.textContent = 'Scanning ports 8000-8020, 8080, 1234, 11434, and 11435 for model servers...';
+        txt.style.cssText = 'font-size:12px;opacity:0.7;';
         wrap.appendChild(txt);
         msg.appendChild(wrap);
         discoverBtn._wp = wp;
@@ -1586,12 +1619,24 @@ function initEndpointForm() {
         } else {
           // Auto-add each discovered endpoint. Server dedupes on base_url
           // and returns `existing: true` for already-registered ones.
+          // Map fingerprinted provider IDs to friendly display names.
+          const _PROVIDER_DISPLAY = {
+            llamacpp: 'llama.cpp', lmstudio: 'LM Studio', vllm: 'vLLM',
+            ollama: 'Ollama',
+          };
           let added = 0;
           let skipped = 0;
           for (const item of items) {
             const base = item.url.replace('/chat/completions', '').replace(/\/$/, '');
+            const providerDisplay = _PROVIDER_DISPLAY[item.provider] || null;
             const fd = new FormData();
             fd.append('base_url', base);
+            if (providerDisplay) {
+              // Use "Provider (host:port)" so the endpoint is immediately
+              // identifiable in the list, e.g. "llama.cpp (localhost:8080)".
+              const hostPart = base.replace(/^https?:\/\//, '').split('/')[0];
+              fd.append('name', `${providerDisplay} (${hostPart})`);
+            }
             fd.append('endpoint_kind', 'local');
             fd.append('model_refresh_mode', 'auto');
             fd.append('skip_probe', 'false');
@@ -1605,7 +1650,12 @@ function initEndpointForm() {
             }
           }
           const totalModels = items.reduce((n, i) => n + (i.models ? i.models.length : 0), 0);
-          const parts = [`Found ${items.length} server${items.length !== 1 ? 's' : ''} with ${totalModels} model${totalModels !== 1 ? 's' : ''}`];
+          const serverNames = items.map(i =>
+            (_PROVIDER_DISPLAY[i.provider] || i.url.replace(/^https?:\/\//, '').split('/')[0])
+          );
+          const parts = [
+            `Found ${items.length} server${items.length !== 1 ? 's' : ''} (${serverNames.join(', ')}) with ${totalModels} model${totalModels !== 1 ? 's' : ''}`,
+          ];
           if (added) parts.push(`added ${added} new`);
           if (skipped) parts.push(`${skipped} already added`);
           msg.innerHTML = parts.join(' — ');
@@ -1745,7 +1795,6 @@ const TOOL_META = {
   manage_skills:     { name: 'Skills',           desc: 'Learn and use procedures',        cat: 'Knowledge',  ctx: '~200' },
   manage_rag:        { name: 'RAG / Docs',       desc: 'Query indexed documents',         cat: 'Knowledge',  ctx: '~150' },
   chat_with_model:   { name: 'Chat with Model',  desc: 'Talk to another AI model',        cat: 'Multi-Agent', ctx: '~200' },
-  second_opinion:    { name: 'Second Opinion',   desc: 'Get another model\'s take',       cat: 'Multi-Agent', ctx: '~150' },
   pipeline:          { name: 'Pipeline',         desc: 'Multi-step AI workflows',         cat: 'Multi-Agent', ctx: '~200' },
   ask_teacher:       { name: 'Ask Teacher',      desc: 'Query a more capable model',      cat: 'Multi-Agent', ctx: '~150' },
   send_to_session:   { name: 'Send to Session',  desc: 'Send message to another chat',    cat: 'Sessions',   ctx: '~100' },
@@ -2976,7 +3025,7 @@ function initLogsView() {
 function initAll() {
   modalEl = el('settings-modal');
   const inits = [
-    initSignupToggle, initAddUser, initEndpointForm, initMcpForm,
+    initSignupToggle, initShareDefaultsToggle, initAddUser, initEndpointForm, initMcpForm,
     initCalDAV, initBackup, initDangerZone, initTokenForm, initLogsView,
     () => settingsModule.initIntegrations()
   ];

@@ -46,8 +46,12 @@ def _ssh_prefix_for_task(task: dict) -> tuple[str, str]:
     shell metacharacters in ``remoteHost`` is rejected with 400 rather than
     injected.
     """
-    host = validate_remote_host((task.get("remoteHost") or "").strip() or None) or ""
-    ssh_port = validate_ssh_port((task.get("sshPort") or "").strip() or None) or ""
+    raw_host = task.get("remoteHost")
+    raw_port = task.get("sshPort")
+    host_value = str(raw_host).strip() if raw_host is not None else None
+    port_value = str(raw_port).strip() if raw_port is not None else None
+    host = validate_remote_host(host_value or None) or ""
+    ssh_port = validate_ssh_port(port_value or None) or ""
     port_flag = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
     return host, port_flag
 
@@ -306,7 +310,10 @@ def setup_codex_routes(
 
     @router.post("/emails/draft-document")
     async def codex_email_draft_document(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
-        owner = _scope_owner_all(request, {"email:draft", "documents:write"})
+        owner = _scope_owner(request, EMAIL_DRAFT_SCOPES)
+        docs_owner = _scope_owner_all(request, DOCS_WRITE_SCOPES)
+        if docs_owner != owner:
+            raise HTTPException(403, "API token owner mismatch")
         if documents_create_endpoint is None:
             raise HTTPException(503, "Documents integration is not available")
         from routes.document_routes import DocumentCreate
@@ -790,7 +797,7 @@ def setup_codex_routes(
         norm = dict(body or {})
         sess = (norm.get("tmux_session") or norm.get("session_id") or "").strip()
         model = (norm.get("model") or norm.get("repo_id") or "").strip()
-        host = (norm.get("host") or norm.get("remote_host") or "").strip()
+        host = validate_remote_host((norm.get("host") or norm.get("remote_host") or "").strip() or None) or ""
         port = norm.get("port") or 8000
         import re as _re
         if not sess or not _re.fullmatch(r"[a-zA-Z0-9_-]+", sess):

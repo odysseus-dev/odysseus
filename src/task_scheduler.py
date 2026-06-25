@@ -9,12 +9,42 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, Tuple
 
+from core.auth import RESERVED_USERNAMES
+
 logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
     """Return naive UTC for task DB fields without using deprecated APIs."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+# Shell/file tools a scheduled task's agent should be offered by default,
+# mirroring the chat agent (where these are on unless a privilege or global
+# setting turns them off). The RAG tool selector + ASSISTANT_ALWAYS_AVAILABLE
+# never include bash/python, so on a host with an empty/degraded tool-embedding
+# index a task could not run shell or Python even for an admin owner. Offering
+# them here is safe: stream_agent_loop's blocked_tools_for_owner() still strips
+# this whole group for non-admin multi-user owners, and only admits it for
+# admins and single-user (AUTH_ENABLED=false) deployments.
+TASK_DEFAULT_SHELL_TOOLS = frozenset({
+    "bash", "python", "read_file", "write_file", "edit_file",
+    "grep", "glob", "ls", "get_workspace",
+})
+
+
+def compose_task_relevant_tools(rag_tools, assistant_always, disabled_tools):
+    """Compose the relevant-tools set offered to a scheduled task's agent.
+
+    Unions the RAG-retrieved tools, the assistant's always-available set, and
+    the default shell/file group, then removes anything the task's crew
+    explicitly disabled via its `enabled_tools` allowlist. Per-owner admin
+    gating is applied later by stream_agent_loop (blocked_tools_for_owner).
+    """
+    tools = set(rag_tools) | set(assistant_always) | set(TASK_DEFAULT_SHELL_TOOLS)
+    if disabled_tools:
+        tools -= set(disabled_tools)
+    return tools
 
 
 # ── Shared TTL cache (singleflight) ────────────────────────────────────────
@@ -234,6 +264,65 @@ def _digest_windows(now):
         ("this_week", now + timedelta(days=2), now + timedelta(days=7)),
         ("next_30_days", now + timedelta(days=7), now + timedelta(days=30)),
     ]
+
+
+def _checkin_calendar_events(db, owner, start, end):
+    """Calendar events in [start, end] for ONE owner, for the check-in digest.
+
+    Ownership lives on CalendarCal.owner; events inherit it via calendar_id.
+    The digest query had no owner scope, so it pulled EVERY user's events into
+    one user's check-in (a cross-tenant leak of summaries/locations). Scope it
+    by joining CalendarCal, mirroring routes/calendar_routes.list_events.
+    """
+    from core.database import CalendarEvent as _CE, CalendarCal as _CC
+    return (
+        db.query(_CE)
+        .join(_CC, _CE.calendar_id == _CC.id)
+        .filter(
+            _CC.owner == owner,
+            _CE.dtstart >= start,
+            _CE.dtstart <= end,
+            _CE.status != "cancelled",
+        )
+        .order_by(_CE.dtstart)
+        .all()
+    )
+
+
+def _normalize_chat_endpoint(url: str) -> str:
+    """Repair a resolved task endpoint to a full chat-completions URL.
+
+    Unlike the chat path — which stores ``build_chat_url(normalize_base(base))``
+    on the session — the task executor passes ``task.endpoint_url`` verbatim to
+    the model HTTP call. A bare OpenAI-compatible base such as
+    ``http://host:11434/v1`` therefore POSTs to a 404 ("page not found") and the
+    model silently appears to "return an empty response".
+
+    Repair only bare OpenAI-compatible bases. Native-Ollama URLs (``/api...``)
+    and URLs that already point at a concrete endpoint are returned untouched, so
+    their own downstream normalizers keep working. Idempotent: a URL already
+    ending in ``/chat/completions`` is left as-is.
+    """
+    if not url:
+        return url
+    # Imports kept function-local (endpoint_resolver pulls in heavy deps) but
+    # OUTSIDE the try: an import failure is a real bug that should surface, not
+    # be silently swallowed into the un-normalized URL this function exists to
+    # repair.
+    from urllib.parse import urlparse
+    from src.endpoint_resolver import normalize_base, build_chat_url
+    path = (urlparse(url).path or "").rstrip("/")
+    if path == "/api" or path.startswith("/api/"):
+        return url  # native Ollama — handled by the native path downstream
+    if path.endswith(("/chat/completions", "/messages", "/responses", "/completions")):
+        return url  # already a concrete endpoint
+    try:
+        return build_chat_url(normalize_base(url))
+    except Exception:
+        # Guard only the actual normalization. Returning the URL un-normalized
+        # reverts to the 404 this fixes, so make the silent revert visible.
+        logger.debug("task endpoint normalization failed for %r; using as-is", url, exc_info=True)
+        return url
 
 
 class TaskScheduler:
@@ -833,6 +922,14 @@ class TaskScheduler:
                     owner=task.owner,
                     body=run.result if output == "notification" else None,
                 )
+            elif run.status == "error":
+                self.add_notification(
+                    task.name,
+                    "error",
+                    task_id,
+                    owner=task.owner,
+                    body=run.error or run.result,
+                )
 
             # Log result to the assistant chat so all task activity is visible.
             # Skip skipped/error rows — user shouldn't see "skipped: …" noise
@@ -1127,11 +1224,7 @@ class TaskScheduler:
                     # Strip timezone for naive DB comparison
                     _s = start.replace(tzinfo=None) if start.tzinfo else start
                     _e = end.replace(tzinfo=None) if end.tzinfo else end
-                    evs = _db.query(_CE).filter(
-                        _CE.dtstart >= _s,
-                        _CE.dtstart <= _e,
-                        _CE.status != "cancelled",
-                    ).order_by(_CE.dtstart).all()
+                    evs = _checkin_calendar_events(_db, task.owner, _s, _e)
                     if not evs:
                         continue
                     # Group by importance for richer output
@@ -1300,6 +1393,7 @@ class TaskScheduler:
             endpoint_url, model = self._resolve_defaults(db, task.owner)
         if not endpoint_url or not model:
             raise RuntimeError("No model/endpoint configured")
+        endpoint_url = _normalize_chat_endpoint(endpoint_url)
         # Record the resolved model so _execute_task_locked can persist it on
         # the run (tasks rarely pin a model, so this is the only record of
         # which model actually produced the output).
@@ -1370,17 +1464,30 @@ class TaskScheduler:
             time_str = _utcnow().strftime("%A, %B %d %Y, %H:%M UTC")
         system_prompt = f"Current time: {time_str}\n\n{system_prompt}"
 
-        # Compute tool filter from CrewMember.enabled_tools if set
-        disabled_tools = None
+        # Compute the disabled-tools set: the crew's enabled_tools allowlist
+        # (inverted) plus the operator's global disabled_tools setting. The
+        # global list must be merged here — chat does the same merge before
+        # entering the agent loop (routes/chat_routes.py) — otherwise an admin
+        # or AUTH_ENABLED=false scheduled task would still see and call shell/
+        # file tools after the operator disabled them globally, because the
+        # prompt/schema/execution gates only enforce what is passed in.
+        disabled_tools: set[str] = set()
         if crew and crew.enabled_tools:
             try:
                 enabled = json.loads(crew.enabled_tools)
                 if isinstance(enabled, list) and enabled:
                     from src.tool_index import BUILTIN_TOOL_DESCRIPTIONS
                     all_tools = set(BUILTIN_TOOL_DESCRIPTIONS.keys())
-                    disabled_tools = all_tools - set(enabled)
+                    disabled_tools |= all_tools - set(enabled)
             except Exception:
                 pass
+        try:
+            from src.settings import get_setting
+            _global_disabled = get_setting("disabled_tools", [])
+            if isinstance(_global_disabled, list):
+                disabled_tools.update(_global_disabled)
+        except Exception:
+            pass
 
         # RAG-select relevant tools for this prompt + always-available assistant tools.
         # Without this, all 40+ tools get sent and models hit their tool limit.
@@ -1390,10 +1497,10 @@ class TaskScheduler:
             tool_idx = get_tool_index()
             if tool_idx:
                 rag_tools = tool_idx.get_tools_for_query(task.prompt or "", k=8)
-                relevant_tools = (rag_tools | ASSISTANT_ALWAYS_AVAILABLE)
-                if disabled_tools:
-                    relevant_tools -= disabled_tools
-                logger.info(f"[assistant] RAG selected {len(rag_tools)} tools + {len(ASSISTANT_ALWAYS_AVAILABLE)} always-available = {len(relevant_tools)} total for '{task.name}'")
+                relevant_tools = compose_task_relevant_tools(
+                    rag_tools, ASSISTANT_ALWAYS_AVAILABLE, disabled_tools
+                )
+                logger.info(f"[assistant] RAG selected {len(rag_tools)} tools + {len(ASSISTANT_ALWAYS_AVAILABLE)} always-available + shell/file defaults = {len(relevant_tools)} total for '{task.name}'")
         except Exception as e:
             logger.warning(f"[assistant] RAG tool selection failed, using all: {e}")
 
@@ -1401,17 +1508,23 @@ class TaskScheduler:
         try:
             result = await self._run_agent_loop(
                 endpoint_url, model, task, session_id,
-                system_prompt=system_prompt, disabled_tools=disabled_tools,
+                system_prompt=system_prompt, disabled_tools=disabled_tools or None,
                 relevant_tools=relevant_tools,
             )
         except Exception as e:
             logger.warning(f"Agent loop failed for task '{task.name}', falling back to simple call: {e}")
-            from src.llm_core import llm_call_async
+            from src.task_endpoint import task_llm_call_async
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": task.prompt},
             ]
-            result = await llm_call_async(url=endpoint_url, model=model, messages=messages, timeout=120)
+            result = await task_llm_call_async(
+                messages,
+                fallback_url=endpoint_url,
+                fallback_model=model,
+                owner=task.owner,
+                timeout=120,
+            )
 
         # Strip the model's chain-of-thought before saving/delivering. Task
         # output is LLM-only, so prose=True (which also removes untagged
@@ -1471,6 +1584,8 @@ class TaskScheduler:
                 model_name = model_name or resolved_model
             except Exception:
                 pass
+
+        endpoint_url = _normalize_chat_endpoint(endpoint_url)
 
         session_id = task.session_id
         if not session_id:
@@ -1591,7 +1706,7 @@ class TaskScheduler:
             msg["X-Odysseus-Ref"] = str(task.id)
             msg.set_content(result or "")
             _send_smtp_message(cfg, from_addr, [to_addr], msg.as_string(), timeout=30)
-            logger.info("Task %s emailed result to %s (%sb)", task.id, to_addr, len(result or ""))
+            logger.info("Task %s emailed result (recipient_set=%s, %sb)", task.id, bool(to_addr), len(result or ""))
         except Exception as e:
             logger.error("Task %s email delivery failed: %s", task.id, e, exc_info=True)
             raise
@@ -1636,13 +1751,17 @@ class TaskScheduler:
         # Honor per-task max_steps (defense against runaway agent loops).
         # Falls back to 20 if not set — the historical default.
         _task_max_rounds = task.max_steps if task.max_steps and task.max_steps > 0 else 20
-        # Tasks are background workloads — they share the Utility model's
-        # fallback chain (Settings → Utility Model → Fallbacks). A downed
-        # primary endpoint won't silently yield `(no output)` — same recipe
-        # chat uses but with the utility list (`utility_model_fallbacks`).
+        # Tasks are background workloads: use the shared task fallback chain
+        # behind the primary endpoint so a downed primary won't silently yield
+        # `(no output)`.
         try:
-            from src.endpoint_resolver import resolve_utility_fallback_candidates
-            _task_fallbacks = resolve_utility_fallback_candidates(owner=task.owner or None)
+            from src.task_endpoint import resolve_task_candidates
+            _task_fallbacks = resolve_task_candidates(
+                fallback_url=endpoint_url,
+                fallback_model=model,
+                fallback_headers=headers,
+                owner=task.owner or None,
+            )[1:]
         except Exception:
             _task_fallbacks = []
         async for event_str in stream_agent_loop(
@@ -1679,21 +1798,22 @@ class TaskScheduler:
         # asking it to summarize what it did. Guarantees output.
         if not full_text.strip():
             try:
-                from src.llm_core import llm_call_async_with_fallback
-                from src.endpoint_resolver import resolve_utility_fallback_candidates
+                from src.task_endpoint import task_llm_call_async
                 grace_context = "You ran out of steps. "
                 if tool_results:
                     grace_context += "Here's what your tools returned:\n" + "\n".join(tool_results[-5:])
                 else:
                     grace_context += "No tool results were captured."
                 grace_context += "\n\nSummarize what you accomplished and what's still pending. Be concise."
-                _grace_candidates = [(endpoint_url, model, headers)] + resolve_utility_fallback_candidates(owner=task.owner or None)
-                full_text = await llm_call_async_with_fallback(
-                    _grace_candidates,
+                full_text = await task_llm_call_async(
                     messages=[
                         {"role": "system", "content": system_content},
                         {"role": "user", "content": grace_context},
                     ],
+                    fallback_url=endpoint_url,
+                    fallback_model=model,
+                    fallback_headers=headers,
+                    owner=task.owner or None,
                     timeout=30,
                 )
                 full_text = (full_text or "").strip()
@@ -1740,6 +1860,7 @@ class TaskScheduler:
             endpoint_url, model = self._resolve_defaults(db, task.owner)
         if not endpoint_url or not model:
             raise RuntimeError("No model/endpoint configured for research")
+        endpoint_url = _normalize_chat_endpoint(endpoint_url)
         # Record the resolved model for the run record (see _execute_task_locked).
         self._last_run_model = model
 
@@ -1948,7 +2069,7 @@ class TaskScheduler:
                 # silent SMTP failure is easier to spot in the logs.
                 logger.info(
                     f"Task {task.id} delivered via MCP tool {tool_name} "
-                    f"(to={recipient or '<unset>'}, body={body_len}b, reply={stdout[:200]!r})"
+                    f"(recipient_set={bool(recipient)}, body={body_len}b, reply={stdout[:200]!r})"
                 )
         except Exception as e:
             logger.error(f"Task {task.id} MCP delivery failed: {e}")
@@ -2202,7 +2323,7 @@ class TaskScheduler:
         # check-ins seeded, which then double-fire alongside the human user's
         # check-ins. This was the root cause of the duplicate 'Morning check-in'
         # rows we had to manually clean up.
-        if not owner or owner in {"internal-tool", "api", "demo", "system"}:
+        if not owner or owner in RESERVED_USERNAMES:
             logger.info(f"ensure_assistant_defaults: skip synthetic owner {owner!r}")
             return
         from core.database import SessionLocal, CrewMember, ScheduledTask
