@@ -1,11 +1,22 @@
 """Protection test: the tool_implementations compatibility shim must keep
-re-exporting every top-level function that importers may depend on.
+re-exporting every symbol importers depend on.
 
 Guards the slice-1 split (tool_implementations.py -> src/tools/*) from
-accidentally dropping a symbol. The list below is the ground-truth set of
-top-level functions extracted from the original tool_implementations.py
-before the split; the shim must re-export ALL of them so existing
-`from src.tool_implementations import X` imports keep working.
+accidentally dropping a symbol. The contract is enforced by two
+self-verifying tests, not by the hand-maintained list below:
+
+* ``test_shim_reexports_every_domain_do_function`` discovers every ``do_*``
+  from the domain modules and asserts reachability through the shim.
+* ``test_every_facade_import_in_repo_resolves`` discovers every
+  ``from src.tool_implementations import X`` site in ``src/`` and ``tests/``
+  and asserts ``X`` resolves through the shim.
+
+Both fail automatically if a re-export is forgotten (the do_* discovery
+covers the tool surface; the import-site scan covers underscore helpers a
+reviewer's P3 finding showed could otherwise slip through the list). The
+``_EXPECTED`` list below is the curated historical surface (the original
+module's top-level names), kept as a belt-and-suspenders check and as the
+async-shape contract for ``do_*``; it is not the ground truth.
 """
 
 import inspect
@@ -94,3 +105,44 @@ def test_shim_reexports_every_domain_do_function():
             if not hasattr(ti, name):
                 dropped.append(f"{mod_name}.{name}")
     assert not dropped, f"shim dropped domain do_* (re-export forgotten): {dropped}"
+
+
+def test_every_facade_import_in_repo_resolves():
+    """Every ``from src.tool_implementations import X`` in src/ and tests/
+    must resolve through the shim.
+
+    This makes the module-docstring contract ("existing ``from
+    src.tool_implementations import X`` imports keep working") self-verifying
+    instead of reliant on the hand-maintained ``_EXPECTED`` list, which
+    omitted three underscore helpers in a reviewer's P3 finding and can drift
+    again. The import sites are enumerated with ``ast`` rather than checked
+    at runtime because the invariant is *which names the rest of the
+    codebase asks the facade for* — no runtime hook enumerates that set,
+    only the import statements do (the narrow source-scanning exception to
+    the behavioral-first rule). The per-name assertion is runtime
+    (``hasattr``), so any forgotten re-export — helper or ``do_*`` — fails
+    here automatically.
+    """
+    import ast
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[1]
+    names = set()
+    for sub in ("src", "tests"):
+        for path in (repo / sub).rglob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            if "src.tool_implementations" not in text:
+                continue
+            try:
+                tree = ast.parse(text, filename=str(path))
+            except SyntaxError:
+                continue  # unrelated to the facade contract
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module == "src.tool_implementations":
+                    for alias in node.names:
+                        if alias.name != "*":
+                            names.add(alias.name)
+    unresolved = sorted(n for n in names if not hasattr(ti, n))
+    assert not unresolved, (
+        f"facade consumers import names the shim does not re-export: {unresolved}"
+    )
