@@ -760,6 +760,13 @@ async def _execute_tool_block_impl(
         desc = f"{tool}: {first_line}"
         result = await _direct_fallback(tool, content, progress_cb=progress_cb) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
+    elif tool in ("nextcloud_list", "nextcloud_read_file"):
+        # Read-only Nextcloud WebDAV tools (src/agent_tools/nextcloud_tools.py);
+        # owner is threaded so they use the caller's configured account.
+        first_line = content.split(chr(10))[0][:80]
+        desc = f"{tool}: {first_line}"
+        result = await _direct_fallback(tool, content, owner=owner) \
+            or {"error": f"{tool}: execution failed", "exit_code": 1}
     elif tool == "manage_bg_jobs":
         # Inspect/kill detached `bash` jobs; needs session_id to scope to chat.
         desc = f"manage_bg_jobs: {content.split(chr(10))[0][:80]}"

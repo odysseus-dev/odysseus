@@ -283,11 +283,13 @@ class NextcloudClient:
             raise NextcloudError("Nextcloud returned no resource for that path.", status=404)
         return single
 
-    def get_file(self, path: str, *, max_bytes: Optional[int] = None) -> Tuple[bytes, Optional[str]]:
+    def get_file(self, path: str, max_bytes: Optional[int] = None) -> Tuple[bytes, Optional[str]]:
         """Download a file. Returns ``(content_bytes, content_type)``.
 
         ``max_bytes`` caps how much is read into memory; a larger remote file
-        raises NextcloudError so a caller never streams multi-GB into RAM.
+        raises NextcloudError so a caller never streams multi-GB into RAM. It is
+        positional (not keyword-only) because call sites invoke it through
+        ``asyncio.to_thread(client.get_file, path, max_bytes)``.
         """
         url = self._dav_url(path)
         try:
