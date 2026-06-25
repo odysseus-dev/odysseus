@@ -26,8 +26,8 @@ clear_fake_database_modules()
 
 import core.database as cdb
 from core.database import McpServer
-import src.tool_implementations as ti
-from src.tool_implementations import _validate_mcp_command
+import src.agent_tools.admin_tools as ti  # do_manage_mcp/get_mcp_manager moved here in the registry migration
+from src.agent_tools.admin_tools import _validate_mcp_command
 
 _TS, _ENGINE, _TMPDB = make_temp_sqlite(cdb.Base.metadata)
 

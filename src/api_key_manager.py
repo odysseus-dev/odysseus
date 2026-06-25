@@ -81,11 +81,26 @@ class APIKeyManager:
         keys stay encrypted. Loading via load() first would decrypt them and
         write them back as plaintext, which then fails to decrypt on the next
         load() and silently drops those providers.
+
+        Uses atomic write (temp file + os.replace) so a crash, disk-full, or
+        mid-write error never truncates the existing keys file.
         """
         keys = self._load_raw()
         keys[provider] = self.encrypt_api_key(api_key)
-        with open(self.api_keys_file, 'w', encoding="utf-8") as f:
-            json.dump(keys, f)
+        tmp_file = self.api_keys_file + ".tmp"
+        try:
+            with open(tmp_file, 'w', encoding="utf-8") as f:
+                json.dump(keys, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_file, self.api_keys_file)
+        except OSError:
+            # Clean up temp file on failure; re-raise so callers see the error
+            try:
+                os.remove(tmp_file)
+            except OSError:
+                pass
+            raise
 
     def load(self) -> Dict[str, str]:
         """Load and decrypt API keys"""

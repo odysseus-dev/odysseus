@@ -33,6 +33,9 @@ import {
   _fetchCachedModels, _cachedAllModels, _filterCachedList, _rerenderCachedModels, _deleteCachedModel,
 } from './cookbookServe.js';
 
+import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
+import { topPortalZ } from './toolWindowZOrder.js';
+
 const STORAGE_KEY = 'cookbook-presets';
 const LAST_STATE_KEY = 'cookbook-last-state';
 const SERVE_STATE_KEY = 'cookbook-serve-state';
@@ -1514,7 +1517,7 @@ async function _fetchDependencies() {
 
     // Wire the installed-package menu.
     function _showDepMenu(anchor) {
-      document.querySelectorAll('.cookbook-dep-menu').forEach(d => d.remove());
+      document.querySelectorAll('.cookbook-dep-menu').forEach(dismissOrRemove);
       const row = anchor.closest('.cookbook-dep-row');
       if (!row) return;
       const pipName = row.dataset.depPip;
@@ -1527,7 +1530,7 @@ async function _fetchDependencies() {
       const minW = 150;
       let left = Math.min(rect.right - minW, window.innerWidth - minW - 8);
       left = Math.max(8, left);
-      dropdown.style.cssText = `position:fixed;display:block;z-index:10001;top:${rect.bottom + 6}px;left:${left}px;right:auto;min-width:${minW}px;max-width:calc(100vw - 16px);background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:6px;font-size:11px;`;
+      dropdown.style.cssText = `position:fixed;display:block;z-index:${topPortalZ()};top:${rect.bottom + 6}px;left:${left}px;right:auto;min-width:${minW}px;max-width:calc(100vw - 16px);background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:6px;font-size:11px;`;
       const upIco = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>';
       const it = document.createElement('div');
       it.className = 'dropdown-item-compact';
@@ -1535,7 +1538,7 @@ async function _fetchDependencies() {
       it.title = `Update ${pkgName} to the latest version (pip install -U)`;
       it.addEventListener('click', async (e) => {
         e.stopPropagation();
-        dropdown.remove();
+        close();
         await _installDep(pipName, pkgName, isLocalOnly, true, null);
       });
       dropdown.appendChild(it);
@@ -1563,19 +1566,14 @@ async function _fetchDependencies() {
         dropdown.appendChild(source);
       }
       document.body.appendChild(dropdown);
-      const close = (ev) => {
-        if (!dropdown.contains(ev.target) && ev.target !== anchor && !anchor.contains(ev.target)) {
-          dropdown.remove();
-          document.removeEventListener('click', close, true);
-        }
-      };
-      setTimeout(() => document.addEventListener('click', close, true), 10);
+      const close = bindMenuDismiss(dropdown, () => { dropdown.remove(); }, (ev) =>
+        !dropdown.contains(ev.target) && ev.target !== anchor && !anchor.contains(ev.target));
     }
     list.querySelectorAll('.cookbook-dep-installed-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         if (document.querySelector('.cookbook-dep-menu')) {
-          document.querySelectorAll('.cookbook-dep-menu').forEach(d => d.remove());
+          document.querySelectorAll('.cookbook-dep-menu').forEach(dismissOrRemove);
           return;
         }
         _showDepMenu(btn);

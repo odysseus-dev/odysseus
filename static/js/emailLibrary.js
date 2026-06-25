@@ -8,6 +8,7 @@ import { styledConfirm, showToast, emptyStateIcon } from './ui.js';
 import { folderDisplayName, sortedFolders } from './emailInbox.js';
 import settingsModule from './settings.js';
 import * as Modals from './modalManager.js';
+import { topPortalZ } from './toolWindowZOrder.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import {
   _esc, _escLinkify, _extractName, _parseTurnMeta,
@@ -23,6 +24,7 @@ import {
 } from './emailLibrary/signatureFold.js';
 import { state } from './emailLibrary/state.js';
 import { collapseSidebarToRail } from './modalSnap.js';
+import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
 const API_BASE = window.location.origin;
 let _emailUnreadChipClickWired = false;
@@ -858,7 +860,7 @@ export function openEmailLibrary(opts = {}) {
   modal.className = 'modal';
   modal.id = 'email-lib-modal';
   modal.innerHTML = `
-    <div class="modal-content doclib-modal-content" style="width:min(720px, 92vw);max-height:85vh;background:var(--bg);">
+    <div class="modal-content doclib-modal-content" style="width:min(720px, 92vw);background:var(--bg);">
       <div class="modal-header">
         <h4>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;">
@@ -4866,7 +4868,7 @@ async function _openEmailAsTab(em, folder) {
   modal.className = 'modal email-reader-tab-modal';
   modal.id = modalId;
   modal.innerHTML = `
-    <div class="modal-content doclib-modal-content email-reader-tab-content" style="background:var(--bg);width:min(720px, 92vw);max-height:85vh;display:flex;flex-direction:column;">
+    <div class="modal-content doclib-modal-content email-reader-tab-content" style="background:var(--bg);width:min(720px, 92vw);display:flex;flex-direction:column;">
       <div class="modal-header">
         <h4 style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">
           <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:8px;">${_esc(em.subject || '(no subject)')}</span>
@@ -5101,7 +5103,7 @@ async function _openEmailWindow(em, folder) {
   modal.id = winId;
   modal.style.cssText = 'pointer-events:none;background:transparent;';
   modal.innerHTML = `
-    <div class="modal-content email-window-content" style="width:min(640px, 92vw);max-height:80vh;display:flex;flex-direction:column;background:var(--bg);">
+    <div class="modal-content email-window-content" style="width:min(640px, 92vw);display:flex;flex-direction:column;background:var(--bg);">
       <div class="modal-header">
         <h4 style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
@@ -5499,23 +5501,19 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
   // Toggle: if a dropdown for THIS anchor is already open, close it.
   const existing = document.querySelector('.email-card-dropdown');
   if (existing && existing._anchor === anchor) {
-    existing.remove();
-    anchor.classList.remove('reader-more-active');
+    dismissOrRemove(existing);
     return;
   }
-  // Otherwise close any other open dropdown (and clear its anchor's active
-  // state) before opening a fresh one.
-  document.querySelectorAll('.email-card-dropdown').forEach(d => {
-    if (d._anchor) d._anchor.classList.remove('reader-more-active');
-    d.remove();
-  });
+  // Otherwise close any other open dropdown (its own teardown clears its
+  // anchor's active state) before opening a fresh one.
+  document.querySelectorAll('.email-card-dropdown').forEach(dismissOrRemove);
 
   const dropdown = document.createElement('div');
   dropdown.className = 'email-card-dropdown';
   dropdown._anchor = anchor;
   anchor.classList.add('reader-more-active');
   const rect = anchor.getBoundingClientRect();
-  dropdown.style.cssText = `position:fixed;z-index:10001;min-width:180px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:12px;top:${rect.bottom + 4}px;right:${window.innerWidth - rect.right}px;`;
+  dropdown.style.cssText = `position:fixed;z-index:${topPortalZ()};min-width:180px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:12px;top:${rect.bottom + 4}px;right:${window.innerWidth - rect.right}px;`;
 
   const _icon = (svg) => `<span class="dropdown-icon">${svg}</span>`;
   const _unreadIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>';
@@ -5721,8 +5719,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
         _showLibRemindSubmenu(em, dropdown);
         return;
       }
-      dropdown.remove();
-      anchor.classList.remove('reader-more-active');
+      close();
       a.action();
     });
     dropdown.appendChild(item);
@@ -5735,30 +5732,25 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
   cancelItem.innerHTML = _icon(_cancelIco) + '<span>Cancel</span>';
   cancelItem.addEventListener('click', (e) => {
     e.stopPropagation();
-    dropdown.remove();
-    anchor.classList.remove('reader-more-active');
+    close();
   });
   dropdown.appendChild(cancelItem);
 
   document.body.appendChild(dropdown);
   _fitEmailDropdown(dropdown, rect);
-  const close = (ev) => {
-    if (!dropdown.contains(ev.target) && ev.target !== anchor) {
-      dropdown.remove();
-      anchor.classList.remove('reader-more-active');
-      document.removeEventListener('click', close, true);
-    }
-  };
-  setTimeout(() => document.addEventListener('click', close, true), 10);
+  const close = bindMenuDismiss(dropdown, () => {
+    dropdown.remove();
+    anchor.classList.remove('reader-more-active');
+  }, (ev) => !dropdown.contains(ev.target) && ev.target !== anchor);
 }
 
 function _showCardMenu(em, anchor) {
-  document.querySelectorAll('.email-card-dropdown').forEach(d => d.remove());
+  document.querySelectorAll('.email-card-dropdown').forEach(dismissOrRemove);
 
   const dropdown = document.createElement('div');
   dropdown.className = 'email-card-dropdown';
   const rect = anchor.getBoundingClientRect();
-  dropdown.style.cssText = `position:fixed;z-index:10001;min-width:140px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:12px;top:${rect.bottom + 4}px;right:${window.innerWidth - rect.right}px;`;
+  dropdown.style.cssText = `position:fixed;z-index:${topPortalZ()};min-width:140px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:12px;top:${rect.bottom + 4}px;right:${window.innerWidth - rect.right}px;`;
 
   const _icon = (svg) => `<span class="dropdown-icon">${svg}</span>`;
   const _replyIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>';
@@ -5918,8 +5910,7 @@ function _showCardMenu(em, anchor) {
         _showLibRemindSubmenu(em, dropdown);
         return;
       }
-      dropdown.remove();
-      anchor.classList.remove('reader-more-active');
+      close();
       a.action();
     });
     dropdown.appendChild(item);
@@ -5932,30 +5923,25 @@ function _showCardMenu(em, anchor) {
   cancelItem.innerHTML = _icon(_cancelIco) + '<span>Cancel</span>';
   cancelItem.addEventListener('click', (e) => {
     e.stopPropagation();
-    dropdown.remove();
-    anchor.classList.remove('reader-more-active');
+    close();
   });
   dropdown.appendChild(cancelItem);
 
   document.body.appendChild(dropdown);
   _fitEmailDropdown(dropdown, rect);
-  const close = (ev) => {
-    if (!dropdown.contains(ev.target) && ev.target !== anchor) {
-      dropdown.remove();
-      anchor.classList.remove('reader-more-active');
-      document.removeEventListener('click', close, true);
-    }
-  };
-  setTimeout(() => document.addEventListener('click', close, true), 10);
+  const close = bindMenuDismiss(dropdown, () => {
+    dropdown.remove();
+    anchor.classList.remove('reader-more-active');
+  }, (ev) => !dropdown.contains(ev.target) && ev.target !== anchor);
 }
 
 // Bulk "Actions" dropdown for select mode — Delete is a separate visible button.
 function _showBulkActionsMenu(anchor) {
-  document.querySelectorAll('.email-card-dropdown').forEach(d => d.remove());
+  document.querySelectorAll('.email-card-dropdown').forEach(dismissOrRemove);
   const dropdown = document.createElement('div');
   dropdown.className = 'email-card-dropdown email-bulk-menu';
   const rect = anchor.getBoundingClientRect();
-  dropdown.style.cssText = `position:fixed;z-index:10001;min-width:160px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:12px;top:${rect.bottom + 4}px;left:${rect.left}px;`;
+  dropdown.style.cssText = `position:fixed;z-index:${topPortalZ()};min-width:160px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:12px;top:${rect.bottom + 4}px;left:${rect.left}px;`;
   const _readIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="m22 2-7 20-4-9-9-4 20-7z"/></svg>';
   const _unreadIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>';
   const _doneIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
@@ -5968,7 +5954,7 @@ function _showBulkActionsMenu(anchor) {
     const it = document.createElement('div');
     it.className = 'dropdown-item-compact' + (a.danger ? ' dropdown-item-danger' : '');
     it.innerHTML = `<span class="dropdown-icon">${a.icon}</span><span>${a.label}</span>`;
-    it.addEventListener('click', (e) => { e.stopPropagation(); dropdown.remove(); a.action(); });
+    it.addEventListener('click', (e) => { e.stopPropagation(); close(); a.action(); });
     dropdown.appendChild(it);
   }
   // Mobile-only Cancel — matches the per-card and sidebar dropdowns.
@@ -5978,7 +5964,7 @@ function _showBulkActionsMenu(anchor) {
   cancelIt.innerHTML = `<span class="dropdown-icon">${_cancelIco2}</span><span>Cancel</span>`;
   cancelIt.addEventListener('click', (e) => {
     e.stopPropagation();
-    dropdown.remove();
+    close();
     // Cancel inside the bulk-Actions menu also exits select mode — matches the
     // documents bulk dropdown.
     state._selectMode = false;
@@ -5989,13 +5975,9 @@ function _showBulkActionsMenu(anchor) {
   dropdown.appendChild(cancelIt);
   document.body.appendChild(dropdown);
   _fitEmailDropdown(dropdown, rect);
-  const close = (ev) => {
-    if (!dropdown.contains(ev.target) && ev.target !== anchor) {
-      dropdown.remove();
-      document.removeEventListener('click', close, true);
-    }
-  };
-  setTimeout(() => document.addEventListener('click', close, true), 10);
+  const close = bindMenuDismiss(dropdown, () => {
+    dropdown.remove();
+  }, (ev) => !dropdown.contains(ev.target) && ev.target !== anchor);
 }
 
 function _updateBulkBar() {
@@ -6240,7 +6222,7 @@ function _showAiReplyChoice(btn, em, data) {
     `max-height:${window.innerHeight - 16}px`,
     'overflow:auto',
     'box-sizing:border-box',
-    'z-index:10060',
+    `z-index:${topPortalZ()}`,
     'display:flex',
     'gap:6px',
     'padding:6px',

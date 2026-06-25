@@ -25,6 +25,11 @@ from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocument
 from .model_interaction_tools import ChatWithModelTool, AskTeacherTool, ListModelsTool
 from .bg_job_tools import ManageBgJobsTool
 from .session_tools import CreateSessionTool, ListSessionsTool, SendToSessionTool, ManageSessionTool
+from .admin_tools import (
+    ADMIN_TOOL_HANDLERS,
+    do_manage_endpoints, do_manage_mcp, do_manage_webhooks,
+    do_manage_tokens, do_manage_settings,
+)
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -52,6 +57,8 @@ TOOL_HANDLERS = {
     "send_to_session": SendToSessionTool().execute,
     "manage_session": ManageSessionTool().execute,
 }
+# Config/integration admin tools (manage_endpoints/mcp/webhooks/tokens/settings).
+TOOL_HANDLERS.update(ADMIN_TOOL_HANDLERS)
 
 # ---------------------------------------------------------------------------
 # Constants (re-exported for backward compatibility — single source of truth
@@ -138,10 +145,5 @@ from src.tool_implementations import (  # noqa: E402, F401
     do_search_chats,
     do_manage_skills,
     do_manage_tasks,
-    do_manage_endpoints,
-    do_manage_mcp,
-    do_manage_webhooks,
-    do_manage_tokens,
-    do_manage_settings,
     do_api_call,
 )

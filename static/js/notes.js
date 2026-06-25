@@ -10,7 +10,8 @@ import { attachColorPicker } from './colorPicker.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
 import { applyEdgeDock, clearDockSide } from './modalSnap.js';
-import { topToolWindowZ } from './toolWindowZOrder.js';
+import { topToolWindowZ, topPortalZ } from './toolWindowZOrder.js';
+import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -3360,7 +3361,7 @@ function _buildForm(note = null) {
 
   function _pickCustomDate() {
     // Replace the dropdown menu with a small inline picker
-    document.querySelectorAll('.note-reminder-menu').forEach(m => m.remove());
+    document.querySelectorAll('.note-reminder-menu').forEach(dismissOrRemove);
     const menu = document.createElement('div');
     menu.className = 'note-reminder-menu';
     const initial = dueInput.value || _toLocalDatetimeStr(_tomorrowDate());
@@ -3394,14 +3395,11 @@ function _buildForm(note = null) {
     if (typeof dInput.showPicker === 'function') {
       try { dInput.showPicker(); } catch {}
     }
+    const close = bindMenuDismiss(menu, () => { menu.remove(); });
     menu.querySelector('.note-reminder-menu-confirm').addEventListener('click', () => {
       if (dInput.value) _setReminder(dInput.value);
-      menu.remove();
+      close();
     });
-    setTimeout(() => {
-      const close = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('click', close); } };
-      document.addEventListener('click', close);
-    }, 0);
   }
 
   if (remindBtn) remindBtn.addEventListener('click', (e) => { e.stopPropagation(); _openReminderMenu(remindBtn, !!dueInput.value); });
@@ -4311,7 +4309,7 @@ function _serializeNoteForCopy(note) {
 // toast. Shared by the corner-copy button click and the Ctrl/Cmd+C shortcut.
 // ── ⋯ corner menu (Copy + Agent) ───────────────────────────────────
 function _openNoteCornerMenu(btn) {
-  document.querySelectorAll('.note-corner-menu-dropdown').forEach(d => d.remove());
+  document.querySelectorAll('.note-corner-menu-dropdown').forEach(dismissOrRemove);
   const id = btn.dataset.noteId;
   const note = _notes.find(n => n.id === id);
   if (!note) return;
@@ -4337,15 +4335,10 @@ function _openNoteCornerMenu(btn) {
   const mh = menu.offsetHeight || 96;
   const below = window.innerHeight - r.bottom;
   const top = (below < mh + 8 && r.top > mh + 8) ? (r.top - mh - 4) : (r.bottom + 4);
-  menu.style.cssText += `position:fixed;z-index:11000;top:${Math.round(top)}px;left:${Math.round(left)}px;`;
-  const close = (ev) => {
-    if (ev && menu.contains(ev.target)) return;
-    menu.remove();
-    document.removeEventListener('click', close, true);
-  };
-  setTimeout(() => document.addEventListener('click', close, true), 0);
-  menu.querySelector('[data-act="copy"]').addEventListener('click', () => { menu.remove(); _copyNote(id, btn); });
-  menu.querySelector('[data-act="agent"]').addEventListener('click', () => { menu.remove(); _agentSolveNote(id); });
+  menu.style.cssText += `position:fixed;z-index:${topPortalZ()};top:${Math.round(top)}px;left:${Math.round(left)}px;`;
+  const close = bindMenuDismiss(menu, () => { menu.remove(); });
+  menu.querySelector('[data-act="copy"]').addEventListener('click', () => { close(); _copyNote(id, btn); });
+  menu.querySelector('[data-act="agent"]').addEventListener('click', () => { close(); _agentSolveNote(id); });
 }
 
 function _positionNoteMenu(menu, btn, width = 196) {
@@ -4356,7 +4349,7 @@ function _positionNoteMenu(menu, btn, width = 196) {
   const mh = menu.offsetHeight || 112;
   const below = window.innerHeight - r.bottom;
   const top = (below < mh + 8 && r.top > mh + 8) ? (r.top - mh - 4) : (r.bottom + 4);
-  menu.style.cssText += `position:fixed;z-index:11000;top:${Math.round(top)}px;left:${Math.round(left)}px;min-width:${width}px;`;
+  menu.style.cssText += `position:fixed;z-index:${topPortalZ()};top:${Math.round(top)}px;left:${Math.round(left)}px;min-width:${width}px;`;
   const close = (ev) => {
     if (ev && menu.contains(ev.target)) return;
     menu.remove();

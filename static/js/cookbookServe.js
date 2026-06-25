@@ -11,6 +11,7 @@ import { modelColor } from './chatRenderer.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 import { openCookbookDependencies } from './cookbook-diagnosis.js';
 import { _hwfitCache } from './cookbook-hwfit.js';
+import { topPortalZ } from './toolWindowZOrder.js';
 
 // Shared state/functions injected by init()
 let _envState;
@@ -1019,7 +1020,7 @@ function _rerenderCachedModels() {
       cancelDiv.addEventListener('click', () => { closeDropdown(); });
       dropdown.appendChild(cancelDiv);
       const rect = btn.getBoundingClientRect();
-      dropdown.style.cssText = `position:fixed;z-index:10001;visibility:hidden;top:0;right:${window.innerWidth-rect.right}px;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:4px;box-shadow:0 8px 24px rgba(0,0,0,0.3);font-size:12px;`;
+      dropdown.style.cssText = `position:fixed;z-index:${topPortalZ()};visibility:hidden;top:0;right:${window.innerWidth-rect.right}px;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:4px;box-shadow:0 8px 24px rgba(0,0,0,0.3);font-size:12px;`;
       document.body.appendChild(dropdown);
       // Clamp into the VISIBLE area (visualViewport, not innerHeight — they differ
       // on mobile under the dynamic toolbar). Flip above the button if there's no
@@ -2166,7 +2167,7 @@ function _rerenderCachedModels() {
         // Cap width/height to the viewport and start hidden — we clamp the final
         // position after mount (below) using the menu's real measured size, so it
         // can't run off-screen on a narrow mobile viewport.
-        dropdown.style.cssText = `position:fixed;display:block;visibility:hidden;z-index:10001;top:0;left:0;right:auto;min-width:${minW}px;max-width:calc(100vw - 16px);max-height:calc(100vh - 24px);overflow-y:auto;box-sizing:border-box;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:6px;font-size:11px;`;
+        dropdown.style.cssText = `position:fixed;display:block;visibility:hidden;z-index:${topPortalZ()};top:0;left:0;right:auto;min-width:${minW}px;max-width:calc(100vw - 16px);max-height:calc(100vh - 24px);overflow-y:auto;box-sizing:border-box;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:6px;font-size:11px;`;
 
         if (!modelSlots.length) {
           const empty = document.createElement('div');
@@ -2957,33 +2958,41 @@ function _rerenderCachedModels() {
             && ((t.remoteHost || '') === _hostStr || (t.remoteServerKey || '') === _serverKeyStr)
             && (t.status === 'running' || t.status === 'ready' || t._serveReady)
           );
+          // Only block when the new model's port genuinely collides with
+          // a running serve. Different ports coexist fine (issue #4507).
           if (_active.length) {
-            const _names = _active.map(t => t.payload?.repo_id || t.repo || t.name || '?').filter(Boolean);
-            const _ok = await window.styledConfirm(
-              `${_active.length} model${_active.length === 1 ? '' : 's'} already serving on ${_hostStr || 'local'} (${_names.join(', ')}). Port 8000 will collide. Stop the running model and launch this one?`,
-              { title: 'Server already running', confirmText: 'Stop & launch', cancelText: 'Cancel' },
-            );
-            if (!_ok) { _restoreLaunchBtn(); return; }
-            // Kill each active serve; prefer the rendered Stop button so
-            // endpoint cleanup + Ollama unload run normally. Fall back to
-            // a raw tmux kill when the Active tab isn't in the DOM.
-            for (const t of _active) {
-              try {
-                const _el = document.querySelector(`.cookbook-task[data-task-id="${t.sessionId}"]`);
-                const _btn = _el?.querySelector('.cookbook-task-action-stop');
-                if (_btn) {
-                  _btn.click();
-                } else if (_runningMod._tmuxGracefulKill) {
-                  await fetch('/api/shell/exec', {
-                    method: 'POST', credentials: 'same-origin',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ command: _runningMod._tmuxGracefulKill(t) }),
-                  });
-                }
-              } catch (_killErr) { /* best-effort */ }
+            const _newPort = (launchCmd.match(/--port[=\s]+(\d+)/) || [])[1] || '';
+            const _clashing = _newPort
+              ? _active.filter(t => _runningMod._taskPort(t) === _newPort)
+              : _active;
+            if (_clashing.length) {
+              const _names = _clashing.map(t => t.payload?.repo_id || t.repo || t.name || '?').filter(Boolean);
+              const _portNote = _newPort ? ` on port ${_newPort}` : '';
+              const _ok = await window.styledConfirm(
+                `${_clashing.length} model${_clashing.length === 1 ? '' : 's'} already serving on ${_hostStr || 'local'} (${_names.join(', ')})${_portNote}. Stop it and launch this one?`,
+                { title: _newPort ? `Port ${_newPort} in use` : 'Server already running', confirmText: 'Stop & launch', cancelText: 'Cancel' },
+              );
+              if (!_ok) { _restoreLaunchBtn(); return; }
+              // Kill each clashing serve; prefer the rendered Stop button so
+              // endpoint cleanup + Ollama unload run normally. Fall back to
+              // a raw tmux kill when the Active tab isn't in the DOM.
+              for (const t of _clashing) {
+                try {
+                  const _el = document.querySelector(`.cookbook-task[data-task-id="${t.sessionId}"]`);
+                  const _btn = _el?.querySelector('.cookbook-task-action-stop');
+                  if (_btn) {
+                    _btn.click();
+                  } else if (_runningMod._tmuxGracefulKill) {
+                    await fetch('/api/shell/exec', {
+                      method: 'POST', credentials: 'same-origin',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ command: _runningMod._tmuxGracefulKill(t) }),
+                    });
+                  }
+                } catch (_killErr) { /* best-effort */ }
+              }
+              await new Promise(r => setTimeout(r, 2500));
             }
-            // Give the OS a beat to release port 8000.
-            await new Promise(r => setTimeout(r, 2500));
           }
         } catch (_e) { /* best-effort */ }
 
