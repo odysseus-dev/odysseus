@@ -10,6 +10,8 @@ import json
 import logging
 from typing import Optional
 
+from .utils import flatten_message_text, strip_media
+
 logger = logging.getLogger(__name__)
 
 SKILL_EXTRACT_PROMPT = (
@@ -153,16 +155,7 @@ async def maybe_extract_skill(
             logger.debug("[skill-extract] no recent messages, skipping")
             return None
 
-        # Strip media (images/audio) from messages
-        stripped_recent = []
-        for msg in recent:
-            content = msg.get("content", "")
-            if isinstance(content, list):
-                text_only = [b for b in content if isinstance(b, dict) and b.get("type") == "text"]
-                if not text_only and content:
-                    continue
-                content = text_only
-            stripped_recent.append({"role": msg.get("role"), "content": content})
+        stripped_recent = strip_media(recent)
 
         if not stripped_recent:
             return None
@@ -171,11 +164,7 @@ async def maybe_extract_skill(
         conv_lines = []
         for msg in stripped_recent:
             role = msg.get("role", "?")
-            content = msg.get("content", "")
-            if isinstance(content, list):
-                content = " ".join(
-                    b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
-                )
+            content = flatten_message_text(msg)
             # Truncate long messages
             if len(content) > 500:
                 content = content[:500] + "..."

@@ -17,6 +17,8 @@ import os
 import re
 from typing import Optional
 
+from .utils import flatten_message_text, strip_media
+
 logger = logging.getLogger(__name__)
 
 
@@ -300,21 +302,7 @@ async def extract_and_store(
         if len(recent) < 2:
             return  # Need at least a user message and assistant response
 
-        # Strip media (images/audio) from messages — background memory extraction
-        # only needs the text. The VL-generated descriptions are already in the
-        # text content of the messages. This avoids sending image tokens to
-        # non-vision models and prevents accidental "vision grounding" triggers.
-        stripped_recent = []
-        for msg in recent:
-            role = msg.get("role")
-            content = msg.get("content", "")
-            if isinstance(content, list):
-                # Filter out multimodal blocks that aren't text
-                text_only = [b for b in content if isinstance(b, dict) and b.get("type") == "text"]
-                if not text_only and content:
-                    continue
-                content = text_only
-            stripped_recent.append({"role": role, "content": content})
+        stripped_recent = strip_media(recent)
 
         if not stripped_recent:
             return
@@ -332,16 +320,9 @@ async def extract_and_store(
         # the model actually extract. Controlled repro on this model: 0/6 trials
         # with the old structure vs 6/6 with this one. The skill extractor flattens
         # for the same reason.
-        def _flatten_msg(m):
-            c = m.get("content", "")
-            if isinstance(c, list):
-                c = " ".join(
-                    b.get("text", "") for b in c
-                    if isinstance(b, dict) and b.get("type") == "text"
-                )
-            return f"{m.get('role', '?')}: {c}"
-
-        transcript = "\n\n".join(_flatten_msg(m) for m in stripped_recent)
+        transcript = "\n\n".join(
+            f"{m.get('role', '?')}: {flatten_message_text(m)}" for m in stripped_recent
+        )
         extraction_messages = [
             {"role": "system", "content": EXTRACT_SYSTEM_PROMPT},
             {"role": "user", "content": (
