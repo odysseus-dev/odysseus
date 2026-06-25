@@ -3766,6 +3766,24 @@ async def stream_agent_loop(
             yield f'data: {json.dumps({"delta": cleaned_round})}\n\n'
 
         if not tool_blocks:
+            # ── Check for failed native tool calls ────────────────────
+            if native_tool_calls and not _force_answer:
+                failed_names = [tc.get("name", "") for tc in native_tool_calls]
+                _allowed_names = sorted([t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")])
+                _allowed_str = ", ".join(_allowed_names) if _allowed_names else "none available"
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        f"Error: You attempted to call tools: {failed_names}. "
+                        f"However, these tools do not exist or are not available in this turn. "
+                        f"Available tools you can call: {_allowed_str}. "
+                        "Please choose a valid tool from this list (for example, use `app_api` to reach email, calendar, or other UI endpoints) or respond directly to the user with text."
+                    )
+                })
+                logger.info(f"[agent] native tool calls failed to convert ({failed_names}). Nudging and looping again.")
+                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                continue
+
             # ── Completion verifier (mechanism 3a) ────────────────────
             # The model is finishing. If this was an effectful agentic turn,
             # have a fresh-context verifier independently check the work

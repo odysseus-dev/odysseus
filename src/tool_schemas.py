@@ -1084,7 +1084,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "list_emails",
-            "description": "List emails from an account/folder, newest first. Returns subject, sender, date, UID, and account for each email. Use list_email_accounts first when the user mentions Gmail/work/a custom mailbox. For last/latest/newest email requests, use max_results=1 and unread_only=false.",
+            "description": "List or search emails from an account/folder, newest first. Returns subject, sender, date, UID, and account for each email. Use list_email_accounts first when the user mentions Gmail/work/a custom mailbox. For last/latest/newest email requests, use max_results=1 and unread_only=false.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1093,6 +1093,7 @@ FUNCTION_TOOL_SCHEMAS = [
                     "limit": {"type": "integer", "description": "Backward-compatible alias for max_results"},
                     "unread_only": {"type": "boolean", "description": "Only show unread emails. Default false; set true only when the user asks for unread emails."},
                     "unresponded_only": {"type": "boolean", "description": "Only show unanswered emails. Default false."},
+                    "query": {"type": "string", "description": "Optional keyword search query (searches subject, body, or sender for this term)."},
                     "account": {"type": "string", "description": "Optional account name/email/id from list_email_accounts, e.g. Gmail or user@example.com"},
                 },
             }

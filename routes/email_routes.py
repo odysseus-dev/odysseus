@@ -1365,7 +1365,7 @@ def setup_email_routes():
             "_fixture_body": body,
         }
 
-    def _fixture_email_list(folder: str, limit: int, offset: int, filter_: str, from_addr: str | None, owner: str) -> dict | None:
+    def _fixture_email_list(folder: str, limit: int, offset: int, filter_: str, from_addr: str | None, owner: str, query: str | None = None) -> dict | None:
         if not _fixture_email_enabled():
             return None
         if (folder or "INBOX").upper() not in {"INBOX", "ALL", "ALL MAIL"}:
@@ -1378,6 +1378,16 @@ def setup_email_routes():
                 if needle in (e.get("from_address") or "").lower()
                 or needle in (e.get("from_name") or "").lower()
             ]
+        if query:
+            terms = str(query).lower().split()
+            if terms:
+                def _matches(item: dict) -> bool:
+                    haystack = " ".join(
+                        str(item.get(key) or "")
+                        for key in ("subject", "from_name", "from_address", "_fixture_body")
+                    ).lower()
+                    return all(term in haystack for term in terms)
+                rows = [e for e in rows if _matches(e)]
         if filter_ in {"unread", "unanswered", "undone", "all", "", None}:
             pass
         elif filter_ in {"favorites", "reminders"} or str(filter_).startswith("tag:"):
@@ -1436,7 +1446,7 @@ def setup_email_routes():
             }
         return {"error": f"Email UID {uid} not found"}
 
-    def _list_emails_sync(folder, limit, offset, filter_, account_id, from_addr=None, has_attachments_only=False, owner=""):
+    def _list_emails_sync(folder, limit, offset, filter_, account_id, from_addr=None, has_attachments_only=False, owner="", query=None):
         """Sync IMAP work — call from async handler via asyncio.to_thread so
         it doesn't block the event loop.
 
@@ -1464,36 +1474,41 @@ def setup_email_routes():
                 _safe = from_addr.replace("\\", "\\\\").replace('"', '\\"')
                 from_clause = f' FROM "{_safe}"'
 
+            query_clause = ""
+            if query:
+                _safe_q = str(query).replace("\\", "\\\\").replace('"', '\\"')
+                query_clause = f' TEXT "{_safe_q}"'
+
             if filter_ == "unread":
-                status, data = _imap_uid_search(conn, f"(UNSEEN{from_clause})")
+                status, data = _imap_uid_search(conn, f"(UNSEEN{from_clause}{query_clause})")
             elif filter_ == "favorites":
                 # Flagged/favorited emails (the star toggle sets the \Flagged flag).
-                status, data = _imap_uid_search(conn, f"(FLAGGED{from_clause})")
+                status, data = _imap_uid_search(conn, f"(FLAGGED{from_clause}{query_clause})")
             elif filter_ == "unanswered":
-                status, data = _imap_uid_search(conn, f"(UNSEEN UNANSWERED{from_clause})")
+                status, data = _imap_uid_search(conn, f"(UNSEEN UNANSWERED{from_clause}{query_clause})")
             elif filter_ == "undone":
                 # All emails NOT marked as answered/done (read or unread).
-                status, data = _imap_uid_search(conn, f"(UNANSWERED{from_clause})")
+                status, data = _imap_uid_search(conn, f"(UNANSWERED{from_clause}{query_clause})")
             elif filter_ == "reminders":
                 # Prefer the Odysseus marker header, but include the subject
                 # fallback too. The fallback uses a distinct Odysseus prefix
                 # so ordinary emails containing "Reminder" don't get mixed in.
                 status, data = _imap_uid_search(
                     conn,
-                    f'(OR HEADER X-Odysseus-Kind "reminder" SUBJECT "Reminder (Odysseus):"{from_clause})',
+                    f'(OR HEADER X-Odysseus-Kind "reminder" SUBJECT "Reminder (Odysseus):"{from_clause}{query_clause})',
                 )
             elif filter_ == "pending_30d":
                 # "What's pending in the last month" — UNANSWERED + delivered
                 # within the last 30 days. SINCE takes a DD-Mon-YYYY date.
                 from datetime import datetime as _dt, timedelta as _td
                 _since = (_dt.utcnow() - _td(days=30)).strftime("%d-%b-%Y")
-                status, data = _imap_uid_search(conn, f'(UNANSWERED SINCE "{_since}"{from_clause})')
+                status, data = _imap_uid_search(conn, f'(UNANSWERED SINCE "{_since}"{from_clause}{query_clause})')
             elif filter_ == "stale_30d":
                 # "What's been sitting too long" — UNANSWERED + delivered
                 # MORE than 30 days ago. BEFORE excludes the cutoff date itself.
                 from datetime import datetime as _dt, timedelta as _td
                 _before = (_dt.utcnow() - _td(days=30)).strftime("%d-%b-%Y")
-                status, data = _imap_uid_search(conn, f'(UNANSWERED BEFORE "{_before}"{from_clause})')
+                status, data = _imap_uid_search(conn, f'(UNANSWERED BEFORE "{_before}"{from_clause}{query_clause})')
             elif filter_ and filter_.startswith("tag:"):
                 # Tag-based filter — resolve UIDs from email_tags first, then
                 # ask IMAP for those messages by Message-ID. `tag:spam` reads
@@ -1594,8 +1609,8 @@ def setup_email_routes():
                     return {"emails": [], "total": 0, "folder": folder}
                 data = [b" ".join(sorted(_uids, key=lambda x: int(x) if str(x, "ascii", "ignore").isdigit() else 0))]
                 status = "OK"
-            elif from_clause:
-                status, data = _imap_uid_search(conn, f"({from_clause.strip()})")
+            elif from_clause or query_clause:
+                status, data = _imap_uid_search(conn, f"({(from_clause + query_clause).strip()})")
             else:
                 status, data = _imap_uid_search(conn, "ALL")
 
@@ -1928,6 +1943,7 @@ def setup_email_routes():
         from_addr: str | None = Query(None, alias="from"),
         account_id: str | None = Query(None),
         has_attachments: int = Query(0),
+        query: str | None = Query(None),
         cache_bust: str | None = Query(None, alias="_"),
         owner: str = Depends(require_owner),
     ):
@@ -1937,12 +1953,12 @@ def setup_email_routes():
         _deferred = getattr(_start_poller, '_deferred', None)
         if _deferred:
             await _deferred()
-        fixture_result = _fixture_email_list(folder, limit, offset, filter, from_addr, owner)
+        fixture_result = _fixture_email_list(folder, limit, offset, filter, from_addr, owner, query=query)
         if fixture_result is not None:
             return fixture_result
         # SECURITY: include `owner` in the cache key so two users with
         # different account scopes don't share a cached list.
-        ck = _list_cache_key(account_id, folder, filter, limit, offset, from_addr or "") + (int(bool(has_attachments)), owner)
+        ck = _list_cache_key(account_id, folder, filter, limit, offset, from_addr or "") + (int(bool(has_attachments)), owner, query or "")
         if not cache_bust:
             cached = _list_cache_get(ck)
             if cached is not None:
@@ -1960,7 +1976,7 @@ def setup_email_routes():
                 return cached
         result = await _asyncio.to_thread(
             _list_emails_sync, folder, limit, offset, filter, account_id, from_addr,
-            bool(has_attachments), owner,
+            bool(has_attachments), owner, query,
         )
         if result and not result.get("error"):
             if offset == 0 and not from_addr and not has_attachments and filter in ("all", "unread", "unanswered", "undone"):

@@ -705,7 +705,7 @@ def _fixture_read_email(uid=None, message_id=None, folder="INBOX", account=None)
 
 
 def _list_emails(folder="INBOX", max_results=20, unresponded_only=False,
-                 unread_only=False, account=None):
+                 unread_only=False, account=None, query=None):
     """List emails newest-first. By default returns the latest messages,
     including read mail, so it matches normal inbox UI expectations.
     Pass unread_only=True and/or unresponded_only=True for attention scans.
@@ -721,18 +721,19 @@ def _list_emails(folder="INBOX", max_results=20, unresponded_only=False,
         if select_status != "OK":
             raise ValueError(f"IMAP folder not found: {folder}")
 
-        if unread_only and unresponded_only:
-            status, data = conn.uid("SEARCH", None, "(UNSEEN UNANSWERED)")
-        elif unread_only:
-            status, data = conn.uid("SEARCH", None, "(UNSEEN)")
-        elif unresponded_only:
-            # Was missing — unresponded_only=True (without unread_only) fell through
-            # to "ALL" and returned answered mail too, despite the documented
-            # "emails without replies" behaviour.
-            status, data = conn.uid("SEARCH", None, "(UNANSWERED)")
-        else:
-            # Include read too — IMAP search "ALL" returns the entire folder
-            status, data = conn.uid("SEARCH", None, "ALL")
+        # Build search criteria
+        criteria_parts = []
+        if unread_only:
+            criteria_parts.append("UNSEEN")
+        if unresponded_only:
+            criteria_parts.append("UNANSWERED")
+        if query:
+            # Escape quotes/backslashes for IMAP SEARCH
+            safe_query = str(query).replace("\\", "\\\\").replace('"', '\\"')
+            criteria_parts.append(f'TEXT "{safe_query}"')
+
+        search_criteria = f"({' '.join(criteria_parts)})" if criteria_parts else "ALL"
+        status, data = conn.uid("SEARCH", None, search_criteria)
 
         if status != "OK" or not data[0]:
             return []
@@ -794,9 +795,11 @@ def _result_sort_time(result: dict) -> datetime:
 
 
 def _list_emails_across_accounts(folder="INBOX", max_results=20,
-                                 unresponded_only=False, unread_only=False):
+                                 unresponded_only=False, unread_only=False, query=None):
     fixture = _fixture_list_emails(folder, max_results, unresponded_only, unread_only, None)
     if fixture is not None:
+        if query:
+            fixture = [row for row in fixture if _fixture_email_matches(row, str(query))]
         return fixture, []
     rows = _list_accounts_raw()
     combined = []
@@ -812,6 +815,7 @@ def _list_emails_across_accounts(folder="INBOX", max_results=20,
                 unresponded_only=unresponded_only,
                 unread_only=unread_only,
                 account=account_selector,
+                query=query,
             )
             for item in account_results:
                 item["_account"] = account_name
@@ -1857,9 +1861,9 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="list_emails",
             description=(
-                "List unread or unresponded emails from the inbox. "
+                "List, search, or check emails from the inbox. "
                 "Returns subject, sender, date, and cached AI summary for each. "
-                "Use this to check what emails need attention. "
+                "Pass `query` to search emails by keyword (subject, body, headers). "
                 "Pass `account` to scan a non-default mailbox."
             ),
             inputSchema={
@@ -1884,6 +1888,10 @@ async def list_tools() -> list[Tool]:
                         "type": "boolean",
                         "description": "Only show unread emails. Default false so latest/all inbox requests match normal mail clients.",
                         "default": False,
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Optional keyword search query (searches subject, body, or sender for this term).",
                     },
                     **ACCOUNT_PROP,
                 },
@@ -2193,6 +2201,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             max_results = arguments.get("max_results", arguments.get("limit", 20))
             unresponded_only = arguments.get("unresponded_only", False)
             unread_only = arguments.get("unread_only", False)
+            query = arguments.get("query")
             # Build a header note so the LLM always knows which account was hit
             # AND what other accounts exist. Prevents "I can see emails" →
             # user: "I have 2 inboxes" → "which one?" loop.
@@ -2205,6 +2214,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     max_results=max_results,
                     unresponded_only=unresponded_only,
                     unread_only=unread_only,
+                    query=query,
                 )
                 account_names = [
                     f"{a.get('name') or a.get('imap_user')} <{a.get('imap_user') or a.get('from_address') or '?'}>"
@@ -2221,6 +2231,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     unresponded_only=unresponded_only,
                     unread_only=unread_only,
                     account=acct,
+                    query=query,
                 )
                 active_cfg = _load_config(acct)
                 if active_cfg.get("account_name") or active_cfg.get("imap_user"):
