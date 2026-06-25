@@ -504,17 +504,33 @@ def resolve_session_auth(sess, session_id: str, owner: Optional[str] = None):
         logger.warning(f"Failed to resolve session headers: {e}")
 
 
+# Date-suffix pattern: model names like "qwen3-vl-plus-2025-12-19" where
+# the endpoint lists the base model "qwen3-vl-plus" without the date.
+_DATE_SUFFIX_RE = re.compile(r'^(.+)-(\d{4}-\d{2}-\d{2})$')
+
+
 def _match_cached_model_id(requested: str, models) -> Optional[str]:
     if not requested or not models:
         return None
     model_ids = [str(m) for m in models if m]
+    # Exact match
     if requested in model_ids:
         return requested
 
     req_base = os.path.basename(requested.rstrip("/"))
+    # Basename match
     for model_id in model_ids:
         if os.path.basename(model_id.rstrip("/")) == req_base:
             return model_id
+
+    # Date-suffixed model name (e.g. "qwen3-vl-plus-2025-12-19" → "qwen3-vl-plus")
+    m = _DATE_SUFFIX_RE.match(requested)
+    if m:
+        base_name = m.group(1)
+        for model_id in model_ids:
+            if model_id == base_name or os.path.basename(model_id.rstrip("/")) == base_name:
+                return model_id
+
     return None
 
 

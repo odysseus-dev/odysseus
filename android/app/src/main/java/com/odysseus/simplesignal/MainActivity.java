@@ -97,6 +97,18 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         configureSystemBars();
+
+        // Accept mode config via intent extras — works on release builds (no run-as needed)
+        Bundle extras = getIntent().getExtras();
+        if (extras != null) {
+            if (extras.containsKey(PREF_MODE)) {
+                saveMode(extras.getString(PREF_MODE));
+            }
+            if (extras.containsKey(PREF_URL)) {
+                saveConfiguredUrl(extras.getString(PREF_URL));
+            }
+        }
+
         String mode = getSavedMode();
         if (MODE_STANDALONE.equals(mode)) {
             startStandaloneMode();
@@ -909,8 +921,10 @@ public class MainActivity extends Activity {
                 resolver.update(uri, values, null, null);
                 location = "Downloads/Odysseus/" + filename;
             } else {
-                File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Odysseus");
-                if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create Downloads folder");
+                File root = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+                if (root == null) root = getFilesDir();
+                File dir = new File(root, "Odysseus");
+                if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create app downloads folder");
                 File file = new File(dir, filename);
                 try (FileOutputStream output = new FileOutputStream(file)) {
                     output.write(bytes);
@@ -1120,6 +1134,31 @@ public class MainActivity extends Activity {
             runOnUiThread(() -> {
                 hideSoftKeyboard();
                 showModeChooser(true);
+            });
+        }
+
+        @JavascriptInterface
+        public void switchToStandalone() {
+            runOnUiThread(() -> {
+                hideSoftKeyboard();
+                startStandaloneMode();
+            });
+        }
+
+        @JavascriptInterface
+        public void switchToEmulator() {
+            runOnUiThread(() -> {
+                hideSoftKeyboard();
+                startRemoteModeAt("http://10.0.2.2:7000");
+            });
+        }
+
+        @JavascriptInterface
+        public void switchToUrl(String url) {
+            final String resolvedUrl = (url != null && !url.trim().isEmpty()) ? url : getConfiguredUrl();
+            runOnUiThread(() -> {
+                hideSoftKeyboard();
+                startRemoteModeAt(resolvedUrl);
             });
         }
     }

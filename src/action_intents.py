@@ -49,14 +49,20 @@ _PANEL = (
 )
 _FILE_ACTION = (
     r"(?:open|read|show|list|browse|inspect|check|search|find|edit|modify|"
-    r"change|write|save|create|delete|remove|rename|move|fix|update|refactor|"
+    r"change|write|save|create|delete|remove|rename|move|fix|update|patch|refactor|"
     r"build|run|test|look\s+(?:at|in|through)|work\s+on)"
 )
 _FILE_TARGET = (
     r"(?:files?|folders?|director(?:y|ies)|repo|repository|project|workspace|"
     r"codebase|source|tree|path)"
 )
-_LOCAL_PATH = r"(?:[a-z]:[\\/][^\s`'\"<>]+|(?:\.{1,2}[\\/]|~[\\/]|/)[^\s`'\"<>]+)"
+_FILE_EXT = (
+    r"(?:py|pyw|js|mjs|cjs|ts|tsx|jsx|java|kt|kts|xml|json|jsonc|toml|"
+    r"ya?ml|txt|md|css|scss|html?|gradle|properties|lock|sh|bash|ps1|"
+    r"bat|cmd|sql|rs|go|c|cc|cpp|h|hpp|cs|rb|php|lua)"
+)
+_FILE_ARTIFACT = rf"(?:[\w.-]+[\\/])+[^\s`'\"<>]+|\b[\w.-]+\.{_FILE_EXT}\b"
+_LOCAL_PATH = rf"(?:[a-z]:[\\/][^\s`'\"<>]+|(?:\.{{1,2}}[\\/]|~[\\/]|/)[^\s`'\"<>]+|{_FILE_ARTIFACT})"
 
 _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
     (category, reason, re.compile(pattern, re.I))

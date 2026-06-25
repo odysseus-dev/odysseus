@@ -10,6 +10,8 @@ pypdf
 beautifulsoup4
 charset-normalizer
 numpy
+# Local AI background removal for the gallery editor's Natural rembg path.
+rembg
 # Vector store + local embeddings for RAG, semantic memory, and tool
 # selection. Used on core agent paths, so installed by default — the app
 # still degrades to keyword fallback if they're ever missing.

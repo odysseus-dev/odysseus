@@ -158,8 +158,23 @@ Copy-Item -LiteralPath $targetApk -Destination $latestApk -Force
 $latestShaFile = Join-Path $resolvedOutputDir "$latestName.sha256"
 Set-Content -LiteralPath $latestShaFile -Value "$($hash.Hash.ToLowerInvariant())  $latestName"
 
+# Also save copies to release-assets/ root with -Android- naming convention
+$androidRootName = "Odysseus-Simple-Signal-Android-$versionName-sideload.apk"
+$androidRootApk = Join-Path "$repoRoot/release-assets" $androidRootName
+Copy-Item -LiteralPath $targetApk -Destination $androidRootApk -Force
+$androidRootShaFile = Join-Path "$repoRoot/release-assets" "$androidRootName.sha256"
+Set-Content -LiteralPath $androidRootShaFile -Value "$($hash.Hash.ToLowerInvariant())  $androidRootName"
+
+$androidLatestName = "Odysseus-Simple-Signal-Android-latest-sideload.apk"
+$androidLatestApk = Join-Path "$repoRoot/release-assets" $androidLatestName
+Copy-Item -LiteralPath $targetApk -Destination $androidLatestApk -Force
+$androidLatestShaFile = Join-Path "$repoRoot/release-assets" "$androidLatestName.sha256"
+Set-Content -LiteralPath $androidLatestShaFile -Value "$($hash.Hash.ToLowerInvariant())  $androidLatestName"
+
 Write-Host "Built sideload APK: $targetApk"
 Write-Host "Latest copy: $latestApk"
+Write-Host "Android-root copy: $androidRootApk"
+Write-Host "Android-root latest: $androidLatestApk"
 Write-Host "SHA-256: $($hash.Hash.ToLowerInvariant())"
 Write-Host "Signature:"
 $verifyOutput | ForEach-Object { Write-Host $_ }

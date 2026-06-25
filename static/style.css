@@ -12065,6 +12065,43 @@ textarea.memory-add-input {
   min-height: 36px;
   background: var(--bg);
 }
+/* ── Window control buttons (minimize / maximize / close) in the
+   doc-editor-header. Replaces the old dynamic divider chevron. ── */
+.doc-window-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  opacity: 0.55;
+  cursor: pointer;
+  flex-shrink: 0;
+  order: 0;  /* override legacy .doc-close-btn { order: -1 } */
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.doc-window-btn:hover {
+  opacity: 0.85;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.doc-window-btn:active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 15%, transparent);
+}
+.doc-close-btn:hover {
+  background: var(--red, #e06c75);
+  color: #fff;
+  opacity: 1;
+}
+.doc-close-btn:active {
+  background: color-mix(in srgb, var(--red, #e06c75) 80%, #000);
+  color: #fff;
+}
 /* Version now lives in the document tab, not the footer. */
 #doc-version-badge { display: none !important; }
 /* Language icon chip on doc tabs — sits between the version pill and title.
@@ -28534,7 +28571,12 @@ button .spinner-whirlpool {
     bottom: 0;
     width: 100%;
     max-height: 70vh;
-    height: 70vh;
+    /* Use `auto` so the panel shrinks when controls are re-parented out
+       (syncControlsPlacement moves .ge-controls to state.container on
+       mobile). The old fixed `height: 70vh` left a huge empty box when
+       controls left, because the transform's `100%` reference stayed at
+       70vh even though the visible content was much smaller. */
+    height: auto;
     background: var(--panel);
     border-left: none;
     border-top: 1px solid var(--border);
@@ -28544,7 +28586,10 @@ button .spinner-whirlpool {
     flex-shrink: 0;
     /* Peek height grows with the layer count up to a cap. JS sets the
        `--peek-height` custom property from _renderLayerPanel(); default
-       fallback is enough for the header + one row. */
+       fallback is enough for the header + one row.
+       `100%` here = the panel's actual content height (thanks to height:auto),
+       so the transform shrinks with the panel when controls are dismissed
+       instead of sliding a 70vh ghost box. */
     transform: translateY(calc(100% - (var(--peek-height, 110px) + var(--ge-bottom-gesture-reserve, 48px))));
     transition: transform 0.22s ease-out;
   }
@@ -40220,6 +40265,31 @@ body.theme-frosted .modal {
   color: var(--fg-muted);
   font-size: 11px;
   line-height: 1.35;
+}
+.android-connect-actions {
+  display: flex;
+  justify-content: center;
+  margin: 10px 0 6px;
+}
+.android-disconnect-btn {
+  padding: 6px 16px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel) 80%, var(--bg));
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.android-disconnect-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+}
+.android-disconnect-btn:disabled {
+  opacity: 0.5;
+  cursor: wait;
 }
 .android-connect-status {
   min-height: 28px;

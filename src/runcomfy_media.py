@@ -11,19 +11,22 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
 import time
 import urllib.request
+import wave
 import uuid
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 
@@ -64,6 +67,32 @@ RUNCOMFY_PROVIDER_ALIASES = {
     "comfyui-cloud",
     "cloud",
     "paid",
+}
+GEMINI_VIDEO_PROVIDER_ALIASES = {
+    "gemini",
+    "google",
+    "google_gemini",
+    "google-gemini",
+    "veo",
+}
+GEMINI_VIDEO_DEFAULT_MODEL = "veo-3.1-generate-preview"
+GEMINI_VIDEO_MODELS = (
+    "veo-3.1-generate-preview",
+    "veo-3.1-fast-generate-preview",
+    "veo-3.1-lite-generate-preview",
+    "veo-2.0-generate-001",
+)
+GEMINI_VIDEO_MODEL_ALIASES = {
+    "veo": GEMINI_VIDEO_DEFAULT_MODEL,
+    "veo-3": GEMINI_VIDEO_DEFAULT_MODEL,
+    "veo-3.1": GEMINI_VIDEO_DEFAULT_MODEL,
+    "veo-3.1-pro": GEMINI_VIDEO_DEFAULT_MODEL,
+    "veo-fast": "veo-3.1-fast-generate-preview",
+    "veo-3.1-fast": "veo-3.1-fast-generate-preview",
+    "veo-lite": "veo-3.1-lite-generate-preview",
+    "veo-3.1-lite": "veo-3.1-lite-generate-preview",
+    "veo-2": "veo-2.0-generate-001",
+    "veo-2.0": "veo-2.0-generate-001",
 }
 RUNCOMFY_MODEL_PREFIXES = (
     "blackforestlabs/",
@@ -240,6 +269,8 @@ def _requested_provider(args: Dict[str, Any], content: str = "") -> str:
         return "runcomfy"
     if raw_provider in LOCAL_COMFY_PROVIDER_ALIASES:
         return "comfyui_local"
+    if raw_provider in GEMINI_VIDEO_PROVIDER_ALIASES:
+        return "gemini_video"
 
     if args.get("workflow") or args.get("comfyui_workflow"):
         return "comfyui_local"
@@ -294,6 +325,230 @@ def runcomfy_fallback_content(kind: str, content: str) -> str:
     allowed = keep_by_kind.get(kind, {"prompt", "description", "quality"})
     cleaned = {key: value for key, value in args.items() if key in allowed and value not in (None, "")}
     return json.dumps(cleaned, ensure_ascii=False) if cleaned else content
+
+
+def _model_ids_from_endpoint_fields(ep: object, *field_names: str) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for field_name in field_names:
+        raw = getattr(ep, field_name, None)
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+        except Exception:
+            parsed = raw
+        if isinstance(parsed, str):
+            values = [part.strip() for part in parsed.replace("\n", ",").split(",") if part.strip()]
+        elif isinstance(parsed, (list, tuple, set)):
+            values = [str(item).strip() for item in parsed if str(item or "").strip()]
+        else:
+            values = []
+        for value in values:
+            key = value.lower()
+            if key not in seen:
+                seen.add(key)
+                out.append(value)
+    return out
+
+
+def _is_gemini_media_endpoint(base_or_url: str, ep: object | None = None) -> bool:
+    text = f"{base_or_url or ''} {getattr(ep, 'name', '') if ep else ''}".lower()
+    try:
+        host = (urlparse(base_or_url or "").hostname or "").lower()
+    except Exception:
+        host = ""
+    return "generativelanguage.googleapis.com" in host or "gemini" in text or "google" in text
+
+
+def _is_gemini_video_model(model_id: str) -> bool:
+    model = str(model_id or "").strip().lower()
+    return model in GEMINI_VIDEO_MODEL_ALIASES or model.startswith("veo-") or model.startswith("models/veo-")
+
+
+def _canonical_gemini_video_model(model_id: str) -> str:
+    raw = str(model_id or "").strip()
+    lowered = raw.lower()
+    if lowered.startswith("models/"):
+        lowered = lowered.split("/", 1)[1]
+        raw = raw.split("/", 1)[1]
+    return GEMINI_VIDEO_MODEL_ALIASES.get(lowered, raw)
+
+
+def _gemini_openai_base_from_url(base_or_url: str) -> str:
+    parsed = urlparse(base_or_url or "")
+    scheme = parsed.scheme or "https"
+    netloc = parsed.netloc or "generativelanguage.googleapis.com"
+    version = "v1beta"
+    for part in [part for part in (parsed.path or "").split("/") if part]:
+        if re.fullmatch(r"v\d+(?:beta)?", part):
+            version = part
+            break
+    return f"{scheme}://{netloc}/{version}/openai"
+
+
+def _gemini_native_base_from_url(base_or_url: str) -> str:
+    parsed = urlparse(base_or_url or "")
+    scheme = parsed.scheme or "https"
+    netloc = parsed.netloc or "generativelanguage.googleapis.com"
+    version = "v1beta"
+    for part in [part for part in (parsed.path or "").split("/") if part]:
+        if re.fullmatch(r"v\d+(?:beta)?", part):
+            version = part
+            break
+    return f"{scheme}://{netloc}/{version}"
+
+
+def _extract_api_key_from_headers(headers: Dict[str, str]) -> str:
+    auth = str((headers or {}).get("Authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return str(
+        (headers or {}).get("x-goog-api-key")
+        or (headers or {}).get("X-Goog-Api-Key")
+        or ""
+    ).strip()
+
+
+def _gemini_video_endpoint_config(owner: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    try:
+        from src.auth_helpers import owner_filter
+        from src.database import ModelEndpoint, SessionLocal
+        from src.endpoint_resolver import build_headers, resolve_endpoint_runtime
+    except Exception:
+        return None
+
+    db = SessionLocal()
+    try:
+        query = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+        if owner:
+            query = owner_filter(query, ModelEndpoint, owner)
+        for ep in query.all():
+            try:
+                base, api_key = resolve_endpoint_runtime(ep, owner=owner)
+            except Exception:
+                continue
+            if not _is_gemini_media_endpoint(base, ep):
+                continue
+            headers = build_headers(api_key, base)
+            if not _extract_api_key_from_headers(headers):
+                continue
+            return {
+                "base_url": _gemini_openai_base_from_url(base),
+                "native_base_url": _gemini_native_base_from_url(base),
+                "headers": headers,
+                "models": _model_ids_from_endpoint_fields(ep, "cached_models", "pinned_models"),
+                "endpoint_name": getattr(ep, "name", "Gemini"),
+            }
+    finally:
+        db.close()
+    return None
+
+
+def _select_gemini_video_model(args: Dict[str, Any], models: Optional[list[str]] = None) -> str:
+    requested = str(args.get("model") or args.get("model_id") or "").strip()
+    if requested and _is_gemini_video_model(requested):
+        return _canonical_gemini_video_model(requested)
+    available = [_canonical_gemini_video_model(model) for model in (models or []) if _is_gemini_video_model(model)]
+    available_lower = {model.lower(): model for model in available}
+    for preferred in GEMINI_VIDEO_MODELS:
+        if preferred.lower() in available_lower:
+            return available_lower[preferred.lower()]
+    for model in available:
+        if _is_gemini_video_model(model):
+            return model
+    return GEMINI_VIDEO_DEFAULT_MODEL
+
+
+def _gemini_video_aspect_ratio(args: Dict[str, Any]) -> str:
+    ratio = _normalize_aspect_ratio(args.get("aspect_ratio"))
+    return "9:16" if ratio == "9:16" else "16:9"
+
+
+def _gemini_video_duration_seconds(args: Dict[str, Any]) -> Optional[int]:
+    raw = args.get("duration") or args.get("duration_seconds") or args.get("seconds")
+    if raw is None or str(raw).strip() == "":
+        return None
+    duration = _coerce_int(raw, 8, 4, 8)
+    if duration <= 4:
+        return 4
+    if duration <= 6:
+        return 6
+    return 8
+
+
+def _gemini_video_extra_body(args: Dict[str, Any]) -> Dict[str, Any]:
+    extra: Dict[str, Any] = {}
+    ratio = _gemini_video_aspect_ratio(args)
+    if args.get("aspect_ratio"):
+        extra["aspect_ratio"] = ratio
+    duration = _gemini_video_duration_seconds(args)
+    if duration:
+        extra["duration_seconds"] = duration
+    resolution = str(args.get("resolution") or "").strip().lower()
+    if resolution in {"720p", "1080p", "4k"}:
+        extra["resolution"] = resolution
+        if resolution in {"1080p", "4k"}:
+            extra["duration_seconds"] = 8
+    for key in ("negative_prompt", "seed", "style", "person_generation"):
+        if args.get(key) not in (None, ""):
+            extra[key] = args[key]
+    return extra
+
+
+def _gemini_video_parameters(args: Dict[str, Any]) -> Dict[str, Any]:
+    params: Dict[str, Any] = {}
+    if args.get("aspect_ratio"):
+        params["aspectRatio"] = _gemini_video_aspect_ratio(args)
+    duration = _gemini_video_duration_seconds(args)
+    if duration:
+        params["durationSeconds"] = duration
+    resolution = str(args.get("resolution") or "").strip().lower()
+    if resolution in {"720p", "1080p", "4k"}:
+        params["resolution"] = resolution
+        if resolution in {"1080p", "4k"}:
+            params["durationSeconds"] = 8
+    if args.get("negative_prompt") not in (None, ""):
+        params["negativePrompt"] = str(args["negative_prompt"])
+    if args.get("person_generation") not in (None, ""):
+        params["personGeneration"] = args["person_generation"]
+    if args.get("seed") not in (None, ""):
+        params["seed"] = _coerce_int(args.get("seed"), 0, 0, 2**31 - 1)
+    return params
+
+
+def _normalize_gemini_video_download_url(video_url: str, native_base_url: str) -> str:
+    parsed = urlparse(video_url or "")
+    if (parsed.hostname or "").lower() != "generativelanguage.googleapis.com":
+        return video_url
+    parts = [part for part in (parsed.path or "").split("/") if part]
+    if len(parts) < 2 or parts[1] != "files":
+        return video_url
+
+    native_parts = [part for part in (urlparse(native_base_url or "").path or "").split("/") if part]
+    native_version = next((part for part in native_parts if re.fullmatch(r"v\d+(?:beta)?", part)), "v1beta")
+    if parts[0] == native_version:
+        return video_url
+    parts[0] = native_version
+    return urlunparse(parsed._replace(path="/" + "/".join(parts)))
+
+
+def _find_video_url(payload: Any) -> str:
+    if isinstance(payload, dict):
+        for key in ("url", "download_url", "video_url", "uri"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        for value in payload.values():
+            found = _find_video_url(value)
+            if found:
+                return found
+    elif isinstance(payload, list):
+        for item in payload:
+            found = _find_video_url(item)
+            if found:
+                return found
+    return ""
 
 
 def _coerce_int(value: Any, default: int, minimum: int, maximum: int) -> int:
@@ -2247,6 +2502,276 @@ async def _generate_runcomfy_cli_media(
     return result
 
 
+def _builtin_music_seed(text: str) -> int:
+    digest = hashlib.sha256((text or "odysseus").encode("utf-8", errors="ignore")).digest()
+    return int.from_bytes(digest[:8], "big", signed=False)
+
+
+def _deterministic_noise(index: int, seed: int) -> float:
+    raw = math.sin((index + (seed % 100_000)) * 12.9898) * 43758.5453
+    return (raw - math.floor(raw)) * 2.0 - 1.0
+
+
+def _write_builtin_synth_wav(path: Path, prompt: str, args: Dict[str, Any]) -> None:
+    sample_rate = 22050
+    duration = _coerce_int(args.get("duration") or args.get("seconds"), 30, 5, 120)
+    seed = _builtin_music_seed(prompt)
+    bpm = _coerce_int(args.get("bpm"), 88 + (seed % 41), 60, 180)
+    base_notes = [220.0, 246.94, 261.63, 293.66, 329.63, 349.23, 392.0]
+    base = base_notes[seed % len(base_notes)]
+    scales = (
+        [0, 2, 4, 7, 9, 12],
+        [0, 3, 5, 7, 10, 12],
+        [0, 2, 3, 7, 9, 12],
+        [0, 5, 7, 10, 12, 14],
+    )
+    scale = scales[(seed >> 4) % len(scales)]
+    progression = [0, 3, 4, 1, 5, 4, 0, 0]
+    total = sample_rate * duration
+    frames = bytearray()
+    two_pi = math.pi * 2.0
+    beat_len = 60.0 / bpm
+
+    for i in range(total):
+        t = i / sample_rate
+        beat = t / beat_len
+        bar = int(beat // 4)
+        beat_in_bar = beat % 4.0
+        eighth = int(beat * 2)
+        step_phase = (beat * 2.0) % 1.0
+        chord_root = progression[bar % len(progression)]
+        melody_pick = (eighth + (seed >> (eighth % 16))) % len(scale)
+        melody_freq = base * (2 ** ((scale[melody_pick] + chord_root) / 12.0))
+        bass_freq = (base / 2.0) * (2 ** (chord_root / 12.0))
+
+        gate = min(1.0, step_phase * 10.0) * max(0.0, 1.0 - step_phase * 0.75)
+        melody = (
+            math.sin(two_pi * melody_freq * t)
+            + 0.35 * math.sin(two_pi * melody_freq * 2.0 * t)
+        ) * 0.12 * gate
+        harmony = math.sin(two_pi * melody_freq * 0.5 * t) * 0.07 * gate
+        bass = math.sin(two_pi * bass_freq * t) * 0.16 * max(0.0, 1.0 - (beat % 1.0) * 0.45)
+
+        kick_phase = beat % 1.0
+        kick = 0.0
+        if kick_phase < 0.16:
+            kick_freq = 78.0 - 42.0 * (kick_phase / 0.16)
+            kick = math.sin(two_pi * kick_freq * t) * math.exp(-28.0 * kick_phase) * 0.45
+
+        snare = 0.0
+        if (1.0 <= beat_in_bar < 1.12) or (3.0 <= beat_in_bar < 3.12):
+            local = min(beat_in_bar - 1.0 if beat_in_bar < 2.0 else beat_in_bar - 3.0, 0.12)
+            snare = _deterministic_noise(i, seed) * math.exp(-18.0 * local) * 0.18
+
+        hat_phase = (beat * 2.0) % 1.0
+        hat = 0.0
+        if hat_phase < 0.08:
+            hat = _deterministic_noise(i * 3, seed) * math.exp(-45.0 * hat_phase) * 0.07
+
+        left = bass + kick + snare + hat + melody * 0.85 + harmony * 0.55
+        right = bass + kick + snare + hat + melody * 0.55 + harmony * 0.85
+        left = max(-0.95, min(0.95, left))
+        right = max(-0.95, min(0.95, right))
+        frames.extend(struct.pack("<hh", int(left * 32767), int(right * 32767)))
+
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(2)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(bytes(frames))
+
+
+async def _generate_builtin_music_media(
+    args: Dict[str, Any],
+    *,
+    owner: Optional[str] = None,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    prompt = str(
+        args.get("prompt")
+        or args.get("description")
+        or args.get("tags")
+        or "an original instrumental song"
+    ).strip()
+    if not prompt:
+        return {"error": "A prompt is required for local music generation.", "exit_code": 1}
+
+    generated_root = Path(GENERATED_IMAGES_DIR)
+    generated_root.mkdir(parents=True, exist_ok=True)
+    final_name = f"{uuid.uuid4().hex[:12]}.wav"
+    final_path = generated_root / final_name
+    await asyncio.to_thread(_write_builtin_synth_wav, final_path, prompt, args)
+    media_id = _save_gallery_row(
+        path=final_path,
+        filename=final_name,
+        media_type="audio",
+        prompt=prompt,
+        model_id="odysseus-local-synth",
+        owner=owner,
+        session_id=session_id,
+        args=args,
+    )
+    result = _media_success_result(
+        kind="music",
+        files=[{
+            "url": f"/api/generated-image/{final_name}",
+            "id": media_id,
+            "filename": final_name,
+            "type": "audio",
+            "kind": "music",
+            "size_bytes": final_path.stat().st_size,
+        }],
+        prompt=prompt,
+        model_id="odysseus-local-synth",
+        args=args,
+        provider="builtin_audio",
+    )
+    result["output"] = (
+        f"Generated local synth audio saved: {result['media_url']}\n"
+        "Provider: built-in local WAV fallback. For AI music/vocals, enable RunComfy Cloud or pass a local ComfyUI audio workflow."
+    )
+    return result
+
+
+async def _generate_gemini_video_media(
+    kind: str,
+    args: Dict[str, Any],
+    *,
+    owner: Optional[str] = None,
+    session_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    if kind != "video":
+        return None
+
+    config = _gemini_video_endpoint_config(owner=owner)
+    if not config:
+        return None
+
+    prompt = str(args.get("prompt") or args.get("description") or "").strip()
+    if not prompt:
+        return {"error": "A prompt is required for Gemini/Veo video generation.", "exit_code": 1}
+
+    model_id = _select_gemini_video_model(args, config.get("models") or [])
+    prompt = _professional_video_prompt(prompt, args, model_id)
+    timeout = _coerce_int(args.get("timeout"), 1800, 60, 7200)
+    poll_interval = _coerce_int(args.get("poll_interval"), 10, 2, 60)
+    configured_base = str(config.get("base_url") or "").rstrip("/")
+    native_base_url = str(config.get("native_base_url") or _gemini_native_base_from_url(configured_base)).rstrip("/")
+    api_key = _extract_api_key_from_headers(dict(config["headers"] or {}))
+    if not api_key:
+        return {"error": "Gemini/Veo video generation needs a Gemini API key.", "exit_code": 1}
+
+    headers = {
+        "x-goog-api-key": api_key,
+        "Content-Type": "application/json",
+    }
+    download_headers = {"x-goog-api-key": api_key}
+    body: Dict[str, Any] = {"instances": [{"prompt": prompt}]}
+    parameters = _gemini_video_parameters(args)
+    if parameters:
+        body["parameters"] = parameters
+
+    create_url = f"{native_base_url}/models/{model_id}:predictLongRunning"
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=30.0, read=60.0, write=30.0, pool=30.0),
+            follow_redirects=True,
+        ) as client:
+            create_response = await client.post(create_url, headers=headers, json=body)
+            if create_response.status_code >= 400:
+                return {
+                    "error": f"Gemini/Veo video generation failed ({create_response.status_code}): {create_response.text[:1200]}",
+                    "exit_code": 1,
+                }
+            operation = create_response.json()
+            operation_name = str(operation.get("name") or operation.get("id") or "").strip().lstrip("/")
+            if not operation_name:
+                return {"error": f"Gemini/Veo returned no operation id: {operation}", "exit_code": 1}
+
+            status_payload = operation
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                status = str(status_payload.get("status") or "").strip().lower()
+                if status in {"completed", "succeeded", "done"} or status_payload.get("done") is True:
+                    break
+                if status in {"failed", "cancelled", "canceled", "error"}:
+                    return {
+                        "error": f"Gemini/Veo video generation failed: {json.dumps(status_payload.get('error') or status_payload, ensure_ascii=False)[:1200]}",
+                        "exit_code": 1,
+                    }
+                if status_payload.get("error"):
+                    return {
+                        "error": f"Gemini/Veo video generation failed: {json.dumps(status_payload.get('error'), ensure_ascii=False)[:1200]}",
+                        "exit_code": 1,
+                    }
+                await asyncio.sleep(poll_interval)
+                status_response = await client.get(f"{native_base_url}/{operation_name}", headers=download_headers)
+                if status_response.status_code >= 400:
+                    return {
+                        "error": f"Gemini/Veo video status check failed ({status_response.status_code}): {status_response.text[:1200]}",
+                        "exit_code": 1,
+                    }
+                status_payload = status_response.json()
+            else:
+                return {"error": f"Gemini/Veo video generation timed out after {timeout}s.", "exit_code": 1}
+
+            video_url = _find_video_url(status_payload)
+            if not video_url:
+                return {"error": f"Gemini/Veo completed but returned no video URL: {json.dumps(status_payload, ensure_ascii=False)[:1200]}", "exit_code": 1}
+
+            video_url = _normalize_gemini_video_download_url(video_url, native_base_url)
+            download_response = await client.get(video_url, headers=download_headers, timeout=300.0)
+            if download_response.status_code >= 400:
+                return {
+                    "error": f"Gemini/Veo video download failed ({download_response.status_code}): {download_response.text[:1200]}",
+                    "exit_code": 1,
+                }
+    except httpx.RequestError as exc:
+        return {"error": f"Gemini/Veo video request failed: {exc}", "exit_code": 1}
+    except Exception as exc:
+        return {"error": f"Gemini/Veo video generation failed: {exc}", "exit_code": 1}
+
+    generated_root = Path(GENERATED_IMAGES_DIR)
+    generated_root.mkdir(parents=True, exist_ok=True)
+    parsed_url = urlparse(video_url)
+    ext = _ext_from_response(Path(parsed_url.path).name or "video.mp4", download_response.headers.get("content-type", ""))
+    if ext not in VIDEO_EXTS:
+        ext = "mp4"
+    final_name = f"{uuid.uuid4().hex[:12]}.{ext}"
+    final_path = generated_root / final_name
+    final_path.write_bytes(download_response.content)
+    result_args = dict(args)
+    duration = _gemini_video_duration_seconds(args)
+    if duration and not result_args.get("duration"):
+        result_args["duration"] = duration
+    media_id = _save_gallery_row(
+        path=final_path,
+        filename=final_name,
+        media_type="video",
+        prompt=prompt,
+        model_id=model_id,
+        owner=owner,
+        session_id=session_id,
+        args=result_args,
+    )
+    return _media_success_result(
+        kind="video",
+        files=[{
+            "url": f"/api/generated-image/{final_name}",
+            "id": media_id,
+            "filename": final_name,
+            "type": "video",
+            "kind": "video",
+            "size_bytes": final_path.stat().st_size,
+        }],
+        prompt=prompt,
+        model_id=model_id,
+        args=result_args,
+        provider="gemini_veo",
+    )
+
+
 async def generate_runcomfy_media(
     kind: str,
     content: str,
@@ -2276,6 +2801,16 @@ async def generate_runcomfy_media(
             default_model=default_model,
             integration=_runcomfy_integration(args),
         )
+
+    if requested == "gemini_video" or (not requested and kind == "video"):
+        gemini_result = await _generate_gemini_video_media(
+            kind,
+            args,
+            owner=owner,
+            session_id=session_id,
+        )
+        if gemini_result is not None:
+            return gemini_result
 
     if kind == "image":
         local_integration = _comfyui_integration(args)
@@ -2314,6 +2849,13 @@ async def generate_runcomfy_media(
             ),
             "exit_code": 1,
         }
+
+    if kind == "music":
+        return await _generate_builtin_music_media(
+            args,
+            owner=owner,
+            session_id=session_id,
+        )
 
     return {
         "error": (

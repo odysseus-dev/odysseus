@@ -16,7 +16,8 @@ def test_recognizes_local_and_hosted_vision_models():
         "qwen2.5-vl:7b", "qwen2.5vl", "internvl2.5", "cogvlm",
         # already worked, keep them working
         "llava", "llava:7b", "bakllava", "minicpm-v",
-        "gpt-4o", "claude-sonnet-4", "gemini-2.0-flash", "pixtral-12b",
+        "gpt-5.4-mini", "gpt-5-mini", "gpt-4o",
+        "claude-sonnet-4", "gemini-2.0-flash", "pixtral-12b",
     ]:
         assert is_vision_model(name), f"{name!r} should be detected as vision-capable"
 

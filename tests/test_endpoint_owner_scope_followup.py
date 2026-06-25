@@ -383,7 +383,8 @@ def test_gallery_image_endpoint_lookups_are_owner_scoped():
     )[0]
 
     assert "owner_filter(q, ModelEndpoint, owner)" in helper_body
-    assert body.count("_first_visible_image_endpoint(db, user)") >= 4
+    assert "def _image_endpoint_lookup_owner" in body
+    assert body.count("_first_visible_image_endpoint(db, _image_endpoint_lookup_owner(request, user))") >= 4
     assert body.count("_visible_image_endpoint_for_base(db,") >= 2
     assert "def _current_user_is_admin" in body
     assert body.count('raise HTTPException(403, "Choose a registered image endpoint")') >= 2
@@ -396,7 +397,7 @@ def test_gallery_image_endpoint_lookups_are_owner_scoped():
         section = body.split(marker, 1)[1].split("@router.", 1)[0]
         assert "user = require_privilege(request, \"can_generate_images\")" in section
         assert (
-            "_first_visible_image_endpoint(db, user)" in section
+            "_first_visible_image_endpoint(db, _image_endpoint_lookup_owner(request, user))" in section
             or "_visible_image_endpoint_for_base(db," in section
         )
 

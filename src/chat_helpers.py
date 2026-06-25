@@ -42,11 +42,11 @@ def extract_urls(text: str) -> List[str]:
 # models (Ollama/llama.cpp) that ship under many names. See issue #124.
 _VISION_MODEL_KEYWORDS = (
     # hosted
-    "gpt-4o", "gpt-4.1", "gpt-4.5", "gpt-4-turbo", "gpt-4-vision",
+    "gpt-5", "gpt-4o", "gpt-4.1", "gpt-4.5", "gpt-4-turbo", "gpt-4-vision",
     "claude-sonnet", "claude-opus", "claude-haiku", "gemini",
     # open / local
     "vision", "multimodal", "llava", "bakllava", "moondream", "pixtral", "minicpm",
-    "internvl", "cogvlm", "qwen-vl", "qwen2-vl", "qwen3-vl", "qwen3vl",
+    "internvl", "cogvlm", "qwen-vl", "qwen2-vl", "qwen3-vl", "qwen3-vl-plus", "qwen3vl", "qwen3.",
     # multimodal families whose names don't contain "vision"/"vl" but DO accept
     # images — without these the image is silently dropped for common Ollama tags
     # like gemma3:4b or gemma4:12b (issue #1274). Gemma 3/4 (4b+), Llama 4 (all),

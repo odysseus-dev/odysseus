@@ -100,6 +100,27 @@ def test_chatgpt_subscription_payload_omits_max_output_tokens_when_zero():
     assert "max_output_tokens" not in payload
 
 
+def test_chatgpt_subscription_payload_preserves_user_image_blocks():
+    payload = llm_core._build_chatgpt_responses_payload(
+        "gpt-5.4-mini",
+        [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "can you see this image?"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+            ],
+        }],
+        temperature=0.2,
+        max_tokens=37,
+    )
+
+    content = payload["input"][0]["content"]
+    assert content == [
+        {"type": "input_text", "text": "can you see this image?"},
+        {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+    ]
+
+
 def _anthropic_payload(temperature):
     return llm_core._build_anthropic_payload(
         "claude-3-5-sonnet",

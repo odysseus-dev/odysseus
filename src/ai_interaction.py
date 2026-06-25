@@ -223,9 +223,12 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
                     if mid.lower() == model_name.lower():
                         return build_chat_url(base), mid, headers
 
-                # Partial match
+                # Partial match — word-boundary aware to avoid false positives
+                # e.g. "gpt-5" matches "gpt-5-mini" but NOT "qwen-gpt-5.1-instruct"
+                _escaped = re.escape(model_name.lower())
+                _boundary_re = re.compile(r'(?:^|[-_/: ])' + _escaped + r'(?:$|[-_/: ])')
                 for mid in model_ids:
-                    if model_name.lower() in mid.lower() or mid.lower() in model_name.lower():
+                    if _boundary_re.search(mid.lower()) or mid.lower() in model_name.lower():
                         return build_chat_url(base), mid, headers
 
                 if _is_gemini_endpoint(base, ep) and _is_gemini_image_model(model_name):
@@ -340,6 +343,76 @@ def _image_model_hint_from_prompt(prompt: str, owner: Optional[str] = None) -> s
             return model
 
     return ""
+
+
+def _looks_like_image_generation_model(model_id: str) -> bool:
+    model = (model_id or "").strip().lower()
+    if not model:
+        return False
+    image_terms = (
+        "gpt-image",
+        "dall-e",
+        "chatgpt-image",
+        "flux",
+        "qwen-image",
+        "imagen",
+        "stable-diffusion",
+        "stable_diffusion",
+        "sdxl",
+        "diffusion",
+        "kontext",
+    )
+    if any(term in model for term in image_terms):
+        return True
+    return "image" in model and any(term in model for term in ("gemini", "qwen", "gpt"))
+
+
+def _session_selected_image_model(session_id: Optional[str], owner: Optional[str] = None) -> str:
+    """Return the current session's selected image model, if it is image-capable."""
+    if not session_id:
+        return ""
+    session = None
+    manager = get_session_manager()
+    try:
+        if manager is not None:
+            session = getattr(manager, "sessions", {}).get(session_id)
+            if session is None and hasattr(manager, "get_session"):
+                session = manager.get_session(session_id)
+    except Exception:
+        session = None
+    if session is None:
+        return ""
+    sess_owner = (getattr(session, "owner", None) or "").strip()
+    if owner and sess_owner and sess_owner != owner:
+        return ""
+    model = (getattr(session, "model", "") or "").strip()
+    return model if _looks_like_image_generation_model(model) else ""
+
+
+def _is_ollama_image_endpoint_url(url: str) -> bool:
+    try:
+        from src.llm_core import _is_ollama_native_url, _is_ollama_openai_compat_url, _host_match
+        return (
+            _is_ollama_native_url(url)
+            or _is_ollama_openai_compat_url(url)
+            or _host_match(url, "ollama.com")
+        )
+    except Exception:
+        try:
+            parsed = urlparse(url or "")
+            host = (parsed.hostname or "").lower()
+            path = (parsed.path or "").rstrip("/")
+            local_host = host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+            return local_host and (parsed.port == 11434 or path.startswith("/api") or path.startswith("/v1"))
+        except Exception:
+            return False
+
+
+def _ollama_openai_image_base(url: str) -> str:
+    parsed = urlparse(url or "")
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}/v1"
+    return (url or "").replace("/api/chat", "").rstrip("/") + "/v1"
 
 
 def _extract_api_key_from_headers(headers: Dict[str, str]) -> str:
@@ -1920,9 +1993,15 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     except Exception:
         _settings = {}
 
-    # Use admin-configured model/quality if not specified by the tool call
+    # Use the explicit/current/mentioned/configured image model if not specified by the tool call.
+    # The session picker is authoritative for ordinary prompts; prompt hints only
+    # apply when the chat is not already on an image-capable model.
     if not model_spec:
-        model_spec = _image_model_hint_from_prompt(prompt, owner=owner) or _settings.get("image_model", "")
+        model_spec = (
+            _session_selected_image_model(session_id, owner=owner)
+            or _image_model_hint_from_prompt(prompt, owner=owner)
+            or _settings.get("image_model", "")
+        )
     if (not image_args and len(raw_content.split("\n")) <= 3 or image_args and not image_args.get("quality")) and _settings.get("image_quality"):
         quality = _settings["image_quality"]
 
@@ -1994,10 +2073,14 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     is_gpt_image = "gpt-image" in model_id.lower()
     is_dalle = "dall-e" in model_id.lower()
     is_gemini_image = _is_gemini_endpoint(url) and _is_gemini_image_model(model_id)
+    is_ollama_image = _is_ollama_image_endpoint_url(url)
     is_local_diffusion = not is_gpt_image and not is_dalle
 
     # Build the images endpoint URL from the chat completions URL
-    base_url = url.replace("/chat/completions", "").replace("/v1/messages", "").rstrip("/")
+    if is_ollama_image:
+        base_url = _ollama_openai_image_base(url)
+    else:
+        base_url = url.replace("/chat/completions", "").replace("/v1/messages", "").rstrip("/")
     images_url = base_url + "/images/generations"
 
     # Validate size for cloud image models (local diffusion accepts any WxH)
@@ -2014,9 +2097,11 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
         "n": 1,
         "size": size,
     }
+    if is_ollama_image:
+        payload["response_format"] = "b64_json"
 
-    # GPT image models and local diffusion support quality; DALL-E does not
-    if is_gpt_image or is_local_diffusion:
+    # GPT image models and local diffusion endpoints support quality; DALL-E and Ollama do not.
+    if is_gpt_image or (is_local_diffusion and not is_ollama_image):
         if quality in ("low", "medium", "high", "auto"):
             payload["quality"] = quality
         else:

@@ -50,7 +50,11 @@ export function init(apiBase) {
  * Open file picker dialog
  */
 export function openPicker() {
-  document.getElementById('file-input').click();
+  const input = document.getElementById('file-input');
+  if (!input) return;
+  // Let the same file be picked again after it was sent or removed.
+  input.value = '';
+  input.click();
 }
 
 /**

@@ -92,15 +92,7 @@ function keyboardDismissSettleDelay() {
 
 function openAndroidConnectionMode() {
   dismissSoftKeyboard();
-  const bridge = window.OdysseusAndroid;
-  if (!isOdysseusAndroidWebView() || !bridge?.showConnectionMode) return openPcAndroidConnectModal();
-  setTimeout(() => {
-    try {
-      bridge.showConnectionMode();
-    } catch (_) {
-      uiModule.showToast('Could not open connection mode.');
-    }
-  }, keyboardDismissSettleDelay());
+  return openPcAndroidConnectModal();
 }
 
 function ensurePcAndroidConnectModal() {
@@ -141,6 +133,11 @@ function ensurePcAndroidConnectModal() {
             <span class="android-connect-option-sub">Use the phone-local backend</span>
           </button>
         </div>
+        <div class="android-connect-actions">
+          <button type="button" class="android-disconnect-btn" id="android-disconnect-all" title="Run 'adb disconnect' to clear stale/stuck connections">
+            Disconnect All ADB
+          </button>
+        </div>
         <div class="android-connect-status" id="android-connect-status">Ready</div>
         <pre class="android-connect-output" id="android-connect-output"></pre>
       </div>
@@ -152,9 +149,53 @@ function ensurePcAndroidConnectModal() {
     if (e.target === modal) closePcAndroidConnectModal();
   });
   modal.querySelector('#android-connect-adb')?.addEventListener('click', runAndroidAdbPcSetup);
+  modal.querySelector('#android-disconnect-all')?.addEventListener('click', runAndroidAdbDisconnectAll);
   modal.querySelectorAll('[data-connect-note]').forEach(btn => {
-    btn.addEventListener('click', () => showAndroidConnectNote(btn.dataset.connectNote || ''));
+    btn.addEventListener('click', () => {
+      const kind = btn.dataset.connectNote || '';
+      const bridge = window.OdysseusAndroid;
+      if (bridge && kind === 'standalone' && bridge.switchToStandalone) {
+        closePcAndroidConnectModal();
+        bridge.switchToStandalone();
+      } else if (bridge && kind === 'emulator' && bridge.switchToEmulator) {
+        closePcAndroidConnectModal();
+        bridge.switchToEmulator();
+      } else if (bridge && kind === 'url' && bridge.switchToUrl) {
+        closePcAndroidConnectModal();
+        bridge.switchToUrl('');
+      } else {
+        showAndroidConnectNote(kind);
+      }
+    });
   });
+  // Wire drag/dock like other windows (landscape drag, edge dock, etc.)
+  try {
+    const content = modal.querySelector('.modal-content');
+    const header = modal.querySelector('.modal-header');
+    if (content && header) {
+      makeWindowDraggable(modal, {
+        content, header,
+        skipSelector: '.close-btn, button',
+        enableDock: true,
+        enableResize: false,
+      });
+      // Re-center when opened (hidden→visible)
+      const resetGeometry = () => {
+        modal.classList.remove('modal-left-docked', 'modal-right-docked', 'minimized', 'modal-minimized');
+        delete content.dataset._tileZone;
+        delete content.dataset._tilePreSnap;
+        ['position', 'left', 'top', 'right', 'bottom', 'width', 'height',
+          'max-width', 'max-height', 'border-radius', 'transform', 'margin',
+        ].forEach(p => content.style.removeProperty(p));
+      };
+      let wasHidden = modal.classList.contains('hidden');
+      new MutationObserver(() => {
+        const isHidden = modal.classList.contains('hidden');
+        if (wasHidden && !isHidden) resetGeometry();
+        wasHidden = isHidden;
+      }).observe(modal, { attributes: true, attributeFilter: ['class'] });
+    }
+  } catch (_) {}
   return modal;
 }
 
@@ -226,6 +267,39 @@ async function runAndroidAdbPcSetup() {
   }
 }
 
+async function runAndroidAdbDisconnectAll() {
+  const btn = document.getElementById('android-disconnect-all');
+  if (btn) btn.disabled = true;
+  setAndroidConnectStatus('Disconnecting all ADB...', 'running');
+  setAndroidConnectOutput('');
+  try {
+    const res = await fetch('/api/android/adb/disconnect-all', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    let data = {};
+    try { data = await res.json(); } catch (_) {}
+    if (!res.ok || data.ok === false) {
+      const err = data.error || data.detail || res.statusText || 'ADB disconnect failed.';
+      setAndroidConnectStatus('ADB disconnect failed', 'error');
+      setAndroidConnectOutput(err);
+      uiModule.showToast('ADB disconnect failed.');
+      return;
+    }
+    setAndroidConnectStatus('All ADB connections cleared', 'ok');
+    setAndroidConnectOutput(data.output || 'All ADB connections disconnected.');
+    uiModule.showToast('All ADB connections cleared.');
+  } catch (e) {
+    setAndroidConnectStatus('ADB disconnect failed', 'error');
+    setAndroidConnectOutput(e?.message || String(e));
+    uiModule.showToast('ADB disconnect failed.');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 // Default chat config — refreshed on every new-chat action so settings
 // changes take effect immediately (previously cached once at page load and
 // went stale when the user changed their default model).
@@ -289,8 +363,13 @@ function initializeEventListeners() {
   const _overflowAttach = el('overflow-attach-btn');
   if (_overflowAttach) _overflowAttach.addEventListener('click', fileHandlerModule.openPicker);
   el('file-input').addEventListener('change', (e)=>{
-    for (const f of e.target.files) fileHandlerModule.addFiles([f]);
-    fileHandlerModule.renderAttachStrip();
+    const files = Array.from(e.target.files || []);
+    if (files.length) {
+      fileHandlerModule.addFiles(files);
+      fileHandlerModule.renderAttachStrip();
+    }
+    // Reset so selecting the same image again fires another change event.
+    e.target.value = '';
     // Refocus textarea after file picker closes (mobile keyboard)
     const ta = el('message');
     if (ta) setTimeout(() => ta.focus(), 100);
@@ -4024,6 +4103,8 @@ function startOdysseusApp() {
     const files = Array.from(e.dataTransfer.files);
     if (files.length === 0) return;
 
+    fileHandlerModule.addFiles(files);
+    fileHandlerModule.renderAttachStrip();
     uiModule.showToast(`Added ${files.length} file${files.length > 1 ? 's' : ''} to chat`);
 
   });

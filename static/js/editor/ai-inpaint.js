@@ -270,6 +270,7 @@ function createInpaintProgress({ title = 'Inpaint' } = {}) {
   let waitDetail = '';
   let closeTimer = null;
   let source = null;
+  let localComplete = false;
 
   const root = document.createElement('div');
   root.className = 'ge-inpaint-progress';
@@ -351,7 +352,7 @@ function createInpaintProgress({ title = 'Inpaint' } = {}) {
       update(label, detail, percent);
     },
     backend(event) {
-      if (!event || destroyed) return;
+      if (!event || destroyed || localComplete) return;
       const label = phaseTitle(event.phase);
       const detail = String(event.message || '');
       if (event.error) {
@@ -378,11 +379,13 @@ function createInpaintProgress({ title = 'Inpaint' } = {}) {
     },
     done(label = 'Inpaint complete', detail = '') {
       waiting = false;
+      localComplete = true;
       update(label, detail, 100, 'complete');
       closeSoon();
     },
     fail(label = 'Inpaint failed', detail = '') {
       waiting = false;
+      localComplete = true;
       update(label, detail, 100, 'error');
       closeSoon(9000);
     },

@@ -49,6 +49,14 @@ def test_research_action_promotes_to_agent():
     assert message_needs_tools("can you look into GPU hosting options")
 
 
+def test_bare_source_paths_promote_to_agent_file_tools():
+    intent = classify_tool_intent(
+        "patch GUI/embedding_manager.py, GUI/embedding_worker.py, rag_core.py, and requirements-embeddings.txt"
+    )
+    assert intent.needs_tools
+    assert intent.category == "files"
+
+
 def test_explanatory_calendar_questions_stay_plain_chat():
     assert not message_needs_tools("How do I add an entry to my calendar?")
     assert not message_needs_tools("What about the built-in Odysseus calendar, is that linked to email?")

@@ -160,6 +160,23 @@ def test_process_with_thinking_unwraps_gemma4_response_channel(node_available):
     assert "<|channel>" not in html
 
 
+def test_squash_outside_code_collapses_repeated_prose_spaces(node_available):
+    text = _run_markdown_case(
+        "Heyy!     How's   it going?\n"
+        "Unicode\u00a0\u00a0space\u3000\u3000too\n"
+        "  - keep   list text readable\n\n"
+        "```python\n"
+        "print('keep    code spacing')\n"
+        "```\n",
+        "mod.squashOutsideCode(input)",
+    )
+
+    assert "Heyy! How's it going?" in text
+    assert "Unicode space too" in text
+    assert "  - keep list text readable" in text
+    assert "print('keep    code spacing')" in text
+
+
 def test_extract_thinking_blocks_handles_thought_tag(node_available):
     result = _run_markdown_case(
         "<thought>internal reasoning</thought>Final answer.",

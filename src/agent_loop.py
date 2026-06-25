@@ -75,6 +75,7 @@ _AGENT_RULES = """\
 - Code/content >15 lines → ```create_document (NOT in chat). Short snippets OK in chat.
 - Editing an existing document: ALWAYS use ```edit_document with FIND/REPLACE blocks. Do NOT rewrite the whole document with ```update_document unless genuinely changing more than half of it.
 - BIAS TOWARD ACTION on edit requests. If the user says "edit out X", "remove the Y paragraph", "change Z" — JUST DO IT with your best interpretation. Don't ask for clarification on minor ambiguity. The user can undo or re-prompt if wrong.
+- For code/file edit/build/test requests, inspect only until you have enough context. Once a plausible change or verification step is clear, run it; do not keep reading files to avoid acting.
 - AFTER A TOOL SUCCEEDS, do not second-guess. The success message ("Document edited: v2, 1 edit") means it worked. Reply in ONE short sentence confirming what was done. No re-checking, no replaying the diff in your head, no validation theater.
 - AFTER A TOOL FAILS (timeout, error, "Unknown action", "not found"), DO NOT GO SILENT. The user expects a follow-up: either retry with a fix (e.g. correct args, longer-running form, run `tail -f /tmp/foo.log` to see progress, split into smaller steps), OR explicitly tell them "this didn't work, want me to try X instead?". A failed tool is not a stopping condition — only a successful one is.
 - YOU DECLARE WHEN THE JOB IS DONE — not a timer. Keep taking concrete steps while the task still needs them; you have plenty of rounds, so don't rush to quit just because you've made a few calls. There are exactly three ways to end a turn: (1) DONE — before you declare it, sanity-check that every concrete thing the user asked for actually exists or succeeded (file written, edit applied, command exited clean); then stop calling tools and write the final answer (that IS your "done" signal); (2) BLOCKED — you genuinely can't proceed (a capability is missing, permission denied, or data you can't obtain), so say plainly what's blocking you, in a sentence or two, and stop; (3) keep going with the single most useful next step. The only wrong moves are trailing off mid-task without one of these, and repeating a call you already ran.
@@ -123,6 +124,7 @@ _API_AGENT_RULES = """\
 - If the active editor document is an email draft/compose window, treat that open email as the target for "write this", "write the email", "reply with...", "make it say...", "draft this", and similar requests. Do NOT create another document, search/list/manage documents, or open a different reply unless the user explicitly asks. Edit the open email draft with `edit_document` or `update_document`; preserve To/Cc/Bcc/Subject/In-Reply-To/References/X-* header lines unless the user asks to change them.
 - "Give suggestions / feedback / review / how can I improve this / what would make it better" about the OPEN document → call `suggest_document`, do NOT write a prose list of ideas in chat. It creates inline accept/reject bubbles on the doc. Give concrete `find`/`replace`/`reason` items. To suggest an ADDITION (e.g. "add a bow to the SVG", a new section), set `find` to a short existing anchor snippet and `replace` to that same snippet PLUS the new content. Only answer in prose when no document is open, or the request is purely conceptual with no concrete change to propose.
 - BIAS TOWARD ACTION on edit requests. If the user says "edit out X", "remove the Y paragraph", "change Z" — call the edit tool with your best interpretation. Don't ask for clarification on minor ambiguity. The user can undo.
+- For code/file edit/build/test requests, inspect only until you have enough context. Once a plausible change or verification step is clear, run it; do not keep reading files to avoid acting.
 - AFTER A TOOL SUCCEEDS, do not second-guess. A success response means it worked. Reply in ONE short sentence confirming what was done. No verification thinking, no re-analyzing — move on.
 - AFTER A TOOL FAILS, DO NOT GO SILENT. The user expects a follow-up: retry with a fix, run a diagnostic (`tail`, `ls`, `which`), or explicitly tell them what didn't work and what you'll try next. Failure is not a stopping condition.
 - YOU DECLARE WHEN THE JOB IS DONE — not a timer. Keep taking concrete steps while the task still needs them; don't quit early just because you've made a few calls. Three ways to end a turn: (1) DONE — before declaring it, verify every concrete deliverable the user asked for actually exists or succeeded; then stop calling tools and write the final answer (that IS your "done" signal); (2) BLOCKED — you can't proceed (missing capability, permission denied, unobtainable data), so state plainly what's blocking you and stop; (3) keep going with the single most useful next step. Never trail off mid-task without (1) or (2), and never repeat a call you already ran.
@@ -183,6 +185,7 @@ _AGENT_RULES = """\
 - If a needed tool/domain is missing from this turn, say what is missing briefly instead of pretending.
 - After a tool succeeds, do not second-guess it; reply with one short confirmation unless more work remains.
 - After a tool fails, retry with a concrete fix or state what is blocking you.
+- For code/file edit/build/test requests, inspect only until you have enough context. Once a plausible change or verification step is clear, run it; do not keep reading files to avoid acting.
 - Finish only when the user's concrete request is actually done, or clearly state that you are blocked.
 - User identity facts/preferences ("my name is X", "call me X", "I live in X") use `manage_memory`, not contacts.
 """
@@ -196,6 +199,7 @@ _API_AGENT_RULES = """\
 - Keep answers concise unless the user asks for depth.
 - After a tool succeeds, do not second-guess it; reply with one short confirmation unless more work remains.
 - After a tool fails, retry with a concrete fix or state what is blocking you.
+- For code/file edit/build/test requests, inspect only until you have enough context. Once a plausible change or verification step is clear, run it; do not keep reading files to avoid acting.
 - Finish only when the user's concrete request is actually done, or clearly state that you are blocked.
 - User identity facts/preferences ("my name is X", "call me X", "I live in X") use `manage_memory`, not contacts.
 """
@@ -260,7 +264,7 @@ _DOMAIN_RULES = {
 - Use file tools for real disk files, workspace files, project/repo/codebase files, and folders. Use document tools only for editor documents.
 - If the user says workspace/project/repo/codebase/source/files/folders, prefer `get_workspace`, `ls`, `glob`, `grep`, `read_file`, `edit_file`, or `write_file` over `manage_documents`.
 - Prefer `grep`, `glob`, and `ls` over shell equivalents when available.
-- Use `edit_file`/`write_file` for writes; avoid shell redirection/heredocs for editing files.""",
+- For small, surgical edits prefer `edit_file`/`write_file` because they produce clear diffs. Shell, PowerShell, or Python may also create or edit files when that is the practical path, unless the user explicitly asks you not to.""",
     "settings": """\
 ## Settings/API rules
 - Use `manage_settings` for preferences and tool enable/disable.
@@ -271,7 +275,8 @@ _DOMAIN_RULES = {
 - Use `generate_image`, `generate_video`, or `generate_music` when the user asks to create new media. Do not claim you cannot generate media when one of those tools is available; call the tool.
 - Never answer an image/video/music generation request with SVG, HTML, code, or a prompt-only workaround unless the user explicitly asks for SVG/code/prompt text.
 - Image generation tries the current/configured/mentioned image-capable model first, then falls back to free local ComfyUI when it is running/configured; RunComfy Cloud is a paid opt-in integration only.
-- Video and music generation use RunComfy Cloud only when that integration is enabled, or local ComfyUI when the request provides an exact workflow JSON.
+- Video generation uses Gemini/Veo through a configured Gemini API endpoint when available; RunComfy Cloud remains an explicit paid option, and local ComfyUI is used when the request provides an exact workflow JSON.
+- Music generation uses RunComfy Cloud when that integration is enabled, local ComfyUI when the request provides an exact workflow JSON, or a built-in local synth fallback when no music backend is configured.
 - Use `runcomfy_media` when a viewed skill gives a specific RunComfy `model_id`/schema or a local ComfyUI workflow that the narrower tools do not cover.
 - Use `manage_gallery` to list/search/get/describe saved Gallery images and videos. Do not claim you cannot see the Gallery without trying this tool when it is available.
 - Use `edit_image` to edit a Gallery image and save the edited copy back to Gallery. Use `manage_gallery` first if you need an image id.
@@ -338,7 +343,7 @@ TOOL_SECTIONS = {
 ```
 Run any shell command. Output is returned to you. Use for: installing packages, checking files, git, system info, process management, etc.
 Do NOT use bash/curl for web lookup/search/latest/current requests when `web_search` or `web_fetch` is available.
-NEVER use bash to create or change files — no `>`/`>>` redirects, no heredocs (`cat > f << 'EOF'`), no `tee`, `sed -i`, `awk -i`, no `python -c` that writes. To CREATE or fully rewrite a file use `write_file`; to change part of an existing file use `edit_file`. Those show a diff and are the ONLY allowed way to write files. (bash is for read-only inspection: `ls`, `cat` to READ, `grep`, `git status`/`git diff`, builds, installs.)
+You may create or edit files from shell/PowerShell when it is the practical path. Prefer `edit_file`/`write_file` for small targeted changes because they show a diff, but do not stay in read-only inspection when a shell edit or script is the right next step.
 For LONG-running commands (package installs, pip/npm, ffmpeg, model downloads, training, builds — anything that may take more than ~20s), make the FIRST line `#!bg` to run it in the BACKGROUND. You get a job id back immediately and are automatically re-invoked with the full output when it finishes — so you never block the chat waiting. Example:
 ```bash
 #!bg
@@ -352,7 +357,7 @@ NEVER pipe multi-line Python through `python -c "..."` — shell quoting eats re
 <python code>
 ```
 Execute Python code. Use for computation, data processing, scripting. NOT for writing code for the user (use create_document for that). Same sandbox limits as bash — no TTY, no GUI, no `input()`; for anything the user should interact with, generate a single HTML file with inline JS instead.
-Prefer a dedicated tool whenever one fits the job (reading, searching, or writing files); use python only for computation/processing no dedicated tool covers - not for reading or writing files.
+Prefer a dedicated tool whenever one fits the job, but Python may read, write, or transform files when a script is the practical path.
 Do NOT use Python/requests for web lookup/search/latest/current requests when `web_search` or `web_fetch` is available.""",
 
     "web_search": """\
@@ -389,7 +394,7 @@ Write content to a file. First line is the path, rest is the content.""",
 ```edit_file
 {"path": "<file path>", "old_string": "<exact text to replace>", "new_string": "<replacement>", "replace_all": false}
 ```
-Edit an EXISTING file by exact string replacement. PREFER this over bash (sed/echo/redirects) for changing files — it shows a before/after diff. `old_string` must match the file exactly and be unique unless `replace_all` is true. Use write_file to create a new file.""",
+Edit an EXISTING file by exact string replacement. Useful for small targeted changes because it shows a before/after diff. `old_string` must match the file exactly and be unique unless `replace_all` is true. Use write_file to create a new file, or use shell/Python when a scripted edit is more practical.""",
 
     "get_workspace": """\
 ```get_workspace
@@ -442,13 +447,13 @@ Generate a professional image file and render it inline. Prefer structured JSON.
 ```generate_video
 {"prompt": "A red kite tumbles across a windy beach at golden hour, kids chase it laughing, surf in the background. Audio: wind, gulls, distant laughter.", "duration": 8, "aspect_ratio": "16:9", "resolution": "1080p", "quality": "professional", "camera": "low tracking shot, slow push-in"}
 ```
-Generate professional video with the configured media backend and render it inline. Optional fields: `provider` (`runcomfy` for paid cloud, `comfyui` for exact local workflow), `model`/`model_id`, `duration`, `aspect_ratio`, `resolution`, `quality` (`draft`, `professional`, `premium`, `hero`, `4k`), `camera`, `image_url`, `audio_url`, `seed`, `enhance_prompt`, `input` for an exact RunComfy JSON body, `workflow` for an exact ComfyUI workflow, and `timeout`. Auto-routes paid RunComfy requests when enabled.""",
+Generate professional video with the configured media backend and render it inline. Optional fields: `provider` (`gemini` for Gemini/Veo API, `runcomfy` for paid cloud, `comfyui` for exact local workflow), `model`/`model_id`, `duration`, `aspect_ratio`, `resolution`, `quality` (`draft`, `professional`, `premium`, `hero`, `4k`), `camera`, `image_url`, `audio_url`, `seed`, `enhance_prompt`, `input` for an exact RunComfy JSON body, `workflow` for an exact ComfyUI workflow, and `timeout`. Auto-routes Gemini/Veo when a Gemini API endpoint is configured; RunComfy remains opt-in.""",
 
     "generate_music": """\
 ```generate_music
 {"tags": "indie pop, bright guitar, driving drums, female vocal, 120 BPM", "lyrics": "[Verse]\\nMorning on the ridge\\n[Chorus]\\nWe rise, we strike", "duration": 60, "quality": "professional"}
 ```
-Generate professional music/audio with the configured media backend and render it inline. Optional fields: `provider` (`runcomfy` for paid cloud, `comfyui` for exact local workflow), `model`/`model_id`, `quality` (`draft`, `professional`, `premium`, `commercial`, `broadcast`), `prompt`, `tags`, `lyrics`, `duration`, `bpm`, `mood`, `loop`, `force_instrumental`, `audio`, `start_time`, `end_time`, `extend_before_duration`, `extend_after_duration`, `enhance_prompt`, `input`, `workflow`, and `timeout`. Paid RunComfy routes require the RunComfy Cloud integration.""",
+Generate professional music/audio with the configured media backend and render it inline. Optional fields: `provider` (`runcomfy` for paid cloud, `comfyui` for exact local workflow), `model`/`model_id`, `quality` (`draft`, `professional`, `premium`, `commercial`, `broadcast`), `prompt`, `tags`, `lyrics`, `duration`, `bpm`, `mood`, `loop`, `force_instrumental`, `audio`, `start_time`, `end_time`, `extend_before_duration`, `extend_after_duration`, `enhance_prompt`, `input`, `workflow`, and `timeout`. Paid RunComfy routes require the RunComfy Cloud integration; when no music backend is configured, Odysseus creates a built-in local synth WAV fallback.""",
 
     "runcomfy_media": """\
 ```runcomfy_media
@@ -1092,7 +1097,15 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
     def has(*patterns: str) -> bool:
         return any(re.search(p, q) for p in patterns)
 
-    local_path_signal = has(r"(?:[a-z]:[\\/]|(?:\.{1,2}[\\/]|~[\\/]|/)[^\s`'\"<>]+)")
+    file_ext = (
+        r"(?:py|pyw|js|mjs|cjs|ts|tsx|jsx|java|kt|kts|xml|json|jsonc|toml|"
+        r"ya?ml|txt|md|css|scss|html?|gradle|properties|lock|sh|bash|ps1|"
+        r"bat|cmd|sql|rs|go|c|cc|cpp|h|hpp|cs|rb|php|lua)"
+    )
+    file_artifact_signal = rf"(?:[\w.-]+[\\/])+[^\s`'\"<>]+|\b[\w.-]+\.{file_ext}\b"
+    local_path_signal = has(
+        rf"(?:[a-z]:[\\/][^\s`'\"<>]+|(?:\.{{1,2}}[\\/]|~[\\/]|/)[^\s`'\"<>]+|{file_artifact_signal})"
+    )
     calendar_surface = r"\b(?:calendars?|calanders?|calenders?|agenda|events?|meetings?|appointments?|schedule)\b"
     tasks_surface = r"\b(?:tasks?|scheduled\s+tasks?|automations?|automation\s+jobs?|cron|background\s+jobs?)\b"
     notes_surface = r"\b(?:notes?|todos?|to-dos?|checklists?|reminders?|remind\s+me)\b"
@@ -1104,7 +1117,7 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
     project_surface = r"\b(?:repo|repository|project|codebase|source\s+tree|source\s+code|project\s+files|source\s+files)\b"
     project_write_action = (
         r"\b(?:edit|modify|change|write|save|create|delete|remove|rename|move|"
-        r"fix|update|refactor|build|run|test)\b"
+        r"fix|update|patch|refactor|build|run|test)\b"
     )
     research_surface = r"\b(?:research|deep\s+research|deep\s+dive|reports?)\b"
     memory_surface = r"\b(?:memories|memory|brain)\b"
@@ -1135,7 +1148,7 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("notes_calendar_tasks")
     if has(calendar_surface):
         domains.add("notes_calendar_tasks")
-    file_context = has(workspace_surface, project_surface) or local_path_signal
+    file_context = has(workspace_surface, project_surface, file_artifact_signal) or local_path_signal
     if has(documents_surface) or (
         not file_context
         and has(r"\b(draft|compose|poem|story|essay|outline|letter|proofread|suggest|feedback|review this)\b")
@@ -2153,6 +2166,7 @@ async def stream_agent_loop(
     owner: Optional[str] = None,
     relevant_tools: Optional[Set[str]] = None,
     fallbacks: Optional[List[tuple]] = None,
+    prefer_fallbacks_first: bool = False,
     plan_mode: bool = False,
     approved_plan: Optional[str] = None,
     tool_policy: Optional[ToolPolicy] = None,
@@ -2604,7 +2618,10 @@ async def stream_agent_loop(
         # Primary target + any configured fallback models. stream_llm_with_fallback
         # only switches on a pre-content failure, so streamed output is never
         # duplicated; the dead-host cooldown keeps repeat primary attempts cheap.
-        _candidates = [(endpoint_url, model, headers)] + list(fallbacks or [])
+        if prefer_fallbacks_first and fallbacks:
+            _candidates = list(fallbacks or []) + [(endpoint_url, model, headers)]
+        else:
+            _candidates = [(endpoint_url, model, headers)] + list(fallbacks or [])
         # stream_llm enforces a per-read INACTIVITY timeout (httpx read=timeout),
         # which kills a wedged/silent endpoint. This wall-clock deadline is the
         # complementary cap for the rare stream that trickles bytes forever and

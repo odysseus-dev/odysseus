@@ -107,6 +107,11 @@ def _current_user_is_admin(request: Request, user: str | None) -> bool:
         return False
 
 
+def _image_endpoint_lookup_owner(request: Request, user: str | None) -> str | None:
+    """Admins can use every endpoint visible in Settings; users stay scoped."""
+    return None if _current_user_is_admin(request, user) else user
+
+
 def _gallery_owner_matches(owner: str | None, user: str | None) -> bool:
     """True when this request may access a gallery row.
 
@@ -164,6 +169,14 @@ def _visible_image_endpoint_query(db, owner: str | None):
     return owner_filter(q, ModelEndpoint, owner)
 
 
+def _visible_enabled_endpoint_query(db, owner: str | None):
+    from src.auth_helpers import owner_filter
+    q = db.query(ModelEndpoint).filter(
+        ModelEndpoint.is_enabled == True,  # noqa: E712
+    )
+    return owner_filter(q, ModelEndpoint, owner)
+
+
 def _first_visible_image_endpoint(db, owner: str | None):
     endpoints = _visible_image_endpoint_query(db, owner).all()
     if owner:
@@ -187,11 +200,49 @@ def _visible_image_endpoint_for_base(db, base: str, owner: str | None):
     return fallback
 
 
+def _visible_enabled_endpoint_for_base(db, base: str, owner: str | None):
+    target = _normalize_image_endpoint_base(base)
+    if not target:
+        return None
+    fallback = None
+    for ep in _visible_enabled_endpoint_query(db, owner).all():
+        if _normalize_image_endpoint_base(getattr(ep, "base_url", "")) == target:
+            if owner and getattr(ep, "owner", None) == owner:
+                return ep
+            if fallback is None:
+                fallback = ep
+    return fallback
+
+
 def _visible_image_endpoint_for_id(db, endpoint_id: str, owner: str | None):
     endpoint_id = str(endpoint_id or "").strip()
     if not endpoint_id:
         return None
     return _visible_image_endpoint_query(db, owner).filter(ModelEndpoint.id == endpoint_id).first()
+
+
+def _visible_enabled_endpoint_for_id(db, endpoint_id: str, owner: str | None):
+    endpoint_id = str(endpoint_id or "").strip()
+    if not endpoint_id:
+        return None
+    return _visible_enabled_endpoint_query(db, owner).filter(ModelEndpoint.id == endpoint_id).first()
+
+
+def _model_name_prefers_image_edit_endpoint(model_name: str) -> bool:
+    m = str(model_name or "").lower()
+    if "dall-e-3" in m:
+        return False
+    return (
+        "gpt-image" in m
+        or "chatgpt-image" in m
+        or "dall-e-2" in m
+        or ("qwen" in m and "image" in m and any(token in m for token in ("edit", "inpaint", "fill")))
+        or ("seedream" in m and any(token in m for token in ("edit", "inpaint", "fill")))
+        or "kontext" in m
+        or "inpaint" in m
+        or "edit" in m
+        or "fill" in m
+    )
 
 
 def setup_gallery_routes() -> APIRouter:
@@ -425,7 +476,7 @@ def setup_gallery_routes() -> APIRouter:
         # Find image endpoint
         db = SessionLocal()
         try:
-            ep = _first_visible_image_endpoint(db, user)
+            ep = _first_visible_image_endpoint(db, _image_endpoint_lookup_owner(request, user))
         finally:
             db.close()
 
@@ -468,7 +519,7 @@ def setup_gallery_routes() -> APIRouter:
 
         db = SessionLocal()
         try:
-            ep = _first_visible_image_endpoint(db, user)
+            ep = _first_visible_image_endpoint(db, _image_endpoint_lookup_owner(request, user))
         finally:
             db.close()
 
@@ -1183,7 +1234,9 @@ def setup_gallery_routes() -> APIRouter:
         if endpoint_id:
             db = SessionLocal()
             try:
-                ep = _visible_image_endpoint_for_id(db, endpoint_id, user)
+                ep = _visible_image_endpoint_for_id(db, endpoint_id, _image_endpoint_lookup_owner(request, user))
+                if not ep and _model_name_prefers_image_edit_endpoint(chosen_model):
+                    ep = _visible_enabled_endpoint_for_id(db, endpoint_id, _image_endpoint_lookup_owner(request, user))
                 if not ep:
                     progress("failed", "The selected image endpoint is not registered for this user.", percent=100, done=True, error=True)
                     raise HTTPException(403, "Choose a registered image endpoint")
@@ -1194,7 +1247,7 @@ def setup_gallery_routes() -> APIRouter:
         elif not base:
             db = SessionLocal()
             try:
-                ep = _first_visible_image_endpoint(db, user)
+                ep = _first_visible_image_endpoint(db, _image_endpoint_lookup_owner(request, user))
                 if not ep:
                     progress("failed", "No image generation endpoint is configured.", percent=100, done=True, error=True)
                     raise HTTPException(400, "No image generation endpoint configured. Serve a diffusion model via Cookbook first.")
@@ -1216,7 +1269,9 @@ def setup_gallery_routes() -> APIRouter:
             _target = _norm_url(base)
             db = SessionLocal()
             try:
-                ep = _visible_image_endpoint_for_base(db, _target, user)
+                ep = _visible_image_endpoint_for_base(db, _target, _image_endpoint_lookup_owner(request, user))
+                if not ep and _model_name_prefers_image_edit_endpoint(chosen_model):
+                    ep = _visible_enabled_endpoint_for_base(db, _target, _image_endpoint_lookup_owner(request, user))
                 if ep:
                     base = (ep.base_url or base).rstrip("/")
                     api_key = ep.api_key
@@ -1371,6 +1426,38 @@ def setup_gallery_routes() -> APIRouter:
                 return None, _provider_no_image_detail(parsed)
             return await _provider_image_value_to_b64(image, client), ""
 
+        def _is_qwen_dashscope_image_edit(model_name: str, endpoint_base: str) -> bool:
+            model_l = str(model_name or "").lower()
+            base_l = str(endpoint_base or "").lower()
+            return (
+                "qwen" in model_l
+                and "image" in model_l
+                and ("edit" in model_l or "2.0" in model_l)
+                and ("aliyuncs.com" in base_l or "dashscope" in base_l)
+            )
+
+        def _qwen_dashscope_generation_url(endpoint_base: str) -> str:
+            from urllib.parse import urlsplit, urlunsplit
+
+            parsed = urlsplit(str(endpoint_base or "").rstrip("/"))
+            path = parsed.path.rstrip("/")
+            lower_path = path.lower()
+            if "/compatible-mode/v1" in lower_path:
+                path = f"{path[:lower_path.index('/compatible-mode/v1')]}/api/v1"
+            elif "/api/v1" in lower_path:
+                path = path[:lower_path.index("/api/v1") + len("/api/v1")]
+            elif lower_path.endswith("/v1"):
+                path = f"{path[:-3].rstrip('/')}/api/v1"
+            else:
+                path = f"{path}/api/v1" if path else "/api/v1"
+            return urlunsplit((
+                parsed.scheme,
+                parsed.netloc,
+                f"{path}/services/aigc/multimodal-generation/generation",
+                "",
+                "",
+            ))
+
         if is_openai_style_edit:
             # OpenAI path: /v1/images/edits with gpt-image-1.
             # Mask convention differs from Stable Diffusion:
@@ -1445,8 +1532,75 @@ def setup_gallery_routes() -> APIRouter:
                 "n": "1",
             }
             headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+            def _blend_provider_result(raw_b64: str, detail: str = "Backend response is ready."):
+                try:
+                    progress("composite", "Compositing edited pixels into the masked region.", percent=84)
+                    generated = Image.open(io.BytesIO(base64.b64decode(raw_b64))).convert("RGBA")
+                    # Match the generated image to the source dims.
+                    if generated.size != source_png.size:
+                        generated = generated.resize(source_png.size, Image.LANCZOS)
+                    # mask_png: white = regenerate (use generated),
+                    #           black = keep (use source).
+                    # Composite: result = source * (1 - mask_norm) + generated * mask_norm
+                    # Image.composite does exactly that with `mask`.
+                    blended = Image.composite(generated, source_png, mask_png)
+                    out_buf = io.BytesIO()
+                    blended.save(out_buf, format="PNG")
+                    progress("backend_complete", detail, percent=88, done=True)
+                    return {"image": base64.b64encode(out_buf.getvalue()).decode()}
+                except Exception as comp_err:
+                    # If compositing fails for any reason, fall back
+                    # to the raw provider output rather than blocking.
+                    logger.warning(f"Inpaint compose failed, returning raw: {comp_err}")
+                    progress("backend_complete", "Backend response is ready; returning raw provider image.", percent=88, done=True)
+                    return {"image": raw_b64}
+
             try:
                 async with httpx.AsyncClient(timeout=120) as client:
+                    if _is_qwen_dashscope_image_edit(oa_model, base):
+                        qwen_prompt = (body.get("prompt", "") or "Edit the selected area.").strip()
+                        if body.get("mask"):
+                            qwen_prompt = (
+                                f"{qwen_prompt}\n\n"
+                                "The app will apply this result only inside the user's painted mask. "
+                                "Keep all unselected areas visually consistent with the source image."
+                            )
+                        params = {"n": 1, "watermark": False}
+                        model_l = oa_model.lower()
+                        if any(token in model_l for token in ("qwen-image-2.0", "qwen-image-edit-plus", "qwen-image-edit-max")):
+                            params.update({
+                                "size": size.replace("x", "*"),
+                                "prompt_extend": True,
+                            })
+                        qwen_payload = {
+                            "model": oa_model,
+                            "input": {
+                                "messages": [{
+                                    "role": "user",
+                                    "content": [
+                                        {"image": f"data:image/png;base64,{body.get('image', '')}"},
+                                        {"text": qwen_prompt},
+                                    ],
+                                }],
+                            },
+                            "parameters": params,
+                        }
+                        qwen_headers = dict(headers)
+                        qwen_headers["Content-Type"] = "application/json"
+                        qwen_url = _qwen_dashscope_generation_url(base)
+                        progress("model_wait", "Sending Qwen image edit request through DashScope.", percent=66)
+                        qr = await client.post(qwen_url, headers=qwen_headers, json=qwen_payload)
+                        if qr.status_code < 200 or qr.status_code >= 300:
+                            progress("failed", f"Qwen image edit failed with HTTP {qr.status_code}.", percent=100, done=True, error=True)
+                            raise HTTPException(qr.status_code, f"Qwen image edit failed: {qr.text[:300]}")
+                        progress("response", "Qwen returned an edited image.", percent=78)
+                        raw_b64, no_image_detail = await _normalized_provider_image_response(qr.text, client)
+                        if not raw_b64:
+                            progress("failed", "Qwen image edit returned no image.", percent=100, done=True, error=True)
+                            raise HTTPException(502, f"Qwen image edit returned no image: {no_image_detail}")
+                        return _blend_provider_result(raw_b64)
+
                     async def _chat_image_edit(previous_error=""):
                         chat_prompt = (
                             f"{body.get('prompt', '')}\n\n"
@@ -1535,27 +1689,7 @@ def setup_gallery_routes() -> APIRouter:
                     # slightly different. Composite the model output onto
                     # the ORIGINAL source using the user's mask, so only
                     # the masked region actually changes.
-                    try:
-                        progress("composite", "Compositing edited pixels into the masked region.", percent=84)
-                        generated = Image.open(io.BytesIO(base64.b64decode(raw_b64))).convert("RGBA")
-                        # Match the generated image to the source dims.
-                        if generated.size != source_png.size:
-                            generated = generated.resize(source_png.size, Image.LANCZOS)
-                        # mask_png: white = regenerate (use generated),
-                        #           black = keep (use source).
-                        # Composite: result = source * (1 - mask_norm) + generated * mask_norm
-                        # Image.composite does exactly that with `mask`.
-                        blended = Image.composite(generated, source_png, mask_png)
-                        out_buf = io.BytesIO()
-                        blended.save(out_buf, format="PNG")
-                        progress("backend_complete", "Backend response is ready.", percent=88, done=True)
-                        return {"image": base64.b64encode(out_buf.getvalue()).decode()}
-                    except Exception as comp_err:
-                        # If compositing fails for any reason, fall back
-                        # to the raw OpenAI output rather than blocking.
-                        logger.warning(f"Inpaint compose failed, returning raw: {comp_err}")
-                        progress("backend_complete", "Backend response is ready; returning raw provider image.", percent=88, done=True)
-                        return {"image": raw_b64}
+                    return _blend_provider_result(raw_b64)
             except httpx.TimeoutException:
                 progress("failed", "OpenAI inpaint timed out.", percent=100, done=True, error=True)
                 raise HTTPException(504, "OpenAI inpaint timed out (120s)")
@@ -1656,7 +1790,7 @@ def setup_gallery_routes() -> APIRouter:
         if endpoint_id:
             db = SessionLocal()
             try:
-                ep = _visible_image_endpoint_for_id(db, endpoint_id, user)
+                ep = _visible_image_endpoint_for_id(db, endpoint_id, _image_endpoint_lookup_owner(request, user))
                 if not ep:
                     raise HTTPException(403, "Choose a registered image endpoint")
                 base = ep.base_url.rstrip("/")
@@ -1666,7 +1800,7 @@ def setup_gallery_routes() -> APIRouter:
         elif not base:
             db = SessionLocal()
             try:
-                ep = _first_visible_image_endpoint(db, user)
+                ep = _first_visible_image_endpoint(db, _image_endpoint_lookup_owner(request, user))
                 if not ep:
                     raise HTTPException(400, "No image generation endpoint configured.")
                 base = ep.base_url.rstrip("/")
@@ -1676,7 +1810,7 @@ def setup_gallery_routes() -> APIRouter:
         else:
             db = SessionLocal()
             try:
-                ep = _visible_image_endpoint_for_base(db, base, user)
+                ep = _visible_image_endpoint_for_base(db, base, _image_endpoint_lookup_owner(request, user))
                 if ep:
                     base = (ep.base_url or base).rstrip("/")
                     api_key = ep.api_key
@@ -2232,20 +2366,7 @@ def setup_gallery_routes() -> APIRouter:
                 return False
 
         def _model_prefers_openai_edit(model_name):
-            m = str(model_name or "").lower()
-            if "dall-e-3" in m:
-                return False
-            return (
-                "gpt-image" in m
-                or "chatgpt-image" in m
-                or "dall-e-2" in m
-                or ("qwen" in m and "image" in m and any(token in m for token in ("edit", "inpaint", "fill")))
-                or ("seedream" in m and any(token in m for token in ("edit", "inpaint", "fill")))
-                or "kontext" in m
-                or "inpaint" in m
-                or "edit" in m
-                or "fill" in m
-            )
+            return _model_name_prefers_image_edit_endpoint(model_name)
 
         async def _provider_image_value_to_b64(value, client):
             value = str(value or "").strip()
@@ -2266,7 +2387,9 @@ def setup_gallery_routes() -> APIRouter:
             if selected_endpoint_id:
                 db = SessionLocal()
                 try:
-                    ep = _visible_image_endpoint_for_id(db, selected_endpoint_id, user)
+                    ep = _visible_image_endpoint_for_id(db, selected_endpoint_id, _image_endpoint_lookup_owner(request, user))
+                    if not ep and _model_name_prefers_image_edit_endpoint(model):
+                        ep = _visible_enabled_endpoint_for_id(db, selected_endpoint_id, _image_endpoint_lookup_owner(request, user))
                     if not ep:
                         raise HTTPException(403, "Choose a registered image endpoint")
                     base = ep.base_url.rstrip("/")
@@ -2283,7 +2406,9 @@ def setup_gallery_routes() -> APIRouter:
                     raise HTTPException(400, f"Rejected endpoint URL: {reason}")
                 db = SessionLocal()
                 try:
-                    ep = _visible_image_endpoint_for_base(db, base, user)
+                    ep = _visible_image_endpoint_for_base(db, base, _image_endpoint_lookup_owner(request, user))
+                    if not ep and _model_name_prefers_image_edit_endpoint(model):
+                        ep = _visible_enabled_endpoint_for_base(db, base, _image_endpoint_lookup_owner(request, user))
                     if ep:
                         base = (ep.base_url or base).rstrip("/")
                         api_key = ep.api_key
@@ -2294,7 +2419,7 @@ def setup_gallery_routes() -> APIRouter:
             else:
                 db = SessionLocal()
                 try:
-                    ep = _first_visible_image_endpoint(db, user)
+                    ep = _first_visible_image_endpoint(db, _image_endpoint_lookup_owner(request, user))
                     if not ep:
                         raise HTTPException(400, "No image endpoint configured for background removal.")
                     base = ep.base_url.rstrip("/")

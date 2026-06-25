@@ -2160,6 +2160,11 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
                 emitted = True
             yield chunk
         if not retried:
+            if not emitted and not is_last:
+                # Model sent [DONE] with zero content — treat as pre-content failure
+                logger.warning(f"[fallback] candidate {model} returned empty response; trying next")
+                last_error = 'data: ' + json.dumps({"error": f"{model} returned an empty response", "status": 200}) + '\n\n'
+                continue
             return  # candidate finished (success, or terminal error already sent)
     # Every candidate failed pre-content — surface the last error.
     if last_error:

@@ -303,17 +303,71 @@ def to_http_exception(exc: Exception) -> HTTPException:
     return HTTPException(502, str(exc))
 
 
+def _responses_image_url(part: dict) -> str:
+    raw = (
+        part.get("image_url")
+        or part.get("imageUrl")
+        or part.get("url")
+        or part.get("data")
+    )
+    if isinstance(raw, dict):
+        raw = raw.get("url") or raw.get("image_url") or raw.get("data")
+    return raw.strip() if isinstance(raw, str) else ""
+
+
+def _responses_text(part: dict) -> str:
+    raw = part.get("text")
+    if raw is None:
+        raw = part.get("content")
+    return "" if raw is None else str(raw)
+
+
+def _responses_content_blocks(role: str, content: Any) -> list[dict]:
+    text_type = "output_text" if role == "assistant" else "input_text"
+    can_send_images = role != "assistant"
+    blocks: list[dict] = []
+
+    if isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict):
+                part_type = str(part.get("type") or "").strip().lower()
+                if can_send_images and part_type in {"image_url", "input_image", "image"}:
+                    image_url = _responses_image_url(part)
+                    if image_url:
+                        blocks.append({"type": "input_image", "image_url": image_url})
+                    continue
+                text = _responses_text(part)
+                if text:
+                    blocks.append({"type": text_type, "text": text})
+            elif part is not None:
+                text = str(part)
+                if text:
+                    blocks.append({"type": text_type, "text": text})
+    elif isinstance(content, dict):
+        part_type = str(content.get("type") or "").strip().lower()
+        if can_send_images and part_type in {"image_url", "input_image", "image"}:
+            image_url = _responses_image_url(content)
+            if image_url:
+                blocks.append({"type": "input_image", "image_url": image_url})
+        text = _responses_text(content)
+        if text:
+            blocks.append({"type": text_type, "text": text})
+    elif content is not None:
+        blocks.append({"type": text_type, "text": str(content)})
+
+    if not blocks:
+        blocks.append({"type": text_type, "text": ""})
+    return blocks
+
+
 def build_responses_input(messages: list[dict]) -> list[dict]:
     input_items: list[dict] = []
     for msg in messages or []:
         role = msg.get("role") or "user"
         if role == "tool":
             role = "user"
-        content = msg.get("content")
-        if isinstance(content, list):
-            text = "\n".join(str(part.get("text") or part.get("content") or "") for part in content if isinstance(part, dict))
-        else:
-            text = "" if content is None else str(content)
-        input_type = "output_text" if role == "assistant" else "input_text"
-        input_items.append({"role": role, "content": [{"type": input_type, "text": text}]})
+        input_items.append({
+            "role": role,
+            "content": _responses_content_blocks(role, msg.get("content")),
+        })
     return input_items

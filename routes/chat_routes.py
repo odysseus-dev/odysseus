@@ -104,12 +104,18 @@ def _resolve_request_workspace(request, raw_value) -> tuple:
     return workspace, (requested if not workspace else "")
 
 
+_WORKSPACE_FILE_EXT = (
+    r"(?:py|pyw|js|mjs|cjs|ts|tsx|jsx|java|kt|kts|xml|json|jsonc|toml|"
+    r"ya?ml|txt|md|css|scss|html?|gradle|properties|lock|sh|bash|ps1|"
+    r"bat|cmd|sql|rs|go|c|cc|cpp|h|hpp|cs|rb|php|lua)"
+)
 _WORKSPACE_LOCAL_PATH_RE = re.compile(
-    r"(?:[A-Za-z]:[\\/][^\s`'\"<>]+|(?:\.{1,2}[\\/]|~[\\/]|/)[^\s`'\"<>]+)"
+    rf"(?:[A-Za-z]:[\\/][^\s`'\"<>]+|(?:\.{{1,2}}[\\/]|~[\\/]|/)[^\s`'\"<>]+|"
+    rf"(?:[\w.-]+[\\/])+[^\s`'\"<>]+|\b[\w.-]+\.{_WORKSPACE_FILE_EXT}\b)"
 )
 _WORKSPACE_FILE_ACTION_RE = re.compile(
     r"\b(?:open|read|show|list|browse|inspect|check|search|find|edit|modify|"
-    r"change|write|save|create|delete|remove|rename|move|fix|update|refactor|"
+    r"change|write|save|create|delete|remove|rename|move|fix|update|patch|refactor|"
     r"build|run|test|look\s+(?:at|in|through)|work\s+on)\b",
     re.I,
 )
@@ -255,17 +261,19 @@ def _requested_media_generation_kind(message: str) -> str | None:
         return None
     if re.search(r"\b(?:svg|html|css|javascript|react|code|markup|xml|mermaid)\b", text):
         return None
+    if _looks_like_existing_media_question(text):
+        return None
 
     direct = r"(?:generate|create|make|produce|render|draw|design|paint|illustrate|compose|write|record|animate)"
-    please = r"(?:i\s+want|i\s+need|give\s+me|please|can\s+you|could\s+you)"
+    request = r"(?:i\s+want|i\s+need|give\s+me)"
     image = r"(?:image|picture|pic|photo|photograph|illustration|artwork|poster|logo|icon|avatar|thumbnail|wallpaper|graphic|concept\s+art|visual)"
     video = r"(?:video|movie|clip|animation|animated\s+clip|gif|b-roll|footage)"
     music = r"(?:music|song|track|audio|soundtrack|beat|jingle|voiceover|voice\s+over|sound\s+effect|sfx)"
 
     checks = (
-        ("video", (rf"\b{direct}\b.{{0,90}}\b{video}\b", rf"\b{please}\b.{{0,90}}\b{video}\b")),
-        ("music", (rf"\b{direct}\b.{{0,90}}\b{music}\b", rf"\b{please}\b.{{0,90}}\b{music}\b")),
-        ("image", (rf"\b{direct}\b.{{0,90}}\b{image}\b", rf"\b{please}\b.{{0,90}}\b{image}\b")),
+        ("video", (rf"\b{direct}\b.{{0,90}}\b{video}\b", rf"\b{request}\b.{{0,90}}\b{video}\b")),
+        ("music", (rf"\b{direct}\b.{{0,90}}\b{music}\b", rf"\b{request}\b.{{0,90}}\b{music}\b")),
+        ("image", (rf"\b{direct}\b.{{0,90}}\b{image}\b", rf"\b{request}\b.{{0,90}}\b{image}\b")),
     )
     for kind, patterns in checks:
         if any(re.search(pattern, text) for pattern in patterns):
@@ -273,6 +281,24 @@ def _requested_media_generation_kind(message: str) -> str | None:
     if re.search(r"\b(?:draw|paint|illustrate|sketch)\b\s+(?:me\s+)?(?:an?\s+|the\s+)?[a-z0-9]", text) and not re.search(r"\b(?:draw\s+(?:a\s+)?conclusion|draw\s+up|draw\s+me\s+a\s+bath)\b", text):
         return "image"
     return None
+
+
+def _looks_like_existing_media_question(message: str) -> bool:
+    text = " ".join((message or "").lower().split())
+    if not text:
+        return False
+    media = r"(?:image|picture|pic|photo|photograph|screenshot|screen\s*shot|gallery|photos)"
+    reference = r"(?:above|attached|uploaded|shown|visible|this|that|the|previous|last|my)"
+    observe = r"(?:see|view|look\s+at|access|inspect|describe|analy[sz]e|read|check|recognize|tell\s+me)"
+    if re.search(rf"\b(?:can|could|do|did)\s+you\b.{{0,80}}\b{observe}\b.{{0,120}}\b{media}\b", text):
+        return True
+    if re.search(rf"\b{observe}\b.{{0,80}}\b{reference}\s+{media}\b", text):
+        return True
+    if re.search(rf"\b{media}\s+{reference}\b", text) and re.search(r"\b(?:can|could|do|did|what|who|where|why|how|is|are)\b", text):
+        return True
+    if re.search(rf"\b(?:what(?:'s| is)|who|where|why|how)\b.{{0,120}}\b(?:in|on|inside|shown|visible)\b.{{0,80}}\b{media}\b", text):
+        return True
+    return False
 
 
 def _message_content_text(item: Any) -> str:
@@ -293,6 +319,93 @@ def _message_content_text(item: Any) -> str:
                 parts.append(part)
         return " ".join(parts)
     return ""
+
+
+def _content_part_is_image(part: Any) -> bool:
+    if not isinstance(part, dict):
+        return False
+    ptype = str(part.get("type") or "").lower()
+    if ptype in {"image", "image_url", "input_image"}:
+        return True
+    if "image" in ptype:
+        return True
+    return any(key in part for key in ("image", "image_url", "input_image"))
+
+
+def _messages_have_image_content(messages: list | None) -> bool:
+    """True when the actual LLM payload contains image content blocks."""
+    for item in messages or []:
+        content = item.get("content") if isinstance(item, dict) else getattr(item, "content", None)
+        if isinstance(content, list) and any(_content_part_is_image(part) for part in content):
+            return True
+    return False
+
+
+def _resolve_configured_vision_primary_candidate(owner: str | None = None) -> list:
+    try:
+        from src.settings import get_user_setting, load_settings
+        from src.endpoint_resolver import resolve_endpoint_by_id
+
+        settings = load_settings()
+        owner_key = owner or ""
+        endpoint_id = (get_user_setting("vision_endpoint_id", owner_key, settings.get("vision_endpoint_id", "")) or "").strip()
+        model = (get_user_setting("vision_model", owner_key, settings.get("vision_model", "")) or "").strip()
+        if not endpoint_id:
+            return []
+        resolved = resolve_endpoint_by_id(endpoint_id, model, owner=owner)
+        return [resolved] if resolved else []
+    except Exception as e:
+        logger.debug("Could not resolve configured vision primary candidate: %s", e)
+        return []
+
+
+def _resolve_auto_vision_fallback_candidates(owner: str | None = None, limit: int = 3) -> list:
+    """Find enabled vision-capable chat endpoints when no explicit chain exists."""
+    try:
+        from src.endpoint_resolver import resolve_auto_vision_candidates
+        return resolve_auto_vision_candidates(owner=owner, limit=limit)
+    except Exception as e:
+        logger.debug("Could not resolve auto vision fallback candidates: %s", e)
+        return []
+
+
+def _resolve_chat_stream_fallback_candidates(messages: list | None, owner: str | None = None) -> list:
+    """Resolve fallbacks for this stream.
+
+    Image-attached turns should try configured vision fallbacks before generic
+    chat fallbacks. Otherwise an incompatible regional vision endpoint can 400
+    with no usable recovery path even though the user has a working vision
+    model configured.
+    """
+    candidates = []
+    if _messages_have_image_content(messages):
+        candidates.extend(_resolve_configured_vision_primary_candidate(owner=owner))
+        try:
+            from src.endpoint_resolver import resolve_vision_fallback_candidates
+            candidates.extend(resolve_vision_fallback_candidates(owner=owner))
+        except Exception as e:
+            logger.debug("Could not resolve vision fallback candidates: %s", e)
+        candidates.extend(_resolve_auto_vision_fallback_candidates(owner=owner))
+    try:
+        from src.endpoint_resolver import resolve_chat_fallback_candidates
+        candidates.extend(resolve_chat_fallback_candidates(owner=owner))
+    except Exception as e:
+        logger.debug("Could not resolve chat fallback candidates: %s", e)
+    return candidates
+
+
+def _should_prefer_vision_fallback(messages: list | None, sess, fallback_candidates: list | None) -> bool:
+    """Selected vision model first; otherwise route image turns to vision fallback."""
+    if not fallback_candidates or not _messages_have_image_content(messages):
+        return False
+    try:
+        from src.chat_helpers import model_supports_vision
+        return not model_supports_vision(
+            getattr(sess, "model", "") or "",
+            getattr(sess, "endpoint_url", "") or "",
+        )
+    except Exception:
+        return True
 
 
 def _looks_like_missed_media_response(text: str) -> bool:
@@ -349,17 +462,38 @@ def _requested_media_generation_kind_from_context(message: str, messages: list |
     return request[0] if request else None
 
 
+def _direct_media_request_for_session(
+    sess,
+    message: str,
+    messages: list | None,
+    owner: str | None = None,
+) -> tuple[str, str] | None:
+    explicit_request = _requested_media_generation_from_context(message, messages)
+    if explicit_request:
+        return explicit_request
+    if _looks_like_existing_media_question(message):
+        return None
+    if _is_image_generation_session(sess, owner=owner):
+        return "image", message or ""
+    return None
+
+
 async def _generate_direct_media(kind: str, prompt: str, session_id: str, owner: str | None) -> dict:
     if kind == "image":
-        from src.ai_interaction import do_generate_image
+        from src.ai_interaction import do_generate_image, _session_selected_image_model
         from src.runcomfy_media import generate_runcomfy_media, runcomfy_fallback_content, wants_runcomfy_media
 
         if wants_runcomfy_media(prompt):
             return await generate_runcomfy_media("image", prompt, owner=owner, session_id=session_id)
+        selected_image_model = _session_selected_image_model(session_id, owner=owner)
         result = await do_generate_image(prompt, session_id, owner=owner)
         if result.get("error"):
             err_text = str(result.get("error", "")).lower()
-            if (prompt or "").strip() and "image prompt is required" not in err_text:
+            if (
+                not selected_image_model
+                and (prompt or "").strip()
+                and "image prompt is required" not in err_text
+            ):
                 result = await generate_runcomfy_media(
                     "image",
                     runcomfy_fallback_content("image", prompt),
@@ -1153,14 +1287,13 @@ def setup_chat_routes(
             full_response = ""
             last_metrics = None
 
-            # Configured fallback chain for the default chat model. Tried in
-            # order if the session's primary model fails before producing
-            # output. Resolved once per request.
-            try:
-                from src.endpoint_resolver import resolve_chat_fallback_candidates
-                _fallback_candidates = resolve_chat_fallback_candidates(owner=_user)
-            except Exception:
-                _fallback_candidates = []
+            # Configured fallback chain. Image-attached turns try vision
+            # fallbacks first, then generic chat fallbacks. Tried in order if
+            # the session's primary model fails before producing output.
+            _fallback_candidates = _resolve_chat_stream_fallback_candidates(
+                messages,
+                owner=_user,
+            )
 
             # Send model name early so the frontend can show it during streaming
             _model_suffix = "Research" if effective_do_research else None
@@ -1171,11 +1304,7 @@ def setup_chat_routes(
                 _model_info["character_name"] = ctx.preset.character_name
             yield f'data: {json.dumps(_model_info)}\n\n'
 
-            _direct_media_request = (
-                ("image", message or "")
-                if _is_image_generation_session(sess, owner=_user)
-                else _requested_media_generation_from_context(message, messages)
-            )
+            _direct_media_request = _direct_media_request_for_session(sess, message or "", messages, owner=_user)
             _direct_media_kind = _direct_media_request[0] if _direct_media_request else None
             if _direct_media_kind:
                 from src.settings import get_setting
@@ -1206,7 +1335,20 @@ def setup_chat_routes(
                     _media_prompt = f"{_user_msg}\n{sess.model}"
                 else:
                     _media_prompt = _user_msg
-                _media_result = await _generate_direct_media(_direct_media_kind, _media_prompt, session, _user)
+                _media_task = asyncio.create_task(_generate_direct_media(_direct_media_kind, _media_prompt, session, _user))
+                _media_started = time.monotonic()
+                while not _media_task.done():
+                    await asyncio.sleep(10)
+                    if _media_task.done():
+                        break
+                    _elapsed = int(time.monotonic() - _media_started)
+                    _progress_tail = (
+                        f"Waiting on {_media_tool.replace('_', ' ')} backend... "
+                        f"{_elapsed}s elapsed. Veo jobs can take up to 6 minutes during peak hours."
+                    )
+                    yield f'data: {json.dumps({"type": "tool_progress", "tool": _media_tool, "tail": _progress_tail})}\n\n'
+                    yield f": heartbeat {_elapsed}\n\n"
+                _media_result = await _media_task
                 _media_output = _media_result.get("results", _media_result.get("output", _media_result.get("error", "")))
                 _exit_code = 0 if "error" not in _media_result else 1
                 _media_tool_data = {
@@ -1242,7 +1384,10 @@ def setup_chat_routes(
                 _actual_model = None
                 # ── Chat mode: call stream_llm directly, NO tools, NO document access ──
                 try:
-                    _chat_candidates = [(sess.endpoint_url, sess.model, sess.headers)] + _fallback_candidates
+                    if _should_prefer_vision_fallback(messages, sess, _fallback_candidates):
+                        _chat_candidates = _fallback_candidates + [(sess.endpoint_url, sess.model, sess.headers)]
+                    else:
+                        _chat_candidates = [(sess.endpoint_url, sess.model, sess.headers)] + _fallback_candidates
                     async for chunk in stream_llm_with_fallback(
                         _chat_candidates,
                         messages,
@@ -1404,6 +1549,7 @@ def setup_chat_routes(
                         tool_policy=tool_policy,
                         owner=_user,
                         fallbacks=_fallback_candidates,
+                        prefer_fallbacks_first=_should_prefer_vision_fallback(messages, sess, _fallback_candidates),
                         plan_mode=plan_mode,
                         approved_plan=approved_plan or None,
                         workspace=workspace or None,

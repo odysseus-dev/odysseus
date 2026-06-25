@@ -38,6 +38,7 @@ try:
         _detect_admin_intent,
         _compute_final_metrics,
         _append_tool_results,
+        _assemble_prompt,
         _MCP_KEYWORDS,
     )
     _IMPORTED_AGENT_LOOP = sys.modules.get("src.agent_loop")
@@ -60,6 +61,34 @@ def test_import_stubs_do_not_leak_into_later_tests():
 
 def test_mcp_keyword_gate_matches_literal_mcp_requests():
     assert "mcp" in _MCP_KEYWORDS
+
+
+def test_agent_prompt_allows_shell_writes_and_steers_to_action():
+    prompt = _assemble_prompt({
+        "bash", "python", "read_file", "write_file", "edit_file",
+        "grep", "glob", "ls", "get_workspace",
+    })
+
+    assert "shell/PowerShell" in prompt
+    assert "may create or edit files" in prompt
+    assert "do not keep reading files to avoid acting" in prompt
+    assert "NEVER use bash to create or change files" not in prompt
+    assert "Do NOT create or edit files via bash" not in prompt
+    assert "not for reading or writing files" not in prompt
+
+
+def test_native_tool_schemas_allow_shell_and_python_file_writes():
+    from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
+
+    descriptions = {
+        schema["function"]["name"]: schema["function"].get("description", "")
+        for schema in FUNCTION_TOOL_SCHEMAS
+    }
+
+    assert "shell/PowerShell may create or edit files" in descriptions["bash"]
+    assert "Python may read, write, or edit files" in descriptions["python"]
+    assert "use shell/Python when a scripted edit is more practical" in descriptions["edit_file"]
+    assert "Do NOT create or edit files via bash" not in descriptions["bash"]
 
 
 # ---------------------------------------------------------------------------

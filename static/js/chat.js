@@ -28,8 +28,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
-  const WORKSPACE_LOCAL_PATH_RE = /(?:[A-Za-z]:[\\/][^\s`'"<>]+|(?:\.{1,2}[\\/]|~[\\/]|\/)[^\s`'"<>]+)/;
-  const WORKSPACE_FILE_ACTION_RE = /\b(?:open|read|show|list|browse|inspect|check|search|find|edit|modify|change|write|save|create|delete|remove|rename|move|fix|update|refactor|build|run|test|look\s+(?:at|in|through)|work\s+on)\b/i;
+  const WORKSPACE_LOCAL_PATH_RE = /(?:[A-Za-z]:[\\/][^\s`'"<>]+|(?:\.{1,2}[\\/]|~[\\/]|\/)[^\s`'"<>]+|(?:[\w.-]+[\\/])+[^\s`'"<>]+|\b[\w.-]+\.(?:py|pyw|js|mjs|cjs|ts|tsx|jsx|java|kt|kts|xml|json|jsonc|toml|ya?ml|txt|md|css|scss|html?|gradle|properties|lock|sh|bash|ps1|bat|cmd|sql|rs|go|c|cc|cpp|h|hpp|cs|rb|php|lua)\b)/i;
+  const WORKSPACE_FILE_ACTION_RE = /\b(?:open|read|show|list|browse|inspect|check|search|find|edit|modify|change|write|save|create|delete|remove|rename|move|fix|update|patch|refactor|build|run|test|look\s+(?:at|in|through)|work\s+on)\b/i;
   const WORKSPACE_FILE_TARGET_RE = /\b(?:files?|folders?|director(?:y|ies)|repo|repository|project|workspace|codebase|source|tree|path)\b/i;
 
   function _looksLikeWorkspaceFileRequest(text) {

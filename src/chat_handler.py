@@ -29,6 +29,59 @@ from src.youtube_handler import (
 logger = logging.getLogger(__name__)
 
 
+def _resolve_available_vision_route(owner: str | None = None) -> tuple | None:
+    """Return a configured or auto-detected vision route, if available."""
+    try:
+        from src.settings import get_user_setting, load_settings
+        settings = load_settings()
+        if not get_user_setting("vision_enabled", owner or "", settings.get("vision_enabled", True)):
+            return None
+
+        configured = get_user_setting("vision_model", owner or "", settings.get("vision_model", "")) or ""
+        if configured:
+            try:
+                from src.document_processor import _resolve_vl_model
+                route = _resolve_vl_model(configured, owner=owner)
+                if route and route[0] and route[1]:
+                    return route
+            except Exception:
+                pass
+
+        try:
+            from src.endpoint_resolver import resolve_vision_fallback_candidates
+            for route in resolve_vision_fallback_candidates(owner=owner):
+                if route and route[0] and route[1]:
+                    return route
+        except Exception:
+            pass
+
+        # Try the hardcoded vision-model candidate list before generic
+        # auto-detection. The explicit list includes "qwen3-vl" / "qwen3vl" /
+        # "qwen3." which match specific vision models like qwen3-vl-plus
+        # via partial match in _resolve_model. Generic auto-detection
+        # (resolve_auto_vision_candidates) picks the first vision model by
+        # endpoint DB order, which often selects a local Gemma instead.
+        if not configured:
+            try:
+                from src.document_processor import _resolve_vl_model
+                route = _resolve_vl_model("", owner=owner)
+                if route and route[0] and route[1]:
+                    return route
+            except Exception:
+                pass
+
+        try:
+            from src.endpoint_resolver import resolve_auto_vision_candidates
+            for route in resolve_auto_vision_candidates(owner=owner, limit=1):
+                if route and route[0] and route[1]:
+                    return route
+        except Exception:
+            pass
+    except Exception:
+        return None
+    return None
+
+
 class ChatHandler:
     """Handles chat operations for both streaming and non-streaming endpoints."""
 
@@ -172,15 +225,24 @@ class ChatHandler:
         # so guide-only/no-tools turns must not reach it.
         vision_enabled = False
         main_is_vision = False
+        routed_vision_model = ""
         if effective_att_ids:
-            from src.settings import get_setting
-            vision_enabled = get_setting("vision_enabled", True)
+            from src.settings import get_user_setting, load_settings
+            settings = load_settings()
+            vision_enabled = get_user_setting("vision_enabled", owner or "", settings.get("vision_enabled", True))
             if vision_enabled:
-                main_is_vision = await asyncio.to_thread(
+                selected_is_vision = await asyncio.to_thread(
                     model_supports_vision,
                     sess.model or "",
                     getattr(sess, "endpoint_url", "") or "",
                 )
+                main_is_vision = bool(selected_is_vision)
+                if main_is_vision:
+                    routed_vision_model = sess.model or ""
+                else:
+                    route = await asyncio.to_thread(_resolve_available_vision_route, owner)
+                    if route:
+                        routed_vision_model = route[1] or ""
 
         if effective_att_ids and vision_enabled:
             meta_by_id = {m["id"]: m for m in attachment_meta}
@@ -194,7 +256,7 @@ class ChatHandler:
                         enhanced_message = f"{enhanced_message}\n\n[Image attached: {file_info['name']}]"
                         _m = meta_by_id.get(att_id)
                         if _m is not None:
-                            _m["vision_model"] = sess.model or ""
+                            _m["vision_model"] = routed_vision_model or sess.model or ""
                         # If the user has hand-edited the OCR/caption via the
                         # chat attachment dropdown, fold it in as an explicit
                         # hint so even vision-capable models respect the
@@ -219,7 +281,9 @@ class ChatHandler:
                         # editable textarea) overrides what the vision model would say.
                         _vcache = os.path.join(UPLOAD_DIR, ".vision", att_id + ".txt")
                         vl_desc = None
-                        vl_model = get_setting("vision_model", "") or ""
+                        from src.settings import get_user_setting, load_settings
+                        _settings = load_settings()
+                        vl_model = get_user_setting("vision_model", owner or "", _settings.get("vision_model", "")) or ""
                         if os.path.exists(_vcache):
                             try:
                                 with open(_vcache, encoding="utf-8") as _vf:

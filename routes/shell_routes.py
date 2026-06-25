@@ -1088,6 +1088,52 @@ def setup_shell_routes() -> APIRouter:
             "error": (combined or f"Helper exited with code {proc.returncode}")[-4000:],
         }
 
+    @router.post("/api/android/adb/disconnect-all")
+    async def android_adb_disconnect_all(request: Request) -> Dict[str, Any]:
+        """Disconnect all ADB connections. Admin only."""
+        _require_admin(request)
+        _reject_cross_site(request)
+        if not IS_WINDOWS:
+            return {"ok": False, "error": "ADB disconnect is currently wired for Windows."}
+
+        # Find adb executable (same logic as android-pc-tools.ps1)
+        adb_path = ""
+        cmd = shutil.which("adb")
+        if cmd:
+            adb_path = cmd
+        else:
+            sdk_adb = Path(os.environ.get("LOCALAPPDATA", "")) / "Android" / "Sdk" / "platform-tools" / "adb.exe"
+            if sdk_adb.exists():
+                adb_path = str(sdk_adb)
+        if not adb_path:
+            return {"ok": False, "error": "adb.exe was not found."}
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                adb_path, "disconnect",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=30)
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            return {"ok": False, "error": "ADB disconnect timed out."}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)[-600:]}
+
+        output = out.decode("utf-8", errors="replace").strip()
+        error = err.decode("utf-8", errors="replace").strip()
+        combined = "\n".join(part for part in (output, error) if part)
+        if proc.returncode == 0:
+            return {"ok": True, "output": combined or "All ADB connections disconnected."}
+        return {
+            "ok": False,
+            "error": (combined or f"ADB disconnect exited with code {proc.returncode}")[-4000:],
+        }
+
     @router.post("/api/shell/stream")
     async def shell_stream(request: Request, req: ShellExecRequest):
         """Execute a shell command and stream output line-by-line via SSE. Admin only."""

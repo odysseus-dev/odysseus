@@ -2821,6 +2821,17 @@ export function openGallery() {
 }
 
 function _doCloseGallery() {
+  // If the gallery modal doesn't exist in the DOM, any editor state is
+  // stale/orphaned. Clean up forcefully instead of blocking the user.
+  const modalEl = document.getElementById('gallery-modal');
+  if (!modalEl) {
+    _open = false;
+    closeEditor();
+    window.__galleryAllowCloseEditor = false;
+    window.__galleryEditLive = false;
+    return;
+  }
+
   const editorMounted = !!document.querySelector('#gallery-editor-container .gallery-editor');
   if ((window.__galleryEditLive || isEditorOpen() || editorMounted) && !window.__galleryAllowCloseEditor) {
     if (uiModule) uiModule.showToast('Close the edit tab first');

@@ -245,6 +245,13 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
               rightPanel.classList.add('minimized');
             }
           }
+          // Expanded layers => hide tool controls so layers gets the
+          // full screen. Peek/minimized leave controls state as-is
+          // (user dismissed them by swiping, only re-tapping a tool
+          // brings them back).
+          if (rightPanel.classList.contains('expanded')) {
+            controls.classList.add('dismissed');
+          }
           e.preventDefault();
         }
       });
@@ -260,6 +267,11 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
           rightPanel.classList.remove('minimized');
         } else {
           rightPanel.classList.toggle('expanded');
+        }
+        // Expanded layers => hide tool controls; peek/minimized leave
+        // controls state as-is (only re-tapping a tool brings them back).
+        if (rightPanel.classList.contains('expanded')) {
+          controls.classList.add('dismissed');
         }
       });
     }

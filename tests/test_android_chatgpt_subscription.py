@@ -72,6 +72,15 @@ def test_android_chatgpt_subscription_uses_codex_responses_runtime():
     assert "private boolean modelRestrictsTemperature" in ANDROID_SERVER
 
 
+def test_android_chatgpt_subscription_preserves_responses_image_blocks():
+    assert "private JSONArray chatGptResponsesContent" in ANDROID_SERVER
+    assert "private void appendChatGptResponsesPart" in ANDROID_SERVER
+    assert "private String chatGptResponsesImageUrl" in ANDROID_SERVER
+    assert '.put("type", "input_image").put("image_url", imageUrl)' in ANDROID_SERVER
+    assert '("image_url".equals(partType) || "input_image".equals(partType) || "image".equals(partType))' in ANDROID_SERVER
+    assert '.put("content", chatGptResponsesContent(role, msg.opt("content")))' in ANDROID_SERVER
+
+
 def test_android_opens_provider_device_auth_links_externally():
     assert "private boolean isExternalAuthUrl(Uri uri)" in MAIN_ACTIVITY
     assert '"auth.openai.com".equals(host)' in MAIN_ACTIVITY

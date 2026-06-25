@@ -504,6 +504,7 @@ const _LABELS = {
   'compare-model-overlay': { label: 'Compare',  icon: 'M8 3v18M16 3v18M3 8h5M16 16h5' },
   'settings-modal':    { label: 'Settings',  icon: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.4.4.62.94.6 1.51V11a2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z' },
   'ge-shortcuts-modal':{ label: 'Shortcuts', icon: 'M2 6h20v12H2zM6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10' },
+  'android-connect-modal':{ label: 'Connect', icon: 'M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.15-1.15' },
   // Virtual id — the doc editor pane isn't a modal, but it minimizes to a
   // chip via the same dock infrastructure.
   'doc-panel':         { label: 'Document', icon: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8' },
@@ -708,6 +709,20 @@ function _handleModalShown(id, modal) {
   _bringToFront(modal);
   if (!_scheduleAndroidDefaultDock(id, modal)) _applyRememberedDock(id);
   _emitModalOpened(id, modal);
+
+  // When a non-email overlay opens on a touch device, minimise the document
+  // editor panel so it doesn't leave a gap in the flex layout.  Email windows
+  // coexist with the doc panel (email-doc-split) so they are excluded.
+  // Works the same as every other window on mobile/landscape — minimise to a
+  // dock chip so the user's work is preserved and one-tap restorable.
+  if (_isTouchInput() && id !== 'doc-panel' && !id.startsWith('email-reader-') && id !== 'email-lib-modal') {
+    try {
+      const docMod = window.documentModule;
+      if (docMod && docMod.isPanelOpen && docMod.isPanelOpen()) {
+        docMod.closePanel('down');
+      }
+    } catch (_) { /* non-critical — best-effort */ }
+  }
 }
 
 function _readRootPx(name) {
@@ -1097,6 +1112,14 @@ function _wireDockPlacement(dock) {
     for (const el of [document.getElementById('attach-strip'), document.querySelector('.chat-input-bar')]) {
       if (el) ro.observe(el);
     }
+  }
+  const chatContainer = document.querySelector('.chat-container');
+  if (chatContainer) {
+    chatContainer.addEventListener('transitionend', (e) => {
+      if (e.propertyName === 'margin-left' || e.propertyName === 'margin-right') {
+        schedule();
+      }
+    });
   }
   new MutationObserver(schedule).observe(document.body, {
     attributes: true,
@@ -2114,6 +2137,7 @@ function _wireChipDrag(chip, dock) {
         _saveDockState();
       }
       clearDragSurface();
+      _applyDockPos(dock);
     } else if (dragMode === 'reorder') {
       chip.classList.remove('dragging');
       chip.style.transition = 'transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)';
@@ -2430,6 +2454,7 @@ const _AUTO_WIRE = {
   'settings-modal':       { rail: null,             sidebar: 'tool-settings-btn' },
   'compare-model-overlay':{ rail: 'rail-compare',   sidebar: 'tool-compare-btn' },
   'ge-shortcuts-modal':   { rail: null,             sidebar: null },
+  'android-connect-modal':{ rail: null,             sidebar: null },
   // Prompt window opens from the overflow menu (no rail/sidebar button), but
   // wiring it here makes tab-down use the new .minimized-dock-chip instead of
   // the legacy .modal-dock-item.

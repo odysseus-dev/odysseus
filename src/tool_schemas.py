@@ -137,7 +137,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "bash",
-            "description": "Run a shell command (full access). Prefer a dedicated tool whenever one fits the job (reading, writing, editing, searching, or listing files); use bash only for what no dedicated tool covers (installs, git, builds, running programs, system info). Do NOT create or edit files via bash redirects/heredocs/sed -- use the dedicated file tools.",
+            "description": "Run a shell command (full access). Prefer a dedicated tool when it is clearly simpler, but shell/PowerShell may create or edit files when that is the practical path. Use for installs, git, builds, running programs, system info, file operations, and scripts.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -151,7 +151,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "python",
-            "description": "Execute Python code to compute a result or test something. Prefer a dedicated tool whenever one fits the job (reading, writing, or searching files); use python only for computation, data processing, or scripting no dedicated tool covers.",
+            "description": "Execute Python code to compute, test, inspect, or transform data/files. Prefer a dedicated tool when it is clearly simpler, but Python may read, write, or edit files when a script is the practical path.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -280,7 +280,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "edit_file",
-            "description": "Edit a file ON DISK by exact string replacement (home folder, project files, any real path like ~/sweden.txt or /path/to/file). This is the right tool for files on disk — NOT edit_document (that's for editor-panel documents). PREFER this over bash (sed/echo) — it shows a diff. old_string must match the file exactly and be unique (or set replace_all). Use write_file to create a new file.",
+            "description": "Edit a file ON DISK by exact string replacement (home folder, project files, any real path like ~/sweden.txt or /path/to/file). This is the right tool for small targeted disk edits when a clear diff is useful — NOT edit_document (that's for editor-panel documents). old_string must match the file exactly and be unique (or set replace_all). Use write_file to create a new file, or use shell/Python when a scripted edit is more practical.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1155,14 +1155,14 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "generate_video",
-            "description": "Generate a professional AI video with the configured media backend, save the downloaded file to Odysseus generated media/Gallery, and render it inline. RunComfy Cloud requires an enabled paid integration; local ComfyUI requires an exact workflow JSON.",
+            "description": "Generate a professional AI video with the configured media backend, save the downloaded file to Odysseus generated media/Gallery, and render it inline. Uses Gemini/Veo when a Gemini API endpoint is configured; RunComfy Cloud is an explicit paid integration; local ComfyUI requires an exact workflow JSON.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "prompt": {"type": "string", "description": "Subject-first video direction. Include one main action, scene, motion verbs, camera movement, lighting, and audio notes when relevant."},
-                    "provider": {"type": "string", "enum": ["comfyui", "runcomfy"], "description": "Optional media backend. comfyui = free local workflow; runcomfy = paid RunComfy Cloud integration."},
+                    "provider": {"type": "string", "enum": ["gemini", "comfyui", "runcomfy"], "description": "Optional media backend. gemini = Gemini/Veo API; comfyui = free local workflow; runcomfy = paid RunComfy Cloud integration."},
                     "integration": {"type": "string", "description": "Optional integration id/name to use when multiple ComfyUI/RunComfy integrations exist."},
-                    "model": {"type": "string", "description": "Optional RunComfy model id. Leave blank for auto: HappyHorse for general pro video, HappyHorse/Veo for i2v, Wan for audio lip-sync, Kling 4K for premium 4K."},
+                    "model": {"type": "string", "description": "Optional video model id. Leave blank for auto: Gemini/Veo API when configured, otherwise RunComfy defaults such as Kling, HappyHorse, or Wan."},
                     "duration": {"type": "integer", "description": "Duration in seconds"},
                     "aspect_ratio": {"type": "string", "description": "Aspect ratio such as 16:9, 9:16, 1:1, or 21:9"},
                     "resolution": {"type": "string", "description": "Resolution such as 720p, 1080p, or 4k when supported"},
@@ -1184,7 +1184,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "generate_music",
-            "description": "Generate professional AI music/audio with the configured media backend, save it to Odysseus generated media, and render it inline. RunComfy Cloud requires an enabled paid integration; local ComfyUI requires an exact workflow JSON.",
+            "description": "Generate professional AI music/audio with the configured media backend, save it to Odysseus generated media, and render it inline. RunComfy Cloud requires an enabled paid integration; local ComfyUI requires an exact workflow JSON. If no music backend is configured, Odysseus returns a built-in local synth WAV fallback.",
             "parameters": {
                 "type": "object",
                 "properties": {

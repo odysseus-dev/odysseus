@@ -35,8 +35,8 @@ function Find-Adb {
 
 function Get-AdbDevice {
     param([string]$AdbPath, [string]$Requested)
-    $lines = & $AdbPath devices | Where-Object { $_ -match "^\S+\s+device\b" }
-    $ids = @($lines | ForEach-Object { ($_ -split "\s+")[0] })
+    $lines = & $AdbPath devices | Where-Object { ($_ -split "`t")[-1] -eq 'device' }
+    $ids = @($lines | ForEach-Object { ($_ -split "`t")[0] })
     if ($Requested) {
         if ($ids -notcontains $Requested) {
             throw "Requested device '$Requested' is not connected. Connected devices: $($ids -join ', ')"
@@ -46,10 +46,45 @@ function Get-AdbDevice {
     if ($ids.Count -eq 0) {
         throw "No authorized ADB device found. In Android Wireless debugging, pair/connect the phone first, then rerun this script."
     }
-    if ($ids.Count -gt 1) {
+
+    # Deduplicate: a phone often appears multiple times (USB + wireless TLS variants
+    # of the same physical device). Strip wireless/TLS entries that are duplicates
+    # of a USB serial, then pick the USB one if available.
+    $usbDevices = @($ids | Where-Object { $_ -notlike '*_adb-tls-connect._tcp' })
+    $wirelessDevices = @($ids | Where-Object { $_ -like '*_adb-tls-connect._tcp' })
+
+    # If there's exactly one USB device, use it (wireless entries are duplicates)
+    if ($usbDevices.Count -eq 1) {
+        if ($wirelessDevices.Count -gt 0) {
+            Write-Host ("Found {0} wireless duplicate(s) of USB device '{1}', using USB connection." -f $wirelessDevices.Count, $usbDevices[0]) -ForegroundColor Yellow
+        }
+        return $usbDevices[0]
+    }
+
+    # Multiple distinct USB devices — genuinely can't choose
+    if ($usbDevices.Count -gt 1) {
         throw "Multiple ADB devices found: $($ids -join ', '). Rerun with -Device <serial>."
     }
-    return $ids[0]
+
+    # No USB devices, single wireless entry
+    if ($wirelessDevices.Count -eq 1) {
+        return $wirelessDevices[0]
+    }
+
+    # Multiple wireless-only entries — deduplicate by base serial
+    # (e.g., "adb-XYZ" and "adb-XYZ.._adb-tls-connect._tcp" are the same device)
+    $baseSerials = @{}
+    foreach ($w in $wirelessDevices) {
+        $base = $w -replace '( \(\d+\))?\._adb-tls-connect\._tcp$', ''
+        $baseSerials[$base] = $true
+    }
+    if ($baseSerials.Count -eq 1) {
+        $chosen = $wirelessDevices[0]
+        Write-Host ("Multiple wireless entries for the same device, picking: {0}" -f $chosen) -ForegroundColor Yellow
+        return $chosen
+    }
+
+    throw "Multiple ADB devices found: $($ids -join ', '). Rerun with -Device <serial>."
 }
 
 function Test-Backend {
@@ -64,22 +99,19 @@ function Test-Backend {
 
 function Set-AndroidPcMode {
     param([string]$AdbPath, [string]$Serial, [int]$Port)
+
     $url = "http://127.0.0.1:$Port"
-    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("odysseus_android_{0}.xml" -f ([Guid]::NewGuid().ToString("N")))
-    $xml = @"
-<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
-<map>
-    <string name="server_url">$url</string>
-    <string name="app_mode">remote</string>
-</map>
-"@
-    Set-Content -LiteralPath $tmp -Value $xml -Encoding UTF8
-    try {
-        & $AdbPath -s $Serial push $tmp /data/local/tmp/odysseus_android.xml | Out-Host
-        & $AdbPath -s $Serial shell "run-as $PackageName sh -c 'mkdir -p shared_prefs && cp /data/local/tmp/odysseus_android.xml shared_prefs/odysseus_android.xml && chmod 600 shared_prefs/odysseus_android.xml'" | Out-Host
-    } finally {
-        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    Write-Host "Launching Android app with PC mode config via intent extras..." -ForegroundColor Cyan
+
+    $result = & $AdbPath -s $Serial shell am start -n "$PackageName/.MainActivity" `
+        -e app_mode remote `
+        -e server_url $url 2>&1
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to launch app with intent extras: $result"
     }
+
+    Write-Host "Android app launched: app_mode=remote, server_url=$url" -ForegroundColor Green
 }
 
 $adbPath = Find-Adb $Adb
@@ -94,11 +126,9 @@ Write-Host ("ADB reverse active for {0}: phone http://127.0.0.1:{1} -> PC http:/
 & $adbPath -s $serial reverse --list | Out-Host
 
 if ($SetPcMode) {
-    & $adbPath -s $serial shell am force-stop $PackageName | Out-Null
+    & $AdbPath -s $serial shell am force-stop $PackageName | Out-Null
     Set-AndroidPcMode $adbPath $serial $Port
-    Write-Host ("Android app mode set to PC tools at http://127.0.0.1:{0}." -f $Port) -ForegroundColor Green
 }
-
-if ($LaunchApp) {
-    & $adbPath -s $serial shell monkey -p $PackageName -c android.intent.category.LAUNCHER 1 | Out-Host
+elseif ($LaunchApp) {
+    & $AdbPath -s $serial shell monkey -p $PackageName -c android.intent.category.LAUNCHER 1 | Out-Host
 }

@@ -30,6 +30,8 @@ def test_inpaint_runner_sends_progress_id_and_updates_live_panel():
     assert "'Rendering result'" in AI_INPAINT_JS
     assert "progress?.done(" in AI_INPAINT_JS
     assert "progress?.fail(" in AI_INPAINT_JS
+    assert "let localComplete = false;" in AI_INPAINT_JS
+    assert "if (!event || destroyed || localComplete) return;" in AI_INPAINT_JS
 
 
 def test_inpaint_progress_log_keeps_user_scroll_position_and_matches_theme():
@@ -42,3 +44,16 @@ def test_inpaint_progress_log_keeps_user_scroll_position_and_matches_theme():
     assert ".ge-inpaint-progress-list" in STYLE_CSS
     assert "overscroll-behavior: contain;" in STYLE_CSS
     assert "scrollbar-width: thin;" in STYLE_CSS
+
+
+def test_inpaint_supports_qwen_dashscope_image_edit_endpoint():
+    assert "def _is_qwen_dashscope_image_edit" in GALLERY_ROUTES
+    assert "def _qwen_dashscope_generation_url" in GALLERY_ROUTES
+    assert "/services/aigc/multimodal-generation/generation" in GALLERY_ROUTES
+    assert '"input": {' in GALLERY_ROUTES
+    assert '"messages": [{' in GALLERY_ROUTES
+    assert '"content": [' in GALLERY_ROUTES
+    assert '"image": f"data:image/png;base64,{body.get(\'image\', \'\')}"' in GALLERY_ROUTES
+    assert '"text": qwen_prompt' in GALLERY_ROUTES
+    assert "The app will apply this result only inside the user's painted mask." in GALLERY_ROUTES
+    assert "return _blend_provider_result(raw_b64)" in GALLERY_ROUTES

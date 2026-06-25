@@ -240,6 +240,20 @@ def test_workspace_file_request_does_not_surface_manage_documents(monkeypatch):
     assert "manage_documents" not in names
 
 
+def test_bare_source_paths_surface_workspace_write_tools(monkeypatch):
+    names, _ = _sent_tool_names(
+        monkeypatch,
+        workspace="/tmp",
+        text=(
+            "patch GUI/embedding_manager.py, GUI/embedding_worker.py, "
+            "rag_core.py, and requirements-embeddings.txt"
+        ),
+    )
+
+    assert {"get_workspace", "read_file", "write_file", "edit_file", "grep"} <= names
+    assert "manage_documents" not in names
+
+
 def test_continue_button_prompt_resumes_workspace_tool_context(monkeypatch):
     history = [
         {"role": "user", "content": "search the workspace for the model picker source files"},

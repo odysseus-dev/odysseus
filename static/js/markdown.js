@@ -749,8 +749,15 @@ export function squashOutsideCode(s) {
   for (let i = 0; i < parts.length; i += 2) {
     parts[i] = parts[i]
       .replace(/\r\n/g, '\n')
+      .replace(/[\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]/g, ' ')
       .replace(/[ \t]+\n/g, '\n')
-      .replace(/\n{3,}/g, '\n\n');
+      .replace(/\n{3,}/g, '\n\n')
+      .split('\n')
+      .map((line) => {
+        const leading = line.match(/^[ \t]*/)?.[0] || '';
+        return leading + line.slice(leading.length).replace(/[ \t]{2,}/g, ' ');
+      })
+      .join('\n');
   }
   return parts.join('```');
 }

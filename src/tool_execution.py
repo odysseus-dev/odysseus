@@ -727,11 +727,12 @@ async def _execute_tool_block_impl(
     # the progress callback so long-running subprocess tools
     # (bash, python) can stream `tool_progress` events to the UI.
     if tool == "generate_image":
-        from src.ai_interaction import do_generate_image
+        from src.ai_interaction import do_generate_image, _session_selected_image_model
         from src.runcomfy_media import generate_runcomfy_media, runcomfy_fallback_content, wants_runcomfy_media
 
         desc = f"generate_image: {content.split(chr(10))[0][:80]}"
         used_runcomfy = wants_runcomfy_media(content)
+        selected_image_model = _session_selected_image_model(session_id, owner=owner)
         if used_runcomfy:
             result = await generate_runcomfy_media(
                 "image",
@@ -745,6 +746,7 @@ async def _execute_tool_block_impl(
             err_text = str(result.get("error", "")).lower()
             should_try_runcomfy = (
                 not used_runcomfy
+                and not selected_image_model
                 and bool((content or "").strip())
                 and "image prompt is required" not in err_text
             )

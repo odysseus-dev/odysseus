@@ -390,6 +390,65 @@ def resolve_vision_fallback_candidates(owner: Optional[str] = None) -> list:
     return _resolve_fallback_candidates("vision_model_fallbacks", owner=owner)
 
 
+def resolve_auto_vision_candidates(owner: Optional[str] = None, limit: int = 3) -> list:
+    """Auto-detect enabled chat endpoints whose models accept image input."""
+    out = []
+    seen = set()
+    db = SessionLocal()
+    try:
+        from src.auth_helpers import owner_filter
+        from src.chat_helpers import model_supports_vision
+
+        q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+        if owner:
+            q = owner_filter(q, ModelEndpoint, owner)
+        for ep in q.all():
+            model_type = (getattr(ep, "model_type", "") or "llm").lower()
+            if model_type not in {"llm", "chat", "vision"}:
+                continue
+            try:
+                base, api_key = resolve_endpoint_runtime(ep, owner=owner)
+                chat_url = build_chat_url(base)
+                headers = build_headers(api_key, base)
+            except Exception as e:
+                logger.debug("Could not resolve auto vision endpoint %s: %s", getattr(ep, "id", ""), e)
+                continue
+            models = list(_endpoint_enabled_models(ep))
+            hidden = _endpoint_hidden_models(ep)
+            try:
+                pinned = json.loads(getattr(ep, "pinned_models", None) or "[]")
+            except Exception:
+                pinned = []
+            if isinstance(pinned, list):
+                for pinned_model in pinned:
+                    pinned_model = str(pinned_model or "").strip()
+                    if pinned_model and pinned_model not in hidden and pinned_model not in models:
+                        models.append(pinned_model)
+
+            for model in models:
+                model = str(model or "").strip()
+                if not model:
+                    continue
+                try:
+                    if not model_supports_vision(model, chat_url):
+                        continue
+                except Exception:
+                    continue
+                key = (chat_url, model)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append((chat_url, model, headers))
+                break
+            if len(out) >= max(1, limit):
+                break
+    except Exception as e:
+        logger.debug("Could not resolve auto vision candidates: %s", e)
+    finally:
+        db.close()
+    return out
+
+
 def _resolve_fallback_candidates(setting_key: str, owner: Optional[str] = None) -> list:
     out = []
     try:

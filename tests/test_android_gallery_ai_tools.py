@@ -158,7 +158,7 @@ def test_android_bgremove_can_force_or_auto_select_downloaded_rembg_models():
     assert "providerImageValueFromText(value)" in ANDROID_SERVER
     assert '"content", "message", "choices"' in ANDROID_SERVER
     image_edit_block = ANDROID_SERVER.split("private boolean isImageEditModel", 1)[1].split(
-        "private boolean isOpenAIBase", 1
+        "private boolean isImageGenerationModel", 1
     )[0]
     assert 'm.contains("flux")' not in image_edit_block
     assert "forceProviderBgRemove || (!forceRembg && !constrainedBgRemove && rembgModel.isEmpty())" in ANDROID_SERVER
@@ -243,6 +243,8 @@ def test_pc_bgremove_sample_strokes_bound_search_without_flooding_subject():
     provider_block = pc_route.split("async def _remove_with_provider():", 1)[1].split(
         "def _subject_keep_mask", 1
     )[0]
+    assert "_model_name_prefers_image_edit_endpoint(model)" in provider_block
+    assert "_visible_enabled_endpoint_for_id(db, selected_endpoint_id" in provider_block
     assert '"/images/edit"' not in provider_block
     assert "def _preferred_rembg_models():" in pc_route
     assert "for model_name in (\"isnet-general-use\", \"silueta\")" in pc_route
@@ -281,6 +283,8 @@ def test_pc_inpaint_routes_openai_compatible_endpoints_through_image_edit():
     assert '"aliyuncs.com"' in inpaint_block
     assert "is_openai_style_edit = _is_openai_compatible_image_edit_base(base)" in inpaint_block
     assert "if is_openai_style_edit:" in inpaint_block
+    assert "_model_name_prefers_image_edit_endpoint(chosen_model)" in inpaint_block
+    assert "_visible_enabled_endpoint_for_id(db, endpoint_id" in inpaint_block
     assert 'jr = await client.post(f"{base}/images/edits", headers=headers, json=json_payload)' in inpaint_block
     assert 'cr = await client.post(f"{base}/chat/completions", headers=headers, json=chat_payload)' in inpaint_block
     assert "The second image is a mask" in inpaint_block
@@ -308,13 +312,163 @@ def test_editor_bgremove_exposes_pipeline_selector():
 
 
 def test_android_inpaint_keeps_edit_capable_image_models():
-    assert "isChatModel(id) || isImageEditModel(id)" in ANDROID_SERVER
+    assert "isChatModel(id) || isImageEditModel(id) || isImageGenerationModel(id)" in ANDROID_SERVER
     assert "m.contains(\"dall-e-2\")" in ANDROID_SERVER
     assert "m.contains(\"dall-e-3\")" in ANDROID_SERVER
     assert "m.contains(\"img2img\")" in ANDROID_SERVER
     assert "m.contains(\"paint-by-example\")" in ANDROID_SERVER
     assert "m.contains(\"pix2pix\")" in ANDROID_SERVER
     assert "dall-e-3 does not support image edits" in ANDROID_SERVER
+
+
+def test_android_standalone_routes_image_generation_before_chat_backend():
+    stream = ANDROID_SERVER.split("private void streamChat", 1)[1].split(
+        "private void streamMobileImageGeneration", 1
+    )[0]
+    assert "String videoPrompt = mobileVideoGenerationPrompt(userText, model);" in stream
+    assert "String imagePrompt = mobileImageGenerationPrompt(userText, model);" in stream
+    assert "streamMobileVideoGeneration(out, sid, history, videoPrompt, videoEndpoint, model, workspaceRejected);" in stream
+    assert "JSONObject imageEndpoint = endpoint;" in stream
+    assert "JSONObject modelEndpoint = endpointForImageGenerationModel(model);" in stream
+    assert "streamMobileImageGeneration(out, sid, history, imagePrompt, imageEndpoint, model, workspaceRejected);" in stream
+    assert "callChat(endpoint, model, modelMessages)" in stream
+    assert stream.index("streamMobileVideoGeneration(out, sid, history, videoPrompt, videoEndpoint, model, workspaceRejected);") < stream.index(
+        "streamMobileImageGeneration(out, sid, history, imagePrompt, imageEndpoint, model, workspaceRejected);"
+    )
+    assert stream.index("streamMobileImageGeneration(out, sid, history, imagePrompt, imageEndpoint, model, workspaceRejected);") < stream.index(
+        "callChat(endpoint, model, modelMessages)"
+    )
+
+
+def test_android_standalone_image_generation_supports_gemini_openai_and_gallery_save():
+    assert "private String mobileImageGenerationPrompt(String userText, String model)" in ANDROID_SERVER
+    assert "private boolean looksLikeExistingMobileMediaQuestion(String message)" in ANDROID_SERVER
+    assert "private JSONObject generateMobileImageReply" in ANDROID_SERVER
+    assert "private JSONArray mobileImageGenerationChoices" in ANDROID_SERVER
+    assert "private JSONObject endpointForImageGenerationModel" in ANDROID_SERVER
+    assert "private boolean endpointCanServeSelectedImageModel" in ANDROID_SERVER
+    assert "private String mobileImageGenerationFailureDetail" in ANDROID_SERVER
+    assert "For loaded local PC models, LM Studio, ComfyUI, or Cookbook routing" in ANDROID_SERVER
+    assert "private boolean isImageGenerationModel(String model)" in ANDROID_SERVER
+    assert "private boolean isGeminiImageModel(String model)" in ANDROID_SERVER
+    assert "private boolean isQwenImageModel(String model)" in ANDROID_SERVER
+    assert "private boolean isDashScopeImageEndpoint(String baseUrl, JSONObject ep)" in ANDROID_SERVER
+    assert "private String qwenDashscopeGenerationUrl(String baseUrl)" in ANDROID_SERVER
+    assert "private String qwenDashscopeSize(String model, String size)" in ANDROID_SERVER
+    assert "private JSONObject postGeminiImageGeneration" in ANDROID_SERVER
+    assert "private JSONObject postQwenDashscopeImageGeneration" in ANDROID_SERVER
+    assert '"responseModalities", new JSONArray().put("TEXT").put("IMAGE")' in ANDROID_SERVER
+    assert '"imageConfig", new JSONObject()' in ANDROID_SERVER
+    assert 'conn.setRequestProperty("x-goog-api-key", apiKey);' in ANDROID_SERVER
+    assert 'new URL(base + "/images/generations")' in ANDROID_SERVER
+    assert '"watermark", false' in ANDROID_SERVER
+    assert "qwenDashscopeSize(model, size)" in ANDROID_SERVER
+    assert "multimodal-generation/generation" in ANDROID_SERVER
+    assert "private JSONObject saveGeneratedGalleryImage" in ANDROID_SERVER
+    assert 'put("url", "/api/generated-image/" + filename)' in ANDROID_SERVER
+    assert "private void streamMobileImageGeneration" in ANDROID_SERVER
+    assert "private void streamMobileMediaReply" in ANDROID_SERVER
+    assert 'put("type", "tool_start")' in ANDROID_SERVER
+    assert 'put("type", "tool_output")' in ANDROID_SERVER
+    assert 'put("tool", "generate_image")' in ANDROID_SERVER
+    assert 'put("image_url", media.optString("image_url", ""))' in ANDROID_SERVER
+    assert "private boolean isQuotaOrProviderAvailabilityError" in ANDROID_SERVER
+    assert '"inlineData", "inline_data"' in ANDROID_SERVER
+    gemini_dispatch = ANDROID_SERVER.split("private JSONObject postMobileImageGeneration", 1)[1].split(
+        "private JSONObject postOpenAiCompatibleImageGeneration", 1
+    )[0]
+    assert "if (isGeminiImageEndpoint(base, choice) || isGeminiImageModel(model))" in gemini_dispatch
+    assert "if (isQwenImageModel(model) && isDashScopeImageEndpoint(base, choice))" in gemini_dispatch
+    assert "return postQwenDashscopeImageGeneration(choice, prompt, size);" in gemini_dispatch
+    openai_generation = ANDROID_SERVER.split("private JSONObject postOpenAiCompatibleImageGeneration", 1)[1].split(
+        "private JSONObject postGeminiImageGeneration", 1
+    )[0]
+    assert "return postGeminiImageGeneration(choice, prompt, size);" in openai_generation
+    assert "postOpenAiCompatibleImageGenerationPayload(base, apiKey, payload)" in openai_generation
+    assert 'retryPayload.remove("quality");' in openai_generation
+    assert 'boolean gptImageModel = modelLower.startsWith("gpt-image") || modelLower.contains("chatgpt-image");' in openai_generation
+    assert 'boolean localDiffusionModel = !gptImageModel && !dalleModel;' in openai_generation
+    assert 'if (gptImageModel || localDiffusionModel) {' in openai_generation
+    assert 'payload.put("response_format", "b64_json");' not in openai_generation
+    assert "&& isImageGenerationModel(model)" not in gemini_dispatch
+
+
+def test_android_standalone_video_generation_supports_dashscope_and_media_output():
+    assert "private String mobileVideoGenerationPrompt(String userText, String model)" in ANDROID_SERVER
+    assert "private JSONObject generateMobileVideoReply" in ANDROID_SERVER
+    assert "private JSONArray mobileVideoGenerationChoices" in ANDROID_SERVER
+    assert "private JSONObject endpointForVideoGenerationModel" in ANDROID_SERVER
+    assert "private boolean endpointCanServeSelectedVideoModel" in ANDROID_SERVER
+    assert "private boolean isVideoGenerationModel(String model)" in ANDROID_SERVER
+    assert "private boolean isDashScopeVideoModel(String model)" in ANDROID_SERVER
+    assert "private boolean isDashScopeVideoEndpoint(String baseUrl, JSONObject ep)" in ANDROID_SERVER
+    assert "private String dashscopeVideoGenerationUrl(String baseUrl)" in ANDROID_SERVER
+    assert "private String dashscopeTaskUrl(String baseUrl, String taskId)" in ANDROID_SERVER
+    assert "private JSONObject postDashScopeVideoGeneration" in ANDROID_SERVER
+    assert 'conn.setRequestProperty("X-DashScope-Async", "enable");' in ANDROID_SERVER
+    assert "video-generation/video-synthesis" in ANDROID_SERVER
+    assert 'firstJsonStringForKey(created, "task_id", 0)' in ANDROID_SERVER
+    assert 'firstJsonStringForKey(status, "task_status", 0)' in ANDROID_SERVER
+    assert "normalizeVideoResponse(status.toString())" in ANDROID_SERVER
+    assert "private JSONObject saveGeneratedGalleryVideo" in ANDROID_SERVER
+    assert 'put("media_type", "video")' in ANDROID_SERVER
+    assert 'put("tool", "generate_video")' in ANDROID_SERVER
+    assert 'put("media_url", saved.optString("url", ""))' in ANDROID_SERVER
+    assert 'put("url", "/api/generated-image/" + filename)' in ANDROID_SERVER
+
+    video_dispatch = ANDROID_SERVER.split("private JSONObject postMobileVideoGeneration", 1)[1].split(
+        "private JSONObject postDashScopeVideoGeneration", 1
+    )[0]
+    assert "if (isDashScopeVideoModel(model) && isDashScopeVideoEndpoint(base, choice))" in video_dispatch
+    assert "return postDashScopeVideoGeneration(choice, prompt, durationSeconds, resolution);" in video_dispatch
+    assert "return postOpenAiCompatibleVideoGeneration(choice, prompt, durationSeconds, aspectRatio, resolution);" in video_dispatch
+
+
+def test_android_selected_image_model_resolves_matching_endpoint_before_fallbacks():
+    choices = ANDROID_SERVER.split("private JSONArray mobileImageGenerationChoices", 1)[1].split(
+        "private void addMobileImageChoice", 1
+    )[0]
+    assert "boolean requestedImageModel = isImageGenerationModel(requestedModel);" in choices
+    assert "addMobileImageChoice(choices, seen, endpointForImageGenerationModel(requestedModel), requestedModel);" in choices
+    assert "return choices;" in choices.split("if (requestedImageModel)", 1)[1].split("JSONArray endpoints", 1)[0]
+
+    add_choice = ANDROID_SERVER.split("private void addMobileImageChoice", 1)[1].split(
+        "private JSONObject endpointForImageGenerationModel", 1
+    )[0]
+    assert "boolean strictRequestedModel = !model.isEmpty();" in add_choice
+    assert "if (!endpointCanServeSelectedImageModel(endpoint, model)) return;" in add_choice
+    assert "model = firstImageGenerationModel(endpoint);" in add_choice
+
+    resolver = ANDROID_SERVER.split("private JSONObject endpointForImageGenerationModel", 1)[1].split(
+        "private boolean looksLikeImageGenerationEndpoint", 1
+    )[0]
+    assert "endpointHasModel(ep, requested) && endpointCanServeSelectedImageModel(ep, requested)" in resolver
+    assert "isGeminiImageModel(providerRequested) && isGeminiImageEndpoint(base, endpoint)" in resolver
+    assert "isOpenAIBase(base)" in resolver
+
+
+def test_android_session_endpoint_resolution_prefers_exact_selected_model_match():
+    resolver = ANDROID_SERVER.split("private JSONObject endpointForSession", 1)[1].split(
+        "private JSONObject endpointForChatUrl", 1
+    )[0]
+    assert "JSONObject modelMatch = model.isEmpty() ? null : endpointForModel(model);" in resolver
+    assert "if (modelMatch != null && (urlMatch == null || !endpointHasModel(urlMatch, model)))" in resolver
+    assert resolver.index("JSONObject modelMatch = model.isEmpty() ? null : endpointForModel(model);") < resolver.index(
+        "if (urlMatch != null && (model.isEmpty() || endpointCanServeModel(urlMatch, model)))"
+    )
+
+
+def test_android_standalone_squashes_reply_spacing_before_streaming():
+    stream = ANDROID_SERVER.split("private void streamChat", 1)[1].split(
+        "private void streamMobileMediaReply", 1
+    )[0]
+    assert "reply = squashMobileReplySpacing(reply);" in stream
+    assert stream.index("reply = callChat(endpoint, model, modelMessages);") < stream.index(
+        "reply = squashMobileReplySpacing(reply);"
+    ) < stream.index("history.put(new JSONObject().put(\"role\", \"assistant\")")
+    assert "private String squashMobileReplySpacing(String raw)" in ANDROID_SERVER
+    assert ".replaceAll(\"[\\\\u00A0\\\\u1680\\\\u2000-\\\\u200A\\\\u202F\\\\u205F\\\\u3000]\", \" \")" in ANDROID_SERVER
+    assert ".append(line.substring(leading).replaceAll(\"[ \\\\t]{2,}\", \" \"))" in ANDROID_SERVER
 
 
 def test_android_inpaint_accepts_common_provider_response_shapes():

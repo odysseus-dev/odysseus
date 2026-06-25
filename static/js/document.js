@@ -164,6 +164,12 @@ import * as Modals from './modalManager.js';
     });
     _maybeOpenDocFromHash();
     window.addEventListener('hashchange', _maybeOpenDocFromHash);
+
+    // Auto-minimize doc panel when another modal opens
+    window.addEventListener('odysseus:modal-opened', (e) => {
+      const id = e.detail?.id;
+      if (id && id !== 'doc-panel' && isOpen) { closePanel('down'); }
+    });
   }
 
   /** Update overflow-doc-btn accent indicator, toolbar indicator, and session list icon */
@@ -3755,26 +3761,13 @@ import * as Modals from './modalManager.js';
     const docInd = document.getElementById('doc-indicator-btn');
     if (docInd) docInd.classList.add('active');
 
-    // Create divider — grip in the middle (drag-to-resize), swapped for a
-    // clickable collapse chevron on hover.
+    // Create divider — grip in the middle (drag-to-resize).
+    // Window controls (minimize / maximize / close) now live in the
+    // doc-editor-header bar so they are always visible on landscape/PC
+    // and don't change sides/behavior based on cursor position.
     const divider = document.createElement('div');
     divider.className = 'doc-divider';
     divider.id = 'doc-divider';
-    // Single chevron that swaps direction based on cursor position:
-    //   - cursor INSIDE the doc pane  →  › (collapse / close panel)
-    //   - cursor OUTSIDE the doc pane →  ‹ (fullscreen — grow leftward)
-    // The arrow rotates via CSS so the swap feels clean. The action follows
-    // the glyph, so clicking always does what the arrow promises.
-    // The secondary X button below it is only shown in fullscreen mode and
-    // hides the pane outright (so fullscreen has an escape that isn't just
-    // "exit fullscreen").
-    divider.innerHTML = '<button type="button" class="doc-divider-collapse" title="Collapse panel" data-mode="collapse"><span>›</span></button>' +
-      '<button type="button" class="doc-divider-hide" title="Hide panel" aria-label="Hide panel"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
-    const _divHide = divider.querySelector('.doc-divider-hide');
-    if (_divHide) {
-      _divHide.addEventListener('mousedown', (e) => e.stopPropagation());
-      _divHide.addEventListener('click', (e) => { e.stopPropagation(); closePanel('down'); });
-    }
 
     // Create the editor pane
     const pane = document.createElement('div');
@@ -3819,6 +3812,11 @@ import * as Modals from './modalManager.js';
         <span id="doc-stream-indicator" class="doc-stream-indicator" style="display:none"><span class="doc-stream-dot"></span> editing</span>
         <span id="doc-version-badge" class="doc-version-badge" title="Version history" style="display:none">v1</span>
         <span style="flex:1"></span>
+        <!-- Window controls: minimize / maximize / close — always visible
+             on landscape & PC, replacing the old dynamic divider chevron. -->
+        <button id="doc-minimize-btn" class="doc-window-btn doc-minimize-btn" title="Minimize"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+        <button id="doc-maximize-btn" class="doc-window-btn doc-maximize-btn" title="Maximize"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></button>
+        <button id="doc-close-btn" class="doc-window-btn doc-close-btn" title="Close"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         <button id="doc-export-pdf-btn" class="doc-action-icon-btn" title="Export PDF" style="display:none;opacity:0.7;gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 18 15 15"/></svg> <span style="font-size:11px;">Export PDF</span></button>
         <button id="doc-pdf-view-btn" class="doc-action-icon-btn" title="Toggle PDF view" style="display:none;opacity:0.7;gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> <span style="font-size:11px;">PDF</span></button>
         <select id="doc-language-select" class="doc-language-select">
@@ -4061,105 +4059,15 @@ import * as Modals from './modalManager.js';
 
     // Wire up divider drag to resize
     initDividerDrag(divider, pane, isRight);
-    // Divider chevron — single button with three modes (the glyph is the
-     // same `›` in markup; CSS rotates 180° for the left-pointing variant).
-     //   • cursor INSIDE the doc pane  →  collapse  (›, slide back, closes panel)
-     //   • cursor OUTSIDE the doc pane →  fullscreen (‹, slide outward, expands)
-     //   • already fullscreen          →  unfullscreen (›, points back in)
-     // The user can also drag the chevron vertically along the divider to
-     // reposition it.
-    const _divCollapse = divider.querySelector('.doc-divider-collapse');
-    if (_divCollapse) {
-      _divCollapse.addEventListener('mousedown', (e) => e.stopPropagation());
-      let _dragging = false;
-      _divCollapse.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (_dragging) { _dragging = false; return; }  // suppress click after drag
-        const mode = _divCollapse.dataset.mode;
-        if (mode === 'fullscreen' || mode === 'unfullscreen') toggleFullscreen();
-        else closePanel('down');
-      });
-      const HYSTERESIS = 24;
-      const _applyMode = (ev) => {
-        // Fullscreen state takes precedence — once the pane is fullscreen the
-        // chevron always offers the "exit fullscreen" affordance regardless
-        // of cursor position.
-        const isFull = pane.classList.contains('doc-fullscreen');
-        if (isFull) {
-          if (_divCollapse.dataset.mode !== 'unfullscreen') {
-            _divCollapse.dataset.mode = 'unfullscreen';
-            _divCollapse.title = 'Exit fullscreen';
-          }
-          return;
-        }
-        if (!ev) return;
-        const rect = divider.getBoundingClientRect();
-        const midX = (rect.left + rect.right) / 2;
-        const cur = _divCollapse.dataset.mode;
-        if (ev.clientX > midX + HYSTERESIS && cur !== 'collapse') {
-          _divCollapse.dataset.mode = 'collapse';
-          _divCollapse.title = 'Collapse panel';
-        } else if (ev.clientX < midX - HYSTERESIS && cur !== 'fullscreen') {
-          _divCollapse.dataset.mode = 'fullscreen';
-          _divCollapse.title = 'Fullscreen';
-        }
-      };
-      const _onMove = (ev) => _applyMode(ev);
-      document.addEventListener('pointermove', _onMove, { passive: true });
-      // Reflect the fullscreen state immediately on toggle (no cursor move).
-      const _classObs = new MutationObserver(() => _applyMode());
-      _classObs.observe(pane, { attributes: true, attributeFilter: ['class'] });
-
-      // Drag-to-reposition: hold + drag vertically moves the chevron along
-      // the divider. Stored as a percent so resizing the pane keeps it
-      // proportional. Only kicks in after a small movement so a normal tap
-      // still registers as a click.
-      const DRAG_THRESHOLD = 4;
-      let _startY = 0, _moved = false, _pid = null;
-      _divCollapse.addEventListener('pointerdown', (ev) => {
-        if (ev.button !== 0 && ev.pointerType === 'mouse') return;
-        _startY = ev.clientY;
-        _moved = false;
-        _pid = ev.pointerId;
-        _divCollapse.setPointerCapture?.(_pid);
-        ev.preventDefault();
-      });
-      _divCollapse.addEventListener('pointermove', (ev) => {
-        if (_pid === null) return;
-        const dy = ev.clientY - _startY;
-        if (!_moved && Math.abs(dy) < DRAG_THRESHOLD) return;
-        _moved = true;
-        _dragging = true;
-        const rect = divider.getBoundingClientRect();
-        if (!rect.height) return;
-        const pct = Math.max(6, Math.min(94, ((ev.clientY - rect.top) / rect.height) * 100));
-        _divCollapse.style.top = pct + '%';
-      });
-      const _endDrag = () => {
-        if (_pid !== null) {
-          try { _divCollapse.releasePointerCapture?.(_pid); } catch {}
-          _pid = null;
-        }
-      };
-      _divCollapse.addEventListener('pointerup', _endDrag);
-      _divCollapse.addEventListener('pointercancel', _endDrag);
-
-      const _obs = new MutationObserver(() => {
-        if (!document.body.contains(divider)) {
-          document.removeEventListener('pointermove', _onMove);
-          _classObs.disconnect();
-          _obs.disconnect();
-        }
-      });
-      _obs.observe(document.body, { childList: true, subtree: true });
-    }
 
     // Mobile grab handle — swipe down to dismiss (like the other sheet windows).
     _wireSwipeDismiss(document.getElementById('doc-mobile-grabber'));
     document.getElementById('doc-mobile-grabber')?.addEventListener('click', () => closePanel('down'));
 
     // Wire up events
-    document.getElementById('doc-close-btn')?.addEventListener('click', () => closePanel('down'));
+    document.getElementById('doc-minimize-btn')?.addEventListener('click', () => closePanel('down'));
+    document.getElementById('doc-maximize-btn')?.addEventListener('click', () => toggleFullscreen());
+    document.getElementById('doc-close-btn')?.addEventListener('click', () => closePanel());
     document.getElementById('doc-footer-close-btn')?.addEventListener('click', () => { if (activeDocId) closeTab(activeDocId); });
     document.getElementById('doc-import-btn')?.addEventListener('click', () => openLibrary());
     document.getElementById('doc-footer-copy-btn')?.addEventListener('click', (e) => {
@@ -8531,17 +8439,27 @@ import * as Modals from './modalManager.js';
     const pane = document.getElementById('doc-editor-pane');
     const container = document.getElementById('chat-container');
     if (!pane) return;
-    // Note: the divider stays in the DOM during fullscreen so its chevron can
-    // act as the exit-fullscreen affordance (the CSS rule
-    // `body:has(.doc-editor-pane.doc-fullscreen) .doc-divider-collapse` slides
-    // it into a forced-inside position). Hiding the divider here would hide
-    // the chevron with it.
+    // Note: the divider stays in the DOM during fullscreen so it can still
+    // act as a drag-to-resize handle.
     if (pane.classList.contains('doc-fullscreen')) {
       pane.classList.remove('doc-fullscreen');
       if (container) container.style.display = '';
     } else {
       pane.classList.add('doc-fullscreen');
       if (container) container.style.display = 'none';
+    }
+    // Sync the maximize/restore button in the header bar
+    const maxBtn = document.getElementById('doc-maximize-btn');
+    if (maxBtn) {
+      if (pane.classList.contains('doc-fullscreen')) {
+        // Restore icon — two overlapping rectangles
+        maxBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="7" width="12" height="12" rx="1.5"/><path d="M9 7V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2"/></svg>';
+        maxBtn.title = 'Restore';
+      } else {
+        // Maximize icon — single rectangle
+        maxBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>';
+        maxBtn.title = 'Maximize';
+      }
     }
     // Re-check md toolbar overflow after layout change
     const mdToolbar = document.getElementById('doc-md-toolbar');

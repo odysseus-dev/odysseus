@@ -19,6 +19,7 @@ def _enable_runcomfy(monkeypatch):
     monkeypatch.setattr(runcomfy_media, "_comfyui_server_available", fake_comfyui_available)
     monkeypatch.setattr(runcomfy_media, "_comfyui_can_auto_launch", lambda integration=None: False)
     monkeypatch.setattr(runcomfy_media, "_comfyui_can_auto_bootstrap", lambda integration=None: False)
+    monkeypatch.setattr(runcomfy_media, "_gemini_video_endpoint_config", lambda owner=None: None)
 
 
 @pytest.mark.asyncio
@@ -89,6 +90,88 @@ async def test_default_video_uses_current_kling_schema(monkeypatch, tmp_path):
     assert body["cfg_scale"] == 0.7
     assert "resolution" not in body
     assert "generate_audio" not in body
+
+
+@pytest.mark.asyncio
+async def test_default_video_uses_gemini_veo_when_api_endpoint_is_configured(monkeypatch, tmp_path):
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, status_code=200, payload=None, content=b"", headers=None, text=""):
+            self.status_code = status_code
+            self._payload = payload or {}
+            self.content = content
+            self.headers = headers or {}
+            self.text = text
+
+        def json(self):
+            return self._payload
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            calls.append(("post", url, headers, json))
+            assert url == "https://generativelanguage.googleapis.com/v1beta/models/veo-3.1-generate-preview:predictLongRunning"
+            assert headers == {"x-goog-api-key": "test-key", "Content-Type": "application/json"}
+            assert json["instances"][0]["prompt"].startswith("create a video of a dog")
+            return FakeResponse(payload={"name": "models/veo-3.1-generate-preview/operations/video-op-1"})
+
+        async def get(self, url, headers=None, timeout=None):
+            calls.append(("get", url, headers, timeout))
+            if url.endswith("/models/veo-3.1-generate-preview/operations/video-op-1"):
+                assert headers == {"x-goog-api-key": "test-key"}
+                return FakeResponse(payload={
+                    "name": "models/veo-3.1-generate-preview/operations/video-op-1",
+                    "done": True,
+                    "response": {
+                        "generateVideoResponse": {
+                            "generatedSamples": [{
+                                "video": {
+                                    "uri": "https://generativelanguage.googleapis.com/v1main/files/video-op-1:download?alt=media"
+                                }
+                            }]
+                        }
+                    },
+                })
+            assert url == "https://generativelanguage.googleapis.com/v1beta/files/video-op-1:download?alt=media"
+            assert headers == {"x-goog-api-key": "test-key"}
+            return FakeResponse(content=b"fake mp4", headers={"content-type": "video/mp4"})
+
+    monkeypatch.setattr(runcomfy_media, "GENERATED_IMAGES_DIR", str(tmp_path))
+    monkeypatch.setattr(runcomfy_media.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(runcomfy_media, "_save_gallery_row", lambda **kwargs: "vid_1")
+    monkeypatch.setattr(
+        runcomfy_media,
+        "_gemini_video_endpoint_config",
+        lambda owner=None: {
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+            "headers": {"Authorization": "Bearer test-key"},
+            "models": [],
+        },
+    )
+    monkeypatch.setattr(runcomfy_media, "_runcomfy_executable", lambda: (_ for _ in ()).throw(AssertionError("RunComfy should not run")))
+
+    result = await runcomfy_media.generate_runcomfy_media(
+        "video",
+        '{"prompt":"create a video of a dog","timeout":60,"poll_interval":2}',
+    )
+
+    assert result["exit_code"] == 0
+    assert result["media_provider"] == "gemini_veo"
+    assert result["media_type"] == "video"
+    assert result["media_model"] == "veo-3.1-generate-preview"
+    assert result["media_id"] == "vid_1"
+    saved = tmp_path / result["media_files"][0]["filename"]
+    assert saved.read_bytes() == b"fake mp4"
+    assert [call[0] for call in calls] == ["post", "get", "get"]
 
 
 def test_wants_runcomfy_media_detects_explicit_comfy_provider():
@@ -188,6 +271,26 @@ async def test_runcomfy_cloud_requires_enabled_integration(monkeypatch, tmp_path
     assert result["exit_code"] == 1
     assert "RunComfy Cloud is disabled" in result["error"]
     assert called is False
+
+
+@pytest.mark.asyncio
+async def test_music_without_backend_uses_builtin_local_synth(monkeypatch, tmp_path):
+    monkeypatch.setattr(runcomfy_media, "GENERATED_IMAGES_DIR", str(tmp_path))
+    monkeypatch.setattr(runcomfy_media, "_runcomfy_integration", lambda args=None: None)
+    monkeypatch.setattr(runcomfy_media, "_save_gallery_row", lambda **kwargs: "")
+
+    result = await runcomfy_media.generate_runcomfy_media(
+        "music",
+        '{"prompt":"create a song of your choice","duration":5}',
+    )
+
+    output_path = tmp_path / Path(result["media_url"]).name
+    assert result["exit_code"] == 0
+    assert result["media_provider"] == "builtin_audio"
+    assert result["media_type"] == "audio"
+    assert result["media_url"].endswith(".wav")
+    assert output_path.exists()
+    assert output_path.read_bytes()[:4] == b"RIFF"
 
 
 @pytest.mark.asyncio

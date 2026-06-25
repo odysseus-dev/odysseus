@@ -83,8 +83,8 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "update_document": "Replace the entire active document content. ONLY for full rewrites (>50% changed). Do not use for small edits — use edit_document instead.",
     "suggest_document": "Suggest changes to the active document with explanations. For code review, proofreading, feedback requests.",
     "generate_image": "Generate a professional AI image file from a text prompt and render it inline. Use for image creation requests; do not substitute SVG/HTML/code/prompt text unless the user explicitly asks for that format. Tries the current/configured/mentioned image-capable model first, then falls back to free local ComfyUI if available; RunComfy Cloud is a paid opt-in integration. Supports size, aspect ratio, style, quality, seed, product shots, posters, ads, portraits, concept art.",
-    "generate_video": "Generate a professional AI video from a prompt using the configured media backend and render it inline. RunComfy Cloud requires an enabled paid integration; local ComfyUI requires an exact workflow. Supports cinematic camera direction, social clips, ad creative, animations, image-to-video, lip-sync/audio-driven clips, and premium tiers.",
-    "generate_music": "Generate professional AI music or audio using the configured media backend and render it inline. RunComfy Cloud requires an enabled paid integration; local ComfyUI requires an exact workflow. Supports songs, instrumentals, jingles, background music, seamless loops, vocals, lyrics, BPM, polished mix/master.",
+    "generate_video": "Generate a professional AI video from a prompt using the configured media backend and render it inline. Uses Gemini/Veo when a Gemini API endpoint is configured; RunComfy Cloud is an explicit paid integration; local ComfyUI requires an exact workflow. Supports cinematic camera direction, social clips, ad creative, animations, image-to-video, lip-sync/audio-driven clips, and premium tiers.",
+    "generate_music": "Generate professional AI music or audio using the configured media backend and render it inline. RunComfy Cloud requires an enabled paid integration; local ComfyUI requires an exact workflow; if neither is configured, Odysseus returns a built-in local synth WAV fallback. Supports songs, instrumentals, jingles, background music, seamless loops, vocals, lyrics, BPM, polished mix/master.",
     "runcomfy_media": "Run any exact media backend endpoint from a skill model_id/input body or local ComfyUI workflow. Use provider=comfyui for the free local route and provider=runcomfy for paid RunComfy Cloud schemas.",
     "chat_with_model": "Send a message to a different AI model. Compare responses, get specialized help, delegate tasks.",
     "ask_teacher": "Ask a more capable model for help with a difficult problem. Escalate complex tasks.",
@@ -341,6 +341,14 @@ class ToolIndex:
         r"https?://|www\.|\b(?:visit|open|fetch|check|read)\s+(?:this\s+)?(?:url|link|site|website|page)\b",
         re.I,
     )
+    _FILE_ARTIFACT_RE = re.compile(
+        r"(?:[A-Za-z]:[\\/][^\s`'\"<>]+|(?:\.{1,2}[\\/]|~[\\/]|/)[^\s`'\"<>]+|"
+        r"(?:[\w.-]+[\\/])+[^\s`'\"<>]+|"
+        r"\b[\w.-]+\.(?:py|pyw|js|mjs|cjs|ts|tsx|jsx|java|kt|kts|xml|json|jsonc|toml|"
+        r"ya?ml|txt|md|css|scss|html?|gradle|properties|lock|sh|bash|ps1|bat|cmd|"
+        r"sql|rs|go|c|cc|cpp|h|hpp|cs|rb|php|lua)\b)",
+        re.I,
+    )
 
     # Keyword hints: if the query mentions these words, force-include the tools.
     _KEYWORD_HINTS = {
@@ -564,6 +572,10 @@ class ToolIndex:
         # prompts do not drag web schemas into the agent context.
         if self._WEB_RE.search(query):
             base.update({"web_search", "web_fetch"})
+        # Bare source filenames and relative paths are workspace-file requests
+        # even when the user does not literally say "workspace" or "file".
+        if self._FILE_ARTIFACT_RE.search(query):
+            base.update({"get_workspace", "ls", "glob", "grep", "read_file", "write_file", "edit_file", "ui_control"})
         return base
 
 
