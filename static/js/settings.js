@@ -3489,6 +3489,7 @@ const INTG_TYPES = {
   caldav:  { label: 'CalDAV',  icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>' },
   contacts: { label: 'Contacts', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
   carddav: { label: 'CardDAV', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
+  nextcloud: { label: 'Nextcloud', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>' },
   email:   { label: 'Email',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>' },
   mcp:     { label: 'MCP',     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>' },
   codex:   { label: 'Codex',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 10.696.453a6.023 6.023 0 0 0-5.75 4.172 6.061 6.061 0 0 0-3.946 2.945 6.024 6.024 0 0 0 .742 7.099 5.98 5.98 0 0 0 .516 4.911 6.046 6.046 0 0 0 6.51 2.9A5.996 5.996 0 0 0 13.26 23.547a6.023 6.023 0 0 0 5.75-4.172 6.061 6.061 0 0 0 3.946-2.945 6.024 6.024 0 0 0-.674-6.609zM13.26 21.047a4.508 4.508 0 0 1-2.886-1.041l.143-.082 4.793-2.769a.777.777 0 0 0 .391-.676V10.34l2.026 1.17a.072.072 0 0 1 .039.061v5.596a4.532 4.532 0 0 1-4.506 4.48zM3.968 17.64a4.473 4.473 0 0 1-.537-3.018l.143.086 4.793 2.769a.79.79 0 0 0 .782 0l5.852-3.379v2.34a.072.072 0 0 1-.029.062l-4.845 2.796a4.532 4.532 0 0 1-6.159-1.656zM2.804 7.922a4.49 4.49 0 0 1 2.348-1.973V11.6a.778.778 0 0 0 .391.676l5.852 3.378-2.026 1.17a.072.072 0 0 1-.068 0L4.456 14.03a4.532 4.532 0 0 1-1.652-6.108zm16.423 3.823L13.375 8.367l2.026-1.17a.072.072 0 0 1 .068 0l4.845 2.796a4.525 4.525 0 0 1-.7 8.08V12.42a.778.778 0 0 0-.387-.676zm2.015-3.025l-.143-.086-4.793-2.769a.79.79 0 0 0-.782 0L9.672 9.243V6.903a.072.072 0 0 1 .029-.062l4.845-2.796a4.525 4.525 0 0 1 6.696 4.675zM8.598 12.66L6.57 11.49a.072.072 0 0 1-.039-.061V5.833a4.525 4.525 0 0 1 7.413-3.48l-.143.082-4.793 2.769a.777.777 0 0 0-.391.676l-.019 6.78zm1.1-2.379l2.607-1.505 2.607 1.505v3.01l-2.607 1.505-2.607-1.505z"/></svg>' },
@@ -3586,9 +3587,10 @@ async function initUnifiedIntegrations() {
   }
 
   async function fetchAll() {
-    const [apiRes, calRes, cardRes, contactsRes, emailAccountsRes, mcpRes, vaultRes, tokenRes, calendarsRes] = await Promise.all([
+    const [apiRes, calRes, ncRes, cardRes, contactsRes, emailAccountsRes, mcpRes, vaultRes, tokenRes, calendarsRes] = await Promise.all([
       fetch('/api/auth/integrations', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { integrations: [] }).catch(() => ({ integrations: [] })),
       fetch('/api/calendar/config/accounts', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { accounts: [] }).catch(() => ({ accounts: [] })),
+      fetch('/api/nextcloud/accounts', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { accounts: [] }).catch(() => ({ accounts: [] })),
       fetch('/api/contacts/config', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
       fetch('/api/contacts/list', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { contacts: [], count: 0 }).catch(() => ({ contacts: [], count: 0 })),
       fetch('/api/email/accounts', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { accounts: [] }).catch(() => ({ accounts: [] })),
@@ -3605,6 +3607,10 @@ async function initUnifiedIntegrations() {
     // CalDAV — one card per account
     for (const acc of (calRes.accounts || [])) {
       items.push({ type: 'caldav', id: acc.id, name: acc.label || 'Calendar (CalDAV)', detail: acc.url, enabled: true, data: acc });
+    }
+    // Nextcloud Files — one card per account
+    for (const acc of (ncRes.accounts || [])) {
+      items.push({ type: 'nextcloud', id: acc.id, name: acc.label || 'Nextcloud Files', detail: acc.base_url, enabled: acc.configured !== false, data: acc });
     }
     // Contacts import first, then the optional CardDAV sync account.
     const contactCount = Number(contactsRes.count || (contactsRes.contacts || []).length || 0);
@@ -3720,6 +3726,7 @@ async function initUnifiedIntegrations() {
         try {
           if (type === 'api') await fetch(`/api/auth/integrations/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'caldav') await fetch(`/api/calendar/config/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+          else if (type === 'nextcloud') await fetch(`/api/nextcloud/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'contacts') {
             await fetch('/api/contacts/clear', { method: 'DELETE', credentials: 'same-origin' });
           }
@@ -3742,12 +3749,103 @@ async function initUnifiedIntegrations() {
     formEl.style.display = '';
     if (type === 'api') showApiForm(editId);
     else if (type === 'caldav') showCalDavForm(editId);
+    else if (type === 'nextcloud') showNextcloudForm(editId);
     else if (type === 'contacts' || type === 'carddav') showCardDavForm();
     else if (type === 'email') showEmailForm(editId);
     else if (type === 'mcp') showMcpForm(editId);
     else if (type === 'codex') showAgentForm('codex', editId);
     else if (type === 'claude') showAgentForm('claude', editId);
     else if (type === 'vault') showVaultForm();
+  }
+
+  // ── Nextcloud Files form ──
+  async function showNextcloudForm(editId) {
+    const isNew = !editId || editId === 'new';
+    formEl.innerHTML = `
+      <div class="admin-card" style="margin-top:8px">
+        <h2 style="font-size:13px;display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>${isNew ? 'Add Nextcloud Files' : 'Edit Nextcloud Files'}</h2>
+        <div class="admin-toggle-sub" style="margin-bottom:8px">Connect a Nextcloud / ownCloud instance to browse and download files. The app password is stored encrypted; use a Nextcloud app password, not your login password.</div>
+        <div class="settings-col">
+          <div class="settings-row"><label class="settings-label">Label</label><input id="uf-nc-label" class="settings-input" placeholder="e.g. Personal, Work"></div>
+          <div class="settings-row"><label class="settings-label">Server URL</label><input id="uf-nc-url" class="settings-input" placeholder="https://cloud.example.com"></div>
+          <div class="settings-row"><label class="settings-label">Username</label><input id="uf-nc-user" class="settings-input" placeholder="you@example.com"></div>
+          <div class="settings-row"><label class="settings-label">App password</label><input id="uf-nc-pass" class="settings-input" type="password" placeholder="${isNew ? '' : 'Leave blank to keep existing'}"></div>
+          <div class="settings-row" style="margin-top:10px;align-items:center;justify-content:flex-end;gap:6px;">
+            <span id="uf-nc-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
+            ${!isNew ? '<button class="admin-btn-add" id="uf-nc-open" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Open Files</button>' : ''}
+            <button class="admin-btn-add" id="uf-nc-save" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));font-weight:600;">Save</button>
+            <button class="admin-btn-add" id="uf-nc-cancel" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Cancel</button>
+          </div>
+        </div>
+      </div>`;
+
+    if (!isNew) {
+      try {
+        const r = await fetch('/api/nextcloud/accounts', { credentials: 'same-origin' });
+        const d = await r.json();
+        const acc = (d.accounts || []).find(a => a.id === editId) || {};
+        el('uf-nc-label').value = acc.label || '';
+        el('uf-nc-url').value = acc.base_url || '';
+        el('uf-nc-user').value = acc.username || '';
+      } catch (_) {}
+    }
+
+    el('uf-nc-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
+
+    const _setMsg = (text, ok) => {
+      const msg = el('uf-nc-msg');
+      msg.textContent = text;
+      msg.style.color = ok ? 'var(--green, #50fa7b)' : 'var(--red)';
+    };
+
+    const openBtn = el('uf-nc-open');
+    if (openBtn) openBtn.addEventListener('click', () => {
+      const label = el('uf-nc-label').value.trim() || el('uf-nc-user').value.trim() || 'Nextcloud';
+      if (typeof window.openNextcloudExplorer === 'function') window.openNextcloudExplorer(editId, label);
+    });
+
+    el('uf-nc-save').addEventListener('click', async () => {
+      const payload = {
+        label: el('uf-nc-label').value.trim(),
+        base_url: el('uf-nc-url').value.trim(),
+        username: el('uf-nc-user').value.trim(),
+      };
+      const pass = el('uf-nc-pass').value;
+      if (isNew) payload.password = pass;
+      else if (pass) payload.password = pass;
+      if (!payload.base_url || !payload.username || (isNew && !payload.password)) {
+        _setMsg('Server URL, username, and app password are required', false);
+        return;
+      }
+      _setMsg('Saving…', true);
+      try {
+        let resp;
+        if (isNew) {
+          resp = await fetch('/api/nextcloud/accounts', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+        } else {
+          resp = await fetch(`/api/nextcloud/accounts/${editId}`, {
+            method: 'PUT', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+        }
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          _setMsg(err.detail || 'Save failed', false);
+          return;
+        }
+        _setMsg('Saved', true);
+        formEl.style.display = 'none';
+        await renderList();
+        notifyIntegrationsChanged();
+      } catch (e) {
+        _setMsg('Network error: ' + e.message, false);
+      }
+    });
   }
 
   // ── API form ──
@@ -5645,6 +5743,7 @@ async function initUnifiedIntegrations() {
       ['contacts', 'Contacts Import'],
       ['email', 'Email (IMAP/SMTP)'],
       ['mcp', 'MCP Tool Server'],
+      ['nextcloud', 'Nextcloud Files'],
     ];
     const _iconFor = (k) => (INTG_TYPES[k]?.icon || '').replace(/width="14"/, 'width="16"').replace(/height="14"/, 'height="16"');
     const _rowsHtml = _typeOptions.map(([k, label]) => `<button type="button" class="uf-type-option" data-value="${k}" style="display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;background:transparent;border:0;color:var(--fg);font:inherit;cursor:pointer;text-align:left;"><span style="display:inline-flex;color:var(--accent, var(--red));flex-shrink:0;">${_iconFor(k)}</span><span>${esc(label)}</span></button>`).join('');

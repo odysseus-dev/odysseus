@@ -79,6 +79,25 @@ MAX_DIFF_LINES = 400            # cap for edit_file unified-diff display
 WEB_FETCH_SOFT_MAX_BYTES = 2_000_000    # default download budget (2 MB)
 WEB_FETCH_HARD_MAX_BYTES = 20_000_000   # absolute ceiling, even with override (20 MB)
 
+# Nextcloud WebDAV (live, read-only file explorer). The agent read cap is
+# configurable via ODYSSEUS_NEXTCLOUD_MAX_READ_CHARS so users with large
+# documents can raise how much the agent pulls into context; an invalid or
+# non-positive value degrades to MAX_READ_CHARS rather than crashing startup.
+NEXTCLOUD_DAV_PATH = "/remote.php/dav/files"  # appended with /<username>/<path>
+NEXTCLOUD_REQUEST_TIMEOUT = 20                # seconds for WebDAV PROPFIND/GET
+try:
+    NEXTCLOUD_MAX_READ_CHARS = int(os.getenv("ODYSSEUS_NEXTCLOUD_MAX_READ_CHARS") or MAX_READ_CHARS)
+except (TypeError, ValueError):
+    NEXTCLOUD_MAX_READ_CHARS = MAX_READ_CHARS
+if NEXTCLOUD_MAX_READ_CHARS <= 0:
+    NEXTCLOUD_MAX_READ_CHARS = MAX_READ_CHARS
+try:
+    NEXTCLOUD_MAX_DOWNLOAD_BYTES = int(os.getenv("ODYSSEUS_NEXTCLOUD_MAX_DOWNLOAD_BYTES") or 50_000_000)
+except (TypeError, ValueError):
+    NEXTCLOUD_MAX_DOWNLOAD_BYTES = 50_000_000
+if NEXTCLOUD_MAX_DOWNLOAD_BYTES <= 0:
+    NEXTCLOUD_MAX_DOWNLOAD_BYTES = 50_000_000
+
 # API Configuration
 MAX_CONTEXT_MESSAGES = 90
 REQUEST_TIMEOUT = 20

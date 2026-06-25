@@ -1,0 +1,181 @@
+// nextcloud.js — read-only Nextcloud Files explorer.
+//
+// Opens a modal file browser over /api/nextcloud/* (added in routes/nextcloud_routes.py).
+// Self-contained: it builds its DOM with createElement/textContent so untrusted
+// file/folder names from the server can't inject markup, reuses the app's CSS
+// variables (--panel/--border/--fg/--accent) and inline monochrome SVG icons,
+// and uses no Unicode emoji. Credentials ride the same-origin session cookie.
+//
+// Public entry point: window.openNextcloudExplorer(accountId, label)
+
+function _ncIcon(name) {
+  // Monochrome inline SVGs matching the rest of the UI's icon style.
+  const icons = {
+    folder: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+    file: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+    close: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+    download: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+    back: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>',
+  };
+  return icons[name] || '';
+}
+
+function _ncHumanSize(n) {
+  if (n === null || n === undefined || isNaN(n)) return '';
+  const f = Number(n);
+  if (f < 1024) return f + ' B';
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = f / 1024, i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return v.toFixed(1) + ' ' + units[i];
+}
+
+async function _ncFetchList(accountId, path) {
+  const url = '/api/nextcloud/list?account=' + encodeURIComponent(accountId) + '&path=' + encodeURIComponent(path);
+  const r = await fetch(url, { credentials: 'same-origin' });
+  if (!r.ok) {
+    let detail = '';
+    try { detail = (await r.json()).detail || ''; } catch (_) {}
+    throw new Error(detail || ('HTTP ' + r.status));
+  }
+  return (await r.json()).entries || [];
+}
+
+window.openNextcloudExplorer = function (accountId, label) {
+  if (!accountId) return;
+  // Backdrop.
+  const backdrop = document.createElement('div');
+  backdrop.className = 'nc-explorer-backdrop';
+  backdrop.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;padding:24px;';
+
+  const panel = document.createElement('div');
+  panel.style.cssText = 'background:var(--panel,#111);border:1px solid var(--border);border-radius:10px;width:min(760px,100%);height:min(82vh,680px);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,0.4);';
+
+  // Header.
+  const header = document.createElement('div');
+  header.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);';
+  const title = document.createElement('div');
+  title.style.cssText = 'font-weight:600;font-size:13px;display:flex;align-items:center;gap:6px;color:var(--accent,var(--red));flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+  title.innerHTML = _ncIcon('folder');
+  const titleText = document.createElement('span');
+  titleText.textContent = 'Nextcloud' + (label ? ' — ' + label : '');
+  title.appendChild(titleText);
+  const closeBtn = document.createElement('button');
+  closeBtn.title = 'Close';
+  closeBtn.style.cssText = 'background:none;border:none;color:var(--fg);cursor:pointer;padding:4px;display:inline-flex;opacity:0.7;';
+  closeBtn.innerHTML = _ncIcon('close');
+  closeBtn.onclick = () => backdrop.remove();
+  header.appendChild(title);
+  header.appendChild(closeBtn);
+
+  // Breadcrumbs.
+  const crumbs = document.createElement('div');
+  crumbs.style.cssText = 'display:flex;align-items:center;gap:4px;padding:8px 12px;border-bottom:1px solid var(--border);font-size:12px;flex-wrap:wrap;';
+
+  // Body (scrollable listing).
+  const body = document.createElement('div');
+  body.style.cssText = 'flex:1;overflow-y:auto;padding:6px 8px;font-size:12px;';
+
+  // Status line.
+  const status = document.createElement('div');
+  status.style.cssText = 'padding:8px 12px;border-top:1px solid var(--border);font-size:11px;opacity:0.6;min-height:20px;';
+
+  panel.appendChild(header);
+  panel.appendChild(crumbs);
+  panel.appendChild(body);
+  panel.appendChild(status);
+  backdrop.appendChild(panel);
+  document.body.appendChild(backdrop);
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) backdrop.remove(); });
+  const onKey = (e) => { if (e.key === 'Escape') { backdrop.remove(); document.removeEventListener('keydown', onKey); } };
+  document.addEventListener('keydown', onKey);
+
+  let currentPath = '';
+
+  function renderCrumbs() {
+    crumbs.innerHTML = '';
+    const root = document.createElement('button');
+    root.textContent = '/';
+    root.style.cssText = 'background:none;border:none;color:var(--accent,var(--red));cursor:pointer;font:inherit;padding:2px 4px;';
+    root.onclick = () => navigate('');
+    crumbs.appendChild(root);
+    if (!currentPath) return;
+    const segs = currentPath.split('/').filter(Boolean);
+    let acc = '';
+    segs.forEach((seg, i) => {
+      acc = acc ? acc + '/' + seg : seg;
+      const sep = document.createElement('span');
+      sep.textContent = '/';
+      sep.style.opacity = '0.4';
+      crumbs.appendChild(sep);
+      const isLast = i === segs.length - 1;
+      const b = document.createElement('button');
+      b.textContent = seg;
+      b.style.cssText = 'background:none;border:none;font:inherit;padding:2px 4px;cursor:pointer;color:' + (isLast ? 'var(--fg)' : 'var(--accent,var(--red))') + ';';
+      if (!isLast) b.onclick = () => navigate(acc);
+      crumbs.appendChild(b);
+    });
+  }
+
+  function navigate(path) {
+    currentPath = (path || '').replace(/^\/+|\/+$/g, '');
+    renderCrumbs();
+    body.innerHTML = '';
+    const loading = document.createElement('div');
+    loading.textContent = 'Loading…';
+    loading.style.cssText = 'padding:16px;opacity:0.6;';
+    body.appendChild(loading);
+    status.textContent = '/' + (currentPath || '');
+    _ncFetchList(accountId, currentPath).then((entries) => {
+      body.innerHTML = '';
+      const dirs = entries.filter(e => e.is_dir).sort((a, b) => a.name.localeCompare(b.name));
+      const files = entries.filter(e => !e.is_dir).sort((a, b) => a.name.localeCompare(b.name));
+      if (dirs.length === 0 && files.length === 0) {
+        const empty = document.createElement('div');
+        empty.textContent = 'This folder is empty.';
+        empty.style.cssText = 'padding:16px;opacity:0.6;';
+        body.appendChild(empty);
+        return;
+      }
+      const rowFor = (entry) => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:6px;cursor:pointer;';
+        const ico = document.createElement('span');
+        ico.style.cssText = 'display:inline-flex;color:var(--accent,var(--red));opacity:0.8;flex-shrink:0;';
+        ico.innerHTML = entry.is_dir ? _ncIcon('folder') : _ncIcon('file');
+        const name = document.createElement('span');
+        name.textContent = entry.name + (entry.is_dir ? '/' : '');
+        name.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        const meta = document.createElement('span');
+        meta.style.cssText = 'opacity:0.5;font-size:11px;flex-shrink:0;';
+        meta.textContent = entry.is_dir ? '' : _ncHumanSize(entry.size);
+        row.appendChild(ico);
+        row.appendChild(name);
+        row.appendChild(meta);
+        row.onmouseenter = () => { row.style.background = 'color-mix(in srgb, var(--fg) 8%, transparent)'; };
+        row.onmouseleave = () => { row.style.background = 'transparent'; };
+        if (entry.is_dir) {
+          row.onclick = () => navigate(entry.path);
+        } else {
+          row.onclick = () => {
+            const url = '/api/nextcloud/file?account=' + encodeURIComponent(accountId) + '&path=' + encodeURIComponent(entry.path);
+            window.open(url, '_blank');
+          };
+        }
+        return row;
+      };
+      dirs.forEach(d => body.appendChild(rowFor(d)));
+      files.forEach(f => body.appendChild(rowFor(f)));
+      status.textContent = '/' + (currentPath || '') + '  ·  ' + dirs.length + ' folder' + (dirs.length === 1 ? '' : 's') + ', ' + files.length + ' file' + (files.length === 1 ? '' : 's');
+    }).catch((e) => {
+      body.innerHTML = '';
+      const err = document.createElement('div');
+      err.style.cssText = 'padding:16px;color:var(--red);';
+      err.textContent = 'Could not list this folder: ' + (e.message || e);
+      body.appendChild(err);
+      status.textContent = '';
+    });
+  }
+
+  navigate('');
+};

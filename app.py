@@ -796,6 +796,10 @@ app.include_router(setup_vault_routes())
 from routes.contacts_routes import setup_contacts_routes
 app.include_router(setup_contacts_routes())
 
+# Nextcloud Files (read-only WebDAV explorer)
+from routes.nextcloud_routes import setup_nextcloud_routes
+app.include_router(setup_nextcloud_routes())
+
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
 

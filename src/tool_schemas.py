@@ -153,6 +153,36 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "nextcloud_list",
+            "description": "List the files and folders at a path on the user's configured Nextcloud (via WebDAV). Use when the user refers to files on their Nextcloud/ownCloud instance. Read-only. Path is relative to the user's Nextcloud home; omit it to list the root. Folders are shown with a trailing slash.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Folder path relative to the Nextcloud home (optional; defaults to root)"},
+                    "account": {"type": "string", "description": "Specific Nextcloud account id (optional; defaults to the first configured account)"}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "nextcloud_read_file",
+            "description": "Read a text file from the user's configured Nextcloud into context (via WebDAV GET). Use when the user asks you to read/open/summarize a file that lives on their Nextcloud/ownCloud. The content is capped (configurable); binary files may not be useful. Read-only.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File path relative to the user's Nextcloud home"},
+                    "account": {"type": "string", "description": "Specific Nextcloud account id (optional; defaults to the first configured account)"}
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "write_file",
             "description": "Write/save a file to disk",
             "parameters": {

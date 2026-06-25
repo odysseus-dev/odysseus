@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 from .subprocess_tools import BashTool, PythonTool
 from .web_tools import WebSearchTool, WebFetchTool
 from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool, GlobTool, GrepTool, GetWorkspaceTool
+from .nextcloud_tools import NextcloudListTool, NextcloudReadFileTool
 from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocumentTool, SuggestDocumentTool, ManageDocumentTool
 from .model_interaction_tools import ChatWithModelTool, AskTeacherTool, ListModelsTool
 from .bg_job_tools import ManageBgJobsTool
@@ -56,6 +57,8 @@ TOOL_HANDLERS = {
     "list_sessions": ListSessionsTool().execute,
     "send_to_session": SendToSessionTool().execute,
     "manage_session": ManageSessionTool().execute,
+    "nextcloud_list": NextcloudListTool().execute,
+    "nextcloud_read_file": NextcloudReadFileTool().execute,
 }
 # Config/integration admin tools (manage_endpoints/mcp/webhooks/tokens/settings).
 TOOL_HANDLERS.update(ADMIN_TOOL_HANDLERS)
@@ -83,6 +86,7 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              "manage_endpoints", "manage_mcp", "manage_webhooks",
              "manage_tokens", "manage_documents", "manage_settings",
              "manage_notes", "manage_calendar",
+             "nextcloud_list", "nextcloud_read_file",
              "resolve_contact", "manage_contact", "list_email_accounts", "send_email", "list_emails",
              "read_email", "reply_to_email", "bulk_email", "archive_email",
              "delete_email", "mark_email_read",
