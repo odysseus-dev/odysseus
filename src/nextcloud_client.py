@@ -270,6 +270,28 @@ class NextcloudClient:
         self._propfind("", "0")
         return True
 
+    def put_file(self, path: str, content: bytes, content_type: Optional[str] = None) -> None:
+        """Write a file's bytes back to Nextcloud (WebDAV PUT).
+
+        Used to mirror edits made in the built-in editor back to the remote file.
+        Raises NextcloudError on auth/transport failure.
+        """
+        url = self._dav_url(path)
+        headers = {}
+        if content_type:
+            headers["Content-Type"] = content_type
+        try:
+            r = httpx.put(url, content=content, headers=headers, auth=self._auth, timeout=self.timeout)
+        except httpx.HTTPError as e:
+            raise NextcloudError(f"Nextcloud request failed: {e}") from e
+        if r.status_code in (200, 201, 204):
+            return
+        if r.status_code == 401:
+            raise NextcloudError("Nextcloud rejected the credentials (401).", status=401)
+        if r.status_code == 404:
+            raise NextcloudError("The parent folder does not exist on Nextcloud (404).", status=404)
+        raise NextcloudError(f"Nextcloud returned HTTP {r.status_code}.", status=r.status_code)
+
 
     def stat(self, path: str) -> dict:
         """Return a single entry describing ``path`` (the self response of a Depth:0 PROPFIND)."""

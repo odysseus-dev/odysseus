@@ -30,6 +30,63 @@ function _ncHumanSize(n) {
   return v.toFixed(1) + ' ' + units[i];
 }
 
+// Extensions/mime types the built-in document editor can edit. Everything else
+// (xlsx, pdf, docx, png, …) falls back to view/download in a new tab.
+const _NC_TEXT_EXT = ['txt', 'md', 'markdown', 'py', 'js', 'ts', 'json', 'csv', 'xml', 'yaml', 'yml', 'html', 'htm', 'css', 'svg', 'log', 'ini', 'toml', 'cfg', 'sh', 'bash', 'sql', 'java', 'c', 'cpp', 'h', 'hpp', 'cc', 'go', 'rs', 'rb', 'php', 'tex', 'env', 'mdx'];
+
+function _ncIsTextLike(entry) {
+  const ct = (entry.content_type || '').toLowerCase();
+  if (ct.startsWith('text/')) return true;
+  if (ct === 'application/json' || ct === 'application/xml' || ct === 'application/javascript' || ct === 'application/x-yaml') return true;
+  const ext = (entry.name.split('.').pop() || '').toLowerCase();
+  return _NC_TEXT_EXT.indexOf(ext) !== -1;
+}
+
+function _ncFileUrl(accountId, path) {
+  return '/api/nextcloud/file?account=' + encodeURIComponent(accountId) + '&path=' + encodeURIComponent(path);
+}
+
+// Open a text/markdown/code file in the built-in editor. Seeds a new library
+// document with the file content, registers it for save→Nextcloud writeback,
+// then opens it via the #document-<id> deep-link. Binary files are opened in a
+// new tab instead (see _ncOpenFile).
+async function _ncOpenInEditor(accountId, entry) {
+  let text;
+  try {
+    const r = await fetch(_ncFileUrl(accountId, entry.path), { credentials: 'same-origin' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    text = await r.text();
+  } catch (_) {
+    window.open(_ncFileUrl(accountId, entry.path), '_blank');  // fallback to view
+    return;
+  }
+  try {
+    const cr = await fetch('/api/document', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: entry.name, content: text }),
+    });
+    if (!cr.ok) throw new Error('create doc HTTP ' + cr.status);
+    const d = await cr.json();
+    // Register so subsequent saves mirror back to Nextcloud (best-effort).
+    fetch('/api/nextcloud/register', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ doc_id: d.id, account: accountId, path: entry.path }),
+    }).catch(() => {});
+    const closeBtn = document.getElementById('doclib-close');  // close Library modal if open
+    if (closeBtn) closeBtn.click();
+    window.location.hash = '#document-' + d.id;  // deep-link opens the editor
+  } catch (_) {
+    window.open(_ncFileUrl(accountId, entry.path), '_blank');  // fallback to view
+  }
+}
+
+function _ncOpenFile(accountId, entry) {
+  if (_ncIsTextLike(entry)) _ncOpenInEditor(accountId, entry);
+  else window.open(_ncFileUrl(accountId, entry.path), '_blank');
+}
+
 async function _ncFetchList(accountId, path) {
   const url = '/api/nextcloud/list?account=' + encodeURIComponent(accountId) + '&path=' + encodeURIComponent(path);
   const r = await fetch(url, { credentials: 'same-origin' });
@@ -157,10 +214,7 @@ window.openNextcloudExplorer = function (accountId, label) {
         if (entry.is_dir) {
           row.onclick = () => navigate(entry.path);
         } else {
-          row.onclick = () => {
-            const url = '/api/nextcloud/file?account=' + encodeURIComponent(accountId) + '&path=' + encodeURIComponent(entry.path);
-            window.open(url, '_blank');
-          };
+          row.onclick = () => _ncOpenFile(accountId, entry);
         }
         return row;
       };
@@ -212,10 +266,7 @@ function _ncFileNode(accountId, entry, depth) {
   meta.textContent = _ncHumanSize(entry.size);
   row.appendChild(spacer); row.appendChild(ico); row.appendChild(name); row.appendChild(meta);
   _ncHover(row);
-  row.onclick = () => {
-    const url = '/api/nextcloud/file?account=' + encodeURIComponent(accountId) + '&path=' + encodeURIComponent(entry.path);
-    window.open(url, '_blank');
-  };
+  row.onclick = () => _ncOpenFile(accountId, entry);
   return row;
 }
 

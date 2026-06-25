@@ -203,3 +203,65 @@ def test_test_connection_unknown_account_is_404(app, monkeypatch):
     r = TestClient(app).post("/api/nextcloud/test", json={"account_id": "not-mine"})
     assert r.status_code == 404
 
+
+# ── Edit writeback (open in editor → save mirrors to Nextcloud) ──
+
+def test_register_is_owner_scoped(app):
+    _as(app, "alice")
+    alice = TestClient(app)
+    acc_id = _make_account(alice)
+    # Bob cannot link a writeback against alice's account.
+    _as(app, "bob")
+    assert TestClient(app).post("/api/nextcloud/register", json={
+        "doc_id": "d1", "account": acc_id, "path": "a.txt",
+    }).status_code == 404
+    # Alice can.
+    _as(app, "alice")
+    assert alice.post("/api/nextcloud/register", json={
+        "doc_id": "d1", "account": acc_id, "path": "a.txt",
+    }).status_code == 200
+
+
+async def test_writeback_is_noop_for_unlinked_doc(app):
+    _as(app, "alice")
+    # A doc that was never registered is left alone (no network, returns None).
+    assert await nc.writeback_doc_if_linked("never-registered-doc", "x", "alice") is None
+
+
+async def test_writeback_mirrors_save_to_registered_doc(app, monkeypatch):
+    _as(app, "alice")
+    client = TestClient(app)
+    acc_id = _make_account(client)
+    assert client.post("/api/nextcloud/register", json={
+        "doc_id": "doc-9", "account": acc_id, "path": "notes/Char.txt",
+    }).status_code == 200
+
+    sent = {}
+
+    class _C:
+        def put_file(self, path, content, content_type=None):
+            sent["path"] = path
+            sent["content"] = content
+
+    monkeypatch.setattr(nc, "_client_for", lambda account: _C())
+    result = await nc.writeback_doc_if_linked("doc-9", "edited text", "alice")
+    assert result == {"ok": True, "path": "notes/Char.txt"}
+    assert sent == {"path": "notes/Char.txt", "content": b"edited text"}
+
+
+async def test_writeback_reports_failure_without_raising(app, monkeypatch):
+    from src.nextcloud_client import NextcloudError
+
+    _as(app, "alice")
+    client = TestClient(app)
+    acc_id = _make_account(client)
+    client.post("/api/nextcloud/register", json={"doc_id": "doc-10", "account": acc_id, "path": "x.txt"})
+
+    class _C:
+        def put_file(self, path, content, content_type=None):
+            raise NextcloudError("Nextcloud rejected the credentials (401).", status=401)
+
+    monkeypatch.setattr(nc, "_client_for", lambda account: _C())
+    result = await nc.writeback_doc_if_linked("doc-10", "x", "alice")
+    assert result["ok"] is False and "credentials" in result["error"]
+

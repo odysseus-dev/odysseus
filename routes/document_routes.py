@@ -612,7 +612,20 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             doc.current_content = req.content
             db.commit()
             db.refresh(doc)
-            return _doc_to_dict(doc)
+            result = _doc_to_dict(doc)
+            # If this document was opened from a Nextcloud file, mirror the save
+            # back to the remote file. No-op (returns None) for normal docs, so
+            # there's no extra cost or field for non-Nextcloud documents.
+            try:
+                from routes.nextcloud_routes import writeback_doc_if_linked
+                sync = await writeback_doc_if_linked(doc_id, req.content, user)
+                if sync is not None:
+                    result["nextcloud_sync"] = sync
+                    if not sync.get("ok"):
+                        logger.warning("Nextcloud writeback failed for doc %s: %s", doc_id, sync.get("error"))
+            except Exception:
+                logger.debug("Nextcloud writeback skipped", exc_info=True)
+            return result
         except HTTPException:
             raise
         except Exception as e:

@@ -56,6 +56,20 @@ class _WebDAVHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def do_PUT(self):
+        # Record what was written so the test can assert the writeback payload.
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        body = self.rfile.read(length) if length else b""
+        _LAST_PUT["path"] = self.path
+        _LAST_PUT["body"] = body
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+
+# Captures the most recent PUT the in-process server received.
+_LAST_PUT = {"path": None, "body": None}
+
 
 @pytest.fixture
 def nc_server():
@@ -100,3 +114,11 @@ def test_get_file_over_the_limit_raises_413(nc_server):
     with pytest.raises(NextcloudError) as exc:
         _client(nc_server).get_file("hello.txt", 5)
     assert exc.value.status == 413
+
+
+def test_put_file_writes_content_back(nc_server):
+    _LAST_PUT["body"] = None
+    _LAST_PUT["path"] = None
+    _client(nc_server).put_file("hello.txt", b"edited content", "text/plain")
+    assert _LAST_PUT["body"] == b"edited content"
+    assert _LAST_PUT["path"].endswith("/remote.php/dav/files/alice/hello.txt")

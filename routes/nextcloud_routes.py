@@ -22,6 +22,40 @@ logger = logging.getLogger(__name__)
 
 PREFS_KEY = "nextcloud_accounts"
 
+# In-process link from an editor Document id to the Nextcloud file it was opened
+# from: {doc_id: (account_id, path)}. When such a document is saved, the save is
+# mirrored back to Nextcloud via WebDAV PUT (see writeback_doc_if_linked). The
+# map is ephemeral — it clears on server restart, so a doc opened in a previous
+# process just stops auto-syncing until it is re-opened from the Nextcloud tab.
+# (Avoids a schema migration to persist provenance on the Document itself.)
+_NC_DOC_LINKS: dict = {}
+
+
+async def writeback_doc_if_linked(doc_id: str, content: str, owner: Optional[str]) -> Optional[dict]:
+    """Mirror a document save back to Nextcloud if the doc is linked.
+
+    Returns None when the doc isn't a Nextcloud-sourced doc (no-op for normal
+    documents), otherwise an outcome dict ``{"ok": bool, ...}``. Best-effort:
+    never raises — callers invoke it after a successful local save.
+    """
+    link = _NC_DOC_LINKS.get(doc_id)
+    if not link:
+        return None
+    account_id, path = link
+    try:
+        account = _find_account(owner, account_id)
+        client = _client_for(account)
+    except HTTPException as e:
+        return {"ok": False, "error": f"account: {e.detail}"}
+    try:
+        await asyncio.to_thread(client.put_file, path, content.encode("utf-8"))
+        return {"ok": True, "path": path}
+    except NextcloudError as e:
+        return {"ok": False, "error": str(e)}
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+
+
 
 async def _require_owner(request: Request) -> Optional[str]:
     """Gate the route on auth, then resolve the prefs owner.
@@ -200,6 +234,41 @@ def setup_nextcloud_routes() -> APIRouter:
         except ValueError as e:
             return {"ok": False, "error": str(e)}
         return {"ok": True}
+
+    @router.post("/register")
+    async def register_doc_link(data: dict, owner: Optional[str] = Depends(_require_owner)):
+        """Link an editor Document to the Nextcloud file it was opened from.
+
+        After this, saves to that document are mirrored back to Nextcloud. The
+        account must belong to ``owner`` (validated) so a user can't direct
+        writebacks at another user's account.
+        """
+        doc_id = (data.get("doc_id") or "").strip()
+        account_id = (data.get("account") or "").strip()
+        path = (data.get("path") or "").strip()
+        if not (doc_id and account_id and path):
+            raise HTTPException(400, "doc_id, account, and path are required")
+        _find_account(owner, account_id)  # owner-scope check (404 if not theirs)
+        _NC_DOC_LINKS[doc_id] = (account_id, path)
+        return {"ok": True}
+
+    @router.put("/file")
+    async def put_file(
+        request: Request,
+        account: str = Query(...),
+        path: str = Query(...),
+        owner: Optional[str] = Depends(_require_owner),
+    ):
+        """Write a file's body back to Nextcloud (direct WebDAV PUT)."""
+        raw = await request.body()
+        client = _client_for(_find_account(owner, account))
+        try:
+            await asyncio.to_thread(client.put_file, path, raw)
+        except NextcloudError as e:
+            raise _map_nextcloud_error(e)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"ok": True, "path": path}
 
     @router.get("/list")
     async def list_path(
