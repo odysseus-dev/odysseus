@@ -179,3 +179,134 @@ window.openNextcloudExplorer = function (accountId, label) {
 
   navigate('');
 };
+
+// ── Library tab: read-only folder tree of all configured Nextcloud accounts ──
+
+const _NC_CHEV = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+
+function _ncRow(depth) {
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;align-items:center;gap:7px;padding:4px 6px;cursor:pointer;border-radius:5px;';
+  row.style.paddingLeft = (6 + depth * 14) + 'px';
+  return row;
+}
+
+function _ncHover(row) {
+  row.onmouseenter = () => { row.style.background = 'color-mix(in srgb, var(--fg) 8%, transparent)'; };
+  row.onmouseleave = () => { row.style.background = 'transparent'; };
+}
+
+function _ncFileNode(accountId, entry, depth) {
+  const row = _ncRow(depth);
+  row.style.cursor = 'pointer';
+  const spacer = document.createElement('span');
+  spacer.style.cssText = 'display:inline-block;width:10px;flex-shrink:0;';
+  const ico = document.createElement('span');
+  ico.style.cssText = 'display:inline-flex;color:var(--accent,var(--red));opacity:0.7;flex-shrink:0;';
+  ico.innerHTML = _ncIcon('file');
+  const name = document.createElement('span');
+  name.textContent = entry.name;
+  name.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+  const meta = document.createElement('span');
+  meta.style.cssText = 'opacity:0.5;font-size:11px;flex-shrink:0;';
+  meta.textContent = _ncHumanSize(entry.size);
+  row.appendChild(spacer); row.appendChild(ico); row.appendChild(name); row.appendChild(meta);
+  _ncHover(row);
+  row.onclick = () => {
+    const url = '/api/nextcloud/file?account=' + encodeURIComponent(accountId) + '&path=' + encodeURIComponent(entry.path);
+    window.open(url, '_blank');
+  };
+  return row;
+}
+
+function _ncFolderNode(accountId, label, path, depth) {
+  const wrap = document.createElement('div');
+  const row = _ncRow(depth);
+  const chev = document.createElement('span');
+  chev.style.cssText = 'display:inline-flex;opacity:0.6;flex-shrink:0;transition:transform 0.15s;';
+  chev.innerHTML = _NC_CHEV;
+  const ico = document.createElement('span');
+  ico.style.cssText = 'display:inline-flex;color:var(--accent,var(--red));opacity:0.85;flex-shrink:0;';
+  ico.innerHTML = _ncIcon('folder');
+  const name = document.createElement('span');
+  name.textContent = label + (path ? '' : '');
+  name.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:' + (depth === 0 ? '600' : '400') + ';';
+  row.appendChild(chev); row.appendChild(ico); row.appendChild(name);
+  _ncHover(row);
+  const kids = document.createElement('div');
+  kids.style.cssText = 'display:none;';
+  wrap.appendChild(row); wrap.appendChild(kids);
+  let loaded = false;
+  row.onclick = () => {
+    const open = kids.style.display !== 'none';
+    if (open) {
+      kids.style.display = 'none';
+      chev.style.transform = 'rotate(0deg)';
+      return;
+    }
+    kids.style.display = '';
+    chev.style.transform = 'rotate(90deg)';
+    if (loaded) return;
+    loaded = true;
+    const loading = document.createElement('div');
+    loading.textContent = 'Loading…';
+    loading.style.cssText = 'padding:4px 6px;opacity:0.6;';
+    kids.appendChild(loading);
+    _ncFetchList(accountId, path).then((entries) => {
+      kids.innerHTML = '';
+      const dirs = entries.filter(e => e.is_dir).sort((a, b) => a.name.localeCompare(b.name));
+      const files = entries.filter(e => !e.is_dir).sort((a, b) => a.name.localeCompare(b.name));
+      if (!dirs.length && !files.length) {
+        const empty = document.createElement('div');
+        empty.textContent = 'Empty folder';
+        empty.style.cssText = 'padding:4px 6px;opacity:0.5;';
+        kids.appendChild(empty);
+        return;
+      }
+      dirs.forEach(d => kids.appendChild(_ncFolderNode(accountId, d.name, d.path, depth + 1)));
+      files.forEach(f => kids.appendChild(_ncFileNode(accountId, f, depth + 1)));
+    }).catch((e) => {
+      kids.innerHTML = '';
+      const err = document.createElement('div');
+      err.style.cssText = 'padding:4px 6px;color:var(--red);';
+      err.textContent = 'Could not list folder: ' + (e.message || e);
+      kids.appendChild(err);
+    });
+  };
+  return wrap;
+}
+
+window.renderNextcloudLibrary = function () {
+  const root = document.getElementById('doclib-nextcloud-tree');
+  if (!root) return;
+  root.innerHTML = '';
+  const loading = document.createElement('div');
+  loading.textContent = 'Loading…';
+  loading.style.cssText = 'padding:10px;opacity:0.6;';
+  root.appendChild(loading);
+  fetch('/api/nextcloud/accounts', { credentials: 'same-origin' })
+    .then(r => r.ok ? r.json() : { accounts: [] })
+    .then((d) => {
+      root.innerHTML = '';
+      const accounts = (d && d.accounts) || [];
+      if (!accounts.length) {
+        const empty = document.createElement('div');
+        empty.style.cssText = 'padding:10px;opacity:0.6;';
+        empty.textContent = 'No Nextcloud account configured. Add one in Settings \u2192 Integrations.';
+        root.appendChild(empty);
+        return;
+      }
+      accounts.forEach(acc => {
+        const label = acc.label || acc.username || 'Nextcloud';
+        root.appendChild(_ncFolderNode(acc.id, label, '', 0));
+      });
+    })
+    .catch(() => {
+      root.innerHTML = '';
+      const err = document.createElement('div');
+      err.style.cssText = 'padding:10px;color:var(--red);';
+      err.textContent = 'Could not load Nextcloud accounts.';
+      root.appendChild(err);
+    });
+};
+

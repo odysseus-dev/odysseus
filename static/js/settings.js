@@ -3772,6 +3772,7 @@ async function initUnifiedIntegrations() {
           <div class="settings-row"><label class="settings-label">App password</label><input id="uf-nc-pass" class="settings-input" type="password" placeholder="${isNew ? '' : 'Leave blank to keep existing'}"></div>
           <div class="settings-row" style="margin-top:10px;align-items:center;justify-content:flex-end;gap:6px;">
             <span id="uf-nc-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
+            <button class="admin-btn-add" id="uf-nc-test" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Test</button>
             ${!isNew ? '<button class="admin-btn-add" id="uf-nc-open" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Open Files</button>' : ''}
             <button class="admin-btn-add" id="uf-nc-save" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));font-weight:600;">Save</button>
             <button class="admin-btn-add" id="uf-nc-cancel" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Cancel</button>
@@ -3797,6 +3798,33 @@ async function initUnifiedIntegrations() {
       msg.textContent = text;
       msg.style.color = ok ? 'var(--green, #50fa7b)' : 'var(--red)';
     };
+
+    el('uf-nc-test').addEventListener('click', async () => {
+      const pass = el('uf-nc-pass').value;
+      // For a saved account with a blank password field, the backend tests the
+      // stored password; only send what the user typed.
+      const payload = {
+        base_url: el('uf-nc-url').value.trim(),
+        username: el('uf-nc-user').value.trim(),
+      };
+      if (!isNew) payload.account_id = editId;
+      if (pass) payload.password = pass;
+      if (!payload.base_url || !payload.username) { _setMsg('Server URL and username are required', false); return; }
+      if (isNew && !pass) { _setMsg('App password is required to test', false); return; }
+      _setMsg('Testing…', true);
+      try {
+        const r = await fetch('/api/nextcloud/test', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const d = await r.json();
+        if (r.ok && d.ok) _setMsg('Connected', true);
+        else _setMsg(d.error || d.detail || 'Connection failed', false);
+      } catch (e) {
+        _setMsg('Network error: ' + e.message, false);
+      }
+    });
 
     const openBtn = el('uf-nc-open');
     if (openBtn) openBtn.addEventListener('click', () => {

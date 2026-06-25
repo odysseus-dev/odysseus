@@ -152,3 +152,54 @@ def test_list_unknown_account_is_404(app):
     _as(app, "alice")
     client = TestClient(app)
     assert client.get("/api/nextcloud/list?account=nope&path=").status_code == 404
+
+
+# ── Test connection ──
+
+def test_test_connection_requires_fields(app):
+    _as(app, "alice")
+    client = TestClient(app)
+    assert client.post("/api/nextcloud/test", json={}).status_code == 400
+
+
+def test_test_connection_inline_success(app, monkeypatch):
+    _as(app, "alice")
+    class _C:
+        def __init__(self, base_url, username, password):
+            self.base_url = base_url
+        def ping(self):
+            return True
+    monkeypatch.setattr(nc, "NextcloudClient", _C)
+    client = TestClient(app)
+    r = client.post("/api/nextcloud/test", json={
+        "base_url": "https://cloud.example.com", "username": "alice", "password": "tok",
+    })
+    assert r.status_code == 200 and r.json()["ok"] is True
+
+
+def test_test_connection_saved_account_failure(app, monkeypatch):
+    from src.nextcloud_client import NextcloudError
+
+    _as(app, "alice")
+    client = TestClient(app)
+    acc_id = _make_account(client)
+
+    class _C:
+        def __init__(self, base_url, username, password):
+            pass
+        def ping(self):
+            raise NextcloudError("Nextcloud rejected the credentials (401).", status=401)
+
+    monkeypatch.setattr(nc, "NextcloudClient", _C)
+    r = client.post("/api/nextcloud/test", json={"account_id": acc_id})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False and "credentials" in body["error"]
+
+
+def test_test_connection_unknown_account_is_404(app, monkeypatch):
+    _as(app, "alice")
+    # No fake client needed: the owner-scope lookup fails first.
+    r = TestClient(app).post("/api/nextcloud/test", json={"account_id": "not-mine"})
+    assert r.status_code == 404
+

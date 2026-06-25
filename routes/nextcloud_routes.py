@@ -165,6 +165,42 @@ def setup_nextcloud_routes() -> APIRouter:
 
     # ── Browsing ──
 
+    @router.post("/test")
+    async def test_connection(data: dict, owner: Optional[str] = Depends(_require_owner)):
+        """Verify credentials without saving.
+
+        Accepts an ``account_id`` (test stored creds, owner-scoped), or inline
+        ``base_url`` + ``username`` + ``password`` for an unsaved account. When
+        ``account_id`` and ``password`` are both given, the inline password is
+        tested against the account's stored URL/username — the CalDAV-style
+        "test a newly typed password before saving" case.
+        """
+        from src.secret_storage import decrypt
+
+        account_id = (data.get("account_id") or "").strip()
+        password = (data.get("password") or "").strip()
+        base_url = (data.get("base_url") or "").strip()
+        username = (data.get("username") or "").strip()
+        if account_id:
+            account = _find_account(owner, account_id)  # 404 if it isn't this owner's
+            base_url = base_url or (account.get("base_url") or "")
+            username = username or (account.get("username") or "")
+            if not password:
+                password = decrypt(account.get("password") or "")
+        if not (base_url and username and password):
+            raise HTTPException(400, "Provide an account_id, or base_url + username + password")
+        try:
+            client = NextcloudClient(base_url, username, password)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        try:
+            await asyncio.to_thread(client.ping)
+        except NextcloudError as e:
+            return {"ok": False, "error": str(e)}
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True}
+
     @router.get("/list")
     async def list_path(
         request: Request,

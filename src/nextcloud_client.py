@@ -260,6 +260,17 @@ class NextcloudClient:
         xml_text = self._propfind(requested_rel, "1")
         return _parse_propfind(xml_text, self.username, requested_rel)
 
+    def ping(self) -> bool:
+        """Lightweight auth + reachability check.
+
+        Issues a Depth:0 PROPFIND on the user's DAV home — enough to confirm the
+        credentials work (a bad app password comes back 401) and the instance is
+        reachable, without pulling a full listing. Raises NextcloudError on failure.
+        """
+        self._propfind("", "0")
+        return True
+
+
     def stat(self, path: str) -> dict:
         """Return a single entry describing ``path`` (the self response of a Depth:0 PROPFIND)."""
         requested_rel = _safe_relative_path(path)
