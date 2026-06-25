@@ -2910,6 +2910,12 @@ async def stream_agent_loop(
         r"\b[^.\n]{0,140}",
         re.IGNORECASE,
     )
+    _HOLDING_RE = re.compile(
+        r"(?:please\s+)?(?:hold\s+on|wait)\b|one\s+moment\b|just\s+a\s+(?:moment|second|minute)\b|"
+        r"\bi\s+am\s+(?:now\s+)?(?:reading|fetching|searching|investigating|scanning|processing)\b|"
+        r"\bi'?m\s+(?:now\s+)?(?:reading|fetching|searching|investigating|scanning|processing)\b",
+        re.IGNORECASE,
+    )
     _awaiting_user = False  # set by ask_user → end the turn and wait for a choice
 
     # Document streaming state (persists across rounds)
@@ -3407,33 +3413,45 @@ async def stream_agent_loop(
             # tool doesn't pin us in a forever loop.
             _intent_text = _strip_think_blocks(cleaned_round).strip()
             _intent_match = _INTENT_RE.search(_intent_text) if _intent_text else None
+            _has_holding = bool(_intent_text and _HOLDING_RE.search(_intent_text))
             # Only nudge when the round REALLY looks like an unfinished
             # promise: short response (<400 chars), no fenced code/answer,
             # and an action-intent phrase was matched. Long answers that
             # happen to contain "let me know" are not stalls.
+            # However, if a holding/waiting pattern is matched, we bypass
+            # the length restriction because "please hold" or "I am reading"
+            # without tools always stalls the run regardless of response length.
             _looks_like_promise = (
                 not guide_only
-                and _intent_match is not None
-                and len(_intent_text) < 400
+                and (_intent_match is not None or _has_holding)
+                and (len(_intent_text) < 400 or _has_holding)
                 and "```" not in _intent_text
                 and _intent_nudge_count < _MAX_INTENT_NUDGES
             )
             if _looks_like_promise:
                 _intent_nudge_count += 1
-                _matched_phrase = _intent_match.group(0).strip()
-                logger.info(f"[agent] intent-without-action nudge #{_intent_nudge_count} on round {round_num}: {_matched_phrase!r}")
-                _lower_phrase = _matched_phrase.lower()
-                _cookbook_log_hint = ""
-                if any(_word in _lower_phrase for _word in ("log", "logs", "output", "tail", "status")):
-                    _cookbook_log_hint = (
-                        " If this is about a Cookbook/model serve, the concrete calls are: "
-                        "`list_served_models` first, then `tail_serve_output` with the "
-                        "session_id from the serve/list result. Never answer with "
-                        "\"check logs\" when those tools are available."
+                if _has_holding:
+                    logger.info(f"[agent] intent-without-action holding pattern nudge #{_intent_nudge_count} on round {round_num}")
+                    _nudge_msg = (
+                        "You wrote a holding/waiting pattern or stated that you are currently performing "
+                        "an action (e.g. reading, searching, wait, hold on) but ended the turn without making any tool calls. "
+                        "In this environment, you must emit the tool calls (such as `read_email` with the relevant UIDs) "
+                        "directly in the same turn so they can execute. You cannot 'hold' or 'wait' for a future turn "
+                        "without calling a tool first. Call the actual tools now to continue the task."
                     )
-                messages.append({
-                    "role": "system",
-                    "content": (
+                else:
+                    _matched_phrase = _intent_match.group(0).strip()
+                    logger.info(f"[agent] intent-without-action nudge #{_intent_nudge_count} on round {round_num}: {_matched_phrase!r}")
+                    _lower_phrase = _matched_phrase.lower()
+                    _cookbook_log_hint = ""
+                    if any(_word in _lower_phrase for _word in ("log", "logs", "output", "tail", "status")):
+                        _cookbook_log_hint = (
+                            " If this is about a Cookbook/model serve, the concrete calls are: "
+                            "`list_served_models` first, then `tail_serve_output` with the "
+                            "session_id from the serve/list result. Never answer with "
+                            "\"check logs\" when those tools are available."
+                        )
+                    _nudge_msg = (
                         f"You just wrote: \"{_matched_phrase}\" — but ended the "
                         "turn without making the actual tool call. The user can "
                         "see you announced the action but didn't run it, which "
@@ -3442,7 +3460,11 @@ async def stream_agent_loop(
                         f"{_cookbook_log_hint}"
                         "If you decided not to do it after all, say so plainly in "
                         "one sentence instead of restating the plan."
-                    ),
+                    )
+
+                messages.append({
+                    "role": "system",
+                    "content": _nudge_msg,
                 })
                 # Visible signal in the stream so the user knows we caught it.
                 yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
