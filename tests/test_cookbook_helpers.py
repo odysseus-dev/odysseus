@@ -16,6 +16,7 @@ from routes.cookbook_helpers import (
     _llama_cpp_rebuild_cmd,
     _append_vllm_linux_preflight_lines,
     _local_tooling_path_export,
+    _local_windows_bash_env_prefix,
     _pip_install_attempt,
     _pip_install_fallback_chain,
     _ollama_bind_from_cmd,
@@ -104,6 +105,16 @@ def test_safe_env_prefix_accepts_powershell_activation_path():
     assert (
         _safe_env_prefix("& 'C:\\Users\\me\\venv\\Scripts\\Activate.ps1'")
         == "& 'C:\\Users\\me\\venv\\Scripts\\Activate.ps1'"
+    )
+
+
+def test_local_windows_bash_env_prefix_converts_powershell_venv_activation():
+    prefix = _local_windows_bash_env_prefix("& 'C:\\Users\\me\\venv\\Scripts\\Activate.ps1'")
+
+    assert prefix == "source /c/Users/me/venv/Scripts/activate"
+    assert (
+        _safe_env_prefix(prefix)
+        == '[ -f "/c/Users/me/venv/Scripts/activate" ] && source "/c/Users/me/venv/Scripts/activate" || true'
     )
 
 
