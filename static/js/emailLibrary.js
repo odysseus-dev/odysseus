@@ -402,7 +402,7 @@ function _emailSplitLeftEdge() {
 }
 
 function _setEmailDocumentSplit(leftEdge, emailWidth) {
-  if (window.innerWidth <= 768) return;
+  if (window.innerWidth <= 768 || (window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches)) return;
   // Zero gap so the doc-pane sits flush against the email's right edge.
   // modalSnap.js's left-dock path publishes the same vars with 0 gap — both
   // systems agree on flush so handoffs between them don't cause the doc to
@@ -418,7 +418,7 @@ function _setEmailDocumentSplit(leftEdge, emailWidth) {
 }
 
 function _measureEmailDocumentSplit(modal) {
-  if (window.innerWidth <= 768 || !document.body.classList.contains('email-doc-split-active')) return;
+  if (window.innerWidth <= 768 || (window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches) || !document.body.classList.contains('email-doc-split-active')) return;
   const content = modal?.querySelector?.('.modal-content');
   const rect = content?.getBoundingClientRect?.();
   if (!rect || !rect.width) return;
@@ -478,7 +478,7 @@ function _emailSplitLeftEdgeIfSidebarCollapsed() {
 }
 
 function _hasDesktopRoomForEmailAndDocument(modal, opts = {}) {
-  if (window.innerWidth <= 768) return false;
+  if (window.innerWidth <= 768 || (window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches)) return false;
   if (window.innerWidth >= 1100) return true;
   const content = modal?.querySelector?.('.modal-content');
   const rect = content?.getBoundingClientRect?.();
@@ -497,7 +497,7 @@ function _hasDesktopRoomForEmailAndDocument(modal, opts = {}) {
 }
 
 function _prepareEmailWindowForDocument(modal) {
-  if (window.innerWidth <= 768) return true;
+  if (window.innerWidth <= 768 || (window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches)) return true;
   if (!modal) return false;
   // Try to make breathing room by collapsing the wide sidebar to the rail
   // when there isn't enough horizontal space for both panes. The
@@ -1624,7 +1624,7 @@ function _makeDraggable(content, modal, fsClass) {
 // true if the snap was applied, false otherwise.
 function _snapEmailModalToLeftSidebar(modal) {
   if (!modal) return false;
-  if (window.innerWidth < 900) return false;
+  if (window.innerWidth < 900 || (window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches)) return false;
   // "Open in new tab" reader modals (id="email-view-…") are explicitly
   // floating windows the user already positioned. Replying from one
   // shouldn't yank it to the left edge — leave it on top in its current
@@ -5120,14 +5120,21 @@ async function _openEmailWindow(em, folder) {
   modal.style.display = 'block';
   const content = modal.querySelector('.modal-content');
   // Position offset from screen center so successive windows cascade.
-  const isMobile = window.innerWidth <= 768;
+  const isMobile = window.innerWidth <= 768 || (window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches);
   if (isMobile) {
     content.style.position = 'fixed';
     content.style.pointerEvents = 'auto';
-    content.style.left = '0';
-    content.style.right = '0';
+    content.style.left = 'env(safe-area-inset-left, 0px)';
+    content.style.right = 'env(safe-area-inset-right, 0px)';
     content.style.bottom = '0';
-    content.style.top = 'auto';
+    content.style.top = 'env(safe-area-inset-top, 0px)';
+    content.style.width = 'calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))';
+    content.style.maxWidth = 'none';
+    content.style.height = 'calc(100dvh - env(safe-area-inset-top, 0px))';
+    content.style.maxHeight = 'none';
+    content.style.borderRadius = '14px 14px 0 0';
+    content.style.transform = 'none';
+    content.style.margin = '0';
   } else {
     content.style.position = 'fixed';
     content.style.pointerEvents = 'auto';

@@ -210,9 +210,14 @@ export function initSidebarLayout(Storage, opts) {
     });
   }
 
-  // Auto-collapse sidebar when window gets small or chat area is squeezed
-  const AUTO_COLLAPSE_WIDTH = 700;
-  const MIN_CHAT_WIDTH = 380; // collapse sidebar if chat gets narrower than this
+  // Auto-collapse sidebar on mobile layout (touch or narrow screen).
+  const _isMobileLayout = () => (
+    typeof window !== 'undefined' && (
+      window.innerWidth < 700 ||
+      (window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches)
+    )
+  );
+  const MIN_CHAT_WIDTH = 380;
 
   function checkSidebarAutoCollapse() {
     if (_userToggledSidebar) return;
@@ -229,11 +234,11 @@ export function initSidebarLayout(Storage, opts) {
     const hasTileSnapped = document.querySelector('.modal-content[data-_tile-zone], .research-pane[data-_tile-zone]');
     const chatTooNarrow = chatContainer && chatContainer.offsetWidth < MIN_CHAT_WIDTH && !isHidden && !hasTileSnapped;
 
-    if ((window.innerWidth < AUTO_COLLAPSE_WIDTH || chatTooNarrow) && !isHidden) {
+    if ((_isMobileLayout() || chatTooNarrow) && !isHidden) {
       sidebar.classList.add('hidden');
       _wasAutoCollapsed = true;
       syncRailSide();
-    } else if (window.innerWidth >= AUTO_COLLAPSE_WIDTH && isHidden && _wasAutoCollapsed) {
+    } else if (!_isMobileLayout() && isHidden && _wasAutoCollapsed) {
       // Only restore if chat won't be too narrow
       sidebar.classList.remove('hidden');
       void document.body.offsetWidth; // reflow
@@ -254,8 +259,8 @@ export function initSidebarLayout(Storage, opts) {
   new MutationObserver(() => requestAnimationFrame(checkSidebarAutoCollapse))
     .observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
-  // Auto-collapse on initial load if window is small
-  if (window.innerWidth < AUTO_COLLAPSE_WIDTH) {
+  // Auto-collapse on initial load in mobile layout
+  if (_isMobileLayout()) {
     const sidebar = document.getElementById('sidebar');
     if (sidebar && !sidebar.classList.contains('hidden')) {
       sidebar.classList.add('hidden');

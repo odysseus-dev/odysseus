@@ -1853,8 +1853,10 @@ body.bg-pattern-sparkles {
       white-space:normal;
       min-height:0;
       --chat-max: 800px;
+      /* Symmetric centering to match .chat-input-bar */
       padding-left: max(0px, calc((100% - var(--chat-max)) / 2));
-      padding-right: max(12px, calc((100% - var(--chat-max)) / 2 + 12px));
+      padding-right: max(0px, calc((100% - var(--chat-max)) / 2));
+      scrollbar-gutter: stable;
     }
     /* Sortable Cookbook column headers had no visual cue, so users couldn't tell
        a header was clickable (the Newest sort on the Model column was invisible).
@@ -4083,11 +4085,11 @@ body.bg-pattern-sparkles {
     }
     body:has(.notes-pane.modal-right-docked) .toast.show { transform: translateX(0); }
     body:has(.notes-pane.modal-right-docked) .toast.exiting { transform: translateX(120%); }
-    @media (max-width: 768px) {
+    @media (hover: none) and (pointer: coarse), (max-width: 768px) {
       .toast {
-        top: 12px;
-        right: 12px;
-        max-width: calc(100vw - 24px);
+        top: calc(12px + env(safe-area-inset-top, 0px));
+        right: calc(12px + env(safe-area-inset-right, 0px));
+        max-width: calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
         /* Receive touches so the swipe-to-dismiss gesture works (desktop keeps
            pointer-events:none so the toast never blocks clicks). Horizontal pan
            only, so it doesn't fight page scroll. */
@@ -4179,9 +4181,17 @@ body.bg-pattern-sparkles {
       height: 24px;
       padding: 0 8px;
     }
-    @media (max-width:768px){
+    @media (hover: none) and (pointer: coarse), (max-width: 768px) {
       .box { max-height:none; }
-      .chat-container { padding:10px; flex:1; margin-top:0; padding-top:42px; min-height:0; }
+      .chat-container {
+        padding:10px;
+        flex:1;
+        margin-top:0;
+        padding-top: calc(40px + env(safe-area-inset-top, 0px));
+        padding-left: calc(10px + env(safe-area-inset-left, 0px));
+        padding-right: calc(10px + env(safe-area-inset-right, 0px));
+        min-height:0;
+      }
       .scroll-nav-btn { width:44px; height:44px; font-size:14px; margin-bottom:0; }
       .send-btn { width:48px; height:48px !important; border-radius:12px; }
       .send-btn svg { width:22px; height:22px; }
@@ -4243,6 +4253,9 @@ body.bg-pattern-sparkles {
       /* Sidebar header — room for hamburger */
       .sidebar-header {
         padding: 18px 12px 8px 12px;
+        padding-top: calc(18px + env(safe-area-inset-top, 0px)) !important;
+        padding-left: calc(12px + env(safe-area-inset-left, 0px)) !important;
+        padding-right: calc(12px + env(safe-area-inset-right, 0px)) !important;
         min-height: 44px;
       }
       .sidebar-brand-title {
@@ -4252,7 +4265,15 @@ body.bg-pattern-sparkles {
       /* Sidebar inner — bigger spacing */
       .sidebar-inner {
         padding: 12px 10px 12px !important;
+        padding-left: calc(10px + env(safe-area-inset-left, 0px)) !important;
+        padding-right: calc(10px + env(safe-area-inset-right, 0px)) !important;
         gap: 4px !important;
+      }
+      .sidebar-user-bar {
+        padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)) !important;
+        padding-left: calc(12px + env(safe-area-inset-left, 0px)) !important;
+        padding-right: calc(12px + env(safe-area-inset-right, 0px)) !important;
+        background: var(--sidebar-bg, var(--panel));
       }
       /* Section headers — match list item sizing */
       .section-header-flex {
@@ -4307,13 +4328,26 @@ body.bg-pattern-sparkles {
       }
       /* Compact top bar on mobile — align with sidebar header */
       .chat-top-bar {
-        padding: 1px 8px;
-        min-height: 14px;
-        margin-top: -31px;
-        padding-top: 31px;
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 3;
+        padding: calc(6px + env(safe-area-inset-top, 0px)) calc(8px + env(safe-area-inset-right, 0px)) 0 calc(8px + env(safe-area-inset-left, 0px));
+        min-height: 0;
+        height: calc(44px + env(safe-area-inset-top, 0px));
+        margin-top: 0;
       }
       .chat-top-bar .chat-new-btn { display: none; }
-      .chat-meta-overlay { font-size: 0.65em; max-width: 55%; overflow: visible; left: 50%; top: 50%; transform: translate(-50%, -50%); position: absolute; }
+      .chat-meta-overlay {
+        font-size: 0.65em;
+        max-width: 55%;
+        overflow: visible;
+        position: absolute;
+        left: 50%;
+        top: calc(6px + env(safe-area-inset-top, 0px) + 22px);
+        transform: translate(-50%, -50%);
+      }
       .chat-meta-overlay .export-dl-btn { display: inline-flex; }
       /* Incognito — smaller on mobile */
       .incognito-btn {
@@ -4323,9 +4357,9 @@ body.bg-pattern-sparkles {
       /* Incognito indicator — right side next to hamburger on mobile */
       .incognito-indicator {
         position: fixed;
-        top: 12px;
+        top: calc(12px + env(safe-area-inset-top, 0px));
         left: auto !important;
-        right: 48px !important;
+        right: calc(48px + env(safe-area-inset-right, 0px)) !important;
         transform: none;
         width: 32px;
         height: 32px;
@@ -4385,9 +4419,9 @@ body.bg-pattern-sparkles {
       .hamburger-btn {
         width: 44px;
         height: 44px;
-        top: 6px;
+        top: calc(6px + env(safe-area-inset-top, 0px));
         left: auto !important;
-        right: 4px !important;
+        right: calc(4px + env(safe-area-inset-right, 0px)) !important;
         -webkit-tap-highlight-color: transparent;
       }
       .hamburger-btn:hover,
@@ -4400,8 +4434,8 @@ body.bg-pattern-sparkles {
       .mobile-new-chat-btn {
         display: flex;
         position: fixed;
-        top: 12px;
-        left: 8px;
+        top: calc(12px + env(safe-area-inset-top, 0px));
+        left: calc(8px + env(safe-area-inset-left, 0px));
         z-index: 210;
         width: 32px;
         height: 32px;
@@ -4469,10 +4503,6 @@ body.bg-pattern-sparkles {
       .session-dropdown {
         padding: 6px !important;
         border-radius: 12px !important;
-      }
-      /* Safe area padding for notched devices */
-      .chat-input-bar {
-        padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
       }
       /* Mode toggle — larger touch targets */
       .mode-toggle {
@@ -4747,6 +4777,8 @@ body.bg-pattern-sparkles {
       .email-reader-tab-modal .email-reader-header,
       .email-window-modal .email-reader-header {
         padding: 8px 8px !important;
+        padding-left: calc(8px + env(safe-area-inset-left, 0px)) !important;
+        padding-right: calc(8px + env(safe-area-inset-right, 0px)) !important;
         gap: 6px !important;
         flex-direction: row !important;
         /* Top-align meta + actions on mobile. With the two-row action
@@ -4853,6 +4885,8 @@ body.bg-pattern-sparkles {
          pushed the email subjects way down. */
       #email-lib-modal .modal-header {
         padding: 4px 8px !important;
+        padding-left: calc(8px + env(safe-area-inset-left, 0px)) !important;
+        padding-right: calc(8px + env(safe-area-inset-right, 0px)) !important;
         min-height: 0 !important;
       }
       #email-lib-modal .modal-header h4 {
@@ -6793,6 +6827,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
         border: none;
         border-top: 1px solid var(--border);
         padding-top: 6px !important;
+        padding-bottom: env(safe-area-inset-bottom, 0px) !important;
         /* Clip children to the rounded top corners — otherwise the sticky
            modal-header's var(--panel) background paints a darker
            rectangle past the radius and the corners look square again. */
@@ -6813,10 +6848,11 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       #settings-modal .settings-modal-content,
       #email-lib-modal .modal-content,
       #doclib-modal .doclib-modal-content {
-        max-height: 100vh !important;
-        max-height: 100dvh !important;
-        height: 100vh !important;
-        height: 100dvh !important;
+        max-height: calc(100vh - env(safe-area-inset-top, 0px)) !important;
+        max-height: calc(100dvh - env(safe-area-inset-top, 0px)) !important;
+        height: calc(100vh - env(safe-area-inset-top, 0px)) !important;
+        height: calc(100dvh - env(safe-area-inset-top, 0px)) !important;
+        padding-top: 6px !important;
         /* Reserve the iOS home-indicator / bottom-bar strip so an expanded
            skill card's footer (Delete / Edit / Run) isn't hidden under it.
            dvh already excludes the URL bar; this handles the safe area. */
@@ -6868,10 +6904,10 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
            previously made the expanded chat preview extend below the
            visible viewport on Chrome/Safari mobile (URL bar covered the
            action buttons row). */
-        max-height: 100vh !important;
-        max-height: 100dvh !important;
-        height: 100vh !important;
-        height: 100dvh !important;
+        max-height: calc(100vh - env(safe-area-inset-top, 0px)) !important;
+        max-height: calc(100dvh - env(safe-area-inset-top, 0px)) !important;
+        height: calc(100vh - env(safe-area-inset-top, 0px)) !important;
+        height: calc(100dvh - env(safe-area-inset-top, 0px)) !important;
       }
       /* Anchor those modals to the top so the full height is usable */
       #cookbook-modal,
@@ -6879,9 +6915,12 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       #email-lib-modal,
       #doclib-modal,
       #gallery-modal,
-      #tasks-modal {
-        padding-top: 0 !important;
+      #tasks-modal,
+      #memory-modal,
+      #settings-modal {
+        padding-top: env(safe-area-inset-top, 0px) !important;
         align-items: stretch !important;
+        justify-content: flex-start !important;
       }
       /* Deep Research already gets the swipe grab-handle pill from the
          shared `.modal-content::before` rule (the pane carries that class).
@@ -6985,6 +7024,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       .modal-header {
         cursor: default;
         touch-action: none;
+        padding-top: 6px;
       }
       @keyframes sheet-enter {
         from { transform: translateY(100%); }
@@ -7716,6 +7756,9 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
         max-height: 85dvh !important;
         max-height: 85vh !important;
         overflow: hidden !important;
+      }
+      #compare-model-overlay {
+        padding-bottom: 0 !important;
       }
       #compare-model-overlay .modal-body {
         overflow: auto !important;
@@ -13771,7 +13814,7 @@ mark.doc-find-mark.current {
 .doc-version-diff .diff-add { color: #3fb950; }
 
 /* Mobile: doc editor takes over full screen as toggle */
-@media (max-width: 768px) {
+@media (hover: none) and (pointer: coarse), (max-width: 768px) {
   body.doc-view .doc-editor-pane {
     /* Force its own full-screen window on mobile. !important on these so an
        inline width/position left over from desktop drag-resize, or the base
@@ -13779,9 +13822,12 @@ mark.doc-find-mark.current {
        render it as a narrow side pane ("sidebar") on a phone. */
     position: fixed !important;
     inset: 0 !important;
-    top: 0 !important; right: 0 !important; bottom: 0 !important; left: 0 !important;
-    max-width: 100% !important;
-    width: 100% !important;
+    top: env(safe-area-inset-top, 0px) !important;
+    right: env(safe-area-inset-right, 0px) !important;
+    bottom: 0 !important;
+    left: env(safe-area-inset-left, 0px) !important;
+    max-width: none !important;
+    width: calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)) !important;
     flex: none !important;
     z-index: 170;
     /* Stroke the top edge so the rounded corners read as a curved sheet edge. */
@@ -13861,6 +13907,10 @@ body:has(.compare-active) .hamburger-btn { display: none !important; }
   /* Footer is identical to desktop now, so the separate mobile Close/Copy
      footer is dropped and the per-tab × stays (matching desktop). */
   .doc-mobile-footer { display: none !important; }
+  .doc-email-actions {
+    margin-bottom: 0 !important;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)) !important;
+  }
   .doc-tab-new {
     font-size: 13px !important;
     padding: 0 14px !important;
@@ -13937,6 +13987,11 @@ body:has(.compare-active) .hamburger-btn { display: none !important; }
   background: transparent;
 }
 .theme-opacity-wrap.hidden { display: none; }
+.modal-header .theme-opacity-wrap.hidden {
+  display: inline-flex;
+  visibility: hidden;
+  pointer-events: none;
+}
 .theme-opacity-wrap:hover { opacity: 1; }
 /* The title h4 already carries margin-right:auto to group header controls
    on the right. BOTH the Peek button AND the injected minimize button also
@@ -15303,7 +15358,7 @@ span[id$="-logo"] svg:not([width]) {
    bottom-right that collapses to a circle while the list scrolls and springs
    back out to "New" when scrolling stops. Desktop is unchanged. */
 .email-lib-fab { display: none; }
-@media (max-width: 768px) {
+@media (hover: none) and (pointer: coarse), (max-width: 768px) {
   /* The absolute FAB anchors to the email panel card. */
   #email-lib-modal .admin-card { position: relative; }
   /* Hide the toolbar "New" button — the FAB is the mobile entry point. */
@@ -15728,6 +15783,10 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
   background-position: 9px center;
   padding-left: 28px;
 }
+#tasks-modal .admin-card:has(#tasks-head-count),
+#tasks-modal .admin-card:has(#tasks-head-count) h2 {
+  top: 0 !important;
+}
 #doclib-panel-chats .doclib-chip {
   height: 28px;
 }
@@ -15947,6 +16006,18 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
 .email-window-modal .modal-content[style*="height"] {
   max-height: calc(100vh - 16px) !important;
 }
+@media (hover: none) and (pointer: coarse), (max-width: 768px) {
+  body:not(.email-doc-split-active) .email-window-modal.email-window-fullscreen .modal-content[style*="width"],
+  body:not(.email-doc-split-active) .email-window-modal.email-window-fullscreen .modal-content[style*="height"] {
+    top: env(safe-area-inset-top, 0px) !important;
+    height: calc(100dvh - env(safe-area-inset-top, 0px)) !important;
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px)) !important;
+    /* Landscape: inset on the long edge for the Dynamic Island */
+    left: env(safe-area-inset-left, 0px) !important;
+    right: env(safe-area-inset-right, 0px) !important;
+    width: calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)) !important;
+  }
+}
 .email-window-modal .email-window-body {
   flex: 1 1 auto !important;
   min-height: 0 !important;
@@ -15974,6 +16045,19 @@ body:not(.email-doc-split-active) .email-window-modal.email-window-fullscreen .m
   transform: none !important;
   display: flex !important;
   flex-direction: column !important;
+}
+@media (hover: none) and (pointer: coarse), (max-width: 768px) {
+  /* Landscape: inset for the Dynamic Island on the long edge */
+  body:not(.email-doc-split-active) .email-window-modal.email-window-fullscreen .modal-content {
+    left: env(safe-area-inset-left, 0px) !important;
+    right: env(safe-area-inset-right, 0px) !important;
+    top: env(safe-area-inset-top, 0px) !important;
+    bottom: 0 !important;
+    width: calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)) !important;
+    height: calc(100dvh - env(safe-area-inset-top, 0px)) !important;
+    max-width: none !important;
+    max-height: none !important;
+  }
 }
 body:not(.email-doc-split-active) .email-window-modal.email-window-fullscreen .email-window-body {
   flex: 1 1 auto !important;
@@ -16004,14 +16088,16 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
    rail. On phones the email should be the normal bottom-sheet — full width,
    rounded top corners. Same specificity as the rule above + later in source,
    so it wins on mobile. */
-@media (max-width: 768px) {
+@media (hover: none) and (pointer: coarse), (max-width: 768px) {
   body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.modal-right-docked) .modal-content {
-    left: 0 !important;
-    right: 0 !important;
-    width: 100vw !important;
-    max-width: 100vw !important;
-    height: 100dvh !important;
-    max-height: 100dvh !important;
+    /* Landscape: inset for the Dynamic Island */
+    left: env(safe-area-inset-left, 0px) !important;
+    right: env(safe-area-inset-right, 0px) !important;
+    width: calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)) !important;
+    max-width: none !important;
+    top: env(safe-area-inset-top, 0px) !important;
+    height: calc(100dvh - env(safe-area-inset-top, 0px)) !important;
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px)) !important;
     border-radius: 14px 14px 0 0 !important;
     border-top: 1px solid var(--border) !important;
   }
@@ -16034,7 +16120,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   max-height: none !important;
   overflow: auto !important;
 }
-@media (max-width: 768px) {
+@media (hover: none) and (pointer: coarse), (max-width: 768px) {
   /* Mobile email modal sizing — keep in sync with the rule earlier in the
      file. 75dvh tall always so flex children (the expanded email reader)
      have a real height to grow into. */
@@ -16096,7 +16182,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
    so touch-pan never gets trapped in a nested scroller.
    Without this, three levels of overflow:auto + max-height combinations
    produce dead-zone areas where swipes do nothing. */
-@media (max-width: 768px) {
+@media (hover: none) and (pointer: coarse), (max-width: 768px) {
   #cookbook-modal .modal-content {
     overflow-y: auto !important;
     -webkit-overflow-scrolling: touch;
@@ -31241,12 +31327,14 @@ body.notes-view .chat-container { flex: 1; min-width: 0; }
   body.notes-view .notes-pane {
     position: fixed;
     inset: 0;
+    top: env(safe-area-inset-top, 0px);
+    bottom: 0;
     max-width: 100%;
     width: 100% !important;
     /* Desktop sets height: min(80vh, 820px) which wins over inset:0's bottom:0
-       and leaves a gap at the bottom of the viewport. Force full height here. */
-    height: 100dvh !important;
-    max-height: 100dvh !important;
+       and leaves a gap at the bottom of the viewport. Force full height (with respect to safe areas) here */
+    height: calc(100dvh - env(safe-area-inset-top, 0px)) !important;
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px)) !important;
     z-index: 170;
     /* Bottom-sheet treatment like the document editor: stroked, rounded top,
        slides up from the bottom. */
@@ -38318,4 +38406,249 @@ body.theme-frosted .modal {
 }
 .log-line-default {
   color: var(--fg, #9cdef2);
+}
+
+/* iOS PWA Safe Area Handling — safe-area-inset on all edges so content
+   never sits under the Dynamic Island or home indicator, in any orientation */
+@media (hover: none) and (pointer: coarse), (max-width: 768px) {
+  main.chat-container#chat-container {
+    position: relative !important;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)) !important;
+    padding-left: calc(10px + env(safe-area-inset-left, 0px)) !important;
+    padding-right: calc(10px + env(safe-area-inset-right, 0px)) !important;
+  }
+  main.chat-container#chat-container > #chat-history {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+  }
+  main.chat-container#chat-container > .chat-input-bar,
+  main.chat-container.welcome-active#chat-container > .chat-input-bar {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    padding-bottom: 10px !important;
+    flex: 0 0 auto !important;
+  }
+
+  #tasks-modal      .modal-content,
+  #calendar-modal   .modal-content,
+  #memory-modal     .memory-modal-content,
+  #settings-modal   .settings-modal-content,
+  #email-lib-modal  .modal-content,
+  #email-lib-modal  .doclib-modal-content,
+  #doclib-modal     .modal-content,
+  #doclib-modal     .doclib-modal-content,
+  #gallery-modal    .modal-content,
+  #gallery-modal    .gallery-modal-content {
+    position: fixed !important;
+    top: env(safe-area-inset-top, 0px) !important;
+    bottom: 0 !important;
+    /* Inset on the long edge for the Dynamic Island */
+    left: env(safe-area-inset-left, 0px) !important;
+    right: env(safe-area-inset-right, 0px) !important;
+    width: calc(100% - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)) !important;
+    max-width: none !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+    border-radius: 14px 14px 0 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+  }
+  #cookbook-modal .modal-content {
+    position: fixed !important;
+    top: env(safe-area-inset-top, 0px) !important;
+    bottom: 0 !important;
+    left: env(safe-area-inset-left, 0px) !important;
+    right: env(safe-area-inset-right, 0px) !important;
+    width: calc(100% - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)) !important;
+    max-width: none !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+    border-radius: 14px 14px 0 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+  #tasks-modal     .modal-content > .modal-body,
+  #calendar-modal  .modal-content > .modal-body,
+  #memory-modal    .memory-modal-content > .modal-body,
+  #settings-modal  .settings-modal-content > .modal-body,
+  #email-lib-modal .modal-content > .modal-body,
+  #doclib-modal    .doclib-modal-content > .modal-body,
+  #doclib-modal    .modal-content > .modal-body,
+  #gallery-modal   .modal-content > .modal-body,
+  #gallery-modal   .gallery-modal-content > .modal-body {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  #cookbook-modal .admin-card,
+  #cookbook-modal .cookbook-group,
+  #cookbook-modal .hwfit-cached-list,
+  #cookbook-modal .hwfit-list {
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+  #cookbook-modal .hwfit-cached-list,
+  #cookbook-modal .hwfit-list,
+  #cookbook-modal .hwfit-table-wrap {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+  }
+
+  body:not(.email-doc-split-active) .email-window-modal.email-window-fullscreen .modal-content,
+  body:not(.email-doc-split-active) .email-window-modal.email-window-fullscreen .modal-content[style] {
+    position: fixed !important;
+    top: env(safe-area-inset-top, 0px) !important;
+    bottom: 0 !important;
+    /* Inset for the Dynamic Island */
+    left: env(safe-area-inset-left, 0px) !important;
+    right: env(safe-area-inset-right, 0px) !important;
+    width: calc(100% - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)) !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    transform: none !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
+  }
+  body:not(.email-doc-split-active) .email-window-modal.email-window-fullscreen .email-window-body {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: auto !important;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  body.notes-view nav.sidebar ~ .notes-pane,
+  body.notes-view .notes-pane,
+  body.notes-view #notes-pane {
+    position: fixed !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding-top: env(safe-area-inset-top, 0px) !important;
+    padding-left: env(safe-area-inset-left, 0px) !important;
+    padding-right: env(safe-area-inset-right, 0px) !important;
+    border-radius: 0 !important;
+    border: none !important;
+    box-sizing: border-box !important;
+    background: var(--bg) !important;
+  }
+  body.notes-view .notes-pane > .notes-pane-body,
+  body.notes-view #notes-pane > .notes-pane-body {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  .modal-content > .modal-header,
+  .memory-modal-content > .modal-header,
+  .settings-modal-content > .modal-header,
+  .doclib-modal-content > .modal-header {
+    padding-top: 6px !important;
+  }
+}
+
+@media (max-width: 768px) and (display-mode: standalone) {
+  html, body {
+    height: 100vh !important;
+    min-height: 100vh !important;
+  }
+}
+
+@media (hover: none) and (pointer: coarse), (max-width: 768px) {
+  body.notes-view nav.sidebar ~ .notes-pane,
+  body.notes-view .notes-pane,
+  body.notes-view #notes-pane {
+    position: fixed !important;
+    transform: none !important;
+    top: env(safe-area-inset-top, 0px) !important;
+    bottom: 0 !important;
+    left: env(safe-area-inset-left, 0px) !important;
+    right: env(safe-area-inset-right, 0px) !important;
+    width: calc(100% - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)) !important;
+    height: auto !important;
+    max-height: none !important;
+    border-radius: 14px 14px 0 0 !important;
+    border-top: 1px solid var(--border) !important;
+    padding-top: 6px !important;
+    margin: 0 !important;
+  }
+}
+
+/* Mobile: kill desktop edge-snap/dock UI and force docked modals back to
+   fullscreen sheets. Safe-area-inset on both edges handles the Dynamic
+   Island regardless of rotation direction */
+@media (hover: none) and (pointer: coarse), (max-width: 768px) {
+  .edge-dock-resize-handle,
+  .modal-snap-hint,
+  .modal-snap-hint-left,
+  .modal-snap-hint-right {
+    display: none !important;
+  }
+  body .modal.modal-left-docked,
+  body .modal.modal-right-docked,
+  body .modal.email-snap-left,
+  body.email-doc-split-active #email-lib-modal.email-snap-left,
+  body.email-doc-split-active #email-lib-modal.modal-left-docked,
+  body.email-doc-split-active #email-lib-modal.modal-right-docked,
+  body.email-doc-split-active .modal[id^="email-reader-"].email-snap-left,
+  body.email-doc-split-active .modal[id^="email-reader-"].modal-left-docked,
+  body.email-doc-split-active .modal[id^="email-reader-"].modal-right-docked {
+    left: env(safe-area-inset-left, 0px) !important;
+    right: env(safe-area-inset-right, 0px) !important;
+    top: env(safe-area-inset-top, 0px) !important;
+    bottom: 0 !important;
+    width: calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)) !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
+    transform: none !important;
+    border-radius: 14px 14px 0 0 !important;
+    border: none !important;
+    overflow: hidden !important;
+  }
+  body .modal.modal-left-docked .modal-content,
+  body .modal.modal-right-docked .modal-content,
+  body .modal.email-snap-left .modal-content,
+  body.email-doc-split-active #email-lib-modal.email-snap-left:not(.modal-dragging) .modal-content,
+  body.email-doc-split-active #email-lib-modal.modal-left-docked:not(.modal-dragging) .modal-content,
+  body.email-doc-split-active #email-lib-modal.modal-right-docked:not(.modal-dragging) .modal-content,
+  body.email-doc-split-active .modal[id^="email-reader-"].email-snap-left:not(.modal-dragging) .modal-content,
+  body.email-doc-split-active .modal[id^="email-reader-"].modal-left-docked:not(.modal-dragging) .modal-content,
+  body.email-doc-split-active .modal[id^="email-reader-"].modal-right-docked:not(.modal-dragging) .modal-content {
+    left: 0 !important;
+    right: 0 !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    height: 100% !important;
+    max-height: none !important;
+    border-radius: inherit !important;
+    transform: none !important;
+  }
 }
