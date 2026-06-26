@@ -229,10 +229,10 @@ do not run on macOS. MLX-only models are not served by Odysseus.
 **One-command launcher** (creates the venv, installs deps, runs setup, starts the
 server; safe to re-run):
 
-```powershell
+```cmd
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
-powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
+launch-windows.bat
 ```
 
 Or do it by hand:
@@ -255,8 +255,8 @@ does **not** read `APP_BIND` / `ODYSSEUS_HOST` from `.env`, so editing `.env`
 alone leaves the native Windows server on loopback. Pass the launcher's
 `-BindHost` flag instead:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1 -BindHost 0.0.0.0
+```cmd
+launch-windows.bat -BindHost 0.0.0.0
 ```
 
 The manual `uvicorn` command takes the same address as `--host 0.0.0.0`. Bind
