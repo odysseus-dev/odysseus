@@ -277,7 +277,14 @@ class OidcManager:
         if access_token:
             try:
                 userinfo = self._fetch_userinfo(access_token)
-                userinfo_available = True
+                # _fetch_userinfo returns None when discovery has no
+                # userinfo_endpoint (rather than an empty dict, which
+                # would be ambiguous).  Only mark userinfo_available
+                # when we actually made a request to a live endpoint.
+                if userinfo is not None:
+                    userinfo_available = True
+                else:
+                    userinfo = {}
                 # Reject mismatched sub — the subject in UserInfo must match
                 # the already-verified id_token subject.
                 ui_sub = userinfo.get("sub")
@@ -485,11 +492,17 @@ class OidcManager:
             pass
         return {}
 
-    def _fetch_userinfo(self, access_token: str) -> Dict[str, Any]:
-        """Fetch claims from the UserInfo endpoint (if available)."""
+    def _fetch_userinfo(self, access_token: str) -> Optional[Dict[str, Any]]:
+        """Fetch claims from the UserInfo endpoint.
+
+        Returns None when discovery has no userinfo_endpoint so the
+        caller can distinguish "no endpoint configured" from "endpoint
+        returned an empty profile".  An empty dict means the endpoint
+        was reached but returned no claims.
+        """
         userinfo_endpoint = self._config.get("userinfo_endpoint")
         if not userinfo_endpoint:
-            return {}
+            return None
         resp = httpx.get(
             userinfo_endpoint,
             headers={"Authorization": f"Bearer {access_token}"},

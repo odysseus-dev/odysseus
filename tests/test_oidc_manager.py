@@ -1139,3 +1139,162 @@ class TestRedirectUriBinding:
             # Verify the token endpoint received the stored URI
             call_data = mock_post.call_args.kwargs["data"]
             assert call_data["redirect_uri"] == stored_uri
+
+
+class TestUserinfoEndpointMissing:
+    """When discovery has no userinfo_endpoint, _fetch_userinfo must return
+    None (not {}), and exchange_code must NOT set _userinfo_available=True.
+    Otherwise the callback treats "no endpoint" as authoritative group
+    evidence and silently demotes an existing OIDC admin."""
+
+    def test_no_userinfo_endpoint_marks_unavailable(self):
+        """Discovery lacking userinfo_endpoint → _fetch_userinfo returns
+        None → _userinfo_available stays False."""
+        jwt_jwks, _ = _make_test_jwks_and_key()
+        nonce = "n" * 64
+        id_token = _make_id_token("user-no-ui", nonce)
+        import core.oidc as mod
+
+        # Discovery doc without a userinfo_endpoint
+        discovery_no_ui = dict(DISCOVERY_DOC)
+        del discovery_no_ui["userinfo_endpoint"]
+
+        with patch.object(mod.httpx, "get") as mock_get, \
+             patch.object(mod.httpx, "post") as mock_post:
+            mock_get.side_effect = [
+                _FakeResponse(200, discovery_no_ui),
+                _mock_jwks_response(jwt_jwks),
+            ]
+            mgr = mod.OidcManager(
+                issuer=FAKE_ISSUER,
+                client_id=FAKE_CLIENT_ID,
+                client_secret=FAKE_CLIENT_SECRET,
+            )
+
+            # _mock_token_response already includes an access_token.
+            mock_post.return_value = _mock_token_response(id_token)
+
+            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            claims = mgr.exchange_code("code", state, "https://app.example.com/callback")
+
+            assert claims["sub"] == "user-no-ui"
+            # _fetch_userinfo must have returned None because there is
+            # no userinfo_endpoint in discovery.
+            assert claims["_userinfo_available"] is False, (
+                "_userinfo_available must be False when discovery has no "
+                "userinfo_endpoint — an empty dict return would be ambiguous"
+            )
+
+    def test_userinfo_endpoint_present_marks_available(self):
+        """Discovery with userinfo_endpoint + successful fetch →
+        _userinfo_available must be True (positive control)."""
+        jwt_jwks, _ = _make_test_jwks_and_key()
+        nonce = "n" * 64
+        id_token = _make_id_token("user-with-ui", nonce)
+        import core.oidc as mod
+
+        with patch.object(mod.httpx, "get") as mock_get, \
+             patch.object(mod.httpx, "post") as mock_post:
+            mock_get.side_effect = [
+                _mock_discovery_response(),
+                _mock_jwks_response(jwt_jwks),
+                _FakeResponse(200, {"sub": "user-with-ui", "email": "u@example.com"}),
+            ]
+            mgr = mod.OidcManager(
+                issuer=FAKE_ISSUER,
+                client_id=FAKE_CLIENT_ID,
+                client_secret=FAKE_CLIENT_SECRET,
+            )
+
+            mock_post.return_value = _mock_token_response(id_token)
+
+            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            claims = mgr.exchange_code("code", state, "https://app.example.com/callback")
+
+            assert claims["sub"] == "user-with-ui"
+            assert claims["_userinfo_available"] is True
+            assert claims.get("email") == "u@example.com"
+
+
+class TestAppKeyAtomicCreation:
+    """Regression: on a fresh multi-worker deployment, the shared app key
+    must be created atomically so no racing reader ever sees an empty or
+    partial key file."""
+
+    def test_key_file_never_empty(self, tmp_path, monkeypatch):
+        """The final key file must never be observable as empty or partial —
+        it either does not exist, or it contains a complete Fernet key."""
+        import src.secret_storage as ss
+        from pathlib import Path
+
+        tmp_key = tmp_path / ".app_key"
+        monkeypatch.setattr(ss, "_KEY_PATH", tmp_key)
+        monkeypatch.setattr(ss, "_fernet", None)
+
+        # Sanity: no key yet
+        assert not tmp_key.exists()
+
+        # Trigger key creation
+        fernet = ss._get_fernet()
+        assert fernet is not None
+        assert tmp_key.exists()
+
+        # The file must contain a valid Fernet key (44 URL-safe base64 bytes)
+        key_bytes = tmp_key.read_bytes()
+        assert len(key_bytes) >= 44, (
+            f"Key file must contain a complete Fernet key, got {len(key_bytes)} bytes"
+        )
+        # Must be usable as a Fernet key
+        from cryptography.fernet import Fernet
+        f = Fernet(key_bytes)
+        token = f.encrypt(b"test")
+        assert f.decrypt(token) == b"test"
+
+    def test_racing_reader_gets_valid_key(self, tmp_path, monkeypatch):
+        """Simulate a race: pause the writer after temp-file write but
+        before the atomic link. A concurrent reader must either see no
+        key (and create its own, which will hit FileExistsError) or see
+        a complete key — never an empty file."""
+        import src.secret_storage as ss
+        from pathlib import Path
+        from cryptography.fernet import Fernet
+
+        tmp_key = tmp_path / ".app_key"
+        monkeypatch.setattr(ss, "_KEY_PATH", tmp_key)
+        monkeypatch.setattr(ss, "_fernet", None)
+
+        # Intercept os.link so we can pause between temp-file write and link.
+        real_link = Path.__class__.link if hasattr(Path, "link") else type(tmp_key).__dict__.get("link")
+        # os.link is a module-level function, not a Path method.
+        import os as real_os
+        original_link = real_os.link
+        link_called = []
+
+        def intercept_link(src, dst, *args, **kwargs):
+            link_called.append(str(src))
+            # Before the link completes, simulate a racing reader.
+            # The reader must not see an empty key file at dst.
+            if tmp_key.exists():
+                content = tmp_key.read_bytes()
+                # This would fail if the file were empty/partial; in our
+                # implementation the final path is never exposed until
+                # os.link completes, so tmp_key.exists() should be False.
+                assert False, (
+                    f"Key file already visible before atomic link — "
+                    f"reader would see {len(content)} bytes"
+                )
+            return original_link(src, dst, *args, **kwargs)
+
+        monkeypatch.setattr(real_os, "link", intercept_link)
+
+        # Trigger key creation — must succeed despite the interceptor.
+        fernet = ss._get_fernet()
+        assert fernet is not None
+        assert len(link_called) >= 1
+        assert tmp_key.exists()
+
+        # The key file must be complete and usable.
+        key_bytes = tmp_key.read_bytes()
+        f = Fernet(key_bytes)
+        token = f.encrypt(b"test")
+        assert f.decrypt(token) == b"test"
