@@ -42,6 +42,18 @@ def _endpoint(method, path):
     raise RuntimeError(f"{method} {path} not found")
 
 
+def _allow_task_admin(monkeypatch, *users):
+    import core.auth as auth
+
+    class _FakeAuthManager:
+        is_configured = True
+
+        def is_admin(self, user):
+            return user in users
+
+    monkeypatch.setattr(auth, "AuthManager", _FakeAuthManager)
+
+
 def _seed_task(task_id, owner, *, then_task_id=None):
     db = _TS()
     try:
@@ -63,7 +75,8 @@ def _seed_task(task_id, owner, *, then_task_id=None):
 
 
 @pytest.mark.asyncio
-async def test_create_task_rejects_cross_owner_chain_target():
+async def test_create_task_rejects_cross_owner_chain_target(monkeypatch):
+    _allow_task_admin(monkeypatch, "alice")
     _seed_task("bob-target-create", "bob")
     create_task = _endpoint("POST", "/api/tasks")
 
@@ -79,7 +92,8 @@ async def test_create_task_rejects_cross_owner_chain_target():
 
 
 @pytest.mark.asyncio
-async def test_update_task_rejects_cross_owner_chain_target():
+async def test_update_task_rejects_cross_owner_chain_target(monkeypatch):
+    _allow_task_admin(monkeypatch, "alice")
     _seed_task("alice-source-update", "alice")
     _seed_task("bob-target-update", "bob")
     update_task = _endpoint("PUT", "/api/tasks/{task_id}")
@@ -101,7 +115,8 @@ async def test_update_task_rejects_cross_owner_chain_target():
 
 
 @pytest.mark.asyncio
-async def test_update_task_allows_same_owner_chain_target():
+async def test_update_task_allows_same_owner_chain_target(monkeypatch):
+    _allow_task_admin(monkeypatch, "alice")
     _seed_task("alice-source-allow", "alice")
     _seed_task("alice-target-allow", "alice")
     update_task = _endpoint("PUT", "/api/tasks/{task_id}")
