@@ -118,15 +118,23 @@ def _extract_headings(md_text: str) -> List[Dict[str, str]]:
         return re.sub(r'\s+', ' ', text).strip()
 
     def _make_slug(text: str) -> str:
-        slug = re.sub(r'[^a-z0-9]+', '-', text.lower()).strip('-')
-        if not slug:
-            slug = "section"
-        if slug in seen_slugs:
-            seen_slugs[slug] += 1
-            slug = f"{slug}-{seen_slugs[slug]}"
-        else:
-            seen_slugs[slug] = 0
-        return slug
+        base = re.sub(r'[^a-z0-9]+', '-', text.lower()).strip('-')
+        if not base:
+            base = "section"
+        if base in seen_slugs:
+            # Increment until the disambiguated candidate is itself unused, so a
+            # generated "intro-1" can't collide with a natural "intro-1" slug.
+            n = seen_slugs[base]
+            while True:
+                n += 1
+                cand = f"{base}-{n}"
+                if cand not in seen_slugs:
+                    break
+            seen_slugs[base] = n
+            seen_slugs[cand] = 0
+            return cand
+        seen_slugs[base] = 0
+        return base
 
     for m in re.finditer(r'^(#{2,3})\s+(.+)$', md_text, re.MULTILINE):
         level = len(m.group(1))
