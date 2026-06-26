@@ -892,3 +892,53 @@ class TestAdminDemotionProtection:
 
         # id_token groups are authoritative — admin sync must run
         auth.set_oidc_user_admin.assert_called_once_with("idtoken-admin", True)
+
+    def test_no_userinfo_endpoint_preserves_existing_admin(self, monkeypatch):
+        """Existing OIDC admin + OIDC_ADMIN_GROUPS + access_token present
+        + no userinfo_endpoint in discovery + no id_token groups →
+        admin must NOT be demoted (missing endpoint is not group evidence)."""
+        monkeypatch.setenv("OIDC_ADMIN_GROUPS", "odysseus-admins")
+
+        mgr = MagicMock()
+        mgr.configured = True
+        mgr.redirect_uri_override = None
+        mgr.issuer = "https://idp.example.com"
+        # Simulate: discovery had no userinfo_endpoint, so _fetch_userinfo
+        # returned None → _userinfo_available stayed False.  The id_token
+        # has no groups claim.  This is the exact scenario where the
+        # callback must NOT treat "no endpoint" as authoritative
+        # non-membership evidence.
+        mgr.exchange_code.return_value = {
+            "sub": "endpointless-admin",
+            "email": "nobody@example.com",
+            "_userinfo_available": False,
+            # no "groups" key in the id_token — no group evidence at all
+        }
+
+        auth = MagicMock()
+        auth.get_user_by_oidc.return_value = "endpointless-admin"
+        auth.create_session_trusted.return_value = "token"
+
+        router = _setup_oidc_routes(auth, mgr)
+        ep = _get_endpoint(router, "/api/auth/oidc/callback")
+
+        import asyncio
+        asyncio.run(
+            ep(
+                _fake_request_with_params(
+                    {"code": "code", "state": "state"},
+                    cookies={"odysseus_oidc_csrf": "state"},
+                ),
+                SimpleNamespace(
+                    set_cookie=MagicMock(),
+                    delete_cookie=MagicMock(),
+                    status_code=200,
+                    headers={},
+                ),
+            )
+        )
+
+        # Admin sync must NOT be called — without a userinfo_endpoint,
+        # _userinfo_available is False, and the id_token has no groups.
+        # An existing admin must not be demoted on missing evidence.
+        auth.set_oidc_user_admin.assert_not_called()

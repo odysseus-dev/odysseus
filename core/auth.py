@@ -4,12 +4,14 @@ Config stored in data/auth.json. Uses bcrypt directly.
 """
 
 import enum
+import fcntl
 import json
 import os
 import secrets
 import threading
 import time
 import logging
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
@@ -112,6 +114,10 @@ class AuthManager:
         # Guards the first-run setup check-and-write so concurrent requests
         # cannot both observe is_configured==False and both create admin accounts.
         self._setup_lock = threading.Lock()
+        # Path for the inter-process file lock (fcntl.flock).  Shared across
+        # all uvicorn workers so first-admin bootstrap and auth.json mutations
+        # are serialised across processes, not just threads within one worker.
+        self._ipc_lock_path = auth_path + ".lock"
         self._load()
         self._load_sessions()
         self._migrate_single_user()
@@ -259,9 +265,28 @@ class AuthManager:
     # Account management
     # ------------------------------------------------------------------
 
+    @contextmanager
+    def _interprocess_auth_lock(self):
+        """Acquire an exclusive inter-process file lock on auth.json.
+
+        Uses fcntl.flock so the kernel releases the lock automatically
+        when the process exits — a crash cannot leave a stale lock.
+        """
+        # Open in read-write mode; create the lock file if it doesn't exist.
+        fd = os.open(self._ipc_lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
     def setup(self, username: str, password: str) -> bool:
         """First-run admin setup. Only works if no users exist."""
-        with self._setup_lock:
+        with self._interprocess_auth_lock(), self._setup_lock:
+            # Reload from disk so we see what another worker may have
+            # written since our last _load().
+            self._load()
             if self.is_configured:
                 return False
             return self.create_user(username, password, is_admin=True)
@@ -321,7 +346,11 @@ class AuthManager:
             logger.warning("Refused OIDC user with reserved username '%s'", username)
             return None
 
-        with self._config_lock:
+        with self._interprocess_auth_lock(), self._config_lock:
+            # Reload from disk so we see what another process (or the
+            # local-setup path) may have written since our last _load().
+            self._load()
+
             if "users" not in self._config:
                 self._config["users"] = {}
             users = self._config["users"]
@@ -336,8 +365,9 @@ class AuthManager:
             # Bootstrap: if no users exist yet, OIDC_ADMIN_GROUPS is
             # unset, and OIDC_FIRST_USER_IS_ADMIN isn't explicitly false,
             # make the first OIDC user an admin.  The check is inside the
-            # lock so two concurrent first-login callbacks cannot both
-            # observe an empty user map and both persist as admin.
+            # inter-process + process-local locks so two workers (or a
+            # concurrent local setup) cannot both observe an empty user
+            # map and both persist as admin.
             if not is_admin:
                 first_user_admin = os.getenv("OIDC_FIRST_USER_IS_ADMIN", "true").lower() != "false"
                 oidc_admin_groups = os.getenv("OIDC_ADMIN_GROUPS", "").strip()

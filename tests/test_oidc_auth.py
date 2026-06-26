@@ -508,3 +508,84 @@ class TestFirstOidcAdminBootstrapConcurrency:
         assert results[0] == results[1]
         # Only one user entry must exist
         assert len(mgr.users) == 1
+
+
+class TestInterprocessFirstAdminSerialisation:
+    """Two independent AuthManager instances sharing the same auth.json
+    path must serialise the first-admin decision across processes — the
+    inter-process file lock (fcntl.flock) must prevent two workers from
+    both creating an admin when the store is empty."""
+
+    def test_two_managers_single_first_admin(self, tmp_path, monkeypatch):
+        """Two managers with the same auth path: if one calls create_user_oidc
+        first, the other's setup must see the store is already configured."""
+        monkeypatch.delenv("OIDC_ADMIN_GROUPS", raising=False)
+
+        from core.auth import AuthManager
+        import threading
+
+        auth_path = str(tmp_path / "auth.json")
+
+        mgr_a = AuthManager(auth_path)
+        mgr_b = AuthManager(auth_path)
+
+        results = {}
+        barrier = threading.Barrier(2, timeout=5)
+
+        def oidc_first():
+            barrier.wait()
+            u = mgr_a.create_user_oidc("alice", "sub-a", "https://idp.example.com")
+            results["oidc"] = u
+
+        def local_setup():
+            barrier.wait()
+            ok = mgr_b.setup("admin", "password123")
+            results["setup"] = ok
+
+        t_oidc = threading.Thread(target=oidc_first)
+        t_setup = threading.Thread(target=local_setup)
+        t_oidc.start()
+        t_setup.start()
+        t_oidc.join()
+        t_setup.join()
+
+        # The inter-process lock serialises the critical sections.
+        # The first operation through the lock sees an empty store and
+        # creates an admin.  The second operation may still succeed at
+        # creating a *non-admin* user (different username → no collision).
+        # The key property: exactly one admin must exist.
+        oidc_created = results.get("oidc") is not None
+        setup_created = results.get("setup") is True
+        assert oidc_created or setup_created, (
+            f"At least one first-admin path must succeed; "
+            f"oidc={oidc_created}, setup={setup_created}"
+        )
+
+        # Reload mgr_a and verify exactly one user is admin.
+        mgr_a._load()
+        admin_count = sum(1 for u in mgr_a.users.values() if u.get("is_admin"))
+        assert admin_count == 1, (
+            f"Expected exactly 1 admin after concurrent bootstrap; "
+            f"found {admin_count}. Users: {list(mgr_a.users.keys())}"
+        )
+
+    def test_setup_sees_oidc_bootstrap(self, tmp_path, monkeypatch):
+        """After create_user_oidc bootstraps the first admin, a subsequent
+        setup() call on a different manager must see is_configured == True."""
+        monkeypatch.delenv("OIDC_ADMIN_GROUPS", raising=False)
+
+        from core.auth import AuthManager
+
+        auth_path = str(tmp_path / "auth.json")
+
+        mgr_a = AuthManager(auth_path)
+        mgr_b = AuthManager(auth_path)
+
+        # Manager A creates the first OIDC user (bootstrap admin)
+        username = mgr_a.create_user_oidc("bob", "sub-b", "https://idp.example.com")
+        assert username is not None
+        assert len(mgr_a.users) == 1
+
+        # Manager B: setup must now be denied — the store is configured
+        ok = mgr_b.setup("admin", "password123")
+        assert ok is False, "setup must not succeed when OIDC already bootstrapped"

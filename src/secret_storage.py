@@ -39,22 +39,41 @@ def _load_or_create_key() -> bytes:
         return _KEY_PATH.read_bytes()
 
     # Slow path: create the key atomically.  On a fresh multi-worker
-    # deployment two workers may race here — the O_EXCL open guarantees
-    # exactly one writer wins; losers read the winner's key so every
-    # process ends up with the same bytes.
+    # deployment two workers may race here.  We write the complete key
+    # to a temp file, fsync it, then use os.link to make it visible at
+    # the final path in a single atomic step.  If os.link fails because
+    # another worker already created the final file, we read the
+    # winner's key.  This avoids the O_CREAT-then-write window where a
+    # racing reader can see an empty or partial key file.
     key = Fernet.generate_key()
     _KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = _KEY_PATH.parent / f".app_key.tmp.{os.getpid()}"
     try:
-        fd = os.open(_KEY_PATH, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        # Another process created the file between our exists() check
-        # and the open — read the winner's key instead.
-        logger.info("App key already created by another worker — reusing")
-        return _KEY_PATH.read_bytes()
-    with os.fdopen(fd, "wb") as f:
-        f.write(key)
-    logger.info(f"Generated new app key at {_KEY_PATH}")
-    return key
+        # Use os.open + os.fdopen so we can set 0o600 at creation time
+        # (plain open() applies umask, typically giving 0o644).
+        tmp_fd = os.open(str(tmp_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(tmp_fd, "wb") as f:
+            f.write(key)
+            f.flush()
+            os.fsync(f.fileno())
+        # Atomic: either the link succeeds and the complete key is
+        # visible, or FileExistsError means another worker won the
+        # race and we read its (complete) key.  No reader ever sees
+        # a partial file.
+        try:
+            os.link(tmp_path, _KEY_PATH)
+        except FileExistsError:
+            logger.info("App key already created by another worker — reusing")
+            return _KEY_PATH.read_bytes()
+        logger.info(f"Generated new app key at {_KEY_PATH}")
+        return key
+    finally:
+        # Best-effort cleanup of the temp file — not critical if it
+        # lingers (a stale tmp uses negligible space).
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
 
 
 def _get_fernet() -> Fernet:
