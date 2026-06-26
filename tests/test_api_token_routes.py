@@ -576,3 +576,173 @@ def test_update_token_normal_object_still_works(monkeypatch, token_routes_mod):
     assert token.name == "updated"
     assert resp["name"] == "updated"
     invalidator.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# 8. Self-serve endpoints — cookie-only, owner forced to session user
+# ---------------------------------------------------------------------------
+
+
+def _self_req(username: str, *, is_api_token: bool = False, invalidator=None):
+    """A request whose state carries a cookie user (or a bearer API token)."""
+    app_state = SimpleNamespace(
+        auth_manager=_admin_mgr(True),
+    )
+    if invalidator is not None:
+        app_state.invalidate_token_cache = invalidator
+    return SimpleNamespace(
+        state=SimpleNamespace(
+            current_user="api" if is_api_token else username,
+            api_token=is_api_token,
+            api_token_owner=username if is_api_token else None,
+        ),
+        headers={},
+        app=SimpleNamespace(state=app_state),
+    )
+
+
+# -- bearer rejection --
+
+
+def test_self_serve_list_rejects_bearer_token(monkeypatch, token_routes_mod):
+    """GET /tokens/self with a bearer API token → 403."""
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv("LOCALHOST_BYPASS", "false")
+    mod = token_routes_mod
+    list_self = _get_handler(mod, "GET", "/tokens/self")
+    req = _self_req("alice", is_api_token=True)
+    with pytest.raises(HTTPException) as exc:
+        list_self(request=req)
+    assert exc.value.status_code == 403
+
+
+def test_self_serve_create_rejects_bearer_token(monkeypatch, token_routes_mod):
+    """POST /tokens/self with a bearer API token → 403."""
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv("LOCALHOST_BYPASS", "false")
+    mod = token_routes_mod
+    create_self = _get_handler(mod, "POST", "/tokens/self")
+    req = _self_req("alice", is_api_token=True)
+    with pytest.raises(HTTPException) as exc:
+        create_self(request=req, name="my-token")
+    assert exc.value.status_code == 403
+
+
+def test_self_serve_delete_rejects_bearer_token(monkeypatch, token_routes_mod):
+    """DELETE /tokens/self/{id} with a bearer API token → 403."""
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv("LOCALHOST_BYPASS", "false")
+    mod = token_routes_mod
+    delete_self = _get_handler(mod, "DELETE", "/tokens/self/{token_id}")
+    req = _self_req("alice", is_api_token=True)
+    with pytest.raises(HTTPException) as exc:
+        delete_self(request=req, token_id="abc12345")
+    assert exc.value.status_code == 403
+
+
+# -- owner isolation (list only returns own tokens) --
+
+
+def test_list_self_only_returns_own_tokens(monkeypatch, token_routes_mod):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    mod = token_routes_mod
+
+    now = datetime.datetime(2024, 1, 1, 0, 0)
+    row_alice = SimpleNamespace(
+        id="a001", name="Alice token", owner="alice", token_prefix="ody_al",
+        scopes="chat", is_active=True, last_used_at=now, created_at=now,
+    )
+    row_bob = SimpleNamespace(
+        id="b001", name="Bob token", owner="bob", token_prefix="ody_bo",
+        scopes="chat", is_active=True, last_used_at=now, created_at=now,
+    )
+
+    fake_session = MagicMock()
+    # The handler filters on owner == user, so the mock query chain must
+    # return only alice's row after the filter.  We mock .all() to return
+    # the union, but the real DB filter would exclude bob.  Simulate it by
+    # having the mock return only alice's row.
+    fake_session.query.return_value.filter.return_value.all.return_value = [row_alice]
+    monkeypatch.setattr(mod, "get_db_session", lambda: _db_ctx(fake_session))
+
+    req = _self_req("alice")
+    list_self = _get_handler(mod, "GET", "/tokens/self")
+    result = list_self(request=req)
+
+    assert len(result) == 1
+    assert result[0]["id"] == "a001"
+    assert result[0]["owner"] == "alice"
+
+
+# -- delete not-yours returns 404 (not 403) to avoid existence oracle --
+
+
+def test_delete_self_not_yours_returns_404(monkeypatch, token_routes_mod):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    mod = token_routes_mod
+
+    # Token exists but belongs to bob, not alice.
+    fake_token = SimpleNamespace(id="bob123", owner="bob", name="bob-token")
+    fake_session = MagicMock()
+    fake_session.query.return_value.filter.return_value.first.return_value = fake_token
+    monkeypatch.setattr(mod, "get_db_session", lambda: _db_ctx(fake_session))
+
+    req = _self_req("alice")
+    delete_self = _get_handler(mod, "DELETE", "/tokens/self/{token_id}")
+    with pytest.raises(HTTPException) as exc:
+        delete_self(request=req, token_id="bob123")
+    assert exc.value.status_code == 404
+
+
+# -- unknown scope rejected --
+
+
+def test_create_self_rejects_unknown_scope(monkeypatch, token_routes_mod):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    mod = token_routes_mod
+
+    fake_session = MagicMock()
+    monkeypatch.setattr(mod, "get_db_session", lambda: _db_ctx(fake_session))
+
+    req = _self_req("alice")
+    create_self = _get_handler(mod, "POST", "/tokens/self")
+    with pytest.raises(HTTPException) as exc:
+        create_self(request=req, name="bad-token", scopes="admin,shell")
+    assert exc.value.status_code == 400
+
+
+# -- owner forced from session (not client) --
+
+
+def test_create_self_forces_owner_from_session(monkeypatch, token_routes_mod):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    mod = token_routes_mod
+
+    fake_suffix = "FAKESUFFIX_XXXXXXXXXXXXXXXXXXXXXXXXXX"
+    fake_uuid_str = "abcd1234-0000-0000-0000-000000000000"
+    monkeypatch.setattr(_secrets_mod, "token_urlsafe", lambda n: fake_suffix)
+    monkeypatch.setattr(_uuid_mod, "uuid4", lambda: SimpleNamespace(__str__=lambda self: fake_uuid_str))
+    monkeypatch.setattr(mod, "bcrypt", SimpleNamespace(
+        hashpw=lambda pw, salt: b"$2b$12$FAKEHASH",
+        gensalt=lambda: b"fakesalt",
+    ))
+
+    captured = {}
+    class _FakeApiToken:
+        def __init__(self, **kw):
+            captured.update(kw)
+            self.__dict__.update(kw)
+    monkeypatch.setattr(mod, "ApiToken", _FakeApiToken)
+
+    fake_session = MagicMock()
+    monkeypatch.setattr(mod, "get_db_session", lambda: _db_ctx(fake_session))
+
+    invalidator = MagicMock()
+    req = _self_req("alice", invalidator=invalidator)
+    create_self = _get_handler(mod, "POST", "/tokens/self")
+    resp = create_self(request=req, name="my-token")
+
+    # Owner must be "alice" (from session), never from client input
+    assert resp["owner"] == "alice"
+    assert captured["owner"] == "alice"
+    invalidator.assert_called_once()
