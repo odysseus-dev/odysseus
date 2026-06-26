@@ -757,3 +757,138 @@ class TestEventLoopOffloading:
             f"Callback took {elapsed:.2f}s — exchange_code was NOT "
             "offloaded to a thread and blocked the event loop"
         )
+
+
+class TestAdminDemotionProtection:
+    """Regression: a transient UserInfo failure must not demote an
+    existing OIDC admin when groups are only available via UserInfo."""
+
+    def test_userinfo_unavailable_preserves_existing_admin(self, monkeypatch):
+        """Existing admin + UserInfo unavailable + no id_token groups →
+        admin status must NOT be synced (no demotion on missing evidence)."""
+        monkeypatch.setenv("OIDC_ADMIN_GROUPS", "odysseus-admins")
+
+        mgr = MagicMock()
+        mgr.configured = True
+        mgr.redirect_uri_override = None
+        mgr.issuer = "https://idp.example.com"
+        # Simulate: UserInfo was NOT fetched.  The id_token has no groups.
+        mgr.exchange_code.return_value = {
+            "sub": "admin-user",
+            "email": "admin@example.com",
+            "_userinfo_available": False,
+            # no "groups" key in the id_token
+        }
+
+        auth = MagicMock()
+        auth.get_user_by_oidc.return_value = "admin-user"
+        auth.create_session_trusted.return_value = "token"
+
+        router = _setup_oidc_routes(auth, mgr)
+        ep = _get_endpoint(router, "/api/auth/oidc/callback")
+
+        import asyncio
+        asyncio.run(
+            ep(
+                _fake_request_with_params(
+                    {"code": "code", "state": "state"},
+                    cookies={"odysseus_oidc_csrf": "state"},
+                ),
+                SimpleNamespace(
+                    set_cookie=MagicMock(),
+                    delete_cookie=MagicMock(),
+                    status_code=200,
+                    headers={},
+                ),
+            )
+        )
+
+        # set_oidc_user_admin must NOT be called — we skip the sync
+        # because we have no authoritative group evidence.
+        auth.set_oidc_user_admin.assert_not_called()
+
+    def test_userinfo_available_demotes_when_no_admin_groups(self, monkeypatch):
+        """Existing admin + UserInfo available + no admin groups →
+        admin MUST be demoted (authentic non-membership evidence)."""
+        monkeypatch.setenv("OIDC_ADMIN_GROUPS", "odysseus-admins")
+
+        mgr = MagicMock()
+        mgr.configured = True
+        mgr.redirect_uri_override = None
+        mgr.issuer = "https://idp.example.com"
+        # Simulate: UserInfo WAS fetched. Groups = empty or non-admin.
+        mgr.exchange_code.return_value = {
+            "sub": "demoted-admin",
+            "email": "demoted@example.com",
+            "_userinfo_available": True,
+            "groups": ["regular-users"],
+        }
+
+        auth = MagicMock()
+        auth.get_user_by_oidc.return_value = "demoted-admin"
+        auth.create_session_trusted.return_value = "token"
+
+        router = _setup_oidc_routes(auth, mgr)
+        ep = _get_endpoint(router, "/api/auth/oidc/callback")
+
+        import asyncio
+        asyncio.run(
+            ep(
+                _fake_request_with_params(
+                    {"code": "code", "state": "state"},
+                    cookies={"odysseus_oidc_csrf": "state"},
+                ),
+                SimpleNamespace(
+                    set_cookie=MagicMock(),
+                    delete_cookie=MagicMock(),
+                    status_code=200,
+                    headers={},
+                ),
+            )
+        )
+
+        # set_oidc_user_admin MUST be called with is_admin=False
+        auth.set_oidc_user_admin.assert_called_once_with("demoted-admin", False)
+
+    def test_id_token_groups_authoritative_even_without_userinfo(self, monkeypatch):
+        """When the id_token itself carries a groups claim, it is
+        authoritative even if UserInfo was not fetched."""
+        monkeypatch.setenv("OIDC_ADMIN_GROUPS", "odysseus-admins")
+
+        mgr = MagicMock()
+        mgr.configured = True
+        mgr.redirect_uri_override = None
+        mgr.issuer = "https://idp.example.com"
+        # Simulate: UserInfo NOT fetched, but id_token has groups.
+        mgr.exchange_code.return_value = {
+            "sub": "idtoken-admin",
+            "email": "idtoken@example.com",
+            "_userinfo_available": False,
+            "groups": ["odysseus-admins"],
+        }
+
+        auth = MagicMock()
+        auth.get_user_by_oidc.return_value = "idtoken-admin"
+        auth.create_session_trusted.return_value = "token"
+
+        router = _setup_oidc_routes(auth, mgr)
+        ep = _get_endpoint(router, "/api/auth/oidc/callback")
+
+        import asyncio
+        asyncio.run(
+            ep(
+                _fake_request_with_params(
+                    {"code": "code", "state": "state"},
+                    cookies={"odysseus_oidc_csrf": "state"},
+                ),
+                SimpleNamespace(
+                    set_cookie=MagicMock(),
+                    delete_cookie=MagicMock(),
+                    status_code=200,
+                    headers={},
+                ),
+            )
+        )
+
+        # id_token groups are authoritative — admin sync must run
+        auth.set_oidc_user_admin.assert_called_once_with("idtoken-admin", True)
