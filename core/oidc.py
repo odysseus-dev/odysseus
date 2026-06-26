@@ -273,9 +273,11 @@ class OidcManager:
         # email, picture, etc.) but MUST NOT overwrite verified identity
         # claims from the id_token (sub, iss, aud, exp, iat, nonce, azp).
         access_token = token_data.get("access_token")
+        userinfo_available = False
         if access_token:
             try:
                 userinfo = self._fetch_userinfo(access_token)
+                userinfo_available = True
                 # Reject mismatched sub — the subject in UserInfo must match
                 # the already-verified id_token subject.
                 ui_sub = userinfo.get("sub")
@@ -297,6 +299,11 @@ class OidcManager:
             except Exception as exc:
                 logger.warning("Failed to fetch userinfo: %s", exc)
 
+        # Let the callback know whether UserInfo was successfully fetched.
+        # When UserInfo is unavailable, group membership claims may be
+        # incomplete — the callback must not demote existing admins based
+        # on missing evidence.
+        claims["_userinfo_available"] = userinfo_available
         return claims
 
     def _token_request(self, code: str, redirect_uri: str) -> Dict[str, Any]:

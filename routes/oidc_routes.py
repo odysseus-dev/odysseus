@@ -156,6 +156,13 @@ def setup_oidc_routes(
         name = claims.get("name", "")
         groups = claims.get("groups", [])
 
+        # Was UserInfo successfully fetched?  When UserInfo is unavailable
+        # and the id_token does not carry a groups claim, we do not have
+        # authoritative group-membership evidence — existing admins must
+        # not be demoted based on missing data.
+        userinfo_available = claims.pop("_userinfo_available", False)
+        id_token_has_groups = "groups" in claims
+
         if not sub:
             logger.error("OIDC id_token missing sub claim")
             return RedirectResponse(
@@ -196,8 +203,20 @@ def setup_oidc_routes(
             # Otherwise the bootstrap (or manual grant) would be undone
             # on the next login.
             if admin_groups:
-                logger.info("OIDC login for existing user '%s' (admin=%s)", username, is_admin)
-                auth_manager.set_oidc_user_admin(username, is_admin)
+                # Only sync admin status when we have authoritative group
+                # evidence.  UserInfo is the primary source for groups;
+                # if it's unavailable and the id_token didn't carry a
+                # groups claim, skip the sync — a transient provider
+                # failure must not silently demote an existing admin.
+                if userinfo_available or id_token_has_groups:
+                    logger.info("OIDC login for existing user '%s' (admin=%s)", username, is_admin)
+                    auth_manager.set_oidc_user_admin(username, is_admin)
+                else:
+                    logger.info(
+                        "OIDC login for existing user '%s' — skipping admin sync "
+                        "(UserInfo unavailable and id_token has no groups claim)",
+                        username,
+                    )
             else:
                 logger.info("OIDC login for existing user '%s'", username)
         else:

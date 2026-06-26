@@ -1,5 +1,6 @@
 """Tests for AuthManager OIDC methods — user creation, lookup, and password rejection."""
 
+import json
 import pytest
 from pathlib import Path
 
@@ -412,3 +413,98 @@ class TestOidcRouteGuards:
         result = asyncio.run(ep(self._fake_req(bob_token)))
         assert "secret" in result
         assert "uri" in result
+
+
+class TestFirstOidcAdminBootstrapConcurrency:
+    """Regression: two concurrent first-OIDC-login callbacks must not
+    both persist as admin.  The first-user bootstrap is serialized
+    inside _config_lock."""
+
+    def test_concurrent_first_oidc_users_only_one_admin(self, monkeypatch):
+        """Simulate two fresh callbacks racing to create the first OIDC
+        user.  The lock guarantees exactly one bootstrap admin, not two."""
+        monkeypatch.setenv("OIDC_FIRST_USER_IS_ADMIN", "true")
+        monkeypatch.delenv("OIDC_ADMIN_GROUPS", raising=False)
+
+        from core.auth import AuthManager
+        import threading
+        import tempfile
+        import os
+
+        auth_path = os.path.join(tempfile.mkdtemp(), "auth.json")
+        # Start with an empty auth store
+        with open(auth_path, "w") as f:
+            json.dump({}, f)
+
+        mgr = AuthManager(auth_path)
+        assert len(mgr.users) == 0
+
+        results = []
+        errors = []
+
+        def create_user_a():
+            try:
+                u = mgr.create_user_oidc("alice", "sub-a", "https://idp.example.com")
+                results.append(("alice", u, mgr.users.get(u, {}).get("is_admin", False)))
+            except Exception as e:
+                errors.append(e)
+
+        def create_user_b():
+            try:
+                u = mgr.create_user_oidc("bob", "sub-b", "https://idp.example.com")
+                results.append(("bob", u, mgr.users.get(u, {}).get("is_admin", False)))
+            except Exception as e:
+                errors.append(e)
+
+        # Start both threads and wait for completion
+        t1 = threading.Thread(target=create_user_a)
+        t2 = threading.Thread(target=create_user_b)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        assert len(errors) == 0, f"Unexpected errors: {errors}"
+        assert len(results) == 2
+
+        # Exactly one user must be admin — the first one through the lock.
+        admin_count = sum(1 for _, _, is_admin in results if is_admin)
+        assert admin_count == 1, (
+            f"Expected exactly 1 bootstrap admin, got {admin_count}. "
+            f"Results: {results}"
+        )
+
+    def test_concurrent_same_identity_idempotent(self, monkeypatch):
+        """Two concurrent create_user_oidc calls for the same OIDC identity
+        must return the same username (idempotent inside the lock)."""
+        monkeypatch.delenv("OIDC_ADMIN_GROUPS", raising=False)
+
+        from core.auth import AuthManager
+        import threading
+        import tempfile
+        import os
+
+        auth_path = os.path.join(tempfile.mkdtemp(), "auth.json")
+        with open(auth_path, "w") as f:
+            json.dump({}, f)
+
+        mgr = AuthManager(auth_path)
+
+        results = []
+
+        def create_same():
+            u = mgr.create_user_oidc("charlie", "sub-c", "https://idp.example.com")
+            results.append(u)
+
+        t1 = threading.Thread(target=create_same)
+        t2 = threading.Thread(target=create_same)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        assert len(results) == 2
+        # Both must return the same username — no duplicates
+        assert results[0] == results[1]
+        # Only one user entry must exist
+        assert len(mgr.users) == 1

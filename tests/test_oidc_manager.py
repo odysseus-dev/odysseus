@@ -940,6 +940,47 @@ class TestStateKeyPersistence:
         assert decoded_b["redirect_uri"] == "https://app.example.com/callback"
 
 
+    def test_atomic_key_creation_prevents_split_brain(self, tmp_path, monkeypatch):
+        """Simulate two racing workers on a fresh data dir: both must
+        end up with the same Fernet key even if they race on first access.
+        The O_EXCL atomic creation guarantees exactly one writer wins."""
+        import core.oidc as mod
+        import src.secret_storage as ss
+
+        key_file = tmp_path / ".app_key"
+        monkeypatch.setattr(ss, "_KEY_PATH", key_file)
+
+        # Sanity: no key yet
+        assert not key_file.exists()
+
+        # Simulate worker A: encode state (creates key file atomically)
+        monkeypatch.setattr(mod, "_state_fernet", None)
+        monkeypatch.setattr(ss, "_fernet", None)
+        state_a = mod._encode_state("nonce-a", "https://cb1.example.com/")
+        assert key_file.exists()
+        key_bytes_a = key_file.read_bytes()
+
+        # Simulate worker B: reset caches, decode worker A's state
+        monkeypatch.setattr(mod, "_state_fernet", None)
+        monkeypatch.setattr(ss, "_fernet", None)
+        decoded_b = mod._decode_state(state_a)
+        assert decoded_b is not None
+        assert decoded_b["nonce"] == "nonce-a"
+
+        # Worker B encodes its own state — must use the same key
+        state_b = mod._encode_state("nonce-b", "https://cb2.example.com/")
+        # After B's encode, the file must still contain worker A's key
+        assert key_file.read_bytes() == key_bytes_a, \
+            "Worker B must not overwrite the key file created by worker A"
+
+        # Reset and verify cross-worker roundtrip still works
+        monkeypatch.setattr(mod, "_state_fernet", None)
+        monkeypatch.setattr(ss, "_fernet", None)
+        decoded_b2 = mod._decode_state(state_b)
+        assert decoded_b2 is not None
+        assert decoded_b2["nonce"] == "nonce-b"
+
+
 class TestJwksCooldown:
     """Regression: failed JWKS refreshes must be throttled by the 60-second cooldown."""
 

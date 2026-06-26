@@ -24,7 +24,6 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
 
-from core.platform_compat import safe_chmod
 from src.constants import APP_KEY_FILE
 
 logger = logging.getLogger(__name__)
@@ -35,14 +34,25 @@ _fernet: Fernet | None = None
 
 
 def _load_or_create_key() -> bytes:
+    # Fast path: key already exists on disk.
     if _KEY_PATH.exists():
         return _KEY_PATH.read_bytes()
-    _KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    # Slow path: create the key atomically.  On a fresh multi-worker
+    # deployment two workers may race here — the O_EXCL open guarantees
+    # exactly one writer wins; losers read the winner's key so every
+    # process ends up with the same bytes.
     key = Fernet.generate_key()
-    _KEY_PATH.write_bytes(key)
-    # POSIX: lock the key to 0o600. Windows: no-op (the user-profile data dir is
-    # already ACL-restricted); safe_chmod swallows both cases.
-    safe_chmod(_KEY_PATH, 0o600)
+    _KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(_KEY_PATH, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        # Another process created the file between our exists() check
+        # and the open — read the winner's key instead.
+        logger.info("App key already created by another worker — reusing")
+        return _KEY_PATH.read_bytes()
+    with os.fdopen(fd, "wb") as f:
+        f.write(key)
     logger.info(f"Generated new app key at {_KEY_PATH}")
     return key
 
