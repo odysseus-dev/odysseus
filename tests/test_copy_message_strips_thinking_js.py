@@ -126,6 +126,27 @@ def test_plain_reply_copy_text_is_unchanged(node_available):
     assert out["content"] == raw
 
 
+def test_minimax_namespaced_thinking_is_extracted(node_available):
+    raw = (
+        '<mm:think>The user said "idk" - just casual.</mm:think>'
+        "Haha fair. Well, I'm here whenever you figure it out."
+    )
+    out = _extract_thinking_blocks(raw)
+
+    assert out["thinkingBlocks"] == ['The user said "idk" - just casual.']
+    assert out["content"] == "Haha fair. Well, I'm here whenever you figure it out."
+    assert "mm:think" not in out["content"]
+
+
+def test_minimax_orphan_closing_tag_drops_leaked_reasoning(node_available):
+    raw = "</mm:think>Hi! What can I do for you?"
+    out = _extract_thinking_blocks(raw)
+
+    assert out["thinkingBlocks"] == []
+    assert out["content"] == "Hi! What can I do for you?"
+    assert "mm:think" not in out["content"]
+
+
 def test_thinking_only_message_yields_empty_content(node_available):
     # The copy handler falls back to the raw text in this case so the button
     # still copies something for turns interrupted mid-thinking.

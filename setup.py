@@ -239,6 +239,15 @@ def check_arch():
 def main():
     print("\n=== Odysseus Setup ===\n")
 
+    # Load .env so pre-seeded ODYSSEUS_ADMIN_USER / ODYSSEUS_ADMIN_PASSWORD (and
+    # other deployment vars) are honored on native installs, not just when they
+    # are exported in the shell. Mirrors app.py: encoding="utf-8-sig" tolerates a
+    # UTF-8 BOM in a Notepad-saved .env. load_dotenv does not override already
+    # exported OS env vars, so the existing precedence is preserved. python-dotenv
+    # is a hard dependency (requirements.txt) and is verified by check_deps below.
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(BASE_DIR, ".env"), encoding="utf-8-sig")
+
     # Fail fast with a clear message if the CPU architecture is wrong (Apple
     # Silicon under an x86/Rosetta Python) before importing anything native.
     check_arch()

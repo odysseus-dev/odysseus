@@ -12,11 +12,23 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
+from fastapi import HTTPException
 from src.constants import MAX_READ_CHARS, DEEP_RESEARCH_DIR, VAULT_FILE
-from src.tool_utils import get_mcp_manager
+from src.tool_utils import get_mcp_manager, _parse_tool_args
 from core.constants import internal_api_base
+from routes._validators import validate_remote_host, validate_ssh_port
 
 logger = logging.getLogger(__name__)
+
+
+def _string_arg(value: Any) -> str:
+    return "" if value is None else str(value).strip()
+
+
+def _validate_cookbook_ssh_target(remote_host: Any, ssh_port: Any = "") -> tuple[str, str]:
+    remote = validate_remote_host(_string_arg(remote_host) or None) or ""
+    sport = validate_ssh_port(_string_arg(ssh_port) or None) or ""
+    return remote, sport
 
 # ---------------------------------------------------------------------------
 # Active email state
@@ -55,38 +67,6 @@ def clear_active_email() -> None:
 # ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
-
-def _parse_tool_args(content):
-    """Parse a tool-call argument blob.
-
-    Accepts either a JSON string or an already-decoded dict. Unwraps the
-    common `{"body": {...}}` envelope that smaller models emit when they
-    read tool descriptions like "Body is JSON: {...}" literally — they
-    pass `body` as a field name rather than treating it as a noun.
-
-    Returns a dict on success, raises ValueError on bad JSON.
-    """
-    if isinstance(content, str):
-        try:
-            args = json.loads(content) if content.strip() else {}
-        except (json.JSONDecodeError, TypeError) as e:
-            raise ValueError(str(e))
-    elif isinstance(content, dict):
-        args = content
-    else:
-        args = {}
-    # Unwrap {"body": {...}} envelope — but only if `body` is the sole key
-    # and points at a dict. We don't want to clobber a legitimate `body`
-    # field on tools where it's a real arg (e.g. send_email body text).
-    if (
-        isinstance(args, dict)
-        and len(args) == 1
-        and "body" in args
-        and isinstance(args["body"], dict)
-        and "action" in args["body"]  # extra safety: only unwrap if the inner dict looks like a tool call
-    ):
-        args = args["body"]
-    return args
 
 # ---------------------------------------------------------------------------
 # Search chats
@@ -575,620 +555,6 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
     finally:
         db.close()
 
-
-# ---------------------------------------------------------------------------
-# Endpoint management tool
-# ---------------------------------------------------------------------------
-
-async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict:
-    """Manage model endpoints: list, add, delete, enable, disable."""
-    from core.database import SessionLocal, ModelEndpoint
-    try:
-        args = _parse_tool_args(content)
-    except ValueError:
-        return {"error": "Invalid JSON arguments", "exit_code": 1}
-
-    action = args.get("action", "list")
-    db = SessionLocal()
-    try:
-        if action == "list":
-            eps = db.query(ModelEndpoint).all()
-            items = [{"id": e.id, "name": e.name, "base_url": e.base_url,
-                       "is_enabled": e.is_enabled} for e in eps]
-            return {"response": f"{len(items)} endpoints", "endpoints": items, "exit_code": 0}
-
-        elif action == "add":
-            import uuid as _uuid
-            name = args.get("name", "")
-            base_url = args.get("base_url", "")
-            api_key = args.get("api_key", "")
-            if not base_url:
-                return {"error": "base_url is required", "exit_code": 1}
-            eid = str(_uuid.uuid4())[:8]
-            from datetime import datetime
-            ep = ModelEndpoint(id=eid, name=name or base_url, base_url=base_url,
-                               api_key=api_key, is_enabled=True,
-                               created_at=datetime.utcnow(), updated_at=datetime.utcnow())
-            db.add(ep)
-            db.commit()
-            return {"response": f"Added endpoint '{name or base_url}' (id: {eid})", "exit_code": 0}
-
-        elif action == "delete":
-            eid = args.get("endpoint_id", "")
-            ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == eid).first()
-            if not ep:
-                return {"error": f"Endpoint {eid} not found", "exit_code": 1}
-            name = ep.name
-            db.delete(ep)
-            db.commit()
-            return {"response": f"Deleted endpoint '{name}'", "exit_code": 0}
-
-        elif action in ("enable", "disable"):
-            eid = args.get("endpoint_id", "")
-            ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == eid).first()
-            if not ep:
-                return {"error": f"Endpoint {eid} not found", "exit_code": 1}
-            ep.is_enabled = (action == "enable")
-            db.commit()
-            return {"response": f"Endpoint '{ep.name}' {action}d", "exit_code": 0}
-
-        else:
-            return {"error": f"Unknown action: {action}", "exit_code": 1}
-    except Exception as e:
-        logger.error(f"manage_endpoints error: {e}")
-        return {"error": str(e), "exit_code": 1}
-    finally:
-        db.close()
-
-
-# ---------------------------------------------------------------------------
-# MCP server management tool
-# ---------------------------------------------------------------------------
-
-async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
-    """Manage MCP servers: list, add, delete, enable, disable, reconnect."""
-    try:
-        args = _parse_tool_args(content)
-    except ValueError:
-        return {"error": "Invalid JSON arguments", "exit_code": 1}
-
-    action = args.get("action", "list")
-
-    if action == "list":
-        mcp = get_mcp_manager()
-        if not mcp:
-            return {"response": "No MCP manager available", "servers": [], "exit_code": 0}
-        from core.database import SessionLocal, McpServer
-        db = SessionLocal()
-        try:
-            servers = db.query(McpServer).all()
-            items = []
-            for s in servers:
-                st = mcp.get_server_status(s.id)
-                status = st.get("status", "disconnected")
-                tool_count = st.get("tool_count", 0)
-                items.append({"id": s.id, "name": s.name, "transport": s.transport,
-                              "is_enabled": s.is_enabled, "status": status,
-                              "tool_count": tool_count})
-            return {"response": f"{len(items)} MCP servers", "servers": items, "exit_code": 0}
-        finally:
-            db.close()
-
-    elif action == "add":
-        from core.database import SessionLocal, McpServer
-        import uuid as _uuid
-        from datetime import datetime
-        name = args.get("name", "")
-        command = args.get("command", "")
-        cmd_args = args.get("args", [])
-        env = args.get("env", {})
-        if not name or not command:
-            return {"error": "name and command are required", "exit_code": 1}
-        sid = str(_uuid.uuid4())[:8]
-        db = SessionLocal()
-        try:
-            srv = McpServer(id=sid, name=name, transport="stdio", command=command,
-                            args=json.dumps(cmd_args) if isinstance(cmd_args, list) else cmd_args,
-                            env=json.dumps(env) if isinstance(env, dict) else env,
-                            is_enabled=True, created_at=datetime.utcnow(), updated_at=datetime.utcnow())
-            db.add(srv)
-            db.commit()
-        finally:
-            db.close()
-        # Try to connect
-        mcp = get_mcp_manager()
-        tool_count = 0
-        if mcp:
-            try:
-                await mcp.connect_server(
-                    sid, name, "stdio", command=command,
-                    args=cmd_args if isinstance(cmd_args, list) else json.loads(cmd_args),
-                    env=env if isinstance(env, dict) else json.loads(env),
-                )
-                st = mcp.get_server_status(sid)
-                tool_count = st.get("tool_count", 0)
-            except Exception as e:
-                logger.warning(f"MCP connect failed for {name}: {e}")
-        return {"response": f"Added MCP server '{name}' ({tool_count} tools)", "exit_code": 0}
-
-    elif action == "delete":
-        sid = args.get("server_id", "")
-        from core.database import SessionLocal, McpServer
-        db = SessionLocal()
-        try:
-            srv = db.query(McpServer).filter(McpServer.id == sid).first()
-            if not srv:
-                return {"error": f"Server {sid} not found", "exit_code": 1}
-            name = srv.name
-            mcp = get_mcp_manager()
-            if mcp:
-                try:
-                    await mcp.disconnect_server(sid)
-                except Exception:
-                    pass
-            db.delete(srv)
-            db.commit()
-            return {"response": f"Deleted MCP server '{name}'", "exit_code": 0}
-        finally:
-            db.close()
-
-    elif action == "reconnect":
-        sid = args.get("server_id", "")
-        mcp = get_mcp_manager()
-        if not mcp:
-            return {"error": "MCP manager not available", "exit_code": 1}
-        try:
-            await mcp.disconnect_server(sid)
-            from core.database import SessionLocal, McpServer
-            db2 = SessionLocal()
-            try:
-                srv = db2.query(McpServer).filter(McpServer.id == sid).first()
-                if srv:
-                    _args = json.loads(srv.args) if srv.args else []
-                    _env = json.loads(srv.env) if srv.env else {}
-                    await mcp.connect_server(
-                        server_id=sid,
-                        name=srv.name,
-                        transport=srv.transport,
-                        command=srv.command,
-                        args=_args,
-                        env=_env,
-                        url=srv.url,
-                    )
-                    st = mcp.get_server_status(sid)
-                    return {"response": f"Reconnected '{srv.name}' ({st.get('tool_count', 0)} tools)", "exit_code": 0}
-                return {"error": f"Server {sid} not found", "exit_code": 1}
-            finally:
-                db2.close()
-        except Exception as e:
-            return {"error": str(e), "exit_code": 1}
-
-    elif action in ("enable", "disable"):
-        sid = args.get("server_id", "")
-        from core.database import SessionLocal, McpServer
-        db = SessionLocal()
-        try:
-            srv = db.query(McpServer).filter(McpServer.id == sid).first()
-            if not srv:
-                return {"error": f"Server {sid} not found", "exit_code": 1}
-            srv.is_enabled = (action == "enable")
-            db.commit()
-            return {"response": f"MCP server '{srv.name}' {action}d", "exit_code": 0}
-        finally:
-            db.close()
-
-    elif action == "list_tools":
-        mcp = get_mcp_manager()
-        if not mcp:
-            return {"response": "No MCP manager", "tools": [], "exit_code": 0}
-        tools = mcp.get_all_tools()
-        items = [{"name": t["name"], "server": t["server_name"],
-                  "description": t.get("description", "")[:100]} for t in tools]
-        return {"response": f"{len(items)} MCP tools available", "tools": items, "exit_code": 0}
-
-    else:
-        return {"error": f"Unknown action: {action}", "exit_code": 1}
-
-
-# ---------------------------------------------------------------------------
-# Webhook management tool
-# ---------------------------------------------------------------------------
-
-async def do_manage_webhooks(content: str, owner: Optional[str] = None) -> Dict:
-    """Manage webhooks: list, add, delete, enable, disable, test."""
-    from core.database import SessionLocal
-    try:
-        args = _parse_tool_args(content)
-    except ValueError:
-        return {"error": "Invalid JSON arguments", "exit_code": 1}
-
-    action = args.get("action", "list")
-    db = SessionLocal()
-    try:
-        from core.database import Webhook
-        if action == "list":
-            hooks = db.query(Webhook).all()
-            items = [{"id": h.id, "name": h.name, "url": h.url,
-                       "events": h.events, "is_active": h.is_active} for h in hooks]
-            return {"response": f"{len(items)} webhooks", "webhooks": items, "exit_code": 0}
-
-        elif action == "add":
-            import uuid as _uuid
-            from datetime import datetime
-            from src.webhook_manager import validate_events, validate_webhook_url
-            name = args.get("name", "")
-            url = args.get("url", "")
-            events = args.get("events", "chat.completed")
-            if not url:
-                return {"error": "url is required", "exit_code": 1}
-            try:
-                url = validate_webhook_url(url)
-                events = validate_events(events)
-            except ValueError as e:
-                return {"error": str(e), "exit_code": 1}
-            wid = str(_uuid.uuid4())[:8]
-            hook = Webhook(id=wid, name=name or url, url=url,
-                           events=events, is_active=True,
-                           created_at=datetime.utcnow(), updated_at=datetime.utcnow())
-            db.add(hook)
-            db.commit()
-            return {"response": f"Added webhook '{name or url}'", "exit_code": 0}
-
-        elif action == "delete":
-            wid = args.get("webhook_id", "")
-            hook = db.query(Webhook).filter(Webhook.id == wid).first()
-            if not hook:
-                return {"error": f"Webhook {wid} not found", "exit_code": 1}
-            name = hook.name
-            db.delete(hook)
-            db.commit()
-            return {"response": f"Deleted webhook '{name}'", "exit_code": 0}
-
-        elif action in ("enable", "disable"):
-            wid = args.get("webhook_id", "")
-            hook = db.query(Webhook).filter(Webhook.id == wid).first()
-            if not hook:
-                return {"error": f"Webhook {wid} not found", "exit_code": 1}
-            hook.is_active = (action == "enable")
-            db.commit()
-            return {"response": f"Webhook '{hook.name}' {action}d", "exit_code": 0}
-
-        else:
-            return {"error": f"Unknown action: {action}", "exit_code": 1}
-    except Exception as e:
-        logger.error(f"manage_webhooks error: {e}")
-        return {"error": str(e), "exit_code": 1}
-    finally:
-        db.close()
-
-
-# ---------------------------------------------------------------------------
-# API token management tool
-# ---------------------------------------------------------------------------
-
-async def do_manage_tokens(content: str, owner: Optional[str] = None) -> Dict:
-    """Manage API tokens: list, create, delete."""
-    from core.database import SessionLocal, ApiToken
-    try:
-        args = _parse_tool_args(content)
-    except ValueError:
-        return {"error": "Invalid JSON arguments", "exit_code": 1}
-
-    action = args.get("action", "list")
-    db = SessionLocal()
-    try:
-        if action == "list":
-            tokens = db.query(ApiToken).all()
-            items = [{"id": t.id, "name": t.name, "token_prefix": t.token_prefix + "...",
-                       "is_active": t.is_active} for t in tokens]
-            return {"response": f"{len(items)} API tokens", "tokens": items, "exit_code": 0}
-
-        elif action == "create":
-            import uuid as _uuid, secrets, bcrypt
-            from datetime import datetime
-            name = args.get("name", "API Token")
-            raw_token = secrets.token_urlsafe(32)
-            token_hash = bcrypt.hashpw(raw_token.encode(), bcrypt.gensalt()).decode()
-            tid = str(_uuid.uuid4())[:8]
-            t = ApiToken(id=tid, name=name, token_hash=token_hash,
-                         token_prefix=raw_token[:8], is_active=True,
-                         created_at=datetime.utcnow(), updated_at=datetime.utcnow())
-            db.add(t)
-            db.commit()
-            return {"response": f"Created token '{name}'", "token": raw_token, "exit_code": 0}
-
-        elif action == "delete":
-            tid = args.get("token_id", "")
-            t = db.query(ApiToken).filter(ApiToken.id == tid).first()
-            if not t:
-                return {"error": f"Token {tid} not found", "exit_code": 1}
-            name = t.name
-            db.delete(t)
-            db.commit()
-            return {"response": f"Deleted token '{name}'", "exit_code": 0}
-
-        else:
-            return {"error": f"Unknown action: {action}", "exit_code": 1}
-    except Exception as e:
-        logger.error(f"manage_tokens error: {e}")
-        return {"error": str(e), "exit_code": 1}
-    finally:
-        db.close()
-
-# ---------------------------------------------------------------------------
-# Settings/preferences management tool
-# ---------------------------------------------------------------------------
-
-async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
-    """Manage user settings and preferences."""
-    try:
-        args = _parse_tool_args(content)
-    except ValueError:
-        return {"error": "Invalid JSON arguments", "exit_code": 1}
-
-    action = args.get("action", "list")
-
-    from core.database import SessionLocal
-    db = SessionLocal()
-    try:
-        # set/get/list/delete operate on the REAL app settings (the same store
-        # the Settings panel writes), so changing a model / voice / search
-        # engine / reminder channel from chat actually takes effect.
-        from src.settings import load_settings, save_settings, DEFAULT_SETTINGS
-
-        # Secrets/credentials the agent must NOT write — kept read-only (masked)
-        # so API keys never flow through chat. User sets these in the panel.
-        _SECRET_KEYS = {
-            "brave_api_key", "google_pse_key", "google_pse_cx",
-            "tavily_api_key", "serper_api_key", "app_public_url",
-        }
-        def _is_secret(k):
-            # `token` must be a suffix, not a substring: otherwise the int
-            # setting `agent_input_token_budget` (which even has a "token budget"
-            # alias to set it from chat) is wrongly classified as a credential.
-            return (
-                k in _SECRET_KEYS
-                or k.endswith("token")
-                or any(t in k for t in ("api_key", "_key", "secret", "password"))
-            )
-
-        # Friendly aliases → real keys, so natural phrasing resolves.
-        _ALIASES_SET = {
-            "voice": "tts_voice", "tts voice": "tts_voice", "tts": "tts_enabled",
-            "text to speech": "tts_enabled", "tts provider": "tts_provider",
-            "speech speed": "tts_speed", "voice speed": "tts_speed",
-            "stt": "stt_enabled", "speech to text": "stt_enabled", "transcription": "stt_enabled",
-            "search engine": "search_provider", "search provider": "search_provider",
-            "search results": "search_result_count", "result count": "search_result_count",
-            "default model": "default_model", "chat model": "default_model",
-            "default endpoint": "default_endpoint_id",
-            "task model": "task_model", "background model": "task_model",
-            "teacher model": "teacher_model", "teacher": "teacher_enabled",
-            "utility model": "utility_model", "research model": "research_model",
-            "research max tokens": "research_max_tokens",
-            "vision model": "vision_model", "vision": "vision_enabled",
-            "image model": "image_model", "image quality": "image_quality",
-            "image gen": "image_gen_enabled", "image generation": "image_gen_enabled",
-            "reminder channel": "reminder_channel", "reminders": "reminder_channel",
-            "ntfy topic": "reminder_ntfy_topic",
-            "webhook integration": "reminder_webhook_integration_id",
-            "webhook template": "reminder_webhook_payload_template", "webhook payload": "reminder_webhook_payload_template",
-            "agent tool calls": "agent_max_tool_calls", "max tool calls": "agent_max_tool_calls",
-            "agent timeout": "agent_stream_timeout_seconds", "stream timeout": "agent_stream_timeout_seconds",
-            "token budget": "agent_input_token_budget", "input budget": "agent_input_token_budget",
-            "hard max": "agent_input_token_hard_max",
-            "token budget cap": "agent_input_token_hard_max",
-            "input budget cap": "agent_input_token_hard_max",
-        }
-        def _resolve(k):
-            k2 = (k or "").strip().lower()
-            if k2 in DEFAULT_SETTINGS:
-                return k2
-            return _ALIASES_SET.get(k2, (k or "").strip())
-
-        _ENUMS = {
-            "image_quality": ["low", "medium", "high"],
-            "reminder_channel": ["browser", "email", "ntfy", "webhook"],
-        }
-        def _coerce(value, default):
-            if isinstance(default, bool):
-                return value if isinstance(value, bool) else str(value).strip().lower() in ("true", "on", "yes", "1", "enable", "enabled")
-            if isinstance(default, int):
-                return int(value)
-            return value
-
-        def _model_slug(value: str) -> str:
-            import re as _re
-            return _re.sub(r"[^a-z0-9]+", "", (value or "").lower())
-
-        def _endpoint_model_from_cache(model_query: str):
-            """Resolve friendly model text to an enabled endpoint + real model id.
-
-            The Settings UI stores both `<prefix>_endpoint_id` and
-            `<prefix>_model`; writing only the model leaves the runtime on the
-            old endpoint. Prefer cached model lists so this stays fast/offline.
-            """
-            import json as _json
-            import re as _re
-            from core.database import ModelEndpoint
-
-            wanted = (model_query or "").strip()
-            wanted_slug = _model_slug(wanted)
-            wanted_tokens = [_model_slug(t) for t in _re.findall(r"[A-Za-z0-9]+", wanted)]
-            wanted_tokens = [t for t in wanted_tokens if t]
-            if not wanted_slug:
-                return None
-            best = None
-            for ep in db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all():
-                raw_models = []
-                try:
-                    raw_models = _json.loads(ep.cached_models or "[]") or []
-                except Exception:
-                    raw_models = []
-                # If cache is empty, still allow matching against endpoint name
-                # for callers using model@endpoint elsewhere later.
-                for mid in raw_models:
-                    mid = str(mid)
-                    mid_slug = _model_slug(mid)
-                    if not mid_slug:
-                        continue
-                    exact = mid.lower() == wanted.lower()
-                    compact_match = wanted_slug in mid_slug or mid_slug in wanted_slug
-                    token_match = bool(wanted_tokens) and all(tok in mid_slug for tok in wanted_tokens)
-                    if exact or compact_match or token_match:
-                        score = 3 if exact else (2 if compact_match else 1)
-                        if not best or score > best[0]:
-                            best = (score, ep.id, mid)
-            if best:
-                return {"endpoint_id": best[1], "model": best[2]}
-            return None
-
-        def _mask(k, v):
-            return "••••• (set in panel)" if _is_secret(k) and v else v
-
-        if action == "list":
-            s = load_settings()
-            shown = {k: _mask(k, v) for k, v in s.items() if k in DEFAULT_SETTINGS and not isinstance(v, dict)}
-            return {"response": f"{len(shown)} settings (use get/set with a key)", "settings": shown, "exit_code": 0}
-
-        elif action == "get":
-            key = _resolve(args.get("key", ""))
-            if not key:
-                return {"error": "key is required", "exit_code": 1}
-            if key not in DEFAULT_SETTINGS:
-                return {"error": f"Unknown setting '{args.get('key')}'. Use action='list' to see them.", "exit_code": 1}
-            val = load_settings().get(key, DEFAULT_SETTINGS.get(key))
-            return {"response": f"{key} = {_mask(key, val)}", "value": _mask(key, val), "exit_code": 0}
-
-        elif action == "set":
-            raw = args.get("key", "")
-            value = args.get("value")
-            if not raw:
-                return {"error": "key is required", "exit_code": 1}
-            key = _resolve(raw)
-            if key not in DEFAULT_SETTINGS:
-                return {"error": f"Unknown setting '{raw}'. Use action='list' to see available settings.", "exit_code": 1}
-            if _is_secret(key):
-                return {"response": f"'{key}' is a credential/secret — for security I can't set it from chat. Open Settings and set it there.", "exit_code": 0}
-            # Structured settings (dicts/lists like keybinds, default_model_fallbacks)
-            # have no safe scalar coercion — _coerce would pass a bare string
-            # straight through and clobber the structure. Refuse them here; they're
-            # edited in their dedicated panels. (reset/delete still restore the
-            # default structure, which is safe.)
-            if isinstance(DEFAULT_SETTINGS[key], (dict, list)):
-                return {"response": f"'{key}' is a structured setting — edit it in its panel, not from chat. (You can reset it to default here.)", "exit_code": 0}
-            try:
-                value = _coerce(value, DEFAULT_SETTINGS[key])
-            except (ValueError, TypeError):
-                return {"error": f"'{value}' isn't a valid value for {key} (expected {type(DEFAULT_SETTINGS[key]).__name__}).", "exit_code": 1}
-            if key in _ENUMS and str(value).lower() not in _ENUMS[key]:
-                return {"error": f"{key} must be one of: {', '.join(_ENUMS[key])}.", "exit_code": 1}
-            s = load_settings()
-            s[key] = value
-            if key in {"default_model", "research_model", "utility_model", "task_model", "vision_model", "image_model"}:
-                resolved = _endpoint_model_from_cache(str(value))
-                if resolved:
-                    prefix = key[:-6]
-                    s[f"{prefix}_endpoint_id"] = resolved["endpoint_id"]
-                    s[key] = resolved["model"]
-                    value = resolved["model"]
-            save_settings(s)
-            if key.endswith("_model") and s.get(f"{key[:-6]}_endpoint_id"):
-                return {"response": f"Set {key} = {value} (endpoint {s.get(f'{key[:-6]}_endpoint_id')}).", "exit_code": 0}
-            return {"response": f"Set {key} = {value}.", "exit_code": 0}
-
-        elif action == "delete" or action == "reset":
-            key = _resolve(args.get("key", ""))
-            if key not in DEFAULT_SETTINGS:
-                return {"error": f"Unknown setting '{args.get('key')}'.", "exit_code": 1}
-            if _is_secret(key):
-                return {"response": f"'{key}' is a credential — reset it in the panel.", "exit_code": 0}
-            s = load_settings()
-            s[key] = DEFAULT_SETTINGS[key]
-            save_settings(s)
-            return {"response": f"Reset {key} to default ({DEFAULT_SETTINGS[key]}).", "exit_code": 0}
-
-        elif action in ("disable_tool", "enable_tool", "list_tools"):
-            # Tool-toggle actions. These edit settings.json:disabled_tools
-            # (the global list read on every chat request) rather than
-            # prefs.json. Friendly aliases accepted: "shell" -> "bash",
-            # "search" -> "web_search", "browser" -> "builtin_browser",
-            # "documents" -> the document tool set, "memory" ->
-            # manage_memory, etc.
-            from src.settings import get_setting, save_settings, load_settings
-            _ALIASES = {
-                "shell": ["bash"],
-                "terminal": ["bash"],
-                "search": ["web_search"],
-                "web": ["web_search"],
-                "browser": ["builtin_browser"],
-                "documents": ["create_document", "edit_document", "update_document", "suggest_document"],
-                "doc": ["create_document", "edit_document", "update_document", "suggest_document"],
-                "memory": ["manage_memory"],
-                "skills": ["manage_skills"],
-                "images": ["generate_image"],
-                "image": ["generate_image"],
-                "tasks": ["manage_tasks"],
-                "notes": ["manage_notes"],
-                "calendar": ["manage_calendar"],
-                "email": ["mcp__email__list_emails", "mcp__email__read_email", "mcp__email__send_email"],
-                "research": ["web_search"],  # research is a per-request flag, not a tool — closest analog
-            }
-
-            if action == "list_tools":
-                current = get_setting("disabled_tools", []) or []
-                return {
-                    "response": (
-                        f"Currently disabled: {', '.join(current) if current else '(none)'}.\n"
-                        "Common toggles: shell (bash), search (web_search), browser, documents, "
-                        "memory, skills, images, tasks, notes, calendar, email."
-                    ),
-                    "disabled": list(current),
-                    "exit_code": 0,
-                }
-
-            tool_name = (args.get("tool") or args.get("name") or "").strip().lower()
-            if not tool_name:
-                return {"error": "tool name required (e.g. 'shell', 'search', 'bash')", "exit_code": 1}
-            targets = _ALIASES.get(tool_name, [tool_name])
-
-            settings = load_settings()
-            current = list(settings.get("disabled_tools") or [])
-            before = set(current)
-            if action == "disable_tool":
-                for t in targets:
-                    if t not in current:
-                        current.append(t)
-            else:  # enable_tool
-                current = [t for t in current if t not in targets]
-            after = set(current)
-            settings["disabled_tools"] = current
-            save_settings(settings)
-
-            verb = "Disabled" if action == "disable_tool" else "Enabled"
-            changed = sorted(after.symmetric_difference(before))
-            return {
-                "response": (
-                    f"{verb} {tool_name} ({', '.join(targets)}). "
-                    f"Now disabled: {', '.join(current) if current else '(none)'}."
-                ),
-                "changed": changed,
-                "disabled": list(current),
-                "exit_code": 0,
-            }
-
-        else:
-            return {"error": f"Unknown action: {action}", "exit_code": 1}
-    except Exception as e:
-        logger.error(f"manage_settings error: {e}")
-        return {"error": str(e), "exit_code": 1}
-    finally:
-        db.close()
-
-
-# ---------------------------------------------------------------------------
-# API call tool
-# ---------------------------------------------------------------------------
 
 async def do_api_call(content: str) -> Dict:
     """Execute an API call to a registered integration."""
@@ -2714,13 +2080,25 @@ async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
                 endpoint_added=endpoint_added, endpoint_id=endpoint_id or "",
             )
             note = "" if registered else " (state-write failed — task may not show in UI)"
+            where = host or "local"
+            log_path = f"/tmp/odysseus-tmux/{sid}.log"
             return {
-                "output": f"Serving {repo_id} (session: {sid}){note}",
+                "output": (
+                    f"Serving {repo_id} on {where} (session: {sid}){note}\n"
+                    f"Next required check: call list_served_models. If this task is not ready, "
+                    f"call tail_serve_output with session_id={sid} and tail=400 before answering. "
+                    f"Do not tell the user to check logs; you have the log tool."
+                ),
                 "session_id": sid,
                 "task_type": "serve",
                 "phase": "running",
                 "host": host,
                 "endpoint_id": endpoint_id,
+                "log_path": log_path,
+                "next_tools": [
+                    {"name": "list_served_models", "arguments": {}},
+                    {"name": "tail_serve_output", "arguments": {"session_id": sid, "tail": 400}},
+                ],
                 "exit_code": 0,
             }
         # FastAPI HTTPException puts the message under `detail`, not `error`.
@@ -2888,6 +2266,10 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
             break
 
     if remote:
+        try:
+            remote, sport = _validate_cookbook_ssh_target(remote, sport)
+        except HTTPException as e:
+            return {"error": str(getattr(e, "detail", e)), "exit_code": 1}
         _pf = f"-p {shlex.quote(str(sport))} " if sport and str(sport) != "22" else ""
         cmd = (
             f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "
@@ -2976,8 +2358,8 @@ async def do_tail_serve_output(content: str, owner: Optional[str] = None) -> Dic
         tail = 400
     tail = max(20, min(tail, 4000))
     headers = _internal_headers()
-    remote = (args.get("remote_host") or args.get("host") or "").strip()
-    sport = (args.get("ssh_port") or "").strip()
+    remote = _string_arg(args.get("remote_host") or args.get("host"))
+    sport = _string_arg(args.get("ssh_port"))
     # Resolve host from cookbook state if caller didn't pass one — same
     # lookup _cookbook_kill_session uses.
     if not remote:
@@ -2995,6 +2377,12 @@ async def do_tail_serve_output(content: str, owner: Optional[str] = None) -> Dic
                     if not sport:
                         sport = t.get("sshPort") or ""
                     break
+    if remote:
+        try:
+            remote, sport = _validate_cookbook_ssh_target(remote, sport)
+        except HTTPException as e:
+            return {"error": str(getattr(e, "detail", e)), "exit_code": 1}
+
     # Prefer the persisted /tmp/odysseus-tmux/SESSION.log file over the
     # live tmux pane. The pane is what the user would see scrolling on
     # their screen — including the post-crash neofetch banner and the
@@ -3057,8 +2445,17 @@ async def do_tail_serve_output(content: str, owner: Optional[str] = None) -> Dic
         MAX_CHARS = 8000
         if len(output_text) > MAX_CHARS:
             output_text = "…(earlier output truncated)…\n" + output_text[-MAX_CHARS:]
+        if not output_text:
+            output_text = (
+                f"No log output captured yet for {session_id} on {host_label}. "
+                "This usually means the tmux wrapper has started but the model process "
+                "has not printed anything yet. Do not stop here: call list_served_models "
+                "again to check whether it is still loading, ready, or crashed; if it is "
+                "still not ready, call tail_serve_output again with a larger tail after "
+                "the next status check."
+            )
         return {
-            "output": output_text or "(empty pane)",
+            "output": output_text,
             "session_id": session_id,
             "host": host_label,
             "tail_lines": tail,
@@ -3172,7 +2569,7 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
 
-    host = (args.get("host") or args.get("remote_host") or "").strip()
+    host = _string_arg(args.get("host") or args.get("remote_host"))
     sess = (args.get("tmux_session") or args.get("session_id") or "").strip()
     model = (args.get("model") or args.get("repo_id") or "").strip()
     port = args.get("port") or 8000
@@ -3183,6 +2580,12 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
         return {"error": "tmux_session and model are required", "exit_code": 1}
 
     # Verify tmux session exists on the target host
+    if host:
+        try:
+            host, _ = _validate_cookbook_ssh_target(host)
+        except HTTPException as e:
+            return {"error": str(getattr(e, "detail", e)), "exit_code": 1}
+
     headers = _internal_headers()
     if host:
         check = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no {shlex.quote(host)} 'tmux has-session -t {shlex.quote(sess)} 2>&1'"
@@ -3266,7 +2669,7 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
         host_only = host.split("@", 1)[-1] if host else "localhost"
         endpoint_url = f"http://{host_only}:{int(port)}/v1"
         try:
-            from src.tool_implementations import do_manage_endpoints  # avoid forward ref issues
+            from src.agent_tools.admin_tools import do_manage_endpoints  # moved in #3629
         except Exception:
             do_manage_endpoints = None
         if do_manage_endpoints is not None:
