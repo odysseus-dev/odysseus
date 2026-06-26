@@ -1511,6 +1511,7 @@ async function initResearchSettings() {
   var tokensInput = el('set-researchMaxTokens');
   var extractTimeoutInput = el('set-researchExtractTimeout');
   var extractConcurrencyInput = el('set-researchExtractConcurrency');
+  var maxUrlsInput = el('set-researchMaxUrls');
   var runTimeoutInput = el('set-researchRunTimeout');
   var msg = el('set-researchMsg');
   var endpoints = [];
@@ -1534,6 +1535,7 @@ async function initResearchSettings() {
     if (settings.research_max_tokens) tokensInput.value = settings.research_max_tokens;
     if (settings.research_extraction_timeout_seconds) extractTimeoutInput.value = settings.research_extraction_timeout_seconds;
     if (settings.research_extraction_concurrency) extractConcurrencyInput.value = settings.research_extraction_concurrency;
+    if (settings.research_max_urls_per_round) maxUrlsInput.value = settings.research_max_urls_per_round;
     if (settings.research_run_timeout_seconds !== undefined && settings.research_run_timeout_seconds !== null) {
       runTimeoutInput.value = settings.research_run_timeout_seconds;
     }
@@ -1554,6 +1556,9 @@ async function initResearchSettings() {
     }
     if (extractConcurrencyInput.value) {
       parts.push('Parallel: ' + extractConcurrencyInput.value);
+    }
+    if (maxUrlsInput.value) {
+      parts.push('Sources/round: ' + maxUrlsInput.value);
     }
     if (runTimeoutInput.value !== '') {
       var rtv = parseInt(runTimeoutInput.value, 10);
@@ -1582,6 +1587,8 @@ async function initResearchSettings() {
     if (et && et >= 15 && et <= 3600) payload.research_extraction_timeout_seconds = et;
     var ec = parseInt(extractConcurrencyInput.value, 10);
     if (ec && ec >= 1 && ec <= 12) payload.research_extraction_concurrency = ec;
+    var mu = parseInt(maxUrlsInput.value, 10);
+    if (mu && mu >= 1 && mu <= 12) payload.research_max_urls_per_round = mu;
     if (runTimeoutInput.value !== '') {
       var rt = parseInt(runTimeoutInput.value, 10);
       // 0 = no limit (disables the hard timeout); otherwise 60s..86400s (24h)
@@ -1607,6 +1614,7 @@ async function initResearchSettings() {
   tokensInput.addEventListener('change', saveResearch);
   extractTimeoutInput.addEventListener('change', saveResearch);
   extractConcurrencyInput.addEventListener('change', saveResearch);
+  maxUrlsInput.addEventListener('change', saveResearch);
   runTimeoutInput.addEventListener('change', saveResearch);
 
   _registerAiEndpointRefresh(function(nextEndpoints) {

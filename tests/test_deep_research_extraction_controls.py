@@ -112,6 +112,74 @@ def test_extraction_timeout_allows_long_local_model_runs():
     assert researcher.extraction_timeout == 1800
 
 
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        (4, 4),       # in-range value passes through
+        (50, 12),     # above ceiling -> clamped to 12
+        (-1, 1),      # below floor -> clamped to 1
+        (None, 3),    # missing -> default 3
+    ],
+)
+def test_max_urls_per_round_is_clamped(value, expected):
+    researcher = DeepResearcher(
+        llm_endpoint="http://local.test/v1/chat/completions",
+        llm_model="local-model",
+        max_urls_per_round=value,
+    )
+    assert researcher.max_urls_per_round == expected
+
+
+class _CapturingResearcher:
+    """Stand-in for DeepResearcher that records its constructor kwargs."""
+    last_kwargs = None
+
+    def __init__(self, **kwargs):
+        type(self).last_kwargs = kwargs
+        self.findings = []
+
+    async def research(self, *args, **kwargs):
+        return "report body"
+
+    def get_stats(self):
+        return {}
+
+
+@pytest.mark.asyncio
+async def test_call_research_service_resolves_max_urls_per_round(monkeypatch):
+    """The handler should pass the explicit arg when given, otherwise fall back
+    to the research_max_urls_per_round setting."""
+    import src.deep_research as deep_research_mod
+    import src.settings as settings_mod
+    from src.research_handler import ResearchHandler
+
+    monkeypatch.setattr(deep_research_mod, "DeepResearcher", _CapturingResearcher)
+
+    def fake_get_setting(key, default=None):
+        if key == "research_max_urls_per_round":
+            return 9
+        return default
+
+    monkeypatch.setattr(settings_mod, "get_setting", fake_get_setting)
+
+    handler = ResearchHandler()
+
+    async def fake_probe(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(handler, "_probe_endpoint", fake_probe)
+
+    endpoint = "http://local.test/v1/chat/completions"
+
+    # No explicit arg -> uses the setting (9)
+    await handler.call_research_service("q", endpoint, "local-model")
+    assert _CapturingResearcher.last_kwargs["max_urls_per_round"] == 9
+
+    # Explicit per-run arg wins over the setting
+    await handler.call_research_service("q", endpoint, "local-model", max_urls_per_round=4)
+    assert _CapturingResearcher.last_kwargs["max_urls_per_round"] == 4
+
+
 @pytest.mark.asyncio
 async def test_planning_and_query_generation_use_configured_timeouts():
     researcher = DeepResearcher(

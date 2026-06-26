@@ -99,6 +99,12 @@ DEFAULT_SETTINGS = {
     "research_planning_timeout_seconds": 90,
     "research_query_timeout_seconds": 90,
     "research_extraction_concurrency": 3,
+    # How many web pages the researcher fetches+extracts per search query each
+    # round. The per-round source count is roughly (this × queries), and round 1
+    # issues 4 queries — so the default 3 caps round 1 at ~12 sources. Raise it
+    # for broader coverage at the cost of more fetches and LLM extraction calls.
+    # Bounded to [1, 12]; tune via Settings or by editing data/settings.json.
+    "research_max_urls_per_round": 3,
     # Hard wall-clock cap on a single deep-research run. The previous 600s
     # (10 min) default cut off slow local / edge LLMs mid-synthesis; 1800s
     # (30 min) is comfortable for most local setups while still bounding

@@ -255,6 +255,7 @@ class ResearchHandler:
         category: str = None,
         extraction_timeout: int = None,
         extraction_concurrency: int = None,
+        max_urls_per_round: int = None,
         owner: str = "",
     ) -> dict:
         """Start research as a background task. Returns task info dict.
@@ -339,6 +340,7 @@ class ResearchHandler:
                         category=category,
                         extraction_timeout=extraction_timeout,
                         extraction_concurrency=extraction_concurrency,
+                        max_urls_per_round=max_urls_per_round,
                     ),
                     timeout=hard_timeout,
                 )
@@ -754,6 +756,7 @@ class ResearchHandler:
         category: str = None,
         extraction_timeout: int = None,
         extraction_concurrency: int = None,
+        max_urls_per_round: int = None,
     ) -> str:
         """
         Run iterative deep research using the LLM-in-the-loop DeepResearcher.
@@ -801,6 +804,12 @@ class ResearchHandler:
                 minimum=1,
                 maximum=12,
             )
+            _max_urls_per_round = _bounded_int(
+                max_urls_per_round if max_urls_per_round is not None else get_setting("research_max_urls_per_round", 3),
+                default=3,
+                minimum=1,
+                maximum=12,
+            )
             _planning_timeout = _bounded_int(
                 get_setting("research_planning_timeout_seconds", _extraction_timeout),
                 default=_extraction_timeout,
@@ -826,6 +835,7 @@ class ResearchHandler:
                 planning_timeout=_planning_timeout,
                 query_timeout=_query_timeout,
                 extraction_concurrency=_extraction_concurrency,
+                max_urls_per_round=_max_urls_per_round,
                 progress_callback=progress_callback,
                 search_provider=search_provider,
                 category=category,

@@ -217,7 +217,10 @@ class DeepResearcher:
         self.category = category
         self.max_rounds = max_rounds
         self.max_time = max_time
-        self.max_urls_per_round = max_urls_per_round
+        # Clamp to [1, 12] like extraction_concurrency so every call site
+        # (handler, scheduler, direct callers) is protected from a bad value
+        # without each having to clamp on its own.
+        self.max_urls_per_round = min(12, max(1, int(max_urls_per_round or 3)))
         self.max_content_chars = max_content_chars
         self.max_report_tokens = max_report_tokens
         self.extraction_timeout = min(3600, max(15, int(extraction_timeout or 90)))

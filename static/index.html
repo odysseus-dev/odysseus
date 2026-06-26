@@ -1703,6 +1703,13 @@
                 </div>
               </div>
               <div class="settings-row">
+                <label class="settings-label">Sources / Round</label>
+                <div style="position:relative;width:382.5px;flex:0 0 auto;margin-left:auto;">
+                  <input id="set-researchMaxUrls" type="text" inputmode="numeric" placeholder="3" class="settings-select" style="width:100%;padding-right:30px;">
+                  <span title="How many web pages the researcher reads per search query each round. The per-round source count is roughly this × queries (round 1 uses 4 queries). Higher = more sources and broader coverage, but slower and more tokens. Default 3, max 12." style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:16px;height:16px;border-radius:50%;border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;opacity:0.55;cursor:help;user-select:none;">?</span>
+                </div>
+              </div>
+              <div class="settings-row">
                 <label class="settings-label">Timeout</label>
                 <input id="set-researchRunTimeout" type="text" inputmode="numeric" placeholder="1800 sec (0 = no limit)" class="settings-select" style="width:382.5px;flex:0 0 auto;margin-left:auto;">
               </div>

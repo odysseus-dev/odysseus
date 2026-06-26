@@ -71,6 +71,7 @@ function _saveSettingsToStorage() {
   try {
     localStorage.setItem(_SETTINGS_KEY, JSON.stringify({
       max_rounds: document.getElementById('research-rounds')?.value || '0',
+      max_urls_per_round: document.getElementById('research-max-urls')?.value || '0',
       search_provider: document.getElementById('research-search-provider')?.value || '',
       endpoint_id: document.getElementById('research-endpoint')?.value || '',
       model: document.getElementById('research-model')?.value || '',
@@ -352,6 +353,14 @@ function _buildPanelHTML() {
     roundOpts += `<option value="${i}">${i}</option>`;
   }
 
+  // "Default" (value 0) means "use the global research_max_urls_per_round
+  // setting" — _readSettings drops the 0 so the field is omitted from the
+  // request body and the server falls back to that setting.
+  let maxUrlsOpts = '<option value="0" selected>Default</option>';
+  for (let i = 1; i <= 12; i++) {
+    maxUrlsOpts += `<option value="${i}">${i}</option>`;
+  }
+
   const settingsHidden = _settingsCollapsed ? ' style="display:none"' : '';
   const chevronCls = _settingsCollapsed ? ' collapsed' : '';
 
@@ -380,6 +389,10 @@ function _buildPanelHTML() {
           <label class="research-setting">
             <span class="research-setting-label">Rounds <span class="hwfit-help-chip hwfit-help-chip-inline" title="How many search → read → reflect rounds the agent runs. More rounds = deeper coverage, longer wait, more tokens.">?</span></span>
             <select id="research-rounds">${roundOpts}</select>
+          </label>
+          <label class="research-setting">
+            <span class="research-setting-label">Sources / round <span class="hwfit-help-chip hwfit-help-chip-inline" title="How many web pages the agent reads per search query each round (≈ this × queries sources/round; round 1 uses 4 queries). Higher = broader coverage, slower, more tokens. Default uses the global setting.">?</span></span>
+            <select id="research-max-urls">${maxUrlsOpts}</select>
           </label>
           <label class="research-setting">
             <span class="research-setting-label">Format <span class="hwfit-help-chip hwfit-help-chip-inline" title="Auto lets the LLM pick the output shape. Override when you specifically want a Compare table, How-to, Product, or Fact-check.">?</span></span>
@@ -482,6 +495,9 @@ function _readSettings() {
   const category = document.getElementById('research-category')?.value || undefined;
   const settings = {
     max_rounds: parseInt(document.getElementById('research-rounds')?.value || '0', 10),
+    // 0 = "Default" → dropped by the cleanup below so the server uses the
+    // global research_max_urls_per_round setting.
+    max_urls_per_round: parseInt(document.getElementById('research-max-urls')?.value || '0', 10),
     search_provider: document.getElementById('research-search-provider')?.value || undefined,
     endpoint_id: document.getElementById('research-endpoint')?.value || undefined,
     model: document.getElementById('research-model')?.value || undefined,
@@ -524,6 +540,8 @@ function _editJob(job) {
   const s = job.settings || {};
   const roundsEl = document.getElementById('research-rounds');
   if (roundsEl && s.max_rounds) roundsEl.value = s.max_rounds;
+  const muEl = document.getElementById('research-max-urls');
+  if (muEl && s.max_urls_per_round) muEl.value = s.max_urls_per_round;
   const spEl = document.getElementById('research-search-provider');
   if (spEl && s.search_provider) spEl.value = s.search_provider;
   const epEl = document.getElementById('research-endpoint');

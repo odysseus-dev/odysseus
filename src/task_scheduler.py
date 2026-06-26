@@ -1884,6 +1884,7 @@ class TaskScheduler:
         max_tokens = int(get_setting("research_max_tokens", 8192))
         extraction_timeout = int(get_setting("research_extraction_timeout_seconds", 90) or 90)
         extraction_concurrency = int(get_setting("research_extraction_concurrency", 3) or 3)
+        max_urls_per_round = int(get_setting("research_max_urls_per_round", 3) or 3)
 
         researcher = DeepResearcher(
             llm_endpoint=endpoint_url,
@@ -1894,6 +1895,7 @@ class TaskScheduler:
             max_report_tokens=max_tokens,
             extraction_timeout=extraction_timeout,
             extraction_concurrency=extraction_concurrency,
+            max_urls_per_round=max_urls_per_round,
         )
 
         started_ts = time.time()
