@@ -73,6 +73,9 @@ def setup_cookbook_routes() -> APIRouter:
             return "stored"
         return f"{value[:4]}...{value[-4:]}"
 
+    def _client_host_platform() -> str:
+        return "windows" if IS_WINDOWS else ""
+
     def _decrypt_secret(value: str | None) -> str:
         if not value:
             return ""
@@ -189,8 +192,27 @@ def setup_cookbook_routes() -> APIRouter:
                 "SGLang is not installed or not in PATH on this server.",
                 [{"label": "install SGLang in Cookbook Dependencies", "op": "dependency", "package": "sglang[all]"}],
             ),
+            # System build deps come BEFORE the generic llama.cpp catch-all
+            # so cmake / build-essential / git missing → a specific OS-package
+            # remediation instead of "install llama-cpp-python[server]" (which
+            # itself fails to compile when cmake is absent).
             (
-                r"llama-server.*command not found|llama\.cpp.*not found|No module named.*llama_cpp|No module named 'starlette_context'|git: command not found|cmake: command not found",
+                r"cmake: command not found|cmake.*not found.*[Cc]ould not",
+                "cmake is required to build llama.cpp from source but isn't installed on this server.",
+                [{"label": "install build deps for llama.cpp (apt: cmake build-essential git / pacman: cmake base-devel git / dnf: cmake gcc-c++ make git / brew: cmake git)", "op": "dependency", "package": "llama-cpp-python[server]"}],
+            ),
+            (
+                r"^(make|g\+\+|gcc): command not found|Could not find C\+\+ compiler",
+                "A C/C++ compiler (build-essential) is required to build llama.cpp from source.",
+                [{"label": "install build deps for llama.cpp on this server", "op": "dependency", "package": "llama-cpp-python[server]"}],
+            ),
+            (
+                r"^git: command not found",
+                "git is required to clone the llama.cpp source tree.",
+                [{"label": "install build deps for llama.cpp on this server", "op": "dependency", "package": "llama-cpp-python[server]"}],
+            ),
+            (
+                r"llama-server.*command not found|llama\.cpp.*not found|No module named.*llama_cpp|No module named 'starlette_context'",
                 "llama.cpp / llama-cpp-python dependencies are missing.",
                 [{"label": "install llama.cpp dependencies or llama-cpp-python[server]", "op": "dependency", "package": "llama-cpp-python[server]"}],
             ),
@@ -226,11 +248,15 @@ def setup_cookbook_routes() -> APIRouter:
         """Return cookbook state without raw secrets for browser clients."""
         _strip_task_secrets(state)
         env = state.get("env") if isinstance(state, dict) else None
+        if isinstance(state, dict) and not isinstance(env, dict):
+            env = {}
+            state["env"] = env
         if isinstance(env, dict):
             token = _decrypt_secret(env.get("hfToken"))
             env.pop("hfToken", None)
             env["hfTokenConfigured"] = bool(token)
             env["hfTokenMasked"] = _mask_secret(token)
+            env["hostPlatform"] = _client_host_platform()
         return state
 
     def _state_for_storage(state, on_disk=None):
@@ -249,10 +275,84 @@ def setup_cookbook_routes() -> APIRouter:
                 env.pop("hfToken", None)
             env.pop("hfTokenMasked", None)
             env.pop("hfTokenConfigured", None)
+            env.pop("hostPlatform", None)
         return state
 
     def _load_stored_hf_token() -> str:
         return load_stored_hf_token(state_path=_cookbook_state_path)
+
+    def _normalize_minimax_m3_vllm_cmd(cmd: str) -> str:
+        """Patch MiniMax M3 vLLM launches into the known-good local form.
+
+        The browser form can be stale or omit advanced-only fields. MiniMax M3
+        is sensitive to several flags: using the HF repo id with block-size 128
+        fails KV-cache setup, and FlashInfer sampler JIT fails on this host's
+        system nvcc. Normalize server-side before writing the tmux runner.
+        """
+        cmd_lower = (cmd or "").lower()
+        if not cmd or "vllm serve" not in cmd_lower or "minimax" not in cmd_lower or "m3" not in cmd_lower:
+            return cmd
+        try:
+            parts = shlex.split(cmd)
+        except ValueError:
+            return cmd
+        if "serve" not in parts:
+            return cmd
+
+        env_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+        env_parts = [p for p in parts if env_re.match(p)]
+        body = [p for p in parts if not env_re.match(p)]
+        try:
+            serve_i = body.index("serve")
+        except ValueError:
+            return cmd
+        if serve_i + 1 >= len(body):
+            return cmd
+
+        repo_id = "cyankiwi/MiniMax-M3-AWQ-INT4"
+        snapshot = (
+            "/home/pewds/.cache/huggingface/hub/"
+            "models--cyankiwi--MiniMax-M3-AWQ-INT4/"
+            "snapshots/4082acbbec1236d21828d55b6bb0fe02ade4ab5b"
+        )
+        if body[serve_i + 1] == repo_id:
+            body[serve_i + 1] = snapshot
+
+        def add_env(key: str, value: str) -> None:
+            if not any(p.startswith(f"{key}=") for p in env_parts):
+                env_parts.append(f"{key}={value}")
+
+        def has_flag(flag: str) -> bool:
+            return any(p == flag or p.startswith(flag + "=") for p in body)
+
+        def set_flag(flag: str, value: str) -> None:
+            for i, part in enumerate(body):
+                if part == flag:
+                    if i + 1 < len(body):
+                        body[i + 1] = value
+                    else:
+                        body.append(value)
+                    return
+                if part.startswith(flag + "="):
+                    body[i] = f"{flag}={value}"
+                    return
+            body.extend([flag, value])
+
+        def add_bool(flag: str) -> None:
+            if not has_flag(flag):
+                body.append(flag)
+
+        add_env("VLLM_TARGET_DEVICE", "cuda")
+        add_env("VLLM_USE_FLASHINFER_SAMPLER", "0")
+        set_flag("--served-model-name", repo_id)
+        set_flag("--tool-call-parser", "minimax_m3")
+        set_flag("--reasoning-parser", "minimax_m3")
+        set_flag("--attention-backend", "TRITON_ATTN")
+        set_flag("--block-size", "128")
+        add_bool("--language-model-only")
+        add_bool("--disable-custom-all-reduce")
+        add_bool("--enable-expert-parallel")
+        return shlex.join(env_parts + body)
 
     def _cookbook_ssh_dir() -> Path:
         # The Docker image keeps cookbook keys under /app/.ssh; that path only
@@ -1230,6 +1330,7 @@ def setup_cookbook_routes() -> APIRouter:
         # `TypeError: argument of type 'NoneType'` (a 500 instead of a clean 400).
         req.cmd = _validate_serve_cmd(req.cmd) or ""
         req.cmd = _normalize_llama_cpp_python_cache_types(req.cmd) or ""
+        req.cmd = _normalize_minimax_m3_vllm_cmd(req.cmd)
         req.cmd = _venv_safe_local_pip_install_cmd(
             req.cmd,
             local=not bool(req.remote_host),
@@ -1243,8 +1344,16 @@ def setup_cookbook_routes() -> APIRouter:
             req.cmd = _pip_install_no_cache(req.cmd)
             # Accept common aliases and enforce server extras for llama-cpp so
             # `python -m llama_cpp.server` has all runtime dependencies.
-            req.cmd = re.sub(r"(?<![A-Za-z0-9_.-])llama_cpp(?![A-Za-z0-9_.-])", "llama-cpp-python[server]", req.cmd)
-            req.cmd = re.sub(r"(?<![A-Za-z0-9_.-])llama-cpp-python(?!\[)", "llama-cpp-python[server]", req.cmd)
+            # CRITICAL: the lookbehind / lookahead must also exclude `/` so
+            # the regex DOESN'T mangle a URL path like
+            #   https://abetlen.github.io/llama-cpp-python/whl/cu124
+            # The previous regex turned that URL into
+            #   https://abetlen.github.io/llama-cpp-python[server]/whl/cu124
+            # which pip then couldn't resolve → silent fallback to source
+            # build of the .tar.gz → CPU-only binary (because CMAKE_ARGS
+            # isn't set), defeating the entire purpose of the CUDA index.
+            req.cmd = re.sub(r"(?<![A-Za-z0-9_.\-/])llama_cpp(?![A-Za-z0-9_.\-/])", "llama-cpp-python[server]", req.cmd)
+            req.cmd = re.sub(r"(?<![A-Za-z0-9_.\-/])llama-cpp-python(?![\[/])", "llama-cpp-python[server]", req.cmd)
             if "llama-cpp-python" in req.cmd and "--extra-index-url" not in req.cmd:
                 req.cmd += " --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu"
             # PEP-508-style package spec — letters, digits, `.-_` for the
@@ -1378,6 +1487,10 @@ def setup_cookbook_routes() -> APIRouter:
             # shell resolves the bundled python3/hf, mirroring the download flow.
             if not remote:
                 runner_lines.append(_local_tooling_path_export(sys.executable))
+                if local_windows:
+                    # Detached Git Bash runs do not always inherit recently edited
+                    # user PATH entries from the already-running Odysseus process.
+                    runner_lines.append('export PATH="$HOME/bin:$HOME/llama.cpp/build-cuda/bin/Release:$HOME/llama.cpp/build/bin/Release:$HOME/llama.cpp/build/bin/Debug:$HOME/llama.cpp/build/bin:$PATH"')
             runner_lines.append("export FLASHINFER_DISABLE_VERSION_CHECK=1")
             if req.hf_token:
                 runner_lines.append(f"export HF_TOKEN='{_bash_squote(req.hf_token)}'")
@@ -1392,7 +1505,8 @@ def setup_cookbook_routes() -> APIRouter:
             runner_lines.append(_HF_TOKEN_STATUS_SNIPPET)
             handled_ollama_serve = False
             # Auto-install inference engine if missing
-            if "llama_cpp" in req.cmd or "llama-server" in req.cmd:
+            local_windows_llama_cmd = local_windows and ("llama_cpp" in req.cmd or "llama-server" in req.cmd)
+            if ("llama_cpp" in req.cmd or "llama-server" in req.cmd) and not local_windows_llama_cmd:
                 # Prefer the NATIVE llama-server binary — its minja templating
                 # renders modern GGUF chat templates that the Python bindings'
                 # Jinja2 rejects (do_tojson ensure_ascii). Build it once from
@@ -1430,6 +1544,69 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('      && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
                 runner_lines.append('  else')
                 _append_llama_cpp_linux_accel_build_lines(runner_lines)
+                runner_lines.append('  fi')
+                # Source the env file the prebuilt-download path writes so
+                # LD_LIBRARY_PATH includes the directory holding libllama.so
+                # and friends. No-op when prebuilt wasn't used.
+                runner_lines.append('  [ -r ~/.config/odysseus-llama-cpp-env ] && . ~/.config/odysseus-llama-cpp-env')
+                # Auto-upgrade pip llama-cpp-python to the CUDA-enabled
+                # wheel when (a) NVIDIA hardware is present and (b) the
+                # currently-installed wheel is CPU-only. Without this the
+                # user gets the Python server happily running at 3 tok/s
+                # because pip's default index ships CPU-only wheels.
+                # Forward-compat: cu124 wheels work on driver/runtime
+                # 12.4+ including the cu13.x line.
+                runner_lines.append('  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L 2>/dev/null | grep -q "GPU " && python3 -c "import llama_cpp" 2>/dev/null; then')
+                runner_lines.append('    if ! python3 -c "import llama_cpp; import sys; sys.exit(0 if llama_cpp.llama_supports_gpu_offload() else 1)" 2>/dev/null; then')
+                runner_lines.append('      echo "[odysseus] NVIDIA detected but installed llama-cpp-python is CPU-only — reinstalling with CUDA wheel index for GPU offload..."')
+                runner_lines.append('      python3 -m pip install --user --break-system-packages --force-reinstall --no-cache-dir "llama-cpp-python[server]" --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124 2>&1 | tail -8 || echo "[odysseus] WARNING: CUDA wheel reinstall failed — Python server will stay CPU-only (slow). Manual fix: pip install --user --force-reinstall \'llama-cpp-python[server]\' --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124"')
+                runner_lines.append('      if python3 -c "import llama_cpp; import sys; sys.exit(0 if llama_cpp.llama_supports_gpu_offload() else 1)" 2>/dev/null; then')
+                runner_lines.append('        echo "[odysseus] llama-cpp-python now supports GPU offload."')
+                runner_lines.append('      fi')
+                runner_lines.append('    fi')
+                runner_lines.append('  fi')
+                # SHORT-CIRCUIT before the build/pip fallback: if the
+                # native binary is missing but llama_cpp Python is already
+                # installed, drop a wrapper at ~/bin/llama-server that
+                # translates llama-server CLI args to llama_cpp.server's
+                # underscore-style flags. The user's serve command stays
+                # `llama-server ...` and "just works" — no build, no cmake,
+                # no second install. This is the path that unblocks every
+                # remote where pip-installed llama-cpp-python is already
+                # working but Cookbook used to insist on a native binary.
+                runner_lines.append('  if ! command -v llama-server >/dev/null 2>&1 && python3 -c "import llama_cpp" 2>/dev/null; then')
+                runner_lines.append('    mkdir -p ~/bin')
+                runner_lines.append('    cat > ~/bin/llama-server <<\'_ODY_LLAMA_SHIM_EOF\'')
+                runner_lines.append('#!/usr/bin/env bash')
+                runner_lines.append('# Auto-generated by Odysseus Cookbook: a `llama-server` lookalike')
+                runner_lines.append('# that translates the native CLI to `python -m llama_cpp.server`.')
+                runner_lines.append('# Lets cookbook-generated launch commands run unchanged on hosts')
+                runner_lines.append('# where only the pip llama-cpp-python package is installed.')
+                runner_lines.append('ARGS=()')
+                runner_lines.append('while [ $# -gt 0 ]; do')
+                runner_lines.append('  case "$1" in')
+                runner_lines.append('    -ngl|--gpu-layers|--n-gpu-layers) ARGS+=(--n_gpu_layers "$2"); shift 2 ;;')
+                runner_lines.append('    -c|--ctx-size) ARGS+=(--n_ctx "$2"); shift 2 ;;')
+                runner_lines.append('    -b|--batch-size) ARGS+=(--n_batch "$2"); shift 2 ;;')
+                runner_lines.append('    -ub|--ubatch-size) shift 2 ;;  # llama-cpp-python has no separate ubatch')
+                runner_lines.append('    --flash-attn) ARGS+=(--flash_attn true); shift 2 ;;')
+                runner_lines.append('    --cache-type-k) ARGS+=(--type_k "$2"); shift 2 ;;')
+                runner_lines.append('    --cache-type-v) ARGS+=(--type_v "$2"); shift 2 ;;')
+                runner_lines.append('    --n-cpu-moe) ARGS+=(--n_cpu_moe "$2"); shift 2 ;;')
+                runner_lines.append('    --mmproj) ARGS+=(--clip_model_path "$2"); shift 2 ;;')
+                runner_lines.append('    --image-max-tokens) shift 2 ;;  # native-only')
+                runner_lines.append('    --no-mmap) ARGS+=(--no_mmap true); shift ;;')
+                runner_lines.append('    --no-warmup) shift ;;  # native-only')
+                runner_lines.append('    --chat-template) ARGS+=(--chat_format "$2"); shift 2 ;;')
+                runner_lines.append('    --fit|--split-mode|--tensor-split|--main-gpu|--parallel) shift 2 ;;  # native-only')
+                runner_lines.append('    --mlock) ARGS+=(--use_mlock true); shift ;;')
+                runner_lines.append('    *) ARGS+=("$1"); shift ;;')
+                runner_lines.append('  esac')
+                runner_lines.append('done')
+                runner_lines.append('exec python3 -m llama_cpp.server "${ARGS[@]}"')
+                runner_lines.append('_ODY_LLAMA_SHIM_EOF')
+                runner_lines.append('    chmod +x ~/bin/llama-server')
+                runner_lines.append('    echo "[odysseus] Created llama-server shim → python -m llama_cpp.server (no native binary needed)"')
                 runner_lines.append('  fi')
                 runner_lines.append('  # If the native build failed, fall back to the Python bindings.')
                 runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
@@ -1494,6 +1671,96 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('  echo "ERROR: vLLM is not installed."')
                 runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('fi')
+                runner_lines.append(f"ODYSSEUS_SERVE_CMD='{_bash_squote(req.cmd)}'")
+                runner_lines.append('if [ -z "$ODYSSEUS_PREFLIGHT_EXIT" ]; then')
+                runner_lines.append('  ODYSSEUS_VLLM_HELP_CMD="$(python3 - "$ODYSSEUS_SERVE_CMD" <<\'PY\'')
+                runner_lines.append('import shlex, sys')
+                runner_lines.append('parts = shlex.split(sys.argv[1])')
+                runner_lines.append('try:')
+                runner_lines.append('    serve_i = parts.index("serve")')
+                runner_lines.append('except ValueError:')
+                runner_lines.append('    print("vllm serve --help")')
+                runner_lines.append('else:')
+                runner_lines.append('    print(shlex.join(parts[:serve_i + 1] + ["--help"]))')
+                runner_lines.append('PY')
+                runner_lines.append(')"')
+                runner_lines.append('  ODYSSEUS_VLLM_SUPPORTS_SWAP=0')
+                runner_lines.append('  if eval "$ODYSSEUS_VLLM_HELP_CMD" 2>&1 | grep -q -- "--swap-space"; then ODYSSEUS_VLLM_SUPPORTS_SWAP=1; fi')
+                runner_lines.append('fi')
+                runner_lines.append('if [ -z "$ODYSSEUS_PREFLIGHT_EXIT" ] && [ "${ODYSSEUS_VLLM_SUPPORTS_SWAP:-0}" = "1" ] && ! printf "%s" "$ODYSSEUS_SERVE_CMD" | grep -q -- "--swap-space"; then')
+                runner_lines.append('  echo "[odysseus] Setting vLLM --swap-space 0 so the runtime does not reserve CPU swap per GPU."')
+                runner_lines.append('  ODYSSEUS_SERVE_CMD="${ODYSSEUS_SERVE_CMD} --swap-space 0"')
+                runner_lines.append('fi')
+                runner_lines.append('if [ -z "$ODYSSEUS_PREFLIGHT_EXIT" ] && [ "${ODYSSEUS_VLLM_SUPPORTS_SWAP:-0}" != "1" ]; then')
+                runner_lines.append('  if printf "%s" "$ODYSSEUS_SERVE_CMD" | grep -q -- "--swap-space"; then')
+                runner_lines.append('    echo "[odysseus] vLLM serve does not expose --swap-space; removing the flag and patching the runtime default to 0."')
+                runner_lines.append('    ODYSSEUS_SERVE_CMD="$(python3 - "$ODYSSEUS_SERVE_CMD" <<\'PY\'')
+                runner_lines.append('import shlex, sys')
+                runner_lines.append('parts = shlex.split(sys.argv[1])')
+                runner_lines.append('out = []')
+                runner_lines.append('skip = False')
+                runner_lines.append('for part in parts:')
+                runner_lines.append('    if skip:')
+                runner_lines.append('        skip = False')
+                runner_lines.append('        continue')
+                runner_lines.append('    if part == "--swap-space":')
+                runner_lines.append('        skip = True')
+                runner_lines.append('        continue')
+                runner_lines.append('    if part.startswith("--swap-space="):')
+                runner_lines.append('        continue')
+                runner_lines.append('    out.append(part)')
+                runner_lines.append('print(shlex.join(out))')
+                runner_lines.append('PY')
+                runner_lines.append(')"')
+                runner_lines.append('  fi')
+                runner_lines.append('  ODYSSEUS_SERVE_CMD="$(python3 - "$ODYSSEUS_SERVE_CMD" <<\'PY\'')
+                runner_lines.append('import shlex, sys')
+                runner_lines.append('parts = shlex.split(sys.argv[1])')
+                runner_lines.append('patch = r"""import inspect, sys')
+                runner_lines.append('from vllm.engine.arg_utils import EngineArgs, AsyncEngineArgs')
+                runner_lines.append('def _odysseus_swap0(cls):')
+                runner_lines.append('    params = list(inspect.signature(cls).parameters)')
+                runner_lines.append('    if "swap_space" not in params:')
+                runner_lines.append('        return')
+                runner_lines.append('    idx = params.index("swap_space")')
+                runner_lines.append('    defaults = list(cls.__init__.__defaults__ or ())')
+                runner_lines.append('    if idx < len(defaults):')
+                runner_lines.append('        defaults[idx] = 0')
+                runner_lines.append('        cls.__init__.__defaults__ = tuple(defaults)')
+                runner_lines.append('    fields = getattr(cls, "__dataclass_fields__", {})')
+                runner_lines.append('    if "swap_space" in fields:')
+                runner_lines.append('        fields["swap_space"].default = 0')
+                runner_lines.append('_odysseus_swap0(EngineArgs)')
+                runner_lines.append('_odysseus_swap0(AsyncEngineArgs)')
+                runner_lines.append('try:')
+                runner_lines.append('    from vllm.config import CacheConfig')
+                runner_lines.append('    CacheConfig.swap_space = 0')
+                runner_lines.append('except Exception:')
+                runner_lines.append('    pass')
+                runner_lines.append('_orig_create_engine_config = EngineArgs.create_engine_config')
+                runner_lines.append('def _odysseus_create_engine_config(self, *args, **kwargs):')
+                runner_lines.append('    self.swap_space = 0')
+                runner_lines.append('    return _orig_create_engine_config(self, *args, **kwargs)')
+                runner_lines.append('EngineArgs.create_engine_config = _odysseus_create_engine_config')
+                runner_lines.append('AsyncEngineArgs.create_engine_config = _odysseus_create_engine_config')
+                runner_lines.append('from vllm.entrypoints.cli.main import main')
+                runner_lines.append('sys.exit(main())"""')
+                runner_lines.append('try:')
+                runner_lines.append('    serve_i = parts.index("serve")')
+                runner_lines.append('except ValueError:')
+                runner_lines.append('    print(shlex.join(parts))')
+                runner_lines.append('else:')
+                runner_lines.append('    exe_i = serve_i - 1')
+                runner_lines.append('    exe = parts[exe_i] if exe_i >= 0 else "vllm"')
+                runner_lines.append('    py = "python3"')
+                runner_lines.append('    if exe.endswith("/bin/vllm"):')
+                runner_lines.append('        py = exe[:-len("/bin/vllm")] + "/bin/python"')
+                runner_lines.append('    parts[exe_i:serve_i] = [py, "-c", patch]')
+                runner_lines.append('    print(shlex.join(parts))')
+                runner_lines.append('PY')
+                runner_lines.append(')"')
+                runner_lines.append('  echo "[odysseus] Patched vLLM internal swap_space default to 0 for this runtime."')
+                runner_lines.append('fi')
             elif "sglang.launch_server" in req.cmd:
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
                 runner_lines.append('if ! command -v sglang &>/dev/null; then')
@@ -1535,7 +1802,10 @@ def setup_cookbook_routes() -> APIRouter:
                     runner_lines,
                     keep_shell_open=not local_windows,
                 )
-                runner_lines.append(req.cmd)
+                if "vllm serve" in req.cmd:
+                    runner_lines.append('eval "$ODYSSEUS_SERVE_CMD"')
+                else:
+                    runner_lines.append(req.cmd)
                 if local_windows:
                     # Detached background process — no interactive shell to keep open.
                     # Print the exit marker the status poller looks for, then stop.
@@ -1839,6 +2109,25 @@ def setup_cookbook_routes() -> APIRouter:
         out, err = await _run_gpu_shell("ls -1 /sys/class/drm 2>/dev/null", host, ssh_port, timeout=4)
         if err is not None or not out:
             return []
+        # Pick the runtime label up-front so each GPU dict gets the
+        # right `backend`. AMD silicon can be driven by ROCm/HIP (native)
+        # OR Vulkan (mesa RADV). Reporting "rocm" on a host where no
+        # ROCm toolchain is installed misleads the frontend env-var
+        # prefix logic — it would emit `HIP_VISIBLE_DEVICES=` for a
+        # Vulkan-only stack, which is a silent no-op at best.
+        rt_out, _ = await _run_gpu_shell(
+            'command -v rocminfo >/dev/null 2>&1 && echo rocm '
+            '|| (command -v hipconfig >/dev/null 2>&1 && echo rocm) '
+            '|| (command -v vulkaninfo >/dev/null 2>&1 && echo vulkan) '
+            '|| echo unknown',
+            host, ssh_port, timeout=4,
+        )
+        _amd_runtime = (rt_out or "").strip().splitlines()[-1:][0].strip() if rt_out else "rocm"
+        if _amd_runtime not in ("rocm", "vulkan"):
+            # Default to rocm so existing ROCm-installed hosts keep
+            # working; "unknown" only happens when neither toolchain is
+            # detected (e.g. minimal sysfs read on a fresh box).
+            _amd_runtime = "rocm"
         gpus = []
         for entry in out.split():
             if not entry.startswith("card") or "-" in entry:
@@ -1882,7 +2171,7 @@ def setup_cookbook_routes() -> APIRouter:
                 "free_mb": free_mb, "total_mb": total_mb, "used_mb": used_mb,
                 "gtt_used_mb": gtt_used_mb,
                 "util_pct": 0, "busy": bool(total_mb and (free_mb / total_mb) < 0.85),
-                "processes": [], "backend": "rocm", "source": "amd-sysfs",
+                "processes": [], "backend": _amd_runtime, "source": "amd-sysfs",
                 "unified_memory": unified,
             })
         if gpus:
@@ -2023,10 +2312,15 @@ def setup_cookbook_routes() -> APIRouter:
 
         amd_gpus = await _probe_amd_sysfs(host, ssh_port)
         if amd_gpus:
+            # The per-GPU dict already carries the runtime label picked by
+            # _probe_amd_sysfs (rocm vs vulkan); mirror that into the
+            # wrapper so the frontend can read `data.backend` directly
+            # without scanning the list.
+            _amd_wrap_backend = str(amd_gpus[0].get("backend") or "rocm")
             return {
                 "ok": True,
                 "gpus": amd_gpus,
-                "backend": "rocm",
+                "backend": _amd_wrap_backend,
                 "source": "amd-sysfs",
                 "fallback_from": "nvidia-smi",
                 "nvidia_error": nvidia_error,
@@ -2115,8 +2409,8 @@ def setup_cookbook_routes() -> APIRouter:
             try:
                 return _state_for_client(json.loads(_cookbook_state_path.read_text(encoding="utf-8")))
             except Exception:
-                return {}
-        return {}
+                return _state_for_client({})
+        return _state_for_client({})
 
     @router.post("/api/cookbook/state")
     async def save_cookbook_state(request: Request):
@@ -2166,6 +2460,17 @@ def setup_cookbook_routes() -> APIRouter:
 
             disk_tasks = on_disk.get("tasks") or [] if isinstance(on_disk, dict) else []
             incoming_tasks = data.get("tasks") if isinstance(data.get("tasks"), list) else []
+            incoming_removed = data.get("removedTasks") if isinstance(data.get("removedTasks"), dict) else {}
+            disk_removed = on_disk.get("removedTasks") if isinstance(on_disk, dict) and isinstance(on_disk.get("removedTasks"), dict) else {}
+            removed_tasks = {**disk_removed, **incoming_removed}
+            data["removedTasks"] = removed_tasks
+            removed_ids = set(removed_tasks.keys())
+            if removed_ids:
+                incoming_tasks = [
+                    t for t in incoming_tasks
+                    if not (isinstance(t, dict) and t.get("sessionId") in removed_ids)
+                ]
+                data["tasks"] = incoming_tasks
             # Anti-poisoning guard: a stale browser tab can keep POSTing a
             # download task as status='done' from before the strict-finish
             # fix landed, undoing any server-side correction. For each
@@ -2203,6 +2508,8 @@ def setup_cookbook_routes() -> APIRouter:
                 sid = t.get("sessionId")
                 if not sid or sid in incoming_ids:
                     continue  # client's version wins
+                if sid in removed_ids:
+                    continue  # intentional cross-device clear/remove
                 ts = t.get("ts") or 0
                 if isinstance(ts, (int, float)) and (now_ms - ts) <= RACE_WINDOW_MS:
                     preserved.append(t)
@@ -2309,16 +2616,14 @@ def setup_cookbook_routes() -> APIRouter:
             # Add 30% headroom for KV cache, activations, etc.
             needed_vram = (est_vram * 1.3) if est_vram else None
 
-            if vram_gb > 0 and needed_vram is not None and needed_vram > vram_gb:
-                continue
-            # Unknown-size models (e.g. MiniMax-M2.7, DeepSeek-V4-Flash) have no
-            # "NB" in the repo id, so the regex above can't extract their
-            # param count. Previously we dropped them entirely, which made
-            # brand-new flagship releases silently vanish from this list even
-            # on rigs with hundreds of GB of VRAM. Adapters/LoRAs are already
-            # filtered by _is_excluded(), so what falls through here is
-            # overwhelmingly full models — keep them, just without a size
-            # badge (the frontend handles needed_vram_gb=null gracefully).
+            if vram_gb > 0:
+                if needed_vram is None:
+                    # The "trending models that fit" list must be conservative:
+                    # if we cannot estimate size from the repo id/tags, do not
+                    # present it as runnable on this hardware.
+                    continue
+                if needed_vram > vram_gb:
+                    continue
 
             out.append({
                 "repo_id": repo_id,
@@ -2514,6 +2819,33 @@ def setup_cookbook_routes() -> APIRouter:
                 atomic_write_json(_cookbook_state_path, state)
             except Exception as e:
                 logger.warning(f"orphan sweep: state write failed: {e}")
+
+    @router.get("/api/cookbook/hf-gguf-files")
+    async def hf_gguf_files(repo_id: str, owner: str = Depends(require_user)):
+        """List GGUF files in a HuggingFace repo for the direct-download picker."""
+        import httpx
+
+        repo_id = _validate_repo_id(repo_id)
+        url = f"https://huggingface.co/api/models/{repo_id}"
+        try:
+            headers = {}
+            token = _load_stored_hf_token()
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code != 200:
+                    return {"ok": False, "files": [], "error": f"HF API HTTP {resp.status_code}"}
+                data = resp.json()
+        except Exception:
+            logger.exception("HF GGUF file scan failed for %s", repo)
+            return {"ok": False, "files": [], "error": "HF API request failed"}
+        files = [
+            str(s.get("rfilename") or "")
+            for s in data.get("siblings", [])
+            if str(s.get("rfilename") or "").lower().endswith(".gguf")
+        ]
+        return {"ok": True, "repo_id": repo_id, "files": files}
 
     # In-memory cache for the Ollama library scrape. ollama.com is a public
     # site, but it doesn't expose a stable JSON listing — we fetch the HTML
