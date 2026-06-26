@@ -39,6 +39,95 @@ function Test-WindowsBashStub($path) {
     return $false
 }
 
+function Test-PortOpen($Hostname, $port, $timeoutSeconds = 2) {
+    # Map 0.0.0.0 and localhost to the explicit IPv4 loopback
+    if ($Hostname -eq "0.0.0.0" -or $Hostname -eq "localhost") { $Hostname = "127.0.0.1" }
+    try {
+        $client = New-Object System.Net.Sockets.TcpClient
+        $async = $client.BeginConnect($Hostname, $port, $null, $null)
+        if ($async.AsyncWaitHandle.WaitOne([int]($timeoutSeconds * 1000))) {
+            $client.EndConnect($async)
+            $client.Close()
+            return $true
+        }
+        $client.Close()
+        return $false
+    } catch {
+        return $false
+    }
+}
+
+function Find-ChromaExe {
+    $candidate = Join-Path $PSScriptRoot "venv\Scripts\chroma.exe"
+    if (Test-Path $candidate) { return $candidate }
+    $cmd = Get-Command chroma.exe -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    return $null
+}
+
+function Ensure-FullChromaDBPackage {
+    if (-not (Find-ChromaExe)) {
+        Write-Step "Installing full ChromaDB package (required for local Windows launcher)..."
+        & $venvPy -m pip install chromadb
+        if ($LASTEXITCODE -ne 0) {
+            Fail "Failed to install ChromaDB. Scroll up for pip error details."
+        }
+    }
+
+    $oldErrPref = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $importTest = & $venvPy -c "import chromadb" 2>&1
+    $ErrorActionPreference = $oldErrPref
+
+    if ($LASTEXITCODE -ne 0) { 
+        Fail "ChromaDB failed to import. Error details:`n$importTest`n`nEnsure the Visual C++ Redistributable is installed." 
+    }
+}
+
+function Start-ChromaDB {
+    param(
+        [string]$Hostname = "127.0.0.1",
+        [int]$Port = 8100,
+        [string]$Path = "$PSScriptRoot\data\chroma"
+    )
+
+    if (Test-PortOpen $Hostname $Port 1) {
+        Write-Host "ChromaDB already listening on ${Hostname}:${Port}"
+        return
+    }
+
+    $logDir = Join-Path $PSScriptRoot "logs"
+    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+    $chromaOut = Join-Path $logDir "chroma-out.log"
+    $chromaErr = Join-Path $logDir "chroma-err.log"
+
+    $chromaExe = Find-ChromaExe
+    if (-not $chromaExe) { Fail "Could not find chroma.exe after installing chromadb." }
+
+    New-Item -ItemType Directory -Path $Path -Force | Out-Null
+    Write-Step "Starting ChromaDB service on ${Hostname}:${Port}"
+    
+    # Start chroma directly and capture the process object
+    $script:chromaProcess = Start-Process -FilePath $chromaExe -ArgumentList "run", "--host", $Hostname, "--port", $Port, "--path", $Path -WindowStyle Hidden -RedirectStandardOutput $chromaOut -RedirectStandardError $chromaErr -PassThru
+    
+    Start-Sleep -Seconds 2
+
+    $maxWait = 30 # Increased timeout
+    $elapsed = 0
+    while (-not (Test-PortOpen $Hostname $Port 1) -and $elapsed -lt $maxWait) {
+        Start-Sleep -Seconds 1
+        $elapsed += 1
+    }
+
+    # If the port is not open, the process likely failed. Capture the logs.
+    if (-not (Test-PortOpen $Hostname $Port 1)) {
+        $logPathRelative = "logs\chroma-err.log"
+        Fail "ChromaDB did not start on ${Hostname}:${Port} after $maxWait seconds. Check the log file for errors: $logPathRelative"
+    }
+
+    Write-Host "ChromaDB listening on ${Hostname}:${Port}"
+}
+
 function Find-GitBash {
     $cmd = Get-Command bash -ErrorAction SilentlyContinue
     if ($cmd -and -not (Test-WindowsBashStub $cmd.Source)) { return $cmd.Source }
@@ -93,7 +182,7 @@ if (-not $pyExe) {
     $pythonCmd = Get-Command python -ErrorAction SilentlyContinue
     if ($pythonCmd) {
         $ver = Get-PythonVersionText $pythonCmd.Source @()
-        if ($ver) {
+        if ($ver -and $ver.Contains('.')) {
             $versionParts = $ver.Split('.')
             $major = [int]$versionParts[0]
             $minor = [int]$versionParts[1]
@@ -135,6 +224,9 @@ Write-Step "Installing dependencies (first run can take a few minutes)"
 & $venvPy -m pip install -r requirements.txt
 if ($LASTEXITCODE -ne 0) { Fail "Dependency install failed. Scroll up for the pip error." }
 
+# Clean up any potential chromadb-client conflict before starting the server.
+Ensure-FullChromaDBPackage
+
 # 4. First-time setup (creates data dirs, DB, .env, admin user)
 Write-Step "Running first-time setup"
 & $venvPy setup.py
@@ -163,7 +255,36 @@ if (Test-Path $cudaBase) {
 }
 
 # 7. Start the server (use `python -m uvicorn` - bare `uvicorn` may not be on PATH)
+if (Test-PortOpen $BindHost $Port 1) {
+    Fail "Port $Port is already in use. Please choose a different port or kill the existing process."
+}
+
+$envFile = Join-Path $PSScriptRoot ".env"
+if (Test-Path $envFile) {
+    foreach ($line in Get-Content $envFile) {
+        if ($line -match '^\s*CHROMADB_HOST\s*=\s*["'']?([^#"''\s]+)') { $env:CHROMADB_HOST = $Matches[1].Trim() }
+        if ($line -match '^\s*CHROMADB_PORT\s*=\s*["'']?([^#"''\s]+)') { $env:CHROMADB_PORT = $Matches[1].Trim() }
+    }
+}
+
+$chromaHost = $env:CHROMADB_HOST
+if (-not $chromaHost -or $chromaHost -eq "localhost") { $chromaHost = "127.0.0.1" }
+$chromaPort = $env:CHROMADB_PORT
+if (-not $chromaPort) { $chromaPort = "8100" }
+
+Start-ChromaDB -Hostname $chromaHost -Port $chromaPort -Path (Join-Path $PSScriptRoot "data\chroma")
+$env:CHROMADB_HOST = $chromaHost
+$env:CHROMADB_PORT = $chromaPort
+
 Write-Step ("Starting Odysseus at http://{0}:{1}" -f $BindHost, $Port)
 Write-Host "Press Ctrl+C to stop."
 Write-Host ""
-& $venvPy -m uvicorn app:app --host $BindHost --port $Port
+
+try {
+    & $venvPy -m uvicorn app:app --host $BindHost --port $Port
+} finally {
+    if ($script:chromaProcess) {
+        Write-Host "`nStopping ChromaDB background process..." -ForegroundColor Cyan
+        Stop-Process -Id $script:chromaProcess.Id -Force -ErrorAction SilentlyContinue
+    }
+}
