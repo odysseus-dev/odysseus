@@ -134,7 +134,8 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
                         r = httpx.get(models_url, headers=headers, timeout=5)
                         r.raise_for_status()
                         data = r.json()
-                        model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+                        items = data if isinstance(data, list) else (data.get("data") or [])
+                        model_ids = [m.get("id") for m in items if isinstance(m, dict) and m.get("id")]
                         if not model_ids:
                             model_ids = [
                                 m.get("name") or m.get("model")
@@ -451,8 +452,6 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
 
     else:
         return {"error": f"Unknown action '{action}'. Use: list, add, edit, delete, search"}
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -942,7 +941,9 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                         try:
                             _r = _req.get(_ibase + "/models", timeout=3)
                             _r.raise_for_status()
-                            _mids = [m.get("id") for m in (_r.json().get("data") or []) if m.get("id")]
+                            _data = _r.json()
+                            _ditems = _data if isinstance(_data, list) else (_data.get("data") or [])
+                            _mids = [m.get("id") for m in _ditems if isinstance(m, dict) and m.get("id")]
                             if _mids:
                                 model_spec = _mids[0]
                                 break
