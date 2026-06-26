@@ -16,7 +16,8 @@ from typing import Callable, Dict, List, Optional, Set
 
 from src.research_utils import strip_thinking, is_low_quality
 
-from src.goal_based_extractor import EXTRACTOR_PROMPT
+from src.goal_based_extractor import EXTRACTOR_SYSTEM
+from src.prompt_security import untrusted_context_message
 
 logger = logging.getLogger(__name__)
 
@@ -107,13 +108,16 @@ You are deciding whether a research report is comprehensive enough.
 **Current report:**
 {report}
 
-**Rounds completed:** {round_num}
+**Rounds completed:** {round_num} of {max_rounds}
 
 Based on the report so far, do we have enough information to answer the question \
 comprehensively?  Consider:
 - Are the key aspects of the question addressed?
 - Are there obvious gaps or unanswered sub-questions?
 - Is the evidence sufficient and from multiple sources?
+
+If rounds completed is well below the target, prefer continuing unless the \
+report is already exhaustive.
 
 Reply with ONLY "YES" or "NO" followed by a brief one-sentence reason.
 Example: "YES — The report covers all major aspects with evidence from multiple sources."
@@ -228,6 +232,7 @@ class DeepResearcher:
         self._start_time: float = 0
         self.queries_used: Set[str] = set()
         self.urls_fetched: Set[str] = set()
+        self.analyzed_urls: List[Dict[str, str]] = []
         self.round_count: int = 0
         # Track which search providers actually returned results during the
         # run, in arrival order — surfaced in the visual report so users can
@@ -435,7 +440,8 @@ class DeepResearcher:
             )
             cat = (result or "").strip().lower()
             # Clean one-word answer first.
-            first = cat.split()[0].strip(".,\"'*:") if cat.split() else ""
+            parts = cat.split()
+            first = parts[0].strip(".,\"'*:") if parts else ""
             if first in CATEGORY_PROMPTS:
                 return first
             # Weak local models often wrap the label in preamble ("the category
@@ -520,6 +526,10 @@ class DeepResearcher:
                 if url and url not in self.urls_fetched:
                     urls_to_fetch.append(r)
                     self.urls_fetched.add(url)
+                    self.analyzed_urls.append({
+                        "url": url,
+                        "title": r.get("title", "") or url,
+                    })
                 if len(urls_to_fetch) >= self.max_urls_per_round * len(queries):
                     break
 
@@ -622,11 +632,12 @@ class DeepResearcher:
             else:
                 content = truncated
 
-        prompt = EXTRACTOR_PROMPT.format(webpage_content=content, goal=question)
-
         try:
             response = await self._llm(
-                [{"role": "user", "content": prompt}],
+                [
+                    {"role": "user", "content": EXTRACTOR_SYSTEM.format(goal=question)},
+                    untrusted_context_message("webpage", content),
+                ],
                 temperature=0.2,
                 max_tokens=2048,
                 timeout=self.extraction_timeout,
@@ -698,6 +709,7 @@ class DeepResearcher:
             question=question,
             report=report,
             round_num=round_num,
+            max_rounds=self.max_rounds,
         )
 
         try:

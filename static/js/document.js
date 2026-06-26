@@ -24,6 +24,7 @@ import * as Modals from './modalManager.js';
   let _autoDetectDebounce = null;
   let _autoTitleDebounce = null;
   let _autoSaveDebounce = null;
+  let _lastAutoSaveErrorAt = 0;
   let _animationInProgress = false;
   let _animationCancel = null;      // function to cancel current animation
   let _htmlPreviewActive = false;   // true when inline HTML preview iframe is showing
@@ -87,7 +88,8 @@ import * as Modals from './modalManager.js';
   }
 
   function _accountCanSend(account) {
-    return !!(account && account.smtp_host && account.smtp_user && account.has_smtp_password);
+    if (!account || !account.smtp_host || !account.smtp_user) return false;
+    return !!(account.has_smtp_password || account.oauth_provider);
   }
 
   async function _resolveComposeSendAccountId() {
@@ -153,6 +155,20 @@ import * as Modals from './modalManager.js';
       addDocToTabs,
       syncDocIndicator: _syncDocIndicator,
     });
+    const sidebarNewDocBtn = document.getElementById('library-new-doc-btn');
+    if (sidebarNewDocBtn && !sidebarNewDocBtn.dataset.docNewWired) {
+      sidebarNewDocBtn.dataset.docNewWired = '1';
+      sidebarNewDocBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          await newDocument();
+        } catch (err) {
+          console.error('Failed to create document from sidebar button:', err);
+          if (uiModule) uiModule.showError('Failed to create document');
+        }
+      });
+    }
     _maybeOpenDocFromHash();
     window.addEventListener('hashchange', _maybeOpenDocFromHash);
   }
@@ -283,8 +299,8 @@ import * as Modals from './modalManager.js';
         ? langIcon(doc.language, 12, { style: 'opacity:0.65;flex-shrink:0;color:currentColor;margin-right:4px;' })
         : '';
       const langChip = `<span class="doc-tab-lang">${lic}</span>`;
-      html += `<div class="doc-tab${isActive ? ' active' : ''}" draggable="true" data-doc-id="${id}" title="${title}">
-        ${verChip}${langChip}<span class="doc-tab-title">${shortTitle}</span>
+      html += `<div class="doc-tab${isActive ? ' active' : ''}" draggable="true" data-doc-id="${id}" title="${_esc(title)}">
+        ${verChip}${langChip}<span class="doc-tab-title">${_esc(shortTitle)}</span>
         <button class="doc-tab-close" data-doc-id="${id}" title="Unlink from chat (kept in the Library)">&times;</button>
       </div>`;
     }
@@ -2472,6 +2488,8 @@ import * as Modals from './modalManager.js';
     }
     // Hide toolbar items that have no clean WYSIWYG equivalent in email (Code).
     document.querySelectorAll('.md-toolbar-email-hide').forEach(el => { el.style.display = 'none'; });
+    // Show email-only toolbar items (AI reply button).
+    document.querySelectorAll('.md-toolbar-email-only').forEach(el => { el.style.display = 'inline-flex'; });
     if (emailHeader) emailHeader.style.display = '';
     if (emailActions) emailActions.style.display = '';
     // Emails have their own complete footer (Close / More / Send), so hide the
@@ -2683,6 +2701,104 @@ import * as Modals from './modalManager.js';
     await _uploadComposeFiles(files);
   }
 
+  function _isMarkdownImageFile(file) {
+    if (!file) return false;
+    if ((file.type || '').toLowerCase().startsWith('image/')) return true;
+    return /\.(avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(file.name || '');
+  }
+
+  function _markdownImageAlt(name) {
+    const base = String(name || 'image').replace(/\.[^.]+$/, '').trim() || 'image';
+    return base.replace(/[\[\]\n\r]/g, ' ').replace(/\s+/g, ' ').trim() || 'image';
+  }
+
+  function _activeDocLanguage() {
+    const doc = activeDocId && docs.get(activeDocId);
+    return ((doc && doc.language) || document.getElementById('doc-language-select')?.value || '').toLowerCase();
+  }
+
+  function _scheduleMarkdownImageAutosave(ta) {
+    updateLineNumbers(ta.value);
+    const codeEl = document.getElementById('doc-editor-code');
+    if (codeEl && !codeEl.dataset.hasDiff) {
+      codeEl.textContent = ta.value + '\n';
+      codeEl.style.minHeight = ta.scrollHeight + 'px';
+    }
+    clearTimeout(_hlDebounce);
+    _hlDebounce = setTimeout(syncHighlighting, 80);
+    clearTimeout(_autoTitleDebounce);
+    _autoTitleDebounce = setTimeout(() => autoTitleFromContent(ta.value), 600);
+    clearTimeout(_autoSaveDebounce);
+    _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 800);
+  }
+
+  function _insertMarkdownImages(uploadedFiles) {
+    const ta = document.getElementById('doc-editor-textarea');
+    if (!ta) return;
+    const files = Array.isArray(uploadedFiles) ? uploadedFiles : [];
+    if (!files.length) return;
+
+    const start = ta.selectionStart || 0;
+    const end = ta.selectionEnd || start;
+    const before = ta.value.slice(0, start);
+    const after = ta.value.slice(end);
+    const lines = files.map(file => {
+      const id = encodeURIComponent(file.id || file.file_id || '');
+      const alt = _markdownImageAlt(file.name || file.filename);
+      return id ? `![${alt}](/api/upload/${id})` : '';
+    }).filter(Boolean);
+    if (!lines.length) return;
+
+    const prefix = before && !before.endsWith('\n') ? '\n' : '';
+    const suffix = after && !after.startsWith('\n') ? '\n' : '';
+    const insert = `${prefix}${lines.join('\n\n')}${suffix}`;
+    _replaceRange(ta, start, end, insert);
+    const caret = start + insert.length;
+    ta.selectionStart = caret;
+    ta.selectionEnd = caret;
+    ta.focus();
+    _scheduleMarkdownImageAutosave(ta);
+    _refreshMarkdownPreviewIfVisible(activeDocId, ta.value);
+  }
+
+  async function _uploadMarkdownImages(files) {
+    const images = Array.from(files || []).filter(_isMarkdownImageFile);
+    if (!images.length) {
+      if (uiModule) uiModule.showError('Choose an image file');
+      return;
+    }
+    if (_activeDocLanguage() !== 'markdown') {
+      if (uiModule) uiModule.showError('Switch the document to markdown before inserting images');
+      return;
+    }
+
+    const fd = new FormData();
+    images.forEach(file => fd.append('files', file));
+    try {
+      const res = await fetch(`${API_BASE}/api/upload`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: fd,
+      });
+      let data = null;
+      try { data = await res.json(); } catch (_) {}
+      if (!res.ok) throw new Error((data && (data.error || data.detail)) || `HTTP ${res.status}`);
+      const uploaded = Array.isArray(data?.files) ? data.files : [];
+      if (!uploaded.length) throw new Error('No uploaded files returned');
+      _insertMarkdownImages(uploaded);
+      if (uiModule) uiModule.showToast(images.length === 1 ? 'Image inserted' : 'Images inserted');
+    } catch (err) {
+      console.error('Failed to insert markdown image:', err);
+      if (uiModule) uiModule.showError('Failed to insert image');
+    }
+  }
+
+  async function _handleMarkdownImageUpload(e) {
+    const files = e.target.files;
+    e.target.value = '';
+    await _uploadMarkdownImages(files);
+  }
+
   function _renderComposeAttachments() {
     const container = document.getElementById('doc-email-compose-atts');
     if (!container) return;
@@ -2864,6 +2980,8 @@ import * as Modals from './modalManager.js';
     if (emailActions) emailActions.style.display = 'none';
     // Restore toolbar items that were hidden for email (Code dropdown).
     document.querySelectorAll('.md-toolbar-email-hide').forEach(el => { el.style.display = ''; });
+    // Re-hide email-only toolbar items (AI reply button).
+    document.querySelectorAll('.md-toolbar-email-only').forEach(el => { el.style.display = 'none'; });
     // Restore the generic documents action bar + its bottom footer (Close /
     // Copy / Export) for non-email docs.
     const docActions = document.getElementById('doc-editor-actions');
@@ -3206,7 +3324,95 @@ import * as Modals from './modalManager.js';
     renderTabs();
   }
 
-  async function _aiReply() {
+  // Fast/Full + optional context popover for the doc-editor email Reply button.
+  // Mirrors the email reader's AI reply choice popover so the UX is identical:
+  // textarea for an optional steering note, then Fast (lightning) or Full
+  // (concentric dot) buttons; both feed into _aiReply with the chosen mode.
+  let _docAiReplyChoiceMenu = null;
+  function _closeDocAiReplyChoice() {
+    if (_docAiReplyChoiceMenu) {
+      try { _docAiReplyChoiceMenu.remove(); } catch (_) {}
+      _docAiReplyChoiceMenu = null;
+    }
+  }
+  function _showDocAiReplyChoice(btn) {
+    _closeDocAiReplyChoice();
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+    const menu = document.createElement('div');
+    menu.className = 'doc-ai-reply-choice';
+    const menuMaxW = Math.min(240, window.innerWidth - 16);
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - menuMaxW - 8));
+    const estHeight = 150;
+    const spaceBelow = window.innerHeight - rect.bottom - 8;
+    const spaceAbove = rect.top - 8;
+    const top = (spaceBelow >= estHeight || spaceBelow >= spaceAbove)
+      ? Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - estHeight - 8))
+      : Math.max(8, rect.top - estHeight - 6);
+    menu.style.cssText = [
+      'position:fixed',
+      `left:${left}px`,
+      `top:${top}px`,
+      `max-width:${menuMaxW}px`,
+      'box-sizing:border-box',
+      'z-index:10060',
+      'display:flex',
+      'gap:6px',
+      'padding:6px',
+      'background:var(--bg,#111)',
+      'border:1px solid var(--border,#333)',
+      'border-radius:7px',
+      'box-shadow:0 8px 24px rgba(0,0,0,.28)',
+    ].join(';');
+    menu.innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:6px;min-width:200px;">
+        <textarea data-note-input rows="2" placeholder="Add context (optional)" style="width:100%;box-sizing:border-box;resize:vertical;min-height:42px;font-family:inherit;font-size:11px;padding:5px 6px;border-radius:5px;border:1px solid var(--border,#333);background:var(--bg-elev,#1a1a1a);color:var(--fg);"></textarea>
+        <div style="display:flex;align-items:center;gap:4px;">
+          <button class="memory-toolbar-btn" data-mode="ai-reply-fast" title="Shorter, faster draft" style="display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:1;">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="var(--accent, var(--red))" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            Fast
+          </button>
+          <button class="memory-toolbar-btn" data-mode="ai-reply-full" title="Fuller reply with more context" style="display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:1;">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="color:var(--accent, var(--red));"><circle cx="12" cy="12" r="6"/></svg>
+            Full
+          </button>
+        </div>
+      </div>
+    `;
+    const noteInput = menu.querySelector('[data-note-input]');
+    setTimeout(() => noteInput?.focus(), 0);
+    menu.addEventListener('mousedown', (ev) => ev.stopPropagation());
+    menu.addEventListener('click', async (ev) => {
+      const choice = ev.target.closest('[data-mode]');
+      if (!choice) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const mode = choice.getAttribute('data-mode') || 'ai-reply-fast';
+      const noteHint = (noteInput?.value || '').trim();
+      _closeDocAiReplyChoice();
+      await _aiReply({ mode, noteHint });
+    });
+    document.body.appendChild(menu);
+    _docAiReplyChoiceMenu = menu;
+    const outsideClose = (ev) => {
+      if (menu.contains(ev.target)) return;
+      document.removeEventListener('click', outsideClose, true);
+      _closeDocAiReplyChoice();
+    };
+    setTimeout(() => document.addEventListener('click', outsideClose, true), 0);
+    // Esc to close.
+    const escClose = (ev) => {
+      if (ev.key === 'Escape') {
+        ev.stopPropagation();
+        document.removeEventListener('keydown', escClose, true);
+        _closeDocAiReplyChoice();
+      }
+    };
+    document.addEventListener('keydown', escClose, true);
+  }
+
+  async function _aiReply(opts = {}) {
+    const { mode = 'auto', noteHint = '' } = (opts || {});
     const to = document.getElementById('doc-email-to')?.value?.trim() || '';
     const subject = document.getElementById('doc-email-subject')?.value?.trim() || '';
     const textarea = document.getElementById('doc-editor-textarea');
@@ -3251,32 +3457,43 @@ import * as Modals from './modalManager.js';
     if (btn) { btn.disabled = true; btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:3px"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>Drafting...'; }
 
     try {
+      // Empty-compose path: if there's no original body, send a placeholder
+      // so the backend's "no body" guard doesn't fail. The user_hint carries
+      // the user's compose intent; the model uses To/Subject + that hint.
+      const bodyForApi = currentBody || (noteHint ? '(no prior email — compose a new message based on the To, Subject, and user instructions)' : currentBody);
+      const fastFlag = mode === 'ai-reply-fast' ? true
+                     : mode === 'ai-reply-full' ? false
+                     : shouldUseFastAiReply();
       const res = await fetch(`${API_BASE}/api/email/ai-reply`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           to: to,
           subject: subject,
-          original_body: currentBody,
+          original_body: bodyForApi,
           model: currentModel,
           session_id: currentSessionId,
           message_id: inReplyTo,
           uid: sourceUid,
           folder: sourceFolder,
-          fast: shouldUseFastAiReply(),
+          fast: fastFlag,
+          user_hint: noteHint || '',
         }),
       });
       const data = await res.json();
       if (data.success && data.reply) {
-        const cleanReply = cleanAiReplyText(data.reply);
-        const lines = currentBody.split('\n');
-        const quoteIdx = lines.findIndex(l => l.startsWith('On ') && l.includes(' wrote:'));
-        let newBody = '';
-        if (quoteIdx > 0) {
-          newBody = cleanReply + '\n\n' + lines.slice(quoteIdx).join('\n');
-        } else {
-          newBody = cleanReply + (currentBody ? '\n\n' + currentBody : '');
-        }
+        let cleanReply = cleanAiReplyText(data.reply);
+        // Strip any "On <date>, <name> wrote:" attribution + everything
+        // after it from the AI's output — the model sometimes re-quotes
+        // the original thread, and we already have the real quote in
+        // currentBody. Without this, AI's invented quote stacked on top
+        // of the real one and looked like the history had been "edited".
+        cleanReply = cleanReply.replace(/\n*On\b[\s\S]*?\bwrote:[\s\S]*$/m, '').trim();
+        // Never overwrite the existing draft (user's typed text + the
+        // quoted history below it). Always prepend the AI suggestion so
+        // the user can read it, copy parts, or delete it — but their
+        // own work and the original quote are untouched.
+        const newBody = currentBody ? cleanReply + '\n\n' + currentBody : cleanReply;
         await _streamEmailBodyText(textarea, newBody);
         if (uiModule) uiModule.showToast(`AI draft inserted (${data.model_used || 'AI'})`);
       } else {
@@ -3285,7 +3502,7 @@ import * as Modals from './modalManager.js';
     } catch (e) {
       if (uiModule) uiModule.showError('Failed to generate AI reply');
     } finally {
-      if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:3px"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>AI Reply'; }
+      if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="color:var(--accent, var(--red));flex-shrink:0;position:relative;top:-1px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg><span style="font-size:11px;margin-left:4px;">Reply</span>'; }
     }
   }
 
@@ -3648,9 +3865,12 @@ import * as Modals from './modalManager.js';
       const res = await fetch(`${API_BASE}/api/document`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify({ session_id: sessionId, title: '', content }),
       });
+      if (!res.ok) throw new Error(`Document create failed: HTTP ${res.status}`);
       const doc = await res.json();
+      if (!doc || !doc.id) throw new Error('Document create failed: missing id');
       addDocToTabs(doc, sessionId);
       // Set the content into the map so switchToDoc preserves it
       const d = docs.get(doc.id);
@@ -3728,15 +3948,15 @@ import * as Modals from './modalManager.js';
       _minimizedDocId = null;
       Modals.unregister('doc-panel');
     }
+    const container = document.getElementById('chat-container');
+    if (!container) return;
+
     isOpen = true;
     // Doc was opened last → it goes in front of the email windows (clears the
     // email-front flag; the doc/email z-index alternation lives in CSS).
     document.body.classList.remove('email-front');
     _ensureAgentMode();
     _markDocVisibleState(_lastSessionId, 'open');
-
-    const container = document.getElementById('chat-container');
-    if (!container) return;
 
     document.body.classList.add('doc-view');
 
@@ -3813,7 +4033,6 @@ import * as Modals from './modalManager.js';
         <button id="doc-export-pdf-btn" class="doc-action-icon-btn" title="Export PDF" style="display:none;opacity:0.7;gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 18 15 15"/></svg> <span style="font-size:11px;">Export PDF</span></button>
         <button id="doc-pdf-view-btn" class="doc-action-icon-btn" title="Toggle PDF view" style="display:none;opacity:0.7;gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> <span style="font-size:11px;">PDF</span></button>
         <select id="doc-language-select" class="doc-language-select">
-          <option value="">type</option>
           <option value="python">python</option>
           <option value="javascript">javascript</option>
           <option value="typescript">typescript</option>
@@ -3851,22 +4070,24 @@ import * as Modals from './modalManager.js';
         </button>
         <div id="doc-email-fields" class="doc-email-fields">
           <div class="email-field" style="position:relative">
-            <label>To</label>
+            <span class="email-field-prefix">To</span>
             <input type="text" id="doc-email-to" placeholder="recipient@example.com" autocomplete="off" />
             <div id="doc-email-to-suggestions" class="email-autocomplete" style="display:none"></div>
             <button type="button" id="doc-email-show-cc" class="email-cc-toggle" title="Show Cc/Bcc">Cc</button>
           </div>
           <div class="email-field" id="doc-email-cc-row" style="display:none;position:relative">
-            <label>Cc</label>
-            <input type="text" id="doc-email-cc" placeholder="cc@example.com" autocomplete="off" />
+            <span class="email-field-prefix">Cc</span>
+            <input type="text" id="doc-email-cc" placeholder="cc@example.com, example2" autocomplete="off" />
             <div id="doc-email-cc-suggestions" class="email-autocomplete" style="display:none"></div>
+            <button type="button" class="email-cc-close" data-cc-close title="Hide Cc/Bcc" aria-label="Hide Cc/Bcc"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
           </div>
           <div class="email-field" id="doc-email-bcc-row" style="display:none;position:relative">
-            <label>Bcc</label>
+            <span class="email-field-prefix">Bcc</span>
             <input type="text" id="doc-email-bcc" placeholder="bcc@example.com" autocomplete="off" />
             <div id="doc-email-bcc-suggestions" class="email-autocomplete" style="display:none"></div>
+            <button type="button" class="email-cc-close" data-cc-close title="Hide Cc/Bcc" aria-label="Hide Cc/Bcc"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
           </div>
-          <div class="email-field"><label>Subject</label><input type="text" id="doc-email-subject" placeholder="Subject" /></div>
+          <div class="email-field" style="position:relative"><span class="email-field-prefix">Subject</span><input type="text" id="doc-email-subject" placeholder="" /></div>
           <div id="doc-email-attachments" class="email-attachments" style="display:none"></div>
           <div id="doc-email-compose-atts" class="email-compose-atts" style="display:none"></div>
         </div>
@@ -3876,16 +4097,18 @@ import * as Modals from './modalManager.js';
         <input type="hidden" id="doc-email-source-folder" />
         <input type="file" id="doc-email-file-input" multiple style="display:none" />
       </div>
+      <input type="file" id="doc-md-image-input" accept="image/*" multiple style="display:none" />
       <div class="doc-md-toolbar" id="doc-md-toolbar" style="display:none">
         <div class="md-toolbar-items" id="md-toolbar-items">
           <span class="md-view-toggle" id="doc-md-view-toggle" style="display:none" role="group" aria-label="Edit or preview">
-            <button type="button" class="md-view-opt" data-mdview="edit" title="Edit source"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-            <button type="button" class="md-view-opt" data-mdview="preview" title="Preview"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+            <button type="button" class="md-view-opt" data-mdview="edit" title="Edit source (Ctrl+Alt+M to toggle)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+            <button type="button" class="md-view-opt" data-mdview="preview" title="Preview (Ctrl+Alt+M to toggle)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
           </span>
           <span class="md-view-toggle" id="doc-render-view-toggle" style="display:none" role="group" aria-label="Code or run">
             <button type="button" class="md-view-opt" data-renderview="code" title="Edit code"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button>
             <button type="button" class="md-view-opt" data-renderview="run" title="Run / Preview"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>
           </span>
+          <button id="doc-email-ai-reply-btn" class="doc-action-icon-btn md-toolbar-email-only" type="button" title="Draft a reply with AI (Fast / Full + optional context)" style="display:none;align-items:center;gap:4px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="color:var(--accent, var(--red));flex-shrink:0;position:relative;top:-1px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg><span style="font-size:11px;">Reply</span></button>
           <button id="doc-fontsize-btn" class="doc-action-icon-btn" title="Font size" style="position:relative;width:28px;height:26px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.7;"><path d="M4 7V4h16v3"/><path d="M12 4v16"/><path d="M8 20h8"/></svg><span class="doc-fontsize-levels"><i data-sz="s">S</i><i data-sz="m">M</i><i data-sz="l">L</i></span></button>
           <button id="doc-diff-toggle-btn" class="doc-action-icon-btn" title="Compare changes" style="opacity:0.7;display:none;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M5 12H2l5-5 5 5H9"/><path d="M19 12h3l-5 5-5-5h3"/></svg></button>
           <span class="md-toolbar-sep"></span>
@@ -3897,7 +4120,7 @@ import * as Modals from './modalManager.js';
           <button type="button" class="md-dd-toggle" data-dd="list" title="List"><span style="font-variant-numeric:tabular-nums;">1.</span><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           <span class="md-toolbar-sep"></span>
           <button type="button" data-md="link" title="Link"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
-          <button type="button" id="md-toolbar-attach-btn" class="md-toolbar-attach-btn" title="Attach files"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+          <button type="button" id="md-toolbar-attach-btn" class="md-toolbar-attach-btn" title="Insert image"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
           <button type="button" class="md-dd-toggle md-toolbar-email-hide" data-dd="code" title="Code">\`<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           <button type="button" data-md="hr" title="Horizontal rule">—</button>
           <span class="md-toolbar-sep"></span>
@@ -4395,6 +4618,24 @@ import * as Modals from './modalManager.js';
         }
       });
     }
+    // Ctrl+Alt+M (and Cmd+Opt+M on mac) flips Edit ↔ Preview on a markdown
+    // doc. Bound once globally; gated on the doc panel being open and the
+    // active doc being markdown so it doesn't fire while the user is typing
+    // in a non-markdown context.
+    if (!window._docMdToggleBound) {
+      window._docMdToggleBound = true;
+      document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey && (e.key === 'm' || e.key === 'M' || e.code === 'KeyM')) {
+          if (!isOpen) return;
+          const doc = activeDocId && docs.get(activeDocId);
+          const lang = (doc?.language || 'markdown').toLowerCase();
+          if (lang !== 'markdown') return;
+          e.preventDefault();
+          toggleMarkdownPreview();
+          _syncHeaderActions();
+        }
+      });
+    }
     document.getElementById('doc-email-draft-btn')?.addEventListener('click', () => {
       document.getElementById('doc-email-more-menu').style.display = 'none';
       _saveDraft();
@@ -4409,7 +4650,11 @@ import * as Modals from './modalManager.js';
       document.getElementById('doc-email-more-menu').style.display = 'none';
       _scheduleSend(anchor);
     });
-    document.getElementById('doc-email-ai-reply-btn')?.addEventListener('click', _aiReply);
+    document.getElementById('doc-email-ai-reply-btn')?.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      _showDocAiReplyChoice(ev.currentTarget);
+    });
 
     const collapseBtn = document.getElementById('doc-email-collapse-btn');
     if (collapseBtn && !collapseBtn._emailCollapseWired) {
@@ -4474,9 +4719,14 @@ import * as Modals from './modalManager.js';
       document.getElementById('doc-email-file-input')?.click();
     });
     document.getElementById('md-toolbar-attach-btn')?.addEventListener('click', () => {
-      document.getElementById('doc-email-file-input')?.click();
+      if (_activeDocLanguage() === 'email') {
+        document.getElementById('doc-email-file-input')?.click();
+      } else {
+        document.getElementById('doc-md-image-input')?.click();
+      }
     });
     document.getElementById('doc-email-file-input')?.addEventListener('change', _handleAttachUpload);
+    document.getElementById('doc-md-image-input')?.addEventListener('change', _handleMarkdownImageUpload);
 
     // Cc/Bcc toggle
     document.getElementById('doc-email-show-cc')?.addEventListener('click', () => {
@@ -4487,6 +4737,25 @@ import * as Modals from './modalManager.js';
       if (bccRow) bccRow.style.display = '';
       document.getElementById('doc-email-show-cc').style.display = 'none';
       _syncEmailHeaderSummary();
+    });
+
+    // Cc/Bcc close — X buttons inside the Cc and Bcc fields hide both
+    // rows + clear their inputs + restore the Cc opener on the To row.
+    document.querySelectorAll('[data-cc-close]').forEach(closeBtn => {
+      closeBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const ccRow = document.getElementById('doc-email-cc-row');
+        const bccRow = document.getElementById('doc-email-bcc-row');
+        const ccInput = document.getElementById('doc-email-cc');
+        const bccInput = document.getElementById('doc-email-bcc');
+        if (ccRow) ccRow.style.display = 'none';
+        if (bccRow) bccRow.style.display = 'none';
+        if (ccInput) ccInput.value = '';
+        if (bccInput) bccInput.value = '';
+        const ccToggle = document.getElementById('doc-email-show-cc');
+        if (ccToggle) ccToggle.style.display = '';
+        _syncEmailHeaderSummary();
+      });
     });
 
     // Autocomplete for To / Cc / Bcc — typed fragment after the last
@@ -4692,6 +4961,26 @@ import * as Modals from './modalManager.js';
         _autoTitleDebounce = setTimeout(() => autoTitleFromContent(ta.value), 600);
         clearTimeout(_autoSaveDebounce);
         _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 2000);
+      });
+      ta.addEventListener('paste', (e) => {
+        if (_activeDocLanguage() !== 'markdown') return;
+        const files = Array.from(e.clipboardData?.files || []).filter(_isMarkdownImageFile);
+        if (!files.length) return;
+        e.preventDefault();
+        _uploadMarkdownImages(files);
+      });
+      ta.addEventListener('dragover', (e) => {
+        if (_activeDocLanguage() !== 'markdown') return;
+        const items = Array.from(e.dataTransfer?.items || []);
+        if (!items.some(item => item.kind === 'file' && /^image\//i.test(item.type || ''))) return;
+        e.preventDefault();
+      });
+      ta.addEventListener('drop', (e) => {
+        if (_activeDocLanguage() !== 'markdown') return;
+        const files = Array.from(e.dataTransfer?.files || []).filter(_isMarkdownImageFile);
+        if (!files.length) return;
+        e.preventDefault();
+        _uploadMarkdownImages(files);
       });
       ta.addEventListener('scroll', () => {
         const code = document.getElementById('doc-editor-code');
@@ -5401,7 +5690,7 @@ import * as Modals from './modalManager.js';
     // any dropdown that just opened. Preventing the default mousedown keeps the
     // textarea focused, so formatting hits the live selection and menus stay up.
     toolbar.addEventListener('mousedown', (e) => {
-      if (e.target.closest('[data-md], .md-dd-toggle, .emoji-picker-btn')) e.preventDefault();
+      if (e.target.closest('[data-md], .md-dd-toggle, .emoji-picker-btn, .md-toolbar-attach-btn')) e.preventDefault();
     });
 
     toolbar.addEventListener('click', (e) => {
@@ -5829,6 +6118,7 @@ import * as Modals from './modalManager.js';
       const res = await fetch(`${API_BASE}/api/document`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify({
           session_id: sessionId,
           title: '',
@@ -5836,7 +6126,9 @@ import * as Modals from './modalManager.js';
           language: 'markdown',
         }),
       });
+      if (!res.ok) throw new Error(`Document create failed: HTTP ${res.status}`);
       const doc = await res.json();
+      if (!doc || !doc.id) throw new Error('Document create failed: missing id');
       addDocToTabs(doc, sessionId);
       if (!isOpen) openPanel();
       // Re-enable editor if it was in empty state
@@ -8119,8 +8411,10 @@ import * as Modals from './modalManager.js';
       const res = await fetch(`${API_BASE}/api/document/${activeDocId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify({ content: textarea.value }),
       });
+      if (!res.ok) throw new Error(`Document save failed: HTTP ${res.status}`);
       const doc = await res.json();
       const badge = document.getElementById('doc-version-badge');
       if (badge) { const _v = doc.version_count || 1; badge.textContent = `v${_v}`; badge.style.display = _v > 1 ? '' : 'none'; }
@@ -8133,7 +8427,11 @@ import * as Modals from './modalManager.js';
       if (!silent && uiModule) uiModule.showToast('Document saved');
     } catch (e) {
       console.error('Failed to save document:', e);
-      if (!silent && uiModule) uiModule.showError('Failed to save document');
+      const now = Date.now();
+      if (uiModule && (!silent || now - _lastAutoSaveErrorAt > 10000)) {
+        uiModule.showError(silent ? 'Autosave failed' : 'Failed to save document');
+        _lastAutoSaveErrorAt = now;
+      }
     }
   }
 
@@ -8527,6 +8825,19 @@ import * as Modals from './modalManager.js';
     // `body:has(.doc-editor-pane.doc-fullscreen) .doc-divider-collapse` slides
     // it into a forced-inside position). Hiding the divider here would hide
     // the chevron with it.
+
+    // Hide the tab bar during the layout shift so any in-flight smooth
+    // scroll / reflow doesn't visibly "fly" the active tab across the
+    // pane as it expands. Restored after the layout settles.
+    const tabBar = document.getElementById('doc-tab-bar');
+    if (tabBar) {
+      tabBar.style.visibility = 'hidden';
+      clearTimeout(tabBar._fsHideTimer);
+      tabBar._fsHideTimer = setTimeout(() => {
+        tabBar.style.visibility = '';
+      }, 240);
+    }
+
     if (pane.classList.contains('doc-fullscreen')) {
       pane.classList.remove('doc-fullscreen');
       if (container) container.style.display = '';
@@ -8978,6 +9289,14 @@ import * as Modals from './modalManager.js';
 
   /** Open the document panel immediately for a doc being streamed in */
   export function streamDocOpen(title, language) {
+    // Discard any pending AI-edit diff before this stream changes the active
+    // document. When the AI streams a NEW document while an unapproved diff is
+    // open on the current one, streamDocOpen reassigns activeDocId below; if the
+    // stale diff isn't cleared first, a later exitDiffMode applies the old doc's
+    // content to the new one and overwrites it (issue #2467). activeDocId still
+    // points at the previously-active doc here, so exitDiffMode(true) restores
+    // and saves THAT doc — same guard handleDocUpdate/switchToDoc use.
+    if (_diffModeActive) exitDiffMode(true);
     // If already streaming a doc, reuse it (don't create a second temp doc)
     if (_streamDocId && docs.has(_streamDocId)) {
       const existing = docs.get(_streamDocId);
@@ -9196,9 +9515,36 @@ import * as Modals from './modalManager.js';
     return oldId;
   }
 
+  function _isMarkdownPreviewVisible() {
+    const preview = document.getElementById('doc-md-preview');
+    return !!(preview && preview.style.display !== 'none');
+  }
+
+  function _refreshMarkdownPreviewIfVisible(docId, content) {
+    if (!_isMarkdownPreviewVisible()) return false;
+    const doc = docs.get(docId);
+    const lang = ((doc && doc.language) || document.getElementById('doc-language-select')?.value || '').toLowerCase();
+    if (lang !== 'markdown') return false;
+    const textarea = document.getElementById('doc-editor-textarea');
+    if (textarea) textarea.value = content;
+    syncHighlighting();
+    _setMarkdownPreviewActive(true, { remember: false });
+    return true;
+  }
+
   /** Handle SSE doc_update event from AI */
   export function handleDocUpdate(data) {
     const streamingId = streamDocFinalize();
+    // Discard any pending AI-edit diff before this update changes the active
+    // document. The diff state (_diffModeActive/_diffOldContent/...) is a
+    // module-global singleton bound to whatever doc was active when the diff
+    // opened; if we switch documents without clearing it, a later tab switch or
+    // Accept/Reject-All flushes the stale diff's content into the now-active
+    // doc and silently overwrites it (issue #2467). activeDocId still points at
+    // the previously-active doc here, so exitDiffMode(true) restores and saves
+    // THAT doc before we reassign activeDocId below — mirroring switchToDoc()
+    // and enterDiffMode().
+    if (_diffModeActive) exitDiffMode(true);
     let docId = data.doc_id;
     const newContent = data.content || '';
 
@@ -9305,6 +9651,7 @@ import * as Modals from './modalManager.js';
     if (docLang && langSelect) langSelect.value = docLang;
     if (!docLang) attemptAutoDetect();
     const isEmailUpdate = (docLang || '').toLowerCase() === 'email';
+    const markdownPreviewWasVisible = _isMarkdownPreviewVisible();
 
     // Animate content update for edits; apply directly for creates/streaming
     const isEdit = !isEmailUpdate && isExistingDoc && oldContent && oldContent !== newContent && !streamingId;
@@ -9318,7 +9665,10 @@ import * as Modals from './modalManager.js';
         if (oldLines[li] !== newLines[li]) changedLines++;
       }
       if (changedLines >= DIFF_MODE_THRESHOLD) {
+        if (markdownPreviewWasVisible) _setMarkdownPreviewActive(false, { remember: false });
         enterDiffMode(oldContent, newContent);
+      } else if (markdownPreviewWasVisible && _refreshMarkdownPreviewIfVisible(docId, newContent)) {
+        // Preview is the visible surface, so refresh it instead of animating a hidden editor.
       } else {
         _animateDocEdit(textarea, newContent);
       }
@@ -9332,6 +9682,7 @@ import * as Modals from './modalManager.js';
       } else {
         if (textarea) textarea.value = newContent;
         syncHighlighting();
+        _refreshMarkdownPreviewIfVisible(docId, newContent);
       }
     }
 

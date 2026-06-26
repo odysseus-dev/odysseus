@@ -3,19 +3,121 @@ import os
 import time
 import json
 import asyncio
+import shutil
+import uuid
+from pathlib import Path
 from fastapi import APIRouter, Request, File, UploadFile, HTTPException
 from typing import List
 import logging
 from core.middleware import require_admin
-from src.auth_helpers import get_current_user
+from core.database import SessionLocal, GalleryImage
+from src.auth_helpers import effective_user
+from src.constants import GENERATED_IMAGES_DIR
 from src.upload_handler import count_recent_uploads
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/upload", tags=["upload"])
+UPLOAD_RESPONSE_HEADERS = {"X-Content-Type-Options": "nosniff"}
 
 def setup_upload_routes(upload_handler):
     """Setup upload routes with the provided handler"""
+
+    def _upload_root() -> str:
+        from src.constants import UPLOAD_DIR
+        return os.path.realpath(getattr(upload_handler, "upload_dir", UPLOAD_DIR))
+
+    def _path_inside_upload_dir(path: str) -> bool:
+        try:
+            return os.path.commonpath([_upload_root(), os.path.realpath(path)]) == _upload_root()
+        except Exception:
+            return False
+
+    def _resolve_upload_path(file_id: str) -> str:
+        from src.constants import UPLOAD_DIR
+        upload_root = getattr(upload_handler, "upload_dir", UPLOAD_DIR)
+        direct = os.path.join(upload_root, file_id)
+        if os.path.lexists(direct):
+            if not _path_inside_upload_dir(direct):
+                raise HTTPException(403, "Access denied")
+            if os.path.isfile(direct):
+                return direct
+            raise HTTPException(404, "File not found")
+
+        for root, _dirs, files in os.walk(upload_root, followlinks=False):
+            if file_id not in files:
+                continue
+            path = os.path.join(root, file_id)
+            if not _path_inside_upload_dir(path):
+                raise HTTPException(403, "Access denied")
+            if os.path.isfile(path):
+                return path
+            raise HTTPException(404, "File not found")
+
+        raise HTTPException(404, "File not found")
+
+    def _promote_chat_image_to_gallery(meta: dict, owner: str | None) -> str | None:
+        """Make chat-uploaded images visible in Gallery without changing chat storage."""
+        is_image_file = getattr(upload_handler, "is_image_file", None)
+        if not callable(is_image_file):
+            return None
+        if not is_image_file(meta.get("name", ""), meta.get("mime", "")):
+            return None
+
+        source_path = meta.get("path")
+        if not source_path or not os.path.isfile(source_path):
+            return None
+
+        db = SessionLocal()
+        try:
+            file_hash = meta.get("hash")
+            if file_hash:
+                q = db.query(GalleryImage).filter(
+                    GalleryImage.file_hash == file_hash,
+                    GalleryImage.is_active == True,  # noqa: E712
+                )
+                if owner:
+                    q = q.filter(GalleryImage.owner == owner)
+                existing = q.first()
+                if existing:
+                    return existing.id
+
+            image_dir = Path(GENERATED_IMAGES_DIR)
+            image_dir.mkdir(parents=True, exist_ok=True)
+            ext = Path(meta.get("name") or source_path).suffix.lower()
+            if ext not in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+                mime_ext = {
+                    "image/png": ".png",
+                    "image/jpeg": ".jpg",
+                    "image/jpg": ".jpg",
+                    "image/webp": ".webp",
+                    "image/gif": ".gif",
+                }.get(meta.get("mime", ""))
+                ext = mime_ext or ".png"
+            filename = f"{uuid.uuid4().hex[:12]}{ext}"
+            dest_path = image_dir / filename
+            shutil.copy2(source_path, dest_path)
+
+            image_id = str(uuid.uuid4())
+            db.add(GalleryImage(
+                id=image_id,
+                filename=filename,
+                prompt=meta.get("name") or "Chat upload",
+                model="chat-upload",
+                owner=owner,
+                file_hash=file_hash,
+                width=meta.get("width"),
+                height=meta.get("height"),
+                file_size=meta.get("size"),
+            ))
+            db.commit()
+            return image_id
+        except Exception as e:
+            db.rollback()
+            logger.warning("Failed to add chat image upload to gallery: %s", e)
+            return None
+        finally:
+            db.close()
     
     @router.post("")
     async def api_upload(request: Request, files: List[UploadFile] = File(...)):
@@ -44,8 +146,10 @@ def setup_upload_routes(upload_handler):
         
         for u in files:
             try:
-                meta = upload_handler.save_upload(u, client_ip, owner=get_current_user(request))
-                out.append({
+                owner = effective_user(request)
+                meta = upload_handler.save_upload(u, client_ip, owner=owner)
+                gallery_id = _promote_chat_image_to_gallery(meta, owner)
+                item = {
                     "id": meta["id"],
                     "name": meta["name"],
                     "mime": meta["mime"],
@@ -55,7 +159,10 @@ def setup_upload_routes(upload_handler):
                     "width": meta.get("width"),
                     "height": meta.get("height"),
                     "is_duplicate": meta.get("is_duplicate", False)
-                })
+                }
+                if gallery_id:
+                    item["gallery_id"] = gallery_id
+                out.append(item)
             except HTTPException:
                 raise
             except Exception as e:
@@ -91,23 +198,11 @@ def setup_upload_routes(upload_handler):
         client isn't downloading the full-resolution photo just to show it tiny."""
         if not upload_handler.validate_upload_id(file_id):
             raise HTTPException(400, "Invalid file ID")
-        # Search upload directories for the file
-        from src.constants import UPLOAD_DIR
         import mimetypes as _mt
-        path = os.path.join(UPLOAD_DIR, file_id)
-        if not os.path.exists(path):
-            for root, dirs, files in os.walk(UPLOAD_DIR):
-                if file_id in files:
-                    path = os.path.join(root, file_id)
-                    break
-            else:
-                raise HTTPException(404, "File not found")
-        if not upload_handler.inside_base_dir(path):
-            raise HTTPException(403, "Access denied")
         # Look up original filename and owner from uploads.json
         original_name = file_id
         info = None
-        uploads_db = os.path.join(UPLOAD_DIR, "uploads.json")
+        uploads_db = os.path.join(_upload_root(), "uploads.json")
         if os.path.exists(uploads_db):
             with open(uploads_db, encoding="utf-8") as f:
                 db = json.load(f)
@@ -116,20 +211,21 @@ def setup_upload_routes(upload_handler):
                 original_name = info.get("name", file_id)
         auth_mgr = getattr(request.app.state, "auth_manager", None)
         auth_configured = bool(auth_mgr and auth_mgr.is_configured)
-        current_user = get_current_user(request)
+        current_user = effective_user(request)
         file_owner = info.get("owner") if info else None
         if auth_configured:
             if not current_user:
                 raise HTTPException(403, "Access denied")
             if file_owner != current_user and not auth_mgr.is_admin(current_user):
                 raise HTTPException(404, "File not found")
-        mime = _mt.guess_type(path)[0] or "application/octet-stream"
+        path = _resolve_upload_path(file_id)
+        mime = (info or {}).get("mime") or _mt.guess_type(path)[0] or "application/octet-stream"
         from fastapi.responses import FileResponse
         # Downscaled thumbnail for image previews — generated once and cached.
         if thumb and mime.startswith("image/"):
             try:
                 from PIL import Image, ImageOps
-                thumb_dir = os.path.join(UPLOAD_DIR, ".thumbs")
+                thumb_dir = os.path.join(_upload_root(), ".thumbs")
                 os.makedirs(thumb_dir, exist_ok=True)
                 thumb_path = os.path.join(thumb_dir, file_id + ".jpg")
                 if (not os.path.exists(thumb_path)
@@ -145,17 +241,21 @@ def setup_upload_routes(upload_handler):
                     if im.mode not in ("RGB", "L"):
                         im = im.convert("RGB")
                     im.save(thumb_path, "JPEG", quality=80)
-                return FileResponse(thumb_path, media_type="image/jpeg")
+                return FileResponse(thumb_path, media_type="image/jpeg", headers=UPLOAD_RESPONSE_HEADERS)
             except Exception as e:
                 logger.warning(f"Thumbnail generation failed for {file_id}: {e}")
                 # Fall through to the full image.
-        return FileResponse(path, media_type=mime, filename=original_name)
+        return FileResponse(
+            path,
+            media_type=mime,
+            filename=original_name,
+            headers=UPLOAD_RESPONSE_HEADERS,
+        )
 
     def _load_upload_info(file_id: str):
         """Look up the uploads.json record for a file_id, with owner/auth checks."""
-        from src.constants import UPLOAD_DIR
         info = None
-        uploads_db = os.path.join(UPLOAD_DIR, "uploads.json")
+        uploads_db = os.path.join(_upload_root(), "uploads.json")
         if os.path.exists(uploads_db):
             with open(uploads_db, encoding="utf-8") as f:
                 db = json.load(f)
@@ -163,8 +263,7 @@ def setup_upload_routes(upload_handler):
         return info
 
     def _vision_cache_path(file_id: str) -> str:
-        from src.constants import UPLOAD_DIR
-        cache_dir = os.path.join(UPLOAD_DIR, ".vision")
+        cache_dir = os.path.join(_upload_root(), ".vision")
         os.makedirs(cache_dir, exist_ok=True)
         return os.path.join(cache_dir, file_id + ".txt")
 
@@ -175,29 +274,19 @@ def setup_upload_routes(upload_handler):
         subsequent loads are instant. Pass force=1 to recompute."""
         if not upload_handler.validate_upload_id(file_id):
             raise HTTPException(400, "Invalid file ID")
-        from src.constants import UPLOAD_DIR
-        path = os.path.join(UPLOAD_DIR, file_id)
-        if not os.path.exists(path):
-            for root, dirs, files in os.walk(UPLOAD_DIR):
-                if file_id in files:
-                    path = os.path.join(root, file_id)
-                    break
-            else:
-                raise HTTPException(404, "File not found")
-        if not upload_handler.inside_base_dir(path):
-            raise HTTPException(403, "Access denied")
         info = _load_upload_info(file_id)
         auth_mgr = getattr(request.app.state, "auth_manager", None)
         auth_configured = bool(auth_mgr and auth_mgr.is_configured)
-        current_user = get_current_user(request)
+        current_user = effective_user(request)
         file_owner = info.get("owner") if info else None
         if auth_configured:
             if not current_user:
                 raise HTTPException(403, "Access denied")
             if file_owner != current_user and not auth_mgr.is_admin(current_user):
                 raise HTTPException(404, "File not found")
+        path = _resolve_upload_path(file_id)
         import mimetypes as _mt
-        mime = _mt.guess_type(path)[0] or ""
+        mime = (info or {}).get("mime") or _mt.guess_type(path)[0] or ""
         if not mime.startswith("image/"):
             raise HTTPException(400, "Not an image")
         cache_path = _vision_cache_path(file_id)
@@ -209,7 +298,7 @@ def setup_upload_routes(upload_handler):
                 logger.warning(f"Vision cache read failed for {file_id}: {e}")
         from src.document_processor import analyze_image_with_vl
         try:
-            text = analyze_image_with_vl(path) or ""
+            text = analyze_image_with_vl(path, owner=current_user) or ""
         except Exception as e:
             logger.error(f"Vision analysis failed for {file_id}: {e}")
             raise HTTPException(500, f"Vision analysis failed: {e}")
@@ -231,13 +320,14 @@ def setup_upload_routes(upload_handler):
             raise HTTPException(404, "File not found")
         auth_mgr = getattr(request.app.state, "auth_manager", None)
         auth_configured = bool(auth_mgr and auth_mgr.is_configured)
-        current_user = get_current_user(request)
+        current_user = effective_user(request)
         file_owner = info.get("owner")
         if auth_configured:
             if not current_user:
                 raise HTTPException(403, "Access denied")
             if file_owner != current_user and not auth_mgr.is_admin(current_user):
                 raise HTTPException(404, "File not found")
+        _resolve_upload_path(file_id)
         body = await request.json()
         text = (body or {}).get("text", "")
         if not isinstance(text, str):

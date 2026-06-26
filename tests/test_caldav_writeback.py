@@ -5,6 +5,9 @@ iCalendar serialization, hash-based remote-calendar discovery, and the
 create/update/delete orchestration.
 """
 
+import asyncio
+import sys
+import types
 from datetime import datetime
 
 from src.caldav_writeback import (
@@ -19,7 +22,9 @@ CAL_ID = _stable_cal_id(REMOTE_URL)
 
 
 class FakeEvent:
-    def __init__(self):
+    def __init__(self, url="https://p69-caldav.icloud.com/123/calendars/home/evt-1.ics"):
+        self.url = url
+        self.etag = '"abc123"'
         self.data = "OLD"
         self.saved = False
         self.deleted = False
@@ -36,6 +41,7 @@ class FakeCalendar:
         self.url = url
         self._existing = existing
         self.saved_ical = None
+        self.created = FakeEvent(str(url).rstrip("/") + "/created.ics")
 
     def event_by_uid(self, uid):
         if self._existing is None:
@@ -44,6 +50,7 @@ class FakeCalendar:
 
     def save_event(self, ical):
         self.saved_ical = ical
+        return self.created
 
 
 def _ev(**over):
@@ -88,6 +95,8 @@ def test_push_create_calls_save_event():
     res = push_event([cal], CAL_ID, _ev(), delete=False)
     assert res["ok"] and res.get("created")
     assert cal.saved_ical and "UID:evt-1" in cal.saved_ical
+    assert res["calendar_url"] == REMOTE_URL
+    assert res["remote_href"].endswith("/created.ics")
 
 
 def test_push_update_overwrites_existing():
@@ -97,6 +106,8 @@ def test_push_update_overwrites_existing():
     assert res["ok"] and res.get("updated")
     assert existing.saved and "SUMMARY:Moved" in existing.data
     assert cal.saved_ical is None  # used update path, not create
+    assert res["remote_href"].endswith("evt-1.ics")
+    assert res["remote_etag"] == '"abc123"'
 
 
 def test_push_delete_removes_existing():
@@ -123,3 +134,104 @@ def test_push_missing_uid_reports_input_error_before_remote_lookup():
     res = push_event([cal], CAL_ID, _ev(uid=""))
     assert res["ok"] is False and "uid" in res["error"]
     assert cal._existing.saved is False
+
+
+def test_writeback_validates_saved_url_before_remote_call(monkeypatch):
+    import src.caldav_sync as sync
+    import src.caldav_writeback as wb
+
+    prefs_mod = types.ModuleType("routes.prefs_routes")
+    prefs_mod._load_for_user = lambda owner: {
+        "caldav": {
+            "url": " https://dav.example.com/calendars/home/ ",
+            "username": owner,
+            "password": "enc:pw",
+        }
+    }
+    secret_mod = types.ModuleType("src.secret_storage")
+    secret_mod.decrypt = lambda value: "plain-password"
+    monkeypatch.setitem(sys.modules, "routes.prefs_routes", prefs_mod)
+    monkeypatch.setitem(sys.modules, "src.secret_storage", secret_mod)
+
+    captured = {}
+
+    def fake_validate(url):
+        captured["validated_url"] = url
+        return "https://dav.example.com/calendars/home"
+
+    def fake_writeback_blocking(local_cal_id, ev, delete, url, username, password,
+                                owner="", account_id=""):
+        captured.update(
+            {
+                "local_cal_id": local_cal_id,
+                "delete": delete,
+                "url": url,
+                "username": username,
+                "password": password,
+            }
+        )
+        return {"ok": True}
+
+    async def inline_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(sync, "validate_caldav_url", fake_validate)
+    monkeypatch.setattr(wb, "_writeback_blocking", fake_writeback_blocking)
+    monkeypatch.setattr(wb.asyncio, "to_thread", inline_to_thread)
+
+    result = asyncio.run(
+        wb.writeback_event("alice", "caldav", "caldav-123", {"uid": "evt-1"})
+    )
+
+    assert result == {"ok": True}
+    assert captured == {
+        "validated_url": "https://dav.example.com/calendars/home/",
+        "local_cal_id": "caldav-123",
+        "delete": False,
+        "url": "https://dav.example.com/calendars/home",
+        "username": "alice",
+        "password": "plain-password",
+    }
+
+
+def test_writeback_rejects_unsafe_saved_url_before_remote_call(monkeypatch):
+    import src.caldav_sync as sync
+    import src.caldav_writeback as wb
+
+    prefs_mod = types.ModuleType("routes.prefs_routes")
+    prefs_mod._load_for_user = lambda owner: {
+        "caldav": {
+            "url": "http://evil.example/latest/meta-data",
+            "username": owner,
+            "password": "enc:pw",
+        }
+    }
+    secret_mod = types.ModuleType("src.secret_storage")
+    secret_mod.decrypt = lambda value: "plain-password"
+    monkeypatch.setitem(sys.modules, "routes.prefs_routes", prefs_mod)
+    monkeypatch.setitem(sys.modules, "src.secret_storage", secret_mod)
+
+    called = False
+
+    def fake_validate(_url):
+        raise ValueError("CalDAV URL host is not allowed")
+
+    def fake_writeback_blocking(local_cal_id, ev, delete, url, username, password,
+                                owner="", account_id=""):
+        nonlocal called
+        called = True
+        return {"ok": True}
+
+    async def inline_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(sync, "validate_caldav_url", fake_validate)
+    monkeypatch.setattr(wb, "_writeback_blocking", fake_writeback_blocking)
+    monkeypatch.setattr(wb.asyncio, "to_thread", inline_to_thread)
+
+    result = asyncio.run(
+        wb.writeback_event("alice", "caldav", "caldav-123", {"uid": "evt-1"})
+    )
+
+    assert result == {"ok": False, "error": "CalDAV URL host is not allowed"}
+    assert called is False

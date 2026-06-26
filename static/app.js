@@ -1160,7 +1160,7 @@ function initializeEventListeners() {
         if (!p.can_use_bash) {
           const bashToggle = document.getElementById('bash-toggle');
           if (bashToggle) bashToggle.closest('.chat-input-toggle')?.style.setProperty('display', 'none');
-          const bashBtn = document.getElementById('tool-bash-btn');
+          const bashBtn = document.getElementById('bash-toggle-btn');
           if (bashBtn) bashBtn.style.display = 'none';
         }
         // Hide document button
@@ -1177,11 +1177,7 @@ function initializeEventListeners() {
           const resOverflow = document.getElementById('overflow-research-btn');
           if (resOverflow) resOverflow.style.display = 'none';
         }
-        // Hide image generation options
-        if (!p.can_generate_images) {
-          const imgBtn = document.getElementById('tool-image-btn');
-          if (imgBtn) imgBtn.style.display = 'none';
-        }
+
       }
     })
     .catch(() => {});
@@ -1222,7 +1218,7 @@ function initializeEventListeners() {
       sortDropdown.querySelectorAll('.sort-option').forEach(o => {
         const check = o.querySelector('.sort-check') || document.createElement('span');
         check.className = 'sort-check';
-        check.style.cssText = 'float:right;font-size:20px;line-height:1;position:relative;top:3px;color:var(--accent, var(--red));opacity:' + (o.dataset.sort === current ? '1' : '0');
+        check.style.cssText = 'float:right;font-size:20px;line-height:1;position:relative;top:1px;color:var(--accent, var(--red));opacity:' + (o.dataset.sort === current ? '1' : '0');
         check.textContent = '\u2022';
         if (!o.querySelector('.sort-check')) o.appendChild(check);
       });
@@ -1266,9 +1262,9 @@ function initializeEventListeners() {
             let msg;
             if (data.updated > 0) {
               msg = `Sorted ${data.updated} into ${data.folders.length} folder${data.folders.length === 1 ? '' : 's'}`;
-              if (remaining > 0) msg += ` — ${remaining} unfiled left, hit Tidy again`;
+              if (remaining > 0) msg += ` — ${remaining} unfiled left, hit Group again`;
             } else if (remaining > 0) {
-              msg = `${remaining} unfiled chats — hit Tidy again`;
+              msg = `${remaining} unfiled chats — hit Group again`;
             } else {
               msg = 'All sorted';
             }
@@ -1289,17 +1285,6 @@ function initializeEventListeners() {
 
     const autoSortBtn = el('auto-sort-sessions-btn');
     if (autoSortBtn) autoSortBtn.addEventListener('click', () => _runTidy(false));
-
-    // Chevron next to the Tidy row toggles the no-AI sub-item.
-    const autoSortMoreBtn = el('auto-sort-sessions-more');
-    const autoSortNoaiBtn = el('auto-sort-sessions-noai-btn');
-    if (autoSortMoreBtn && autoSortNoaiBtn) {
-      autoSortMoreBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        autoSortNoaiBtn.style.display = autoSortNoaiBtn.style.display === 'none' ? 'block' : 'none';
-      });
-      autoSortNoaiBtn.addEventListener('click', () => _runTidy(true));
-    }
   }
 
   // Model sort dropdown
@@ -1586,7 +1571,15 @@ function initializeEventListeners() {
   function applyModeToToggles(mode) {
     MODE_TOOLS.forEach(({ btnId, checkboxId, stateKey }) => {
       const btn = el(btnId);
-      if (!btn || btn.style.display === 'none') return;
+      if (!btn) return;
+      // Hide bash button in chat mode
+      if (mode === 'chat' && stateKey === 'bash') {
+        btn.style.display = 'none';
+        return;
+      }
+      // Show buttons in agent mode (or for web toggle in any mode)
+      btn.style.display = '';
+      if (btn.style.display === 'none') return;
       const on = loadToolPref(stateKey, mode);
       btn.classList.toggle('active', on);
       if (checkboxId) { const chk = el(checkboxId); if (chk) chk.checked = on; }
@@ -1601,6 +1594,12 @@ function initializeEventListeners() {
     const state = loadToggleState();
     let currentMode = state.mode || 'chat';
 
+    // Immediately hide bash button in chat mode on page load
+    if (currentMode === 'chat') {
+      const bashBtn = el('bash-toggle-btn');
+      if (bashBtn) bashBtn.style.display = 'none';
+    }
+
     function setMode(mode) {
       currentMode = mode;
       const st = loadToggleState();
@@ -1613,6 +1612,8 @@ function initializeEventListeners() {
       // Slide the pill to the active button
       const toggle = agentBtn.closest('.mode-toggle');
       if (toggle) toggle.classList.toggle('mode-chat', mode === 'chat');
+      // Workspace pill + overflow entry are agent-only - hide immediately (no flash).
+      try { workspaceModule.applyMode(mode); } catch (_) {}
       // Delay tool glow-up for a staggered effect
       setTimeout(() => applyModeToToggles(mode), 500);
     }
@@ -2417,7 +2418,7 @@ function initializeEventListeners() {
   };
 
   // Keys hidden by default on first run (no localStorage yet)
-  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn']);
+  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn', 'text-emojis']);
 
   // Keys that need admin to toggle off (reserved for future use)
   const UI_VIS_ADMIN_ONLY = new Set([]);
@@ -2445,11 +2446,9 @@ function initializeEventListeners() {
     document.querySelectorAll('.section[draggable]').forEach(el => {
       el.setAttribute('draggable', dragEnabled ? 'true' : 'false');
     });
-    // Text-only emojis toggle. Default is ON (the checkbox defaults to
-    // checked because text-emojis isn't in UI_VIS_DEFAULT_OFF), so treat
-    // an absent value as enabled — otherwise the toggle looked on at
-    // startup but the effect only activated after the user flipped it.
-    applyTextEmojis(state['text-emojis'] !== false);
+    // Text-only emojis toggle. Default is OFF so model-emitted shortcodes
+    // like `:blush:` render through the normal monochrome emoji path.
+    applyTextEmojis(state['text-emojis'] === true);
     // Hide thinking sections toggle (show-thinking: checked=show, unchecked=hide)
     document.body.classList.toggle('hide-thinking', state['show-thinking'] === false);
   }
@@ -3125,7 +3124,9 @@ function initializeEventListeners() {
       setTimeout(() => uiModule.autoResize(textarea), 1);
     });
     textarea.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      const isMobile = window.innerWidth <= 768
+
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isMobile) {
         // If ghost autocomplete is active, accept the suggestion instead of submitting
         if (window._ghostAutocomplete && window._ghostAutocomplete.isActive()) {
           e.preventDefault();
@@ -3698,7 +3699,9 @@ function startOdysseusApp() {
   // Enter to send (shift+enter for newline), or new chat when empty
   if (messageInput) {
     messageInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      const isMobile = window.innerWidth <= 768
+
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isMobile) {
         e.preventDefault();
         // Flush the debounced icon update so dataset.mode reflects the current
         // text state. Without this, a fast type-and-Enter would still see the

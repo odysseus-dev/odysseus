@@ -27,12 +27,56 @@ function _statusLabel(status, type) {
 // "cookbook-task-status" ('' = the neutral loading style).
 function _taskBadge(task) {
   if (task._unreachable && task.status === 'running') return { text: 'unreachable', cls: 'cookbook-task-error' };
+  if (task.type === 'download' && task.status === 'running') {
+    return { text: _statusLabel(task.status, task.type), cls: 'cookbook-task-downloading' };
+  }
   if (task.type === 'serve' && task.status === 'running' && task.progress) {
     // Same green "running" pill — just with dynamic phase text, so it doesn't
     // read as a different status while the server is coming up.
     return { text: task.progress, cls: 'cookbook-task-running' };
   }
   return { text: _statusLabel(task.status, task.type), cls: 'cookbook-task-' + task.status };
+}
+
+function _ggufDisplayPartFromPath(path) {
+  const parts = String(path || '').split('/').filter(Boolean);
+  const file = parts[parts.length - 1] || '';
+  const dir = parts.length > 1 ? parts[parts.length - 2] : '';
+  const text = `${dir} ${file}`;
+  const quant = text.match(/\b(?:UD-)?(?:IQ[1-8]_[A-Z0-9]+|Q[2-8]_K_[MLS]|Q[2-8]_[0-9A-Z]+|Q[2-8])\b/i);
+  if (quant) return quant[0].toUpperCase().replace(/^UD-/, '');
+  return file.replace(/\.gguf$/i, '').replace(/-\d{5}-of-\d{5}$/i, '');
+}
+
+function _downloadDisplayName(name, task) {
+  const include = task?.payload?.include || '';
+  if (!include || String(name || '').includes(' · ')) return name;
+  const part = _ggufDisplayPartFromPath(include.replace(/\*/g, ''));
+  return part ? `${name} · ${part}` : name;
+}
+
+function _taskDisplayName(task) {
+  const name = String(task?.name || '').trim();
+  if (task?.type === 'download') return _downloadDisplayName(name, task);
+  if (task?.type !== 'serve') return name;
+  const gguf = task?.payload?._fields?.gguf_file || task?.payload?.gguf_file || '';
+  if (!gguf || name.includes(' · ')) return name;
+  const part = _ggufDisplayPartFromPath(gguf);
+  return part ? `${name} · ${part}` : name;
+}
+
+function _canLaunchDownloadedTask(task) {
+  return task?.type === 'download' && ['done', 'completed'].includes(task.status || '') && !!(task.payload?.repo_id || task.name);
+}
+
+function _downloadServeFields(task) {
+  const include = String(task?.payload?.include || '').trim();
+  if (!include) return null;
+  return {
+    backend: 'llamacpp',
+    _forceBackend: true,
+    _preferredGgufInclude: include,
+  };
 }
 
 // A download task whose tmux output still shows an active per-shard line
@@ -52,18 +96,25 @@ function _downloadOutputLooksActive(task) {
 
 function _canClearTask(task) {
   if (!task || task.status === 'running') return false;
-  if (task.type === 'serve' && (task.status === 'ready' || task._serveReady)) return false;
+  if (task.type === 'serve' && (task.status === 'ready' || (task._serveReady && !['stopped', 'error', 'crashed', 'failed', 'completed'].includes(task.status)))) return false;
   // If the tmux output still shows an in-flight download, the task isn't
   // actually finished — hide the clear/check pill so it doesn't show on a
   // task that's still doing work. (The next render will reflect this and
   // ideally the self-heal flips status back to running.)
   if (_downloadOutputLooksActive(task)) return false;
-  return ['done', 'stopped', 'error', 'crashed', 'failed'].includes(task.status);
+  return ['done', 'completed', 'stopped', 'error', 'crashed', 'failed'].includes(task.status);
 }
 
 function _clearPillLabel(task) {
   if (_downloadOutputLooksActive(task)) return 'reconnect';
   return 'clear';
+}
+
+function _venvRootFromPath(path) {
+  let p = (path || '').toString().trim().replace(/\/+$/, '');
+  if (!p) return '';
+  p = p.replace(/\/bin\/(?:activate|python(?:3(?:\.\d+)?)?|vllm|pip(?:3)?)$/i, '');
+  return p;
 }
 
 // A pip dependency/driver install (payload._dep) reports success with the
@@ -141,6 +192,13 @@ async function _openDownloadForGgufTask(task) {
 function _terminalServeDiagnosis(task, outputText) {
   const out = String(outputText || task?.output || '');
   if (!task || task.type !== 'serve' || !['stopped', 'error', 'crashed', 'failed'].includes(task.status) || !out.trim()) return null;
+  // Suppress the crash diagnosis when the output proves the server
+  // actually became reachable — e.g. an early `exit 127` from a failed
+  // build attempt was followed by the shim/Python fallback successfully
+  // starting Uvicorn. Without this, the user sees a confusing "build
+  // stopped before the server became reachable" toast while the server
+  // is right there serving requests.
+  if (_serveOutputLooksReady(task)) return null;
   // Pip tasks (Reinstall vLLM, Upgrade torch, etc.) ride on the serve task
   // type so they get a tmux session + show up in Running tab — but they are
   // NOT serve invocations. Their output is pip's own; the generic
@@ -255,12 +313,49 @@ let _savePresets;
 let _copyText;
 let _persistEnvState;
 let _refreshDependencies;
+let _serverByVal;
+let _serverKey;
+let _selectedServer;
 let modelLogo;
 let esc;
 let _detectBackend;
 let _detectToolParser;
 let _detectModelOptimizations;
 let _buildServeCmd;
+
+function _taskServerSelection(task) {
+  const host = task?.remoteHost || task?.payload?.remote_host || '';
+  const savedKey = task?.remoteServerKey || task?.payload?.remote_server_key || '';
+  const server = (savedKey ? _serverByVal(savedKey) : null)
+    || (host ? _serverByVal(host) : null)
+    || (host ? _envState.servers.find(s => s.host === host) : null)
+    || null;
+  const key = server ? (_serverKey ? _serverKey(server) : savedKey) : (savedKey || (host || 'local'));
+  return { host, server, key };
+}
+
+function _selectTaskServer(task) {
+  const { host, server, key } = _taskServerSelection(task);
+  _envState.remoteHost = host;
+  _envState.remoteServerKey = key === 'local' ? '' : key;
+  if (server) {
+    _envState.env = server.env || 'none';
+    _envState.envPath = server.envPath || '';
+    _envState.platform = server.platform || '';
+  } else if (!host) {
+    _envState.env = 'none';
+    _envState.envPath = '';
+    _envState.platform = '';
+  }
+  document.querySelectorAll('#hwfit-server-select, #hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(sel => {
+    if (!sel || sel.tagName !== 'SELECT') return;
+    const wanted = key || (host || 'local');
+    if ([...sel.options].some(o => o.value === wanted)) sel.value = wanted;
+    else if (host && [...sel.options].some(o => o.value === host)) sel.value = host;
+    else sel.value = host ? wanted : 'local';
+  });
+  return { host, server, key };
+}
 
 // When a new action is started (download / dependency / serve), this holds the
 // new task's id so the next render collapses every other card and leaves only
@@ -524,7 +619,7 @@ async function _startQueuedDownload(task) {
       if (t.sessionId === data.session_id) return false;
       return !(key && t.type === 'download' && t.status === 'queued' && _downloadDedupeKey(t) === key);
     });
-    if (!found) tasks.push(_stripTaskSecrets(launchedTask));
+    if (!found) tasks.push(_redactTaskForStorage(launchedTask));
     _saveTasks(tasks);
     _renderRunningTab();
     _startBackgroundMonitor();
@@ -634,8 +729,23 @@ function _loadPrunedTasks() {
 const _REMOVED_KEY = 'cookbook-removed-tasks';
 const _TOMBSTONE_TTL_MS = 24 * 3600 * 1000;
 function _loadTombstones() {
-  try { return JSON.parse(localStorage.getItem(_REMOVED_KEY)) || {}; }
+  try {
+    const tomb = JSON.parse(localStorage.getItem(_REMOVED_KEY)) || {};
+    const now = Date.now();
+    let changed = false;
+    for (const k in tomb) {
+      if (now - tomb[k] > _TOMBSTONE_TTL_MS) {
+        delete tomb[k];
+        changed = true;
+      }
+    }
+    if (changed) localStorage.setItem(_REMOVED_KEY, JSON.stringify(tomb));
+    return tomb;
+  }
   catch { return {}; }
+}
+function _saveTombstones(tomb) {
+  localStorage.setItem(_REMOVED_KEY, JSON.stringify(tomb || {}));
 }
 function _tombstoneTask(id) {
   if (!id) return;
@@ -643,19 +753,29 @@ function _tombstoneTask(id) {
   const now = Date.now();
   tomb[id] = now;
   for (const k in tomb) { if (now - tomb[k] > _TOMBSTONE_TTL_MS) delete tomb[k]; }
-  localStorage.setItem(_REMOVED_KEY, JSON.stringify(tomb));
+  _saveTombstones(tomb);
 }
 function _isTombstoned(id) {
   const ts = _loadTombstones()[id];
   return ts != null && (Date.now() - ts) <= _TOMBSTONE_TTL_MS;
 }
 
-function _stripTaskSecrets(task) {
+function _redactStoredText(value) {
+  return String(value || '')
+    .replace(/hf_[A-Za-z0-9]{20,}/g, '[redacted-token]')
+    .replace(/((?:api[_-]?key|token|authorization|password|passwd|secret)\s*[=:]\s*)(["']?)[^\s"']+/gi, '$1$2[redacted]');
+}
+
+function _redactTaskForStorage(task) {
   if (!task || typeof task !== 'object') return task;
   const safe = { ...task };
+  if (typeof safe.output === 'string') safe.output = _redactStoredText(safe.output);
   if (safe.payload && typeof safe.payload === 'object') {
     safe.payload = { ...safe.payload };
     delete safe.payload.hf_token;
+    delete safe.payload.hfToken;
+    if (typeof safe.payload._cmd === 'string') safe.payload._cmd = _redactStoredText(safe.payload._cmd);
+    if (typeof safe.payload.cmd === 'string') safe.payload.cmd = _redactStoredText(safe.payload.cmd);
   }
   return safe;
 }
@@ -664,23 +784,24 @@ function _stripStateSecrets(state) {
   const safe = { ...state };
   if (safe.env && typeof safe.env === 'object') {
     const { hfToken, ...env } = safe.env;
-    if (hfToken) env.hfToken = hfToken;
     safe.env = env;
   }
-  if (Array.isArray(safe.tasks)) safe.tasks = safe.tasks.map(_stripTaskSecrets);
+  if (Array.isArray(safe.tasks)) safe.tasks = safe.tasks.map(_redactTaskForStorage);
   return safe;
 }
 
 export function _saveTasks(tasks) {
-  localStorage.setItem(TASKS_KEY, JSON.stringify((tasks || []).map(_stripTaskSecrets)));
+  localStorage.setItem(TASKS_KEY, JSON.stringify((tasks || []).map(_redactTaskForStorage)));
   _syncToServer();
 }
 
 export function _addTask(sessionId, name, type, payload) {
   let tasks = _loadTasks();
   const remoteHost = (payload && payload.remote_host) || _envState.remoteHost || '';
-  const sshPort = (payload && payload.ssh_port) || _getPort(remoteHost) || '';
-  const platform = (payload && payload.platform) || _getPlatform(remoteHost) || '';
+  const remoteServerKey = (payload && payload.remote_server_key) || '';
+  const remoteServerName = (payload && payload.remote_server_name) || '';
+  const sshPort = (payload && payload.ssh_port) || _getPort(remoteServerKey || remoteHost) || '';
+  const platform = (payload && payload.platform) || _getPlatform(remoteServerKey || remoteHost) || '';
   // Serving a model supersedes its finished download — clear the matching
   // finished download card (covers serving directly from the Serve tab, not just
   // via the download card's "Serve →" button).
@@ -695,7 +816,7 @@ export function _addTask(sessionId, name, type, payload) {
       return !(key && t.type === 'download' && t.status === 'queued' && _downloadDedupeKey(t) === key);
     });
   }
-  const task = _stripTaskSecrets({ id: sessionId, sessionId, name, type, status: 'running', output: '', ts: Date.now(), payload: payload || null, remoteHost, sshPort, platform });
+  const task = _redactTaskForStorage({ id: sessionId, sessionId, name, type, status: 'running', output: '', ts: Date.now(), payload: payload || null, remoteHost, remoteServerKey, remoteServerName, sshPort, platform });
   tasks.push(task);
   _saveTasks(tasks);
   // New action → collapse all other cards, leave only this one open.
@@ -782,44 +903,94 @@ function _winSessionCmd(task, tmuxArgs) {
     const ps = host
       ? `Get-Content '${sd}\\${sid}.log' -Tail ${lines} -ErrorAction SilentlyContinue`
       : `Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.log') -Tail ${lines} -ErrorAction SilentlyContinue`;
-    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
+    return _winPowerShellCmd(task, ps);
   }
   if (tmuxArgs.includes('has-session')) {
     const ps = host
       ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Get-Process -Id $p -ErrorAction SilentlyContinue | Out-Null; if ($?) { exit 0 } else { exit 1 } } else { exit 1 }`
       : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { Get-Process -Id $p -ErrorAction SilentlyContinue | Out-Null; if ($?) { exit 0 } else { exit 1 } } else { exit 1 }`;
-    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
+    return _winPowerShellCmd(task, ps);
   }
   if (tmuxArgs.includes('kill-session')) {
-    const ps = host
-      ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`
-      : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.*') -Force -ErrorAction SilentlyContinue`;
-    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
+    const ps = _winSessionStopTreePs(task);
+    return _winPowerShellCmd(task, ps);
   }
   if (tmuxArgs.includes('send-keys') && tmuxArgs.includes('C-c')) {
     const ps = host
       ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -ErrorAction SilentlyContinue }`
       : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -ErrorAction SilentlyContinue }`;
-    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
+    return _winPowerShellCmd(task, ps);
   }
   return host ? `ssh ${pf}${host} 'tmux ${tmuxArgs}' 2>/dev/null` : `tmux ${tmuxArgs} 2>/dev/null`;
 }
 
-function _tmuxGracefulKill(task) {
+function _winPowerShellCmd(task, ps) {
+  const command = `powershell -Command "${ps}"`;
+  if (!task.remoteHost) return command;
+  return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} ${_shQuote(command)}`;
+}
+
+function _winSessionStopTreePs(task) {
+  const host = task.remoteHost;
+  const sd = host ? '$env:TEMP\\odysseus-sessions' : '$env:TEMP\\odysseus-tmux';
+  const sid = task.sessionId;
+  const stopTree = `function Stop-Tree([int]$Id) { Get-CimInstance Win32_Process -Filter ('ParentProcessId = ' + $Id) -ErrorAction SilentlyContinue | ForEach-Object { Stop-Tree ([int]$_.ProcessId) }; Stop-Process -Id $Id -Force -ErrorAction SilentlyContinue }`;
+  return host
+    ? `${stopTree}; $p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p -match '^\\d+$') { Stop-Tree ([int]$p) }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`
+    : `${stopTree}; $p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p -match '^\\d+$') { Stop-Tree ([int]$p) }; Remove-Item (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.*') -Force -ErrorAction SilentlyContinue`;
+}
+
+export function _tmuxGracefulKill(task) {
   if (_isWindows(task)) {
-    const host = task.remoteHost;
-    const sd = host ? '$env:TEMP\\odysseus-sessions' : '$env:TEMP\\odysseus-tmux';
-    const sid = task.sessionId;
-    const pf = _sshPrefix(_getPort(task));
-    const ps = host
-      ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`
-      : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.*') -Force -ErrorAction SilentlyContinue`;
-    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
+    const ps = _winSessionStopTreePs(task);
+    return _winPowerShellCmd(task, ps);
   }
   if (task.remoteHost) {
     return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} 'tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null'`;
   }
   return `tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null`;
+}
+
+// Force-kill escalation: SIGKILL the tmux pane's owning PID and any children,
+// then nuke the session. Use AFTER the graceful kill when the process is
+// still detected — vLLM sometimes ignores SIGINT during model init, and a
+// stuck CUDA context can survive `tmux kill-session` alone.
+export function _tmuxForceKill(task) {
+  if (_isWindows(task)) {
+    // Windows graceful path already does Stop-Process -Force, so the same
+    // command serves as the "force" variant.
+    return _tmuxGracefulKill(task);
+  }
+  const sid = task.sessionId;
+  const inner =
+    `PIDS=$(tmux list-panes -t ${sid} -F "#{pane_pid}" 2>/dev/null); ` +
+    `if [ -n "$PIDS" ]; then ` +
+    `  for P in $PIDS; do ` +
+    `    pkill -KILL -P "$P" 2>/dev/null; ` +
+    `    kill -9 "$P" 2>/dev/null; ` +
+    `  done; ` +
+    `fi; ` +
+    `tmux kill-session -t ${sid} 2>/dev/null`;
+  if (task.remoteHost) {
+    return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} ${_shQuote(inner)}`;
+  }
+  return inner;
+}
+
+// Returns a shell snippet that prints "ALIVE" if the tmux session still
+// exists (or its main PID is still listed in /proc), "DEAD" otherwise.
+// Used by the Stop-all escalation to decide whether to force-kill.
+export function _tmuxIsAliveCheck(task) {
+  if (_isWindows(task)) {
+    // Skip the check on Windows — the graceful path already force-kills.
+    return null;
+  }
+  const sid = task.sessionId;
+  const inner = `if tmux has-session -t ${sid} 2>/dev/null; then echo ALIVE; else echo DEAD; fi`;
+  if (task.remoteHost) {
+    return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} ${_shQuote(inner)}`;
+  }
+  return inner;
 }
 
 function _shQuote(value) {
@@ -940,14 +1111,24 @@ function _presetEnvFields(task) {
   };
 }
 
+function _redactPresetForStorage(preset) {
+  if (!preset || typeof preset !== 'object') return preset;
+  const safe = { ...preset };
+  if (typeof safe.cmd === 'string') safe.cmd = _redactStoredText(safe.cmd);
+  if (typeof safe.command === 'string') safe.command = _redactStoredText(safe.command);
+  delete safe.hf_token;
+  delete safe.hfToken;
+  return safe;
+}
+
 function _saveTaskAsPreset(task, label) {
   const host = task.remoteHost || 'localhost';
   const portMatch = task.payload?._cmd?.match(/--port\s+(\d+)/);
   const port = portMatch ? portMatch[1] : '8000';
   const presets = _loadPresets();
   if (presets.some(p => p.cmd === task.payload._cmd)) return false;
-  presets.push({ name: task.name, model: task.payload.repo_id, backend: 'vllm', host, port, cmd: task.payload._cmd, remoteHost: task.remoteHost || '', label: label || task.name, ..._presetEnvFields(task) });
-  _savePresets(presets);
+  presets.push(_redactPresetForStorage({ name: task.name, model: task.payload.repo_id, backend: 'vllm', host, port, cmd: task.payload._cmd, remoteHost: task.remoteHost || '', label: label || task.name, ..._presetEnvFields(task) }));
+  _savePresets(presets.map(_redactPresetForStorage));
   return true;
 }
 
@@ -990,7 +1171,7 @@ function _autoSaveWorkingConfig(task) {
   const existing = presets.find(p => p.cmd === cmd);
   if (existing) {
     task._autoSaved = true;
-    if (!existing.confirmedWorking) { existing.confirmedWorking = true; _savePresets(presets); }
+    if (!existing.confirmedWorking) { existing.confirmedWorking = true; _savePresets(presets.map(_redactPresetForStorage)); }
     return;   // already saved → just confirm it, no duplicate, no toast
   }
   // Respect the per-model cap the manual save flow uses (max 5).
@@ -998,13 +1179,13 @@ function _autoSaveWorkingConfig(task) {
   const host = task.remoteHost || 'localhost';
   const portMatch = cmd.match(/--port[=\s]+(\d+)/);
   const port = portMatch ? portMatch[1] : '8000';
-  presets.push({
+  presets.push(_redactPresetForStorage({
     name: task.name, model, backend: 'vllm', host, port,
     cmd, remoteHost: task.remoteHost || '',
     label: _autoConfigLabel(task), confirmedWorking: true, autoSaved: true,
     ..._presetEnvFields(task),
-  });
-  _savePresets(presets);
+  }));
+  _savePresets(presets.map(_redactPresetForStorage));
   task._autoSaved = true;
   uiModule.showToast('Saved working config');
 }
@@ -1026,6 +1207,7 @@ function _syncToServer() {
       if (!_envState || !Array.isArray(_envState.servers) || _envState.servers.length === 0) return;
       const state = {
         tasks: _loadTasks(),
+        removedTasks: _loadTombstones(),
         presets: _loadPresets(),
         env: _envState,
         serveState: null,
@@ -1074,15 +1256,22 @@ export async function _syncFromServer() {
 
     const localTasks = _loadTasks();
     const serverTasks = state.tasks || [];
+    const serverTombstones = (state.removedTasks && typeof state.removedTasks === 'object') ? state.removedTasks : {};
+    const localTombstones = _loadTombstones();
+    const mergedTombstones = { ...serverTombstones, ...localTombstones };
+    for (const [id, ts] of Object.entries(serverTombstones)) {
+      if (localTombstones[id] == null || Number(ts) > Number(localTombstones[id])) mergedTombstones[id] = ts;
+    }
+    _saveTombstones(mergedTombstones);
 
     const localIds = new Set(localTasks.map(t => t.sessionId));
-    const merged = [...localTasks];
+    const merged = localTasks.filter(t => !_isTombstoned(t.sessionId));
     for (const t of serverTasks) {
       if (!localIds.has(t.sessionId) && !_isTombstoned(t.sessionId)) {
         merged.push(t);
       }
     }
-    localStorage.setItem(TASKS_KEY, JSON.stringify(merged.map(_stripTaskSecrets)));
+    localStorage.setItem(TASKS_KEY, JSON.stringify(merged.map(_redactTaskForStorage)));
 
     if (state.env) {
       // The active server selection (remoteHost + its env/path/platform) is a
@@ -1093,6 +1282,18 @@ export async function _syncFromServer() {
       const { remoteHost: _rh, env: _e, envPath: _ep, platform: _pf, ...settings } = state.env;
       delete settings.hfToken;
       Object.assign(_envState, settings);
+      const selected = (_envState.remoteServerKey && _serverByVal?.(_envState.remoteServerKey))
+        || (_envState.remoteHost ? (_envState.servers || []).find(s => s.host === _envState.remoteHost) : null);
+      if (selected) {
+        _envState.env = selected.env || 'none';
+        _envState.envPath = selected.envPath || '';
+        _envState.platform = selected.platform || '';
+      } else if (!_envState.remoteHost) {
+        const local = (_envState.servers || []).find(s => !s.host || s.host === 'local');
+        _envState.env = local?.env || 'none';
+        _envState.envPath = local?.envPath || '';
+        _envState.platform = local?.platform || '';
+      }
       const { hfToken, ...safeState } = _envState;
       localStorage.setItem('cookbook-last-state', JSON.stringify(safeState));
     }
@@ -1102,6 +1303,7 @@ export async function _syncFromServer() {
     if (state.serveState) {
       localStorage.setItem(SERVE_STATE_KEY, JSON.stringify(state.serveState));
     }
+    document.dispatchEvent(new CustomEvent('cookbook:state-synced', { detail: state }));
     return true;
   } catch { return false; }
 }
@@ -1260,16 +1462,11 @@ async function _openServeEditForTask(task, cmdOverride, fieldOverrides = null) {
   if (fieldOverrides && typeof fieldOverrides === 'object') {
     fields = { ...(fields || {}), ...fieldOverrides };
   }
-  // Switch the active server to the one this serve ran on (mirrors _openEdit).
-  const _tHost = task.remoteHost || '';
-  _envState.remoteHost = _tHost;
-  const _tSrv = _envState.servers.find(s => s.host === _tHost);
-  if (_tSrv) { _envState.env = _tSrv.env || 'none'; _envState.envPath = _tSrv.envPath || ''; _envState.platform = _tSrv.platform || ''; }
-  else if (!_tHost) { _envState.env = 'none'; _envState.envPath = ''; _envState.platform = ''; }
-  document.querySelectorAll('#hwfit-server-select, #hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(sel => {
-    if (!sel || sel.tagName !== 'SELECT') return;
-    sel.value = _tHost || 'local';
-  });
+  fields = { ...(fields || {}), _replaceTaskId: task.sessionId };
+  // Switch the active server to the exact profile this serve ran on. The
+  // dropdown stores stable srv: keys, not raw host strings, so preserving only
+  // task.remoteHost can relaunch against the local container by accident.
+  _selectTaskServer(task);
   try {
     const { openServePanelForRepo } = await import('./cookbookServe.js');
     await openServePanelForRepo(repo, fields);
@@ -1467,14 +1664,33 @@ function _parseServeCmdToFields(cmd) {
   return fields;
 }
 
-export async function _launchServeTask(shortName, repo, cmd, fields, hostOverride) {
+export async function _launchServeTask(shortName, repo, cmd, fields, hostOverride, targetMeta = null) {
   // Host resolution mirrors the download path: when the caller passes an explicit
   // host (resolved from the dropdown the user actually picked), use it and look
   // up that server's port/platform from the shared servers list. Only fall back
   // to _envState.remoteHost for legacy callers (diagnosis/pip-update).
   const _host = (hostOverride !== undefined) ? (hostOverride || '') : (_envState.remoteHost || '');
-  const _hsrv = _envState.servers.find(s => s.host === _host) || {};
+  const _targetKey = targetMeta?.serverKey || '';
+  const _hsrv = (_targetKey && _targetKey !== 'local' ? _serverByVal(_targetKey) : null)
+    || (hostOverride === undefined ? _serverByVal(_envState.remoteServerKey || _host) : null)
+    || _envState.servers.find(s => s.host === _host) || {};
+  const _serverMetaKey = _targetKey || (_hsrv && _serverKey ? _serverKey(_hsrv) : '') || (_host || 'local');
+  const _serverMetaName = targetMeta?.serverName || _hsrv.name || (_host ? _host : 'Local');
   const _hplatform = _host ? (_hsrv.platform || '') : (_envState.platform || '');
+  const _replaceTaskId = fields?._replaceTaskId || '';
+  if (_replaceTaskId) {
+    try {
+      const _old = _loadTasks().find(t => t.sessionId === _replaceTaskId);
+      if (_old && _old.type === 'serve') {
+        await fetch('/api/shell/exec', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command: _tmuxGracefulKill(_old) }),
+        });
+        _removeTask(_old.sessionId);
+      }
+    } catch {}
+  }
 
   // Replace any serve already targeting this same host:port — you can't run two
   // servers on one port, so re-serving (or retrying) should stop & remove the
@@ -1518,7 +1734,7 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
     }
   } else {
     if (_envState.env === 'venv' && _envState.envPath) {
-      const p = _envState.envPath;
+      const p = _venvRootFromPath(_envState.envPath);
       envPrefix = 'source ' + (p.endsWith('/bin/activate') ? p : p + '/bin/activate');
     } else if (_envState.env === 'conda' && _envState.envPath) {
       envPrefix = 'eval "$(conda shell.bash hook)" && conda activate ' + _envState.envPath;
@@ -1529,7 +1745,7 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
     repo_id: repo,
     cmd: cmd,
     remote_host: _host || undefined,
-    ssh_port: _getPort(_host) || undefined,
+    ssh_port: _getPort(_serverMetaKey || _host) || undefined,
     env_prefix: envPrefix || undefined,
     hf_token: _envState.hfToken || undefined,
     gpus: _envState.gpus || undefined,
@@ -1553,13 +1769,17 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
       return;
     }
 
-    const _sp = _getPort(_host);
+    const _sp = _getPort(_serverMetaKey || _host);
     // _fields = the exact structured serve-form values used for this launch,
     // so the "Edit / relaunch" button can re-open the Serve panel pre-filled
     // with these precise settings (not just the last-used-for-repo state).
-    const payload = { repo_id: repo, remote_host: _host || undefined, ssh_port: _sp || undefined, _cmd: cmd, _fields: fields || undefined, _env: _usedEnv, _envPath: _usedEnvPath, _gpus: _usedGpus };
+    const payload = { repo_id: repo, remote_host: _host || undefined, remote_server_key: _serverMetaKey || undefined, remote_server_name: _serverMetaName || undefined, ssh_port: _sp || undefined, _cmd: cmd, _fields: fields || undefined, _env: _usedEnv, _envPath: _usedEnvPath, _gpus: _usedGpus };
     _addTask(data.session_id, shortName, 'serve', payload);
     uiModule.showToast(`Serving ${shortName}...`);
+    // Auto-register may have enabled an existing (offline) endpoint for this
+    // host:port. Refresh the picker so the row is no longer dimmed, and the
+    // user doesn't see "offline" on a serve they just started.
+    try { _refreshModelsAfterEndpointChange(); } catch (_) {}
   } catch (e) {
     uiModule.showToast('Failed: ' + e.message);
   }
@@ -1634,7 +1854,7 @@ export function _renderRunningTab() {
     runTab.className = 'cookbook-tab';
     runTab.dataset.backend = 'Running';
     const _errCount = tasks.filter(t => t.status === 'error' || t.status === 'crashed').length;
-    runTab.innerHTML = `Running${activeCountHtml}${_errCount ? `<span class="cookbook-tab-error-dot"></span>` : ''}`;
+    runTab.innerHTML = `Active${activeCountHtml}${_errCount ? `<span class="cookbook-tab-error-dot"></span>` : ''}`;
     tabBar.insertBefore(runTab, tabBar.firstChild);
     runTab.addEventListener('click', () => {
       tabBar.querySelectorAll('.cookbook-tab').forEach(t => t.classList.remove('active'));
@@ -1645,7 +1865,7 @@ export function _renderRunningTab() {
     });
   } else if (runTab) {
     const _errCount2 = tasks.filter(t => t.status === 'error' || t.status === 'crashed').length;
-    runTab.innerHTML = tasks.length ? `Running${activeCountHtml}${_errCount2 ? '<span class="cookbook-tab-error-dot"></span>' : ''}` : 'Running';
+    runTab.innerHTML = tasks.length ? `Active${activeCountHtml}${_errCount2 ? '<span class="cookbook-tab-error-dot"></span>' : ''}` : 'Active';
     if (!hasContent) {
       if (runTab.classList.contains('active')) {
         const wfTab = tabBar.querySelector('.cookbook-tab[data-backend="Search"]');
@@ -1660,11 +1880,15 @@ export function _renderRunningTab() {
     group = document.createElement('div');
     group.className = 'cookbook-group hidden';
     group.dataset.backendGroup = 'Running';
-    group.innerHTML = '<div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">' +
+    // No `flex:1` on the card — with overflow:visible (forced via #cookbook-modal
+    // .cookbook-group > .admin-card), flex:1 collapsed the card to body height
+    // and the body's scrollHeight stopped tracking the overflowing children.
+    // Sized-to-content means cookbook-body's overflow-y:auto kicks in naturally.
+    group.innerHTML = '<div class="admin-card" style="display:flex;flex-direction:column;">' +
       '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">' +
-      '<h2 style="margin:0;padding:0;line-height:1;">Running <span id="running-count" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal">' + activeCount + '</span></h2>' +
+      '<h2 style="margin:0;padding:0;line-height:1;">Active <span id="running-count" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal">' + activeCount + '</span></h2>' +
       '</div>' +
-      '<p class="memory-desc doclib-desc" style="margin-top:6px;">Active downloads and serving processes.</p>' +
+      '<p class="memory-desc doclib-desc" style="margin-top:6px;">Active downloads, installs and model launches.</p>' +
       '</div>';
     const firstGroup = body.querySelector('.cookbook-group');
     if (firstGroup) body.insertBefore(group, firstGroup);
@@ -1698,15 +1922,25 @@ export function _renderRunningTab() {
   }
 
   // Group tasks by server
-  const _serverName = (host) => {
-    if (!host) return 'Local';
-    const srv = _envState.servers.find(s => s.host === host);
-    return srv?.name || host;
+  const _taskServerKey = (task) => task?.remoteServerKey || task?.remoteHost || '';
+  const _serverName = (keyOrTask) => {
+    if (keyOrTask && typeof keyOrTask === 'object') {
+      const task = keyOrTask;
+      if (task.remoteServerName) return task.remoteServerName;
+      const srv = task.remoteServerKey ? _serverByVal(task.remoteServerKey) : null;
+      if (srv?.name) return srv.name;
+      if (!task.remoteHost) return 'Local';
+      return (_envState.servers.find(s => s.host === task.remoteHost)?.name) || task.remoteHost;
+    }
+    const key = keyOrTask || '';
+    if (!key || key === 'local') return 'Local';
+    const srv = _serverByVal(key);
+    return srv?.name || key;
   };
   const serverGroups = {};
   for (const t of tasks) {
-    const key = t.remoteHost || '';
-    if (!serverGroups[key]) serverGroups[key] = { name: _serverName(key), serve: [], download: [] };
+    const key = _taskServerKey(t);
+    if (!serverGroups[key]) serverGroups[key] = { name: _serverName(t), serve: [], download: [] };
     serverGroups[key][t.type === 'serve' ? 'serve' : 'download'].push(t);
   }
 
@@ -1741,7 +1975,7 @@ export function _renderRunningTab() {
       // green when reachable, red if any serve task on it is crashed/unreachable.
       const _secDot = (key && allTasks.some(_serveTaskFailed)) ? 'fail' : 'ok';
       const _dotTitle = key ? (_secDot === 'fail' ? 'Server not responding' : 'Reachable') : 'Local (this machine)';
-      sec.insertAdjacentHTML('afterbegin', `<div class="cookbook-section-header" data-collapse="${bodyId}"><svg class="cookbook-section-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg><span class="cookbook-srv-status ${_secDot}" title="${_dotTitle}" style="flex-shrink:0;position:relative;top:0px;"></span><span class="cookbook-section-title" style="margin:0;">${esc(sg.name)}</span><button class="cookbook-btn cookbook-stop-all-btn" data-stop-server="${esc(key)}">Stop all</button><button class="cookbook-btn cookbook-clear-btn" data-clear-server="${esc(key)}">Clear finished</button></div><div id="${bodyId}" class="cookbook-section-body"></div>`);
+      sec.insertAdjacentHTML('afterbegin', `<div class="cookbook-section-header" data-collapse="${bodyId}"><svg class="cookbook-section-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg><span class="cookbook-srv-status ${_secDot}" title="${_dotTitle}" style="flex-shrink:0;position:relative;top:0px;"></span><span class="cookbook-section-title" style="margin:0;">${esc(sg.name)}</span><button class="cookbook-btn cookbook-stop-all-btn" data-stop-server="${esc(key)}" title="Stop all running servers"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true" style="vertical-align:-1px;margin-right:4px;"><rect x="5" y="5" width="14" height="14" rx="1.5"/></svg>Stop all</button><button class="cookbook-btn cookbook-clear-btn" data-clear-server="${esc(key)}" title="Clear finished tasks"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-1px;margin-right:4px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Clear finished</button></div><div id="${bodyId}" class="cookbook-section-body"></div>`);
     }
   }
 
@@ -1752,10 +1986,23 @@ export function _renderRunningTab() {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();  // don't toggle the section collapse (was an inline onclick, blocked by CSP)
       const host = btn.dataset.clearServer;
-      if (!await window.styledConfirm(`Clear finished tasks on ${_serverName(host)}?`, { confirmText: 'Clear' })) return;
       const allTasks = _loadTasks();
-      const toRemove = allTasks.filter(t => (t.remoteHost || '') === host && _canClearTask(t));
-      const remaining = allTasks.filter(t => (t.remoteHost || '') !== host || !_canClearTask(t));
+      const toRemove = allTasks.filter(t => _taskServerKey(t) === host && _canClearTask(t));
+      // Bail with a clear message instead of silently doing nothing when
+      // every task on this server is still running (nothing finished to
+      // clear yet) — the previous behavior looked like the button was dead.
+      if (!toRemove.length) {
+        const stillRunning = allTasks.filter(t => _taskServerKey(t) === host && t.status === 'running').length;
+        const _msg = stillRunning
+          ? `No finished tasks on ${_serverName(host)} — ${stillRunning} still running. Stop them first to clear.`
+          : `No finished tasks on ${_serverName(host)}.`;
+        if (window.uiModule?.showToast) window.uiModule.showToast(_msg);
+        else alert(_msg);
+        return;
+      }
+      if (!await window.styledConfirm(`Clear ${toRemove.length} finished task${toRemove.length === 1 ? '' : 's'} on ${_serverName(host)}?`, { confirmText: 'Clear' })) return;
+      toRemove.forEach(t => _tombstoneTask(t.sessionId));
+      const remaining = allTasks.filter(t => _taskServerKey(t) !== host || !_canClearTask(t));
       _saveTasks(remaining);
       // Fade/slide each finished card out (same exit as the per-card clear)
       // instead of yanking them instantly.
@@ -1789,7 +2036,7 @@ export function _renderRunningTab() {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();  // don't toggle the section collapse
       const host = btn.dataset.stopServer;
-      const running = _loadTasks().filter(t => (t.remoteHost || '') === host && t.status === 'running');
+      const running = _loadTasks().filter(t => _taskServerKey(t) === host && t.status === 'running');
       if (!running.length) { uiModule.showToast(`Nothing running on ${_serverName(host)}`); return; }
       if (!await window.styledConfirm(`Stop ${running.length} running task${running.length > 1 ? 's' : ''} on ${_serverName(host)}?`, { confirmText: 'Stop all' })) return;
       // Mark every task as user-stopped BEFORE firing the kills so that the
@@ -1862,7 +2109,17 @@ export function _renderRunningTab() {
       const startNow = el.querySelector('.cookbook-task-start-now');
       if (startNow) startNow.style.display = (task.type === 'download' && task.status === 'queued') ? '' : 'none';
       const terminalDiag = _terminalServeDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
-      if (terminalDiag) _showDiagnosis(el, terminalDiag, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
+      if (terminalDiag) {
+        _showDiagnosis(el, terminalDiag, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
+      } else {
+        const existingDiag = el.querySelector('.cookbook-diagnosis');
+        // Keep diagnosis for failed tasks even if output was cleared and we
+        // can no longer re-derive the exact message — removing it would hide
+        // the crash reason from the user.
+        if (existingDiag && !['stopped', 'error', 'crashed', 'failed'].includes(task.status)) {
+          existingDiag.remove();
+        }
+      }
     }
     if (!task) {
       if (el._uptimeInterval) { clearInterval(el._uptimeInterval); el._uptimeInterval = null; }
@@ -1882,11 +2139,12 @@ export function _renderRunningTab() {
 
     const _bdg = _taskBadge(task);
     const _bdgTitle = (task._unreachable && task.status === 'running') ? ' title="Server not responding — it may have crashed"' : '';
+    const displayName = _taskDisplayName(task);
     el.innerHTML = `
       <div class="cookbook-task-header">
         <span class="cookbook-task-type${(task.status === 'done' && task.type === 'download') ? ' cookbook-task-type-done' : ''}" data-type="${esc(task.type)}">${esc((task.status === 'done' && task.type === 'download') ? 'finished' : task.type)}</span>
-        <span class="cookbook-task-name">${modelLogo(task.name)}${esc(task.name)}</span>
-        <span class="cookbook-task-indicator"><span class="cookbook-task-wave" style="display:${task.status === 'running' ? '' : 'none'}"></span><span class="cookbook-task-check" title="Clear" style="display:${_canClearTask(task) ? '' : 'none'}"><svg class="cookbook-task-check-ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#50fa7b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cookbook-task-clear-ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span class="cookbook-task-done-label">${esc(_clearPillLabel(task))}</span><span class="cookbook-task-clear-label">clear</span></span></span>
+        <span class="cookbook-task-name">${modelLogo(task.name)}${esc(displayName)}</span>
+        <span class="cookbook-task-indicator"><span class="cookbook-task-wave" style="display:${task.status === 'running' ? '' : 'none'}"></span>${_canLaunchDownloadedTask(task) ? '<button type="button" class="cookbook-task-serve-btn" title="Open in Launch"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Launch</span></button>' : ''}<span class="cookbook-task-check" title="Clear" style="display:${_canClearTask(task) ? '' : 'none'}"><svg class="cookbook-task-check-ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#50fa7b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cookbook-task-clear-ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span class="cookbook-task-done-label">${esc(_clearPillLabel(task))}</span><span class="cookbook-task-clear-label">clear</span></span></span>
         <button type="button" class="cookbook-task-start-now" title="Start this queued download now" style="display:${(task.type === 'download' && task.status === 'queued') ? '' : 'none'}"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="8 5 19 12 8 19 8 5"/></svg><span>start now</span></button>
         <span class="cookbook-task-status ${_bdg.cls}"${_bdgTitle}>${esc(_bdg.text)}</span>
         <button class="cookbook-task-menu-btn" title="Actions">&#8942;</button>
@@ -1900,6 +2158,9 @@ export function _renderRunningTab() {
 
     const terminalDiag = _terminalServeDiagnosis(task, task.output || '');
     if (terminalDiag) _showDiagnosis(el, terminalDiag, task.output || '');
+    if (!terminalDiag && (task.status === 'error' || task.status === 'crashed') && task._backendDiagnosis) {
+      _showDiagnosis(el, task._backendDiagnosis, task.output || '');
+    }
 
     const _uptimeEl = el.querySelector('.cookbook-task-uptime');
     if (_uptimeEl && (task.type === 'serve' || task.type === 'download') && task.status === 'running') {
@@ -1955,18 +2216,11 @@ export function _renderRunningTab() {
           e.stopPropagation();
           const repo = task.payload?.repo_id || task.name;
           if (!repo) { uiModule.showToast('No model info on this task'); return; }
-          // Point the active server at the one it downloaded to.
-          const _tHost = task.remoteHost || '';
-          _envState.remoteHost = _tHost;
-          const _tSrv = _envState.servers.find(s => s.host === _tHost);
-          if (_tSrv) { _envState.env = _tSrv.env || 'none'; _envState.envPath = _tSrv.envPath || ''; _envState.platform = _tSrv.platform || ''; }
-          else if (!_tHost) { _envState.env = 'none'; _envState.envPath = ''; _envState.platform = ''; }
-          document.querySelectorAll('#hwfit-server-select, #hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(sel => {
-            if (sel && sel.tagName === 'SELECT') sel.value = _tHost || 'local';
-          });
+          // Point the active server at the exact profile it downloaded to.
+          _selectTaskServer(task);
           try {
             const { openServePanelForRepo } = await import('./cookbookServe.js');
-            await openServePanelForRepo(repo);
+            await openServePanelForRepo(repo, _downloadServeFields(task));
             // Serving it supersedes the finished download — clear the card from
             // the Running tab (smooth exit) now that we've jumped to Serve.
             _animateOutThenRemove(el, task.sessionId);
@@ -2076,57 +2330,40 @@ export function _renderRunningTab() {
         dropdown.className = 'cookbook-task-dropdown';
 
         const items = [];
+        // ── Run section ─────────────────────────────────────────────
         // Queued download: let the user jump the queue and start it immediately
         // (downloads otherwise run one-at-a-time per server).
         if (task.type === 'download' && task.status === 'queued') {
-          items.push({ label: 'Start now', action: 'start-now', custom: () => {
+          items.push({ group: 'run', label: 'Start now', action: 'start-now', custom: () => {
             _startQueuedDownload(task);
             _renderRunningTab();
           }});
         }
         if (task.status !== 'running' && task.status !== 'queued') {
-          items.push({ label: 'Reconnect', action: 'reconnect' });
+          items.push({ group: 'run', label: 'Reconnect tmux', action: 'reconnect' });
         }
-        if (task.status === 'running') {
-          items.push({ label: 'Stop', action: 'stop', danger: true });
-        }
-        items.push({ label: 'Restart', action: 'retry' });
-        // Edit serve — open the full serve panel (same as the edit icon),
-        // switching to this task's server first so the model is found.
+        items.push({ group: 'run', label: 'Restart', action: 'retry' });
+        // ── Edit section ────────────────────────────────────────────
+        // Merged "Edit & relaunch" — opens the structured serve panel
+        // pre-filled with this task's config. The old standalone "Edit
+        // cmd & relaunch" raw-text dialog is now reachable from inside
+        // that panel (Show command). Single entry-point per task.
         if (task.type === 'serve' && task.payload?.repo_id) {
-          items.push({ label: 'Edit in serve panel', action: 'edit-panel', tooltip: 'Open the full Serve config panel pre-filled with this task — pick a different backend, change GPUs, edit env vars, then Launch from there', custom: () => _openEdit() });
+          items.push({ group: 'edit', label: 'Edit & relaunch', action: 'edit-panel', tooltip: 'Open the Serve config panel pre-filled with this task — pick a different backend, change GPUs, edit env vars or the raw cmd, then Launch.', custom: () => _openEdit() });
         }
-        // Save serve — save current launch config as a preset.
         if (task.type === 'serve' && task.payload?._cmd) {
-          items.push({ label: 'Save serve', action: 'save', custom: () => {
+          items.push({ group: 'edit', label: 'Save serve', action: 'save', custom: () => {
             if (!_saveTaskAsPreset(task)) { uiModule.showToast('Already saved'); return; }
             uiModule.showToast('Saved to presets');
             _renderRunningTab();
           }});
         }
-        // Edit command — only meaningful for serve tasks that aren't running.
-        // Lets the user tweak flags after a crash/error and relaunch.
-        if (task.type === 'serve' && task.status !== 'running' && task.payload?._cmd) {
-          items.push({ label: 'Edit cmd & relaunch', action: 'edit', tooltip: 'Edit the raw vllm/llama-server cmd string in a dialog and relaunch immediately on the same host', custom: async () => {
-            const newCmd = await _promptEditServeCmd(task.payload._cmd);
-            if (newCmd == null) return; // cancelled
-            try {
-              await fetch('/api/shell/exec', {
-                method: 'POST', credentials: 'same-origin',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
-              });
-            } catch {}
-            _removeTask(task.sessionId);
-            // Relaunch on the task's OWN host, not the current global selection.
-            _launchServeTask(task.name, task.payload.repo_id, newCmd, task.payload._fields, task.remoteHost || '');
-          }});
-        }
+        // ── Endpoint section ────────────────────────────────────────
         // Manual endpoint registration — fallback for when auto-add fails
         // (e.g. probe timeout on a remote that's slow). Forces adding this
         // serve to the model-endpoints list regardless of prior flag state.
         if (task.type === 'serve' && task.payload?._cmd) {
-          items.push({ label: 'Register endpoint', action: 'register-endpoint', custom: async () => {
+          items.push({ group: 'endpoint', label: 'Register endpoint', action: 'register-endpoint', custom: async () => {
             const host = _connectHostFromRemote(task.remoteHost);
             const portMatch = task.payload?._cmd?.match(/--port\s+(\d+)/);
             const port = portMatch ? portMatch[1] : '8000';
@@ -2171,33 +2408,38 @@ export function _renderRunningTab() {
             }
           }});
         }
+        // ── Copy section ────────────────────────────────────────────
         if (_isWindows(task)) {
           const host = task.remoteHost;
           const sd = host ? '$env:TEMP\\odysseus-sessions' : '$env:TEMP\\odysseus-tmux';
           const logCmd = host
             ? `ssh ${_sshPrefix(_getPort(task))}${host} "powershell -Command \\"Get-Content '${sd}\\${task.sessionId}.log' -Wait\\""`
             : `powershell -Command "Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${task.sessionId}.log') -Wait"`;
-          items.push({ label: 'Copy log cmd', action: 'copy-tmux', custom: () => {
+          items.push({ group: 'copy', label: 'Copy log cmd', action: 'copy-tmux', custom: () => {
             _copyText(logCmd);
           }});
         } else {
           // Just the tmux command itself — no ssh wrapper.
           const tmuxAttach = `tmux attach -t ${task.sessionId}`;
-          items.push({ label: 'Copy tmux', action: 'copy-tmux', custom: () => {
+          items.push({ group: 'copy', label: 'Copy tmux', action: 'copy-tmux', custom: () => {
             _copyText(tmuxAttach);
           }});
         }
         if (_shouldOfferCrashReport(task)) {
-          items.push({ label: 'Copy crash report', action: 'copy-crash-report', custom: () => {
+          items.push({ group: 'copy', label: 'Copy crash report', action: 'copy-crash-report', custom: () => {
             const out = (el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
             _copyText(_buildCrashReport(task, out));
             uiModule.showToast('Copied crash report');
           }});
         }
         // Copy the last 50 lines of the task's output/log.
-        items.push({ label: 'Copy last 50 lines', action: 'copy-log', custom: () => {
+        items.push({ group: 'copy', label: 'Copy last 50 lines', action: 'copy-log', custom: () => {
           const out = (el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
           const last = out.split('\n').slice(-50).join('\n');
+          if (!last.trim()) {
+            uiModule.showToast('No log content available yet');
+            return;
+          }
           _copyText(last);
           uiModule.showToast('Copied last 50 lines');
         }});
@@ -2205,8 +2447,10 @@ export function _renderRunningTab() {
         // the live tmux session and (for serve tasks) deletes the
         // matching model-endpoint, THEN animates the task card out.
         // Just "Remove" hid that it stops the live serve too.
+        // ── Danger section ──────────────────────────────────────────
         const _isLive = task.type === 'serve' && ['running', 'ready', 'loading', 'warming', 'starting'].includes(task.status || '');
         items.push({
+          group: 'danger',
           label: _isLive ? 'Stop and remove' : 'Remove',
           action: 'kill',
           tooltip: _isLive
@@ -2214,10 +2458,8 @@ export function _renderRunningTab() {
             : 'Remove this row',
           danger: true,
         });
-        // Cancel = mobile-only dismiss item. Same pattern as the email kebab:
-        // the `dropdown-cancel-mobile` class is hidden on desktop and styled
-        // as a separated bottom row on mobile (border-top + extra padding).
-        items.push({ label: 'Cancel', action: 'cancel', mobileOnly: true, custom: () => {} });
+        // Cancel = mobile-only dismiss item. Same pattern as the email kebab.
+        items.push({ group: 'danger', label: 'Cancel', action: 'cancel', mobileOnly: true, custom: () => {} });
 
         const _MENU_ICONS = {
           'start-now': '<polygon points="6 4 20 12 6 20 6 4"/>',
@@ -2234,7 +2476,18 @@ export function _renderRunningTab() {
           kill: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
           cancel: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
         };
+        let _lastGroup = null;
         for (const item of items) {
+          // Insert a thin divider whenever the group changes, so the
+          // user can visually scan Run / Edit / Endpoint / Copy / Danger
+          // blocks instead of one long undifferentiated list.
+          if (item.group && _lastGroup && item.group !== _lastGroup) {
+            const sep = document.createElement('div');
+            sep.className = 'cookbook-dropdown-divider';
+            sep.style.cssText = 'height:1px;margin:4px 6px;background:color-mix(in srgb, var(--fg) 12%, transparent);pointer-events:none;';
+            dropdown.appendChild(sep);
+          }
+          _lastGroup = item.group || _lastGroup;
           const div = document.createElement('div');
           div.className = 'dropdown-item-compact'
             + (item.danger ? ' cookbook-dropdown-danger' : '')
@@ -2434,6 +2687,10 @@ export function _renderRunningTab() {
     el.querySelector('.cookbook-output-copy').addEventListener('click', (e) => {
       e.stopPropagation();
       const text = el.querySelector('.cookbook-output-pre')?.textContent || '';
+      if (!text.trim()) {
+        uiModule.showToast('No log content available yet');
+        return;
+      }
       _copyText(text).then(() => {
         const btn = el.querySelector('.cookbook-output-copy');
         const origHTML = btn.innerHTML;
@@ -2444,7 +2701,7 @@ export function _renderRunningTab() {
     });
 
     // Route to the right server section body
-    const serverBodyId = `server-body-${(task.remoteHost || 'local').replace(/[^a-zA-Z0-9-]/g, '_')}`;
+    const serverBodyId = `server-body-${(_taskServerKey(task) || 'local').replace(/[^a-zA-Z0-9-]/g, '_')}`;
     const targetBody = document.getElementById(serverBodyId);
     if (targetBody) targetBody.appendChild(el);
     else group.appendChild(el);
@@ -2620,7 +2877,7 @@ async function _reconnectTask(el, task) {
               // capture-pane lets the existing _reconnectTask flow pick up
               // the real state (running, finished, or truly dead).
               const _reconnectFix = {
-                label: 'Reconnect',
+                label: 'Reconnect tmux',
                 action: () => {
                   _updateTask(task.sessionId, { status: 'running' });
                   el.dataset.status = 'running';
@@ -2735,6 +2992,7 @@ async function _reconnectTask(el, task) {
                   _updateTask(task.sessionId, { status: 'done', _doneConfirmAt: null, _lastStatusFlipAt: Date.now() });
                   const _el = document.querySelector(`.cookbook-task[data-task-id="${task.sessionId}"]`);
                   if (_el) {
+                    _clearDiagnosis(_el);
                     _el.dataset.status = 'done';
                     const _badge = _el.querySelector('.cookbook-task-status');
                     if (_badge) { _badge.textContent = _statusLabel('done', task.type); _badge.className = 'cookbook-task-status cookbook-task-done'; }
@@ -2801,13 +3059,14 @@ async function _reconnectTask(el, task) {
             const curProgress = computeProgressSignal(_bytes, _dlAgg, lastPct, snapshot);
             const _fetchPctMatches = [...snapshot.matchAll(/Fetching\s+\d+\s+files:\s*(\d+)%/g)];
             const _fetchPct = _fetchPctMatches.length ? parseInt(_fetchPctMatches[_fetchPctMatches.length - 1][1]) : null;
+            const isPipDep = !!(task.payload && task.payload._dep);
             const _startupStalled = !_bytes && ((_dlAgg === 0) || (_fetchPct === 0)) && curProgress === '0';
             const _STALE_TIMEOUT = _startupStalled ? STARTUP_STALE_PROGRESS_MS : STALE_PROGRESS_MS;
             if (!el._lastProgress) { el._lastProgress = curProgress; el._lastProgressTime = Date.now(); }
             if (curProgress !== el._lastProgress) {
               el._lastProgress = curProgress;
               el._lastProgressTime = Date.now();
-            } else if (Date.now() - (el._lastProgressTime || 0) > _STALE_TIMEOUT && task._autoRestarted) {
+            } else if (!isPipDep && Date.now() - (el._lastProgressTime || 0) > _STALE_TIMEOUT && task._autoRestarted) {
               const mins = Math.floor((Date.now() - (el._lastProgressTime || 0)) / 60000);
               // Already auto-restarted once and stalled again — make the badge a
               // one-click retry (resumes from the cached partial files) so the
@@ -2820,7 +3079,7 @@ async function _reconnectTask(el, task) {
                 badge._retryBound = true;
                 badge.addEventListener('click', (e) => { e.stopPropagation(); _retryTask(el, task); });
               }
-            } else if (Date.now() - (el._lastProgressTime || 0) > _STALE_TIMEOUT && !task._autoRestarted) {
+            } else if (!isPipDep && Date.now() - (el._lastProgressTime || 0) > _STALE_TIMEOUT && !task._autoRestarted) {
               task._autoRestarted = true;
               _updateTask(task.sessionId, { _autoRestarted: true });
               badge.textContent = _startupStalled ? '0% stall — retrying' : 'stale — restarting';
@@ -2972,6 +3231,7 @@ async function _reconnectTask(el, task) {
               break;
             }
             if (snapshot.includes('DOWNLOAD_OK') || (snapshot.includes('/snapshots/') && completed >= totalFiles && totalFiles > 0)) {
+              _clearDiagnosis(el);
               _dlRetryCount.delete(task.payload?.repo_id || task.name);
               badge.textContent = _statusLabel('done', task.type);
               badge.className = 'cookbook-task-status cookbook-task-done';
@@ -3002,6 +3262,11 @@ async function _reconnectTask(el, task) {
             if (info.status === 'ready' && !task._serveReady) {
               task._serveReady = true;
               _updateTask(task.sessionId, { _serveReady: true });
+              // The auto-registered endpoint was marked offline while the
+              // server was coming up. Now that it's reachable, nudge the
+              // picker to re-probe so the offline pill clears without the
+              // user having to reopen Settings or refresh the page.
+              try { _refreshModelsAfterEndpointChange(); } catch (_) {}
             }
             if (info.phase) {
               badge.textContent = info.phase;
@@ -3290,7 +3555,8 @@ function _refreshServerDots() {
   let tasks;
   try { tasks = _loadTasks(); } catch { return; }
   const byKey = {};
-  for (const t of tasks) { (byKey[t.remoteHost || ''] = byKey[t.remoteHost || ''] || []).push(t); }
+  const _taskServerKeyForDot = (task) => task?.remoteServerKey || task?.remoteHost || '';
+  for (const t of tasks) { (byKey[_taskServerKeyForDot(t)] = byKey[_taskServerKeyForDot(t)] || []).push(t); }
   document.querySelectorAll('.cookbook-section-header').forEach(header => {
     const dot = header.querySelector('.cookbook-srv-status');
     if (!dot) return;
@@ -3424,7 +3690,9 @@ async function _probeEndpointUntilOnline(epId, host, port) {
     try {
       // Hit the probe endpoint — it re-probes server-side and updates
       // cached_models. We consume (and discard) the SSE stream.
-      await fetch(`/api/model-endpoints/${epId}/probe`, { credentials: 'same-origin' }).then(r => r.text()).catch(() => {});
+      const probeRes = await fetch(`/api/model-endpoints/${epId}/probe`, { credentials: 'same-origin' }).catch(() => null);
+      if (probeRes && probeRes.status === 404) return;
+      if (probeRes) await probeRes.text().catch(() => {});
       const eps = await fetch('/api/model-endpoints', { credentials: 'same-origin' }).then(r => r.json()).catch(() => []);
       const ep = (eps || []).find(e => e.id === epId);
       if (ep && (ep.models || []).length) {
@@ -3462,7 +3730,7 @@ async function _pollBackgroundStatus() {
             }
           }
           if (added > 0) {
-            localStorage.setItem(TASKS_KEY, JSON.stringify(merged.map(_stripTaskSecrets)));
+            localStorage.setItem(TASKS_KEY, JSON.stringify(merged.map(_redactTaskForStorage)));
             _renderRunningTab();
           }
         }
@@ -3493,12 +3761,22 @@ async function _pollBackgroundStatus() {
         // dead-session check inspects). Recover "done" from the retained output's
         // exit-0 sentinel so a clean install isn't downgraded to crashed.
         const depDone = !!task.payload?._dep && _depInstallSucceeded(task.output);
+        // A finished model download whose tmux pane is gone is also reported
+        // "stopped" (the dead-session check can miss the landed snapshot).
+        // Recover "done" from the terminal `DOWNLOAD_OK` sentinel — emitted
+        // only after the runner exits 0 — so a completed download isn't
+        // downgraded to crashed. This background poll runs blind (no live
+        // stream to debounce against), so unlike the reconnect loop it keys
+        // off the conclusive exit sentinel only, never the `/snapshots/` path,
+        // which can be printed mid-stream for multi-file downloads.
+        const downloadDone = task.type === 'download'
+          && String(task.output || '').includes('DOWNLOAD_OK');
         const nextStatus = live.status === 'completed'
           ? 'done'
           : (live.status === 'error'
             ? 'error'
             : (live.status === 'stopped'
-                ? (depDone ? 'done' : (task.type === 'download' ? 'crashed' : 'stopped'))
+                ? ((depDone || downloadDone) ? 'done' : (task.type === 'download' ? 'crashed' : 'stopped'))
                 : null));
         if (nextStatus && task.status !== nextStatus) {
           updates.status = nextStatus;
@@ -3508,12 +3786,19 @@ async function _pollBackgroundStatus() {
           updates.status = live.status === 'ready' ? 'ready' : 'running';
         }
         if (live.progress && live.progress !== task.progress) updates.progress = live.progress;
+        if (live.exit_code != null && live.exit_code !== task.exit_code) updates.exit_code = live.exit_code;
         if (live.output_tail) {
           const previous = String(task.output || '');
           const tail = String(live.output_tail || '');
           if (tail && !previous.endsWith(tail)) {
             updates.output = `${previous ? `${previous}\n` : ''}${tail}`.slice(-5000);
           }
+        }
+        if (live.diagnosis && !task._diagnosisDismissed) {
+          updates._backendDiagnosis = live.diagnosis;
+        }
+        if (live.cmd && !task.payload?._cmd) {
+          updates.payload = { ...(task.payload || {}), _cmd: live.cmd };
         }
         if (Object.keys(updates).length) {
           Object.assign(task, updates);
@@ -3523,6 +3808,12 @@ async function _pollBackgroundStatus() {
       if (changed) {
         _saveTasks(localTasks);
         _renderRunningTab();
+        for (const task of localTasks) {
+          if (!task._backendDiagnosis) continue;
+          const el = document.querySelector(`[data-session-id="${CSS.escape(task.sessionId)}"]`);
+          if (!el || el.querySelector('.cookbook-diagnosis')) continue;
+          _showDiagnosis(el, task._backendDiagnosis, task.output || '');
+        }
         completedDeps.forEach(t => _refreshDepsAfterInstall(t));
       }
     } catch (_) { /* non-fatal: background status should never break polling */ }
@@ -3671,6 +3962,9 @@ export function initRunning(shared) {
   _copyText = shared._copyText;
   _persistEnvState = shared._persistEnvState;
   _refreshDependencies = shared._refreshDependencies;
+  _serverByVal = shared._serverByVal;
+  _serverKey = shared._serverKey;
+  _selectedServer = shared._selectedServer;
   modelLogo = shared.modelLogo;
   esc = shared.esc;
   _detectBackend = shared._detectBackend;

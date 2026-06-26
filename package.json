@@ -4,9 +4,6 @@
     "url": "https://github.com/pewdiepie-archdaemon/odysseus.git"
   },
   "devDependencies": {
-    "@antithesishq/bombadil": "^0.3.2"
-  },
-  "dependencies": {
-    "@anthropic-ai/sdk": "^0.98.0"
+    "@antithesishq/bombadil": "^0.6.1"
   }
 }

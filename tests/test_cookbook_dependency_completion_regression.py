@@ -28,13 +28,15 @@ def test_background_status_poll_reconciles_into_local_tasks():
     assert "completedDeps.forEach(t => _refreshDepsAfterInstall(t));" in source
 
 
-def test_local_windows_session_commands_use_local_powershell_log_dir():
+def test_windows_session_commands_use_shared_powershell_wrapper_and_local_log_dir():
     source = _read("static/js/cookbookRunning.js")
 
     assert "const host = task.remoteHost;" in source
     assert "host ? '$env:TEMP\\\\odysseus-sessions' : '$env:TEMP\\\\odysseus-tmux'" in source
-    assert "return host ? `ssh ${pf}${host}" in source
-    assert ": `powershell -Command \"${ps}\"`;" in source
+    assert "function _winPowerShellCmd(task, ps)" in source
+    assert "const command = `powershell -Command \"${ps}\"`;" in source
+    assert "if (!task.remoteHost) return command;" in source
+    assert "return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} ${_shQuote(command)}`;" in source
 
 
 def test_dep_install_success_recognized_from_exit_sentinel():
@@ -56,10 +58,14 @@ def test_session_gone_heuristic_honors_dep_install_success():
     source = _read("static/js/cookbookRunning.js")
 
     assert "const depInstallSucceeded = !!task.payload?._dep && _depInstallSucceeded(lastOutput);" in source
+    # Whitespace-normalized so the check survives line-wrapping/formatting while
+    # still proving the invariant: a finished dependency install short-circuits
+    # looksSuccessful ahead of the download/serve branch.
+    normalized = " ".join(source.split())
     assert (
         "const looksSuccessful = depInstallSucceeded "
-        "|| (task.type === 'download' ? downloadLooksSuccessful : serveLooksReady);"
-    ) in source
+        "|| (task.type === 'download'"
+    ) in normalized
 
 
 def test_background_poll_recovers_done_for_stopped_dependency_install():
@@ -70,7 +76,23 @@ def test_background_poll_recovers_done_for_stopped_dependency_install():
     source = _read("static/js/cookbookRunning.js")
 
     assert "const depDone = !!task.payload?._dep && _depInstallSucceeded(task.output);" in source
-    assert "depDone ? 'done' : (task.type === 'download' ? 'crashed' : 'stopped')" in source
+    assert "(depDone || downloadDone) ? 'done' : (task.type === 'download' ? 'crashed' : 'stopped')" in source
+
+
+def test_background_poll_recovers_done_for_completed_download():
+    """When the backend reports a finished model download as "stopped" (its
+    tmux pane is gone after DOWNLOAD_OK, so the dead-session check can miss the
+    landed snapshot), the reconciler must recover "done" from the terminal
+    DOWNLOAD_OK sentinel instead of downgrading the card to crashed. The
+    background poll keys off DOWNLOAD_OK only (not the "/snapshots/" path, which
+    can appear mid-stream for multi-file downloads)."""
+    source = _read("static/js/cookbookRunning.js")
+
+    normalized = " ".join(source.split())
+    assert (
+        "const downloadDone = task.type === 'download' "
+        "&& String(task.output || '').includes('DOWNLOAD_OK');"
+    ) in normalized
 
 
 def test_dependency_install_payload_keeps_env_path_for_refresh():

@@ -16,10 +16,12 @@ from pathlib import Path
 from typing import Optional, Dict
 
 from src.research_utils import strip_thinking, is_low_quality
+from src.constants import DEEP_RESEARCH_DIR
 
 logger = logging.getLogger(__name__)
 
-RESEARCH_DATA_DIR = Path("data/deep_research")
+RESEARCH_DATA_DIR = Path(DEEP_RESEARCH_DIR)
+_RESEARCH_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9-]{1,128}$")
 
 
 def _bounded_int(value, *, default: int, minimum: int, maximum: int) -> int:
@@ -46,6 +48,18 @@ def _format_probe_failure(model: str, exc: Exception) -> str:
         return f"Cannot reach model '{model}' — {err}"
 
     return f"Cannot reach model '{model}' — check that the endpoint is running and accessible."
+
+
+def _research_json_path(session_id: str) -> Optional[Path]:
+    if not isinstance(session_id, str) or not _RESEARCH_SESSION_ID_RE.fullmatch(session_id):
+        return None
+    root = RESEARCH_DATA_DIR.resolve()
+    path = (RESEARCH_DATA_DIR / f"{session_id}.json").resolve()
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return None
+    return path
 
 
 class ResearchHandler:
@@ -207,6 +221,22 @@ class ResearchHandler:
     # Task registry — background research with persistence
     # ------------------------------------------------------------------
 
+    def rename_owner(self, old_owner: str, new_owner: str) -> int:
+        """Move in-flight research tasks from one owner key to another."""
+        old_key = str(old_owner or "").strip().lower()
+        new_key = str(new_owner or "").strip().lower()
+        if not old_key or not new_key:
+            return 0
+
+        changed = 0
+        for entry in list(self._active_tasks.values()):
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("owner", "")).strip().lower() == old_key:
+                entry["owner"] = new_key
+                changed += 1
+        return changed
+
     def start_research(
         self,
         session_id: str,
@@ -232,6 +262,9 @@ class ResearchHandler:
         max_rounds is the safety cap; the AI's _should_stop decision (after
         min_rounds) terminates the loop earlier in normal operation.
         """
+        if _research_json_path(session_id) is None:
+            raise ValueError("Invalid research session_id")
+
         # Resolve the hard wall-clock timeout from settings when the caller
         # didn't pin one. Local / edge models routinely need more than the
         # old 600s default to finish a deep-research synthesis. A setting of
@@ -346,8 +379,26 @@ class ResearchHandler:
                 raise
             except Exception as e:
                 logger.error(f"Background research failed: {e}", exc_info=True)
-                entry["result"] = str(e)
-                entry["status"] = "error"
+                # Preserve partial findings if available (mirrors timeout branch)
+                researcher = entry.get("researcher")
+                if researcher and researcher.evolving_report:
+                    _elapsed = time.time() - entry["started_at"]
+                    entry["result"] = self._format_research_report(
+                        query, researcher.evolving_report,
+                        researcher.get_stats(), _elapsed,
+                    )
+                    entry["status"] = "done"
+                    self._save_result(session_id, entry)
+                    try:
+                        sources = self._extract_sources(researcher.findings) if researcher.findings else []
+                        findings = self._extract_raw_findings(researcher.findings) if researcher.findings else []
+                        _guarded_complete(session_id, entry["result"], sources, findings)
+                    except Exception as cb_err:
+                        logger.warning(f"on_complete callback failed in error branch: {cb_err}")
+                    on_progress({"phase": "warning", "message": f"Research finished with errors — partial results saved ({_elapsed:.0f}s elapsed)"})
+                else:
+                    entry["result"] = str(e)
+                    entry["status"] = "error"
 
         task = asyncio.create_task(_run())
         entry["task"] = task
@@ -355,7 +406,6 @@ class ResearchHandler:
 
     def get_status(self, session_id: str) -> Optional[dict]:
         """Get current research status for a session."""
-        avg = self.get_avg_duration()
         if session_id in self._active_tasks:
             entry = self._active_tasks[session_id]
             result = {
@@ -364,11 +414,21 @@ class ResearchHandler:
                 "query": entry["query"],
                 "started_at": entry["started_at"],
             }
+            # avg_duration is a historical figure over completed reports on
+            # disk; get_avg_duration() globs and JSON-parses the whole research
+            # dir, so compute it at most once per active stream (memoized on the
+            # entry) instead of on every ~1s SSE poll. The disk branch below
+            # never used it, so it no longer pays that cost at all.
+            if "_avg_duration" not in entry:
+                entry["_avg_duration"] = self.get_avg_duration()
+            avg = entry["_avg_duration"]
             if avg is not None:
                 result["avg_duration"] = round(avg, 1)
             return result
         # Check disk for completed research (skip consumed results)
-        path = RESEARCH_DATA_DIR / f"{session_id}.json"
+        path = _research_json_path(session_id)
+        if path is None:
+            return None
         if path.exists():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
@@ -407,7 +467,9 @@ class ResearchHandler:
             if entry["status"] in ("done", "error", "cancelled"):
                 return entry.get("result")
         # Check disk (skip consumed results)
-        path = RESEARCH_DATA_DIR / f"{session_id}.json"
+        path = _research_json_path(session_id)
+        if path is None:
+            return None
         if path.exists():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
@@ -429,7 +491,9 @@ class ResearchHandler:
             if researcher and researcher.findings:
                 return self._extract_sources(researcher.findings)
         # Check disk
-        path = RESEARCH_DATA_DIR / f"{session_id}.json"
+        path = _research_json_path(session_id)
+        if path is None:
+            return None
         if path.exists():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
@@ -446,7 +510,9 @@ class ResearchHandler:
             if researcher and researcher.findings:
                 return self._extract_raw_findings(researcher.findings)
         # Check disk
-        path = RESEARCH_DATA_DIR / f"{session_id}.json"
+        path = _research_json_path(session_id)
+        if path is None:
+            return None
         if path.exists():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
@@ -521,7 +587,9 @@ class ResearchHandler:
         Keeps the JSON on disk so visual reports can be generated later.
         """
         self._active_tasks.pop(session_id, None)
-        path = RESEARCH_DATA_DIR / f"{session_id}.json"
+        path = _research_json_path(session_id)
+        if path is None:
+            return
         if path.exists():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
@@ -533,6 +601,10 @@ class ResearchHandler:
     def _save_result(self, session_id: str, entry: dict):
         """Persist completed research result to disk."""
         try:
+            path = _research_json_path(session_id)
+            if path is None:
+                logger.error("Refusing to save research result for invalid session_id: %r", session_id)
+                return
             # Extract and cache sources + raw findings
             sources = []
             raw_findings = []
@@ -542,7 +614,6 @@ class ResearchHandler:
                 raw_findings = self._extract_raw_findings(researcher.findings)
             entry["sources"] = sources
 
-            path = RESEARCH_DATA_DIR / f"{session_id}.json"
             data = {
                 "query": entry["query"],
                 "status": entry["status"],
@@ -569,7 +640,9 @@ class ResearchHandler:
 
     def _get_session_json(self, session_id: str) -> Optional[dict]:
         """Load the saved research JSON for a session, if it exists."""
-        path = RESEARCH_DATA_DIR / f"{session_id}.json"
+        path = _research_json_path(session_id)
+        if path is None:
+            return None
         if path.exists():
             try:
                 return json.loads(path.read_text(encoding="utf-8"))
@@ -579,7 +652,9 @@ class ResearchHandler:
 
     def get_report_html(self, session_id: str) -> Optional[str]:
         """Generate the visual HTML report for a session (always fresh from JSON)."""
-        json_path = RESEARCH_DATA_DIR / f"{session_id}.json"
+        json_path = _research_json_path(session_id)
+        if json_path is None:
+            return None
         if not json_path.exists():
             logger.warning(f"No JSON found for visual report: {json_path}")
             return None
@@ -606,7 +681,9 @@ class ResearchHandler:
 
     def hide_image(self, session_id: str, image_url: str) -> bool:
         """Add image_url to the persisted hidden_images list for a research."""
-        path = RESEARCH_DATA_DIR / f"{session_id}.json"
+        path = _research_json_path(session_id)
+        if path is None:
+            return False
         if not path.exists():
             return False
         try:
@@ -624,7 +701,9 @@ class ResearchHandler:
 
     def unhide_all_images(self, session_id: str) -> bool:
         """Clear the hidden_images list for a research."""
-        path = RESEARCH_DATA_DIR / f"{session_id}.json"
+        path = _research_json_path(session_id)
+        if path is None:
+            return False
         if not path.exists():
             return False
         try:
@@ -740,7 +819,7 @@ class ResearchHandler:
                 llm_model=llm_model,
                 llm_headers=llm_headers,
                 max_rounds=max_rounds,
-                min_rounds=min(3, max_rounds),
+                min_rounds=max(2, max_rounds - 2),
                 max_time=max_time,
                 max_report_tokens=_max_report_tokens,
                 extraction_timeout=_extraction_timeout,

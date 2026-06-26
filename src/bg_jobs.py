@@ -33,13 +33,15 @@ from core.atomic_io import atomic_write_json
 from core.platform_compat import (
     detached_popen_kwargs,
     find_bash,
+    git_bash_path,
     kill_process_tree,
     pid_alive,
 )
 
-_DATA_DIR = Path(os.environ.get("DATA_DIR", "data"))
-_JOBS_DIR = _DATA_DIR / "bg_jobs"
-_STORE = _DATA_DIR / "bg_jobs.json"
+from src.constants import BG_JOBS_DIR, BG_JOBS_FILE
+
+_JOBS_DIR = Path(BG_JOBS_DIR)
+_STORE = Path(BG_JOBS_FILE)
 
 # A job that runs longer than this is presumed stuck and reaped (the agent
 # still gets a "timed out" follow-up so nothing hangs forever).
@@ -106,7 +108,7 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
         # handles drive paths and spaces correctly.
         cmd_path = _JOBS_DIR / f"{job_id}.cmd.sh"
         cmd_path.write_text(command + "\n", encoding="utf-8")
-        lp, xp, cp = (shlex.quote(p.as_posix()) for p in (log_path, exit_path, cmd_path))
+        lp, xp, cp = (shlex.quote(git_bash_path(p)) for p in (log_path, exit_path, cmd_path))
         script_path = _JOBS_DIR / f"{job_id}.sh"
         script_path.write_text(
             f"bash {cp} > {lp} 2>&1\n"
@@ -261,10 +263,32 @@ def list_for_session(session_id: str) -> List[Dict[str, Any]]:
     return [r for r in refresh().values() if r.get("session_id") == session_id]
 
 
+def kill(job_id: str) -> Optional[Dict[str, Any]]:
+    """Terminate a running job's process tree and mark it killed. Returns the
+    updated record, or None if the id is unknown. Idempotent: a job that already
+    finished is returned unchanged. Sets followed_up so the monitor does not also
+    fire an auto-continue for a job the agent deliberately stopped."""
+    jobs = _load()
+    rec = jobs.get(job_id)
+    if rec is None:
+        return None
+    if rec.get("status") == "running":
+        _kill(rec.get("pid"))
+        rec["status"] = "failed"
+        rec["exit_code"] = -1
+        rec["ended_at"] = time.time()
+        rec["killed"] = True
+        rec["followed_up"] = True
+        _save(jobs)
+    return rec
+
+
 def result_text(rec: Dict[str, Any]) -> str:
     """Human/agent-readable summary of a finished job, for the follow-up."""
     out = _read_output(rec)
-    if rec.get("timed_out"):
+    if rec.get("killed"):
+        head = "Background job was killed."
+    elif rec.get("timed_out"):
         head = f"Background job timed out after {rec.get('max_runtime_s')}s."
     elif rec.get("died"):
         head = "Background job process died unexpectedly (no exit code)."

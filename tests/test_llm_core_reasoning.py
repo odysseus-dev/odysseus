@@ -172,3 +172,67 @@ def test_registered_thinking_model_stray_close_tag_repair_unchanged(monkeypatch)
     assert deltas, deltas
     first = deltas[0]["delta"]
     assert first.startswith("<think>"), f"expected repair prefix, got: {first!r}"
+
+
+def test_thinking_field_emits_thinking_chunk(monkeypatch):
+    deltas = _run_stream(
+        "gpt-oss:20b",
+        [
+            'data: {"choices":[{"delta":{"thinking":"checking files"}}]}',
+            'data: {"choices":[{"delta":{"content":"visible answer"}}]}',
+            "data: [DONE]",
+        ],
+        monkeypatch,
+    )
+    assert any(d.get("thinking") and d["delta"] == "checking files" for d in deltas), deltas
+    assert any((not d.get("thinking")) and d["delta"] == "visible answer" for d in deltas), deltas
+
+def test_harmony_analysis_channel_routes_to_thinking(monkeypatch):
+    deltas = _run_stream(
+        "gpt-oss:20b",
+        [
+            'data: {"choices":[{"delta":{"content":"<|channel|>ana"}}]}',
+            'data: {"choices":[{"delta":{"content":"lysis<|message|>We need to inspect."}}]}',
+            'data: {"choices":[{"delta":{"content":"<|end|><|channel|>final<|message|>Here "}}]}',
+            'data: {"choices":[{"delta":{"content":"are the files.<|end|>"}}]}',
+            "data: [DONE]",
+        ],
+        monkeypatch,
+    )
+    thinking = "".join(d["delta"] for d in deltas if d.get("thinking"))
+    answer = "".join(d["delta"] for d in deltas if not d.get("thinking"))
+
+    assert thinking == "We need to inspect."
+    assert answer == "Here are the files."
+    assert "<|channel|>" not in thinking + answer
+    assert "<|message|>" not in thinking + answer
+
+
+def test_harmony_commentary_channel_no_marker_or_toolarg_leak(monkeypatch):
+    # gpt-oss commentary channel (tool-call preambles / function-arg bodies) is
+    # internal — it must not leak the channel marker, the `to=functions.*`
+    # recipient, or its body into the visible answer. The `<|channel|>comm` /
+    # `entary` split also exercises the suffix-hold for the new marker.
+    deltas = _run_stream(
+        "gpt-oss:20b",
+        [
+            'data: {"choices":[{"delta":{"content":"<|channel|>comm"}}]}',
+            'data: {"choices":[{"delta":{"content":"entary to=functions.web_search<|message|>Let me search the web."}}]}',
+            'data: {"choices":[{"delta":{"content":"<|end|><|channel|>final<|message|>Here are the "}}]}',
+            'data: {"choices":[{"delta":{"content":"results.<|end|>"}}]}',
+            "data: [DONE]",
+        ],
+        monkeypatch,
+    )
+    thinking = "".join(d["delta"] for d in deltas if d.get("thinking"))
+    answer = "".join(d["delta"] for d in deltas if not d.get("thinking"))
+
+    # final channel is the only user-facing text
+    assert answer == "Here are the results."
+    # commentary body routed to thinking, not the visible answer
+    assert thinking == "Let me search the web."
+    # no harmony markers, channel name, or tool recipient leak anywhere
+    assert "<|channel|>" not in thinking + answer
+    assert "<|message|>" not in thinking + answer
+    assert "commentary" not in answer
+    assert "to=functions.web_search" not in thinking + answer

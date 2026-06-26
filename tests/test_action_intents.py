@@ -23,6 +23,14 @@ def test_calendar_imperative_variants_promote_to_agent():
     )
 
 
+def test_calendar_read_requests_promote_to_agent():
+    assert message_needs_tools("What upcoming events do I have?")
+    assert message_needs_tools("Can you show my next appointments?")
+    assert message_needs_tools("Do I have upcoming Taekwondo classes this week?")
+    assert message_needs_tools("What's on my calendar tomorrow?")
+    assert message_needs_tools("When is my next meeting?")
+
+
 def test_note_todo_and_reminder_actions_promote_to_agent():
     assert message_needs_tools("add milk to my todo list")
     assert message_needs_tools("take a note that the server needs checking")
@@ -39,6 +47,13 @@ def test_email_and_ui_actions_promote_to_agent():
 def test_research_action_promotes_to_agent():
     assert message_needs_tools("research cost effective local models")
     assert message_needs_tools("can you look into GPU hosting options")
+
+
+def test_explicit_web_search_promotes_to_agent():
+    assert message_needs_tools("use web search and find a recipe for chocolate chip cookies")
+    assert message_needs_tools("do a web search for the best chocolate chip cookies")
+    assert message_needs_tools("search the web for current RTX 3090 prices")
+    assert classify_tool_intent("use web search and find a recipe").category == "web"
 
 
 def test_explanatory_calendar_questions_stay_plain_chat():
