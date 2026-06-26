@@ -276,10 +276,10 @@ def setup_api_token_routes() -> APIRouter:
         user = require_user(request)
         with get_db_session() as db:
             token = db.query(ApiToken).filter(ApiToken.id == token_id).first()
-            if not token:
+            # Return 404 for both "not found" and "not yours" so callers
+            # can't probe for the existence of another user's token ids.
+            if not token or token.owner != user:
                 raise HTTPException(404, "Token not found")
-            if token.owner != user:
-                raise HTTPException(403, "Not your token")
             db.delete(token)
         _invalidate_cache(request)
         return {"status": "deleted"}
