@@ -8,8 +8,9 @@ self-verifying tests, not by the hand-maintained list below:
 * ``test_shim_reexports_every_domain_do_function`` discovers every ``do_*``
   from the domain modules and asserts reachability through the shim.
 * ``test_every_facade_import_in_repo_resolves`` discovers every
-  ``from src.tool_implementations import X`` site in ``src/`` and ``tests/``
-  and asserts ``X`` resolves through the shim.
+  ``from src.tool_implementations import X`` site across first-party Python
+  dirs (src/, tests/, routes/, ...) and asserts ``X`` resolves through the
+  shim.
 
 Both fail automatically if a re-export is forgotten (the do_* discovery
 covers the tool surface; the import-site scan covers underscore helpers a
@@ -44,6 +45,10 @@ _EXPECTED = [
     "_parse_tool_args", "_resolve_cookbook_host", "_run_bw",
     "_scan_running_model_processes", "_skill_dump", "_string_arg",
     "_validate_cookbook_ssh_target",
+    # active-email facade helpers (no do_* prefix); consumed by
+    # routes/chat_routes.py — listed here because get_active_email has no
+    # in-repo importer, so the import-site scan below can't see it alone.
+    "set_active_email", "get_active_email", "clear_active_email",
 ]
 
 
@@ -108,8 +113,8 @@ def test_shim_reexports_every_domain_do_function():
 
 
 def test_every_facade_import_in_repo_resolves():
-    """Every ``from src.tool_implementations import X`` in src/ and tests/
-    must resolve through the shim.
+    """Every ``from src.tool_implementations import X`` in any first-party
+    Python dir (src/, tests/, routes/, ...) must resolve through the shim.
 
     This makes the module-docstring contract ("existing ``from
     src.tool_implementations import X`` imports keep working") self-verifying
@@ -124,12 +129,24 @@ def test_every_facade_import_in_repo_resolves():
     here automatically.
     """
     import ast
+    import os
     from pathlib import Path
 
     repo = Path(__file__).resolve().parents[1]
+    # Walk every first-party Python dir so route-level (and any future)
+    # facade consumers are covered, not just src/ and tests/. Prune
+    # non-source trees (venvs, caches, data, build artifacts) in-place.
+    _SKIP_DIRS = {
+        "__pycache__", "venv", "node_modules", "data", "logs",
+        "odysseus.egg-info", "static", "specs", "licenses", "docker",
+    }
     names = set()
-    for sub in ("src", "tests"):
-        for path in (repo / sub).rglob("*.py"):
+    for root, _dirs, files in os.walk(repo):
+        _dirs[:] = [d for d in _dirs if not (d.startswith(".") or d in _SKIP_DIRS)]
+        for fn in files:
+            if not fn.endswith(".py"):
+                continue
+            path = Path(root) / fn
             text = path.read_text(encoding="utf-8")
             if "src.tool_implementations" not in text:
                 continue
