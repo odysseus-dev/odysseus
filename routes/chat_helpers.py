@@ -961,6 +961,9 @@ def select_saved_body(
     all ungrounded pre-tool prose sanitizes to "", which must persist as empty
     rather than fall back to the raw pre-tool prose; only a genuinely absent
     sanitized body (None, e.g. a non-agentic turn) falls back to ``full_response``.
+    ``teacher_clean`` carries the same distinction: a teacher takeover that
+    sanitizes to "" persists as an empty teacher segment (the student segment
+    alone) rather than falling back to the raw ``post_metrics_deltas``.
     """
     if clean_body is not None:
         student = clean_body
@@ -970,6 +973,12 @@ def select_saved_body(
         return full_response
     if teacher_clean:
         return (student + "\n\n" + teacher_clean) if student else teacher_clean
+    if teacher_clean is not None:
+        # Teacher sanitized to empty ("") — present but contributes no segment,
+        # so persist just the student segment rather than falling back to the raw
+        # post-metrics deltas (which carry the teacher's pre-tool prose). Mirrors
+        # the outer/student presence semantics above (RaresKeY finding).
+        return student
     return student + post_metrics_deltas
 
 

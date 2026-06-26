@@ -1369,7 +1369,14 @@ def setup_chat_routes(
                                         # metrics. Keep its sanitized answer as the
                                         # teacher segment (#3992 finding #4); forward
                                         # untouched (clean_response already popped).
-                                        if _metrics_clean:
+                                        # Preserve an empty sanitized teacher body ("")
+                                        # as a real value the same way the outer path
+                                        # does (RaresKeY finding): a teacher whose
+                                        # visible text was all pre-tool prose sanitizes
+                                        # to "" and must not fall back to the raw
+                                        # post-metrics deltas; only a missing key (None)
+                                        # leaves _teacher_clean unset.
+                                        if _metrics_clean is not None:
                                             _teacher_clean = _metrics_clean
                                         yield f'data: {json.dumps(data)}\n\n'
                                     else:

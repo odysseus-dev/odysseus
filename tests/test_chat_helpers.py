@@ -475,3 +475,25 @@ def test_select_saved_body_distinguishes_empty_sanitized_from_absent():
     # Empty student + a teacher takeover: keep the teacher segment alone, with no
     # leading blank line from concatenating onto an empty student.
     assert select_saved_body("", "", "RAW", teacher_clean="TEACHER-ANSWER", pre_metrics_raw="RAW") == "TEACHER-ANSWER"
+
+
+def test_select_saved_body_empty_teacher_clean_drops_raw_teacher_prose():
+    # RaresKeY follow-up: the teacher path must mirror the student presence
+    # semantics. A tool-using teacher takeover whose visible text was all
+    # pre-tool prose sanitizes to teacher_clean == "". That empty-but-present
+    # teacher segment must persist as empty (the student segment alone), never
+    # falling back to the raw post-metrics deltas that still carry the teacher's
+    # pre-tool prose.
+    student = "STUDENT grounded answer."
+    raw_teacher_deltas = "\n\nTEACHER-RAW pre-tool guess: 999."
+    body = select_saved_body(
+        student, raw_teacher_deltas, "full", teacher_clean="", pre_metrics_raw=student
+    )
+    assert body == student, f"empty teacher segment not preserved: {body!r}"
+    assert "TEACHER-RAW pre-tool guess" not in body, f"raw teacher pre-tool prose leaked: {body!r}"
+    # A genuinely absent teacher (None) still appends the raw post-metrics deltas
+    # (a no-tool teacher's visible correction has no clean_response to prefer).
+    assert (
+        select_saved_body(student, raw_teacher_deltas, "full", teacher_clean=None)
+        == student + raw_teacher_deltas
+    )
