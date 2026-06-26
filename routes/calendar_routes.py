@@ -434,6 +434,20 @@ def _parse_dt(s: str) -> datetime:
         if t is not None:
             return base.replace(hour=t[0], minute=t[1])
 
+    # time-first: "3pm today", "9am tomorrow", "11pm tonight"
+    # (parity with parse_due_for_user, which handles these via the same form)
+    m = _re.match(r'^(.+?)\s+(today|tonight|tomorrow|tmrw|yesterday)$', lower)
+    if m:
+        time_part, word = m.group(1).strip(), m.group(2)
+        base = today
+        if word in ("tomorrow", "tmrw"):
+            base = today + timedelta(days=1)
+        elif word == "yesterday":
+            base = today - timedelta(days=1)
+        t = _parse_time(time_part)
+        if t is not None:
+            return base.replace(hour=t[0], minute=t[1])
+
     # next <weekday> [at] TIME
     weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
     m = _re.match(r'^next\s+(\w+)(?:\s+at)?\s*(.*)$', lower)
