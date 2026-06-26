@@ -6,8 +6,10 @@ import uiModule from './ui.js';
 import markdownModule from './markdown.js';
 import * as spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
+import { topPortalZ } from './toolWindowZOrder.js';
 import { sortModelIds } from './modelSort.js';
 import { ordinalSuffix } from './util/ordinal.js';
+import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -17,8 +19,15 @@ let _tasksFetched = false;   // first-fetch sentinel — `false` → show loadin
 let _escHandler = null;
 let _viewingRuns = null; // task id when viewing run history
 let _clockInterval = null;
+let _taskFailurePending = false;
 
 const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+function _setTaskFailurePending(active) {
+  _taskFailurePending = !!active;
+  document.getElementById('tool-tasks-btn')?.classList.toggle('task-failure-pending', _taskFailurePending);
+  document.getElementById('rail-tasks')?.classList.toggle('task-failure-pending', _taskFailurePending);
+}
 
 // ---- API ----
 
@@ -892,10 +901,10 @@ function _attachTaskLongPress(card, menuBtn) {
 
 function _showTaskDropdown(anchor, items) {
   // Remove any existing dropdown
-  document.querySelectorAll('.task-dropdown').forEach(d => d.remove());
+  document.querySelectorAll('.task-dropdown').forEach(dismissOrRemove);
   const dd = document.createElement('div');
   dd.className = 'task-dropdown';
-  dd.style.cssText = 'position:fixed;z-index:100000;background:var(--panel);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.3);padding:4px;min-width:120px;';
+  dd.style.cssText = 'position:fixed;background:var(--panel);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.3);padding:4px;min-width:120px;';
   items.forEach(item => {
     const btn = document.createElement('button');
     btn.style.cssText = 'display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:6px 10px;border:none;background:none;color:var(--fg);font-size:11px;font-family:inherit;cursor:pointer;border-radius:4px;transition:background 0.1s;';
@@ -907,10 +916,14 @@ function _showTaskDropdown(anchor, items) {
     }
     btn.addEventListener('mouseenter', () => { btn.style.background = 'color-mix(in srgb, var(--fg) 8%, transparent)'; });
     btn.addEventListener('mouseleave', () => { btn.style.background = 'none'; });
-    btn.addEventListener('click', (e) => { e.stopPropagation(); dd.remove(); item.action(); });
+    btn.addEventListener('click', (e) => { e.stopPropagation(); close(); item.action(); });
     dd.appendChild(btn);
   });
   document.body.appendChild(dd);
+  // Sit above the currently-raised tool modal at any stack depth (#4720): the
+  // modal bring-to-front counter climbs unbounded, so a hardcoded z eventually
+  // loses. topPortalZ() derives the value from the live tool-window stack.
+  dd.style.zIndex = String(topPortalZ());
   const rect = anchor.getBoundingClientRect();
   let top = rect.bottom + 4;
   let left = rect.right - dd.offsetWidth;
@@ -919,16 +932,13 @@ function _showTaskDropdown(anchor, items) {
   dd.style.top = top + 'px';
   dd.style.left = left + 'px';
   const openedAt = performance.now();
-  const close = (e) => {
+  const close = bindMenuDismiss(dd, () => { dd.remove(); }, (ev) => {
     // Ignore any clicks that occur within 250ms of the open (covers touch
     // "ghost click" duplicates that were firing right after pointerup and
-    // removing the dropdown before the user could see it).
-    if (performance.now() - openedAt < 250) return;
-    if (!dd.contains(e.target)) { dd.remove(); document.removeEventListener('click', close); }
-  };
-  // requestAnimationFrame so the listener is registered AFTER the current
-  // pointer/click event cycle has finished bubbling.
-  requestAnimationFrame(() => document.addEventListener('click', close));
+    // removing the dropdown before the user could see it) — treat as inside.
+    if (performance.now() - openedAt < 250) return false;
+    return !dd.contains(ev.target);
+  });
 }
 
 // ---- Presets ----
@@ -2238,6 +2248,9 @@ function _renderActivityEntry(entry) {
     status = _classifyResult(entry.result);
   }
   const statusDot = `<span class="task-log-status task-log-status-${status}" title="${status}"></span>`;
+  const failedTag = status === 'error'
+    ? '<span class="task-log-failed-tag">(failed)</span>'
+    : '';
   // Render the result through markdown so code blocks, lists, links look right.
   let resultHtml;
   const _isRunning = entry.status === 'running' || entry.status === 'queued';
@@ -2361,7 +2374,7 @@ function _renderActivityEntry(entry) {
       <div class="task-log-row-head">
         ${statusDot}
         <span class="task-log-task-icon">${_taskIcon({ action: entry.action, task_type: entry.kind })}</span>
-        <span class="task-log-name">${_escHtml(entry.taskName)}</span>${_taskAiMark(entry)}
+        <span class="task-log-name">${_escHtml(entry.taskName)}</span>${failedTag}${_taskAiMark(entry)}
         ${repeatBadge}
         <span style="flex:1"></span>
         ${rightHtml}
@@ -2502,8 +2515,11 @@ function _renderMainView() {
 
 export function openTasks(focusId, opts) {
   const o = opts || {};
+  const openActivityForFailure = _taskFailurePending && !focusId && o.filter === undefined;
+  _setTaskFailurePending(false);
   if (_open) {
     // Already open — just focus the requested task / apply filter.
+    if (openActivityForFailure) _switchTab('activity');
     if (o.filter !== undefined) { _taskFilter = o.filter; _renderList(); }
     if (focusId) _focusTask(focusId);
     return;
@@ -2610,7 +2626,7 @@ export function openTasks(focusId, opts) {
   // of an empty modal-body that fills in after the fetch resolves — that delay
   // was visible as a "flicker" right after opening.
   _activeTab = 'tasks';
-  _switchTab('tasks');
+  _switchTab(openActivityForFailure ? 'activity' : 'tasks');
   _fetchTasks().then(() => {
     // Re-render so the list swaps the Loading row for real cards.
     _renderList();
@@ -2704,7 +2720,13 @@ async function _pollTaskNotifications() {
       const msg = `Task ${ok ? 'finished' : 'failed'}: ${n.task_name}`;
       if (!uiModule) continue;
       if (ok) uiModule.showToast(msg, { duration: 5000 });
-      else uiModule.showError(msg);
+      else {
+        _setTaskFailurePending(true);
+        uiModule.showError(msg);
+        if (_open && document.querySelector('.tasks-tab.active[data-tab="activity"]')) {
+          _renderActivityView();
+        }
+      }
     }
   } catch (e) {
     // Silently ignore — server may be unreachable

@@ -1233,22 +1233,30 @@ def _list_attachments_from_msg(msg):
         return attachments
     idx = 0
     for part in msg.walk():
-        if part.is_multipart():
-            continue
         cd = str(part.get("Content-Disposition", ""))
         ct = part.get_content_type()
+        is_attached_email = ct == "message/rfc822" and ("attachment" in cd.lower() or part.get_filename())
+        if part.is_multipart() and not is_attached_email:
+            continue
         # Skip text/html body parts (only consider real attachments)
         if ct in ("text/plain", "text/html") and "attachment" not in cd:
             continue
         filename = part.get_filename()
         if filename:
             filename = _decode_header(filename)
+            if ct == "message/rfc822" and not re.search(r"\.[A-Za-z0-9]{1,8}$", filename):
+                filename = f"{filename}.eml"
         else:
             # Inline images, etc. - generate a name
-            ext = ct.split("/")[-1] if "/" in ct else "bin"
+            ext = "eml" if ct == "message/rfc822" else (ct.split("/")[-1] if "/" in ct else "bin")
             filename = f"attachment_{idx}.{ext}"
         payload = part.get_payload(decode=True)
-        size = len(payload) if payload else 0
+        if payload is None and ct == "message/rfc822":
+            try:
+                payload = part.as_bytes()
+            except Exception:
+                payload = b""
+        size = len(payload) if payload is not None else 0
         attachments.append({
             "index": idx,
             "filename": filename,
@@ -1260,29 +1268,58 @@ def _list_attachments_from_msg(msg):
     return attachments
 
 
+def _is_likely_signature_image_attachment(att: dict) -> bool:
+    """Match the reader's inline signature/logo image filter."""
+    filename = str((att or {}).get("filename") or "").lower()
+    if not re.search(r"\.(png|jpe?g|gif|bmp|svg|webp)$", filename):
+        return False
+    size = int((att or {}).get("size") or 0)
+    if re.search(r"^image\d{3,}\.(png|jpe?g|gif)$", filename):
+        return True
+    if re.search(r"^(signature|logo|sig|footer|banner)[-_\d]*\.(png|jpe?g|gif|svg)$", filename):
+        return True
+    return 0 < size < 30 * 1024
+
+
+def _has_visible_attachments(msg) -> bool:
+    """Return True only for attachments the reader will render as chips."""
+    return any(
+        not _is_likely_signature_image_attachment(att)
+        for att in _list_attachments_from_msg(msg)
+    )
+
+
 def _extract_attachment_to_disk(msg, index, target_dir):
     """Extract a specific attachment to disk and return the file path."""
     if not msg.is_multipart():
         return None
     idx = 0
     for part in msg.walk():
-        if part.is_multipart():
-            continue
         cd = str(part.get("Content-Disposition", ""))
         ct = part.get_content_type()
+        is_attached_email = ct == "message/rfc822" and ("attachment" in cd.lower() or part.get_filename())
+        if part.is_multipart() and not is_attached_email:
+            continue
         if ct in ("text/plain", "text/html") and "attachment" not in cd:
             continue
         if idx == index:
             filename = part.get_filename()
             if filename:
                 filename = _decode_header(filename)
+                if ct == "message/rfc822" and not re.search(r"\.[A-Za-z0-9]{1,8}$", filename):
+                    filename = f"{filename}.eml"
             else:
-                ext = ct.split("/")[-1] if "/" in ct else "bin"
+                ext = "eml" if ct == "message/rfc822" else (ct.split("/")[-1] if "/" in ct else "bin")
                 filename = f"attachment_{idx}.{ext}"
             # Sanitize
             safe_name = re.sub(r"[^\w\s\-.]", "_", filename).strip()
             payload = part.get_payload(decode=True)
-            if not payload:
+            if payload is None and ct == "message/rfc822":
+                try:
+                    payload = part.as_bytes()
+                except Exception:
+                    payload = b""
+            if payload is None:
                 return None
             target_dir.mkdir(parents=True, exist_ok=True)
             filepath = target_dir / safe_name
