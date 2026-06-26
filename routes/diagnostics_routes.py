@@ -7,8 +7,9 @@ from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, Form, Request
 
 from services.youtube.youtube_handler import extract_youtube_id, extract_transcript_async
-from core.constants import DEFAULT_HOST, DATA_DIR
+from core.constants import APP_DB, DEFAULT_HOST, DATA_DIR, UPLOAD_DIR
 from core.middleware import require_admin
+from src.storage_diagnostics import collect_storage_bloat_diagnostics
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,18 @@ def setup_diagnostics_routes(
         except Exception as e:
             logger.error(f"Diagnostics logs retrieval error: {e}")
             raise HTTPException(500, f"Failed to retrieve logs: {str(e)}")
+
+    @router.get("/api/diagnostics/storage-bloat")
+    async def get_storage_bloat_diagnostics(request: Request) -> Dict[str, Any]:
+        require_admin(request)
+        try:
+            return collect_storage_bloat_diagnostics(
+                db_path=APP_DB,
+                upload_dir=UPLOAD_DIR,
+            )
+        except Exception as e:
+            logger.error(f"Storage bloat diagnostics error: {e}")
+            raise HTTPException(500, "Failed to retrieve storage bloat diagnostics")
 
     @router.get("/api/db/stats")
     async def get_database_stats(request: Request) -> Dict[str, Any]:
