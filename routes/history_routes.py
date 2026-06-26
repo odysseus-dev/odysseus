@@ -124,7 +124,16 @@ def setup_history_routes(session_manager) -> APIRouter:
 
         total_count = len(history_dict)
         if limit is not None:
-            history_dict = history_dict[offset:offset + limit]
+            has_explicit_offset = request.query_params.get("offset") is not None
+            if has_explicit_offset:
+                history_dict = history_dict[offset:offset + limit]
+            else:
+                # Default: most-recent messages (slice from the end).
+                # session.history is chronological (oldest first), so
+                # offset=0 would return the oldest messages — the opposite
+                # of what the frontend's "400 most-recent" comment expects.
+                start = max(0, total_count - limit)
+                history_dict = history_dict[start:start + limit]
 
         return {
             "history": history_dict,

@@ -102,7 +102,14 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     try { sessionId = sessionModule.getCurrentSessionId(); } catch (_) {}
     if (!sessionId) { bar.textContent = 'No session'; return; }
     try {
-      var res = await fetch(API_BASE + '/api/history/' + sessionId + '?limit=50&offset=' + Math.max(0, _unloadedMsgCount - 50));
+      // Compute a backward-paging offset into the chronological history
+      // array.  The initial load returned the most-recent 400 messages
+      // (indices total-400 .. total-1).  Each DOM trim offloads the
+      // oldest-visible N messages from the top, and each "load older"
+      // fetch walks 50 messages further back.
+      var total = window._historyTotal || 0;
+      var offset = Math.max(0, total - 400 + _unloadedMsgCount - 50);
+      var res = await fetch(API_BASE + '/api/history/' + sessionId + '?limit=50&offset=' + offset);
       var data = await res.json();
       var msgs = data.history || [];
       if (msgs.length === 0) {
