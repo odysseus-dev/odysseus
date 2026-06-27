@@ -240,6 +240,11 @@ def test_manifest_present_but_unreferenced_upload_is_suspected_orphan(tmp_path):
         {"stored_name_hash": storage_diagnostics._hash_upload_identifier(kept)}
     ]
     assert uploads["suspected_orphans"]["count"] == 2
+    assert uploads["suspected_orphans"]["definitive"] is True
+    assert uploads["suspected_orphans"]["complete"] is True
+    assert uploads["suspected_orphans"]["observed_only"] is False
+    assert uploads["suspected_orphans"]["observed_count"] == 2
+    assert uploads["suspected_orphans"]["reason_incomplete"] is None
     samples = {
         row["path_hash"]: row
         for row in uploads["suspected_orphans"]["sample"]
@@ -323,6 +328,52 @@ def test_metadata_attachment_reference_is_not_suspected_orphan(tmp_path):
     assert "summarize the attachment" not in json.dumps(report)
 
 
+def test_reference_beyond_scan_limit_makes_orphans_observed_only(
+    monkeypatch,
+    tmp_path,
+):
+    db_path = tmp_path / "app.db"
+    live = "dddddddddddddddddddddddddddddddd.pdf"
+    conn = _init_db(db_path)
+    conn.execute("INSERT INTO sessions(id, name) VALUES ('s1', 'Session')")
+    rows = [
+        ("m1", "x" * 300, json.dumps({"note": "x" * 300})),
+        ("m2", "x" * 200, json.dumps({"note": "x" * 200})),
+        (
+            "m3",
+            "x",
+            json.dumps({"attachments": [{"id": live}]}),
+        ),
+    ]
+    conn.executemany(
+        """
+        INSERT INTO chat_messages(id, session_id, role, content, metadata)
+        VALUES (?, 's1', 'user', ?, ?)
+        """,
+        rows,
+    )
+    conn.commit()
+    conn.close()
+
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    (upload_dir / live).write_bytes(b"live")
+    monkeypatch.setattr(storage_diagnostics, "MAX_REFERENCE_SCAN_ROWS", 2)
+
+    report = collect_storage_bloat_diagnostics(db_path=db_path, upload_dir=upload_dir)
+    suspected = report["uploads"]["suspected_orphans"]
+
+    assert report["database"]["upload_references"]["complete"] is False
+    assert suspected["definitive"] is False
+    assert suspected["complete"] is False
+    assert suspected["observed_only"] is True
+    assert suspected["count"] is None
+    assert suspected["observed_count"] == 1
+    assert suspected["reason_incomplete"] == ["db_reference_scan_incomplete"]
+    assert len(suspected["sample"]) == 1
+    assert live not in json.dumps(report)
+
+
 def test_document_pdf_source_reference_is_not_suspected_orphan(tmp_path):
     db_path = tmp_path / "app.db"
     live = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.pdf"
@@ -377,7 +428,14 @@ def test_upload_traversal_is_bounded_and_reports_truncation(monkeypatch, tmp_pat
     assert uploads["file_count_observed"] == 2
     assert uploads["total_size_bytes"] is None
     assert uploads["total_size_bytes_observed"] == 2
+    assert uploads["suspected_orphans"]["definitive"] is False
+    assert uploads["suspected_orphans"]["complete"] is False
+    assert uploads["suspected_orphans"]["observed_only"] is True
+    assert uploads["suspected_orphans"]["count"] is None
     assert uploads["suspected_orphans"]["observed_count"] == 2
+    assert uploads["suspected_orphans"]["reason_incomplete"] == [
+        "upload_traversal_truncated"
+    ]
     assert "upload_traversal_truncated" in report["warnings"]
 
 

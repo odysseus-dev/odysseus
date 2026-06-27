@@ -94,6 +94,7 @@ def collect_storage_bloat_diagnostics(
     upload_report = _collect_upload_report(
         Path(upload_dir or UPLOAD_DIR),
         live_upload_ids,
+        db_report["upload_references"]["complete"],
         warnings,
     )
     return {
@@ -680,6 +681,7 @@ def _content_upload_ids(content_samples: list[str]) -> set[str]:
 def _collect_upload_report(
     upload_dir: Path,
     live_upload_ids: set[str],
+    reference_scan_complete: bool,
     warnings: list[str],
 ) -> dict[str, Any]:
     report: dict[str, Any] = {
@@ -701,7 +703,12 @@ def _collect_upload_report(
         "manifest_present": False,
         "manifest_entry_count": 0,
         "manifest_entries": {"count": 0, "sample": []},
-        "suspected_orphans": {"count": 0, "sample": []},
+        "suspected_orphans": _suspected_orphan_report(
+            observed_count=0,
+            sample=[],
+            reference_scan_complete=reference_scan_complete,
+            upload_traversal_complete=False,
+        ),
     }
     if not upload_dir.exists():
         warnings.append("upload directory missing")
@@ -713,7 +720,13 @@ def _collect_upload_report(
     report["present"] = True
     manifest = _load_upload_manifest(upload_dir, warnings)
     manifest_ids = _manifest_upload_ids(manifest or {})
-    file_report = _upload_file_report(upload_dir, manifest_ids, live_upload_ids, warnings)
+    file_report = _upload_file_report(
+        upload_dir,
+        manifest_ids,
+        live_upload_ids,
+        reference_scan_complete,
+        warnings,
+    )
     report.update(file_report)
     report["manifest_present"] = manifest is not None
     report["manifest_entry_count"] = len(manifest or {})
@@ -725,6 +738,7 @@ def _upload_file_report(
     upload_dir: Path,
     manifest_ids: set[str],
     live_upload_ids: set[str],
+    reference_scan_complete: bool,
     warnings: list[str],
 ) -> dict[str, Any]:
     state = UploadTraversalState(visited_dirs=1)
@@ -756,11 +770,36 @@ def _upload_file_report(
         "visited_dirs": state.visited_dirs,
         "skipped_symlink_count": state.skipped_symlink_count,
         "skipped_unreadable_count": state.skipped_unreadable_count,
-        "suspected_orphans": {
-            "count": orphan_count,
-            "observed_count": orphan_count,
-            "sample": orphan_sample,
-        },
+        "suspected_orphans": _suspected_orphan_report(
+            observed_count=orphan_count,
+            sample=orphan_sample,
+            reference_scan_complete=reference_scan_complete,
+            upload_traversal_complete=not state.truncated,
+        ),
+    }
+
+
+def _suspected_orphan_report(
+    *,
+    observed_count: int,
+    sample: list[dict[str, Any]],
+    reference_scan_complete: bool,
+    upload_traversal_complete: bool,
+) -> dict[str, Any]:
+    reasons: list[str] = []
+    if not reference_scan_complete:
+        reasons.append("db_reference_scan_incomplete")
+    if not upload_traversal_complete:
+        reasons.append("upload_traversal_truncated")
+    complete = not reasons
+    return {
+        "definitive": complete,
+        "complete": complete,
+        "observed_only": not complete,
+        "count": observed_count if complete else None,
+        "observed_count": observed_count,
+        "reason_incomplete": reasons or None,
+        "sample": sample,
     }
 
 
