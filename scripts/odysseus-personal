@@ -81,7 +81,7 @@ def cmd_remove_dir(args):
 
 def cmd_reload(args):
     _manager().refresh_index()
-    emit({"ok": True, "count": len(_manager().index)}, args)
+    emit({"ok": True, "count": len(_file_rows(getattr(_manager(), "index", []) or []))}, args)
 
 
 def cmd_exclude(args):

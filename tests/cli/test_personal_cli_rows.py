@@ -20,3 +20,16 @@ def test_file_rows_skips_invalid_rows(monkeypatch):
         "bad-row",
         None,
     ]) == [{"name": "notes.txt", "path": "/tmp/notes.txt"}]
+
+
+def test_reload_counts_only_valid_index_rows(monkeypatch):
+    cli = _load_cli(monkeypatch)
+    manager = cli._manager()
+    manager.index = [{"name": "notes.txt"}, "bad-row", None]
+    seen = []
+    monkeypatch.setattr(cli, "emit", lambda payload, args: seen.append(payload))
+
+    cli.cmd_reload(object())
+
+    manager.refresh_index.assert_called_once()
+    assert seen == [{"ok": True, "count": 1}]
