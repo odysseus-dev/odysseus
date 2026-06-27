@@ -15,6 +15,31 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _read_timeout_value(
+    timeout: int | float | str | None,
+    *,
+    default: int | float | str = 300,
+) -> float | None:
+    if timeout is None:
+        return None
+    try:
+        value = float(timeout)
+    except (TypeError, ValueError):
+        try:
+            value = float(default)
+        except (TypeError, ValueError):
+            value = 300.0
+    return None if value <= 0 else value
+
+
 class LLMConfig:
     """Configuration constants for LLM operations."""
     DEFAULT_TIMEOUT = 30
@@ -22,7 +47,7 @@ class LLMConfig:
     DEFAULT_MAX_TOKENS = 0
     MAX_RETRIES = 3
     RETRY_DELAY = 0.5
-    STREAM_TIMEOUT = 300
+    STREAM_TIMEOUT = _env_int("ODYSSEUS_STREAM_TIMEOUT", 300)
     # TCP+TLS connect budget for a SINGLE attempt. The old hard-coded 3.0s
     # assumed LAN/Tailscale peers ('SYN in <100ms'); it is too tight for public
     # cloud endpoints (offshore APIs take ~0.5-1.5s cold, with jitter), so a
@@ -35,12 +60,24 @@ class LLMConfig:
 
 def _call_timeout(read_timeout) -> httpx.Timeout:
     """Per-request timeout for non-streaming LLM calls (connect from config)."""
-    return httpx.Timeout(connect=LLMConfig.CONNECT_TIMEOUT, read=float(read_timeout), write=10.0, pool=5.0)
+    read = _read_timeout_value(read_timeout, default=LLMConfig.DEFAULT_TIMEOUT)
+    return httpx.Timeout(
+        connect=LLMConfig.CONNECT_TIMEOUT,
+        read=read,
+        write=10.0,
+        pool=5.0,
+    )
 
 
 def _stream_timeout(read_timeout) -> httpx.Timeout:
     """Per-request timeout for streaming LLM calls (connect from config)."""
-    return httpx.Timeout(connect=LLMConfig.CONNECT_TIMEOUT, read=float(read_timeout), write=30.0, pool=5.0)
+    read = _read_timeout_value(read_timeout, default=LLMConfig.STREAM_TIMEOUT)
+    return httpx.Timeout(
+        connect=LLMConfig.CONNECT_TIMEOUT,
+        read=read,
+        write=30.0,
+        pool=5.0,
+    )
 
 
 # Cache for LLM responses

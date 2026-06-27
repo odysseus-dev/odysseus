@@ -18,14 +18,31 @@ on a GET would be unsafe (Lax cookies ride top-level GET navigations), so GET
 """
 
 import html
+import json
+import uuid
+from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from core.middleware import require_admin
 from src.auth_helpers import get_current_user
 
 from companion import pairing as _pairing
+
+COMPANION_CONTRACT_VERSION = 1
+
+
+def require_companion_scope(request: Request) -> None:
+    """Require the chat scope for bearer-token companion callers."""
+    if not getattr(request.state, "api_token", False):
+        return
+    scopes = getattr(request.state, "api_token_scopes", None) or []
+    if isinstance(scopes, str):
+        scopes = [scope.strip() for scope in scopes.split(",")]
+    scope_set = {str(scope).strip() for scope in scopes if str(scope).strip()}
+    if _pairing.COMPANION_SCOPE not in scope_set:
+        raise HTTPException(403, "API token requires chat scope")
 
 
 def token_owner(request: Request) -> str | None:
@@ -41,6 +58,15 @@ def token_owner(request: Request) -> str | None:
     return get_current_user(request)
 
 
+def require_companion_owner(request: Request) -> str:
+    """Require a resolved owner for companion model/session actions."""
+    require_companion_scope(request)
+    owner = token_owner(request)
+    if not owner:
+        raise HTTPException(401, "Companion owner could not be resolved")
+    return owner
+
+
 def owner_can_see(row_owner, owner) -> bool:
     """Owner-scope rule for read endpoints.
 
@@ -53,16 +79,159 @@ def owner_can_see(row_owner, owner) -> bool:
     return row_owner is None or row_owner == owner
 
 
-def require_models_scope(request: Request) -> None:
-    """Require the companion chat scope for bearer-token model inventory."""
-    if not getattr(request.state, "api_token", False):
-        return
-    scopes = getattr(request.state, "api_token_scopes", None) or []
-    if isinstance(scopes, str):
-        scopes = [scope.strip() for scope in scopes.split(",")]
-    scope_set = {str(scope).strip() for scope in scopes if str(scope).strip()}
-    if _pairing.COMPANION_SCOPE not in scope_set:
-        raise HTTPException(403, "API token requires chat scope")
+def companion_manifest(request: Request) -> dict:
+    """Stable discovery contract for thin private companion clients."""
+    from core.constants import APP_VERSION
+
+    api_token = bool(getattr(request.state, "api_token", False))
+    token_scopes = getattr(request.state, "api_token_scopes", []) or []
+    return {
+        "name": "odysseus",
+        "version": APP_VERSION,
+        "contract_version": COMPANION_CONTRACT_VERSION,
+        "owner": token_owner(request),
+        "auth": {
+            "mode": "token" if api_token else "session",
+            "required_bearer_scope": _pairing.COMPANION_SCOPE,
+            "token_scopes": sorted({str(scope) for scope in token_scopes})
+            if api_token
+            else [],
+            "pairing": {
+                "method": "admin_cookie_post",
+                "path": "/api/companion/pair",
+                "payload_version": _pairing.PAIRING_VERSION,
+                "scopes": [_pairing.COMPANION_SCOPE],
+            },
+        },
+        "endpoints": {
+            "ping": {"method": "GET", "path": "/api/companion/ping"},
+            "info": {"method": "GET", "path": "/api/companion/info"},
+            "manifest": {"method": "GET", "path": "/api/companion/manifest"},
+            "models": {"method": "GET", "path": "/api/companion/models"},
+            "sessions": {"method": "GET", "path": "/api/companion/sessions"},
+            "create_session": {"method": "POST", "path": "/api/companion/sessions"},
+            "chat_stream": {"method": "POST", "path": "/api/chat_stream"},
+            "chat_resume": {"method": "GET", "path": "/api/chat/resume/{session_id}"},
+            "chat_stop": {"method": "POST", "path": "/api/chat/stop/{session_id}"},
+            "chat_stream_status": {
+                "method": "GET",
+                "path": "/api/chat/stream_status/{session_id}",
+            },
+        },
+        "features": {
+            "chat": {
+                "available": True,
+                "streaming": True,
+                "required_bearer_scope": _pairing.COMPANION_SCOPE,
+                "request_body": "multipart_form_data",
+            },
+            "models": {"read": True},
+            "sessions": {"list": True, "create": True},
+        },
+    }
+
+
+def _companion_session_manager():
+    from core import models as core_models
+
+    manager = getattr(core_models, "_session_manager", None)
+    if manager is None:
+        raise HTTPException(503, "Session manager is not ready")
+    return manager
+
+
+def _json_list(value) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value if isinstance(item, str) and item.strip()]
+    if not isinstance(value, str) or not value.strip():
+        return []
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(item) for item in parsed if isinstance(item, str) and item.strip()]
+
+
+def _endpoint_model_ids(endpoint) -> list[str]:
+    hidden = set(_json_list(getattr(endpoint, "hidden_models", None)))
+    pinned = _json_list(getattr(endpoint, "pinned_models", None))
+    cached = _json_list(getattr(endpoint, "cached_models", None))
+    out: list[str] = []
+    for model_id in [*pinned, *cached]:
+        if model_id in hidden or model_id in out:
+            continue
+        out.append(model_id)
+    return out
+
+
+def _session_summary(session) -> dict:
+    return {
+        "id": session.id,
+        "name": session.name,
+        "model": session.model,
+        "endpoint_url": session.endpoint_url,
+        "rag": bool(session.rag),
+        "archived": bool(session.archived),
+        "message_count": int(getattr(session, "message_count", 0) or 0),
+    }
+
+
+def _persist_companion_session_headers(session_id: str, headers: dict | None) -> None:
+    from core.database import Session as DbSession, SessionLocal
+
+    db = SessionLocal()
+    try:
+        row = db.query(DbSession).filter(DbSession.id == session_id).first()
+        if row:
+            row.headers = headers or {}
+            row.updated_at = datetime.utcnow()
+            db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def _pick_companion_session_endpoint(*, owner: str, endpoint_id: str, model: str):
+    from core.database import ModelEndpoint, SessionLocal
+    from src.endpoint_resolver import build_chat_url, normalize_base
+
+    db = SessionLocal()
+    try:
+        q = db.query(ModelEndpoint).filter(
+            ModelEndpoint.is_enabled == True,  # noqa: E712
+            (ModelEndpoint.model_type == "llm") | (ModelEndpoint.model_type == None),  # noqa: E711
+        )
+        if owner:
+            q = q.filter((ModelEndpoint.owner == owner) | (ModelEndpoint.owner == None))  # noqa: E711
+        if endpoint_id:
+            q = q.filter(ModelEndpoint.id == endpoint_id)
+        for endpoint in q.all():
+            if not owner_can_see(getattr(endpoint, "owner", None), owner):
+                continue
+            models = _endpoint_model_ids(endpoint)
+            selected_model = model.strip() if model else ""
+            if selected_model:
+                if models and selected_model not in models:
+                    continue
+            elif models:
+                selected_model = models[0]
+            else:
+                continue
+            base_url = normalize_base(endpoint.base_url or "")
+            return {
+                "endpoint_id": endpoint.id,
+                "endpoint_url": build_chat_url(base_url),
+                "endpoint_base_url": base_url,
+                "model": selected_model,
+                "api_key": endpoint.api_key or "",
+            }
+    finally:
+        db.close()
+    return None
 
 
 def mint_pairing_token(owner: str, invalidate=None) -> tuple[str, str]:
@@ -86,6 +255,7 @@ def setup_companion_routes() -> APIRouter:
     def ping(request: Request):
         """Cheap, auth-validated health check. A 200 with ok=true confirms the
         host/port and credential are valid; middleware returns 401 otherwise."""
+        require_companion_scope(request)
         from core.constants import APP_VERSION
         return {
             "ok": True,
@@ -98,13 +268,24 @@ def setup_companion_routes() -> APIRouter:
     def info(request: Request):
         """Server identity + coarse capability flags. `owner` is the caller's own
         identity (the token's owner for bearer callers)."""
+        require_companion_scope(request)
         from core.constants import APP_VERSION
         return {
             "name": "odysseus",
             "version": APP_VERSION,
             "owner": token_owner(request),
             "capabilities": {"chat": True, "streaming": True},
+            "client_contract": {
+                "version": COMPANION_CONTRACT_VERSION,
+                "manifest": "/api/companion/manifest",
+            },
         }
+
+    @router.get("/manifest")
+    def manifest(request: Request):
+        """Machine-readable contract for private mobile/PWA companion clients."""
+        require_companion_scope(request)
+        return companion_manifest(request)
 
     @router.get("/models")
     def models(request: Request):
@@ -116,7 +297,7 @@ def setup_companion_routes() -> APIRouter:
         rows -- the same rule as owner_filter. Read-only; never returns api_key
         material.
         """
-        require_models_scope(request)
+        require_companion_scope(request)
         import json as _json
 
         from core.database import SessionLocal, ModelEndpoint
@@ -158,6 +339,61 @@ def setup_companion_routes() -> APIRouter:
         finally:
             db.close()
         return {"endpoints": out}
+
+    @router.get("/sessions")
+    def list_sessions(request: Request):
+        """List the caller's mobile-visible chat sessions."""
+        owner = require_companion_owner(request)
+        manager = _companion_session_manager()
+        sessions = manager.get_sessions_for_user(owner)
+        return {
+            "sessions": [
+                _session_summary(session)
+                for session in sessions.values()
+                if not getattr(session, "archived", False)
+            ]
+        }
+
+    @router.post("/sessions")
+    def create_session(request: Request, body: dict = Body(default_factory=dict)):
+        """Create a chat session from an owner-visible saved model endpoint."""
+        owner = require_companion_owner(request)
+        manager = _companion_session_manager()
+        body = body or {}
+        name = str(body.get("name") or "Companion").strip()[:120] or "Companion"
+        endpoint_id = str(body.get("endpoint_id") or "").strip()
+        model = str(body.get("model") or "").strip()
+        rag = bool(body.get("rag", False))
+        selected = _pick_companion_session_endpoint(
+            owner=owner,
+            endpoint_id=endpoint_id,
+            model=model,
+        )
+        if not selected:
+            raise HTTPException(400, "No owner-visible companion model endpoint found")
+
+        sid = str(uuid.uuid4())
+        session = manager.create_session(
+            session_id=sid,
+            name=name,
+            endpoint_url=selected["endpoint_url"],
+            model=selected["model"],
+            rag=rag,
+            owner=owner,
+        )
+        if selected["api_key"]:
+            from src.endpoint_resolver import build_headers
+
+            session.headers = build_headers(
+                selected["api_key"],
+                selected["endpoint_base_url"],
+            )
+            _persist_companion_session_headers(sid, session.headers)
+
+        return {
+            "session": _session_summary(session),
+            "endpoint_id": selected["endpoint_id"],
+        }
 
     @router.get("/pair")
     def pair_page(request: Request):

@@ -10,6 +10,7 @@ import os
 import sys
 import types
 import json
+import importlib
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -29,7 +30,14 @@ if "core.database" not in sys.modules:
     sys.modules["core.database"] = _db
 
 import companion.routes as companion_routes
-from companion.routes import setup_companion_routes, token_owner, owner_can_see
+from companion.routes import (
+    COMPANION_CONTRACT_VERSION,
+    companion_manifest,
+    owner_can_see,
+    require_companion_scope,
+    setup_companion_routes,
+    token_owner,
+)
 
 
 def _request(**state):
@@ -125,16 +133,20 @@ def _models_route():
     raise AssertionError("GET /api/companion/models route not found")
 
 
+def _route(path):
+    for route in setup_companion_routes().routes:
+        if getattr(route, "path", "") == path and "GET" in getattr(route, "methods", set()):
+            return route.endpoint
+    raise AssertionError(f"GET {path} route not found")
+
+
 def _call_models_route(monkeypatch, rows, request):
     db = _DB(rows)
     db_mod = sys.modules["core.database"]
     monkeypatch.setattr(db_mod, "SessionLocal", lambda: db)
     monkeypatch.setattr(db_mod, "ModelEndpoint", _ModelEndpoint)
 
-    endpoint_mod = sys.modules.get("src.endpoint_resolver")
-    if endpoint_mod is None:
-        endpoint_mod = types.ModuleType("src.endpoint_resolver")
-        sys.modules["src.endpoint_resolver"] = endpoint_mod
+    endpoint_mod = importlib.import_module("src.endpoint_resolver")
     monkeypatch.setattr(
         endpoint_mod,
         "build_chat_url",
@@ -152,6 +164,67 @@ def _endpoint_names(endpoints):
 
 
 # --- token_owner: who a request is attributed to ---------------------------
+
+def test_companion_scope_allows_cookie_sessions():
+    require_companion_scope(_request(api_token=False, current_user="alice"))
+
+
+def test_companion_scope_allows_chat_scoped_bearer_token():
+    require_companion_scope(
+        _request(api_token=True, api_token_scopes=["chat"], current_user="api")
+    )
+
+
+def test_companion_scope_rejects_non_chat_bearer_token():
+    with pytest.raises(HTTPException) as exc:
+        require_companion_scope(
+            _request(
+                api_token=True,
+                api_token_scopes=["todos:read"],
+                current_user="api",
+            )
+        )
+
+    assert exc.value.status_code == 403
+    assert "chat scope" in exc.value.detail
+
+
+def test_manifest_describes_narrow_companion_contract(monkeypatch):
+    monkeypatch.setattr(companion_routes, "get_current_user", lambda request: "api")
+    req = _request(
+        api_token=True,
+        api_token_owner="alice",
+        api_token_scopes=["chat"],
+        current_user="api",
+    )
+
+    response = companion_manifest(req)
+
+    assert response["contract_version"] == COMPANION_CONTRACT_VERSION
+    assert response["owner"] == "alice"
+    assert response["auth"]["required_bearer_scope"] == "chat"
+    assert response["auth"]["pairing"]["scopes"] == ["chat"]
+    assert response["endpoints"]["sessions"] == {
+        "method": "GET",
+        "path": "/api/companion/sessions",
+    }
+    assert response["endpoints"]["create_session"] == {
+        "method": "POST",
+        "path": "/api/companion/sessions",
+    }
+    assert "commands" not in response["endpoints"]
+    assert "goals" not in response["endpoints"]
+    assert "signed_commands" not in response["features"]
+
+
+def test_manifest_route_requires_chat_scope_for_bearer_token():
+    with pytest.raises(HTTPException) as exc:
+        _route("/api/companion/manifest")(
+            _request(api_token=True, api_token_scopes=["memory:read"], current_user="api")
+        )
+
+    assert exc.value.status_code == 403
+
 
 def test_token_owner_bearer_resolves_to_token_owner():
     # A paired bearer caller runs as the "api" pseudo-user, but must attribute

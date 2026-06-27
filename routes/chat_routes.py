@@ -50,6 +50,24 @@ _active_streams: Dict[str, dict] = {}
 _IMAGE_MODEL_PREFIXES = ("gpt-image", "dall-e", "chatgpt-image")
 
 
+def _require_chat_scope_for_api_token(request: Request) -> None:
+    """Bearer callers to chat routes must carry the chat scope."""
+    if not getattr(request.state, "api_token", False):
+        return
+    scopes = set(getattr(request.state, "api_token_scopes", []) or [])
+    if "chat" not in scopes:
+        raise HTTPException(403, "API token is not scoped for chat")
+
+
+def _reject_bash_for_api_token(request: Request, allow_bash: object) -> None:
+    """Bearer-token chat calls do not get agent shell access in this slice."""
+    if str(allow_bash).lower() != "true":
+        return
+    if not getattr(request.state, "api_token", False):
+        return
+    raise HTTPException(403, "API tokens cannot request bash access")
+
+
 def _stream_set(session_id: str, **fields) -> None:
     """Update fields on the active-stream entry for `session_id`, or
     no-op if the entry has already been popped. Using .get() avoids a
@@ -346,6 +364,7 @@ def setup_chat_routes(
     # ------------------------------------------------------------------ #
     @router.post("/api/chat", response_model=Dict[str, str])
     async def chat_endpoint(request: Request, chat_request: ChatRequest) -> Dict[str, str]:
+        _require_chat_scope_for_api_token(request)
         _set_user_time_from_request(request)
 
         message = chat_request.message
@@ -456,6 +475,7 @@ def setup_chat_routes(
     # ------------------------------------------------------------------ #
     @router.post("/api/chat_stream")
     async def chat_stream(request: Request) -> StreamingResponse:
+        _require_chat_scope_for_api_token(request)
         body = None
         try:
             if request.headers.get("content-type", "").startswith("application/json"):
@@ -498,6 +518,7 @@ def setup_chat_routes(
         # Plan mode is a modifier on agent mode — it only makes sense with tools.
         if plan_mode:
             chat_mode = "agent"
+        _reject_bash_for_api_token(request, allow_bash)
         # An approved plan being EXECUTED: the frontend sends the checklist back
         # on each turn so we can pin it in context. This way a long plan on a
         # weak model survives history truncation — the agent can always re-read
@@ -1435,6 +1456,7 @@ def setup_chat_routes(
     # ------------------------------------------------------------------ #
     @router.get("/api/chat/resume/{session_id}")
     async def chat_resume(request: Request, session_id: str) -> StreamingResponse:
+        _require_chat_scope_for_api_token(request)
         _verify_session_owner(request, session_id)
         if not agent_runs.is_active(session_id):
             raise HTTPException(404, "No active run for this session")
@@ -1446,6 +1468,7 @@ def setup_chat_routes(
     # ------------------------------------------------------------------ #
     @router.post("/api/chat/stop/{session_id}")
     async def chat_stop(request: Request, session_id: str) -> Dict[str, Any]:
+        _require_chat_scope_for_api_token(request)
         _verify_session_owner(request, session_id)
         stopped = agent_runs.stop(session_id)
         return {"stopped": stopped}
@@ -1455,6 +1478,7 @@ def setup_chat_routes(
     # ------------------------------------------------------------------ #
     @router.get("/api/chat/stream_status/{session_id}")
     async def chat_stream_status(request: Request, session_id: str) -> Dict[str, Any]:
+        _require_chat_scope_for_api_token(request)
         _verify_session_owner(request, session_id)
         # A detached run can still be going even if _active_streams was popped;
         # report it as active so the client knows to reconnect via /resume.
@@ -1473,6 +1497,7 @@ def setup_chat_routes(
     # ------------------------------------------------------------------ #
     @router.post("/api/inject_context/{session_id}")
     async def inject_context(request: Request, session_id: str, context: str = Form(...)) -> Dict[str, str]:
+        _require_chat_scope_for_api_token(request)
         _verify_session_owner(request, session_id)
         try:
             sess = session_manager.get_session(session_id)
@@ -1492,6 +1517,7 @@ def setup_chat_routes(
         q: str = Query("", min_length=0),
         limit: int = Query(20, ge=1, le=100),
     ) -> List[Dict[str, Any]]:
+        _require_chat_scope_for_api_token(request)
         if not q or not q.strip():
             return []
 
@@ -1517,6 +1543,7 @@ def setup_chat_routes(
         Unlike the full chat pipeline, this does NOT run the agent loop or tools.
         It just asks the LLM to rewrite the given text.
         """
+        _require_chat_scope_for_api_token(request)
         try:
             body = await request.json()
         except Exception:
