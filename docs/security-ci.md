@@ -1,14 +1,16 @@
 # Security CI guide
 
-This project runs a set of automated security checks on every pull request and
-on every push to `main`. This page explains what each one does, whether it can
+This project runs a set of automated security checks on pull requests and
+selected branch pushes. This page explains what each one does, whether it can
 block a merge, and the few one-time settings you should turn on to get the full
 benefit.
 
 ## What runs, and why
 
-Each check lives in its own file under `.github/workflows/`. They run
-automatically; you do not start them.
+Most checks live in files under `.github/workflows/`. CodeQL is configured
+through GitHub's code scanning default setup, so it appears as a dynamic GitHub
+workflow instead of a checked-in workflow file. They run automatically; you do
+not start them.
 
 | Check | What it protects against | Blocks a merge? |
 |---|---|---|
@@ -88,11 +90,14 @@ let the workflows run on one pull request first, then add them here.
 2. Turn on **Dependency graph** (usually on by default for public repos) -- this
    powers Dependency review and Dependabot.
 3. Turn on **Dependabot alerts** and **Dependabot security updates**.
-4. Under **Code scanning**, you have two ways to scan the app code with CodeQL:
-   - The included `codeql.yml` workflow already scans `main` and runs weekly.
-   - To also scan **pull requests** (recommended, since most contributions come
-     from forks), click **Set up -> Default** under Code scanning. GitHub then
-     runs CodeQL on pull requests for you, with no token limitations.
+4. Under **Code scanning**, use **Set up -> Default** for CodeQL. GitHub then
+   runs CodeQL as a dynamic workflow without the fork-token limitations that
+   affect checked-in advanced workflows.
+
+   Do not also add a checked-in CodeQL workflow while default setup is enabled:
+   GitHub rejects advanced CodeQL uploads when default setup is active. If the
+   project later needs an advanced CodeQL workflow, disable default setup first
+   and keep only one CodeQL publishing path active.
 
 ## Keeping it current
 

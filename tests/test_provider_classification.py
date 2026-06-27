@@ -1,20 +1,18 @@
-"""Provider classification and upstream-error formatting (REAL src.llm_core).
+"""Provider classification from a base URL (REAL src.llm_core).
 
 ROADMAP "Backend → more tests around ... provider setup" and "Provider
 setup/probing audit for Anthropic, Gemini, Groq, xAI, OpenRouter, OpenAI, and
 DeepSeek". `test_provider_endpoints.py` already pins URL/header *building*; this
 module pins the two pieces of provider setup that decide WHICH provider an
-endpoint is and how its failures are reported to the user:
+endpoint is:
 
   * `_detect_provider`  — host-based provider identification (drives payload
     shape, auth headers, and the /v1 collapse). The look-alike-host and
     domain-in-path cases guard the hostname (not substring) matching.
   * `_provider_label`   — the human name shown in degraded-state messages.
-  * `_format_upstream_error` — turns a raw upstream HTTP status + body into the
-    one-line, provider-aware message the UI shows ("Provider probes" degraded
-    reporting in the roadmap).
-  * `_uses_max_completion_tokens` — the gpt-5 / o-series quirk that the probe
-    and chat payload builders branch on.
+
+Upstream-error formatting lives in `test_provider_classification_errors.py` and
+the token-param quirk in `test_provider_classification_token_params.py`.
 
 conftest.py stubs the heavy deps (sqlalchemy, src.database), so importing the
 real module is side-effect free.
@@ -24,8 +22,6 @@ import pytest
 from src.llm_core import (
     _detect_provider,
     _provider_label,
-    _format_upstream_error,
-    _uses_max_completion_tokens,
 )
 
 
@@ -97,10 +93,19 @@ class TestProviderLabel:
     def test_known_labels(self, url, expected):
         assert _provider_label(url) == expected
 
-    def test_local_non_ollama_endpoint(self):
-        # A loopback host that isn't on the native Ollama /api path is just a
-        # generic local endpoint (e.g. an OpenAI-compatible local server).
-        assert _provider_label("http://localhost:8080/v1") == "local endpoint"
+    @pytest.mark.parametrize("url", [
+        "http://localhost:8080/v1",
+        "http://127.0.0.1:8080/v1",
+        "http://localhost:8000/v1",
+        "http://localhost:1234/v1",
+        "http://localhost:9999/v1",
+    ])
+    def test_local_non_ollama_endpoint(self, url):
+        # The serving tool is NOT inferred from the port: vLLM, SGLang, llama.cpp
+        # and plain OpenAI-compatible servers all share 8000/8080, so a port-only
+        # label would mislabel real setups. The tool is identified by /props
+        # fingerprinting during discovery; this helper stays neutral.
+        assert _provider_label(url) == "local endpoint"
 
     def test_unknown_host_returns_host(self):
         assert _provider_label("https://api.unknown-llm.example/v1") == "api.unknown-llm.example"
@@ -108,81 +113,3 @@ class TestProviderLabel:
     @pytest.mark.parametrize("url", ["", None])
     def test_empty_returns_generic(self, url):
         assert _provider_label(url) == "provider"
-
-
-# ── _format_upstream_error ──
-# Status + body → one-line provider-aware sentence.
-
-class TestFormatUpstreamError:
-    def test_401_rejects_key_with_provider_and_detail(self):
-        msg = _format_upstream_error(
-            401, '{"error": {"message": "Invalid API key"}}', "https://api.x.ai/v1"
-        )
-        assert msg.startswith("xAI rejected the API key")
-        assert "Invalid API key" in msg
-        assert "re-paste the key" in msg
-
-    def test_403_denies_access(self):
-        msg = _format_upstream_error(
-            403, '{"error": {"message": "Forbidden"}}', "https://api.openai.com/v1"
-        )
-        assert "OpenAI denied access (403)" in msg
-        assert "Forbidden" in msg
-
-    def test_404_points_at_base_url(self):
-        msg = _format_upstream_error(404, "", "https://api.groq.com/openai/v1")
-        assert msg == "Groq returned 404 — check the base URL and model name."
-
-    def test_429_rate_limited(self):
-        msg = _format_upstream_error(
-            429, '{"error": {"message": "slow down"}}', "https://api.anthropic.com"
-        )
-        assert msg.startswith("Anthropic rate-limited the request (429).")
-        assert "slow down" in msg
-
-    def test_5xx_reported_as_outage(self):
-        msg = _format_upstream_error(503, "", "https://api.deepseek.com")
-        assert msg == "DeepSeek is having an outage (HTTP 503)."
-
-    def test_other_status_passthrough(self):
-        msg = _format_upstream_error(418, "", "https://api.openai.com/v1")
-        assert msg == "OpenAI returned HTTP 418"
-
-    def test_string_error_field(self):
-        msg = _format_upstream_error(401, '{"error": "bad key"}', "https://api.openai.com/v1")
-        assert "bad key" in msg
-
-    def test_plain_text_body_used_as_detail(self):
-        msg = _format_upstream_error(500, "upstream exploded", "https://api.openai.com/v1")
-        assert "OpenAI is having an outage (HTTP 500)." in msg
-        assert "upstream exploded" in msg
-
-    def test_bytes_body_is_decoded(self):
-        msg = _format_upstream_error(
-            401, b'{"error": {"message": "nope"}}', "https://api.openai.com/v1"
-        )
-        assert "nope" in msg
-
-    def test_unknown_url_falls_back_to_generic_label(self):
-        msg = _format_upstream_error(401, "", "")
-        assert msg.startswith("provider rejected the API key")
-
-
-# ── _uses_max_completion_tokens ──
-# gpt-5 / o-series need `max_completion_tokens`; everything else `max_tokens`.
-
-class TestUsesMaxCompletionTokens:
-    @pytest.mark.parametrize("model", [
-        "gpt-5", "gpt-5.2", "gpt-5-mini", "o1", "o1-preview", "o3", "o3-mini",
-        "o4-mini", "gpt-4.5", "gpt-4.5-preview", "openrouter/openai/o3",
-    ])
-    def test_requires_max_completion_tokens(self, model):
-        assert _uses_max_completion_tokens(model) is True
-
-    @pytest.mark.parametrize("model", [
-        # gpt-4o must NOT be confused with the o-series ("o4"/"o1" tokens).
-        "gpt-4o", "gpt-4o-mini", "gpt-4.1", "claude-opus-4", "llama-3.3-70b",
-        "deepseek-chat", "", None,
-    ])
-    def test_uses_plain_max_tokens(self, model):
-        assert _uses_max_completion_tokens(model) is False

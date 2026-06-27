@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 NON_ADMIN_BLOCKED_TOOLS = {
     "bash",
     "python",
+    "manage_bg_jobs",
     "read_file",
     "write_file",
     "edit_file",
@@ -114,6 +115,8 @@ _PLAN_MODE_KNOWN_MUTATORS = {
     # Shell is never read-only-safe; block it explicitly so it stays out of plan
     # mode even if the schema list fails to load.
     "bash", "python",
+    # Controls shell processes (kill); plan mode can't run bash anyway.
+    "manage_bg_jobs",
 }
 
 
@@ -177,13 +180,16 @@ def owner_is_admin_or_single_user(owner: Optional[str]) -> bool:
     defense-in-depth for callers that bypass it (e.g. trusted loopback).
     """
     try:
+        from src.auth_helpers import _auth_disabled
+
+        if _auth_disabled():
+            return True
+
         from core.auth import AuthManager
 
         auth = AuthManager()
         if not auth.is_configured:
-            from src.auth_helpers import _auth_disabled
-
-            return _auth_disabled()
+            return False
         return bool(owner and auth.is_admin(owner))
     except Exception as exc:
         logger.warning("Unable to evaluate owner admin status: %s", exc)

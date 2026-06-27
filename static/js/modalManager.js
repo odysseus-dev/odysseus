@@ -28,6 +28,7 @@
 import { previewZoneAt, clearPreview, snapModalToZone } from './tileManager.js';
 import { suspendDock, resumeDock, clearRightDock, applyEdgeDock } from './modalSnap.js';
 import { dismissOrRemove } from './escMenuStack.js';
+import { nextToolWindowZ } from './toolWindowZOrder.js';
 
 const _state = new Map(); // id -> { restoreFn, closeFn, railBtnId, isMinimized, restoreMinHeight }
 
@@ -63,7 +64,14 @@ function _applyRememberedDock(id) {
 // those statics and bump on every bring-to-front.
 let _modalTopZ = 300;
 function _bringToFront(modal) {
-  if (modal) modal.style.setProperty('z-index', String(++_modalTopZ), 'important');
+  if (!modal) return;
+  const z = nextToolWindowZ({
+    exclude: modal,
+    current: getComputedStyle(modal).zIndex,
+    floor: _modalTopZ,
+  });
+  _modalTopZ = Math.max(_modalTopZ, z);
+  modal.style.setProperty('z-index', String(z), 'important');
 }
 
 function _emitModalOpened(id, modal) {

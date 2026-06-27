@@ -174,8 +174,20 @@ async def subscribe(session_id: str) -> AsyncGenerator[str, None]:
             next_seq += 1
         if run.status != "running":
             return
+        heartbeat_idx = 0
         while True:
-            seq, ev = await q.get()
+            try:
+                seq, ev = await asyncio.wait_for(q.get(), timeout=10.0)
+            except asyncio.TimeoutError:
+                # Keep slow local models/proxies alive while they prefill before
+                # the first token. SSE comments are ignored by the UI but reset
+                # browser/proxy idle timers, which prevents "empty response"
+                # disconnects on llama.cpp first-token latencies of 30s+.
+                if run.status == "running":
+                    heartbeat_idx += 1
+                    yield f": heartbeat {heartbeat_idx}\n\n"
+                    continue
+                seq, ev = (None, None)
             if seq is None:            # end sentinel
                 while next_seq < len(run.buffer):   # flush any tail the sentinel raced
                     yield run.buffer[next_seq]
