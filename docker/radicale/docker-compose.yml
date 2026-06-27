@@ -1,0 +1,43 @@
+# Radicale (CalDAV/CardDAV) for shared calendar across Odysseus machines
+#
+# Deploy on ONE always-on host (NAS, home server) reachable over Tailscale.
+# Image: https://hub.docker.com/r/tomsquest/docker-radicale
+#
+# First-time setup:
+#   1. cp .env.example .env  → set RADICALE_BIND to this host's Tailscale IP
+#   2. Create credentials:
+#        docker run --rm -it httpd:2.4-alpine htpasswd -nbB YOUR_USER 'YOUR_PASSWORD' | cut -d: -f2-
+#      Paste hash into config/users as:  YOUR_USER:HASH
+#   3. mkdir -p data
+#   4. docker compose up -d
+#
+# Each Odysseus machine (Settings → Calendar → CalDAV):
+#   URL:      http://<RADICALE_BIND>:5232/<YOUR_USER>/
+#   User/pass: same as config/users
+#   On each machine's .env: ODYSSEUS_ALLOW_PRIVATE_CALDAV=1
+#
+# Phone (on Tailscale): add CalDAV account → same URL and credentials.
+
+services:
+  radicale:
+    image: ${RADICALE_IMAGE:-tomsquest/docker-radicale:latest}
+    container_name: odysseus-radicale
+    restart: unless-stopped
+    ports:
+      # Bind to Tailscale IP (from .env), not 0.0.0.0 on the public LAN.
+      - "${RADICALE_BIND:-127.0.0.1}:5232:5232"
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./config:/config:ro
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:5232/.web/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

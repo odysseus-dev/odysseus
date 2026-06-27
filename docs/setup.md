@@ -224,6 +224,15 @@ do not run on macOS. MLX-only models are not served by Odysseus.
 
 </details>
 
+### Multi-machine (Tailscale + Radicale)
+
+For several workstations on a Tailscale tailnet with a shared Radicale calendar,
+see [multi-machine.md](multi-machine.md). Windows bootstrap:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap-multi-machine.ps1
+```
+
 ### Native Windows
 
 **One-command launcher** (creates the venv, installs deps, runs setup, starts the
