@@ -162,13 +162,13 @@ def _infer_serve_port(cmd: str) -> int:
     """Infer likely listen port from a serve command."""
     if not cmd:
         return 8080
-    m = re.search(r"--port\\s+(\\d+)", cmd)
+    m = re.search(r"--port\s+(\d+)", cmd)
     if m:
         try:
             return int(m.group(1))
         except Exception:
             pass
-    m = re.search(r"OLLAMA_HOST=[^\\s]*?:(\\d+)", cmd)
+    m = re.search(r"OLLAMA_HOST=[^\s]*?:(\d+)", cmd)
     if m:
         try:
             return int(m.group(1))
