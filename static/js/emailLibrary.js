@@ -7260,11 +7260,10 @@ async function _generateSummary(reader, data, btn) {
       }
     } else {
       content.innerHTML = `<span style="color:var(--red)">${_esc(result.error || 'Failed to summarize')}</span>`;
-      panel.remove();
     }
   } catch (e) {
     sp.destroy();
-    panel.remove();
+    content.innerHTML = '<span style="color:var(--red)">Failed to summarize</span>';
     if (uiModule) uiModule.showError?.('Failed to summarize');
   } finally {
     if (btn) btn.disabled = false;
