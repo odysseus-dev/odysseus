@@ -56,13 +56,20 @@ def _skill_entries(skills):
     return [s for s in skills or [] if isinstance(s, dict)]
 
 
+def _use_count(skill: dict) -> int:
+    try:
+        return int(skill.get("uses") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _summary(skill: dict) -> dict:
     return {
         "name": skill.get("name", ""),
         "category": skill.get("category", "general"),
         "description": _preview_text(skill.get("description")),
         "status": skill.get("status", ""),
-        "uses": skill.get("uses", 0),
+        "uses": _use_count(skill),
         "last_used": skill.get("last_used") or "",
         "tags": skill.get("tags") or [],
     }
@@ -72,7 +79,7 @@ def cmd_list(args):
     out = _skill_entries(_manager().load_all())
     if args.category:
         out = [s for s in out if (s.get("category") or "general") == args.category]
-    out.sort(key=lambda s: (-int(s.get("uses") or 0), s.get("name", "")))
+    out.sort(key=lambda s: (-_use_count(s), s.get("name", "")))
     emit([_summary(s) for s in out[: args.limit]], args)
 
 

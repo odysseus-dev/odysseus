@@ -20,3 +20,10 @@ def test_skill_entries_skips_invalid_rows(monkeypatch):
         "bad-row",
         None,
     ]) == [{"name": "deploy", "category": "ops"}]
+
+
+def test_summary_normalizes_invalid_use_count(monkeypatch):
+    cli = _load_cli(monkeypatch)
+
+    assert cli._summary({"name": "deploy", "uses": "bad"})["uses"] == 0
+    assert cli._summary({"name": "ops", "uses": "3"})["uses"] == 3
