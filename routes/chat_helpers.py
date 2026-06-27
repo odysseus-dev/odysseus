@@ -44,7 +44,7 @@ def _is_casual_low_signal(text: str) -> bool:
     tail = m.group("tail") or ""
     if _CASUAL_BLOCKLIST_RE.search(tail):
         return False
-    tail_words = re.findall(r"[A-Za-z0-9_'-]+", tail)
+    tail_words = re.findall(r"[\w'-]+", tail)
     return len(tail_words) <= 2
 
 

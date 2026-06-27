@@ -878,7 +878,7 @@ def _is_casual_low_signal(text: str) -> bool:
     # Allow a short vocative/address after the opener without hardcoding the
     # address term itself: "hey man", "yo dude", "sup <name>". Longer tails are
     # more likely to be an actual request and should get normal context/tooling.
-    tail_words = re.findall(r"[A-Za-z0-9_'-]+", tail)
+    tail_words = re.findall(r"[\w'-]+", tail)
     return len(tail_words) <= 2
 
 
