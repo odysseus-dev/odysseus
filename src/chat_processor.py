@@ -280,10 +280,54 @@ class ChatProcessor:
         web_sources = []
         if use_web:
             try:
-                web_context, web_sources = comprehensive_web_search(
-                    message, time_filter=time_filter, return_sources=True
-                )
-                preface.append(untrusted_context_message("web search results", web_context))
+                from src.llm_core import llm_call
+
+                t_url, t_model, t_headers = session.endpoint_url, session.model, session.headers
+
+                # Default fallback is the first non-empty line of the original user message
+                fallback_query = next((line.strip() for line in message.split("\n") if line.strip()), "")
+                search_query = fallback_query
+
+                try:
+                    generated_query = llm_call(
+                        t_url,
+                        t_model,
+                        [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "Extract a concise search query from the user's message. "
+                                    "Reply ONLY with the query."
+                                ),
+                            },
+                            {"role": "user", "content": message},
+                        ],
+                        headers=t_headers,
+                        temperature=0.1,
+                        max_tokens=50,
+                        timeout=15
+                    ).strip()
+
+                    if generated_query:
+                        # LLM successfully generated a non-empty query -> use the generated query
+                        search_query = generated_query
+                    else:
+                        # LLM returned an empty or whitespace-only query -> fall back to original query
+                        logger.warning("LLM generated an empty search query, using fallback.")
+                except Exception as e:
+                    # LLM failed (exception/error) -> fall back to original user query
+                    logger.warning(f"Failed to generate search query via LLM, using fallback: {e}")
+
+                search_query = " ".join(search_query.split())
+                if len(search_query) > 150:
+                    search_query = search_query[:150].strip()
+
+                if search_query:
+                    # Execute web search using the final selected query
+                    web_context, web_sources = comprehensive_web_search(
+                        search_query, time_filter=time_filter, return_sources=True
+                    )
+                    preface.append(untrusted_context_message("web search results", web_context))
             except Exception as e:
                 logger.error(f"Web search failed: {e}")
                 preface.append({"role": "system", "content": "Web search encountered an error and could not retrieve results."})
