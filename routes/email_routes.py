@@ -44,7 +44,7 @@ from routes.email_helpers import (
     _q, _attach_compose_uploads, _cleanup_compose_uploads,
     _load_settings, _save_settings, _get_email_config,
     _send_smtp_message, _smtp_security_mode,
-    _IMAP_TIMEOUT_SECONDS, _open_imap_connection,
+    _IMAP_TIMEOUT_SECONDS, _open_imap_connection, _NoImapError,
     make_oauth_state, verify_oauth_state,
     _imap_connect, _imap, _decode_header, _detect_sent_folder, _detect_drafts_folder,
     _extract_attachment_text, _list_attachments_from_msg, _has_visible_attachments, _is_likely_signature_image_attachment,
@@ -708,6 +708,9 @@ def setup_email_routes():
         conn = None
         try:
             conn = _imap_connect(account_id, owner=owner)
+        except _NoImapError:
+            return {"emails": [], "total": 0, "folder": folder}
+        try:
             select_status, _ = conn.select(_q(folder), readonly=True)
             if select_status != "OK":
                 return {"emails": [], "total": 0, "folder": folder, "error": f"Folder not found: {folder}"}

@@ -919,6 +919,10 @@ def _open_imap_connection(host: str, port: int, *, starttls: bool, timeout: int 
     imaplib._MAXLINE = 50_000_000
     return conn
 
+class _NoImapError(ConnectionError):
+    """Raised when the selected account has no IMAP configured (send-only)."""
+
+
 def _imap_connect(account_id: str | None = None, owner: str = "",
                   timeout: int = _IMAP_TIMEOUT_SECONDS):
     # SECURITY: passing `owner` scopes the fallback config lookup so a brand
@@ -928,6 +932,8 @@ def _imap_connect(account_id: str | None = None, owner: str = "",
     # `timeout` is overridable so short-lived callers (e.g. the service-health
     # probe) can impose a tighter budget than the default IMAP timeout.
     cfg = _get_email_config(account_id, owner=owner)
+    if not cfg.get("imap_host"):
+        raise _NoImapError("IMAP not configured — add an Email Account with IMAP in Settings or set env vars")
     # Connection mode:
     #   STARTTLS on → plain + upgrade
     #   STARTTLS off + port 993 → implicit SSL (IMAPS)
