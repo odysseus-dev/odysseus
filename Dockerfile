@@ -18,8 +18,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tmux \
     openssh-client \
     gosu \
+    libgl1 \
+    libglib2.0-0t64 \
+    libxcb1 \
+    libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
+# libgl1/libglib2.0-0t64/libxcb1 are runtime shared libs (libGL.so.1,
+# libglib-2.0/libgthread, libxcb.so.1) that opencv-python (cv2) loads. The
+# slim base omits them, so the Cookbook "install realesrgan" path imports cv2
+# and dies with `libxcb.so.1: cannot open shared object file` despite a clean
+# pip install. Using full opencv-python (not -headless) because basicsr/gfpgan/
+# facexlib/realesrgan all depend on the `opencv-python` distribution by name.
+#
+# libmagic1 is the shared lib (libmagic.so.1) that python-magic dlopens for
+# content-based MIME sniffing in src/upload_handler.py. We install both here
+# (libmagic1 + the python-magic wrapper, below) rather than in requirements.txt
+# because python-magic resolves libmagic at import time: where the lib is
+# absent the import can block or raise, so keeping it image-only avoids
+# regressing pip/venv installs on hosts without libmagic. Debian always has the
+# lib here, so the import is instant and detection actually works.
 # Docker CLI (client only — daemon stays on the host via the
 # /var/run/docker.sock mount). The Debian `docker.io` package ships
 # dockerd but not the client binary on slim, so grab the static client
@@ -45,6 +63,11 @@ ARG INSTALL_OPTIONAL=false
 COPY requirements.txt requirements-optional.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
     && if [ "$INSTALL_OPTIONAL" = "true" ]; then pip install --no-cache-dir -r requirements-optional.txt; fi
+
+# python-magic powers content-based MIME sniffing in src/upload_handler.py.
+# Image-only (not in requirements.txt) because it needs the libmagic1 system
+# lib installed above.
+RUN pip install --no-cache-dir python-magic==0.4.27
 
 # Pre-bake the FastEmbed models so the container doesn't need
 # network egress (HuggingFace) at first chat/embedding request. Without
