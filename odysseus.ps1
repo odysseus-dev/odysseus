@@ -3,7 +3,7 @@
   Unified Odysseus Windows launcher.
 
   Preferred usage:
-    .\odysseus run --launch native --host 127.0.0.1 --port 7000
+    .\odysseus run --launch docker --host 127.0.0.1 --port 7000
     .\odysseus # Same as above (uses defaults)
     .\odysseus update --launch docker
     .\odysseus add-to-path
@@ -104,7 +104,7 @@ function Show-Help {
             Show-CommandHelp -Name "run" `
                 -Description "Create/refresh environment and run the app" `
                 -Options @(
-                    "-Launch native|docker|docker-nvidia|docker-amd|standalone   Default: native",
+                    "-Launch native|docker|docker-nvidia|docker-amd|standalone    Default: docker",
                     "-Host <host>                                                 Default: 127.0.0.1",
                     "-Port <port>                                                 Default: 7000",
                     "--force-build                                                Force a rebuild of the standalone launcher"
@@ -121,7 +121,7 @@ function Show-Help {
             Show-CommandHelp -Name "update" `
                 -Description "Pull latest changes and refresh dependencies" `
                 -Options @(
-                    "-Launch native|docker|docker-nvidia|docker-amd|standalone   Default: native"
+                    "-Launch native|docker|docker-nvidia|docker-amd|standalone    Default: docker"
                 ) `
                 -Examples @(
                     ".\odysseus update",
@@ -134,9 +134,9 @@ function Show-Help {
             Show-CommandHelp -Name "add-autostart" `
                 -Description "Register Windows Scheduled Task at user logon" `
                 -Options @(
-                    "--launch native|docker|docker-nvidia|docker-amd     Default: native",
-                    "--host <host>                                       Default: 127.0.0.1",
-                    "--port <port>                                       Default: 7000"
+                    "--launch native|docker|docker-nvidia|docker-amd    Default: docker",
+                    "--host <host>                                      Default: 127.0.0.1",
+                    "--port <port>                                      Default: 7000"
                 ) `
                 -Examples @(
                     ".\odysseus add-autostart",
@@ -383,10 +383,10 @@ function Invoke-Run {
         Write-Host ""
 
         & $venvPy -m uvicorn app:app --host $BindHost --port $BindPort
-        
+
         return
     }
-    
+
     Write-Step "Starting Docker deployment"
 
     # Only set APP_BIND if user explicitly wants it network-accessible
@@ -435,7 +435,7 @@ function Invoke-Update {
     $composeArgs = Resolve-DockerComposeArgs -RequestedLaunch $RequestedLaunch
 
     docker compose @composeArgs up -d --build
-    
+
     if ($LASTEXITCODE -ne 0) { Fail "docker compose up -d --build failed." }
 
     Write-Step "Pruning dangling Docker images"
@@ -568,8 +568,8 @@ if ($RemainingArgs) {
 }
 
 # Handle help flag
-if ($Help) { 
-    if($Command -ne "help") { 
+if ($Help) {
+    if($Command -ne "help") {
         $SubCommand = $Command
         $Command = "help"
     }

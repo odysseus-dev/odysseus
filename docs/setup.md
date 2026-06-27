@@ -236,8 +236,12 @@ cd odysseus
 
 # Run Odysseus
 .\odysseus run --launch=native
-# Errors about execution policy? Use this instead:
-# powershell -ExecutionPolicy Bypass -File .\odysseus run --launch=native
+
+# Seeing a "cannot be loaded because it is not digitally signed" error? Try:
+#   Unblock-File .\odysseus.ps1
+
+# Still no luck, or seeing a "running scripts is disabled on this system" error? Try:
+#   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ```
 
 Or do it by hand:
