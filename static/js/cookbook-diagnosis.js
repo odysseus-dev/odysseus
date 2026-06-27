@@ -461,6 +461,40 @@ export const ERROR_PATTERNS = [
       { label: 'Copy install command', action: () => _copyText('curl -fsSL https://ollama.com/install.sh | sh') },
     ],
   },
+  // System build deps must be checked BEFORE the llama-server catch-all:
+  // a `cmake: command not found` failure ALSO produces `llama-server:
+  // command not found` later in the script (the build aborts then the
+  // run line fails) — pattern order is first-match-wins, so without
+  // these specific entries the user gets the misleading "install
+  // llama-cpp-python[server]" suggestion when the actual blocker is a
+  // missing OS-package toolchain that pip can't ship.
+  {
+    pattern: /cmake: command not found|cmake.*not found.*Could not/i,
+    message: 'cmake is required to compile llama.cpp from source, but it is not installed on this server.',
+    suggestion: 'Suggested action: install cmake via the OS package manager — apt: cmake build-essential / pacman: cmake base-devel / dnf: cmake gcc-c++ make / brew: cmake. Cookbook can do this automatically on the next launch if your user has passwordless sudo for apt/pacman/dnf.',
+    fixes: [
+      { label: 'Open Dependencies', action: () => _openCookbookDependencies('llama_cpp') },
+      { label: 'Copy apt install', action: () => _copyText('sudo apt install -y cmake build-essential git') },
+      { label: 'Copy pacman install', action: () => _copyText('sudo pacman -Sy --needed cmake base-devel git') },
+      { label: 'Copy dnf install', action: () => _copyText('sudo dnf install -y cmake gcc gcc-c++ make git') },
+    ],
+  },
+  {
+    pattern: /^(make|g\+\+|gcc): command not found|Could not find C\+\+ compiler/i,
+    message: 'A C/C++ compiler (build-essential / base-devel) is required to compile llama.cpp.',
+    fixes: [
+      { label: 'Open Dependencies', action: () => _openCookbookDependencies('llama_cpp') },
+      { label: 'Copy apt install', action: () => _copyText('sudo apt install -y build-essential') },
+    ],
+  },
+  {
+    pattern: /^git: command not found/i,
+    message: 'git is required to clone the llama.cpp source tree.',
+    fixes: [
+      { label: 'Open Dependencies', action: () => _openCookbookDependencies('llama_cpp') },
+      { label: 'Copy apt install', action: () => _copyText('sudo apt install -y git') },
+    ],
+  },
   {
     pattern: /llama-server.*command not found|llama\.cpp.*not found|No module named.*llama_cpp|No module named 'starlette_context'/i,
     message: 'llama-cpp-python server is not installed. Run: pip install "llama-cpp-python[server]"',
@@ -714,11 +748,15 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
   copyBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
     const bundle = _diagnosisCopyBundle(task, diagnosis, sourceText, suggestionText);
-    try {
-      await navigator.clipboard.writeText(bundle);
+    // Use the shared helper which falls back to execCommand('copy') on
+    // non-HTTPS origins (Tailscale IPs, LAN IPs, etc.) — navigator.clipboard
+    // is silently a no-op on those, which is why the button appeared dead
+    // for users on http://100.113.161.2:7011 over Tailscale/mobile.
+    const ok = await _copyText(bundle);
+    if (ok) {
       copyBtn.classList.add('copied');
       setTimeout(() => { if (copyBtn.isConnected) copyBtn.classList.remove('copied'); }, 1200);
-    } catch (_) {}
+    }
   });
 
   const dismissBtn = document.createElement('button');

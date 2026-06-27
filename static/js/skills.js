@@ -7,6 +7,8 @@
 
 import uiModule from './ui.js';
 import * as spinnerModule from './spinner.js';
+import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
+import { topPortalZ } from './toolWindowZOrder.js';
 
 const API = window.location.origin;
 let skills = [];
@@ -391,14 +393,14 @@ function _svg(paths, { fill = 'none', size = 13 } = {}) {
 // Kebab dropdown for a collapsed skill card — same actions + icons as the
 // expanded footer (Publish/Unpublish · Edit · Delete).
 function _openSkillMenu(btn, card, sk, name, isPublished) {
-  document.querySelectorAll('.skill-kebab-menu').forEach(m => m.remove());
+  document.querySelectorAll('.skill-kebab-menu').forEach(dismissOrRemove);
   const menu = document.createElement('div');
   menu.className = 'skill-kebab-menu';
   const mk = (paths, label, opts, onClick) => {
     const item = document.createElement('button');
     item.className = 'skill-kebab-item' + (opts && opts.danger ? ' danger' : '');
     item.innerHTML = _svg(paths, opts) + `<span>${label}</span>`;
-    item.addEventListener('click', (e) => { e.stopPropagation(); menu.remove(); onClick(); });
+    item.addEventListener('click', (e) => { e.stopPropagation(); close(); onClick(); });
     menu.appendChild(item);
   };
   if (isPublished) mk(_ICON.unpublish, 'Unpublish', {}, () => _setSkillStatus(name, 'draft'));
@@ -410,7 +412,7 @@ function _openSkillMenu(btn, card, sk, name, isPublished) {
   selItem.innerHTML = '<svg class="memory-select-btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg><span>Select</span>';
   selItem.addEventListener('click', (e) => {
     e.stopPropagation();
-    menu.remove();
+    close();
     if (!_selectMode) _enterSelectMode();
     _selectedNames.add(name);
     renderSkillsList();
@@ -432,10 +434,14 @@ function _openSkillMenu(btn, card, sk, name, isPublished) {
   const cancelItem = document.createElement('button');
   cancelItem.className = 'skill-kebab-item dropdown-cancel-mobile';
   cancelItem.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span>Cancel</span>';
-  cancelItem.addEventListener('click', (e) => { e.stopPropagation(); menu.remove(); });
+  cancelItem.addEventListener('click', (e) => { e.stopPropagation(); close(); });
   menu.appendChild(cancelItem);
 
   document.body.appendChild(menu);
+  // Override the CSS z-index (100002) with a value derived from the live
+  // tool-window stack so the kebab menu stays above its modal even after the
+  // bring-to-front counter climbs past the static value (#4720).
+  menu.style.zIndex = String(topPortalZ());
   const r = btn.getBoundingClientRect();
   menu.style.top = (r.bottom + 4) + 'px';
   menu.style.right = Math.max(6, window.innerWidth - r.right) + 'px';
@@ -453,8 +459,7 @@ function _openSkillMenu(btn, card, sk, name, isPublished) {
     menu.style.maxHeight = Math.max(80, window.innerHeight - 12 - mr2.top) + 'px';
     menu.style.overflowY = 'auto';
   }
-  const close = (ev) => { if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener('click', close, true); } };
-  setTimeout(() => document.addEventListener('click', close, true), 0);
+  const close = bindMenuDismiss(menu, () => { menu.remove(); }, (ev) => !menu.contains(ev.target));
 }
 
 // Cards for the agent's built-in tool capabilities (from
@@ -1802,7 +1807,7 @@ async function _showSkillSource(name) {
   wrap.className = 'modal';
   wrap.style.display = 'block';
   wrap.innerHTML = `
-    <div class="modal-content" style="max-width:760px;max-height:85vh;display:flex;flex-direction:column">
+    <div class="modal-content" style="max-width:760px;display:flex;flex-direction:column">
       <div class="modal-header">
         <h4>SKILL.md — <code>${esc(name)}</code></h4>
         <span style="flex:1"></span>

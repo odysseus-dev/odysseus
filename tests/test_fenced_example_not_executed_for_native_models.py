@@ -221,6 +221,60 @@ def test_skip_fenced_still_recovers_xml_invoke_markup():
     assert "latest python release" in blocks[0].content
 
 
+def test_stepfun_native_tool_tokens_are_executed_even_when_fenced_fallback_is_skipped():
+    leaked = (
+        "<｜tool▁calls▁begin｜>"
+        "<｜tool▁call▁begin｜>web_search<｜tool▁sep｜>"
+        '{"query":"Sweden news today"}'
+        "<｜tool▁call▁end｜>"
+        "<｜tool▁calls▁end｜>"
+    )
+    blocks = parse_tool_blocks(leaked, skip_fenced=True)
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "web_search"
+    assert "Sweden news today" in blocks[0].content
+    assert strip_tool_blocks(leaked, skip_fenced=True) == ""
+
+
+def test_stepfun_native_tool_tokens_accept_plain_web_query():
+    leaked = (
+        "<｜tool▁call▁begin｜>web_search<｜tool▁sep｜>"
+        "Sweden news today"
+        "<｜tool▁call▁end｜>"
+    )
+    blocks = parse_tool_blocks(leaked, skip_fenced=True)
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "web_search"
+    assert "Sweden news today" in blocks[0].content
+
+
+def test_skip_fenced_still_recovers_direct_xml_tool_markup():
+    leaked = (
+        "I'll search now.\n"
+        "<tool_call><web_search>News in Sweden today 2026-06-22</web_search></tool_call>"
+    )
+    blocks = parse_tool_blocks(leaked, skip_fenced=True)
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "web_search"
+    assert "News in Sweden today 2026-06-22" in blocks[0].content
+    assert strip_tool_blocks(leaked, skip_fenced=True) == "I'll search now."
+
+
+def test_skip_fenced_recovers_direct_xml_tool_markup_with_unclosed_wrapper():
+    leaked = (
+        "I'll search now.\n"
+        "<tool_call>\n"
+        "<web_search>\n"
+        "Sweden news today 2026-06-22\n"
+        "</web_search>"
+    )
+    blocks = parse_tool_blocks(leaked, skip_fenced=True)
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "web_search"
+    assert "Sweden news today 2026-06-22" in blocks[0].content
+    assert strip_tool_blocks(leaked, skip_fenced=True) == "I'll search now."
+
+
 def test_skip_fenced_still_recovers_dsml_markup():
     dsml = (
         "Let me search for that.\n"

@@ -14060,6 +14060,138 @@
   ]
  },
  {
+  "name": "google/gemma-4-12B-it",
+  "provider": "Google",
+  "parameter_count": "12.0B",
+  "parameters_raw": 12000000000,
+  "min_ram_gb": 8.5,
+  "recommended_ram_gb": 11.0,
+  "min_vram_gb": 7.5,
+  "quantization": "Q4_K_M",
+  "context_length": 131072,
+  "use_case": "General purpose, multimodal; unsloth/gemma-4-12B-it-GGUF Dynamic variants reduce VRAM from ~7.5 GB to ~5.5 GB",
+  "is_moe": false,
+  "num_experts": null,
+  "active_experts": null,
+  "active_parameters": null,
+  "architecture": "gemma4",
+  "pipeline_tag": "image-text-to-text",
+  "release_date": "2026-04-01",
+  "gguf_sources": [
+   {
+    "repo": "unsloth/gemma-4-12B-it-GGUF",
+    "provider": "unsloth"
+   }
+  ],
+  "capabilities": [
+   "vision"
+  ]
+ },
+ {
+  "name": "google/gemma-4-12B-it-qat-int4",
+  "provider": "Google",
+  "parameter_count": "12.0B",
+  "parameters_raw": 12000000000,
+  "min_ram_gb": 8.0,
+  "recommended_ram_gb": 9.5,
+  "min_vram_gb": 6.5,
+  "quantization": "QAT-INT4",
+  "context_length": 131072,
+  "use_case": "General purpose, multimodal (QAT quantization-aware training — higher quality than post-train INT4; vLLM native; no GGUF)",
+  "is_moe": false,
+  "num_experts": null,
+  "active_experts": null,
+  "active_parameters": null,
+  "architecture": "gemma4",
+  "pipeline_tag": "image-text-to-text",
+  "release_date": "2026-04-01",
+  "gguf_sources": [],
+  "capabilities": [
+   "vision"
+  ]
+ },
+ {
+  "name": "google/gemma-4-12B-it-qat-int8",
+  "provider": "Google",
+  "parameter_count": "12.0B",
+  "parameters_raw": 12000000000,
+  "min_ram_gb": 15.0,
+  "recommended_ram_gb": 20.0,
+  "min_vram_gb": 13.5,
+  "quantization": "QAT-INT8",
+  "context_length": 131072,
+  "use_case": "General purpose, multimodal (QAT INT8 — highest quality, 2x VRAM of QAT-INT4; vLLM native; no GGUF)",
+  "is_moe": false,
+  "num_experts": null,
+  "active_experts": null,
+  "active_parameters": null,
+  "architecture": "gemma4",
+  "pipeline_tag": "image-text-to-text",
+  "release_date": "2026-04-01",
+  "gguf_sources": [],
+  "capabilities": [
+   "vision"
+  ]
+ },
+ {
+  "name": "google/gemma-4-12B-it-qat-q4_0-gguf",
+  "provider": "Google",
+  "parameter_count": "12.0B",
+  "parameters_raw": 12000000000,
+  "min_ram_gb": 8.5,
+  "recommended_ram_gb": 11.0,
+  "min_vram_gb": 7.5,
+  "quantization": "QAT-INT4",
+  "context_length": 262144,
+  "use_case": "General purpose, multimodal (vision + audio); official Google QAT int4 GGUF — near-bf16 quality at int4 size, served on llama.cpp/Ollama with CPU offload",
+  "is_moe": false,
+  "num_experts": null,
+  "active_experts": null,
+  "active_parameters": null,
+  "architecture": "gemma4",
+  "pipeline_tag": "image-text-to-text",
+  "release_date": "2026-04-01",
+  "gguf_sources": [
+   {
+    "repo": "google/gemma-4-12B-it-qat-q4_0-gguf",
+    "provider": "Google",
+    "file": "gemma-4-12b-it-qat-q4_0.gguf"
+   }
+  ],
+  "capabilities": [
+   "vision",
+   "audio"
+  ]
+ },
+ {
+  "name": "google/gemma-4-26B-A4B-it-qat-q4_0-gguf",
+  "provider": "Google",
+  "parameter_count": "25.2B",
+  "parameters_raw": 25200000000,
+  "min_ram_gb": 14.4,
+  "recommended_ram_gb": 18.0,
+  "min_vram_gb": 14.4,
+  "quantization": "QAT-INT4",
+  "context_length": 262144,
+  "use_case": "High-throughput, multimodal MoE (3.8B active); official Google QAT int4 GGUF — near-bf16 quality at int4 size, served on llama.cpp with CPU offload",
+  "is_moe": true,
+  "num_experts": null,
+  "active_experts": null,
+  "active_parameters": 3800000000,
+  "architecture": "gemma4",
+  "pipeline_tag": "image-text-to-text",
+  "release_date": "2026-04-01",
+  "gguf_sources": [
+   {
+    "repo": "google/gemma-4-26B-A4B-it-qat-q4_0-gguf",
+    "provider": "Google"
+   }
+  ],
+  "capabilities": [
+   "vision"
+  ]
+ },
+ {
   "name": "google/gemma-4-31B-it",
   "provider": "Google",
   "parameter_count": "32.7B",

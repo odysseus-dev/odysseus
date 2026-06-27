@@ -33,6 +33,9 @@ import {
   _fetchCachedModels, _cachedAllModels, _filterCachedList, _rerenderCachedModels, _deleteCachedModel,
 } from './cookbookServe.js';
 
+import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
+import { topPortalZ } from './toolWindowZOrder.js';
+
 const STORAGE_KEY = 'cookbook-presets';
 const LAST_STATE_KEY = 'cookbook-last-state';
 const SERVE_STATE_KEY = 'cookbook-serve-state';
@@ -73,7 +76,7 @@ function _platformIcon(platform) {
   return '';
 }
 
-export let _envState = { env: 'none', envPath: '', hfToken: '', hfTokenConfigured: false, hfTokenMasked: '', gpus: '', remoteHost: '', servers: [], modelPaths: [], platform: '', defaultServer: '' };
+export let _envState = { env: 'none', envPath: '', hfToken: '', hfTokenConfigured: false, hfTokenMasked: '', gpus: '', remoteHost: '', servers: [], modelPaths: [], platform: '', hostPlatform: '', defaultServer: '' };
 let _lastCacheHostVal = null;
 let _cookbookOpeningSpinners = [];
 export function _lastCacheHost() { return _lastCacheHostVal; }
@@ -210,8 +213,13 @@ function _getPort(hostOrTask) {
 
 /** Get platform for a given host (or task object). Returns 'windows', 'termux', 'linux', or '' */
 export function _getPlatform(hostOrTask) {
-  if (!hostOrTask) return _envState.platform || '';
-  if (typeof hostOrTask === 'object') return hostOrTask.platform || _getPlatform(hostOrTask.remoteServerKey || hostOrTask.remoteHost);
+  if (hostOrTask === 'local') return _envState.hostPlatform || '';
+  if (!hostOrTask) return _envState.remoteHost ? (_envState.platform || '') : (_envState.hostPlatform || '');
+  if (typeof hostOrTask === 'object') {
+    const taskHost = hostOrTask.remoteServerKey || hostOrTask.remoteHost || '';
+    if (!taskHost || taskHost === 'local') return _envState.hostPlatform || '';
+    return hostOrTask.platform || _getPlatform(taskHost);
+  }
   const selected = hostOrTask === _envState.remoteHost ? _selectedServer() : null;
   const srv = selected || _serverByVal(hostOrTask);
   return srv?.platform || '';
@@ -230,14 +238,30 @@ export function _isMetal() {
 }
 
 /** Detect model-specific vLLM optimizations */
+function _isStepFunStepModel(modelName) {
+  const n = (modelName || '').toLowerCase();
+  return n.includes('stepfun')
+    || n.includes('step-3')
+    || n.includes('step3')
+    || n.includes('step_3');
+}
+
 function _detectModelOptimizations(modelName) {
   const n = (modelName || '').toLowerCase();
   const opts = { envVars: [], flags: [], tips: [] };
 
+  // StepFun Step-3.x MoE models. Their tokenizer defines the Step tool-call
+  // and thinking tags; vLLM/SGLang need the step3p5 parser instead of generic
+  // Hermes/XML guesses, and the MoE backend should default to expert parallel.
+  if (_isStepFunStepModel(modelName)) {
+    opts.flags.push('--enable-expert-parallel');
+    opts.tips.push('StepFun Step-3 MoE: expert parallel');
+    opts.tips.push('StepFun parser: step3p5 for native tool calls and reasoning tags');
+  }
   // Qwen3.5 MoE models — MoE-specific env vars + expert-parallel.
   // The --reasoning-parser flag is added uniformly below via
   // _detectReasoningParser, no longer hardcoded here.
-  if (n.includes('qwen3.5') || n.includes('qwen3-') && (n.includes('a10b') || n.includes('a22b') || n.includes('a3b'))) {
+  else if (n.includes('qwen3.5') || n.includes('qwen3-') && (n.includes('a10b') || n.includes('a22b') || n.includes('a3b'))) {
     opts.envVars.push('VLLM_USE_DEEP_GEMM=0', 'VLLM_USE_FLASHINFER_MOE_FP16=1', 'VLLM_USE_FLASHINFER_SAMPLER=0', 'OMP_NUM_THREADS=4');
     opts.flags.push('--enable-expert-parallel');
     opts.tips.push('MoE optimizations: expert parallel + flashinfer MoE kernels');
@@ -258,6 +282,19 @@ function _detectModelOptimizations(modelName) {
     opts.tips.push('MoE expert parallel for DeepSeek');
     opts.kvCacheDtype = 'fp8';
     opts.tips.push('fp8 KV cache required — bf16 OOMs at usable context');
+  }
+  // MiniMax MoE — Abab/M1/M2/M2.5/M2.7 are all MoE (Lightning Attention +
+  // MoE in M1, full sparse MoE from M2 onward). They benefit from the
+  // same --enable-expert-parallel flag as the Qwen/DeepSeek families,
+  // and the toggle has to be detectable here for the Expert Parallel
+  // checkbox in the serve form to render at all.
+  else if (n.includes('minimax')) {
+    opts.flags.push('--enable-expert-parallel');
+    opts.tips.push('MoE expert parallel for MiniMax');
+    if (/\bm3\b/.test(n)) {
+      opts.kvCacheDtype = 'fp8';
+      opts.tips.push('MiniMax M3 defaults: fp8 KV cache, block-size 128, TRITON attention');
+    }
   }
   // Reasoning parser — applies independently of MoE detection. Without this
   // flag, models like MiniMax-M2.x, DeepSeek-R1, Qwen3 reasoning, GLM-4.x,
@@ -299,6 +336,12 @@ function _detectModelOptimizations(modelName) {
  */
 export function _detectReasoningParser(modelName) {
   const n = (modelName || '').toLowerCase();
+  // StepFun Step-3.x uses Step's native <think> / tool-call tokens. vLLM
+  // registers this parser as step3p5.
+  if (_isStepFunStepModel(modelName)) return 'step3p5';
+  // MiniMax M3 — newer vLLM nightly/parser builds use minimax_m3. This must
+  // be checked before the M2.x rule and before the generic MiniMax tool parser.
+  if (n.includes('minimax') && /\bm3\b/.test(n)) return 'minimax_m3';
   // MiniMax M2 / M2.5 / M2.7 — released with a dedicated parser. Catch M2
   // before plain "minimax" so M2.x doesn't fall through to a wrong parser.
   if (n.includes('minimax') && n.match(/\bm2(?:\.\d)?\b/)) return 'minimax_m2';
@@ -332,6 +375,7 @@ export function _detectReasoningParser(modelName) {
  */
 export function _detectToolParser(modelName) {
   const n = (modelName || '').toLowerCase();
+  if (_isStepFunStepModel(modelName)) return 'step3p5';
   if (n.includes('qwen3') && n.includes('coder')) return 'qwen3_coder';
   if (n.includes('qwen3')) return 'qwen3_xml';
   if (n.includes('qwen')) return 'hermes';   // Qwen2.5 / Qwen2 / Qwen1.5
@@ -340,6 +384,7 @@ export function _detectToolParser(modelName) {
   if (n.includes('mistral') || n.includes('mixtral')) return 'mistral';
   if (n.includes('deepseek-v3')) return 'deepseek_v3';
   if (n.includes('deepseek')) return 'deepseek_v3';
+  if (n.includes('minimax') && /\bm3\b/.test(n)) return 'minimax_m3';
   if (n.includes('minimax') && n.includes('m2')) return 'minimax_m2';
   if (n.includes('minimax')) return 'minimax';
   if (n.includes('gemma')) return 'pythonic';
@@ -367,7 +412,9 @@ export function _detectBackend(model) {
     return { backend: 'unsupported', label: 'Unsupported' };
   }
   const isAwqLike = /^AWQ|^GPTQ|^NVFP4/.test(q) || ['FP8', 'FP4', 'MXFP4', 'NF4', 'INT4', 'INT8', 'W4A16', 'W8A8', 'W8A16'].includes(q) || /\b(awq|gptq|fp8|fp4|nvfp4|mxfp4|nf4|int4|int8|w4a16|w8a8|w8a16)\b/i.test(_nm);
-  const isGgufLike = model.is_gguf || /^Q[2-8]/.test(q) || /^IQ/.test(q) || q === 'GGUF' || _nm.includes('gguf');
+  const hasGgufFile = Array.isArray(model.gguf_files)
+    && model.gguf_files.some(f => f && typeof f.rel_path === 'string' && /\.gguf$/i.test(f.rel_path));
+  const isGgufLike = model.is_gguf || hasGgufFile || /^Q[2-8]/.test(q) || /^IQ/.test(q) || q === 'GGUF' || _nm.includes('gguf');
 
   // Image gen models → diffusers
   if (model.is_image_gen || model.is_diffusion || model._tag === 'image') {
@@ -419,6 +466,38 @@ export function _psQuote(value) {
   return "'" + String(value ?? '').replace(/'/g, "''") + "'";
 }
 
+// Pick the GPU-pinning env-var name for the detected backend. NVIDIA uses
+// CUDA_VISIBLE_DEVICES; ROCm/HIP uses HIP_VISIBLE_DEVICES; Vulkan and
+// Apple Metal don't take an index env var at all (and CUDA_VISIBLE_DEVICES
+// is a silent no-op on those, which silently hides "wrong backend" config
+// bugs). Returns 'cmd ' style prefix ('CUDA_VISIBLE_DEVICES=0 ') or '' when
+// the backend doesn't support pinning. Pass isWindows=true to get PowerShell
+// `$env:` syntax instead. backend defaults to whatever hwfit detected.
+function _gpuEnvVarName() {
+  // Only emit a pinning env var when we POSITIVELY know the backend AND
+  // the hwfit scan was actually run against the currently-targeted host.
+  // Without the target-match guard, switching the server picker from an
+  // NVIDIA box (cuda) to a local/Vulkan target preserved the stale
+  // `cuda` backend in the cache, leaking `CUDA_VISIBLE_DEVICES=` into
+  // launches that don't have an NVIDIA GPU at all. Default to "" when
+  // unsure — the user sees a clean command and is prompted to scan.
+  const cachedHost = String(_hwfitCache?._scannedHost || '');
+  const currentHost = String(_envState.remoteHost || '');
+  if (cachedHost !== currentHost) return '';
+  const sb = String(_hwfitCache?.system?.backend || '').toLowerCase();
+  if (sb === 'cuda') return 'CUDA_VISIBLE_DEVICES';
+  if (sb === 'rocm') return 'HIP_VISIBLE_DEVICES';
+  return ''; // vulkan / metal / mps / apple / cpu / generic / unknown — no env-var pinning
+}
+function _gpuEnvPrefix(gpuId, isWindows = false) {
+  const id = String(gpuId || '').trim();
+  if (!id) return '';
+  const varName = _gpuEnvVarName();
+  if (!varName) return '';
+  if (isWindows) return `$env:${varName}="${id}"; `;
+  return `${varName}=${id} `;
+}
+
 export function _buildEnvPrefix() {
   if (_isWindows()) return _buildEnvPrefixWindows();
   let parts = [];
@@ -431,7 +510,8 @@ export function _buildEnvPrefix() {
   }
   let envVars = [];
   if (_envState.hfToken) envVars.push('export HF_TOKEN=' + _shellQuote(_envState.hfToken));
-  if (_envState.gpus) envVars.push('export CUDA_VISIBLE_DEVICES=' + _shellQuote(_envState.gpus));
+  const _envGpuVar = _gpuEnvVarName();
+  if (_envState.gpus && _envGpuVar) envVars.push(`export ${_envGpuVar}=` + _shellQuote(_envState.gpus));
   if (envVars.length) parts.push(envVars.join(' && '));
   if (parts.length === 0) return '';
   return parts.join(' && ') + ' &&';
@@ -447,9 +527,17 @@ function _buildEnvPrefixWindows() {
     parts.push('conda activate ' + _psQuote(_envState.envPath));
   }
   if (_envState.hfToken) parts.push('$env:HF_TOKEN=' + _psQuote(_envState.hfToken));
-  if (_envState.gpus) parts.push('$env:CUDA_VISIBLE_DEVICES=' + _psQuote(_envState.gpus));
+  const _winGpuVar = _gpuEnvVarName();
+  if (_envState.gpus && _winGpuVar) parts.push(`$env:${_winGpuVar}=` + _psQuote(_envState.gpus));
   if (parts.length === 0) return '';
   return parts.join('; ') + ';';
+}
+
+function _venvRootFromPath(path) {
+  let p = (path || '').toString().trim().replace(/\/+$/, '');
+  if (!p) return '';
+  p = p.replace(/\/bin\/(?:activate|python(?:3(?:\.\d+)?)?|vllm|pip(?:3)?)$/i, '');
+  return p;
 }
 
 export function _buildServeCmd(f, modelName, backend) {
@@ -458,8 +546,9 @@ export function _buildServeCmd(f, modelName, backend) {
   // interactive sessions often leave a user-site install (~/.local/bin/vllm)
   // ahead of the venv's bin, so the WRONG vllm gets launched even with the
   // venv activated. Absolute path sidesteps the whole PATH question.
-  const _isVenv = _envState.env === 'venv' && _envState.envPath;
-  const _venvBin = _isVenv ? (_envState.envPath.replace(/\/+$/, '') + '/bin/') : '';
+  const _formVenv = (f.venv ?? '').toString().trim();
+  const _activeVenvPath = _venvRootFromPath(_formVenv || (_envState.env === 'venv' ? (_envState.envPath || '') : ''));
+  const _venvBin = _activeVenvPath ? (_activeVenvPath + '/bin/') : '';
   const _vllmBin = _venvBin ? `${_venvBin}vllm` : 'vllm';
   const _py3Bin = _venvBin ? `${_venvBin}python3` : 'python3';
   let cmd = '';
@@ -468,26 +557,39 @@ export function _buildServeCmd(f, modelName, backend) {
     // the bare "auto" input that used to back gpu_id is gone, and the
     // button strip is the only source for which devices to pin.
     const gpuId = (f.gpus || f.gpu_id || '').toString().trim();
-    if (gpuId) cmd += `CUDA_VISIBLE_DEVICES=${gpuId} `;
+    cmd += _gpuEnvPrefix(gpuId);
     if (f.moe_env) {
       const _opts = _detectModelOptimizations(modelName);
-      if (_opts.envVars.length) cmd += _opts.envVars.join(' ') + ' ';
+      if (_opts.envVars.length) {
+        cmd += _opts.envVars.join(' ') + ' ';
+      } else {
+        // Fallback when the user toggles MoE Env on for a model the
+        // family detector didn't classify as MoE — emit the generic
+        // vLLM MoE optimization env vars so the toggle is never a
+        // silent no-op (was the case before the "always show" change).
+        cmd += 'VLLM_USE_DEEP_GEMM=0 VLLM_USE_FLASHINFER_MOE_FP16=1 OMP_NUM_THREADS=4 ';
+      }
     }
-    // Pinned attention backend (Attention field). Empty = let vLLM pick.
-    const _attn = (f.vllm_attn_backend ?? '').toString().trim();
-    if (_attn) cmd += `VLLM_ATTENTION_BACKEND=${_attn} `;
     // Free-text "Env" field — verbatim KEY=VAL pairs (space-separated).
     // Collapse any pasted newlines/tabs so the backend allowlist (which
     // rejects \n / \r) doesn't trip on a multi-line paste from a model card.
     const _extraEnv = (f.extra_env ?? '').toString().replace(/\s+/g, ' ').trim();
     if (_extraEnv) cmd += _extraEnv + ' ';
     cmd += `${_vllmBin} serve ${modelName} --host 0.0.0.0 --port ${f.port || '8000'}`;
+    const _servedModelName = (f.served_model_name ?? '').toString().trim();
+    if (_servedModelName) cmd += ` --served-model-name ${_servedModelName}`;
+    // Pinned attention backend (Attention field). Empty = let vLLM pick.
+    const _attn = (f.vllm_attn_backend ?? '').toString().trim();
+    if (_attn) cmd += ` --attention-backend ${_attn}`;
     const _gemma4ChatTemplate = _gemma4ThinkingChatTemplateArg(modelName);
     if (_gemma4ChatTemplate) cmd += ` --chat-template ${_gemma4ChatTemplate}`;
     cmd += ` --tensor-parallel-size ${f.tp || '1'}`;
+    const _blockSize = (f.vllm_block_size ?? '').toString().trim();
+    if (/^\d+$/.test(_blockSize)) cmd += ` --block-size ${_blockSize}`;
     cmd += ` --max-model-len ${f.ctx || '8192'}`;
     cmd += ` --gpu-memory-utilization ${f.gpu_mem || '0.90'}`;
-    if (f.swap && f.swap !== '0') cmd += ` --swap-space ${f.swap}`;
+    const _swapRaw = (f.swap ?? '').toString().trim().toLowerCase();
+    if (_swapRaw && !['0', 'off', 'none', 'false'].includes(_swapRaw)) cmd += ` --swap-space ${_swapRaw}`;
     cmd += ` --dtype ${f.dtype || 'auto'}`;
     const _kv = (f.vllm_kv_cache_dtype ?? '').toString().trim();
     if (_kv === 'fp8') cmd += ' --kv-cache-dtype fp8';
@@ -497,10 +599,12 @@ export function _buildServeCmd(f, modelName, backend) {
     if (f.prefix_cache) cmd += ' --enable-prefix-caching';
     if (f.auto_tool) cmd += ` --enable-auto-tool-choice --tool-call-parser ${_detectToolParser(modelName)}`;
     if (f.expert_parallel) cmd += ' --enable-expert-parallel';
+    if (f.language_model_only) cmd += ' --language-model-only';
+    if (f.disable_custom_all_reduce) cmd += ' --disable-custom-all-reduce';
     if (f.reasoning_parser) {
       const rp = typeof f.reasoning_parser === 'string' && f.reasoning_parser !== 'true'
-        ? f.reasoning_parser : (f._reasoning_parser_value || 'qwen3');
-      cmd += ` --reasoning-parser ${rp}`;
+        ? f.reasoning_parser : (f._reasoning_parser_value || _detectReasoningParser(modelName) || '');
+      if (rp) cmd += ` --reasoning-parser ${rp}`;
     }
     if (f.speculative) {
       const _specMethod = (f.spec_method || 'mtp').trim() || 'mtp';
@@ -513,7 +617,7 @@ export function _buildServeCmd(f, modelName, backend) {
     // the bare "auto" input that used to back gpu_id is gone, and the
     // button strip is the only source for which devices to pin.
     const gpuId = (f.gpus || f.gpu_id || '').toString().trim();
-    if (gpuId) cmd += `CUDA_VISIBLE_DEVICES=${gpuId} `;
+    cmd += _gpuEnvPrefix(gpuId);
     const _extraEnv = (f.extra_env ?? '').toString().replace(/\s+/g, ' ').trim();
     if (_extraEnv) cmd += _extraEnv + ' ';
     cmd += `${_py3Bin} -m sglang.launch_server --model-path ${modelName} --host 0.0.0.0 --port ${f.port || '30000'}`;
@@ -525,6 +629,13 @@ export function _buildServeCmd(f, modelName, backend) {
     if (f.dtype && f.dtype !== 'auto') cmd += ` --dtype ${f.dtype}`;
     if (f.max_seqs && f.max_seqs.toString().trim()) cmd += ` --max-running-requests ${f.max_seqs.toString().trim()}`;
     if (f.trust_remote) cmd += ' --trust-remote-code';
+    if (f.auto_tool) cmd += ` --enable-auto-tool-choice --tool-call-parser ${_detectToolParser(modelName)}`;
+    if (f.expert_parallel) cmd += ' --enable-expert-parallel';
+    if (f.reasoning_parser) {
+      const rp = typeof f.reasoning_parser === 'string' && f.reasoning_parser !== 'true'
+        ? f.reasoning_parser : (f._reasoning_parser_value || _detectReasoningParser(modelName) || '');
+      if (rp) cmd += ` --reasoning-parser ${rp}`;
+    }
     if (!f.prefix_cache) cmd += ' --disable-radix-cache';
     if (f.enforce_eager) cmd += ' --disable-cuda-graph';
   } else if (backend === 'llamacpp') {
@@ -532,28 +643,51 @@ export function _buildServeCmd(f, modelName, backend) {
     // GPU list — read from gpus (button strip); fall back to gpu_id for
     // backward-compat with older saved presets that pre-date the removal.
     const gpuId = (f.gpus || f.gpu_id || '').toString().trim();
-    const py = _isWindows() ? 'python' : 'python3';
+    const _targetHost = Object.prototype.hasOwnProperty.call(f, 'host')
+      ? String(f.host || '').trim()
+      : String(_envState.remoteHost || '').trim();
+    const _isWin = _targetHost ? _isWindows(_targetHost) : _isWindows('local');
+    const _localWindows = _isWin && !_targetHost;
+    const py = _isWin ? 'python' : 'python3';
     // CPU-only serve (-ngl 0): drop the GPU-only flags, otherwise the command
     // mixes "zero GPU layers" with CUDA unified-memory + flash-attn and fails to
     // start (issue #1291). Only affects the ngl=0 path; GPU serving is unchanged.
+    // The Inference mode pill (GPU/CPU) above gates this — when the user picks
+    // CPU, force ngl=0 here so all downstream flag-suppression fires
+    // consistently regardless of what the (now-hidden) ngl input shows.
+    const _llamaMode = String(f.llama_mode || '').toLowerCase();
+    if (_llamaMode === 'unified') f.unified_mem = true;
+    if (_llamaMode === 'cpu') {
+      f.ngl = '0';
+    } else if (['gpu', 'unified'].includes(_llamaMode) && (!f.ngl || String(f.ngl).trim() === '0')) {
+      f.ngl = '99';
+    }
     const _cpuOnly = String(f.ngl).trim() === '0';
+    // GGML_CUDA_* env vars are no-ops on Vulkan/ROCm/Metal/CPU. Only emit
+    // them when the detected backend is actually CUDA AND the hwfit scan
+    // was run against the currently-targeted host, so a saved preset
+    // from a prior NVIDIA target doesn't pollute a non-NVIDIA launch
+    // with misleading prefixes.
+    const _sb = String(_hwfitCache?.system?.backend || '').toLowerCase();
+    const _hwfitHost = String(_hwfitCache?._scannedHost || '');
+    const _curHost = _targetHost;
+    const _isCudaTarget = (_sb === 'cuda') && (_hwfitHost === _curHost);
     const lcPrefix = (() => {
       let p = '';
-      if (f.unified_mem && !_cpuOnly && !_isWindows()) p += `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 `;
-      if (gpuId && !_isWindows()) p += `CUDA_VISIBLE_DEVICES=${gpuId} `;
+      if (f.unified_mem && !_cpuOnly && (!_isWin || _localWindows) && _isCudaTarget) p += `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 `;
+      // No GPU env var in CPU mode - `-ngl 0` already disables offload
+      // so CUDA_VISIBLE_DEVICES / HIP_VISIBLE_DEVICES would be misleading
+      // clutter ("why is CUDA pinned for a CPU run?").
+      if ((!_isWin || _localWindows) && !_cpuOnly) p += _gpuEnvPrefix(gpuId);
       return p;
     })();
-    if (f.unified_mem && !_cpuOnly && _isWindows()) cmd += `$env:GGML_CUDA_ENABLE_UNIFIED_MEMORY="1"; `;
-    if (gpuId && _isWindows()) cmd += `$env:CUDA_VISIBLE_DEVICES="${gpuId}"; `;
-    if (!_isWindows()) {
-      // Resolve GGUF path once, fail loudly if nothing matched (prevents
-      // `--model ""` which causes confusing downstream errors).
-      cmd += `MODEL_FILE=${ggufPath} && { [ -n "$MODEL_FILE" ] && [ -f "$MODEL_FILE" ]; } || { echo "ERROR: No GGUF found on this host. Either download the model here, or switch to the server where it's cached."; exit 1; } && `;
-    }
-    const modelArg = _isWindows() ? `"${ggufPath}"` : `"$MODEL_FILE"`;
-    // Prefer the native llama-server binary on Linux — its minja templating
-    // renders modern GGUF chat templates that the Python bindings' Jinja2
-    // rejects (do_tojson ensure_ascii). Fall back to llama_cpp.server.
+    if (f.unified_mem && !_cpuOnly && _isWin && !_localWindows && _isCudaTarget) cmd += `$env:GGML_CUDA_ENABLE_UNIFIED_MEMORY="1"; `;
+    if (_isWin && !_localWindows && !_cpuOnly) cmd += _gpuEnvPrefix(gpuId, true);
+    const needsGgufPrelude = /^\$\(\{\s*find\s/.test(String(ggufPath || ''));
+    const modelArg = needsGgufPrelude ? '"$MODEL_FILE"' : `"${ggufPath}"`;
+    // Prefer native llama-server. The backend bootstrap resolves/builds the
+    // right binary (Vulkan/HIP/CUDA/Metal/CPU), so keep the generated command
+    // as a validator-safe binary + args with no shell chaining.
     // Don't suppress stderr — surface real errors (missing file, lib, OOM).
     // Optional perf/fit flags from a hardware profile (see services/hwfit/
     // profiles.py). n_cpu_moe offloads MoE expert layers to CPU when the model
@@ -575,9 +709,16 @@ export function _buildServeCmd(f, modelName, backend) {
       _lcExtra += ` --n-cpu-moe ${_ncm}`;
       _lcpExtra += ` --n_cpu_moe ${_ncm}`;   // llama-cpp-python uses underscores
     }
+    // Flash-attn default = auto: native llama-server picks whether to
+    // enable based on the build/model; explicit ON (the Flash-attn
+    // toggle in the form) forces it. "auto" is a meaningful arg, not
+    // omission — older builds without flash-attn ignore it cleanly,
+    // newer ones get the speedup without the user having to know.
     if (f.flash_attn && !_cpuOnly) {
       _lcExtra += ' --flash-attn on';
       _lcpExtra += ' --flash_attn true';
+    } else if (!_cpuOnly) {
+      _lcExtra += ' --flash-attn auto';
     }
     if (_kv) {
       _lcExtra += ` --cache-type-k ${_kv} --cache-type-v ${_kv}`;
@@ -613,12 +754,19 @@ export function _buildServeCmd(f, modelName, backend) {
       // llama-cpp-python takes the projector via --clip_model_path.
       _lcpExtra += ` --clip_model_path "${f._mmproj_path}"`;
     }
+    const _lcServer = `${lcPrefix}llama-server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} -ngl ${f.ngl || '99'} -c ${f.ctx || '8192'}${_lcExtra}`;
     const _lcpServer = `${lcPrefix}${py} -m llama_cpp.server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} --n_gpu_layers ${f.ngl || '99'} --n_ctx ${f.ctx || '8192'}${_lcpExtra}`;
-    if (_isWindows()) {
+    if (_localWindows) {
+      // Local Windows serve is launched through Git Bash, so use the native
+      // llama-server shape and let PATH resolve the CUDA Release wrapper.
+      cmd += _lcServer;
+    } else if (_isWin) {
       cmd += _lcpServer;
     } else {
-      cmd += `${lcPrefix}llama-server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} -ngl ${f.ngl || '99'} -c ${f.ctx || '8192'}${_lcExtra}`;
-      cmd += ` || ${_lcpServer}`;
+      cmd += _lcServer;
+    }
+    if (needsGgufPrelude) {
+      cmd = `MODEL_FILE=${ggufPath} && { [ -n "$MODEL_FILE" ] && [ -f "$MODEL_FILE" ]; } || { echo "ERROR: No GGUF found on this host"; exit 1; } && ${cmd}`;
     }
   } else if (backend === 'ollama') {
     const ollamaPort = f.port || '11434';
@@ -652,7 +800,7 @@ export function _buildServeCmd(f, modelName, backend) {
     }
   } else if (backend === 'diffusers') {
     const gpuStr = f.gpus?.trim();
-    if (gpuStr) cmd += `CUDA_VISIBLE_DEVICES=${gpuStr} `;
+    cmd += _gpuEnvPrefix(gpuStr);
     const diffusersPy = _isWindows() ? 'python' : _py3Bin;
     cmd += `${diffusersPy} scripts/diffusion_server.py --model ${modelName} --port ${f.port || '8100'}`;
     if (f.diff_dtype && f.diff_dtype !== 'bfloat16') cmd += ` --dtype ${f.diff_dtype}`;
@@ -771,6 +919,14 @@ async function _fetchDependencies() {
       if (_depPort) _pkgParams.set('ssh_port', _depPort);
       if (_depVenv) _pkgParams.set('venv', _depVenv);
     }
+    // Pass the detected backend so the server can build a single
+    // OS+backend-aware install command per row (e.g. add nvidia-cuda-toolkit
+    // on a CUDA-Debian box, vulkan-headers on a Vulkan-Arch box, etc.)
+    // instead of dumping every distro's syntax as a hint.
+    const _depBackend = String(_hwfitCache?.system?.backend || '').toLowerCase();
+    if (_depBackend && _hwfitCache?._scannedHost === _depHost) {
+      _pkgParams.set('backend', _depBackend);
+    }
     const resp = await fetch('/api/cookbook/packages' + (_pkgParams.toString() ? '?' + _pkgParams.toString() : ''));
     const data = await resp.json();
     const pkgs = data.packages || [];
@@ -780,7 +936,7 @@ async function _fetchDependencies() {
     const _statusTag = (pkg, isLocal, isSystemDep, winBlocked) => {
       if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
       if (pkg.installed && isSystemDep) return `<span class="cookbook-dep-tag cookbook-dep-installed" title="Found on selected server">Installed</span>`;
-      if (pkg.installed && pkg.pip_update_available === false) {
+      if (pkg.installed && pkg.pip_update_available === false && pkg.name !== 'llama_cpp') {
         const tip = esc(pkg.update_note || pkg.status_note || 'Found externally; update outside Odysseus.');
         return `<span class="cookbook-dep-tag cookbook-dep-installed" title="${tip}">Installed</span>`;
       }
@@ -798,10 +954,10 @@ async function _fetchDependencies() {
     // matches the engine you're configuring. Unknown packages get no
     // icon (the name alone is fine for librosa, hf_transfer, etc.).
     const _DEP_GLYPHS = {
-      vllm:    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4l7 16 7-16"/><path d="M14 4l4 9 3-9"/></svg>',
-      sglang:  '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
-      llama_cpp: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg>',
-      ollama:  '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 10a6 6 0 0 1 12 0v4a4 4 0 0 1-8 0v-1"/><circle cx="10" cy="9" r="1"/><circle cx="14" cy="9" r="1"/></svg>',
+      vllm: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4l7 16 7-16"/><path d="M14 4l4 9 3-9"/></svg>',
+      sglang: '<span aria-hidden="true" style="display:block;width:13px;height:13px;background:currentColor;-webkit-mask:url(/static/icons/sglang-mark.png) center/contain no-repeat;mask:url(/static/icons/sglang-mark.png) center/contain no-repeat;"></span>',
+      llama_cpp: '<svg width="13" height="13" viewBox="0 0 600 600" fill="none" aria-hidden="true"><path d="M600 392L504.249 558L504.137 557.929C487.252 584.069 458.193 600 426.864 600H120L240 392H600Z" fill="currentColor"/><path d="M240 392H0L199.602 46.0254C216.032 17.5463 246.411 0 279.29 0H466.154L240 392Z" fill="currentColor"/></svg>',
+      ollama: '<img src="/static/icons/ollama-mark-crop.png" alt="" aria-hidden="true" width="13" height="13" style="display:block;width:13px;height:13px;object-fit:contain;" />',
       diffusers: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg>',
     };
     const _depGlyphHtml = (name) => {
@@ -822,9 +978,7 @@ async function _fetchDependencies() {
       // diagnosis-style `_launchServeTask` with `pip install --force-reinstall`
       // so the user can watch the pip install in the Running tab.
       let _rebuildBtn = '';
-      if (pkg.name === 'llama_cpp') {
-        _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild" id="cookbook-rebuild-engine" title="Clear the cached llama.cpp build so the next serve recompiles from source (use after installing a CUDA/ROCm toolkit to turn a CPU-only build into a GPU build).">Rebuild</button>`;
-      } else if (pkg.name === 'vllm' && pkg.installed) {
+      if (pkg.name === 'vllm' && pkg.installed) {
         _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild cookbook-dep-reinstall" data-reinstall-pkg="vllm" title="Force-reinstall vLLM (pulls a matching torch). Runs as a tmux task in the Running tab.">Reinstall</button>`;
       } else if (pkg.name === 'sglang' && pkg.installed) {
         _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild cookbook-dep-reinstall" data-reinstall-pkg="sglang" title="Force-reinstall SGLang (pulls a matching torch). Runs as a tmux task in the Running tab.">Reinstall</button>`;
@@ -832,18 +986,61 @@ async function _fetchDependencies() {
       // For backends with a recipe catalog (vllm / sglang / llama_cpp),
       // append a caret button that toggles a per-row recipe panel below.
       const hasRecipe = RECIPE_BACKENDS.has(pkg.name);
-      const recipeCaret = hasRecipe
-        ? `<button class="cookbook-dep-tag cookbook-dep-recipe-caret" data-dep-recipe-toggle="${esc(pkg.name)}" title="Pick a model to see the exact install commands" aria-expanded="false" style="background:none;border:1px solid var(--border);padding:2px 6px;display:inline-flex;align-items:center;cursor:pointer;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.15s"><polyline points="6 9 12 15 18 9"/></svg></button>`
-        : '';
+      // Standalone recipe-caret button removed — the "Pick install
+      // command" action lives inside the Installed ▾ dropdown menu
+      // (see _showDepMenu) so each row only has ONE caret to click.
+      // Kept the variable so downstream concat code stays the same.
+      const recipeCaret = '';
       const recipePanel = hasRecipe ? _recipePanelHtml(pkg.name) : '';
+      // When llama_cpp (or any future engine) reports build_deps_missing
+      // from its system_prereqs probe, surface a one-tap install button
+      // that fires the OS package manager on the target via
+      // /api/cookbook/install-system-deps. Keeps the user inside Cookbook
+      // instead of forcing them out to a shell to apt/pacman/dnf.
+      const _bdm = Array.isArray(pkg.build_deps_missing) ? pkg.build_deps_missing : [];
+      const _buildDepsBtn = _bdm.length
+        ? `<button type="button" class="cookbook-dep-tag cookbook-dep-install cookbook-dep-install-sysdeps" data-dep-sysdeps="${esc(_bdm.join(','))}" data-dep-target="${isLocal ? 'local' : 'remote'}" title="Install ${esc(_bdm.join(', '))} via the OS package manager on this target (requires passwordless sudo or root).">Install build deps</button>`
+        : '';
+      // Render the target-specific install command as a compact mono box
+      // when the server resolved it (target's /etc/os-release was readable
+      // AND the backend is known). The box doubles as the source of truth
+      // for the "Install build deps" button's failure toast — both surfaces
+      // show the same string for the same target.
+      const _instCmd = (_bdm.length && pkg.install_cmd_for_target) ? String(pkg.install_cmd_for_target) : '';
+      const _instCmdOs = pkg.install_cmd_os ? String(pkg.install_cmd_os) : '';
+      const _instCmdBe = pkg.install_cmd_backend ? String(pkg.install_cmd_backend) : '';
+      const _instLabel = (_instCmdOs && _instCmdBe) ? `${_instCmdOs} + ${_instCmdBe}` : (_instCmdOs || _instCmdBe || 'this target');
+      const _instCmdBox = _instCmd
+        ? `<div class="cookbook-dep-install-cmd" data-dep-cmd="${esc(_instCmd)}" style="margin-top:6px;font-size:10.5px;opacity:0.85;">`
+          + `<div style="opacity:0.65;margin-bottom:2px;">Install on ${esc(_instLabel)}:</div>`
+          + `<div style="display:flex;gap:4px;align-items:stretch;">`
+          + `<code style="flex:1;padding:4px 6px;background:color-mix(in srgb, var(--fg) 6%, transparent);border:1px solid var(--border);border-radius:4px;font-family:var(--mono, ui-monospace, monospace);font-size:10.5px;white-space:pre-wrap;word-break:break-all;">${esc(_instCmd)}</code>`
+          + `<button type="button" class="cookbook-dep-cmd-copy" data-dep-cmd-copy="${esc(_instCmd)}" title="Copy install command" style="padding:2px 8px;font-size:10px;border:1px solid var(--border);border-radius:4px;background:none;cursor:pointer;color:var(--fg-muted);">Copy</button>`
+          + `</div></div>`
+        : '';
+      // Partial-state row (replaces the cryptic yellow "Partial ▾" tag).
+      // Renders inline as a yellow banner with two clear actions: one-tap
+      // Install (runs the reinstall in cookbook) or Copy command (paste
+      // into a terminal). Same content surfaces whether the user solves
+      // it from inside Cookbook or from a shell.
+      const _gpuWheelCmd = 'CMAKE_ARGS="-DGGML_CUDA=on" python3 -m pip install --user --break-system-packages --force-reinstall --no-cache-dir "llama-cpp-python[server]" --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124';
+      const _gpuUpgradeBox = (pkg.partial && pkg.partial_action === 'reinstall_llama_cpp_cuda')
+        ? `<div class="cookbook-dep-gpu-upgrade" style="margin-top:6px;font-size:11px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;background:color-mix(in srgb, var(--yellow, #f1fa8c) 14%, transparent);border:1px solid color-mix(in srgb, var(--yellow, #f1fa8c) 40%, var(--border));padding:6px 8px;border-radius:6px;">`
+          + `<span style="flex:1;min-width:160px;">Installed CPU-only — GPU detected on this target. Upgrade for ~10× faster inference.</span>`
+          + `<button type="button" class="cookbook-dep-tag cookbook-dep-install cookbook-dep-install-gpu-wheel" data-dep-target="${isLocal ? 'local' : 'remote'}" data-dep-gpu-cmd="${esc(_gpuWheelCmd)}" style="font-weight:600;">Install GPU wheel</button>`
+          + `<button type="button" class="cookbook-dep-tag cookbook-dep-cmd-copy" data-dep-cmd-copy="${esc(_gpuWheelCmd)}" title="Copy command to clipboard">Copy command</button>`
+          + `</div>`
+        : '';
       return `<div class="cookbook-dep-row${winBlocked ? ' cookbook-dep-blocked' : ''}" data-pkg-name="${esc(pkg.name)}" data-dep-pip="${esc(pkg.pip || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}" data-dep-kind="${esc(pkg.kind || 'python')}">`
         + `<div class="cookbook-dep-info">`
         + `<div class="memory-item-title">${_depGlyphHtml(pkg.name)}${esc(pkg.name)}</div>`
         + `<div class="memory-item-meta" style="font-size:10px;opacity:0.5;margin-top:2px;">${esc(pkg.desc)}</div>`
         + note
         + updateNote
+        + _instCmdBox
         + `</div>`
         + _rebuildBtn
+        + _buildDepsBtn
         + `<span class="cookbook-dep-tag cookbook-dep-cat">${esc(pkg.category)}</span>`
         + _statusTag(pkg, isLocal, isSystemDep, winBlocked)
         + recipeCaret
@@ -985,8 +1182,15 @@ async function _fetchDependencies() {
         if (!res.ok || !data.ok) {
           // FastAPI HTTPException returns {detail: …}; the route's own
           // path returns {ok:false, error:…}. Surface whichever we get.
+          // Long duration + an OK button — the default 1.2s toast was
+          // disappearing before the user could read multi-clause errors
+          // like "tmux missing on remote".
           const reason = data.detail || data.error || `HTTP ${res.status}`;
-          uiModule.showToast('Install failed: ' + String(reason).slice(0, 200));
+          uiModule.showToast('Install failed: ' + String(reason).slice(0, 400), {
+            duration: 20000,
+            action: 'OK',
+            onAction: () => {},
+          });
           return;
         }
         // _dep flags this as a pip dependency/driver install (not a servable
@@ -996,17 +1200,158 @@ async function _fetchDependencies() {
         if (statusEl) { statusEl.textContent = upgrade ? 'Updating...' : 'Installing...'; statusEl.disabled = true; }
         uiModule.showToast(`${upgrade ? 'Updating' : 'Installing'} ${pkgName} on ${targetHost}...`);
       } catch (err) {
-        uiModule.showToast('Install failed: ' + err.message);
+        uiModule.showToast('Install failed: ' + err.message, {
+          duration: 20000,
+          action: 'OK',
+          onAction: () => {},
+        });
       }
     }
 
     // Wire install buttons (not-installed packages)
-    list.querySelectorAll('.cookbook-dep-install:not(.cookbook-dep-recipe-run)').forEach(btn => {
+    list.querySelectorAll('.cookbook-dep-install:not(.cookbook-dep-recipe-run):not(.cookbook-dep-install-sysdeps)').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
         const pipName = btn.dataset.depPip;
         const pkgName = btn.closest('.cookbook-dep-row')?.querySelector('.memory-item-title')?.textContent || pipName;
         await _installDep(pipName, pkgName, btn.dataset.depTarget === 'local', !!btn.dataset.upgrade, btn);
+      });
+    });
+
+    // Wire "Install build deps" buttons — surfaced on rows whose
+    // system_prereqs are missing (e.g. llama_cpp with no cmake on the
+    // target). One-tap call to /api/cookbook/install-system-deps; the
+    // route enforces a per-package allowlist and uses passwordless
+    // sudo only, so it can never silently hang or stretch beyond the
+    // build-toolchain set the catalog declares.
+    // "Partial ▾" upgrade tag: clicking it fires the action-specific
+    // install routine (currently only `reinstall_llama_cpp_cuda` —
+    // forces pip install with the abetlen CUDA wheel index to add GPU
+    // offload). Same install flow used at launch-time auto-fix, but
+    // user-initiated here so they don't have to launch + wait + retry.
+    list.querySelectorAll('.cookbook-dep-partial').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const action = btn.dataset.depPartialAction || '';
+        if (action !== 'reinstall_llama_cpp_cuda') return;
+        const isLocal = btn.dataset.depTarget === 'local';
+        if (!isLocal) {
+          const depsServerSel = document.getElementById('hwfit-deps-server');
+          if (depsServerSel) _applyServerSelection(depsServerSel.value);
+        }
+        const targetLabel = isLocal ? 'this server' : (_envState.remoteHost || 'remote');
+        const cmd = 'CMAKE_ARGS="-DGGML_CUDA=on" python3 -m pip install --user --break-system-packages --force-reinstall --no-cache-dir "llama-cpp-python[server]" --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124';
+        try {
+          const reqBody = {
+            repo_id: 'llama-cpp-python-cuda',
+            cmd,
+            remote_host: _envState.remoteHost || undefined,
+            ssh_port: _getPort(_envState.remoteHost) || undefined,
+            platform: _envState.platform || undefined,
+          };
+          const res = await fetch('/api/model/serve', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(reqBody),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.ok) {
+            const payload = { repo_id: 'pip llama-cpp-python[CUDA]', _cmd: cmd, remote_host: _envState.remoteHost || '', _dep: true };
+            _addTask(data.session_id, 'pip llama-cpp-python[CUDA]', 'download', payload);
+            uiModule.showToast(`Reinstalling llama-cpp-python with CUDA wheels on ${targetLabel} (~1-3 min)…`, 4000);
+          } else {
+            uiModule.showToast('Upgrade failed: ' + String(data.detail || data.error || `HTTP ${res.status}`).slice(0, 300), {
+              duration: 20000, action: 'OK', onAction: () => {},
+            });
+          }
+        } catch (err) {
+          uiModule.showToast('Upgrade request failed: ' + err.message, { duration: 20000, action: 'OK', onAction: () => {} });
+        }
+      });
+    });
+
+    // Inline command-box "Copy" buttons — one per row that has a
+    // resolved per-target install command. Same string surfaces here
+    // and in the toast/diagnosis so the user always sees one answer.
+    list.querySelectorAll('.cookbook-dep-cmd-copy').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const cmd = btn.dataset.depCmdCopy || '';
+        if (!cmd) return;
+        try { await navigator.clipboard.writeText(cmd); }
+        catch { /* fall through */ }
+        const orig = btn.textContent;
+        btn.textContent = 'Copied';
+        setTimeout(() => { if (btn.isConnected) btn.textContent = orig; }, 1200);
+      });
+    });
+    list.querySelectorAll('.cookbook-dep-install-sysdeps').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const names = (btn.dataset.depSysdeps || '').split(',').map(s => s.trim()).filter(Boolean);
+        if (!names.length) return;
+        const isLocal = btn.dataset.depTarget === 'local';
+        // Pull the per-target install command from the sibling box on
+        // the same row, so failure toasts surface the SAME line the
+        // user already sees inline. No duplicated formatting logic.
+        const _row = btn.closest('.cookbook-dep-row');
+        const _cmdBox = _row?.querySelector('.cookbook-dep-install-cmd');
+        const _resolvedCmd = _cmdBox?.dataset.depCmd || '';
+        // Mirror _installDep: the Dependencies tab has its own server
+        // picker that can override _envState. Apply it before reading
+        // remoteHost, otherwise the install silently runs on the wrong
+        // target (container ends up with the packages, the real remote
+        // host stays broken, success toast misleads the user).
+        if (!isLocal) {
+          const depsServerSel = document.getElementById('hwfit-deps-server');
+          if (depsServerSel) _applyServerSelection(depsServerSel.value);
+        }
+        const targetLabel = isLocal ? 'this server' : (_envState.remoteHost || 'remote');
+        const origText = btn.textContent;
+        btn.textContent = 'Installing…';
+        btn.disabled = true;
+        try {
+          const body = { packages: names };
+          if (!isLocal && _envState.remoteHost) {
+            body.remote_host = _envState.remoteHost;
+            const _p = _getPort(_envState.remoteHost);
+            if (_p) body.ssh_port = _p;
+          }
+          const res = await fetch('/api/cookbook/install-system-deps', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.ok) {
+            uiModule.showToast(`Installed ${names.join(', ')} on ${targetLabel}. Refreshing…`, 4000);
+            // Refresh the deps panel so the row updates (prereqs now present).
+            try { await _fetchDependencies(); } catch {}
+          } else {
+            const reason = data.error || data.detail || `HTTP ${res.status}`;
+            // Append the per-target install command (if we already know it
+            // from the row) so the user can copy-paste it without leaving
+            // the toast. Otherwise just surface the error.
+            const _suffix = _resolvedCmd ? `\n\nRun on ${targetLabel}: ${_resolvedCmd}` : '';
+            uiModule.showToast('Build-deps install failed: ' + String(reason).slice(0, 300) + _suffix, {
+              duration: 25000,
+              action: _resolvedCmd ? 'Copy command' : 'OK',
+              onAction: async () => {
+                if (_resolvedCmd) {
+                  try { await navigator.clipboard.writeText(_resolvedCmd); } catch {}
+                }
+              },
+            });
+            btn.textContent = origText;
+            btn.disabled = false;
+          }
+        } catch (err) {
+          uiModule.showToast('Install request failed: ' + err.message, {
+            duration: 20000, action: 'OK', onAction: () => {},
+          });
+          btn.textContent = origText;
+          btn.disabled = false;
+        }
       });
     });
 
@@ -1139,12 +1484,59 @@ async function _fetchDependencies() {
     });
 
 
-    // Wire the ⋮ menu on installed packages — currently just "Update".
+    async function _rebuildLlamaCpp(updateSource = false, statusEl = null) {
+      const sel = document.getElementById('hwfit-deps-server');
+      if (sel) _applyServerSelection(sel.value);
+      const host = _envState.remoteHost || '';
+      const where = host || 'this server';
+      const action = updateSource ? 'Update llama.cpp source and rebuild' : 'Rebuild llama.cpp engine';
+      const detail = updateSource
+        ? 'This fast-forwards the Cookbook-managed ~/llama.cpp checkout when possible, then clears the cached llama-server build. The next launch recompiles or installs the latest matching prebuilt.'
+        : 'This clears the cached llama-server build. The next launch recompiles or installs a matching prebuilt.';
+      if (!confirm(`${action} on ${where}?\n\n${detail}`)) return;
+      const oldText = statusEl?.textContent;
+      if (statusEl) {
+        statusEl.disabled = true;
+        statusEl.textContent = updateSource ? 'Updating...' : 'Clearing...';
+      }
+      try {
+        const res = await fetch('/api/cookbook/rebuild-engine', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            engine: 'llamacpp',
+            remote_host: host || undefined,
+            ssh_port: _getPort(host) || undefined,
+            update_source: !!updateSource,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          const reason = data.detail || data.error || `HTTP ${res.status}`;
+          uiModule.showToast(`${updateSource ? 'Update' : 'Rebuild'} failed: ` + String(reason).slice(0, 300), {
+            duration: 20000, action: 'OK', onAction: () => {},
+          });
+        } else {
+          uiModule.showToast(`${updateSource ? 'Updated source and cleared' : 'Cleared'} llama.cpp build on ${where}. Re-launch the serve task to rebuild.`);
+        }
+      } catch (err) {
+        uiModule.showToast(`${updateSource ? 'Update' : 'Rebuild'} failed: ` + err.message);
+      } finally {
+        if (statusEl) {
+          statusEl.disabled = false;
+          statusEl.textContent = oldText;
+        }
+      }
+    }
+    window._cookbookRebuildLlamaCpp = _rebuildLlamaCpp;
+
+    // Wire the installed-package menu.
     function _showDepMenu(anchor) {
-      document.querySelectorAll('.cookbook-dep-menu').forEach(d => d.remove());
+      document.querySelectorAll('.cookbook-dep-menu').forEach(dismissOrRemove);
       const row = anchor.closest('.cookbook-dep-row');
       if (!row) return;
       const pipName = row.dataset.depPip;
+      const rowPkgName = row.dataset.pkgName || '';
       const pkgName = row.querySelector('.memory-item-title')?.textContent || pipName;
       const isLocalOnly = row.dataset.depTarget === 'local';
       const dropdown = document.createElement('div');
@@ -1153,7 +1545,7 @@ async function _fetchDependencies() {
       const minW = 150;
       let left = Math.min(rect.right - minW, window.innerWidth - minW - 8);
       left = Math.max(8, left);
-      dropdown.style.cssText = `position:fixed;display:block;z-index:10001;top:${rect.bottom + 6}px;left:${left}px;right:auto;min-width:${minW}px;max-width:calc(100vw - 16px);background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:6px;font-size:11px;`;
+      dropdown.style.cssText = `position:fixed;display:block;z-index:${topPortalZ()};top:${rect.bottom + 6}px;left:${left}px;right:auto;min-width:${minW}px;max-width:calc(100vw - 16px);background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:6px;font-size:11px;`;
       const upIco = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>';
       const it = document.createElement('div');
       it.className = 'dropdown-item-compact';
@@ -1161,24 +1553,42 @@ async function _fetchDependencies() {
       it.title = `Update ${pkgName} to the latest version (pip install -U)`;
       it.addEventListener('click', async (e) => {
         e.stopPropagation();
-        dropdown.remove();
+        close();
         await _installDep(pipName, pkgName, isLocalOnly, true, null);
       });
       dropdown.appendChild(it);
-      document.body.appendChild(dropdown);
-      const close = (ev) => {
-        if (!dropdown.contains(ev.target) && ev.target !== anchor && !anchor.contains(ev.target)) {
+      if (rowPkgName === 'llama_cpp') {
+        const rebuildIco = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>';
+        const rebuild = document.createElement('div');
+        rebuild.className = 'dropdown-item-compact';
+        rebuild.innerHTML = `<span class="dropdown-icon">${rebuildIco}</span><span>Rebuild</span>`;
+        rebuild.title = 'Clear the cached llama-server build so the next launch rebuilds it.';
+        rebuild.addEventListener('click', async (e) => {
+          e.stopPropagation();
           dropdown.remove();
-          document.removeEventListener('click', close, true);
-        }
-      };
-      setTimeout(() => document.addEventListener('click', close, true), 10);
+          await _rebuildLlamaCpp(false, null);
+        });
+        dropdown.appendChild(rebuild);
+        const source = document.createElement('div');
+        source.className = 'dropdown-item-compact';
+        source.innerHTML = `<span class="dropdown-icon">${upIco}</span><span>Update source + rebuild</span>`;
+        source.title = 'Fast-forward ~/llama.cpp when possible, then clear the cached build.';
+        source.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          dropdown.remove();
+          await _rebuildLlamaCpp(true, null);
+        });
+        dropdown.appendChild(source);
+      }
+      document.body.appendChild(dropdown);
+      const close = bindMenuDismiss(dropdown, () => { dropdown.remove(); }, (ev) =>
+        !dropdown.contains(ev.target) && ev.target !== anchor && !anchor.contains(ev.target));
     }
     list.querySelectorAll('.cookbook-dep-installed-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         if (document.querySelector('.cookbook-dep-menu')) {
-          document.querySelectorAll('.cookbook-dep-menu').forEach(d => d.remove());
+          document.querySelectorAll('.cookbook-dep-menu').forEach(dismissOrRemove);
           return;
         }
         _showDepMenu(btn);
@@ -1427,33 +1837,7 @@ function _wireTabEvents(body) {
       if (sel) _applyServerSelection(sel.value);
       const host = _envState.remoteHost || '';
       const where = host || 'this server';
-      if (!confirm(`Rebuild the llama.cpp engine on ${where}?\n\nThis clears the cached llama-server build so the next serve recompiles from source (with CUDA/HIP if a toolchain is present). It does not download or install anything.`)) return;
-      const _label = rebuildBtn.textContent;
-      rebuildBtn.disabled = true;
-      rebuildBtn.textContent = 'Clearing...';
-      try {
-        const res = await fetch('/api/cookbook/rebuild-engine', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            engine: 'llamacpp',
-            remote_host: host || undefined,
-            ssh_port: _getPort(host) || undefined,
-          }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.ok) {
-          const reason = data.detail || data.error || `HTTP ${res.status}`;
-          uiModule.showToast('Rebuild failed: ' + String(reason).slice(0, 200));
-        } else {
-          uiModule.showToast(`Cleared llama.cpp build on ${where}. Re-launch the serve task to rebuild with GPU support.`);
-        }
-      } catch (err) {
-        uiModule.showToast('Rebuild failed: ' + err.message);
-      } finally {
-        rebuildBtn.disabled = false;
-        rebuildBtn.textContent = _label;
-      }
+      if (window._cookbookRebuildLlamaCpp) await window._cookbookRebuildLlamaCpp(false, rebuildBtn);
     });
   }
 
@@ -1564,6 +1948,9 @@ function _wireTabEvents(body) {
   // Download input
   const dlBtn = document.getElementById('cookbook-dl-btn');
   const dlInput = document.getElementById('cookbook-dl-repo');
+  const dlGgufRow = document.getElementById('cookbook-dl-gguf-row');
+  const dlGgufQuant = document.getElementById('cookbook-dl-gguf-quant');
+  const dlGgufNote = document.getElementById('cookbook-dl-gguf-note');
   const dlCardToggle = document.getElementById('cookbook-download-card-toggle');
   const dlCardBody = document.getElementById('cookbook-download-card-body');
   const dlCardArrow = document.getElementById('cookbook-download-card-arrow');
@@ -1577,11 +1964,106 @@ function _wireTabEvents(body) {
   if (dlBtn && dlInput) {
     function _stripHfUrl(input) {
       let repo = input.trim();
+      // Strip a leading `hf download` / `hf-cli download` / `huggingface-cli
+      // download` wrapper so a paste from CLI docs Just Works. Drop the
+      // command prefix; the rest is parsed by the existing strippers.
+      repo = repo.replace(/^(?:huggingface-cli|hf-cli|hf)\s+(?:download|d)\s+/i, '');
+      // Strip the `hf://` (and `huggingface://`) scheme — the HF CLI
+      // accepts it as an alias and users naturally copy it. Same effect
+      // as the bare `org/repo[/file.gguf]` form after the strip.
+      repo = repo.replace(/^(?:hf|huggingface):\/\//i, '');
       // Strip Ollama-style "hf.co/" prefix if present (e.g. hf.co/unsloth/...:tag)
       repo = repo.replace(/^hf\.co\//, '');
+      // Full HF blob/resolve URL → turn into `org/repo/path/to/file` so
+      // the downstream `_splitRepoFile` can pick the file out.
+      // Matches: https://huggingface.co/org/repo/blob/branch/path/to/file.gguf
+      //          https://huggingface.co/org/repo/resolve/branch/path/to/file.gguf
+      const hfBlob = repo.match(/^https?:\/\/huggingface\.co\/([^/]+\/[^/?#]+)\/(?:blob|resolve)\/[^/?#]+\/([^?#]+)/);
+      if (hfBlob) return `${hfBlob[1]}/${hfBlob[2]}`;
       const hfMatch = repo.match(/^https?:\/\/huggingface\.co\/([^/]+\/[^/?#]+(?::[^/?#\s]+)?)/);
       if (hfMatch) repo = hfMatch[1];
       return repo;
+    }
+    function _ggufQuantFromPath(path) {
+      const clean = String(path || '').split('?')[0];
+      const parts = clean.split('/').filter(Boolean);
+      const dir = parts.length > 1 ? parts[0] : '';
+      const file = parts[parts.length - 1] || clean;
+      const dirQuant = dir.match(/^(?:I?Q\d(?:_[A-Z0-9]+){0,3}|UD-[A-Z0-9_]+)$/i);
+      if (dirQuant) return dirQuant[0].toUpperCase();
+      const fileQuant = file.match(/(?:^|[-_.\/])((?:I?Q\d(?:_[A-Z0-9]+){0,3})|(?:UD-[A-Z0-9_]+))(?=(?:[-_.]|\.gguf|$))/i);
+      return fileQuant ? fileQuant[1].toUpperCase() : '';
+    }
+    function _ggufIncludeForQuant(files, quant) {
+      const matches = files.filter(f => _ggufQuantFromPath(f) === quant);
+      if (!matches.length) return '';
+      const dirs = Array.from(new Set(matches.map(f => f.includes('/') ? f.split('/').slice(0, -1).join('/') : '')));
+      if (dirs.length === 1) {
+        const prefix = dirs[0] ? `${dirs[0]}/` : '';
+        return `${prefix}*${quant}*.gguf`;
+      }
+      return `*${quant}*.gguf`;
+    }
+    function _hideGgufPicker(message = '') {
+      if (dlGgufRow) dlGgufRow.style.display = 'none';
+      if (dlGgufQuant) {
+        dlGgufQuant.innerHTML = '';
+        dlGgufQuant.dataset.repo = '';
+      }
+      if (dlGgufNote) dlGgufNote.textContent = message;
+    }
+    async function _scanGgufRepo(rawValue) {
+      if (!dlGgufRow || !dlGgufQuant || !dlGgufNote) return false;
+      const rawRepo = _stripHfUrl(rawValue || '');
+      const ollamaName = _ollamaName(rawRepo);
+      const fileSplit = !ollamaName ? _splitRepoFile(rawRepo) : null;
+      const split = ollamaName ? { repo: ollamaName, include: null } : (fileSplit || _splitRepoTag(rawRepo));
+      const repo = split.repo || '';
+      if (ollamaName || split.include || !/^[^\s/]+\/[^\s/]+$/.test(repo)) {
+        _hideGgufPicker();
+        return false;
+      }
+      dlGgufRow.style.display = 'flex';
+      dlGgufQuant.innerHTML = '<option value="">Scanning...</option>';
+      dlGgufQuant.dataset.repo = repo;
+      dlGgufNote.textContent = '';
+      try {
+        const res = await fetch(`/api/cookbook/hf-gguf-files?repo_id=${encodeURIComponent(repo)}`, { credentials: 'same-origin' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || 'scan failed');
+        if (dlGgufQuant.dataset.repo !== repo) return false;
+        const files = (data.files || [])
+          .map(s => String(s || ''))
+          .filter(name => /\.gguf$/i.test(name));
+        const byQuant = new Map();
+        files.forEach(name => {
+          const quant = _ggufQuantFromPath(name);
+          if (!quant) return;
+          if (!byQuant.has(quant)) byQuant.set(quant, []);
+          byQuant.get(quant).push(name);
+        });
+        if (!byQuant.size) {
+          _hideGgufPicker('No GGUF quants found');
+          return false;
+        }
+        const quantRank = q => {
+          const m = q.match(/^I?Q(\d)/i);
+          return m ? Number(m[1]) : 99;
+        };
+        const quants = Array.from(byQuant.keys()).sort((a, b) => quantRank(a) - quantRank(b) || a.localeCompare(b));
+        dlGgufQuant.innerHTML = quants.map(q => {
+          const include = _ggufIncludeForQuant(files, q);
+          const count = byQuant.get(q).length;
+          return `<option value="${esc(include)}">${esc(q)} (${count})</option>`;
+        }).join('');
+        const first = dlGgufQuant.options[0];
+        dlGgufNote.textContent = first ? first.value : '';
+        return !!(first && first.value);
+      } catch (err) {
+        _hideGgufPicker(`GGUF scan failed: ${err.message || err}`);
+        return false;
+      }
     }
     // Split `org/repo:tag` (Ollama/llama.cpp style) into repo + include-glob.
     // The `:tag` picks a specific GGUF quantization file from the repo.
@@ -1589,6 +2071,22 @@ function _wireTabEvents(body) {
       const m = raw.match(/^([^\s/:]+\/[^\s/:]+):([^\s/]+)$/);
       if (!m) return { repo: raw, include: null };
       return { repo: m[1], include: `*${m[2]}*` };
+    }
+    // Split `org/repo/path/to/file.gguf` (or `.safetensors`/`.bin`) into
+    // repo + exact file include. Lets the user paste a path straight out
+    // of a HuggingFace "Files and versions" page or a copied filename
+    // without needing to peel the repo/file apart by hand. Returns null
+    // when the input doesn't look like a deep file path.
+    function _splitRepoFile(raw) {
+      // Must have at least 3 slash-separated segments AND end in a
+      // model-file extension to avoid eating Ollama tags or repo-only
+      // inputs like `org/repo`.
+      const parts = raw.split('/');
+      if (parts.length < 3) return null;
+      const fname = parts[parts.length - 1];
+      if (!/\.(gguf|safetensors|bin|pt|pth|onnx|mlx)(\?[^?]*)?$/i.test(fname)) return null;
+      const repo = parts.slice(0, 2).join('/');
+      return { repo, include: fname.replace(/\?.*$/, '') };
     }
     // Ollama-library name. Matches `qwen2.5:14b`, `llama3:latest`, and the
     // (rare) `library/<name>:<tag>` form which we normalize by stripping the
@@ -1601,11 +2099,21 @@ function _wireTabEvents(body) {
       }
       return null;
     }
-    const triggerDownload = () => {
+    const triggerDownload = async () => {
       const rawRepo = _stripHfUrl(dlInput.value);
       if (!rawRepo) return;
       const ollamaName = _ollamaName(rawRepo);
-      const { repo, include: autoInclude } = ollamaName ? { repo: ollamaName, include: null } : _splitRepoTag(rawRepo);
+      // Prefer the deep-file split (org/repo/file.gguf → repo + exact
+      // include) over the tag split (org/repo:tag → glob include), and
+      // both over the plain repo case. Ollama names still take priority
+      // since they go through a different backend.
+      const _fileSplit = !ollamaName ? _splitRepoFile(rawRepo) : null;
+      const { repo, include: autoInclude } = ollamaName
+        ? { repo: ollamaName, include: null }
+        : (_fileSplit || _splitRepoTag(rawRepo));
+      let pickerInclude = (!ollamaName && !_fileSplit && !autoInclude && dlGgufQuant?.dataset.repo === repo)
+        ? (dlGgufQuant.value || '')
+        : '';
       // HuggingFace repo IDs must be `org/model`. A bare model name would 404
       // at snapshot_download time with a raw traceback, so reject it up front.
       // Ollama names (single-segment with a tag) skip this check — they go
@@ -1613,6 +2121,25 @@ function _wireTabEvents(body) {
       if (!ollamaName && !/^[^\s/]+\/[^\s/]+$/.test(repo)) {
         uiModule.showToast('Enter a full HuggingFace repo ID like "org/model-name", or an Ollama name like "qwen2.5:14b".');
         dlInput.focus();
+        return;
+      }
+      const looksGgufRepo = !ollamaName && !_fileSplit && !autoInclude && /\bgguf\b/i.test(repo);
+      if (looksGgufRepo && !pickerInclude) {
+        const oldText = dlBtn.textContent;
+        dlBtn.disabled = true;
+        dlBtn.textContent = 'Scanning...';
+        try {
+          const found = await _scanGgufRepo(rawRepo);
+          pickerInclude = (found && dlGgufQuant?.dataset.repo === repo) ? (dlGgufQuant.value || '') : '';
+        } finally {
+          dlBtn.disabled = false;
+          dlBtn.textContent = oldText;
+        }
+        if (!pickerInclude) {
+          uiModule.showToast('Pick a GGUF quant first. Odysseus will not download the whole GGUF repo without an include pattern.');
+          return;
+        }
+        uiModule.showToast('Pick the GGUF quant, then press Download again.');
         return;
       }
       // Resolve the host straight from THIS window's server dropdown, by index
@@ -1631,7 +2158,7 @@ function _wireTabEvents(body) {
       let envPath = host ? (_hsrv.envPath || '') : _envState.envPath;
       const payload = { repo_id: repo };
       if (ollamaName) payload.backend = 'ollama';
-      if (autoInclude) payload.include = autoInclude;
+      if (autoInclude || pickerInclude) payload.include = autoInclude || pickerInclude;
       if (_envState.hfToken && !ollamaName) payload.hf_token = _envState.hfToken;
       if (host) { payload.remote_host = host; const _sp3 = _getPort(host); if (_sp3) payload.ssh_port = _sp3; }
       const srvPlatform = _getPlatform(host);
@@ -1651,12 +2178,25 @@ function _wireTabEvents(body) {
         }
       }
       const shortName = repo.split('/').pop();
-      _retryDownload(shortName, payload);
+      const displayName = payload.include
+        ? `${shortName} · ${_ggufQuantFromPath(String(payload.include).replace(/\*/g, '')) || String(payload.include).replace(/\*/g, '').replace(/\.gguf$/i, '')}`
+        : shortName;
+      _retryDownload(displayName, payload);
       dlInput.value = '';
     };
     dlBtn.addEventListener('click', triggerDownload);
     dlInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') triggerDownload();
+    });
+    let _ggufScanTimer = null;
+    const _scheduleGgufScan = () => {
+      clearTimeout(_ggufScanTimer);
+      _ggufScanTimer = setTimeout(() => _scanGgufRepo(dlInput.value), 350);
+    };
+    dlInput.addEventListener('input', _scheduleGgufScan);
+    dlInput.addEventListener('blur', () => _scanGgufRepo(dlInput.value));
+    dlGgufQuant?.addEventListener('change', () => {
+      if (dlGgufNote) dlGgufNote.textContent = dlGgufQuant.value || '';
     });
   }
 
@@ -1682,17 +2222,12 @@ function _wireTabEvents(body) {
       const folded = dlFoldBody.classList.contains('is-folded');
       _setFolded(!folded);
     });
-    // Auto-fold on any downward scroll inside the cookbook modal,
-    // and auto-expand when the user scrolls all the way back to the
-    // top of whichever scroller they're in. The chevron ▸ still
-    // toggles manually.
+    // Auto-fold on any downward scroll inside the cookbook modal. Do not
+    // auto-expand on upward/top scroll — once the user collapses Download,
+    // it should stay collapsed until the header is clicked again.
     const _maybeFold = () => {
       if (dlFoldBody.classList.contains('is-folded')) return;
       _setFolded(true, /* persist */ false);
-    };
-    const _maybeExpand = () => {
-      if (!dlFoldBody.classList.contains('is-folded')) return;
-      _setFolded(false, /* persist */ false);
     };
     // Capture phase so scrolls on nested scrollers (.hwfit-list,
     // .cookbook-body, .modal-content) all hit us.
@@ -1708,7 +2243,6 @@ function _wireTabEvents(body) {
       const y = tgt.scrollTop;
       const prev = _lastY.get(tgt) || 0;
       if (y > prev) _maybeFold();
-      else if (y <= 0) _maybeExpand();
       _lastY.set(tgt, y);
     }, true);
   }
@@ -1787,12 +2321,6 @@ function _wireTabEvents(body) {
           return data.models || [];
         };
         let models = await _fetchLatest(vram);
-        // If the VRAM filter wiped everything out (often a flaky/zero hardware
-        // probe for a remote server — a huge-VRAM box should fit MORE, not
-        // fewer), fall back to the unfiltered trending list so something shows.
-        if (!models.length && vram > 0) {
-          models = await _fetchLatest(0);
-        }
         if (['rocm', 'metal', 'mps', 'apple', 'generic', 'cpu'].includes(hwInfo.backend)) {
           models = models.filter(m => !_hfModelLooksAwqLike(m));
         }
@@ -2099,13 +2627,14 @@ function _renderRecipes() {
     const isLocal = !s.host || s.host.toLowerCase() === 'local';
     if (isLocal) {
       s.host = '';
+      s.platform = _envState.hostPlatform || '';
       if (_localSeen) return false;
       _localSeen = true;
     }
     return true;
   });
   if (!_localSeen) {
-    _es.servers.unshift({ host: '', env: _es.env || 'none', envPath: _es.envPath || '', modelDir: '~/.cache/huggingface/hub' });
+    _es.servers.unshift({ host: '', env: _es.env || 'none', envPath: _es.envPath || '', modelDir: '~/.cache/huggingface/hub', platform: _envState.hostPlatform || '' });
   }
   if (_es.remoteHost && !_es.servers.some(s => s.host === _es.remoteHost)) {
     _es.servers.push({ host: _es.remoteHost, env: _es.env || 'none', envPath: _es.envPath || '', modelDir: '~/.cache/huggingface/hub' });
@@ -2130,6 +2659,11 @@ function _renderRecipes() {
   html += `<input type="text" class="cookbook-dl-repo" id="cookbook-dl-repo" placeholder="org/model-name, qwen2.5:14b, or HF URL" style="flex:1;min-width:0;" />`;
   html += `<button class="cookbook-btn cookbook-dl-btn" id="cookbook-dl-btn">Download</button>`;
   html += `</div>`;
+  html += `<div id="cookbook-dl-gguf-row" class="cookbook-dl-gguf-row" style="display:none;">`;
+  html += `<span class="cookbook-dl-gguf-label">GGUF</span>`;
+  html += `<select class="cookbook-field-input" id="cookbook-dl-gguf-quant"></select>`;
+  html += `<span id="cookbook-dl-gguf-note"></span>`;
+  html += `</div>`;
   // Ollama-library browse used to live here as its own collapsible dropdown,
   // but that duplicated the Engine filter (which already has Ollama). The
   // standalone UI is gone — to find Ollama models, set Engine = Ollama in
@@ -2146,7 +2680,7 @@ function _renderRecipes() {
   html += `<span id="cookbook-hf-latest-arrow" style="display:inline-block;transition:transform 0.15s;pointer-events:none;opacity:0.6;font-size:11px;">\u25B8</span>`;
   html += `</button>`;
   html += `</div>`;
-  html += `<div id="cookbook-hf-latest-list" style="display:none;margin-top:4px;max-height:320px;overflow-y:auto;flex-direction:column;gap:4px;"></div>`;
+  html += `<div id="cookbook-hf-latest-list" style="display:none;margin-top:4px;max-height:320px;overflow-y:auto;overscroll-behavior:contain;flex-direction:column;gap:4px;"></div>`;
   html += `</div>`;
   html += `</div>`;  // /#cookbook-dl-tab-fold-body (whole Download card body)
 
@@ -2551,6 +3085,56 @@ export function isVisible() {
   return !modal.classList.contains('hidden');
 }
 
+let _sharedSyncInFlight = false;
+let _sharedSyncLast = 0;
+async function _refreshSharedCookbookState(reason = '') {
+  if (!isVisible() || _sharedSyncInFlight) return;
+  const now = Date.now();
+  if (now - _sharedSyncLast < 1500) return;
+  _sharedSyncInFlight = true;
+  _sharedSyncLast = now;
+  try {
+    const ok = await _syncFromServer();
+    if (!ok) return;
+    try { Object.assign(_envState, _readStoredEnvState()); } catch {}
+    const modal = document.getElementById('cookbook-modal');
+    const activeTab = modal?.querySelector('.cookbook-tab.active')?.dataset?.backend || '';
+    if (activeTab === 'Running') {
+      _renderRunningTab();
+    } else if (activeTab === 'Settings') {
+      const active = document.activeElement;
+      const editingSettings = active && active.closest && active.closest('.cookbook-settings-stack');
+      if (!editingSettings) {
+        _renderRecipes();
+        const tab = document.querySelector('#cookbook-modal .cookbook-tab[data-backend="Settings"]');
+        if (tab) tab.click();
+      }
+    }
+  } catch (e) {
+    console.warn('[cookbook] shared state refresh failed', reason, e);
+  } finally {
+    _sharedSyncInFlight = false;
+  }
+}
+
+document.addEventListener('cookbook:state-synced', () => {
+  try { Object.assign(_envState, _readStoredEnvState()); } catch {}
+  if (isVisible()) {
+    const activeTab = document.querySelector('#cookbook-modal .cookbook-tab.active')?.dataset?.backend || '';
+    if (activeTab === 'Running') _renderRunningTab();
+  }
+});
+
+window.addEventListener('focus', () => { _refreshSharedCookbookState('focus'); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') _refreshSharedCookbookState('visible');
+});
+setInterval(() => {
+  if (!isVisible()) return;
+  const activeTab = document.querySelector('#cookbook-modal .cookbook-tab.active')?.dataset?.backend || '';
+  if (activeTab === 'Running') _refreshSharedCookbookState('active-poll');
+}, 5000);
+
 // Close button
 document.addEventListener('DOMContentLoaded', () => {
   const closeBtn = document.getElementById('close-cookbook-modal');
@@ -2579,6 +3163,7 @@ const shared = {
   _getPort,
   _sshPrefix,
   _serverByVal,
+  _serverKey,
   _selectedServer,
   _getPlatform,
   _isWindows,

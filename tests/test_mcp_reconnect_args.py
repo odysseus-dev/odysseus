@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 def test_reconnect_passes_full_server_config():
     """do_manage_mcp reconnect must pass name/transport/command/args/env/url."""
-    from src.tool_implementations import do_manage_mcp
+    from src.agent_tools.admin_tools import do_manage_mcp
 
     fake_mcp = MagicMock()
     fake_mcp.disconnect_server = AsyncMock()
@@ -28,7 +28,7 @@ def test_reconnect_passes_full_server_config():
     fake_db = MagicMock()
     fake_db.query.return_value.filter.return_value.first.return_value = fake_srv
 
-    with patch("src.tool_implementations.get_mcp_manager", return_value=fake_mcp), \
+    with patch("src.agent_tools.admin_tools.get_mcp_manager", return_value=fake_mcp), \
          patch("core.database.SessionLocal", return_value=fake_db):
         result = asyncio.run(do_manage_mcp(
             json.dumps({"action": "reconnect", "server_id": "srv-123"})
