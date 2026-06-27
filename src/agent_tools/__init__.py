@@ -25,6 +25,7 @@ from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocument
 from .model_interaction_tools import ChatWithModelTool, AskTeacherTool, ListModelsTool
 from .bg_job_tools import ManageBgJobsTool
 from .session_tools import CreateSessionTool, ListSessionsTool, SendToSessionTool, ManageSessionTool
+from .productivity_tools import PRODUCTIVITY_TOOL_HANDLERS, do_manage_notes, do_manage_calendar, do_resolve_contact, do_manage_contact
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -52,6 +53,8 @@ TOOL_HANDLERS = {
     "send_to_session": SendToSessionTool().execute,
     "manage_session": ManageSessionTool().execute,
 }
+
+TOOL_HANDLERS.update(PRODUCTIVITY_TOOL_HANDLERS)
 
 # ---------------------------------------------------------------------------
 # Constants (re-exported for backward compatibility — single source of truth
