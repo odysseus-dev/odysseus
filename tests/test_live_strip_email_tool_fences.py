@@ -24,7 +24,6 @@ import re
 from pathlib import Path
 
 _SRC = Path("static/js/chatRenderer.js")
-_TOOLS_SRC = Path("src/agent_tools/__init__.py")
 _ROUTES_SRC = Path("routes/model_routes.py")
 
 # Deliberately NOT stripped: legitimate code-example languages, not tool
@@ -33,11 +32,13 @@ _NON_STRIPPED = {"bash", "python"}
 
 
 def _tool_tags() -> set[str]:
-    """Extract the backend TOOL_TAGS set from src/agent_tools/__init__.py (source-level)."""
-    source = _TOOLS_SRC.read_text(encoding="utf-8")
-    m = re.search(r"TOOL_TAGS\s*=\s*\{(?P<body>.*?)\}", source, re.DOTALL)
-    assert m, "TOOL_TAGS literal not found in src/agent_tools/__init__.py"
-    return set(re.findall(r'"([a-z_]+)"', m.group("body")))
+    """The backend TOOL_TAGS set — the same authoritative set GET /api/tools
+    serves (sorted) and the live EXEC_FENCE_RE derives from. Imported rather
+    than source-scraped so it reflects the real set however it is composed: the
+    literal plus the ``| BUILTIN_EMAIL_TOOLS`` union (email tool names live in
+    that single source, not inline in the literal)."""
+    from src.agent_tools import TOOL_TAGS
+    return set(TOOL_TAGS)
 
 
 def _exec_fence_regex() -> re.Pattern:
