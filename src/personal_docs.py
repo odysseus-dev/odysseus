@@ -90,7 +90,7 @@ def split_chunks(text: str, size: int = config.CHUNK_SIZE, overlap: int = config
 def tokenize(s: str) -> Set[str]:
     """Tokenize string into words, excluding stop words."""
     text = s if isinstance(s, str) else ""
-    tokens = re.findall(r"[A-Za-z0-9_\-]+", text.lower())
+    tokens = re.findall(r"[\w\-]+", text.lower())
     return set(t for t in tokens if t not in config.STOP_WORDS and len(t) > 1)
 
 def load_personal_index(
