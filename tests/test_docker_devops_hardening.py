@@ -70,6 +70,23 @@ def test_host_docker_overlay_mounts_socket_and_adds_docker_group():
     assert "ODYSSEUS_ENABLE_HOST_DOCKER=true" in service["environment"]
 
 
+def test_docker_entrypoint_gates_socket_group_plumbing_on_explicit_opt_in():
+    script = (ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
+    block_start = script.index("DOCKER_SOCK=\"${DOCKER_SOCK:-/var/run/docker.sock}\"")
+    block_end = script.index("\nmount_root_for()", block_start)
+    socket_group_block = script[block_start:block_end]
+
+    opt_in_check = socket_group_block.index(
+        "[ \"${ODYSSEUS_ENABLE_HOST_DOCKER:-}\" = \"true\" ]"
+    )
+    socket_check = socket_group_block.index("[ -S \"$DOCKER_SOCK\" ]")
+    stat_socket = socket_group_block.index("stat -c")
+    add_group = socket_group_block.index("groupadd -g")
+    add_user_group = socket_group_block.index("usermod -aG")
+
+    assert opt_in_check < socket_check < stat_socket < add_group < add_user_group
+
+
 def test_docker_entrypoint_does_not_resolve_root_commands_from_app_local_path():
     script = (ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
     path_export = script.index('export PATH="/app/.local/bin:$PATH"')

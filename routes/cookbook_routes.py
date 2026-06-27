@@ -33,6 +33,7 @@ from routes.shell_routes import TMUX_LOG_DIR
 from src.host_docker_access import (
     HOST_DOCKER_ACCESS_HINT,
     HOST_DOCKER_SOCKET_PATH,
+    host_docker_access_enabled,
     local_docker_available,
     running_in_container,
 )

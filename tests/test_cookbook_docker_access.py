@@ -3,8 +3,33 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from starlette.requests import Request
+
 import routes.cookbook_routes as cookbook_routes
+from routes.cookbook_helpers import ServeRequest
 from src.host_docker_access import HOST_DOCKER_ACCESS_HINT
+
+
+def _model_serve_endpoint():
+    router = cookbook_routes.setup_cookbook_routes()
+    for route in router.routes:
+        if route.path == "/api/model/serve" and "POST" in route.methods:
+            return route.endpoint
+    raise AssertionError("POST /api/model/serve route not found")
+
+
+def _admin_request() -> Request:
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/model/serve",
+            "headers": [],
+            "state": {},
+        }
+    )
+    request.state.current_user = "admin"
+    return request
 
 
 @pytest.mark.asyncio
@@ -92,6 +117,48 @@ async def test_remote_docker_still_uses_ssh_probe(monkeypatch):
         "docker",
         windows=True,
     )
+
+
+@pytest.mark.asyncio
+async def test_local_container_serve_returns_host_docker_opt_in_hint(
+    monkeypatch,
+    tmp_path,
+):
+    async def binary_available(binary, remote, ssh_port, **kwargs):
+        assert remote is None
+        if binary == "tmux":
+            return True
+        assert cookbook_routes.shutil.which(binary) == "/usr/bin/docker"
+        return False
+
+    monkeypatch.setattr(cookbook_routes, "require_admin", lambda request: None)
+    monkeypatch.setattr(cookbook_routes, "_binary_available", binary_available)
+    monkeypatch.setattr(cookbook_routes, "running_in_container", lambda: True)
+    monkeypatch.setattr(
+        cookbook_routes,
+        "host_docker_access_enabled",
+        lambda: False,
+    )
+    monkeypatch.setattr(cookbook_routes.shutil, "which", lambda binary: "/usr/bin/docker")
+    monkeypatch.setattr(cookbook_routes, "TMUX_LOG_DIR", tmp_path)
+    monkeypatch.setattr(
+        cookbook_routes,
+        "load_stored_hf_token",
+        lambda **kwargs: "",
+    )
+
+    response = await _model_serve_endpoint()(
+        _admin_request(),
+        ServeRequest(
+            repo_id="example/model",
+            cmd="python docker",
+        ),
+    )
+
+    assert response["ok"] is False
+    assert response["error"] == HOST_DOCKER_ACCESS_HINT
+    assert "docker/host-docker.yml" in response["error"]
+
 
 def test_local_ollama_docker_access_blocked_in_container_cli_only(monkeypatch, tmp_path):
     monkeypatch.setattr(cookbook_routes.shutil, "which", lambda binary: "/usr/bin/docker")
