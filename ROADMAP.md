@@ -12,7 +12,6 @@ the codebase, you are probably right to stay away.
   and WSL all need coverage.
 
 - Integration audit: do integrations even work? Confirm what works, what needs setup docs, and what should be removed or hidden. 
-- Self-host troubleshooting cookbook. Document the weird 30-second fixes that otherwise become 30-minute searches: Dovecot cleartext auth for local stacks, ntfy Android Instant Delivery for non-ntfy.sh servers, clipboard limits on plain-HTTP Tailscale URLs, Radicale collection URLs, and similar traps.
 - Cookbook reliability on other computers. This is probably the area most likely to need work across different machines, GPUs, drivers, shells, and Python environments.
 - Cookbook SGLang support across platforms. Make sure SGLang setup/serve works
   predictably on Linux, Windows/WSL, macOS where possible, Docker, and common
