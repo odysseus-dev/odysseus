@@ -31,6 +31,8 @@ except ModuleNotFoundError as e:
 
 
 def _mask_token(token: str, reveal: bool = False) -> str:
+    if not isinstance(token, str):
+        return ""
     token = token or ""
     if reveal:
         return token
@@ -42,7 +44,7 @@ def _mask_token(token: str, reveal: bool = False) -> str:
 
 
 def _summary(t: "ScheduledTask", reveal: bool = False) -> dict:
-    tok = t.webhook_token or ""
+    tok = t.webhook_token if isinstance(t.webhook_token, str) else ""
     return {
         "task_id": t.id,
         "name": t.name,
