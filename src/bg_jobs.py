@@ -78,6 +78,13 @@ def _pid_alive(pid: Optional[int]) -> bool:
     return pid_alive(pid)
 
 
+def _float_or(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def launch(command: str, session_id: str, cwd: Optional[str] = None,
            max_runtime_s: int = DEFAULT_MAX_RUNTIME_S) -> Dict[str, Any]:
     """Launch `command` detached. Returns the job record (status='running').
@@ -207,7 +214,9 @@ def refresh() -> Dict[str, Dict[str, Any]]:
             rec["status"] = "done" if code == 0 else "failed"
             rec["ended_at"] = now
             changed = True
-        elif (now - rec.get("started_at", now)) > rec.get("max_runtime_s", DEFAULT_MAX_RUNTIME_S):
+        elif (now - _float_or(rec.get("started_at"), now)) > _float_or(
+            rec.get("max_runtime_s"), DEFAULT_MAX_RUNTIME_S
+        ):
             # Runaway / stuck — reap it but STILL surface a follow-up.
             _kill(rec.get("pid"))
             rec["status"] = "failed"

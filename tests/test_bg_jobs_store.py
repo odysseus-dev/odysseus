@@ -26,3 +26,29 @@ def test_load_keeps_only_object_job_records(tmp_path, monkeypatch):
     monkeypatch.setattr(bg_jobs, "_STORE", store)
 
     assert bg_jobs._load() == {"good": {"id": "good", "status": "done"}}
+
+
+def test_refresh_ignores_invalid_runtime_numbers(tmp_path, monkeypatch):
+    store = tmp_path / "bg_jobs.json"
+    jobs_dir = tmp_path / "jobs"
+    jobs_dir.mkdir()
+    store.write_text(
+        json.dumps(
+            {
+                "job1": {
+                    "id": "job1",
+                    "status": "running",
+                    "pid": 999999,
+                    "started_at": "bad",
+                    "max_runtime_s": "bad",
+                    "exit_path": str(jobs_dir / "job1.exit"),
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(bg_jobs, "_STORE", store)
+    monkeypatch.setattr(bg_jobs, "_JOBS_DIR", jobs_dir)
+    monkeypatch.setattr(bg_jobs, "_pid_alive", lambda pid: True)
+
+    assert bg_jobs.refresh()["job1"]["status"] == "running"
