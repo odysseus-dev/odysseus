@@ -7,7 +7,10 @@ import types
 import pytest
 
 import src.storage_diagnostics as storage_diagnostics
-from src.storage_diagnostics import collect_storage_bloat_diagnostics
+from src.storage_diagnostics import (
+    collect_configured_storage_bloat_diagnostics,
+    collect_storage_bloat_diagnostics,
+)
 
 
 def _init_db(path):
@@ -22,7 +25,8 @@ def _init_db(path):
             id TEXT PRIMARY KEY,
             session_id TEXT NOT NULL,
             role TEXT NOT NULL,
-            content TEXT NOT NULL
+            content TEXT NOT NULL,
+            metadata TEXT
         );
         """
     )
@@ -284,6 +288,73 @@ def test_manifest_present_and_live_db_referenced_upload_is_not_orphan(tmp_path):
     assert "uploaded file reference" not in json.dumps(report)
 
 
+def test_metadata_attachment_reference_is_not_suspected_orphan(tmp_path):
+    db_path = tmp_path / "app.db"
+    live = "dddddddddddddddddddddddddddddddd.pdf"
+    conn = _init_db(db_path)
+    conn.execute("INSERT INTO sessions(id, name) VALUES ('s1', 'Session')")
+    conn.execute(
+        """
+        INSERT INTO chat_messages(id, session_id, role, content, metadata)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            "m1",
+            "s1",
+            "user",
+            '[{"type":"text","text":"summarize the attachment"}]',
+            json.dumps({"attachments": [{"id": live, "type": "application/pdf"}]}),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    (upload_dir / live).write_bytes(b"live")
+
+    report = collect_storage_bloat_diagnostics(db_path=db_path, upload_dir=upload_dir)
+
+    references = report["database"]["upload_references"]
+    assert references["live_reference_count"] == 1
+    assert "chat_messages.metadata" in references["sources"]
+    assert report["uploads"]["suspected_orphans"]["count"] == 0
+    assert live not in json.dumps(report)
+    assert "summarize the attachment" not in json.dumps(report)
+
+
+def test_document_pdf_source_reference_is_not_suspected_orphan(tmp_path):
+    db_path = tmp_path / "app.db"
+    live = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.pdf"
+    conn = _init_db(db_path)
+    conn.execute(
+        """
+        CREATE TABLE documents (
+            id TEXT PRIMARY KEY,
+            current_content TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO documents(id, current_content) VALUES (?, ?)",
+        ("doc1", f'<!-- pdf_source upload_id="{live}" -->\n\n# Private title'),
+    )
+    conn.commit()
+    conn.close()
+
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    (upload_dir / live).write_bytes(b"live")
+
+    report = collect_storage_bloat_diagnostics(db_path=db_path, upload_dir=upload_dir)
+
+    references = report["database"]["upload_references"]
+    assert "documents.current_content.pdf_source_marker" in references["sources"]
+    assert report["uploads"]["suspected_orphans"]["count"] == 0
+    assert live not in json.dumps(report)
+    assert "Private title" not in json.dumps(report)
+
+
 def test_upload_traversal_is_bounded_and_reports_truncation(monkeypatch, tmp_path):
     db_path = tmp_path / "app.db"
     conn = _init_db(db_path)
@@ -389,6 +460,7 @@ def test_storage_bloat_route_requires_admin_and_returns_report(monkeypatch, tmp_
     upload_dir.mkdir()
 
     monkeypatch.setattr(diag, "require_admin", lambda _request: None)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setattr(diag, "APP_DB", str(db_path))
     monkeypatch.setattr(diag, "UPLOAD_DIR", str(upload_dir))
 
@@ -415,17 +487,17 @@ def test_storage_bloat_route_does_not_import_core_database(monkeypatch, tmp_path
         def __getattr__(self, name):
             raise AssertionError(f"core.database should not be imported for {name}")
 
-    def fake_collect(*, db_path, upload_dir, database_url=None):
-        assert database_url is None
-        assert db_path == str(tmp_path / "app.db")
+    def fake_collect(*, default_db_path, upload_dir):
+        assert default_db_path == str(tmp_path / "app.db")
         assert upload_dir == str(tmp_path / "uploads")
         return {"status": "success", "database": {}, "uploads": {}, "warnings": []}
 
     monkeypatch.setitem(sys.modules, "core.database", PoisonDatabase("core.database"))
     monkeypatch.setattr(diag, "require_admin", lambda _request: None)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setattr(diag, "APP_DB", str(tmp_path / "app.db"))
     monkeypatch.setattr(diag, "UPLOAD_DIR", str(tmp_path / "uploads"))
-    monkeypatch.setattr(diag, "collect_storage_bloat_diagnostics", fake_collect)
+    monkeypatch.setattr(diag, "collect_configured_storage_bloat_diagnostics", fake_collect)
 
     app = FastAPI()
     app.include_router(diag.setup_diagnostics_routes(None, False, None, None))
@@ -435,3 +507,50 @@ def test_storage_bloat_route_does_not_import_core_database(monkeypatch, tmp_path
 
     assert response.status_code == 200
     assert response.json()["status"] == "success"
+
+
+def test_configured_storage_helper_uses_database_url(monkeypatch, tmp_path):
+    default_db = tmp_path / "default.db"
+    default_conn = _init_db(default_db)
+    default_conn.close()
+    custom_db = tmp_path / "custom.db"
+    custom_conn = _init_db(custom_db)
+    custom_conn.execute("INSERT INTO sessions(id, name) VALUES ('s1', 'Custom')")
+    custom_conn.commit()
+    custom_conn.close()
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{custom_db}")
+
+    report = collect_configured_storage_bloat_diagnostics(
+        default_db_path=default_db,
+        upload_dir=upload_dir,
+    )
+
+    tables = report["database"]["tables"]
+    assert tables["sessions"]["row_count"] == 1
+
+
+@pytest.mark.parametrize(
+    ("database_url", "warning"),
+    [
+        ("sqlite:///:memory:", "in-memory SQLite database has no file size"),
+        (
+            "postgresql://localhost/odysseus",
+            "unsupported database URL; only SQLite file diagnostics are available",
+        ),
+    ],
+)
+def test_unsupported_database_sources_are_non_fatal(tmp_path, database_url, warning):
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+
+    report = collect_storage_bloat_diagnostics(
+        database_url=database_url,
+        upload_dir=upload_dir,
+    )
+
+    assert report["status"] == "success"
+    assert report["database"]["path_present"] is False
+    assert warning in report["warnings"]

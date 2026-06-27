@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Form, Request
 from services.youtube.youtube_handler import extract_youtube_id, extract_transcript_async
 from core.constants import APP_DB, DEFAULT_HOST, DATA_DIR, UPLOAD_DIR
 from core.middleware import require_admin
-from src.storage_diagnostics import collect_storage_bloat_diagnostics
+from src.storage_diagnostics import collect_configured_storage_bloat_diagnostics
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +58,8 @@ def setup_diagnostics_routes(
     async def get_storage_bloat_diagnostics(request: Request) -> Dict[str, Any]:
         require_admin(request)
         try:
-            return collect_storage_bloat_diagnostics(
-                db_path=APP_DB,
+            return collect_configured_storage_bloat_diagnostics(
+                default_db_path=APP_DB,
                 upload_dir=UPLOAD_DIR,
             )
         except Exception as e:

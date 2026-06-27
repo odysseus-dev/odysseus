@@ -13,6 +13,7 @@ from typing import Any, Iterator
 from urllib.parse import quote, unquote
 
 from src.constants import UPLOAD_DIR
+from src.runtime_paths import get_app_root
 
 
 DEFAULT_TABLES = (
@@ -29,11 +30,40 @@ MAX_ORPHAN_ROWS = 50
 INLINE_SCAN_LIMIT = 200
 MAX_REFERENCE_SCAN_ROWS = 1000
 MAX_REFERENCE_CONTENT_CHARS = 20000
+MAX_REFERENCE_JSON_NODES = 2000
 MAX_UPLOAD_TRAVERSAL_FILES = 10000
 MAX_UPLOAD_TRAVERSAL_DIRS = 2000
 DATA_URL_RE = re.compile(r"data:[^;,\s]{1,120};base64,", re.IGNORECASE)
 UPLOAD_ID_RE = re.compile(r"\b[0-9a-fA-F]{32}(?:\.[A-Za-z0-9]+)?\b")
 BASE64_CHARS_RE = re.compile(r"[A-Za-z0-9+/=]")
+PDF_SOURCE_UPLOAD_ID_RE = re.compile(
+    r'<!--\s*pdf_(?:form_)?source\s+upload_id="(?P<upload_id>[^"]+)"',
+    re.IGNORECASE,
+)
+CHAT_REFERENCE_COLUMNS = (
+    "metadata",
+    "meta_data",
+    "meta",
+    "extra",
+    "attachments",
+)
+REFERENCE_CONTAINER_KEYS = {
+    "attachment",
+    "attachments",
+    "file",
+    "files",
+    "upload",
+    "uploads",
+    "source",
+    "sources",
+}
+REFERENCE_ID_KEYS = {
+    "id",
+    "file_id",
+    "upload_id",
+    "source_id",
+    "source_upload_id",
+}
 
 
 @dataclass
@@ -77,11 +107,26 @@ def collect_storage_bloat_diagnostics(
             "inline_payload_rows": MAX_INLINE_ROWS,
             "orphan_uploads": MAX_ORPHAN_ROWS,
             "live_reference_scan_rows": MAX_REFERENCE_SCAN_ROWS,
-            "live_reference_content_chars": MAX_REFERENCE_CONTENT_CHARS,
+            "live_reference_value_chars": MAX_REFERENCE_CONTENT_CHARS,
+            "live_reference_json_nodes": MAX_REFERENCE_JSON_NODES,
             "upload_traversal_files": MAX_UPLOAD_TRAVERSAL_FILES,
             "upload_traversal_dirs": MAX_UPLOAD_TRAVERSAL_DIRS,
         },
     }
+
+
+def collect_configured_storage_bloat_diagnostics(
+    *,
+    default_db_path: str | os.PathLike[str],
+    upload_dir: str | os.PathLike[str],
+) -> dict[str, Any]:
+    """Collect diagnostics from DATABASE_URL, falling back to the app DB."""
+    database_url = os.getenv("DATABASE_URL")
+    return collect_storage_bloat_diagnostics(
+        database_url=database_url,
+        db_path=None if database_url else default_db_path,
+        upload_dir=upload_dir,
+    )
 
 
 def _resolve_sqlite_path(
@@ -99,7 +144,10 @@ def _resolve_sqlite_path(
     if not database_url.startswith("sqlite:///"):
         warnings.append("unsupported database URL; only SQLite file diagnostics are available")
         return None
-    return Path(unquote(database_url.removeprefix("sqlite:///")))
+    path = Path(unquote(database_url.removeprefix("sqlite:///")))
+    if path.is_absolute():
+        return path
+    return Path(get_app_root()) / path
 
 
 def _connect_readonly(db_path: Path) -> sqlite3.Connection:
@@ -121,11 +169,14 @@ def _collect_db_report(
         "content_rows": {"largest": [], "inline_payload_suspects": []},
         "fts": {"present": False, "tables": []},
         "upload_references": {
-            "source": "chat_messages.content",
+            "sources": [],
             "live_reference_count": 0,
             "scan_rows": 0,
+            "source_scan_rows": {},
             "scan_limit": MAX_REFERENCE_SCAN_ROWS,
-            "content_char_scan_limit": MAX_REFERENCE_CONTENT_CHARS,
+            "scan_limit_scope": "per_source",
+            "value_char_scan_limit": MAX_REFERENCE_CONTENT_CHARS,
+            "json_node_scan_limit": MAX_REFERENCE_JSON_NODES,
             "complete": False,
         },
     }
@@ -154,14 +205,16 @@ def _collect_db_report(
             )
             if "chat_messages" in tables:
                 report["content_rows"] = _content_rows_report(conn, warnings)
-                references, live_upload_ids = _live_upload_reference_report(
-                    conn,
-                    warnings,
-                    report["tables"].get("chat_messages", {}).get("row_count"),
-                )
-                report["upload_references"] = references
             else:
                 warnings.append("chat_messages table missing")
+            if "chat_messages" in tables or "documents" in tables:
+                references, live_upload_ids = _live_upload_reference_report(
+                    conn,
+                    tables,
+                    warnings,
+                    report["tables"],
+                )
+                report["upload_references"] = references
     except sqlite3.Error as exc:
         warnings.append(f"database diagnostics unavailable: {type(exc).__name__}")
     return report, live_upload_ids
@@ -374,50 +427,247 @@ def _base64_density(content: str) -> float:
 
 def _live_upload_reference_report(
     conn: sqlite3.Connection,
+    tables: set[str],
     warnings: list[str],
-    total_chat_rows: Any,
+    table_reports: dict[str, dict[str, Any]],
 ) -> tuple[dict[str, Any], set[str]]:
     report: dict[str, Any] = {
-        "source": "chat_messages.content",
+        "sources": [],
         "live_reference_count": 0,
         "scan_rows": 0,
+        "source_scan_rows": {},
         "scan_limit": MAX_REFERENCE_SCAN_ROWS,
-        "content_char_scan_limit": MAX_REFERENCE_CONTENT_CHARS,
+        "scan_limit_scope": "per_source",
+        "value_char_scan_limit": MAX_REFERENCE_CONTENT_CHARS,
+        "json_node_scan_limit": MAX_REFERENCE_JSON_NODES,
         "complete": False,
     }
+    live_ids: set[str] = set()
+    scans_complete: list[bool] = []
+    if "chat_messages" in tables:
+        chat_columns = _table_columns(conn, "chat_messages", warnings)
+        chat_fields = ["content"]
+        chat_fields.extend(
+            column for column in CHAT_REFERENCE_COLUMNS if column in chat_columns
+        )
+        for field in chat_fields:
+            source = f"chat_messages.{field}"
+            rows = _bounded_reference_rows(conn, "chat_messages", field, warnings)
+            if rows is None:
+                scans_complete.append(False)
+                continue
+            json_complete = True
+            if field == "content":
+                live_ids.update(
+                    _content_upload_ids(
+                        [str(row["value_sample"] or "") for row in rows]
+                    )
+                )
+            else:
+                field_ids, json_complete = _metadata_rows_upload_ids(rows)
+                live_ids.update(field_ids)
+                if not json_complete:
+                    warnings.append(
+                        f"{source} live reference scan limited by JSON node count"
+                    )
+            scan_complete = _reference_scan_complete(
+                rows,
+                table_reports.get("chat_messages", {}).get("row_count"),
+                source,
+                warnings,
+            )
+            scans_complete.append(scan_complete and json_complete)
+            _record_reference_scan(report, source, len(rows))
+
+    if "documents" in tables:
+        document_columns = _table_columns(conn, "documents", warnings)
+        if "current_content" in document_columns:
+            source = "documents.current_content.pdf_source_marker"
+            rows = _bounded_reference_rows(
+                conn,
+                "documents",
+                "current_content",
+                warnings,
+            )
+            if rows is None:
+                scans_complete.append(False)
+            else:
+                live_ids.update(
+                    _document_source_upload_ids(
+                        str(row["value_sample"] or "") for row in rows
+                    )
+                )
+                scans_complete.append(
+                    _reference_scan_complete(
+                        rows,
+                        table_reports.get("documents", {}).get("row_count"),
+                        source,
+                        warnings,
+                    )
+                )
+                _record_reference_scan(report, source, len(rows))
+
+    report["live_reference_count"] = len(live_ids)
+    report["complete"] = bool(scans_complete) and all(scans_complete)
+    return report, live_ids
+
+
+def _table_columns(
+    conn: sqlite3.Connection,
+    table: str,
+    warnings: list[str],
+) -> set[str]:
     try:
-        rows = conn.execute(
-            """
-            SELECT substr(content, 1, ?) AS content_sample,
-                   length(content) AS char_length
-            FROM chat_messages
-            ORDER BY length(CAST(content AS BLOB)) DESC
+        rows = conn.execute(f'PRAGMA table_info("{table}")').fetchall()
+    except sqlite3.Error as exc:
+        warnings.append(f"{table} column discovery unavailable: {type(exc).__name__}")
+        return set()
+    return {str(row["name"]) for row in rows}
+
+
+def _bounded_reference_rows(
+    conn: sqlite3.Connection,
+    table: str,
+    field: str,
+    warnings: list[str],
+) -> list[sqlite3.Row] | None:
+    try:
+        return conn.execute(
+            f"""
+            SELECT substr("{field}", 1, ?) AS value_sample,
+                   length("{field}") AS value_length
+            FROM "{table}"
+            ORDER BY length(CAST("{field}" AS BLOB)) DESC
             LIMIT ?
             """,
             (MAX_REFERENCE_CONTENT_CHARS, MAX_REFERENCE_SCAN_ROWS),
         ).fetchall()
     except sqlite3.Error as exc:
-        warnings.append(f"live upload reference scan unavailable: {exc}")
-        return report, set()
+        warnings.append(
+            f"{table}.{field} live reference scan unavailable: {type(exc).__name__}"
+        )
+        return None
 
-    content_samples = [str(row["content_sample"] or "") for row in rows]
-    live_ids = _content_upload_ids(content_samples)
-    scanned_all_rows = not isinstance(total_chat_rows, int) or total_chat_rows <= len(rows)
-    scanned_full_content = all(
-        (row["char_length"] or 0) <= MAX_REFERENCE_CONTENT_CHARS
+
+def _reference_scan_complete(
+    rows: list[sqlite3.Row],
+    total_rows: Any,
+    source: str,
+    warnings: list[str],
+) -> bool:
+    scanned_all_rows = not isinstance(total_rows, int) or total_rows <= len(rows)
+    scanned_full_values = all(
+        (row["value_length"] or 0) <= MAX_REFERENCE_CONTENT_CHARS
         for row in rows
     )
     if not scanned_all_rows:
-        warnings.append("live upload reference scan limited by row count")
-    if not scanned_full_content:
-        warnings.append("live upload reference scan limited by content length")
+        warnings.append(f"{source} live reference scan limited by row count")
+    if not scanned_full_values:
+        warnings.append(f"{source} live reference scan limited by value length")
+    return scanned_all_rows and scanned_full_values
 
-    report.update({
-        "live_reference_count": len(live_ids),
-        "scan_rows": len(rows),
-        "complete": scanned_all_rows and scanned_full_content,
-    })
-    return report, live_ids
+
+def _record_reference_scan(
+    report: dict[str, Any],
+    source: str,
+    row_count: int,
+) -> None:
+    report["sources"].append(source)
+    report["source_scan_rows"][source] = row_count
+    report["scan_rows"] += row_count
+
+
+def _metadata_rows_upload_ids(
+    rows: list[sqlite3.Row],
+) -> tuple[set[str], bool]:
+    ids: set[str] = set()
+    complete = True
+    for row in rows:
+        row_ids, row_complete = _json_upload_ids_with_status(row["value_sample"])
+        ids.update(row_ids)
+        complete = complete and row_complete
+    return ids, complete
+
+
+def _attachment_upload_ids_from_metadata(raw: Any) -> set[str]:
+    return _json_upload_ids(raw)
+
+
+def _json_upload_ids(value: Any) -> set[str]:
+    ids, _complete = _json_upload_ids_with_status(value)
+    return ids
+
+
+def _json_upload_ids_with_status(value: Any) -> tuple[set[str], bool]:
+    parsed = value
+    if isinstance(value, str):
+        sample = value[:MAX_REFERENCE_CONTENT_CHARS]
+        try:
+            parsed = json.loads(sample)
+        except (json.JSONDecodeError, RecursionError, TypeError, ValueError):
+            return set(UPLOAD_ID_RE.findall(sample)), True
+
+    ids: set[str] = set()
+    remaining_nodes = [MAX_REFERENCE_JSON_NODES]
+    _collect_json_upload_ids(parsed, ids, remaining_nodes, isinstance(parsed, list))
+    return ids, remaining_nodes[0] > 0
+
+
+def _collect_json_upload_ids(
+    value: Any,
+    ids: set[str],
+    remaining_nodes: list[int],
+    in_reference_container: bool,
+) -> None:
+    if remaining_nodes[0] <= 0:
+        return
+    remaining_nodes[0] -= 1
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if remaining_nodes[0] <= 0:
+                return
+            remaining_nodes[0] -= 1
+            normalized_key = str(key).lower()
+            is_container = (
+                in_reference_container
+                or normalized_key in REFERENCE_CONTAINER_KEYS
+            )
+            is_direct_reference_id = (
+                normalized_key in REFERENCE_ID_KEYS
+                and normalized_key != "id"
+            )
+            if normalized_key in REFERENCE_ID_KEYS and (
+                is_container or is_direct_reference_id
+            ):
+                ids.update(_upload_ids_from_scalar(child))
+            elif is_container:
+                _collect_json_upload_ids(child, ids, remaining_nodes, True)
+    elif isinstance(value, list):
+        for child in value:
+            _collect_json_upload_ids(
+                child,
+                ids,
+                remaining_nodes,
+                in_reference_container,
+            )
+    elif in_reference_container:
+        ids.update(_upload_ids_from_scalar(value))
+
+
+def _upload_ids_from_scalar(value: Any) -> set[str]:
+    if not isinstance(value, str):
+        return set()
+    return set(UPLOAD_ID_RE.findall(value[:MAX_REFERENCE_CONTENT_CHARS]))
+
+
+def _document_source_upload_ids(content_samples: Iterator[str]) -> set[str]:
+    ids: set[str] = set()
+    for sample in content_samples:
+        for match in PDF_SOURCE_UPLOAD_ID_RE.finditer(sample):
+            upload_id = match.group("upload_id")
+            if UPLOAD_ID_RE.fullmatch(upload_id):
+                ids.add(upload_id)
+    return ids
 
 
 def _content_upload_ids(content_samples: list[str]) -> set[str]:
