@@ -246,6 +246,7 @@ import re as _re_reply
 # serves replies and summaries (any fenced final-output block).
 _REPLY_OPEN_RE = _re_reply.compile(r"<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>+", _re_reply.I)
 _REPLY_CLOSE_RE = _re_reply.compile(r"<<<\s*END\s*>>+", _re_reply.I)
+_SUMMARY_BULLET_RE = _re_reply.compile(r"^(?:[-*\u2022]\s+|\d+[.)]\s+)")
 
 
 def _extract_reply(text: str) -> str:
@@ -273,6 +274,76 @@ def _extract_reply(text: str) -> str:
     t = _REPLY_OPEN_RE.sub("", t)
     t = _REPLY_CLOSE_RE.sub("", t)
     return _strip_think(t).strip()
+
+
+def _build_email_summary_messages(sender: str, subject: str, body_for_llm: str) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are an email summarizer. Format: 1-3 short bullet points "
+                "(use '- '). Cover: main point, action items, deadlines. If the "
+                "email has attachments (marked '--- ATTACHMENTS ---'), USE THEIR "
+                "CONTENTS - pull invoice totals, deadlines, key clauses, concrete "
+                "numbers/dates from PDFs/docs into the bullets. Be terse.\n\n"
+                "OUTPUT FORMAT: Put ONLY the bullet points between these exact "
+                "markers, each on its own line:\n"
+                "<<<SUMMARY>>>\n"
+                "- ...\n"
+                "<<<END>>>\n"
+                "Any reasoning must come BEFORE <<<SUMMARY>>> (ideally inside "
+                "<think>...</think>). Only the text between the markers is kept."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"From: {sender}\nSubject: {subject}\n\n{body_for_llm[:12000]}"
+                "\n\n---\n\nSummarize the email. Output the bullets between "
+                "<<<SUMMARY>>> and <<<END>>>."
+            ),
+        },
+    ]
+
+
+async def _generate_email_summary(
+    url: str,
+    model: str,
+    sender: str,
+    subject: str,
+    body_for_llm: str,
+    *,
+    headers: dict | None = None,
+    max_tokens: int = 8192,
+    timeout: int = 180,
+) -> str:
+    """Generate a cacheable email summary through the shared LLM adapter."""
+    from src.llm_core import llm_call_async
+
+    raw = await llm_call_async(
+        url=url,
+        model=model,
+        messages=_build_email_summary_messages(sender, subject, body_for_llm),
+        temperature=0.3,
+        max_tokens=max_tokens,
+        headers=headers,
+        timeout=timeout,
+    )
+    raw_text = raw or ""
+    if _REPLY_OPEN_RE.search(raw_text):
+        summary = _extract_reply(raw_text)
+        if summary:
+            return summary
+
+    cleaned = _strip_think(raw_text).strip()
+    bullets = [
+        line.strip()
+        for line in cleaned.splitlines()
+        if _SUMMARY_BULLET_RE.match(line.strip())
+    ]
+    if bullets:
+        return "\n".join(bullets)
+    return cleaned.strip()
 
 
 def _apply_email_style_mechanics(text: str) -> str:
