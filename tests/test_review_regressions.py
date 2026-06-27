@@ -497,6 +497,11 @@ async def test_app_api_blocks_cookbook_host_control_routes_before_loopback(monke
             {"pid": 12345, "signal": "TERM"},
             "process signalling is host control",
         ),
+        (
+            "/api/cookbook/stop-session",
+            {"session_id": "cookbook-deadbeef"},
+            "session stop is host process control",
+        ),
     )
 
     for path, body, error_text in blocked_calls:
@@ -573,6 +578,7 @@ async def test_app_api_endpoint_discovery_hides_cookbook_host_control_routes(mon
                     "/api/cookbook/packages/install": {"post": {"summary": "Install Package"}},
                     "/api/cookbook/rebuild-engine": {"post": {"summary": "Rebuild Engine"}},
                     "/api/cookbook/kill-pid": {"post": {"summary": "Kill Process"}},
+                    "/api/cookbook/stop-session": {"post": {"summary": "Stop Session"}},
                     "/api/cookbook/gpus": {"get": {"summary": "List GPUs"}},
                 }
             }
@@ -601,6 +607,7 @@ async def test_app_api_endpoint_discovery_hides_cookbook_host_control_routes(mon
     assert ("POST", "/api/cookbook/packages/install") not in paths
     assert ("POST", "/api/cookbook/rebuild-engine") not in paths
     assert ("POST", "/api/cookbook/kill-pid") not in paths
+    assert ("POST", "/api/cookbook/stop-session") not in paths
 
 
 @pytest.mark.asyncio
@@ -821,7 +828,7 @@ async def test_webhook_tool_reuses_private_url_validation():
     monkeypatch.setitem(sys.modules, "core.database", fake_core_db)
     monkeypatch.setitem(sys.modules, "src.database", fake_src_db)
 
-    from src.tool_implementations import do_manage_webhooks
+    from src.agent_tools.admin_tools import do_manage_webhooks
 
     try:
         result = await do_manage_webhooks(

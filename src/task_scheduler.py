@@ -289,6 +289,42 @@ def _checkin_calendar_events(db, owner, start, end):
     )
 
 
+def _normalize_chat_endpoint(url: str) -> str:
+    """Repair a resolved task endpoint to a full chat-completions URL.
+
+    Unlike the chat path — which stores ``build_chat_url(normalize_base(base))``
+    on the session — the task executor passes ``task.endpoint_url`` verbatim to
+    the model HTTP call. A bare OpenAI-compatible base such as
+    ``http://host:11434/v1`` therefore POSTs to a 404 ("page not found") and the
+    model silently appears to "return an empty response".
+
+    Repair only bare OpenAI-compatible bases. Native-Ollama URLs (``/api...``)
+    and URLs that already point at a concrete endpoint are returned untouched, so
+    their own downstream normalizers keep working. Idempotent: a URL already
+    ending in ``/chat/completions`` is left as-is.
+    """
+    if not url:
+        return url
+    # Imports kept function-local (endpoint_resolver pulls in heavy deps) but
+    # OUTSIDE the try: an import failure is a real bug that should surface, not
+    # be silently swallowed into the un-normalized URL this function exists to
+    # repair.
+    from urllib.parse import urlparse
+    from src.endpoint_resolver import normalize_base, build_chat_url
+    path = (urlparse(url).path or "").rstrip("/")
+    if path == "/api" or path.startswith("/api/"):
+        return url  # native Ollama — handled by the native path downstream
+    if path.endswith(("/chat/completions", "/messages", "/responses", "/completions")):
+        return url  # already a concrete endpoint
+    try:
+        return build_chat_url(normalize_base(url))
+    except Exception:
+        # Guard only the actual normalization. Returning the URL un-normalized
+        # reverts to the 404 this fixes, so make the silent revert visible.
+        logger.debug("task endpoint normalization failed for %r; using as-is", url, exc_info=True)
+        return url
+
+
 class TaskScheduler:
     def __init__(self, session_manager):
         self._session_manager = session_manager
@@ -1357,6 +1393,7 @@ class TaskScheduler:
             endpoint_url, model = self._resolve_defaults(db, task.owner)
         if not endpoint_url or not model:
             raise RuntimeError("No model/endpoint configured")
+        endpoint_url = _normalize_chat_endpoint(endpoint_url)
         # Record the resolved model so _execute_task_locked can persist it on
         # the run (tasks rarely pin a model, so this is the only record of
         # which model actually produced the output).
@@ -1547,6 +1584,8 @@ class TaskScheduler:
                 model_name = model_name or resolved_model
             except Exception:
                 pass
+
+        endpoint_url = _normalize_chat_endpoint(endpoint_url)
 
         session_id = task.session_id
         if not session_id:
@@ -1821,6 +1860,7 @@ class TaskScheduler:
             endpoint_url, model = self._resolve_defaults(db, task.owner)
         if not endpoint_url or not model:
             raise RuntimeError("No model/endpoint configured for research")
+        endpoint_url = _normalize_chat_endpoint(endpoint_url)
         # Record the resolved model for the run record (see _execute_task_locked).
         self._last_run_model = model
 

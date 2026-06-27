@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 from routes.cookbook_helpers import (
     _SESSION_ID_RE,
+    _REPO_ID_RE,
     _git_bash_path,
     _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_token,
     _validate_local_dir, _validate_gpus, _shell_path,
@@ -82,6 +83,9 @@ def setup_cookbook_routes() -> APIRouter:
         if len(value) <= 8:
             return "stored"
         return f"{value[:4]}...{value[-4:]}"
+
+    def _client_host_platform() -> str:
+        return "windows" if IS_WINDOWS else ""
 
     def _decrypt_secret(value: str | None) -> str:
         if not value:
@@ -255,21 +259,21 @@ def setup_cookbook_routes() -> APIRouter:
         """Return cookbook state without raw secrets for browser clients."""
         _strip_task_secrets(state)
         env = state.get("env") if isinstance(state, dict) else None
+        if isinstance(state, dict) and not isinstance(env, dict):
+            env = {}
+            state["env"] = env
         if isinstance(env, dict):
             token = _decrypt_secret(env.get("hfToken"))
             env.pop("hfToken", None)
             env["hfTokenConfigured"] = bool(token)
             env["hfTokenMasked"] = _mask_secret(token)
-        if isinstance(state, dict):
-            # Lets the UI pick the right stop/kill path for local tasks even
-            # before the hardware probe has set env.platform.
-            state["serverPlatform"] = "windows" if IS_WINDOWS else "linux"
+            env["hostPlatform"] = _client_host_platform()
         return state
 
     def _state_for_storage(state, on_disk=None):
         """Encrypt cookbook secrets before writing state to disk."""
         if isinstance(state, dict):
-            state.pop("serverPlatform", None)
+            state.pop("serverPlatform", None)  # legacy key from pre-hostPlatform builds
         _strip_task_secrets(state)
         env = state.get("env") if isinstance(state, dict) else None
         disk_env = on_disk.get("env") if isinstance(on_disk, dict) and isinstance(on_disk.get("env"), dict) else {}
@@ -284,6 +288,7 @@ def setup_cookbook_routes() -> APIRouter:
                 env.pop("hfToken", None)
             env.pop("hfTokenMasked", None)
             env.pop("hfTokenConfigured", None)
+            env.pop("hostPlatform", None)
         return state
 
     def _load_stored_hf_token() -> str:
@@ -564,9 +569,15 @@ def setup_cookbook_routes() -> APIRouter:
 
     def _read_stopped_repos() -> set[str]:
         try:
-            data = json.loads(_STOPPED_REPOS_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, list):
-                return {str(x) for x in data if x}
+            text = _STOPPED_REPOS_PATH.read_text(encoding="utf-8").strip()
+            if not text:
+                return set()
+            # Legacy JSON list from earlier builds — still readable on upgrade.
+            if text.startswith("["):
+                data = json.loads(text)
+                if isinstance(data, list):
+                    return {str(x) for x in data if x}
+            return {line.strip() for line in text.splitlines() if line.strip()}
         except Exception:
             pass
         return set()
@@ -574,7 +585,8 @@ def setup_cookbook_routes() -> APIRouter:
     def _write_stopped_repos(repos: set[str]) -> None:
         TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
         _STOPPED_REPOS_PATH.write_text(
-            json.dumps(sorted(repos), indent=0) + "\n", encoding="utf-8"
+            "\n".join(sorted(repos)) + ("\n" if repos else ""),
+            encoding="utf-8",
         )
 
     def _mark_download_stopped(repo_id: str) -> None:
@@ -621,7 +633,7 @@ def setup_cookbook_routes() -> APIRouter:
             '  if [ -f "$_ODYSSEUS_STOP_FILE" ]; then '
             'echo ""; echo "DOWNLOAD_STOPPED"; exit 130; fi; '
             'if [ -n "${_ODYSSEUS_REPO:-}" ] && [ -f "${_ODYSSEUS_STOPPED_REPOS:-}" ] '
-            '&& grep -Fq "$_ODYSSEUS_REPO" "$_ODYSSEUS_STOPPED_REPOS" 2>/dev/null; then '
+            '&& grep -Fxq "$_ODYSSEUS_REPO" "$_ODYSSEUS_STOPPED_REPOS" 2>/dev/null; then '
             'echo ""; echo "DOWNLOAD_STOPPED"; exit 130; fi'
         )
 
@@ -794,11 +806,13 @@ def setup_cookbook_routes() -> APIRouter:
                     f"\"powershell -Command \\\"{ps}\\\"\""
                 )
             else:
+                sid = shlex.quote(session_id)
                 cmd = (
                     f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "
                     f"{_pf}{shlex.quote(remote)} "
-                    f"'tmux send-keys -t {shlex.quote(session_id)} C-c 2>/dev/null; "
-                    f"sleep 2; tmux kill-session -t {shlex.quote(session_id)} 2>/dev/null'"
+                    f"'tmux has-session -t {sid} 2>/dev/null || exit 0; "
+                    f"tmux send-keys -t {sid} C-c 2>/dev/null; "
+                    f"sleep 2; tmux kill-session -t {sid}'"
                 )
             proc = await asyncio.create_subprocess_shell(
                 cmd,
@@ -810,9 +824,11 @@ def setup_cookbook_routes() -> APIRouter:
             return {"ok": ok, "exit_code": proc.returncode}
         if IS_WINDOWS:
             return await asyncio.to_thread(_stop_local_windows_session, session_id, repo_id)
+        sid = shlex.quote(session_id)
         cmd = (
-            f"tmux send-keys -t {shlex.quote(session_id)} C-c 2>/dev/null; "
-            f"sleep 2; tmux kill-session -t {shlex.quote(session_id)} 2>/dev/null"
+            f"tmux has-session -t {sid} 2>/dev/null || exit 0; "
+            f"tmux send-keys -t {sid} C-c 2>/dev/null; "
+            f"sleep 2; tmux kill-session -t {sid}"
         )
         proc = await asyncio.create_subprocess_shell(
             cmd,
@@ -1854,6 +1870,10 @@ def setup_cookbook_routes() -> APIRouter:
             # shell resolves the bundled python3/hf, mirroring the download flow.
             if not remote:
                 runner_lines.append(_local_tooling_path_export(sys.executable))
+                if local_windows:
+                    # Detached Git Bash runs do not always inherit recently edited
+                    # user PATH entries from the already-running Odysseus process.
+                    runner_lines.append('export PATH="$HOME/bin:$HOME/llama.cpp/build-cuda/bin/Release:$HOME/llama.cpp/build/bin/Release:$HOME/llama.cpp/build/bin/Debug:$HOME/llama.cpp/build/bin:$PATH"')
             runner_lines.append("export FLASHINFER_DISABLE_VERSION_CHECK=1")
             if req.hf_token:
                 runner_lines.append(f"export HF_TOKEN='{_bash_squote(req.hf_token)}'")
@@ -1868,7 +1888,8 @@ def setup_cookbook_routes() -> APIRouter:
             runner_lines.append(_HF_TOKEN_STATUS_SNIPPET)
             handled_ollama_serve = False
             # Auto-install inference engine if missing
-            if "llama_cpp" in req.cmd or "llama-server" in req.cmd:
+            local_windows_llama_cmd = local_windows and ("llama_cpp" in req.cmd or "llama-server" in req.cmd)
+            if ("llama_cpp" in req.cmd or "llama-server" in req.cmd) and not local_windows_llama_cmd:
                 # Prefer the NATIVE llama-server binary — its minja templating
                 # renders modern GGUF chat templates that the Python bindings'
                 # Jinja2 rejects (do_tojson ensure_ascii). Build it once from
@@ -2732,14 +2753,14 @@ def setup_cookbook_routes() -> APIRouter:
         validate_remote_host(req.remote_host)
         sport = validate_ssh_port(req.ssh_port)
         repo_id_raw = (req.repo_id or "").strip()
-        # repo_id is optional download metadata — only HF org/name ids are
-        # validated strictly; Ollama tags, local model ids, and setup tasks
-        # must not block the kill path with a 400.
+        # repo_id is optional stop metadata. Validate with the same safe
+        # model-id contract as launch paths; only HF org/name ids get
+        # stopped-download markers / orphan-scan side effects.
         repo_id_for_stop = None
         if repo_id_raw:
-            if "/" in repo_id_raw:
-                _validate_repo_id(repo_id_raw)
-                repo_id_for_stop = repo_id_raw
+            validated = _validate_serve_model_id(repo_id_raw)
+            if _REPO_ID_RE.match(validated):
+                repo_id_for_stop = validated
         return await _stop_cookbook_session_impl(
             req.session_id.strip(),
             remote_host=req.remote_host or "",
@@ -2808,8 +2829,8 @@ def setup_cookbook_routes() -> APIRouter:
             try:
                 return _state_for_client(json.loads(_cookbook_state_path.read_text(encoding="utf-8")))
             except Exception:
-                return {}
-        return {}
+                return _state_for_client({})
+        return _state_for_client({})
 
     @router.post("/api/cookbook/state")
     async def save_cookbook_state(request: Request):

@@ -777,10 +777,17 @@ def _provider_label(url: str) -> str:
             pass
     if _is_ollama_native_url(url): return "Ollama"
     try:
-        host = (urlparse(url).hostname or "").lower()
+        _parsed_local = urlparse(url)
+        host = (_parsed_local.hostname or "").lower()
+        port = _parsed_local.port
     except Exception:
         return "provider"
     if host in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
+        # A port alone is not authoritative: vLLM, SGLang, llama.cpp and plain
+        # OpenAI-compatible servers all routinely share 8000/8080, so naming the
+        # serving tool from the port here would mislabel real setups. The tool is
+        # identified by probing llama-server's native /props endpoint during
+        # discovery (see ModelDiscovery._fingerprint_provider); this stays neutral.
         return "local endpoint"
     return host or "provider"
 
