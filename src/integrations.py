@@ -444,7 +444,11 @@ async def execute_api_call(
     elif auth_type == "query" and api_key:
         if params is None:
             params = {}
-        param_name = integration.get("auth_param", "api_key")
+        # auth_param is always present (add_integration setdefaults it to ""),
+        # so a plain .get(..., "api_key") returns the empty string for a blank
+        # value and the key would be attached under an empty param name. Coalesce
+        # so a blank auth_param falls back to "api_key".
+        param_name = integration.get("auth_param") or "api_key"
         params[param_name] = api_key
 
     # auth_type == "basic" — expects api_key as "user:password"

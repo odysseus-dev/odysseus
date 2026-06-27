@@ -249,3 +249,36 @@ async def test_list_truncation_respects_limit_including_sentinel():
     assert isinstance(parsed, list)
     sentinel = parsed[-1]
     assert sentinel.get("_truncated") is True
+
+
+@pytest.mark.asyncio
+async def test_query_auth_blank_param_defaults_to_api_key():
+    # add_integration setdefaults auth_param to "", so a blank value must fall
+    # back to "api_key" rather than attaching the key under an empty param name.
+    integration = {
+        **DUMMY_INTEGRATION,
+        "auth_type": "query",
+        "api_key": "secret123",
+        "auth_param": "",
+    }
+    result, mock_client = await _call_with_integration(integration)
+
+    assert result.get("exit_code") == 0
+    params = mock_client.request.call_args.kwargs["params"]
+    assert params.get("api_key") == "secret123"
+    assert "" not in params
+
+
+@pytest.mark.asyncio
+async def test_query_auth_explicit_param_is_respected():
+    integration = {
+        **DUMMY_INTEGRATION,
+        "auth_type": "query",
+        "api_key": "secret123",
+        "auth_param": "apikey",
+    }
+    result, mock_client = await _call_with_integration(integration)
+
+    assert result.get("exit_code") == 0
+    params = mock_client.request.call_args.kwargs["params"]
+    assert params.get("apikey") == "secret123"
