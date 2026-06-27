@@ -251,8 +251,9 @@ class ChatHandler:
                 if file_info and self.upload_handler.is_image_file(
                     file_info["name"], file_info.get("mime", "")
                 ):
-                    if main_is_vision:
-                        # Main model can see images — just note it, image is passed via build_user_content.
+                    if main_is_vision or routed_vision_model:
+                        # The selected model or routed fallback can see images;
+                        # just note it, image is passed via build_user_content.
                         enhanced_message = f"{enhanced_message}\n\n[Image attached: {file_info['name']}]"
                         _m = meta_by_id.get(att_id)
                         if _m is not None:
@@ -327,7 +328,7 @@ class ChatHandler:
                 if isinstance(item, dict) and item.get("type") == "text"
             ]
             user_content = "\n".join(text_parts).strip() if text_parts else enhanced_message
-        elif not main_is_vision and isinstance(user_content, list):
+        elif not (main_is_vision or routed_vision_model) and isinstance(user_content, list):
             text_parts = [
                 item.get("text", "") for item in user_content
                 if isinstance(item, dict) and item.get("type") == "text"

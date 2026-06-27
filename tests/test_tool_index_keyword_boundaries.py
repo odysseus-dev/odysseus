@@ -55,3 +55,17 @@ def test_genuine_keywords_still_force_include():
     assert "reply_to_email" in ti.get_tools_for_query("reply to this email")
     assert "edit_document" in ti.get_tools_for_query("edit the document")
     assert "serve_model" in ti.get_tools_for_query("serve the model")
+
+
+def test_media_words_do_not_force_generation_tools():
+    ti = _index()
+    for q in (
+        "make me a dog image",
+        "create a short video",
+        "photo of a product on a table",
+        "show my gallery photos",
+    ):
+        tools = ti.get_tools_for_query(q)
+        assert "generate_image" not in tools, q
+        assert "generate_video" not in tools, q
+        assert "generate_music" not in tools, q

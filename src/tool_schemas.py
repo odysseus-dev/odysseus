@@ -1110,14 +1110,14 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "generate_image",
-            "description": "Generate a professional AI image file from a text prompt, save it to Odysseus generated media/Gallery, and render it inline. Do not answer image creation requests with SVG, HTML, code, or prompt-only workarounds unless the user explicitly asks for that format. Tries the current/configured/mentioned image-capable model first, then falls back to free local ComfyUI if available. RunComfy Cloud is a paid opt-in integration.",
+            "description": "Generate a professional AI image file from a text prompt, save it to Odysseus generated media/Gallery, and render it inline. Use the selected or explicitly provided image-capable model/backend. Do not answer image creation requests with SVG, HTML, code, or prompt-only workarounds unless the user explicitly asks for that format.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "prompt": {"type": "string", "description": "Subject-first image prompt. Include composition, use case, visual style, lighting, and any exact text in quotes."},
                     "provider": {"type": "string", "enum": ["comfyui", "runcomfy"], "description": "Optional media backend. comfyui = free local ComfyUI; runcomfy = paid RunComfy Cloud integration."},
                     "integration": {"type": "string", "description": "Optional integration id/name to use when multiple ComfyUI/RunComfy integrations exist."},
-                    "model": {"type": "string", "description": "Optional image model or RunComfy model id. Leave blank for auto: GPT Image 2 for typography/text, FLUX 2 Klein 9B for general professional imagery."},
+                    "model": {"type": "string", "description": "Optional explicit image model or RunComfy model id."},
                     "size": {"type": "string", "description": "Size such as 1024x1024, 1024x1536, 1536x1024, or 1536x864"},
                     "aspect_ratio": {"type": "string", "description": "Optional aspect such as 16:9, 9:16, 1:1, 3:2, or 2:3 when size is omitted"},
                     "style": {"type": "string", "description": "Optional concise art direction, e.g. editorial product photography, premium SaaS ad, cinematic concept art"},
@@ -1155,14 +1155,14 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "generate_video",
-            "description": "Generate a professional AI video with the configured media backend, save the downloaded file to Odysseus generated media/Gallery, and render it inline. Uses Gemini/Veo when a Gemini API endpoint is configured; RunComfy Cloud is an explicit paid integration; local ComfyUI requires an exact workflow JSON.",
+            "description": "Generate a professional AI video with the selected or explicitly provided media backend, save the downloaded file to Odysseus generated media/Gallery, and render it inline. RunComfy Cloud is an explicit paid integration; local ComfyUI requires an exact workflow JSON.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "prompt": {"type": "string", "description": "Subject-first video direction. Include one main action, scene, motion verbs, camera movement, lighting, and audio notes when relevant."},
                     "provider": {"type": "string", "enum": ["gemini", "comfyui", "runcomfy"], "description": "Optional media backend. gemini = Gemini/Veo API; comfyui = free local workflow; runcomfy = paid RunComfy Cloud integration."},
                     "integration": {"type": "string", "description": "Optional integration id/name to use when multiple ComfyUI/RunComfy integrations exist."},
-                    "model": {"type": "string", "description": "Optional video model id. Leave blank for auto: Gemini/Veo API when configured, otherwise RunComfy defaults such as Kling, HappyHorse, or Wan."},
+                    "model": {"type": "string", "description": "Optional explicit video model id."},
                     "duration": {"type": "integer", "description": "Duration in seconds"},
                     "aspect_ratio": {"type": "string", "description": "Aspect ratio such as 16:9, 9:16, 1:1, or 21:9"},
                     "resolution": {"type": "string", "description": "Resolution such as 720p, 1080p, or 4k when supported"},
@@ -1184,14 +1184,14 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "generate_music",
-            "description": "Generate professional AI music/audio with the configured media backend, save it to Odysseus generated media, and render it inline. RunComfy Cloud requires an enabled paid integration; local ComfyUI requires an exact workflow JSON. If no music backend is configured, Odysseus returns a built-in local synth WAV fallback.",
+            "description": "Generate professional AI music/audio with an explicitly selected media backend, save it to Odysseus generated media, and render it inline. RunComfy Cloud requires an enabled paid integration; local ComfyUI requires an exact workflow JSON.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "prompt": {"type": "string", "description": "Style brief or full ElevenLabs prompt. Include genre, mood, instrumentation, vocal type, BPM, arrangement, and use case."},
                     "provider": {"type": "string", "enum": ["comfyui", "runcomfy"], "description": "Optional media backend. comfyui = free local workflow; runcomfy = paid RunComfy Cloud integration."},
                     "integration": {"type": "string", "description": "Optional integration id/name to use when multiple ComfyUI/RunComfy integrations exist."},
-                    "model": {"type": "string", "description": "Optional RunComfy model id. Leave blank for auto: ACE Step 1.5 for professional, ElevenLabs for premium/commercial, ACE Step base for drafts/batches."},
+                    "model": {"type": "string", "description": "Optional explicit RunComfy model id."},
                     "quality": {"type": "string", "enum": ["draft", "professional", "premium", "commercial", "broadcast"], "description": "Audio tier. professional defaults to ACE Step 1.5; premium/commercial defaults to ElevenLabs Music."},
                     "tags": {"type": "string", "description": "ACE Step style tags, e.g. indie pop, driving drums, female vocal, 120 BPM, polished mix"},
                     "lyrics": {"type": "string", "description": "Lyrics with section markers, or [inst] for instrumental"},

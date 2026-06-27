@@ -82,9 +82,9 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "edit_document": "Preferred tool for editing an existing document — targeted find-and-replace. Use for any small change: add a function, fix a bug, tweak a section, rename things.",
     "update_document": "Replace the entire active document content. ONLY for full rewrites (>50% changed). Do not use for small edits — use edit_document instead.",
     "suggest_document": "Suggest changes to the active document with explanations. For code review, proofreading, feedback requests.",
-    "generate_image": "Generate a professional AI image file from a text prompt and render it inline. Use for image creation requests; do not substitute SVG/HTML/code/prompt text unless the user explicitly asks for that format. Tries the current/configured/mentioned image-capable model first, then falls back to free local ComfyUI if available; RunComfy Cloud is a paid opt-in integration. Supports size, aspect ratio, style, quality, seed, product shots, posters, ads, portraits, concept art.",
-    "generate_video": "Generate a professional AI video from a prompt using the configured media backend and render it inline. Uses Gemini/Veo when a Gemini API endpoint is configured; RunComfy Cloud is an explicit paid integration; local ComfyUI requires an exact workflow. Supports cinematic camera direction, social clips, ad creative, animations, image-to-video, lip-sync/audio-driven clips, and premium tiers.",
-    "generate_music": "Generate professional AI music or audio using the configured media backend and render it inline. RunComfy Cloud requires an enabled paid integration; local ComfyUI requires an exact workflow; if neither is configured, Odysseus returns a built-in local synth WAV fallback. Supports songs, instrumentals, jingles, background music, seamless loops, vocals, lyrics, BPM, polished mix/master.",
+    "generate_image": "Generate a professional AI image file from a text prompt and render it inline when an image-generation tool/model is explicitly selected or invoked. Supports size, aspect ratio, style, quality, seed, product shots, posters, ads, portraits, concept art.",
+    "generate_video": "Generate a professional AI video from a prompt when a video-generation tool/model is explicitly selected or invoked. Supports cinematic camera direction, social clips, ad creative, animations, image-to-video, lip-sync/audio-driven clips, and premium tiers.",
+    "generate_music": "Generate professional AI music or audio when an audio-generation tool/backend is explicitly selected or invoked. Supports songs, instrumentals, jingles, background music, seamless loops, vocals, lyrics, BPM, polished mix/master.",
     "runcomfy_media": "Run any exact media backend endpoint from a skill model_id/input body or local ComfyUI workflow. Use provider=comfyui for the free local route and provider=runcomfy for paid RunComfy Cloud schemas.",
     "chat_with_model": "Send a message to a different AI model. Compare responses, get specialized help, delegate tasks.",
     "ask_teacher": "Ask a more capable model for help with a difficult problem. Escalate complex tasks.",
@@ -424,29 +424,9 @@ class ToolIndex:
                    "research i did", "research about", "show research",
                    "can you see my research"}):
             {"manage_research", "trigger_research", "ui_control"},
-        # New media generation.
-        frozenset({"generate image", "make image", "create image", "draw",
-                   "render image", "text to image", "image gen", "picture of",
-                   "photo of", "make me an image", "make a picture",
-                   "professional image", "pro image", "premium image",
-                   "product shot", "hero image", "ad image", "poster"}):
-            {"generate_image", "manage_gallery"},
-        frozenset({"generate video", "make video", "create video", "text to video",
-                   "image to video", "video gen", "animate this", "make a clip",
-                   "cinematic clip", "music video", "professional video",
-                   "pro video", "premium video", "4k video", "hero shot",
-                   "commercial video", "ad creative"}):
-            {"generate_video", "runcomfy_media", "manage_gallery"},
-        frozenset({"generate music", "make music", "create music", "make a song",
-                   "compose", "jingle", "instrumental", "background music",
-                   "music gen", "song with lyrics", "audio track", "game loop",
-                   "professional music", "pro audio", "premium music",
-                   "commercial music", "broadcast audio", "seamless loop",
-                   "theme song", "soundtrack"}):
-            {"generate_music", "runcomfy_media"},
         frozenset({"runcomfy", "run comfy", "skills.sh media", "ai video generation",
                    "ai image generation", "ai music", "lip sync", "avatar video"}):
-            {"runcomfy_media", "generate_image", "generate_video", "generate_music"},
+            {"runcomfy_media"},
         # Gallery / saved photo access and edits.
         frozenset({"gallery", "my gallery", "photo", "photos", "image", "images",
                    "picture", "pictures", "camera roll", "uploaded photo",
@@ -454,7 +434,7 @@ class ToolIndex:
                    "see my photos", "describe this photo", "describe my photo",
                    "edit photo", "edit image", "remove background", "upscale image",
                    "sharpen image", "enhance face", "inpaint"}):
-            {"generate_image", "manage_gallery", "edit_image", "ui_control"},
+            {"manage_gallery", "edit_image", "ui_control"},
         # Document edit/update intent. Keep this scoped to editor documents;
         # generic "fix/edit/change" belongs to files when the user says
         # workspace/project/code/repo/file.

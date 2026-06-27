@@ -10754,11 +10754,11 @@ public class MobileBackendServer {
     private String mobileImageGenerationPrompt(String userText, String model) {
         String prompt = valueOr(userText, "").trim();
         if (prompt.isEmpty()) return "";
+        boolean selectedImageModel = isImageGenerationModel(model);
+        if (!selectedImageModel) return "";
         String kind = requestedMobileMediaGenerationKind(prompt);
         if ("video".equals(kind) || "music".equals(kind) || "audio".equals(kind)) return "";
         if ("image".equals(kind)) return prompt;
-        boolean selectedImageModel = isImageGenerationModel(model);
-        if (!selectedImageModel) return "";
         if (looksLikeExistingMobileMediaQuestion(prompt)) return "";
         String text = " " + prompt.toLowerCase(Locale.US).replaceAll("\\s+", " ") + " ";
         if (text.contains(" prompt ") || text.contains(" svg ") || text.contains(" html ")
@@ -10774,11 +10774,11 @@ public class MobileBackendServer {
     private String mobileVideoGenerationPrompt(String userText, String model) {
         String prompt = valueOr(userText, "").trim();
         if (prompt.isEmpty()) return "";
+        boolean selectedVideoModel = isVideoGenerationModel(model);
+        if (!selectedVideoModel) return "";
         String kind = requestedMobileMediaGenerationKind(prompt);
         if ("image".equals(kind) || "music".equals(kind) || "audio".equals(kind)) return "";
         if ("video".equals(kind)) return prompt;
-        boolean selectedVideoModel = isVideoGenerationModel(model);
-        if (!selectedVideoModel) return "";
         String text = " " + prompt.toLowerCase(Locale.US).replaceAll("\\s+", " ") + " ";
         if (text.contains(" prompt ") || text.contains(" svg ") || text.contains(" html ")
                 || text.contains(" css ") || text.contains(" javascript ") || text.contains(" code ")) return "";

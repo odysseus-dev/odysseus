@@ -727,12 +727,11 @@ async def _execute_tool_block_impl(
     # the progress callback so long-running subprocess tools
     # (bash, python) can stream `tool_progress` events to the UI.
     if tool == "generate_image":
-        from src.ai_interaction import do_generate_image, _session_selected_image_model
-        from src.runcomfy_media import generate_runcomfy_media, runcomfy_fallback_content, wants_runcomfy_media
+        from src.ai_interaction import do_generate_image
+        from src.runcomfy_media import generate_runcomfy_media, wants_runcomfy_media
 
         desc = f"generate_image: {content.split(chr(10))[0][:80]}"
         used_runcomfy = wants_runcomfy_media(content)
-        selected_image_model = _session_selected_image_model(session_id, owner=owner)
         if used_runcomfy:
             result = await generate_runcomfy_media(
                 "image",
@@ -742,41 +741,24 @@ async def _execute_tool_block_impl(
             )
         else:
             result = await do_generate_image(content, session_id, owner=owner)
-        if result.get("error"):
-            err_text = str(result.get("error", "")).lower()
-            should_try_runcomfy = (
-                not used_runcomfy
-                and not selected_image_model
-                and bool((content or "").strip())
-                and "image prompt is required" not in err_text
-            )
-            if should_try_runcomfy:
-                result = await generate_runcomfy_media(
-                    "image",
-                    runcomfy_fallback_content("image", content),
-                    owner=owner,
-                    session_id=session_id,
-                )
         result.setdefault("exit_code", 0 if not result.get("error") else 1)
     elif tool == "generate_video":
-        from src.runcomfy_media import generate_runcomfy_media, runcomfy_fallback_content, wants_runcomfy_media
+        from src.runcomfy_media import generate_runcomfy_media
 
         desc = f"generate_video: {content.split(chr(10))[0][:80]}"
-        runcomfy_content = content if wants_runcomfy_media(content) else runcomfy_fallback_content("video", content)
         result = await generate_runcomfy_media(
             "video",
-            runcomfy_content,
+            content,
             owner=owner,
             session_id=session_id,
         )
     elif tool == "generate_music":
-        from src.runcomfy_media import generate_runcomfy_media, runcomfy_fallback_content, wants_runcomfy_media
+        from src.runcomfy_media import generate_runcomfy_media
 
         desc = f"generate_music: {content.split(chr(10))[0][:80]}"
-        runcomfy_content = content if wants_runcomfy_media(content) else runcomfy_fallback_content("music", content)
         result = await generate_runcomfy_media(
             "music",
-            runcomfy_content,
+            content,
             owner=owner,
             session_id=session_id,
         )

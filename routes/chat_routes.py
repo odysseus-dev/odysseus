@@ -56,6 +56,25 @@ _IMAGE_MODEL_PREFIXES = (
     "imagen",
     "models/imagen",
 )
+_VIDEO_MODEL_HINTS = (
+    "text-to-video",
+    "image-to-video",
+    "video-generation",
+    "t2v",
+    "i2v",
+    "veo-",
+    "sora",
+    "wan2",
+    "wanx",
+    "wan-ai",
+    "kling",
+    "runway",
+    "luma",
+    "vidu",
+    "pixverse",
+    "hailuo",
+    "happyhorse",
+)
 _MEDIA_RESULT_KEYS = (
     "media_url", "media_id", "media_type", "media_prompt", "media_model",
     "media_size", "media_quality", "media_files",
@@ -242,45 +261,20 @@ def _is_image_generation_session(sess, owner: str | None = None) -> bool:
     return False
 
 
-def _requested_media_generation_kind(message: str) -> str | None:
-    """Return the requested generated-media kind for explicit user asks.
-
-    This is intentionally conservative: it catches direct "make/generate an
-    image/video/song" requests while leaving analysis, prompts, SVG/code, and
-    troubleshooting turns in ordinary chat.
-    """
-    text = " ".join((message or "").lower().split())
-    if not text:
-        return None
-
-    if re.search(r"\binstead\s+of\s+(?:producing|generating|creating|making|rendering)\s+(?:an?\s+)?(?:image|picture|photo|video|song|music|audio)\b", text):
-        return None
-    if re.search(r"\b(?:why|how)\b.{0,60}\b(?:produce|produced|generat(?:e|ed|ing)|creat(?:e|ed|ing)|mak(?:e|ing)|render(?:ed|ing)?)\b", text):
-        return None
-    if re.search(r"\b(?:prompt\s+for|image\s+prompt|video\s+prompt|music\s+prompt|audio\s+prompt)\b", text):
-        return None
-    if re.search(r"\b(?:svg|html|css|javascript|react|code|markup|xml|mermaid)\b", text):
-        return None
-    if _looks_like_existing_media_question(text):
-        return None
-
-    direct = r"(?:generate|create|make|produce|render|draw|design|paint|illustrate|compose|write|record|animate)"
-    request = r"(?:i\s+want|i\s+need|give\s+me)"
-    image = r"(?:image|picture|pic|photo|photograph|illustration|artwork|poster|logo|icon|avatar|thumbnail|wallpaper|graphic|concept\s+art|visual)"
-    video = r"(?:video|movie|clip|animation|animated\s+clip|gif|b-roll|footage)"
-    music = r"(?:music|song|track|audio|soundtrack|beat|jingle|voiceover|voice\s+over|sound\s+effect|sfx)"
-
-    checks = (
-        ("video", (rf"\b{direct}\b.{{0,90}}\b{video}\b", rf"\b{request}\b.{{0,90}}\b{video}\b")),
-        ("music", (rf"\b{direct}\b.{{0,90}}\b{music}\b", rf"\b{request}\b.{{0,90}}\b{music}\b")),
-        ("image", (rf"\b{direct}\b.{{0,90}}\b{image}\b", rf"\b{request}\b.{{0,90}}\b{image}\b")),
+def _is_video_generation_session(sess) -> bool:
+    """Whether the selected session model is explicitly a video model."""
+    model = (getattr(sess, "model", "") or "").strip().lower()
+    if model.startswith("models/"):
+        model = model.split("/", 1)[1]
+    if not model or "embedding" in model:
+        return False
+    if "wan2.7-image" in model or "wan2-7-image" in model:
+        return False
+    if "minimax" in model and "video" in model:
+        return True
+    return any(hint in model for hint in _VIDEO_MODEL_HINTS) or (
+        "video" in model and not model.startswith("gpt-image")
     )
-    for kind, patterns in checks:
-        if any(re.search(pattern, text) for pattern in patterns):
-            return kind
-    if re.search(r"\b(?:draw|paint|illustrate|sketch)\b\s+(?:me\s+)?(?:an?\s+|the\s+)?[a-z0-9]", text) and not re.search(r"\b(?:draw\s+(?:a\s+)?conclusion|draw\s+up|draw\s+me\s+a\s+bath)\b", text):
-        return "image"
-    return None
 
 
 def _looks_like_existing_media_question(message: str) -> bool:
@@ -299,26 +293,6 @@ def _looks_like_existing_media_question(message: str) -> bool:
     if re.search(rf"\b(?:what(?:'s| is)|who|where|why|how)\b.{{0,120}}\b(?:in|on|inside|shown|visible)\b.{{0,80}}\b{media}\b", text):
         return True
     return False
-
-
-def _message_content_text(item: Any) -> str:
-    if isinstance(item, dict):
-        content = item.get("content", "")
-    else:
-        content = getattr(item, "content", "")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for part in content:
-            if isinstance(part, dict):
-                text = part.get("text") or part.get("content")
-                if isinstance(text, str):
-                    parts.append(text)
-            elif isinstance(part, str):
-                parts.append(part)
-        return " ".join(parts)
-    return ""
 
 
 def _content_part_is_image(part: Any) -> bool:
@@ -408,71 +382,16 @@ def _should_prefer_vision_fallback(messages: list | None, sess, fallback_candida
         return True
 
 
-def _looks_like_missed_media_response(text: str) -> bool:
-    normalized = " ".join((text or "").lower().split())
-    if not normalized:
-        return False
-    miss_markers = (
-        r"\b(?:svg|html|code|markup)\b",
-        r"\bcopy\s+it\s+into\b",
-        r"\b(?:prompt|negative\s+prompt)\s*:",
-        r"\b(?:cannot|can't|don'?t)\s+(?:generate|create|render|run|invoke|access|have)\b",
-        r"\b(?:tool|skill|invocation|interface|backend)\s+(?:is\s+)?(?:not\s+)?(?:available|exposed|configured|installed|authenticated)\b",
-        r"\b(?:no|without)\s+(?:actual\s+)?(?:image|video|music|audio)?\s*(?:generation\s+)?(?:tool|backend|endpoint|model)\b",
-        r"\b(?:failed|error|setup|sign\s+in|login|log\s+in|runcomfy)\b",
-    )
-    return any(re.search(pattern, normalized) for pattern in miss_markers)
-
-
-def _requested_media_generation_from_context(message: str, messages: list | None) -> tuple[str, str] | None:
-    kind = _requested_media_generation_kind(message)
-    if kind:
-        return kind, message
-
-    text = " ".join((message or "").lower().split())
-    if not re.search(r"\b(?:try\s+again|do\s+it|run\s+it|make\s+it|generate\s+it|create\s+it|use\s+(?:the|that)\s+skill|use\s+(?:the|that)\s+tool)\b", text):
-        return None
-
-    last_user_text = ""
-    last_assistant_text = ""
-    skipped_current = False
-    for item in reversed(messages or []):
-        role = item.get("role", "") if isinstance(item, dict) else getattr(item, "role", "")
-        item_text = _message_content_text(item)
-        if role == "user" and not skipped_current and item_text.strip() == (message or "").strip():
-            skipped_current = True
-            continue
-        if role == "assistant" and not last_assistant_text:
-            last_assistant_text = item_text
-            continue
-        if role == "user":
-            last_user_text = item_text
-            break
-
-    if not last_user_text or not last_assistant_text:
-        return None
-    if not _looks_like_missed_media_response(last_assistant_text):
-        return None
-    kind = _requested_media_generation_kind(last_user_text)
-    return (kind, last_user_text) if kind else None
-
-
-def _requested_media_generation_kind_from_context(message: str, messages: list | None) -> str | None:
-    request = _requested_media_generation_from_context(message, messages)
-    return request[0] if request else None
-
-
 def _direct_media_request_for_session(
     sess,
     message: str,
     messages: list | None,
     owner: str | None = None,
 ) -> tuple[str, str] | None:
-    explicit_request = _requested_media_generation_from_context(message, messages)
-    if explicit_request:
-        return explicit_request
     if _looks_like_existing_media_question(message):
         return None
+    if _is_video_generation_session(sess):
+        return "video", message or ""
     if _is_image_generation_session(sess, owner=owner):
         return "image", message or ""
     return None
@@ -480,35 +399,19 @@ def _direct_media_request_for_session(
 
 async def _generate_direct_media(kind: str, prompt: str, session_id: str, owner: str | None) -> dict:
     if kind == "image":
-        from src.ai_interaction import do_generate_image, _session_selected_image_model
-        from src.runcomfy_media import generate_runcomfy_media, runcomfy_fallback_content, wants_runcomfy_media
+        from src.ai_interaction import do_generate_image
+        from src.runcomfy_media import generate_runcomfy_media, wants_runcomfy_media
 
         if wants_runcomfy_media(prompt):
             return await generate_runcomfy_media("image", prompt, owner=owner, session_id=session_id)
-        selected_image_model = _session_selected_image_model(session_id, owner=owner)
-        result = await do_generate_image(prompt, session_id, owner=owner)
-        if result.get("error"):
-            err_text = str(result.get("error", "")).lower()
-            if (
-                not selected_image_model
-                and (prompt or "").strip()
-                and "image prompt is required" not in err_text
-            ):
-                result = await generate_runcomfy_media(
-                    "image",
-                    runcomfy_fallback_content("image", prompt),
-                    owner=owner,
-                    session_id=session_id,
-                )
-        return result
+        return await do_generate_image(prompt, session_id, owner=owner)
 
-    from src.runcomfy_media import generate_runcomfy_media, runcomfy_fallback_content, wants_runcomfy_media
+    from src.runcomfy_media import generate_runcomfy_media
     media_kind = "music" if kind == "audio" else kind
-    runcomfy_prompt = prompt if wants_runcomfy_media(prompt) else runcomfy_fallback_content(media_kind, prompt)
 
     return await generate_runcomfy_media(
         media_kind,
-        runcomfy_prompt,
+        prompt,
         owner=owner,
         session_id=session_id,
     )
@@ -1331,7 +1234,10 @@ def setup_chat_routes(
                 _media_request_text = (_direct_media_request[1] if _direct_media_request else _user_msg) or _user_msg
                 if _media_request_text != _user_msg:
                     _media_prompt = json.dumps({"prompt": _media_request_text})
-                elif _direct_media_kind == "image" and _is_image_generation_session(sess, owner=_user):
+                elif (
+                    (_direct_media_kind == "image" and _is_image_generation_session(sess, owner=_user))
+                    or (_direct_media_kind == "video" and _is_video_generation_session(sess))
+                ):
                     _media_prompt = f"{_user_msg}\n{sess.model}"
                 else:
                     _media_prompt = _user_msg

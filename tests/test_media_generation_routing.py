@@ -6,36 +6,33 @@ import pytest
 
 from src import ai_interaction
 from routes.chat_routes import (
+    _direct_media_request_for_session,
     _generate_direct_media,
-    _requested_media_generation_from_context,
-    _requested_media_generation_kind,
-    _requested_media_generation_kind_from_context,
 )
 
 
 @pytest.mark.parametrize(
-    ("message", "expected"),
+    "message",
     [
-        ("make me a dog image", "image"),
-        ("produce an image of a dog", "image"),
-        ("draw me a cartoon dog", "image"),
-        ("can you make an image of a dog", "image"),
-        ("create a 10 second product video", "video"),
-        ("can you create a video of a dog", "video"),
-        ("compose a cinematic soundtrack", "music"),
-        ("write a 30 second jingle", "music"),
-        ("it did this instead of producing an image", None),
-        ("write an SVG of a dog", None),
-        ("give me a prompt for image generation", None),
-        ("why did it generate a prompt instead of a photo", None),
-        ("can you see the image above", None),
-        ("can you describe this image", None),
-        ("what is in the photo above?", None),
-        ("look at my gallery photos", None),
+        "make me a dog image",
+        "produce an image of a dog",
+        "create a 10 second product video",
+        "compose a cinematic soundtrack",
     ],
 )
-def test_requested_media_generation_kind(message, expected):
-    assert _requested_media_generation_kind(message) == expected
+def test_media_words_do_not_route_text_model_to_generation(message):
+    sess = SimpleNamespace(model="qwen3.5:latest", endpoint_url="http://localhost:11434/v1/chat/completions")
+
+    assert _direct_media_request_for_session(sess, message, [{"role": "user", "content": message}]) is None
+
+
+def test_selected_video_model_routes_to_video_generation():
+    sess = SimpleNamespace(model="veo-3.1-generate-preview", endpoint_url="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions")
+
+    assert _direct_media_request_for_session(sess, "A slow dolly shot of a glass greenhouse", []) == (
+        "video",
+        "A slow dolly shot of a glass greenhouse",
+    )
 
 
 def test_image_model_hint_prefers_image_capable_provider_models(monkeypatch):
@@ -130,52 +127,6 @@ def test_gemini_image_api_helpers_handle_openai_compatible_base():
             }
         }]
     }) == "abc123"
-
-
-def test_media_generation_continuation_reuses_last_explicit_request():
-    messages = [
-        {"role": "user", "content": "produce an image of a friendly dog"},
-        {"role": "assistant", "content": "Here is SVG code instead."},
-        {"role": "user", "content": "use the skill and try again"},
-    ]
-
-    assert _requested_media_generation_kind_from_context("use the skill and try again", messages) == "image"
-    assert _requested_media_generation_from_context("use the skill and try again", messages) == (
-        "image",
-        "produce an image of a friendly dog",
-    )
-
-
-def test_media_generation_continuation_requires_missed_assistant_response():
-    messages = [
-        {"role": "user", "content": "produce an image of a friendly dog"},
-        {"role": "assistant", "content": "Image generation complete."},
-        {"role": "user", "content": "try again"},
-    ]
-
-    assert _requested_media_generation_kind_from_context("try again", messages) is None
-
-
-def test_media_generation_continuation_uses_immediate_prior_turn_only():
-    messages = [
-        {"role": "user", "content": "produce an image of a friendly dog"},
-        {"role": "assistant", "content": "Here is SVG code instead."},
-        {"role": "user", "content": "why did that happen?"},
-        {"role": "assistant", "content": "The model ignored the media tool."},
-        {"role": "user", "content": "try again"},
-    ]
-
-    assert _requested_media_generation_kind_from_context("try again", messages) is None
-
-
-def test_media_generation_continuation_without_prior_request_stays_chat():
-    messages = [
-        {"role": "user", "content": "why did the model answer with SVG?"},
-        {"role": "assistant", "content": "It missed the tool."},
-        {"role": "user", "content": "try again"},
-    ]
-
-    assert _requested_media_generation_kind_from_context("try again", messages) is None
 
 
 def test_generate_image_prefers_current_session_image_model_over_default(monkeypatch, tmp_path):

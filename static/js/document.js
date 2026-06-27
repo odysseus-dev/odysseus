@@ -310,6 +310,14 @@ import * as Modals from './modalManager.js';
     }
     html += `<button class="doc-tab-new" id="doc-tab-new-btn" title="New document"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`;
     html += '</div>';
+    // Window controls on the tab bar — minimize / fullscreen / close, same as
+    // every other modal window. They sit on the far-right edge of the tab bar,
+    // outside the scroll area so they stay pinned.
+    html += `<div class="doc-tab-window-controls">
+      <button class="doc-tab-win-btn doc-tab-min-btn" id="doc-tab-min-btn" title="Minimize"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+      <button class="doc-tab-win-btn doc-tab-max-btn" id="doc-tab-max-btn" title="Fullscreen"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></button>
+      <button class="doc-tab-win-btn doc-tab-close-btn" id="doc-tab-close-btn" title="Close"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>`;
     html += '<button class="doc-tab-arrow doc-tab-arrow-right" id="doc-tab-right" title="Scroll right">&#x203A;</button>';
     tabBar.innerHTML = html;
 
@@ -408,6 +416,21 @@ import * as Modals from './modalManager.js';
       if (docId) closeTab(docId);
     };
     tabBar.addEventListener('click', tabBar._closeHandler);
+
+    // Handle window-control buttons on the tab bar (minimize / fullscreen /
+    // close). These buttons are recreated every renderTabs() so they must be
+    // caught by the same tabBar delegation that handles tab close / menu etc.
+    if (!tabBar._winCtrlHandler) {
+      tabBar._winCtrlHandler = (e) => {
+        const minBtn = e.target.closest('#doc-tab-min-btn');
+        if (minBtn) { e.stopPropagation(); closePanel('down'); return; }
+        const maxBtn = e.target.closest('#doc-tab-max-btn');
+        if (maxBtn) { e.stopPropagation(); toggleFullscreen(); return; }
+        const closeBtn = e.target.closest('#doc-tab-close-btn');
+        if (closeBtn) { e.stopPropagation(); closePanel(); return; }
+      };
+      tabBar.addEventListener('click', tabBar._winCtrlHandler);
+    }
 
     // Wire drag-to-reorder
     initTabDragReorder(tabBar);
@@ -4068,6 +4091,9 @@ import * as Modals from './modalManager.js';
     document.getElementById('doc-minimize-btn')?.addEventListener('click', () => closePanel('down'));
     document.getElementById('doc-maximize-btn')?.addEventListener('click', () => toggleFullscreen());
     document.getElementById('doc-close-btn')?.addEventListener('click', () => closePanel());
+    // Tab-bar window controls are handled via tabBar delegation in renderTabs
+    // (renderTabs rebuilds innerHTML each time, so getElementById listeners
+    // would be lost after the first tab change).
     document.getElementById('doc-footer-close-btn')?.addEventListener('click', () => { if (activeDocId) closeTab(activeDocId); });
     document.getElementById('doc-import-btn')?.addEventListener('click', () => openLibrary());
     document.getElementById('doc-footer-copy-btn')?.addEventListener('click', (e) => {
@@ -8459,6 +8485,17 @@ import * as Modals from './modalManager.js';
         // Maximize icon — single rectangle
         maxBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>';
         maxBtn.title = 'Maximize';
+      }
+    }
+    // Also sync the tab-bar maximize button
+    const tabMaxBtn = document.getElementById('doc-tab-max-btn');
+    if (tabMaxBtn) {
+      if (pane.classList.contains('doc-fullscreen')) {
+        tabMaxBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="7" width="12" height="12" rx="1.5"/><path d="M9 7V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2"/></svg>';
+        tabMaxBtn.title = 'Restore';
+      } else {
+        tabMaxBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>';
+        tabMaxBtn.title = 'Fullscreen';
       }
     }
     // Re-check md toolbar overflow after layout change

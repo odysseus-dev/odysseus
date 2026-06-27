@@ -272,12 +272,9 @@ _DOMAIN_RULES = {
 - `app_api` is only for safe UI/API actions without a named tool; do not use it for shell, package installs, engine rebuilds, or sensitive auth/admin paths.""",
     "gallery": """\
 ## Media/Gallery rules
-- Use `generate_image`, `generate_video`, or `generate_music` when the user asks to create new media. Do not claim you cannot generate media when one of those tools is available; call the tool.
+- Only use media-generation tools when they are explicitly selected/invoked in the available tool set. Do not switch to an image/video/music backend just because the prompt mentions image, photo, video, or music.
 - Never answer an image/video/music generation request with SVG, HTML, code, or a prompt-only workaround unless the user explicitly asks for SVG/code/prompt text.
-- Image generation tries the current/configured/mentioned image-capable model first, then falls back to free local ComfyUI when it is running/configured; RunComfy Cloud is a paid opt-in integration only.
-- Video generation uses Gemini/Veo through a configured Gemini API endpoint when available; RunComfy Cloud remains an explicit paid option, and local ComfyUI is used when the request provides an exact workflow JSON.
-- Music generation uses RunComfy Cloud when that integration is enabled, local ComfyUI when the request provides an exact workflow JSON, or a built-in local synth fallback when no music backend is configured.
-- Use `runcomfy_media` when a viewed skill gives a specific RunComfy `model_id`/schema or a local ComfyUI workflow that the narrower tools do not cover.
+- Use `runcomfy_media` only when the user explicitly asks for RunComfy/a viewed skill gives a specific RunComfy `model_id`/schema, or a local ComfyUI workflow is provided.
 - Use `manage_gallery` to list/search/get/describe saved Gallery images and videos. Do not claim you cannot see the Gallery without trying this tool when it is available.
 - Use `edit_image` to edit a Gallery image and save the edited copy back to Gallery. Use `manage_gallery` first if you need an image id.
 - Inpaint requires a mask or mask_image_id. For quick local edits, use sharpen. For visual understanding, use `manage_gallery` action `describe`.""",
@@ -301,7 +298,7 @@ _DOMAIN_TOOL_MAP = {
     "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
     "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls", "get_workspace"},
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
-    "gallery": {"generate_image", "generate_video", "generate_music", "runcomfy_media", "manage_gallery", "edit_image"},
+    "gallery": {"manage_gallery", "edit_image"},
     "memory": {"manage_memory"},
     "skills": {"manage_skills"},
 }
@@ -441,19 +438,19 @@ Suggest changes with explanations (for review/feedback requests).""",
 ```generate_image
 {"prompt": "Editorial product photo of a matte black smart speaker on a walnut table, soft window light, premium home interior", "size": "1536x1024", "quality": "professional", "style": "high-end commercial photography"}
 ```
-Generate a professional image file and render it inline. Prefer structured JSON. Do not respond with SVG/HTML/code/prompt text for image creation unless the user explicitly asks for that format. Optional fields: `provider` (`comfyui` for free local, `runcomfy` for paid integration), `model`/`model_id`, `size`, `aspect_ratio`, `style`, `quality` (`draft`, `high`, `professional`, `premium`), `seed`, and `enhance_prompt`. Uses the current/configured/mentioned image-capable model first, then falls back to local ComfyUI if available; RunComfy Cloud is opt-in.""",
+Generate a professional image file and render it inline. Prefer structured JSON. Do not respond with SVG/HTML/code/prompt text for image creation unless the user explicitly asks for that format. Optional fields: `provider` (`comfyui` for free local, `runcomfy` for paid integration), `model`/`model_id`, `size`, `aspect_ratio`, `style`, `quality` (`draft`, `high`, `professional`, `premium`), `seed`, and `enhance_prompt`. Use the selected or explicitly provided image-capable model/backend.""",
 
     "generate_video": """\
 ```generate_video
 {"prompt": "A red kite tumbles across a windy beach at golden hour, kids chase it laughing, surf in the background. Audio: wind, gulls, distant laughter.", "duration": 8, "aspect_ratio": "16:9", "resolution": "1080p", "quality": "professional", "camera": "low tracking shot, slow push-in"}
 ```
-Generate professional video with the configured media backend and render it inline. Optional fields: `provider` (`gemini` for Gemini/Veo API, `runcomfy` for paid cloud, `comfyui` for exact local workflow), `model`/`model_id`, `duration`, `aspect_ratio`, `resolution`, `quality` (`draft`, `professional`, `premium`, `hero`, `4k`), `camera`, `image_url`, `audio_url`, `seed`, `enhance_prompt`, `input` for an exact RunComfy JSON body, `workflow` for an exact ComfyUI workflow, and `timeout`. Auto-routes Gemini/Veo when a Gemini API endpoint is configured; RunComfy remains opt-in.""",
+Generate professional video with the selected/explicit media backend and render it inline. Optional fields: `provider` (`gemini` for Gemini/Veo API, `runcomfy` for paid cloud, `comfyui` for exact local workflow), `model`/`model_id`, `duration`, `aspect_ratio`, `resolution`, `quality` (`draft`, `professional`, `premium`, `hero`, `4k`), `camera`, `image_url`, `audio_url`, `seed`, `enhance_prompt`, `input` for an exact RunComfy JSON body, `workflow` for an exact ComfyUI workflow, and `timeout`.""",
 
     "generate_music": """\
 ```generate_music
 {"tags": "indie pop, bright guitar, driving drums, female vocal, 120 BPM", "lyrics": "[Verse]\\nMorning on the ridge\\n[Chorus]\\nWe rise, we strike", "duration": 60, "quality": "professional"}
 ```
-Generate professional music/audio with the configured media backend and render it inline. Optional fields: `provider` (`runcomfy` for paid cloud, `comfyui` for exact local workflow), `model`/`model_id`, `quality` (`draft`, `professional`, `premium`, `commercial`, `broadcast`), `prompt`, `tags`, `lyrics`, `duration`, `bpm`, `mood`, `loop`, `force_instrumental`, `audio`, `start_time`, `end_time`, `extend_before_duration`, `extend_after_duration`, `enhance_prompt`, `input`, `workflow`, and `timeout`. Paid RunComfy routes require the RunComfy Cloud integration; when no music backend is configured, Odysseus creates a built-in local synth WAV fallback.""",
+Generate professional music/audio with an explicitly selected media backend and render it inline. Optional fields: `provider` (`runcomfy` for paid cloud, `comfyui` for exact local workflow), `model`/`model_id`, `quality` (`draft`, `professional`, `premium`, `commercial`, `broadcast`), `prompt`, `tags`, `lyrics`, `duration`, `bpm`, `mood`, `loop`, `force_instrumental`, `audio`, `start_time`, `end_time`, `extend_before_duration`, `extend_after_duration`, `enhance_prompt`, `input`, `workflow`, and `timeout`.""",
 
     "runcomfy_media": """\
 ```runcomfy_media
@@ -1729,8 +1726,7 @@ def _build_base_prompt(
         if not needs_admin:
             # At least strip the management section
             mgmt_tools = set(TOOL_SECTIONS.keys()) - set(ALWAYS_AVAILABLE) - {
-                "generate_image", "generate_video", "generate_music", "runcomfy_media", "suggest_document",
-                "chat_with_model", "ask_teacher", "list_models",
+                "suggest_document", "chat_with_model", "ask_teacher", "list_models",
             }
             agent_prompt = _assemble_prompt(
                 set(TOOL_SECTIONS.keys()) - mgmt_tools, disabled, compact=compact

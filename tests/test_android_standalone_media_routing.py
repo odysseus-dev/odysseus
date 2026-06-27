@@ -41,6 +41,10 @@ def test_android_selected_image_model_accepts_bare_descriptive_prompt():
     )[0]
 
     assert "boolean selectedImageModel = isImageGenerationModel(model);" in image_prompt
+    assert 'if (!selectedImageModel) return "";' in image_prompt
+    assert image_prompt.index("boolean selectedImageModel = isImageGenerationModel(model);") < image_prompt.index(
+        "String kind = requestedMobileMediaGenerationKind(prompt);"
+    )
     assert "if (!looksLikeMobileNonGenerationQuestion(prompt)) return prompt;" in image_prompt
     assert "looksLikeExistingMobileMediaQuestion(prompt)" in image_prompt
 
@@ -231,6 +235,10 @@ def test_android_selected_video_model_accepts_bare_descriptive_prompt():
     )[0]
 
     assert "boolean selectedVideoModel = isVideoGenerationModel(model);" in video_prompt
+    assert 'if (!selectedVideoModel) return "";' in video_prompt
+    assert video_prompt.index("boolean selectedVideoModel = isVideoGenerationModel(model);") < video_prompt.index(
+        "String kind = requestedMobileMediaGenerationKind(prompt);"
+    )
     assert "if (!looksLikeMobileNonGenerationQuestion(prompt)) return prompt;" in video_prompt
 
 

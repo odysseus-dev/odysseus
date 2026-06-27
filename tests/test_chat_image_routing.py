@@ -95,7 +95,7 @@ def test_matching_image_endpoint_routes_selected_image_model(monkeypatch):
     assert chat_routes._is_image_generation_session(_session(model="sdxl-local"))
 
 
-def test_image_generation_session_respects_explicit_video_request(monkeypatch):
+def test_image_generation_session_does_not_switch_to_video_from_prompt_words(monkeypatch):
     def fail_if_called():
         raise AssertionError("prefixed image models should not need a DB lookup")
 
@@ -108,7 +108,7 @@ def test_image_generation_session_respects_explicit_video_request(monkeypatch):
         [{"role": "user", "content": "Create a video of a micro bulldog"}],
     )
 
-    assert request == ("video", "Create a video of a micro bulldog")
+    assert request == ("image", "Create a video of a micro bulldog")
 
 
 def test_image_generation_session_defaults_to_image_without_explicit_media_kind(monkeypatch):

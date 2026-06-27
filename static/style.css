@@ -11912,6 +11912,53 @@ textarea.memory-add-input {
   }
 }
 
+/* ── Window controls on the doc tab bar (minimize / fullscreen / close) —
+   same as every other modal window, so the document editor panel has its own
+   close/fullscreen/minimize at the top instead of only at the footer. ─ */
+.doc-tab-window-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.doc-tab-win-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  opacity: 0.55;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.doc-tab-win-btn:hover {
+  opacity: 0.85;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.doc-tab-win-btn:active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 15%, transparent);
+}
+.doc-tab-close-btn:hover {
+  background: var(--red, #e06c75) !important;
+  color: #fff !important;
+  opacity: 1 !important;
+}
+.doc-tab-close-btn:active {
+  background: color-mix(in srgb, var(--red, #e06c75) 80%, #000) !important;
+  color: #fff !important;
+}
+
 /* Ghost tab shown in the empty state (new, not-yet-saved document). Muted +
    italic so it reads as a placeholder, and non-interactive so clicking it
    can't hit the tab handlers (it has no data-doc-id). */
