@@ -5,6 +5,7 @@ import importlib
 import importlib.util
 import json
 import os
+import socket
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +14,7 @@ import pytest
 
 from routes.shell_routes import (
     _find_line_break,
+    _host_docker_access_enabled,
     _import_optional_dependency_for_status,
     _running_in_container,
     _docker_row_status,
@@ -216,12 +218,23 @@ class TestDockerRowStatus:
         assert status.applicable is False
         assert status.install_hint == DOCKER_IN_CONTAINER_HINT
 
-    def test_in_container_but_present_is_applicable_with_default_hint(self):
+    def test_in_container_cli_without_opt_in_is_not_applicable(self):
         status = _docker_row_status(
             on_remote=False,
             in_container=True,
             installed=True,
             default_hint=self.DEFAULT,
+        )
+        assert status.applicable is False
+        assert status.install_hint == DOCKER_IN_CONTAINER_HINT
+
+    def test_in_container_opt_in_with_socket_is_applicable(self):
+        status = _docker_row_status(
+            on_remote=False,
+            in_container=True,
+            installed=True,
+            default_hint=self.DEFAULT,
+            host_docker_access=True,
         )
         assert status.applicable is True
         assert status.install_hint == self.DEFAULT
@@ -260,7 +273,51 @@ class TestDockerRowStatus:
         lowered = DOCKER_IN_CONTAINER_HINT.lower()
         assert "remote" in lowered
         assert "socket" in lowered
-        assert "host-root" in lowered or "host root" in lowered
+        assert "high-trust" in lowered
+        assert "docker/host-docker.yml" in lowered
+
+
+class TestHostDockerAccess:
+    def test_opt_in_without_socket_is_disabled(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("ODYSSEUS_ENABLE_HOST_DOCKER", "true")
+
+        assert _host_docker_access_enabled(str(tmp_path / "missing.sock")) is False
+
+    def test_regular_file_is_not_accepted(self, monkeypatch, tmp_path):
+        socket_path = tmp_path / "docker.sock"
+        socket_path.touch()
+        monkeypatch.setenv("ODYSSEUS_ENABLE_HOST_DOCKER", "true")
+
+        assert _host_docker_access_enabled(str(socket_path)) is False
+
+    @pytest.mark.parametrize("flag", [None, "false"])
+    def test_socket_without_explicit_opt_in_is_disabled(
+        self,
+        monkeypatch,
+        tmp_path,
+        flag,
+    ):
+        socket_path = tmp_path / "docker.sock"
+        with socket.socket(socket.AF_UNIX) as unix_socket:
+            unix_socket.bind(str(socket_path))
+            if flag is None:
+                monkeypatch.delenv("ODYSSEUS_ENABLE_HOST_DOCKER", raising=False)
+            else:
+                monkeypatch.setenv("ODYSSEUS_ENABLE_HOST_DOCKER", flag)
+
+            assert _host_docker_access_enabled(str(socket_path)) is False
+
+    def test_explicit_opt_in_with_unix_socket_is_enabled(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        socket_path = tmp_path / "docker.sock"
+        with socket.socket(socket.AF_UNIX) as unix_socket:
+            unix_socket.bind(str(socket_path))
+            monkeypatch.setenv("ODYSSEUS_ENABLE_HOST_DOCKER", "true")
+
+            assert _host_docker_access_enabled(str(socket_path)) is True
 
 
 class TestPackageProbeStatus:
