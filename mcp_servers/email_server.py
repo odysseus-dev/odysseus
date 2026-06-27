@@ -481,7 +481,10 @@ def _decode_header(raw):
             if isinstance(data, bytes):
                 try:
                     decoded.append(data.decode(charset or "utf-8", errors="replace"))
-                except LookupError:
+                except (LookupError, ValueError):
+                    # errors="replace" only covers byte-decode errors, not codec
+                    # lookup/usage failures: registered codecs like idna/punycode
+                    # raise UnicodeError (a ValueError subclass) under "replace".
                     decoded.append(data.decode("utf-8", errors="replace"))
             else:
                 decoded.append(data)

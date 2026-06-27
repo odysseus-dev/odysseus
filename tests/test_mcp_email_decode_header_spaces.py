@@ -80,6 +80,19 @@ def test_empty_header():
     assert es._decode_header("") == ""
 
 
+def test_idna_charset_header_does_not_crash():
+    # idna/punycode are registered stdlib codecs, so make_header reaches the
+    # lossy fallback rather than failing at lookup, but decoding bytes with
+    # errors="replace" raises UnicodeError (a ValueError subclass), not
+    # LookupError. The fallback must still degrade to utf-8 instead of crashing
+    # _decode_header, which runs on every read/reply/forward header.
+    assert isinstance(es._decode_header("=?idna?B?gA==?="), str)
+
+
+def test_punycode_charset_header_does_not_crash():
+    assert isinstance(es._decode_header("=?punycode?B?gA==?="), str)
+
+
 @pytest.mark.asyncio
 async def test_mcp_email_accounts_are_filtered_by_hidden_owner(tmp_path, monkeypatch):
     db_path = tmp_path / "app.db"
