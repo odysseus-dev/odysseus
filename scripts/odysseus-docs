@@ -37,6 +37,10 @@ def _text_len(value) -> int:
     return len(value) if isinstance(value, str) else 0
 
 
+def _text_value(value) -> str:
+    return value if isinstance(value, str) else ""
+
+
 def _serialize(d: "Document", include_content: bool = False) -> dict:
     out = {
         "id": d.id,
@@ -51,7 +55,7 @@ def _serialize(d: "Document", include_content: bool = False) -> dict:
         "updated_at": d.updated_at.isoformat() if d.updated_at else "",
     }
     if include_content:
-        out["current_content"] = d.current_content or ""
+        out["current_content"] = _text_value(d.current_content)
     return out
 
 
@@ -110,7 +114,7 @@ def cmd_export(args):
         if not d:
             fail(f"no document with id {args.id!r}")
         if args.version is None:
-            content = d.current_content or ""
+            content = _text_value(d.current_content)
             version = d.version_count or 1
         else:
             v = db.query(DocumentVersion).filter(
@@ -119,7 +123,7 @@ def cmd_export(args):
             ).first()
             if not v:
                 fail(f"no version {args.version} on doc {args.id!r}")
-            content = v.content or ""
+            content = _text_value(v.content)
             version = v.version_number
         if args.raw:
             sys.stdout.write(content)
