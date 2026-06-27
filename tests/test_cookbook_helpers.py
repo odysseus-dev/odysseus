@@ -419,8 +419,6 @@ def test_pip_install_attempt_failure_propagates_real_exit_code():
     """Run the generated snippet against a deliberately broken pip install
     to confirm the subshell exits with pip's non-zero status."""
     snippet = _pip_install_attempt("python3 -m pip install __nonexistent_package_12345__")
-    if sys.platform == "win32":
-        snippet = snippet.replace("$", "\\$")
     result = subprocess.run(
         ["bash", "-c", snippet],
         capture_output=True,
@@ -433,8 +431,6 @@ def test_pip_install_attempt_failure_propagates_real_exit_code():
 def test_pip_install_attempt_success_exits_zero():
     """When pip succeeds, the subshell should exit 0."""
     snippet = _pip_install_attempt("python3 -c 'pass'")
-    if sys.platform == "win32":
-        snippet = snippet.replace("$", "\\$")
     result = subprocess.run(
         ["bash", "-c", snippet],
         capture_output=True,
@@ -447,8 +443,6 @@ def test_pip_install_attempt_success_exits_zero():
 def test_pip_install_attempt_surfaces_stderr_on_failure():
     """On failure, the last 5 lines of pip output should appear in stdout."""
     snippet = _pip_install_attempt("python3 -m pip install __nonexistent_package_12345__")
-    if sys.platform == "win32":
-        snippet = snippet.replace("$", "\\$")
     result = subprocess.run(
         ["bash", "-c", snippet],
         capture_output=True,
@@ -554,6 +548,19 @@ def test_validate_serve_cmd_accepts_windows_printf_format():
         "\"$(printf %s ${HOME}'/.cache/huggingface/hub/models--unsloth--Qwen3.5-2B-GGUF/snapshots/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-Q4_K_M.gguf')\" "
         "--host 0.0.0.0 --port 8000 --n_gpu_layers 99 --n_ctx 32768 --flash_attn true --type_k q4_0 --type_v q4_0"
     )
+    assert _validate_serve_cmd(cmd) == cmd
+
+
+def test_validate_serve_cmd_accepts_llama_mmproj_printf_format():
+    cmd = (
+        "CUDA_VISIBLE_DEVICES=0 llama-server --model "
+        "\"$(printf %s ${HOME}'/.cache/huggingface/hub/models--unsloth--Qwen3.6-35B-A3B-GGUF/snapshots/abc/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf')\" "
+        "--host 0.0.0.0 --port 8000 -ngl 99 -c 20000 "
+        "--cache-type-k q4_0 --cache-type-v q4_0 --mmproj "
+        "\"$(printf %s ${HOME}'/.cache/huggingface/hub/models--unsloth--Qwen3.6-35B-A3B-GGUF/snapshots/abc/mmproj-BF16.gguf')\" "
+        "--image-max-tokens 1024"
+    )
+
     assert _validate_serve_cmd(cmd) == cmd
 
 

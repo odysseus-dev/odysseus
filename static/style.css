@@ -4062,6 +4062,31 @@ body.bg-pattern-sparkles {
     @keyframes toastCheckDraw {
       to { stroke-dashoffset: 0; }
     }
+    .toast-close-btn {
+      margin-left: 8px;
+      padding: 0;
+      width: 22px;
+      height: 22px;
+      line-height: 1;
+      border: none;
+      background: none;
+      color: var(--fg);
+      opacity: 0.5;
+      cursor: pointer;
+      font-size: 16px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: auto;
+      flex-shrink: 0;
+      transition: transform 0.22s ease, opacity 0.15s ease, background 0.15s ease;
+    }
+    .toast-close-btn:hover {
+      opacity: 1;
+      transform: rotate(90deg);
+      background: color-mix(in srgb, var(--fg) 8%, transparent);
+    }
     .toast.exiting {
       opacity: 0;
       transform: translateX(-120%);
@@ -8663,6 +8688,12 @@ button.hamburger {
 
 /* Hide thinking sections globally via settings toggle */
 body.hide-thinking .thinking-section { display: none !important; }
+
+/* Widen chat area via settings toggle */
+body.fullwidth-chat .chat-history {
+  padding-left: 0 !important;
+  padding-right: 12px !important;
+}
 
 /* Thinking process styles — colors follow theme accent */
 .msg .body .stream-content {
@@ -16954,7 +16985,8 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 /* Kebab dropdown */
 .skill-kebab-menu {
   position: fixed;
-  z-index: 100002;
+  /* z-index is set inline via topPortalZ() at open time (#4720); a static
+     value here loses once the modal bring-to-front counter climbs past it. */
   min-width: 150px;
   padding: 4px;
   background: var(--panel, var(--bg));

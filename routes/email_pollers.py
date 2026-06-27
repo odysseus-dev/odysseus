@@ -694,20 +694,23 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                 logger.warning(f"[cal-extract] JSON parse failed: {je} on raw={cal_extract[:200]!r}")
                     except Exception as e:
                         logger.warning(f"[cal-extract] Meeting extraction LLM call failed for uid={uid}: {e}")
-                    # Record we processed this email so we don't re-LLM next run
-                    try:
-                        _cc = _sql3.connect(SCHEDULED_DB)
-                        _cc.execute(
-                            "INSERT OR REPLACE INTO email_calendar_extractions "
-                            "(message_id, owner, uid, events_created, created_at) VALUES (?, ?, ?, ?, ?)",
-                            (message_id, account_owner or "", uid.decode() if isinstance(uid, bytes) else str(uid),
-                             _cal_run_count, datetime.utcnow().isoformat())
-                        )
-                        _cc.commit()
-                        _cc.close()
-                        _cal_existing.add(message_id)
-                    except Exception as ce:
-                        logger.debug(f"Could not cache calendar extraction: {ce}")
+                    else:
+                        # Record we processed this email so we don't re-LLM next run.
+                        # Only mark as processed on success ? transient LLM failures
+                        # are retried on the next poll run (matches summary/reply pattern).
+                        try:
+                            _cc = _sql3.connect(SCHEDULED_DB)
+                            _cc.execute(
+                                "INSERT OR REPLACE INTO email_calendar_extractions "
+                                "(message_id, owner, uid, events_created, created_at) VALUES (?, ?, ?, ?, ?)",
+                                (message_id, account_owner or "", uid.decode() if isinstance(uid, bytes) else str(uid),
+                                 _cal_run_count, datetime.utcnow().isoformat())
+                            )
+                            _cc.commit()
+                            _cc.close()
+                            _cal_existing.add(message_id)
+                        except Exception as ce:
+                            logger.debug(f"Could not cache calendar extraction: {ce}")
 
                 if need_urgent:
                     try:

@@ -8,6 +8,7 @@ import uiModule from './ui.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
 import { registerMenuDismiss } from './escMenuStack.js';
 import { computeProgressSignal } from './cookbookProgressSignal.js';
+import { portOf, nextFreePort } from './cookbookPorts.js';
 
 // Human-friendly badge label for a task's internal status. Avoids surfacing
 // the word "error" in the sidebar — a server the user stopped or one that
@@ -266,9 +267,7 @@ function _taskHostLabel(task) {
 }
 
 function _taskPort(task) {
-  const cmd = task?.payload?._cmd || '';
-  const match = cmd.match(/--port\s+(\d+)/);
-  return match ? match[1] : '';
+  return portOf(task?.payload?._cmd || '');
 }
 
 function _buildCrashReport(task, outputText) {
@@ -455,16 +454,14 @@ function _nextAvailablePort() {
   const usedPorts = new Set();
   tasks.forEach(t => {
     if (t.type === 'serve' && (t.status === 'running' || t.status === 'queued')) {
-      const m = t.payload?._cmd?.match(/--port\s+(\d+)/);
-      if (m) usedPorts.add(parseInt(m[1]));
+      const p = _taskPort(t);
+      if (p) usedPorts.add(parseInt(p));
     }
   });
   presets.forEach(p => {
     if (p.port) usedPorts.add(parseInt(p.port));
   });
-  let port = 8000;
-  while (usedPorts.has(port)) port++;
-  return String(port);
+  return nextFreePort(usedPorts);
 }
 
 // ── Endpoint cleanup ──
@@ -784,6 +781,7 @@ function _stripStateSecrets(state) {
   const safe = { ...state };
   if (safe.env && typeof safe.env === 'object') {
     const { hfToken, ...env } = safe.env;
+    delete env.hostPlatform;
     safe.env = env;
   }
   if (Array.isArray(safe.tasks)) safe.tasks = safe.tasks.map(_redactTaskForStorage);
@@ -1676,7 +1674,7 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
     || _envState.servers.find(s => s.host === _host) || {};
   const _serverMetaKey = _targetKey || (_hsrv && _serverKey ? _serverKey(_hsrv) : '') || (_host || 'local');
   const _serverMetaName = targetMeta?.serverName || _hsrv.name || (_host ? _host : 'Local');
-  const _hplatform = _host ? (_hsrv.platform || '') : (_envState.platform || '');
+  const _hplatform = _host ? (_hsrv.platform || '') : (_envState.hostPlatform || '');
   const _replaceTaskId = fields?._replaceTaskId || '';
   if (_replaceTaskId) {
     try {
@@ -1691,7 +1689,6 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
       }
     } catch {}
   }
-
   // Replace any serve already targeting this same host:port — you can't run two
   // servers on one port, so re-serving (or retrying) should stop & remove the
   // old one instead of leaving a dead duplicate behind. (The retry buttons
@@ -3987,4 +3984,4 @@ export function initRunning(shared) {
 }
 
 // Also export _retryDownload and _nextAvailablePort for use by other modules
-export { _retryDownload, _nextAvailablePort, _processQueue };
+export { _retryDownload, _nextAvailablePort, _processQueue, _taskPort };

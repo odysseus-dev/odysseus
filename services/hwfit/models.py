@@ -12,6 +12,7 @@ QUANT_BPP = {
     "Q4_K_M": 0.58, "Q4_0": 0.58, "Q3_K_M": 0.48, "Q2_K": 0.37,
     "AWQ-4bit": 0.50, "AWQ-8bit": 1.0,
     "GPTQ-Int4": 0.50, "GPTQ-Int8": 1.0,
+    "QAT-INT4": 0.50, "QAT-INT8": 1.0,
     "mlx-4bit": 0.55, "mlx-8bit": 1.0, "mlx-6bit": 0.75,
     # DeepSeek-V4-style mixed: MoE experts in FP4 (bulk), attention + non-
     # expert dense in FP8, embeddings/LM head in BF16. By weight count the
@@ -30,6 +31,7 @@ QUANT_SPEED_MULT = {
     "Q4_K_M": 1.15, "Q4_0": 1.15, "Q3_K_M": 1.25, "Q2_K": 1.35,
     "AWQ-4bit": 1.2, "AWQ-8bit": 0.85,
     "GPTQ-Int4": 1.2, "GPTQ-Int8": 0.85,
+    "QAT-INT4": 1.15, "QAT-INT8": 0.85,
     "mlx-4bit": 1.15, "mlx-8bit": 0.85, "mlx-6bit": 1.0,
     "FP4-MoE-Mixed": 1.10,  # slightly slower than pure FP4 because of mixed-dtype dispatch
     "FP8-Mixed": 0.85,
@@ -47,6 +49,10 @@ QUANT_QUALITY_PENALTY = {
     # penalty so FP8 wins when both fit. AWQ-4bit stays heavier.
     "AWQ": -1.0, "AWQ-4bit": -4.0, "AWQ-8bit": -1.0,
     "GPTQ": -1.0, "GPTQ-Int4": -4.0, "GPTQ-Int8": -1.0,
+    # Quantization-aware training recovers most of the int4 quality loss, so a
+    # QAT-INT4 build lands far closer to bf16 than a post-training Q4/INT4
+    # (Google reports near-bf16 quality). Penalize it lightly, not like Q4_K_M.
+    "QAT-INT4": -1.0, "QAT-INT8": 0.0,
     "mlx-4bit": -4.0, "mlx-8bit": -0.5, "mlx-6bit": -1.5,
     # DeepSeek-V4 mixed: only MoE experts at FP4 (the rest is FP8/BF16),
     # so the realized quality is much closer to FP8 than to pure FP4 —
@@ -63,6 +69,7 @@ QUANT_BYTES_PER_PARAM = {
     "Q4_K_M": 0.5, "Q4_0": 0.5, "Q3_K_M": 0.375, "Q2_K": 0.25,
     "AWQ-4bit": 0.5, "AWQ-8bit": 1.0,
     "GPTQ-Int4": 0.5, "GPTQ-Int8": 1.0,
+    "QAT-INT4": 0.5, "QAT-INT8": 1.0,
     "mlx-4bit": 0.5, "mlx-8bit": 1.0, "mlx-6bit": 0.75,
     "FP4-MoE-Mixed": 0.55,
     "FP8-Mixed": 1.0,
@@ -74,6 +81,7 @@ PREQUANTIZED_PREFIXES = (
     "AWQ-", "GPTQ-", "mlx-", "FP8", "FP4", "NVFP4", "MXFP4", "NF4",
     "INT4", "INT8", "W4A16", "W8A8", "W8A16",
     "FP4-MoE-Mixed", "FP8-Mixed",
+    "QAT-",
 )
 
 

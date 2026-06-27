@@ -755,44 +755,36 @@ def _extract_last_user_message(messages: List[Dict]) -> str:
     return ""
 
 
-def _insert_before_latest_user(messages: List[Dict], context_msg: Dict) -> List[Dict]:
-    """Insert a context message immediately before the latest user turn."""
-    out = list(messages or [])
-    for idx in range(len(out) - 1, -1, -1):
-        if out[idx].get("role") == "user":
-            out.insert(idx, context_msg)
-            return out
-    out.append(context_msg)
-    return out
+def _strip_think_blocks(text: str) -> str:
+    """Linear-time equivalent of
+    ``re.sub(r'<think>.*?</think>', '', text, flags=DOTALL|IGNORECASE)``.
 
-
-def _uploaded_files_context_message(uploaded_files: Optional[List[Dict]]) -> Optional[Dict]:
-    if not uploaded_files:
-        return None
-
-    lines = [
-        "Uploaded files attached to the latest user turn:",
-    ]
-    for item in uploaded_files[:20]:
-        name = str(item.get("name") or item.get("id") or "upload")
-        bits = [
-            f"id={item.get('id', '')}",
-            f"name={name}",
-        ]
-        if item.get("mime"):
-            bits.append(f"mime={item.get('mime')}")
-        if item.get("size") is not None:
-            bits.append(f"size={item.get('size')} bytes")
-        if item.get("path"):
-            bits.append(f"path={item.get('path')}")
-        lines.append("- " + "; ".join(bits))
-    if len(uploaded_files) > 20:
-        lines.append(f"- ... {len(uploaded_files) - 20} more upload(s) omitted from this manifest")
-    lines.extend([
-        "",
-        "The attachment contents may already be in the latest user message. If an attachment is marked truncated or omitted, read its listed path with `read_file` when that tool is available. Do not say uploaded files are undiscoverable when they are listed here.",
-    ])
-    return untrusted_context_message("current chat uploaded files", "\n".join(lines))
+    The lazy regex rescans to end-of-string from every ``<think>`` opener when
+    a closer is missing -> O(n^2) on untrusted model output (prompt injection
+    can echo thousands of openers). This forward-only scan pairs each opener
+    with the next closer in a single pass. Output is byte-for-byte identical to
+    the original narrow regex: only literal ``<think>``/``</think>`` (any case)
+    are matched, a dangling opener with no closer is left intact, and an orphan
+    ``</think>`` is never stripped.
+    """
+    if not text:
+        return text
+    lowered = text.lower()
+    parts = []
+    pos = 0
+    while True:
+        start = lowered.find("<think>", pos)
+        if start == -1:
+            parts.append(text[pos:])
+            break
+        end = lowered.find("</think>", start + 7)
+        if end == -1:
+            # No closer for this opener: lazy regex matches nothing here.
+            parts.append(text[pos:])
+            break
+        parts.append(text[pos:start])
+        pos = end + 8  # len("</think>")
+    return "".join(parts)
 
 
 _LOW_SIGNAL_RE = re.compile(r"^[\W_]*$", re.UNICODE)
@@ -1877,7 +1869,7 @@ async def _run_verifier_subagent(
     except Exception as e:
         logger.warning(f"[agent] verifier subagent failed: {e}")
         return []
-    raw = re.sub(r"<think>.*?</think>", "", raw or "", flags=re.DOTALL | re.IGNORECASE)
+    raw = _strip_think_blocks(raw or "")
     last_v = None
     for line in raw.splitlines():
         if "VERIFICATION:" in line:
@@ -2514,7 +2506,6 @@ async def stream_agent_loop(
     # backstop. Counting identical repeats — not distinct same-tool calls —
     # lets a legit batch (e.g. 18 calendar events at once) through.
     _call_freq: collections.Counter = collections.Counter()
-    _THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
     _force_answer = False  # set by loop-breaker → next round runs with NO tools
     # Supervisor: how many times we've nudged the model after it announced
     # an action without emitting the tool call. Capped to prevent a model
@@ -2852,7 +2843,7 @@ async def stream_agent_loop(
             if tool_blocks:
                 logger.info(f"[agent] force-answer round {round_num}: discarding {len(tool_blocks)} ignored tool call(s)")
             tool_blocks = []
-            if not _THINK_RE.sub("", strip_tool_blocks(round_response)).strip():
+            if not _strip_think_blocks(strip_tool_blocks(round_response)).strip():
                 # The model burned its budget gathering data but never wrote a
                 # final answer (common with weaker models on multi-source
                 # briefings). Salvage it: one blunt non-streaming synthesis call
@@ -2875,7 +2866,7 @@ async def stream_agent_loop(
                         url=endpoint_url, model=model, messages=_synth_messages,
                         headers=headers, temperature=0.3, max_tokens=max_tokens, timeout=60,
                     )
-                    _synth = _THINK_RE.sub("", strip_tool_blocks(_raw or "")).strip()
+                    _synth = _strip_think_blocks(strip_tool_blocks(_raw or "")).strip()
                 except Exception as _e:
                     logger.warning(f"[agent] grace synthesis failed: {_e}")
                 if _synth:
@@ -2937,7 +2928,7 @@ async def stream_agent_loop(
             # the model fix them (capped, and it must do new effectful work
             # to re-trigger). Skipped on force-answer rounds (no tools to
             # fix with), pure Q&A, and when the toggle is off.
-            _claimed_done = bool(_THINK_RE.sub("", cleaned_round).strip())
+            _claimed_done = bool(_strip_think_blocks(cleaned_round).strip())
             if (_effectful_used and not _force_answer
                     and _claimed_done
                     and _verifier_rounds < _VERIFIER_MAX_ROUNDS
@@ -2981,7 +2972,7 @@ async def stream_agent_loop(
             # actual tool now") and loop again. Capped at
             # _MAX_INTENT_NUDGES so a model that genuinely cannot use the
             # tool doesn't pin us in a forever loop.
-            _intent_text = _THINK_RE.sub("", cleaned_round).strip()
+            _intent_text = _strip_think_blocks(cleaned_round).strip()
             _intent_match = _INTENT_RE.search(_intent_text) if _intent_text else None
             # Only nudge when the round REALLY looks like an unfinished
             # promise: short response (<400 chars), no fenced code/answer,
@@ -3044,7 +3035,7 @@ async def stream_agent_loop(
         # "Real" answer text = round text minus <think> blocks. Empty-think
         # rounds (just "<think>\n\n</think>" + a tool call) must not read as
         # progress, so strip think before checking.
-        _real_text = _THINK_RE.sub("", cleaned_round).strip()
+        _real_text = _strip_think_blocks(cleaned_round).strip()
         # Circling = repeating a recent call with nothing written. Any
         # progress (a NEW distinct call, or actual answer text) resets it.
         if _is_repeat and not _real_text:
