@@ -2053,7 +2053,14 @@ async def stream_agent_loop(
     _mcp_disabled_map = _load_mcp_disabled_map() if mcp_mgr else {}
     if _direct_low_signal:
         logger.info("[agent] direct low-signal reply path for latest=%r", _last_user[:80])
-        direct_messages = [{"role": "user", "content": _last_user}]
+        # Keep the assembled system context (persona / preset / policy) so the
+        # fast path still honours the assistant's identity. Sending only the
+        # bare user turn made personas — and every Sequential Group participant,
+        # whose persona prompt is injected as a system message — reply out of
+        # character (#4885). Stale document/email/skills context is added later
+        # (after this early return), so this preamble is just identity + policy.
+        _system_preamble = [m for m in messages if m.get("role") == "system"]
+        direct_messages = _system_preamble + [{"role": "user", "content": _last_user}]
         direct_response = ""
         direct_start = time.time()
         direct_actual_model = model
