@@ -5,12 +5,23 @@ routes/calendar_routes using the same stub-friendly import pattern
 as test_null_owner_gates.py. No live DB or FastAPI test client needed.
 """
 
+import sys
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
 
-from tests.test_null_owner_gates import _import_calendar_helpers
+
+def _import_calendar_helpers():
+    """Import the two private gate helpers without booting the full
+    calendar router. We patch sys.modules so the module-load side
+    effects (DB import) don't blow up under the conftest stubs."""
+    mod_name = "routes.calendar_routes"
+    if mod_name in sys.modules:
+        return sys.modules[mod_name]
+    # core.database is stubbed by conftest already; the module should
+    # import cleanly.
+    return __import__(mod_name, fromlist=["_get_or_404_calendar", "_get_or_404_event"])
 
 
 # ── _resolve_base_uid ──────────────────────────────────────────────────
