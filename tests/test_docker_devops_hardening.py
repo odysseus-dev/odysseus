@@ -17,6 +17,7 @@ COMPOSE_FILES = [
     ROOT / "docker-compose.gpu-nvidia.yml",
     ROOT / "docker-compose.gpu-amd.yml",
 ]
+HOST_DOCKER_OVERLAY = ROOT / "docker" / "host-docker.yml"
 TEST_DOCS = [
     ROOT / "tests" / "README.md",
     ROOT / "tests" / "TESTING_STANDARD.md",
@@ -52,6 +53,21 @@ def test_compose_files_forward_every_upload_limit_env_var():
     assert expected
     for path in COMPOSE_FILES:
         assert expected <= _compose_env_names(path), path.name
+
+
+def test_default_compose_files_do_not_mount_host_docker_socket():
+    for path in COMPOSE_FILES:
+        text = path.read_text(encoding="utf-8")
+        assert "/var/run/docker.sock" not in text, path.name
+
+
+def test_host_docker_overlay_mounts_socket_and_adds_docker_group():
+    overlay = yaml.safe_load(HOST_DOCKER_OVERLAY.read_text(encoding="utf-8"))
+    service = overlay["services"]["odysseus"]
+
+    assert "/var/run/docker.sock:/var/run/docker.sock" in service["volumes"]
+    assert "${DOCKER_GID:-963}" in service["group_add"]
+    assert "ODYSSEUS_ENABLE_HOST_DOCKER=true" in service["environment"]
 
 
 def test_docker_entrypoint_does_not_resolve_root_commands_from_app_local_path():

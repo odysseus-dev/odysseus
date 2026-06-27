@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE = ROOT / "docker-compose.yml"
 NVIDIA_OVERLAY = ROOT / "docker" / "gpu.nvidia.yml"
 AMD_OVERLAY = ROOT / "docker" / "gpu.amd.yml"
+HOST_DOCKER_OVERLAY = ROOT / "docker" / "host-docker.yml"
 NVIDIA_STANDALONE = ROOT / "docker-compose.gpu-nvidia.yml"
 AMD_STANDALONE = ROOT / "docker-compose.gpu-amd.yml"
 
@@ -59,6 +60,13 @@ def _merge_overlay_into_base(base: dict, overlay: dict) -> dict:
         expected["services"][SERVICE], overlay_service
     )
     return expected
+
+
+def _merge_overlays_into_base(base: dict, *overlays: dict) -> dict:
+    merged = copy.deepcopy(base)
+    for overlay in overlays:
+        merged = _merge_overlay_into_base(merged, overlay)
+    return merged
 
 
 @pytest.fixture(scope="module")
@@ -124,9 +132,10 @@ def test_nvidia_odysseus_adds_only_overlay(base):
         {"driver": "nvidia", "count": "all", "capabilities": ["gpu"]}
     ]
 
-    # Base Docker socket group is preserved; no AMD-only keys leaked in.
+    # No Docker or AMD groups are added.
     assert "devices" not in svc
-    assert svc["group_add"] == base_svc["group_add"]
+    assert "group_add" not in base_svc
+    assert "group_add" not in svc
 
 
 def test_amd_odysseus_adds_only_overlay(base):
@@ -137,10 +146,66 @@ def test_amd_odysseus_adds_only_overlay(base):
     # Environment is unchanged from base for AMD.
     assert svc["environment"] == base_svc["environment"]
 
-    # devices are new; group_add preserves the base Docker group and appends AMD groups.
+    # Devices and GPU-only groups are added.
     assert "devices" not in base_svc
     assert svc["devices"] == ["/dev/kfd", "/dev/dri"]
-    assert svc["group_add"] == base_svc["group_add"] + ["video", "${RENDER_GID:-render}"]
+    assert "group_add" not in base_svc
+    assert svc["group_add"] == ["video", "${RENDER_GID:-render}"]
 
     # No NVIDIA-only keys leaked in.
     assert "deploy" not in svc
+
+
+# --- Host Docker opt-in combinations ---------------------------------------
+
+
+def test_base_has_no_host_docker_access(base):
+    service = base["services"][SERVICE]
+
+    assert "/var/run/docker.sock:/var/run/docker.sock" not in service["volumes"]
+    assert "ODYSSEUS_ENABLE_HOST_DOCKER=true" not in service["environment"]
+    assert "group_add" not in service
+
+
+def test_base_plus_host_docker_overlay_has_explicit_access(base):
+    merged = _merge_overlays_into_base(base, _load(HOST_DOCKER_OVERLAY))
+    service = merged["services"][SERVICE]
+
+    assert "/var/run/docker.sock:/var/run/docker.sock" in service["volumes"]
+    assert "ODYSSEUS_ENABLE_HOST_DOCKER=true" in service["environment"]
+    assert service["group_add"] == ["${DOCKER_GID:-963}"]
+
+
+def test_nvidia_plus_host_docker_preserves_gpu_and_docker_access(base):
+    merged = _merge_overlays_into_base(
+        base,
+        _load(NVIDIA_OVERLAY),
+        _load(HOST_DOCKER_OVERLAY),
+    )
+    service = merged["services"][SERVICE]
+
+    devices = service["deploy"]["resources"]["reservations"]["devices"]
+    assert devices == [
+        {"driver": "nvidia", "count": "all", "capabilities": ["gpu"]}
+    ]
+    assert "/var/run/docker.sock:/var/run/docker.sock" in service["volumes"]
+    assert "ODYSSEUS_ENABLE_HOST_DOCKER=true" in service["environment"]
+    assert service["group_add"] == ["${DOCKER_GID:-963}"]
+
+
+def test_amd_plus_host_docker_preserves_gpu_and_docker_groups(base):
+    merged = _merge_overlays_into_base(
+        base,
+        _load(AMD_OVERLAY),
+        _load(HOST_DOCKER_OVERLAY),
+    )
+    service = merged["services"][SERVICE]
+
+    assert service["devices"] == ["/dev/kfd", "/dev/dri"]
+    assert service["group_add"] == [
+        "video",
+        "${RENDER_GID:-render}",
+        "${DOCKER_GID:-963}",
+    ]
+    assert "/var/run/docker.sock:/var/run/docker.sock" in service["volumes"]
+    assert "ODYSSEUS_ENABLE_HOST_DOCKER=true" in service["environment"]
