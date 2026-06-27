@@ -139,12 +139,17 @@ function _closeHoveredWindow() {
   return false;
 }
 
-function _spaceIsBlocked(e, surface) {
+function _spaceIsBlocked(e) {
   const target = _targetEl(e.target);
   if (!target) return false;
-  if (_isTextEditingTarget(target)) return !surface || surface.contains(target);
+  // Keyboard focus must win over mouse hover: if the keystroke is destined for
+  // a text field or another interactive control, Space belongs to that element
+  // no matter which surface the pointer happens to be over. Letting the hovered
+  // surface override a focused input ate spaces and closed tabs mid-type
+  // (#4856), so blocking depends only on the focused element, not the pointer.
+  if (_isTextEditingTarget(target)) return true;
   const blocked = target.closest?.(SPACE_BLOCKED_SELECTOR);
-  return !!(blocked && (!surface || surface.contains(blocked)));
+  return !!blocked;
 }
 
 function _activateSpaceCard(card) {
@@ -190,13 +195,13 @@ function _initHoverCardSpaceToggle() {
   document.addEventListener('keydown', (e) => {
     if (e.code !== 'Space' || e.repeat) return;
     if (hoveredToggleCard && _isSpaceVisible(hoveredToggleCard)) {
-      if (_spaceIsBlocked(e, hoveredToggleCard)) return;
+      if (_spaceIsBlocked(e)) return;
       e.preventDefault();
       _activateSpaceCard(hoveredToggleCard);
       return;
     }
     if (hoveredDockChip && document.contains(hoveredDockChip)) {
-      if (_spaceIsBlocked(e, hoveredDockChip)) return;
+      if (_spaceIsBlocked(e)) return;
       const id = hoveredDockChip.dataset.modalId;
       if (id && Modals.isRegistered(id)) {
         e.preventDefault();
@@ -206,7 +211,7 @@ function _initHoverCardSpaceToggle() {
     }
     const id = _spaceWindowId(hoveredToggleWindow);
     if (!id) return;
-    if (_spaceIsBlocked(e, hoveredToggleWindow)) return;
+    if (_spaceIsBlocked(e)) return;
     e.preventDefault();
     Modals.minimize(id);
   }, true);
