@@ -755,6 +755,17 @@ def _extract_last_user_message(messages: List[Dict]) -> str:
     return ""
 
 
+def _insert_before_latest_user(messages: List[Dict], context_msg: Dict) -> List[Dict]:
+    """Insert a context message immediately before the latest user turn."""
+    out = list(messages or [])
+    for idx in range(len(out) - 1, -1, -1):
+        if out[idx].get("role") == "user":
+            out.insert(idx, context_msg)
+            return out
+    out.append(context_msg)
+    return out
+
+
 def _strip_think_blocks(text: str) -> str:
     """Linear-time equivalent of
     ``re.sub(r'<think>.*?</think>', '', text, flags=DOTALL|IGNORECASE)``.
