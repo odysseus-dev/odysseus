@@ -1,0 +1,7 @@
+# Copy to config/users (gitignored on real deployments — keep credentials local).
+# Generate hash:
+#   docker run --rm -it httpd:2.4-alpine htpasswd -nbB alice 'secret' | cut -d: -f2-
+# Format:
+#   alice:$2y$05$...
+
+alice:REPLACE_WITH_BCRYPT_HASH

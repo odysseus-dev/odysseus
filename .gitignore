@@ -102,3 +102,7 @@ compound.config.json
 *.error.log
 _scratch/
 /odysseus/
+
+# Radicale deploy secrets (multi-machine calendar)
+docker/radicale/data/
+docker/radicale/config/users
