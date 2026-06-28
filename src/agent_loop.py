@@ -2461,7 +2461,19 @@ async def stream_agent_loop(
     _mcp_disabled_map = _load_mcp_disabled_map() if mcp_mgr else {}
     if _direct_low_signal:
         logger.info("[agent] direct low-signal reply path for latest=%r", _last_user[:80])
-        direct_messages = [{"role": "user", "content": _last_user}]
+        direct_messages = [
+            {
+                "role": "system",
+                "content": (
+                    "## FINAL ANSWER CONTRACT\n"
+                    "After tool work is complete and no more tools are needed, write only the final answer for the user.\n"
+                    "- Keep the final answer concise by default, even if the solving phase used high reasoning or verbosity.\n"
+                    "- Do not replay tool commands, raw logs, or earlier failed attempts unless the user explicitly asks for process details.\n"
+                    "- Prefer 1-4 sentences or a short bullet list. If blocked, state the exact blocker and the next useful action."
+                ),
+            },
+            {"role": "user", "content": _last_user},
+        ]
         direct_response = ""
         direct_start = time.time()
         direct_actual_model = model
@@ -3591,7 +3603,7 @@ async def stream_agent_loop(
                         f"You just wrote: \"{_matched_phrase}\" — but ended the "
                         "turn without making the actual tool call. The user can "
                         "see you announced the action but didn't run it, which "
-                        "is the most frustrating thing you can do. "
+                        "is an unfinished promise or plan. "
                         "DO IT NOW: emit the actual function call this turn. "
                         f"{_cookbook_log_hint}"
                         "If you decided not to do it after all, say so plainly in "

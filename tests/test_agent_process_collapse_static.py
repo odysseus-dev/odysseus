@@ -43,9 +43,11 @@ def test_agent_process_has_collapsed_panel_styles():
     source = _read("static/style.css")
 
     assert ".agent-process {" in source
-    assert "margin: 0 0 10px;" in source
+    assert "margin: 12px 0;" in source
     assert ".agent-process-summary" in source
+    assert ".agent-process-summary-left" in source
+    assert ".agent-process-summary-right" in source
+    assert ".agent-process-toggle::after" in source
+    assert ".agent-process[open] .agent-process-toggle" in source
     assert ".agent-process-meta" in source
-    assert ".agent-process > summary::before" in source
-    assert ".agent-process[open] > .agent-process-summary::after" in source
     assert ".stopped-detail" in source
