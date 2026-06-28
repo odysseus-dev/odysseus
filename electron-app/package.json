@@ -1,0 +1,64 @@
+{
+  "name": "odysseus",
+  "version": "1.0.0",
+  "description": "Self-contained Odysseus app",
+  "main": "main.js",
+  "author": "Odysseus",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --mac",
+    "dev": "NODE_ENV=development electron ."
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "com.odysseus.app",
+    "productName": "Odysseus",
+    "directories": {
+      "output": "../dist-electron",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "build/icon.png",
+      "build/icon.icns"
+    ],
+    "extraResources": [
+      {
+        "from": "build/server",
+        "to": "server",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../data",
+        "to": "data",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dir",
+          "arch": ["arm64"]
+        },
+        {
+          "target": "dmg",
+          "arch": ["arm64"]
+        }
+      ],
+      "icon": "build/icon.icns",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "identity": null
+    }
+  }
+}

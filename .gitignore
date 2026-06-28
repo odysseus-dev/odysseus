@@ -28,6 +28,10 @@ secrets.env.*
 data/
 !services/hwfit/data/
 !services/hwfit/data/hf_models.json
+# Electron/Chromium runtime profile data should never be committed
+data/.odysseus-app-data/
+# Accidental recursive repo copies inside data/ must stay out
+data/odysseus/
 logs/
 *.log
 *.db
@@ -59,6 +63,13 @@ Thumbs.db
 *.cache
 cache/
 output.txt.txt
+build-py/
+dist-electron/
+server-build/
+electron-app/build/
+electron-app/node_modules/
+electron-app/package-lock.json
+odysseus-server.spec
 
 # Media (uploaded/generated)
 *.jpg
