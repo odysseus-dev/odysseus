@@ -10,6 +10,7 @@ import asyncio
 
 import src.teacher_escalation as teacher_escalation
 import routes.skills_routes as skills_routes
+from src.agent_tools import model_interaction_tools
 
 
 def test_call_teacher_scopes_model_resolution_to_owner(monkeypatch):
@@ -24,7 +25,11 @@ def test_call_teacher_scopes_model_resolution_to_owner(monkeypatch):
         return "teacher reply"
 
     monkeypatch.setattr("src.ai_interaction._resolve_model", fake_resolve_model)
-    monkeypatch.setattr("src.ai_interaction._TEACHER_SYSTEM_PROMPT", "sys", raising=False)
+    # _TEACHER_SYSTEM_PROMPT moved to src.agent_tools.model_interaction_tools
+    # (#3629); patch the module object directly — a dotted-string path here is
+    # fragile because src/agent_tools/__init__.py re-imports the submodule, and
+    # the setattr target's resolution depends on import order across the suite.
+    monkeypatch.setattr(model_interaction_tools, "_TEACHER_SYSTEM_PROMPT", "sys")
     monkeypatch.setattr("src.llm_core.llm_call_async", fake_llm_call_async)
 
     result = asyncio.run(
