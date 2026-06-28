@@ -1,5 +1,6 @@
 """Gallery routes — browsable library for photos and AI-generated images."""
 
+from __future__ import annotations
 import os
 import hashlib
 import logging

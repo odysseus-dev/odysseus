@@ -5,6 +5,7 @@ Registry of built-in automation actions that can be executed by the task
 scheduler without needing an LLM call.
 """
 
+from __future__ import annotations
 import logging
 import os
 from datetime import datetime

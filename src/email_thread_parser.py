@@ -22,8 +22,8 @@ Returns a list of dicts:
 where level 0 is the current reply, increasing levels = deeper in the chain.
 """
 
-from __future__ import annotations
 
+from __future__ import annotations
 import html as _html
 import re
 from typing import Any

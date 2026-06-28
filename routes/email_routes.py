@@ -12,6 +12,7 @@ Importing from the helpers module brings in everything those route
 handlers need. The split is mechanical — no behavior change.
 """
 
+from __future__ import annotations
 import asyncio
 import os
 import sqlite3 as _sql3

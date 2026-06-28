@@ -12,6 +12,7 @@ and `email_pollers.py` (the background loops):
     - Pydantic models, shared constants, scheduled-DB bootstrap
 """
 
+from __future__ import annotations
 import os
 import base64
 import time

@@ -1,6 +1,7 @@
 # src/chat_helpers.py
 """URL extraction, message/upload validation, request parsing."""
 
+from __future__ import annotations
 import re
 import os
 import json

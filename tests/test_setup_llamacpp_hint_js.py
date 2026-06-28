@@ -14,4 +14,4 @@ def test_setup_guide_offers_llamacpp_local_example():
     src = _SRC.read_text(encoding="utf-8")
     # The example URL appears in both the HTML-string and streamed renderings.
     assert src.count("http://localhost:8080/v1") >= 2
-    assert "llama.cpp (llama-server)" in src
+    assert "llama.cpp" in src

@@ -6,6 +6,7 @@ read email content, and draft replies as email documents.
 Connects to local Dovecot IMAP and reads from the AI summary cache.
 """
 
+from __future__ import annotations
 import asyncio
 import imaplib
 import smtplib

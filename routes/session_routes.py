@@ -1,4 +1,5 @@
 # routes/session_routes.py
+from __future__ import annotations
 import re
 import html
 import json

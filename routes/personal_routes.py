@@ -1,5 +1,6 @@
 # routes/personal_routes.py
 """Routes for personal documents management."""
+from __future__ import annotations
 import os
 import logging
 import shutil

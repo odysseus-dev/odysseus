@@ -58,6 +58,9 @@ _HARNESS = """
 let appended = [];
 class FormData {{ append(k, v) {{ appended.push([k, String(v)]); }} }}
 const FIELDS = {fields};
+globalThis.window = globalThis.window || {{}};
+window.__t = window.__t || function(k) {{ return k; }};
+const __t = function(k) {{ return k; }};
 function el(id) {{
   if (!(id in FIELDS)) return null;
   return {{

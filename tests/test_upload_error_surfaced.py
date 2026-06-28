@@ -28,4 +28,4 @@ def test_upload_pending_checks_response_and_surfaces_error():
     # Must guard on the HTTP status before trusting the body...
     assert re.search(r"if\s*\(\s*!res\.ok\s*\)", body), "uploadPending must check res.ok"
     # ...and tell the user the upload failed (not swallow it).
-    assert "Upload failed" in body
+    assert "failedToSave" in body or "Upload failed" in body

@@ -3,6 +3,7 @@ Authentication module — multi-user password hashing, session tokens, config pe
 Config stored in data/auth.json. Uses bcrypt directly.
 """
 
+from __future__ import annotations
 import enum
 import json
 import os

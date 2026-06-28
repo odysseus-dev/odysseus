@@ -1,6 +1,7 @@
 """cookbook_helpers.py — validators + small helpers shared by the cookbook routes.
 Extracted from cookbook_routes.py; the routes module imports the symbols it needs."""
 
+from __future__ import annotations
 import json
 import logging
 import ntpath

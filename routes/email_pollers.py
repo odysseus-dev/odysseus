@@ -16,6 +16,7 @@ Pure helpers live in `email_helpers.py`. Routes themselves live in
 `email_routes.py`.
 """
 
+from __future__ import annotations
 import email as email_mod
 import email.utils  # the `email` binding is referenced as email.utils.parseaddr inside the pass
 import smtplib

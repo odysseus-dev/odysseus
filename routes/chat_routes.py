@@ -1,5 +1,6 @@
 """Chat routes — /api/chat, /api/chat_stream, /api/inject_context, /api/search."""
 
+from __future__ import annotations
 import asyncio
 import json
 import os

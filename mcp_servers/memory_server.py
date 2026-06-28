@@ -5,6 +5,7 @@ MCP server exposing memory management (list, add, edit, delete, search).
 Imports MemoryManager and MemoryVectorStore from the Odysseus codebase.
 """
 
+from __future__ import annotations
 import asyncio
 import os
 import sys

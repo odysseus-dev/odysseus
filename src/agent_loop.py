@@ -6,6 +6,7 @@ Wraps stream_llm() with multi-round tool execution.
 The LLM decides when to use tools by writing fenced code blocks.
 """
 
+from __future__ import annotations
 import asyncio
 import collections
 import json

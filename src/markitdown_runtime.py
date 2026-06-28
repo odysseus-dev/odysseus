@@ -8,6 +8,8 @@ core never hard-depends on it. Mirrors the optional-dependency pattern in
 `src/pdf_runtime.py`.
 """
 
+from __future__ import annotations
+from __future__ import annotations
 import logging
 import os
 

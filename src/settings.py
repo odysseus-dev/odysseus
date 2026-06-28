@@ -4,6 +4,7 @@
 Single source of truth for reading/writing data/settings.json and data/features.json.
 All modules should import from here instead of accessing files directly.
 """
+from __future__ import annotations
 
 import json
 import time

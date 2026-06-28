@@ -18,6 +18,7 @@ unchanged. That lets legacy rows coexist with new ones until a
 single migration pass rewrites them.
 """
 
+from __future__ import annotations
 import os
 import logging
 from pathlib import Path

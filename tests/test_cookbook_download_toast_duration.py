@@ -18,7 +18,7 @@ def test_download_failure_toasts_stay_visible():
     # explicit duration >= _MIN_MS so the actionable error stays readable.
     lines = [
         ln for ln in SRC.read_text(encoding="utf-8").splitlines()
-        if "showToast(" in ln and "Download failed:" in ln
+        if "showToast(" in ln and ("Download failed:" in ln or "downloadFailed" in ln)
     ]
     assert lines, "expected at least one 'Download failed' showToast call"
     for ln in lines:

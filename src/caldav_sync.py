@@ -22,6 +22,7 @@ Design notes:
   user's local TZ correctly.
 """
 
+from __future__ import annotations
 import asyncio
 import hashlib
 import ipaddress

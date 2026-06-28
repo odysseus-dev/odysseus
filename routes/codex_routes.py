@@ -5,6 +5,7 @@ reuse existing Odysseus helpers and enforce API-token scopes before touching
 user data.
 """
 
+from __future__ import annotations
 import asyncio
 import json
 import zipfile

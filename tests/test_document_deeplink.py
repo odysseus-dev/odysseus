@@ -30,4 +30,4 @@ def test_failed_document_load_surfaces_user_error():
     """A missing/failed document must tell the user, not fail silently."""
     js = (_REPO / "static" / "js" / "document.js").read_text(encoding="utf-8")
     assert "uiModule.showError" in js
-    assert "Document not found" in js
+    assert "doc.documentNotFound" in js

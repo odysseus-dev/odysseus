@@ -1,5 +1,6 @@
 # routes/model_routes.py
 """Routes for model and provider management."""
+from __future__ import annotations
 import os
 import re
 import uuid

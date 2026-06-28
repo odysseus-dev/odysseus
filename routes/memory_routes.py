@@ -1,4 +1,5 @@
 # routes/memory_routes.py
+from __future__ import annotations
 from fastapi import APIRouter, Form, HTTPException, Request, UploadFile, File
 from typing import Dict, Any, Optional, List
 import json

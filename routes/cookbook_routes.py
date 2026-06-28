@@ -1,5 +1,6 @@
 """Cookbook routes — model download, serve, cache scanning, and cookbook state sync."""
 
+from __future__ import annotations
 import asyncio
 import json
 import logging

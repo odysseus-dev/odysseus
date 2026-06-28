@@ -17,6 +17,7 @@ on a GET would be unsafe (Lax cookies ride top-level GET navigations), so GET
 /pair only renders a form.
 """
 
+from __future__ import annotations
 import html
 
 from fastapi import APIRouter, HTTPException, Request
