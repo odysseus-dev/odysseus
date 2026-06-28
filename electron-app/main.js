@@ -4,7 +4,9 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 
-const PORT = 7860;
+// Derive the Odysseus server port from the same env vars the server uses.
+// Priority: APP_PORT > ODYSSEUS_PORT > 7860 (macOS default; avoid 7000 = AirPlay).
+const PORT = process.env.APP_PORT || process.env.ODYSSEUS_PORT || 7860;
 const isDev = process.env.NODE_ENV === 'development';
 
 // In dev: PROJECT_DIR is the repo root (where app.py lives)
@@ -202,7 +204,8 @@ function createWindow() {
     return { action: 'deny' };
   });
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith(APP_URL)) {
+    const appOrigin = new URL(APP_URL).origin;
+    if (new URL(url).origin !== appOrigin) {
       event.preventDefault();
       shell.openExternal(url);
     }
@@ -213,6 +216,9 @@ function createWindow() {
     mainWindow.show();
     startBackend();
   });
+
+  // Clean up window reference when closed (prevents dangling handle).
+  mainWindow.on('closed', () => { mainWindow = null; });
 }
 
 // ── Start backend and then load the app UI ────────────────────────────
