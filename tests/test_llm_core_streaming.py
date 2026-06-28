@@ -45,7 +45,7 @@ class _FakeClient:
         return _FakeStreamCtx(self._lines)
 
 
-def _drive(monkeypatch, lines, model="gemini-3.1-pro-preview-customtools"):
+def _drive(monkeypatch, lines, model="gemini-3.1-pro-preview-customtools", url=None):
     """Run stream_llm against a canned SSE line list; return parsed events."""
     monkeypatch.setattr(llm_core, "_get_http_client", lambda: _FakeClient(lines))
     monkeypatch.setattr(llm_core, "_is_host_dead", lambda u: False)
@@ -55,7 +55,7 @@ def _drive(monkeypatch, lines, model="gemini-3.1-pro-preview-customtools"):
     async def run():
         events = []
         async for chunk in llm_core.stream_llm(
-            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            url or "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
             model,
             [{"role": "user", "content": "hi"}],
             headers={"Authorization": "Bearer k"},
@@ -75,6 +75,12 @@ def _drive(monkeypatch, lines, model="gemini-3.1-pro-preview-customtools"):
 
 def _sse(delta):
     return "data: " + json.dumps({"choices": [{"delta": delta}]})
+
+
+def _event_data(event_type, payload):
+    body = dict(payload)
+    body.setdefault("type", event_type)
+    return [f"event: {event_type}", "data: " + json.dumps(body)]
 
 
 def test_parallel_calls_with_null_index_do_not_collide(monkeypatch):
@@ -104,6 +110,49 @@ def test_parallel_calls_with_null_index_do_not_collide(monkeypatch):
     # signature preserved on the first call only, exactly as received
     assert by_name["get_memory"]["extra_content"] == {"google": {"thought_signature": "SIG0"}}
     assert "extra_content" not in by_name["bash"]
+
+
+def test_chatgpt_subscription_responses_function_call_stream(monkeypatch):
+    lines = []
+    lines += _event_data("response.output_item.added", {
+        "output_index": 0,
+        "item": {
+            "type": "function_call",
+            "id": "fc_read",
+            "call_id": "call_read",
+            "name": "read_file",
+            "arguments": "",
+        },
+    })
+    lines += _event_data("response.function_call_arguments.delta", {
+        "output_index": 0,
+        "item_id": "fc_read",
+        "delta": '{"path": "',
+    })
+    lines += _event_data("response.function_call_arguments.delta", {
+        "output_index": 0,
+        "item_id": "fc_read",
+        "delta": '/workspace/README.txt"}',
+    })
+    lines += _event_data("response.completed", {
+        "response": {"usage": {"input_tokens": 7, "output_tokens": 2}},
+    })
+
+    events = _drive(
+        monkeypatch,
+        lines,
+        model="gpt-5.3-codex-spark",
+        url="https://chatgpt.com/backend-api/codex",
+    )
+
+    calls = next(e["calls"] for e in events if e.get("type") == "tool_calls")
+    assert calls == [{
+        "id": "call_read",
+        "name": "read_file",
+        "arguments": '{"path": "/workspace/README.txt"}',
+    }]
+    usage = next(e["data"] for e in events if e.get("type") == "usage")
+    assert usage == {"input_tokens": 7, "output_tokens": 2}
 
 
 def test_single_call_chunked_arguments_still_accumulate(monkeypatch):
