@@ -8,6 +8,7 @@
 import Storage, { KEYS } from './storage.js';
 import uiModule from './ui.js';
 import { makeWindowDraggable } from './windowDrag.js';
+import { parseWorkspaceUrl } from './workspaceUrl.js';
 
 const API_BASE = window.location.origin;
 // Same folder glyph as the overflow menu item + pill (not an emoji).
@@ -82,6 +83,24 @@ export async function vetAndSetWorkspace(path) {
   } catch (e) {
     return { ok: false, path: null };
   }
+}
+
+export async function applyWorkspaceParamFromUrl() {
+  const parsed = parseWorkspaceUrl(window.location);
+  if (!parsed.found) return { found: false, ok: false, path: null };
+
+  if (parsed.cleanUrl && window.history && typeof window.history.replaceState === 'function') {
+    try { window.history.replaceState(null, '', parsed.cleanUrl); } catch (_) {}
+  }
+  if (!parsed.path) return { found: true, ok: false, path: null };
+
+  const result = await vetAndSetWorkspace(parsed.path);
+  if (result.ok) {
+    if (uiModule && uiModule.showToast) uiModule.showToast(`Workspace set: ${_basename(result.path)}`);
+  } else if (uiModule && uiModule.showError) {
+    uiModule.showError('Could not use workspace from link');
+  }
+  return { found: true, ok: !!result.ok, path: result.path || null };
 }
 
 export function clearWorkspace() {
@@ -199,10 +218,11 @@ export function closeWorkspaceBrowser() {
 export function initWorkspace() {
   // Restore persisted workspace into the pill on load.
   syncWorkspaceIndicator(getWorkspace());
+  applyWorkspaceParamFromUrl().catch(() => {});
   const overflow = document.getElementById('overflow-workspace-btn');
   if (overflow) overflow.addEventListener('click', openWorkspaceBrowser);
   const pill = document.getElementById('workspace-indicator-btn');
   if (pill) pill.addEventListener('click', clearWorkspace);
 }
 
-export default { initWorkspace, openWorkspaceBrowser, getWorkspace, setWorkspace, vetAndSetWorkspace, clearWorkspace, syncWorkspaceIndicator, applyMode };
+export default { initWorkspace, openWorkspaceBrowser, getWorkspace, setWorkspace, vetAndSetWorkspace, applyWorkspaceParamFromUrl, clearWorkspace, syncWorkspaceIndicator, applyMode };
