@@ -239,6 +239,7 @@ cat > "$ELECTRON_DIR/package.json" << 'PKGJSON'
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --mac",
+    "build:signed": "electron-builder --mac --config.mac.identity=builder --config.mac.hardenedRuntime=true",
     "dev": "NODE_ENV=development electron ."
   },
   "devDependencies": {
@@ -255,6 +256,8 @@ cat > "$ELECTRON_DIR/package.json" << 'PKGJSON'
     "files": [
       "main.js",
       "preload.js",
+      "entitlements.plist",
+      "notarize.js",
       "build/icon.png",
       "build/icon.icns"
     ],
@@ -289,8 +292,11 @@ cat > "$ELECTRON_DIR/package.json" << 'PKGJSON'
       "icon": "build/icon.icns",
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
-      "identity": null
-    }
+      "identity": null,
+      "entitlements": "entitlements.plist",
+      "entitlementsInherit": "entitlements.plist"
+    },
+    "afterSign": "notarize.js"
   }
 }
 PKGJSON
