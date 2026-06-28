@@ -61,6 +61,7 @@ import './js/i18n/email-library.pt-BR.js';
 import './js/i18n/email-inbox.pt-BR.js';
 import './js/i18n/calendar.pt-BR.js';
 import './js/i18n/tasks.pt-BR.js';
+import './js/i18n/notes.pt-BR.js';
 import './js/i18n/cookbook-build.pt-BR.js';
 import './js/i18n/cookbook-running.pt-BR.js';
 import './js/i18n/slash-commands.pt-BR.js';
