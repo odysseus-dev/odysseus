@@ -1419,10 +1419,14 @@ def setup_cookbook_routes() -> APIRouter:
         # in cookbook.js, which does import the GGUF, so this gate is local-only.)
         if (_serve_in_container and re.search(r"\bollama\s+serve\b", req.cmd)):
             _host_port = _ollama_bind_from_cmd(req.cmd, default_host="127.0.0.1")[1]
-            _host_tags_url = f"http://host.docker.internal:{_host_port}/v1"
+            # Probe the host daemon's NATIVE /api/tags (not the chat-filtered
+            # /v1/models path) so presence verification sees every served tag,
+            # including embedding models whose names would be filtered out as
+            # non-chat.
+            _host_tags_url = f"http://host.docker.internal:{_host_port}"
             try:
-                from routes.model_routes import _probe_endpoint
-                _served = _probe_endpoint(_host_tags_url, None, timeout=5)
+                from routes.model_routes import _probe_ollama_tags
+                _served = _probe_ollama_tags(_host_tags_url, timeout=5)
             except Exception as _pe:
                 logger.warning(f"host-Ollama tag probe failed for {_host_tags_url}: {_pe!r}")
                 _served = []

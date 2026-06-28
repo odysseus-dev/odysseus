@@ -765,6 +765,30 @@ def _ollama_model_names(data: Any) -> List[str]:
     return out
 
 
+def _probe_ollama_tags(base_url: str, timeout: int = 5) -> List[str]:
+    """Return raw tag names served by a native Ollama daemon's ``/api/tags``.
+
+    Unlike :func:`_probe_endpoint`, this hits Ollama's native list endpoint and
+    does NOT chat-filter the result: callers that need to verify *presence* of a
+    tag (e.g. embedding models whose names contain ``embed``) must see every
+    served tag, not just chat-capable ones. ``base_url`` is the daemon root
+    (no ``/v1``/``/api`` suffix). Returns ``[]`` on any error.
+    """
+    base = _normalize_base(base_url).rstrip("/")
+    # Strip an accidental /v1 or /api suffix so we always hit the native root.
+    for suffix in ("/v1", "/api"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+    url = f"{base}/api/tags"
+    try:
+        r = httpx.get(url, timeout=timeout, verify=llm_verify())
+        r.raise_for_status()
+        return _ollama_model_names(r.json())
+    except Exception as e:
+        logger.warning("Failed to probe Ollama tags at %s: %s", _redact_url_for_log(url), e)
+        return []
+
+
 def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> List[str]:
     """Probe a base URL's /models endpoint and return list of model IDs.
     For Anthropic, queries their /v1/models API, falling back to hardcoded list."""
