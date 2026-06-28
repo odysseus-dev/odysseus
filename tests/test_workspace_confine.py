@@ -21,6 +21,7 @@ import pytest
 from src.tool_execution import (
     _AGENT_WORKDIR,
     _active_workspace,
+    _workspace_shell_write_block_reason,
     _resolve_search_root,
     _resolve_tool_path,
     _resolve_tool_path_in_workspace,
@@ -188,6 +189,48 @@ async def test_workspace_bash_read_only_diagnostics_remain_allowed(ws, admin):
     assert desc != "bash: BLOCKED"
     assert r["exit_code"] == 0
     assert "OK" in r["output"]
+
+
+@pytest.mark.parametrize("command", [
+    "awk '$3 > 100 {print $1}' data.csv",
+    "cat data.json | jq '.items[] | select(.size > 5)'",
+    'echo "use > to redirect"',
+    "ls -la > /dev/null 2>&1",
+    "grep -rn 'a -> b' src/",
+    'python -c "print(1 > 0)"',
+    "git log --oneline | head -20",
+    "diff <(sort a.txt) <(sort b.txt)",
+])
+def test_workspace_shell_guard_allows_read_only_redirect_syntax(ws, command):
+    token = _active_workspace.set(ws)
+    try:
+        assert _workspace_shell_write_block_reason("bash", command) is None
+    finally:
+        _active_workspace.reset(token)
+
+
+@pytest.mark.parametrize("command", [
+    "printf 'x' > note.txt",
+    "printf 'x' >> note.txt",
+    "printf 'x' 1> note.txt",
+    "printf 'x' 2> error.log",
+    "printf 'x' &> out.log",
+])
+def test_workspace_shell_guard_blocks_workspace_redirect_targets(ws, command):
+    token = _active_workspace.set(ws)
+    try:
+        assert _workspace_shell_write_block_reason("bash", command)
+    finally:
+        _active_workspace.reset(token)
+
+
+def test_workspace_shell_guard_blocks_absolute_workspace_redirect_target(ws):
+    target = os.path.join(ws, "absolute-note.txt")
+    token = _active_workspace.set(ws)
+    try:
+        assert _workspace_shell_write_block_reason("bash", f"printf 'x' > {target}")
+    finally:
+        _active_workspace.reset(token)
 
 
 @pytest.mark.asyncio

@@ -15,9 +15,10 @@ import logging
 import os
 import pathlib
 import re
+import shlex
 import sys
 import time
-from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 
 
@@ -457,7 +458,14 @@ _WORKSPACE_SHELL_MUTATION_CMD_RE = re.compile(
     r"(^|[;&|]\s*)(sed\s+-i|perl\s+-pi|awk\s+-i)\b",
     re.IGNORECASE | re.MULTILINE,
 )
-_WORKSPACE_SHELL_REDIRECT_RE = re.compile(r"(?<!\d)>{1,2}(?![&|])|<<-?", re.MULTILINE)
+_WORKSPACE_SHELL_HEREDOC_TOKENS = {"<<", "<<-"}
+_WORKSPACE_SHELL_OUTPUT_REDIRECT_TOKENS = {">", ">>", ">|", "&>", "&>>", ">&", ">>&"}
+_WORKSPACE_SHELL_OUTPUT_REDIRECT_RE = re.compile(
+    r"^(?P<fd>\d*)?(?P<op>&>>|>>&|>>|>\||&>|>&|>)(?P<target>.*)$"
+)
+_WORKSPACE_SHELL_FD_TARGET_RE = re.compile(r"^&?\d+$|^&?-$")
+_WORKSPACE_SHELL_DEV_FD_RE = re.compile(r"^/(?:dev/fd|proc/self/fd)/\d+$")
+_WORKSPACE_SHELL_SINK_TARGETS = {"/dev/null", "/dev/stdout", "/dev/stderr", os.devnull.lower()}
 
 
 def _split_bg_marker(content: str):
@@ -473,15 +481,94 @@ def _split_bg_marker(content: str):
     return False, content
 
 
+def _workspace_shell_tokens(command: str) -> Optional[List[str]]:
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    try:
+        return list(lexer)
+    except ValueError:
+        return None
+
+
+def _workspace_shell_redirect_target_is_safe(target: str, workspace: str) -> bool:
+    target = (target or "").strip()
+    if not target:
+        return False
+    if _WORKSPACE_SHELL_FD_TARGET_RE.match(target):
+        return True
+
+    lowered = target.lower()
+    if lowered in _WORKSPACE_SHELL_SINK_TARGETS:
+        return True
+    if _WORKSPACE_SHELL_DEV_FD_RE.match(target):
+        return True
+
+    expanded = os.path.expandvars(os.path.expanduser(target))
+    if not os.path.isabs(expanded):
+        return False
+
+    try:
+        workspace_real = os.path.realpath(workspace)
+        target_real = os.path.realpath(expanded)
+        return os.path.commonpath([workspace_real, target_real]) != workspace_real
+    except (OSError, ValueError):
+        return False
+
+
+def _workspace_shell_redirects_to_workspace(command: str, workspace: str) -> bool:
+    tokens = _workspace_shell_tokens(command)
+    if tokens is None:
+        # If tokenization cannot determine quoting, keep the old safety posture
+        # for literal redirects while avoiding quoted/comparison false positives
+        # in valid shell.
+        return bool(re.search(r"(^|[\s;&|])(?:\d*)>{1,2}\S*", command) or "<<" in command)
+
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token in _WORKSPACE_SHELL_HEREDOC_TOKENS or token.startswith("<<"):
+            return True
+
+        if token.isdigit() and i + 1 < len(tokens):
+            next_token = tokens[i + 1]
+            if next_token in _WORKSPACE_SHELL_OUTPUT_REDIRECT_TOKENS:
+                target = tokens[i + 2] if i + 2 < len(tokens) else ""
+                if not _workspace_shell_redirect_target_is_safe(target, workspace):
+                    return True
+                i += 3
+                continue
+
+        if token in _WORKSPACE_SHELL_OUTPUT_REDIRECT_TOKENS:
+            target = tokens[i + 1] if i + 1 < len(tokens) else ""
+            if not _workspace_shell_redirect_target_is_safe(target, workspace):
+                return True
+            i += 2
+            continue
+
+        match = _WORKSPACE_SHELL_OUTPUT_REDIRECT_RE.match(token)
+        if match:
+            target = match.group("target")
+            if match.group("op") == ">&" and not target:
+                target = tokens[i + 1] if i + 1 < len(tokens) else ""
+                i += 1
+            if not _workspace_shell_redirect_target_is_safe(target, workspace):
+                return True
+        i += 1
+
+    return False
+
+
 def _workspace_shell_write_block_reason(tool: str, content: str) -> Optional[str]:
-    if tool != "bash" or not get_active_workspace():
+    workspace = get_active_workspace()
+    if tool != "bash" or not workspace:
         return None
     _, command = _split_bg_marker(content or "")
     if not command.strip():
         return None
     if not (
         _WORKSPACE_SHELL_MUTATION_CMD_RE.search(command)
-        or _WORKSPACE_SHELL_REDIRECT_RE.search(command)
+        or _workspace_shell_redirects_to_workspace(command, workspace)
     ):
         return None
     return (
