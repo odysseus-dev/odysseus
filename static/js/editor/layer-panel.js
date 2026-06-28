@@ -357,7 +357,7 @@ export function createLayerPanelRenderer(deps) {
           if (layer.isBase && uiModule?.styledConfirm) {
             const ok = await uiModule.styledConfirm(
               'Delete the original photo layer? Ctrl+Z brings it back.',
-              { confirmText: 'Delete', cancelText: 'Cancel', danger: true }
+              { confirmText: (window.__t || (k=>k))('common.delete'), cancelText: (window.__t || (k=>k))('common.cancel'), danger: true }
             );
             if (!ok) return;
           }

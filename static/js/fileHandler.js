@@ -178,7 +178,7 @@ export async function uploadPending() {
       // pendingFiles so the strip re-renders for a retry (see finally below).
       let detail = '';
       try { const e = await res.json(); detail = e.detail || e.error || ''; } catch (_) {}
-      _showToast('Upload failed' + (detail ? ': ' + detail : ` (HTTP ${res.status})`));
+      _showToast((window.__t || (k=>k))('settings.failedToSave') + (detail ? ': ' + detail : ` (HTTP ${res.status})`));
       return [];
     }
     const data = await res.json();

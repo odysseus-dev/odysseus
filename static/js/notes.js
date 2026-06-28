@@ -89,8 +89,8 @@ function _showNotesFirstOpenHint(pane) {
   hint.id = 'notes-first-open-hint';
   hint.className = 'tour-hint';
   hint.innerHTML = `
-    <div class="tour-hint-text"><b>Notes</b> is your basic todo list, and also where reminders are managed.</div>
-    <button type="button" class="tour-hint-dismiss">OK</button>
+    <div class="tour-hint-text"><b>${(window.__t || (k=>k))('notes.title')}</b> ${(window.__t || (k=>k))('notes.firstOpenHint')}</div>
+    <button type="button" class="tour-hint-dismiss">${(window.__t || (k=>k))('notes.ok')}</button>
   `;
   document.body.appendChild(hint);
 
@@ -1155,31 +1155,31 @@ export function openPanel() {
   pane.innerHTML = `
     <div class="notes-mobile-grabber" id="notes-mobile-grabber" aria-hidden="true"></div>
     <div class="notes-pane-header">
-      <h4 class="notes-pane-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2.5px;margin-right:6px"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/><path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/></svg>Notes</h4>
+      <h4 class="notes-pane-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2.5px;margin-right:6px"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/><path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/></svg>${(window.__t || (k=>k))('notes.title')}</h4>
       <span style="flex:1"></span>
-      <button id="notes-archive-toggle" class="doc-action-icon-btn notes-header-text-btn" title="View archive" style="opacity:0.8;gap:5px;">
+      <button id="notes-archive-toggle" class="doc-action-icon-btn notes-header-text-btn" title="${(window.__t || (k=>k))('notes.viewArchive')}" style="opacity:0.8;gap:5px;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 002 2h12a2 2 0 002-2V8"/><path d="M10 12h4"/></svg>
-        <span class="notes-header-btn-label">Archive</span>
+        <span class="notes-header-btn-label">${(window.__t || (k=>k))('notes.archive')}</span>
       </button>
-      <button id="notes-view-toggle" class="doc-action-icon-btn notes-header-text-btn" title="Toggle view" style="opacity:0.8;gap:5px;">
+      <button id="notes-view-toggle" class="doc-action-icon-btn notes-header-text-btn" title="${(window.__t || (k=>k))('notes.toggleView')}" style="opacity:0.8;gap:5px;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-        <span class="notes-header-btn-label">Toggle</span>
+        <span class="notes-header-btn-label">${(window.__t || (k=>k))('notes.toggle')}</span>
       </button>
-      <button id="notes-minimize-btn" class="modal-minimize-btn" title="Minimize" aria-label="Minimize notes" style="position:relative;left:2px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="18" x2="18" y2="18"/></svg></button>
+      <button id="notes-minimize-btn" class="modal-minimize-btn" title="${(window.__t || (k=>k))('notes.minimize')}" aria-label="${(window.__t || (k=>k))('notes.minimize')}" style="position:relative;left:2px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="18" x2="18" y2="18"/></svg></button>
     </div>
     <div class="notes-search-bar">
-      <input type="text" id="notes-search" class="memory-search-input" placeholder="Search notes…" autocomplete="off" />
-      <button id="notes-select-btn" class="notes-select-trigger" type="button">Select</button>
+      <input type="text" id="notes-search" class="memory-search-input" placeholder="${(window.__t || (k=>k))('notes.searchPlaceholder')}" autocomplete="off" />
+      <button id="notes-select-btn" class="notes-select-trigger" type="button">${(window.__t || (k=>k))('common.select')}</button>
     </div>
     <div id="notes-bulk-bar" class="memory-bulk-bar hidden">
-      <label class="memory-bulk-check-all"><input type="checkbox" id="notes-select-all" /> All</label>
-      <span id="notes-selected-count">0 Selected</span>
+      <label class="memory-bulk-check-all"><input type="checkbox" id="notes-select-all" /> ${(window.__t || (k=>k))('common.all')}</label>
+      <span id="notes-selected-count">0 ${(window.__t || (k=>k))('common.selected')}</span>
       <span style="flex:1"></span>
       <button id="notes-bulk-archive" class="memory-toolbar-btn" disabled>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 002 2h12a2 2 0 002-2V8"/><path d="M10 12h4"/></svg>Archive
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 002 2h12a2 2 0 002-2V8"/><path d="M10 12h4"/></svg>${(window.__t || (k=>k))('notes.archive')}
       </button>
       <button id="notes-bulk-delete" class="memory-toolbar-btn danger" disabled>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>Delete
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>${(window.__t || (k=>k))('common.delete')}
       </button>
     </div>
     <div class="notes-pane-body"></div>
@@ -1284,7 +1284,7 @@ export function openPanel() {
     // Label shows what you'll switch TO — "Grid" while in list, "List" while in grid.
     const _setViewLabel = () => {
       const lbl = viewBtn.querySelector('.notes-header-btn-label');
-      if (lbl) lbl.textContent = _viewMode === 'grid' ? 'List' : 'Grid';
+      if (lbl) lbl.textContent = _viewMode === 'grid' ? (window.__t || (k=>k))('notes.listView') : (window.__t || (k=>k))('notes.gridView');
     };
     _setViewLabel();
     requestAnimationFrame(() => _applyMasonry(document.querySelector('#notes-pane .notes-pane-body')));
@@ -1328,20 +1328,20 @@ export function openPanel() {
     _exitSelectMode();
     await _fetchNotes();
     _renderNotes();
-    uiModule.showToast(`Archived ${ids.length}`);
+    uiModule.showToast((window.__t || (k=>k))('notes.archivedN', {n: ids.length}));
   });
   document.getElementById('notes-bulk-delete').addEventListener('click', async () => {
     const ids = [..._selectedIds];
     if (!ids.length) return;
     if (uiModule && uiModule.styledConfirm) {
-      const ok = await uiModule.styledConfirm(`Delete ${ids.length} note${ids.length === 1 ? '' : 's'}?`, { confirmText: 'Delete', danger: true });
+      const ok = await uiModule.styledConfirm((window.__t || (k=>k))('notes.deleteConfirm', {n: ids.length}), { confirmText: (window.__t || (k=>k))('common.delete'), danger: true });
       if (!ok) return;
     }
     await Promise.all(ids.map(id => _deleteNoteApi(id).catch(() => {})));
     _exitSelectMode();
     await _fetchNotes();
     _renderNotes();
-    uiModule.showToast(`Deleted ${ids.length}`);
+    uiModule.showToast((window.__t || (k=>k))('notes.deletedN', {n: ids.length}));
   });
   // Escape: exit select mode first (if active), otherwise close the panel.
   // Skip when the user is editing a form field — those have their own
@@ -1431,7 +1431,7 @@ function _enterSelectMode() {
   const bar = document.getElementById('notes-bulk-bar');
   const btn = document.getElementById('notes-select-btn');
   if (bar) bar.classList.remove('hidden');
-  if (btn) { btn.classList.add('active'); btn.textContent = 'Cancel'; }
+  if (btn) { btn.classList.add('active'); btn.textContent = (window.__t || (k=>k))('notes.cancel'); }
   _renderNotes();
   _updateBulkBar();
 }
@@ -1443,7 +1443,7 @@ function _exitSelectMode() {
   const btn = document.getElementById('notes-select-btn');
   const all = document.getElementById('notes-select-all');
   if (bar) bar.classList.add('hidden');
-  if (btn) { btn.classList.remove('active'); btn.textContent = 'Select'; }
+  if (btn) { btn.classList.remove('active'); btn.textContent = (window.__t || (k=>k))('notes.select'); }
   if (all) all.checked = false;
   _renderNotes();
 }
@@ -1454,7 +1454,7 @@ function _updateBulkBar() {
   const archiveBtn = document.getElementById('notes-bulk-archive');
   const deleteBtn = document.getElementById('notes-bulk-delete');
   const allEl = document.getElementById('notes-select-all');
-  if (countEl) countEl.textContent = `${count} Selected`;
+  if (countEl) countEl.textContent = (window.__t || (k=>k))('memory.selected', {n: count});
   if (archiveBtn) archiveBtn.disabled = count === 0;
   if (deleteBtn) deleteBtn.disabled = count === 0;
   if (allEl) allEl.checked = _notes.length > 0 && _notes.every(n => _selectedIds.has(n.id));
@@ -1484,17 +1484,17 @@ function _isPastReminder(n) {
 async function _clearPastReminders() {
   const targets = _notes.filter(n => !n.archived && _isPastReminder(n));
   if (!targets.length) {
-    uiModule.showToast?.('No past reminders to clear');
+    uiModule.showToast?.((window.__t || (k=>k))('notes.noPastReminders'));
     return;
   }
   const ok = uiModule?.styledConfirm
-    ? await uiModule.styledConfirm(`Delete ${targets.length} past reminder${targets.length === 1 ? '' : 's'}?`, { confirmText: 'Delete', danger: true })
-    : confirm(`Delete ${targets.length} past reminder${targets.length === 1 ? '' : 's'}?`);
+    ? await uiModule.styledConfirm((window.__t || (k=>k))('notes.clearPastConfirm', {n: targets.length}), { confirmText: (window.__t || (k=>k))('common.delete'), danger: true })
+    : confirm((window.__t || (k=>k))('notes.clearPastConfirm', {n: targets.length}));
   if (!ok) return;
   await Promise.all(targets.map(n => _deleteNoteApi(n.id).catch(() => {})));
   await _fetchNotes();
   _renderNotes();
-  uiModule.showToast?.(`Cleared ${targets.length} past reminder${targets.length === 1 ? '' : 's'}`);
+  uiModule.showToast?.((window.__t || (k=>k))('notes.clearedPastReminders', {n: targets.length}));
 }
 
 function _renderLabels(root = document) {
@@ -1513,8 +1513,8 @@ function _renderLabels(root = document) {
   const todayCount = _notes.filter(n => n.note_type === 'goal' && !n.archived && _nextGoalStep(n)).length;
   bar.style.display = '';
   const allActive = _activeLabel === null && _activeFilter === null;
-  let html = `<button class="notes-label-chip${allActive ? ' active' : ''}" data-action="all">All</button>`;
-  html += `<button class="notes-label-chip${_activeFilter === 'default' ? ' active' : ''}" data-action="default" title="Show notes without tags">Default <span class="notes-label-chip-count">${defaultCount}</span></button>`;
+  let html = `<button class="notes-label-chip${allActive ? ' active' : ''}" data-action="all">${(window.__t || (k=>k))('notes.allChip')}</button>`;
+  html += `<button class="notes-label-chip${_activeFilter === 'default' ? ' active' : ''}" data-action="default" title="${(window.__t || (k=>k))('notes.showWithoutTags')}">Default <span class="notes-label-chip-count">${defaultCount}</span></button>`;
   if (todayCount > 0) {
     const isOn = _activeFilter === 'today';
     const icon = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:2px"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>';
@@ -1873,7 +1873,7 @@ function _renderNotes() {
     html += `<div class="note-card${note.pinned ? ' note-card-pinned' : ''}${cc}${sel}${goalClass}${reminderGlowClass}${_selectMode ? ' note-card-selectmode' : ''}" draggable="${(_selectMode || _isNotesMobileMode()) ? 'false' : 'true'}" data-note-id="${note.id}"${cardStyle}>
       ${_selectMode ? `<input type="checkbox" class="memory-select-cb note-card-cb" data-note-id="${note.id}" ${_selectedIds.has(note.id) ? 'checked' : ''} />` : ''}
       ${goalPill}
-      <button class="note-card-pin${note.pinned ? ' active' : ''}" data-note-id="${note.id}" title="${note.pinned ? 'Unpin' : 'Pin'}">
+      <button class="note-card-pin${note.pinned ? ' active' : ''}" data-note-id="${note.id}" title="${note.pinned ? (window.__t || (k=>k))('notes.unpin') : (window.__t || (k=>k))('notes.pin')}">
         <svg width="16" height="16" viewBox="0 0 24 28" fill="${note.pinned ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"${note.pinned ? ' style="color:var(--accent,var(--red));"' : ''}><g transform="rotate(${note.pinned ? 0 : 45} 12 14)" style="transition:transform 0.2s ease;"><line x1="12" y1="17" x2="12" y2="27"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17z"/></g></svg>
       </button>
       ${_showingArchived
@@ -1895,7 +1895,7 @@ function _renderNotes() {
       </div>
       ${_safeImgSrc(note.image_url) ? `<img class="note-card-image" src="${_esc(_safeImgSrc(note.image_url))}" alt="" draggable="false" />` : ''}
       ${contentHtml}
-      ${_hasItems(note) ? `<div class="note-cl-quickadd"><input type="text" class="note-cl-quickadd-input" placeholder="+ Add item" data-note-id="${note.id}" /></div>` : ''}
+      ${_hasItems(note) ? `<div class="note-cl-quickadd"><input type="text" class="note-cl-quickadd-input" placeholder="+ ${(window.__t || (k=>k))('memory.add')}" data-note-id="${note.id}" /></div>` : ''}
       ${reminderTagHtml}
       ${noteTags.length ? `<div class="note-card-label">${noteTags.map(t => `<button type="button" class="note-card-label-chip" data-note-label-filter="${_esc(t)}" title="Filter #${_esc(t)}">#${_esc(t)}</button>`).join(' ')}</div>` : ''}
       <div class="note-card-actions">
@@ -2079,7 +2079,7 @@ function _renderQuickAdd(body) {
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
       </button>
     </div>
-    <input type="text" class="notes-quick-input" placeholder="Add a to-do…" />
+    <input type="text" class="notes-quick-input" placeholder="${(window.__t || (k=>k))('notes.addTodo')}" />
     <button class="notes-quick-icon" data-action="photo" title="Attach photo">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
     </button>
@@ -2337,7 +2337,7 @@ function _bindCardEvents(body) {
       const finish = () => {
         _renderNotes();
         _patchNote(id, { archived: true }).then(() => {
-          uiModule.showToast('Archived', { duration: 6000, action: 'Undo', actionIcon: _undoIcon, onAction: undo, actionHint: 'Ctrl+Z' });
+          uiModule.showToast((window.__t || (k=>k))('sidebar.archive'), { duration: 6000, action: 'Undo', actionIcon: _undoIcon, onAction: undo, actionHint: 'Ctrl+Z' });
         }).catch(() => {
           _notes.splice(idx, 0, removed);
           _renderNotes();
@@ -2364,7 +2364,7 @@ function _bindCardEvents(body) {
       if (idx < 0) return;
       const removed = _notes.splice(idx, 1)[0];
       _renderNotes();
-      _patchNote(id, { archived: false }).then(() => uiModule.showToast('Unarchived')).catch(() => {
+      _patchNote(id, { archived: false }).then(() => uiModule.showToast((window.__t || (k=>k))('sidebar.restore'))).catch(() => {
         _notes.splice(idx, 0, removed);
         _renderNotes();
         uiModule.showError('Failed to unarchive');
@@ -2380,7 +2380,7 @@ function _bindCardEvents(body) {
       if (idx < 0) return;
       const removed = _notes.splice(idx, 1)[0];
       _renderNotes();
-      _deleteNoteApi(id).then(() => uiModule.showToast('Deleted')).catch(() => {
+      _deleteNoteApi(id).then(() => uiModule.showToast((window.__t || (k=>k))('misc.deleted'))).catch(() => {
         _notes.splice(idx, 0, removed);
         _renderNotes();
         uiModule.showError('Failed to delete');
@@ -2415,7 +2415,7 @@ function _bindCardEvents(body) {
         _pushUndo({ label: 'archive', run: undo });
         const _undoIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="9 14 4 9 9 4"/><path d="M4 9h11a5 5 0 0 1 5 5v0a5 5 0 0 1-5 5H9"/></svg>';
         _patchNote(id, { archived: true }).then(() => {
-          uiModule.showToast('Archived', { duration: 6000, action: 'Undo', actionIcon: _undoIcon, onAction: undo, actionHint: 'Ctrl+Z' });
+          uiModule.showToast((window.__t || (k=>k))('sidebar.archive'), { duration: 6000, action: 'Undo', actionIcon: _undoIcon, onAction: undo, actionHint: 'Ctrl+Z' });
         }).catch(() => {
           _notes.splice(curIdx, 0, removed);
           _renderNotes();
@@ -2440,7 +2440,7 @@ function _bindCardEvents(body) {
       if (idx < 0) return;
       const removed = _notes.splice(idx, 1)[0];
       _renderNotes();
-      _patchNote(id, { archived: false }).then(() => uiModule.showToast('Unarchived')).catch(() => {
+      _patchNote(id, { archived: false }).then(() => uiModule.showToast((window.__t || (k=>k))('sidebar.restore'))).catch(() => {
         _notes.splice(idx, 0, removed);
         _renderNotes();
         uiModule.showError('Failed to unarchive');
@@ -2841,7 +2841,7 @@ function _buildForm(note = null) {
   let currentImageUrl = _safeImgSrc(note?.image_url || '');
   form.innerHTML = `
     <div class="note-form-header">
-      <input type="text" class="note-form-title" placeholder="Title" value="${_esc(note?.title || '')}" />
+      <input type="text" class="note-form-title" placeholder="${(window.__t || (k=>k))('notes.titlePlaceholder')}" value="${_esc(note?.title || '')}" />
       <button type="button" class="note-form-icon-btn note-form-remind-btn${note?.due_date ? ' has-date' : ''}" title="Remind me">
         <svg width="31" height="31" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
       </button>
@@ -2851,7 +2851,7 @@ function _buildForm(note = null) {
     ${currentImageUrl && type !== 'draw' ? `<div class="note-form-image-wrap"><img class="note-form-image" src="${_esc(currentImageUrl)}" draggable="false" /><button class="note-form-image-rm" title="Remove">&times;</button></div>` : ''}
     <div class="note-form-body">
       ${type === 'note'
-        ? `<textarea class="note-form-content" placeholder="Take a note..." rows="4">${_esc(note?.content || '')}</textarea>`
+        ? `<textarea class="note-form-content" placeholder="${(window.__t || (k=>k))('notes.takeNote')}" rows="4">${_esc(note?.content || '')}</textarea>`
         : type === 'draw'
         ? _buildDrawHtml()
         : type === 'goal'
@@ -2978,7 +2978,7 @@ function _buildForm(note = null) {
           ? _stashedNoteText
           : (_stashedGoalDesc && _stashedGoalDesc)
           || (_stashedTodoItems || _stashedGoalItems || []).map(i => i.text).join('\n');
-        bodyEl.innerHTML = `<textarea class="note-form-content" placeholder="Take a note..." rows="4">${_esc(text)}</textarea>`;
+        bodyEl.innerHTML = `<textarea class="note-form-content" placeholder="${(window.__t || (k=>k))('notes.takeNote')}" rows="4">${_esc(text)}</textarea>`;
         _wireHashtag(bodyEl.querySelector('.note-form-content'));
       }
       const focusEl = newType === 'note'
@@ -3637,13 +3637,13 @@ function _buildForm(note = null) {
     const _saveLabelEl = _saveBtnEl0.querySelector('.nft-label');
     const _enterArchive = () => {
       _saveBtnEl0.classList.add('archive-mode');
-      if (_saveLabelEl) _saveLabelEl.textContent = 'Archive';
+      if (_saveLabelEl) _saveLabelEl.textContent = (window.__t || (k=>k))('notes.archive');
       _saveBtnEl0.title = 'Archive';
     };
     const _enterUpdate = () => {
       if (!_saveBtnEl0.classList.contains('archive-mode')) return;
       _saveBtnEl0.classList.remove('archive-mode');
-      if (_saveLabelEl) _saveLabelEl.textContent = 'Update';
+      if (_saveLabelEl) _saveLabelEl.textContent = (window.__t || (k=>k))('notes.update');
       _saveBtnEl0.title = 'Update';
     };
     _enterArchive();
@@ -3667,7 +3667,7 @@ function _buildForm(note = null) {
     _pushUndo({ label: 'archive', run: undo });
     const _undoIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="9 14 4 9 9 4"/><path d="M4 9h11a5 5 0 0 1 5 5v0a5 5 0 0 1-5 5H9"/></svg>';
     _patchNote(id, { archived: true }).then(() => {
-      uiModule.showToast('Archived', { duration: 6000, action: 'Undo', actionIcon: _undoIcon, onAction: undo, actionHint: 'Ctrl+Z' });
+      uiModule.showToast((window.__t || (k=>k))('sidebar.archive'), { duration: 6000, action: 'Undo', actionIcon: _undoIcon, onAction: undo, actionHint: 'Ctrl+Z' });
     }).catch(() => {
       _notes.splice(idx, 0, removed);
       _renderNotes();
@@ -3678,7 +3678,7 @@ function _buildForm(note = null) {
     if (!isEdit) return;
     const id = note.id;
     if (uiModule.styledConfirm) {
-      const ok = await uiModule.styledConfirm('Delete this note?', { confirmText: 'Delete', danger: true });
+      const ok = await uiModule.styledConfirm('Delete this note?', { confirmText: (window.__t || (k=>k))('common.delete'), danger: true });
       if (!ok) return;
     } else if (!confirm('Delete this note?')) {
       return;
@@ -3687,7 +3687,7 @@ function _buildForm(note = null) {
     if (idx >= 0) _notes.splice(idx, 1);
     _editingId = null;
     _renderNotes();
-    _deleteNoteApi(id).then(() => uiModule.showToast('Deleted')).catch(() => {
+    _deleteNoteApi(id).then(() => uiModule.showToast((window.__t || (k=>k))('misc.deleted'))).catch(() => {
       uiModule.showError('Failed to delete');
       _fetchNotes().then(() => _renderNotes());
     });
@@ -3708,7 +3708,7 @@ function _buildGoalHtml(note, items) {
   const desc = (note?.content || '').toString();
   return `
     <div class="note-form-goal">
-      <textarea class="note-form-goal-desc" placeholder="Description (optional)" rows="3">${_esc(desc)}</textarea>
+      <textarea class="note-form-goal-desc" placeholder="${(window.__t || (k=>k))('notes.descriptionOptional')}" rows="3">${_esc(desc)}</textarea>
       ${_buildChecklistHtml(items)}
     </div>
   `;
@@ -3753,7 +3753,7 @@ function _buildChecklistHtml(items) {
     html += `<div class="note-cl-row${item.done ? ' done' : ''}" draggable="true" data-item-id="${item.id || _uid()}" data-indent="${indent}" style="padding-left:${indent * 16}px">
       <span class="note-cl-grip" title="Drag to reorder">⋮⋮</span>
       <span class="note-cl-dot"></span>
-      <input type="text" class="note-cl-text" value="${_esc(item.text)}" placeholder="Item..." />
+      <input type="text" class="note-cl-text" value="${_esc(item.text)}" placeholder="${(window.__t || (k=>k))('notes.itemPlaceholder')}" />
       <button type="button" class="note-cl-rm">&times;</button>
     </div>`;
   }
@@ -3832,7 +3832,7 @@ function _wireChecklist(container) {
       row.draggable = true;
       row.dataset.itemId = _uid();
       row.dataset.indent = '0';
-      row.innerHTML = `<span class="note-cl-grip" title="Drag">⋮⋮</span><span class="note-cl-dot"></span><input type="text" class="note-cl-text" placeholder="Item..." /><button type="button" class="note-cl-rm">&times;</button>`;
+      row.innerHTML = `<span class="note-cl-grip" title="${(window.__t || (k=>k))('notes.drag')}">⋮⋮</span><span class="note-cl-dot"></span><input type="text" class="note-cl-text" placeholder="${(window.__t || (k=>k))('notes.itemPlaceholder')}" /><button type="button" class="note-cl-rm">&times;</button>`;
       inputs.insertBefore(row, addBtn);
       row.querySelector('.note-cl-text').focus();
       _wireRow(row, container);
@@ -4287,7 +4287,7 @@ function _createNote(type = 'todo') {
   form.classList.add('note-form-new');
   body.prepend(form);
   form.querySelector('.note-form-title').focus();
-  if (restored) uiModule.showToast('Restored unsaved note');
+  if (restored) uiModule.showToast((window.__t || (k=>k))('notes.restoredUnsavedNote'));
 }
 
 // Build the plain-text/markdown form of a note for clipboard copy.
@@ -4410,7 +4410,7 @@ async function _agentSolveNote(id) {
   const note = _notes.find(n => n.id === id);
   if (!note) return;
   const prompt = _noteToAgentPrompt(note);
-  if (!prompt) { uiModule.showToast('Nothing to solve — note is empty'); return; }
+  if (!prompt) { uiModule.showToast((window.__t || (k=>k))('notes.nothingToSolve')); return; }
   try {
     const dc = await (await fetch(`${API_BASE}/api/default-chat`, { credentials: 'same-origin' })).json();
     if (!dc.endpoint_url || !dc.model) { uiModule.showError('No default chat model configured'); return; }
@@ -4455,7 +4455,7 @@ async function _agentSolveNote(id) {
       })
       .catch(() => {});
 
-    uiModule.showToast('Agent working in background — tap the Agent tag when ready');
+    uiModule.showToast((window.__t || (k=>k))('notes.agentWorking'));
   } catch (e) {
     uiModule.showError('Agent failed: ' + (e.message || e));
   }
@@ -4472,7 +4472,7 @@ async function _agentSolveTodoItem(noteId, idx) {
   const item = note.items[idx];
   const itemText = (item && (item.text || '').trim()) || '';
   if (!itemText) {
-    uiModule.showToast('Nothing to solve — item is empty');
+    uiModule.showToast((window.__t || (k=>k))('notes.nothingToSolveItem'));
     return;
   }
   const titleCtx = (note.title || '').trim();
@@ -4535,7 +4535,7 @@ async function _agentSolveTodoItem(noteId, idx) {
       })
       .catch(() => {});
 
-    uiModule.showToast('Agent working on this item — tap the Agent tag when ready');
+    uiModule.showToast((window.__t || (k=>k))('notes.agentWorkingItem'));
   } catch (e) {
     uiModule.showError('Agent failed: ' + (e.message || e));
   }
@@ -4589,7 +4589,7 @@ function _editNote(id) {
   const { note: _n, restored } = _applyDraftToNote(note, id);
   const form = _buildForm(_n);
   card.replaceWith(form);
-  if (restored) uiModule.showToast('Restored unsaved changes');
+  if (restored) uiModule.showToast((window.__t || (k=>k))('notes.restoredUnsaved'));
   // Pinned notes live in the first masonry column — the edit form has
   // column-span:all, which can leave the form rendered above the fold or
   // visually buried under neighboring pinned cards. Bring it into view
@@ -4636,10 +4636,10 @@ function _editNote(id) {
 
 async function _deleteNote(id) {
   const ok = uiModule?.styledConfirm
-    ? await uiModule.styledConfirm('Delete this note?', { confirmText: 'Delete', danger: true })
+    ? await uiModule.styledConfirm('Delete this note?', { confirmText: (window.__t || (k=>k))('common.delete'), danger: true })
     : confirm('Delete this note?');
   if (!ok) return;
-  try { await _deleteNoteApi(id); await _fetchNotes(); _renderNotes(); uiModule.showToast('Deleted'); }
+  try { await _deleteNoteApi(id); await _fetchNotes(); _renderNotes(); uiModule.showToast((window.__t || (k=>k))('misc.deleted')); }
   catch (err) { uiModule.showError(err.message); }
 }
 
@@ -4684,7 +4684,7 @@ function _openMobileFullscreenEdit(id, fromCard) {
   const { note: _n, restored } = _applyDraftToNote(note, id);
   const form = _buildForm(_n);
   body.appendChild(form);
-  if (restored) uiModule.showToast('Restored unsaved changes');
+  if (restored) uiModule.showToast((window.__t || (k=>k))('notes.restoredUnsaved'));
   document.body.appendChild(overlay);
   _mobileFsOverlay = overlay;
 
@@ -4813,7 +4813,7 @@ function _openMobileFullscreenEdit(id, fromCard) {
       newRow.draggable = true;
       newRow.dataset.itemId = _uid();
       newRow.dataset.indent = '0';
-      newRow.innerHTML = '<span class="note-cl-grip" title="Drag">⋮⋮</span><span class="note-cl-dot"></span><input type="text" class="note-cl-text" placeholder="Item..." /><button type="button" class="note-cl-rm">&times;</button>';
+      newRow.innerHTML = `<span class="note-cl-grip" title="${(window.__t || (k=>k))('notes.drag')}">⋮⋮</span><span class="note-cl-dot"></span><input type="text" class="note-cl-text" placeholder="${(window.__t || (k=>k))('notes.itemPlaceholder')}" /><button type="button" class="note-cl-rm">&times;</button>`;
       inputs.insertBefore(newRow, addRow);
       _wireRow(newRow, inputs);
       // Touch reorder on the freshly-added row's grip.

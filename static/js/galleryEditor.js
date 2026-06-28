@@ -2,6 +2,8 @@
  * Gallery Editor — canvas-based image editor with layers, brush, eraser, text, crop, inpaint mask.
  */
 
+const __t = (k, v) => (window.__t || (kk=>kk))(k, v);
+
 import uiModule from './ui.js';
 import dragSortModule from './dragSort.js';
 import spinnerModule from './spinner.js';
@@ -233,16 +235,16 @@ function _getSelectedAIEndpoint(type) {
 // the busy button state ("Removing…", "Sharpening…"). Falls back to a
 // neutral "Processing…" when the layer name doesn't match a known verb.
 const _BUSY_LABELS = {
-  'bg removed': 'Removing…',
-  'sharpened': 'Sharpening…',
-  'enhanced': 'Enhancing…',
-  'harmonized': 'Harmonizing…',
-  'upscaled': 'Upscaling…',
-  'styled': 'Styling…',
+  'bg removed': __t('galleryEditor.removingBusy'),
+  'sharpened': __t('galleryEditor.sharpeningBusy'),
+  'enhanced': __t('galleryEditor.enhancingBusy'),
+  'harmonized': __t('galleryEditor.harmonizingBusy'),
+  'upscaled': __t('galleryEditor.upscalingBusy'),
+  'styled': __t('galleryEditor.stylingBusy'),
 };
 function _deriveBusyLabel(layerName) {
-  if (!layerName) return 'Processing…';
-  return _BUSY_LABELS[String(layerName).toLowerCase()] || 'Processing…';
+  if (!layerName) return __t('galleryEditor.processingBusy');
+  return _BUSY_LABELS[String(layerName).toLowerCase()] || __t('galleryEditor.processingBusy');
 }
 
 // AI-tool runner — sharpen / harmonize / upscale / style / bg-remove
@@ -491,7 +493,7 @@ function _showCanvasLoading(message) {
     `;
     state.container.appendChild(overlay);
   }
-  overlay.querySelector('.ge-canvas-loading-msg').textContent = message || 'Working…';
+  overlay.querySelector('.ge-canvas-loading-msg').textContent = message || __t('common.loading');
   overlay.style.display = '';
 }
 function _hideCanvasLoading() {
@@ -1266,7 +1268,7 @@ function _showCropApply() {
     <input type="number" class="ge-crop-w" min="1" max="20000" value="${Math.round(state.cropRect.w)}" title="Width">
     <span class="ge-crop-x">×</span>
     <input type="number" class="ge-crop-h" min="1" max="20000" value="${Math.round(state.cropRect.h)}" title="Height">
-    <button class="ge-crop-apply-btn">Apply</button>
+    <button class="ge-crop-apply-btn">__t('galleryEditor.apply')</button>
   `;
   const area = state.container.querySelector('.ge-canvas-area');
   if (!area || !state.cropRect || !state.mainCanvas) return;
@@ -1623,7 +1625,7 @@ function _showWandLoading() {
     spinner.element.style.cssText = 'width:30px;height:30px;margin:0;';
     overlay.appendChild(spinner.element);
   } catch (_) {
-    overlay.textContent = 'Selecting...';
+    overlay.textContent = __t('common.loading');
   }
   area.appendChild(overlay);
   return () => {
@@ -1728,7 +1730,7 @@ function _loadLayerAlphaAsSelection(layer) {
   state.wandLayerId = layer.id;
   state.wandLastSeed = null;
   composite();
-  if (uiModule) uiModule.showToast('Layer pixels selected');
+  if (uiModule) uiModule.showToast(__t('galleryEditor.layerPixelsSelected'));
 }
 
 // Invert the active selection: lasso (point list — turn into a polygon
@@ -1747,7 +1749,7 @@ function _invertSelection() {
     }
     ctx.putImageData(data, 0, 0);
     composite();
-    if (uiModule) uiModule.showToast('Selection inverted');
+    if (uiModule) uiModule.showToast(__t('galleryEditor.selectionInverted'));
     return true;
   }
   if (state.lassoPoints.length >= 3 && !state.lassoActive) {
@@ -1772,7 +1774,7 @@ function _invertSelection() {
     state.lassoPoints = [];
     state.lassoActive = false;
     composite();
-    if (uiModule) uiModule.showToast('Selection inverted (converted to wand)');
+    if (uiModule) uiModule.showToast(__t('galleryEditor.selectionInverted'));
     return true;
   }
   return false;
@@ -1855,7 +1857,7 @@ function _wandToMask() {
   state.wandLastSeed = null;
   composite();
   _renderLayerPanel();
-  if (uiModule) uiModule.showToast('Selection added to mask');
+  if (uiModule) uiModule.showToast(__t('galleryEditor.selectionAddedToMask'));
 }
 
 // Reveal/hide the small "X" badge on the Lasso and Wand tool buttons
@@ -1951,7 +1953,7 @@ function _wandCopyToNewLayer() {
   composite();
   _renderLayerPanel();
   _revealLayerPanel();
-  if (uiModule) uiModule.showToast('Copied to new layer');
+  if (uiModule) uiModule.showToast(__t('common.copied'));
 }
 
 function _lassoDeleteSelection() {
@@ -1978,7 +1980,7 @@ function _lassoDeleteSelection() {
 
   state.lassoPoints = [];
   composite();
-  uiModule.showToast('Selection deleted');
+  uiModule.showToast(__t('galleryEditor.selectionDeleted'));
 }
 
 function _lassoCopyToLayer() {
@@ -2016,7 +2018,7 @@ function _lassoCopyToLayer() {
   _renderLayerPanel();
   _revealLayerPanel();
   composite();
-  uiModule.showToast('Selection copied to new layer');
+  uiModule.showToast(__t('galleryEditor.selectionCopied'));
 }
 
 function _lassoToMask() {
@@ -2052,7 +2054,7 @@ function _lassoToMask() {
   state.lassoPoints = [];
   composite();
   _renderLayerPanel();
-  uiModule.showToast('Selection added to mask');
+  uiModule.showToast(__t('galleryEditor.selectionAddedToMask'));
 }
 
 // ── Edge feather ──
@@ -2087,8 +2089,8 @@ function _filterSliderPrompt(title, params, onPreview) {
         <div class="ge-filter-modal-head">${title}</div>
         ${rows}
         <div class="ge-filter-modal-actions">
-          <button type="button" class="ge-btn ge-btn-sm" data-action="cancel">Cancel</button>
-          <button type="button" class="ge-btn ge-btn-sm ge-btn-primary" data-action="apply">Apply</button>
+          <button type="button" class="ge-btn ge-btn-sm" data-action="cancel">${__t('common.cancel')}</button>
+          <button type="button" class="ge-btn ge-btn-sm ge-btn-primary" data-action="apply">__t('galleryEditor.apply')</button>
         </div>
       </div>
     `;
@@ -2133,7 +2135,7 @@ function _filterSliderPrompt(title, params, onPreview) {
 // entry we pre-saved so the canceled run leaves no trace.
 async function _applyLiveBlur({ title, params, label, renderer }) {
   const layer = activeLayer();
-  if (!layer || layer.locked) { if (uiModule) uiModule.showToast('Select an unlocked layer'); return; }
+  if (!layer || layer.locked) { if (uiModule) uiModule.showToast(__t('galleryEditor.selectUnlockedLayer')); return; }
   const w = layer.canvas.width, h = layer.canvas.height;
   const snap = document.createElement('canvas');
   snap.width = w; snap.height = h;
@@ -2165,29 +2167,29 @@ async function _applyLiveBlur({ title, params, label, renderer }) {
 
 function _applyGaussianBlur() {
   _applyLiveBlur({
-    title: 'Gaussian Blur',
-    label: 'Gaussian Blur',
-    params: [{ key: 'radius', label: 'Radius', min: 0, max: 100, step: 1, value: 6, suffix: 'px' }],
+    title: __t('galleryEditor.gaussianBlur'),
+    label: __t('galleryEditor.gaussianBlur'),
+    params: [{ key: 'radius', label: __t('galleryEditor.radius'), min: 0, max: 100, step: 1, value: 6, suffix: 'px' }],
     renderer: _gaussianBlur,
   });
 }
 
 function _applyZoomBlur() {
   _applyLiveBlur({
-    title: 'Zoom Blur',
-    label: 'Zoom Blur',
-    params: [{ key: 'strength', label: 'Strength', min: 1, max: 50, step: 1, value: 15 }],
+    title: __t('galleryEditor.zoomBlur'),
+    label: __t('galleryEditor.zoomBlur'),
+    params: [{ key: 'strength', label: __t('galleryEditor.strength'), min: 1, max: 50, step: 1, value: 15 }],
     renderer: _zoomBlur,
   });
 }
 
 function _applyMotionBlur() {
   _applyLiveBlur({
-    title: 'Motion Blur',
-    label: 'Motion Blur',
+    title: __t('galleryEditor.motionBlur'),
+    label: __t('galleryEditor.motionBlur'),
     params: [
-      { key: 'length', label: 'Length', min: 1, max: 200, step: 1, value: 20, suffix: 'px' },
-      { key: 'angle', label: 'Angle', min: -180, max: 180, step: 1, value: 0, suffix: '°' },
+      { key: 'length', label: __t('galleryEditor.length'), min: 1, max: 200, step: 1, value: 20, suffix: 'px' },
+      { key: 'angle', label: __t('galleryEditor.angle'), min: -180, max: 180, step: 1, value: 0, suffix: '°' },
     ],
     renderer: _motionBlur,
   });
@@ -2700,7 +2702,7 @@ function _buildEditor(container) {
     layer.ctx.drawImage(stencil, 0, 0);
     composite();
     _renderLayerPanel();
-    if (uiModule) uiModule.showToast('Filled');
+    if (uiModule) uiModule.showToast(__t('galleryEditor.filled'));
   }
 
   // AI model selectors (Gen, Inpaint, per-tool) — full
@@ -2716,7 +2718,7 @@ function _buildEditor(container) {
       await exportToGallery();
       return;
     }
-    const endBusy = _saveButtonBusy('Saving…');
+    const endBusy = _saveButtonBusy(__t('common.save'));
     let blob = null;
     let savedOk = false;
     const t0 = performance.now();
@@ -3047,7 +3049,7 @@ function _flashSaveButtonOk() {
   const origBg = btn.style.background;
   btn.style.background = '#3aa75a';
   btn.style.color = '#fff';
-  btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:4px;"><polyline points="20 6 9 17 4 12"/></svg>Saved';
+  btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:4px;"><polyline points="20 6 9 17 4 12"/></svg>' + __t('common.save');
   setTimeout(() => {
     btn.style.background = origBg;
     btn.style.color = '';
@@ -3071,10 +3073,10 @@ function _saveButtonBusy(label) {
     btn.appendChild(sp.createElement());
     const txt = document.createElement('span');
     txt.className = 'ge-btn-busy-label';
-    txt.textContent = label || 'Saving…';
+    txt.textContent = label || __t('common.save');
     btn.appendChild(txt);
     sp.start();
-  } catch { btn.textContent = label || 'Saving…'; }
+  } catch { btn.textContent = label || __t('common.save'); }
   return () => {
     try { sp && sp.stop && sp.stop(); } catch {}
     btn.disabled = false;
@@ -3084,7 +3086,7 @@ function _saveButtonBusy(label) {
 }
 
 export async function exportToGallery() {
-  const endBusy = _saveButtonBusy('Saving copy…');
+  const endBusy = _saveButtonBusy(__t('common.save'));
   let blob = null;
   let savedOk = false;
   const t0 = performance.now();
@@ -3277,7 +3279,7 @@ export function downloadPNG() {
 // survives the round-trip. Use Load Project to restore.
 function _saveProject() {
   if (!state.layers.length) {
-    if (uiModule) uiModule.showToast('Nothing to save');
+    if (uiModule) uiModule.showToast(__t('galleryEditor.nothingToSave'));
     return;
   }
   const project = {
@@ -3307,7 +3309,7 @@ function _saveProject() {
   a.download = 'project.geproj.json';
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-  if (uiModule) uiModule.showToast('Project saved', 3000);
+  if (uiModule) uiModule.showToast(__t('galleryEditor.projectSaved'), 3000);
 }
 
 // Open-file picker for Load Project. Restores layers + canvas size.
@@ -3322,14 +3324,14 @@ function _loadProjectPrompt() {
       const text = await file.text();
       const proj = JSON.parse(text);
       if (proj.type !== 'odysseus-gallery-editor-project') {
-        if (uiModule) uiModule.showToast('Not a project file', 5000);
+        if (uiModule) uiModule.showToast(__t('galleryEditor.notProjectFile'), 5000);
         return;
       }
       await _restoreDraft(proj);
       composite();
       _renderLayerPanel();
       _fitZoom();
-      if (uiModule) uiModule.showToast('Project loaded', 3000);
+      if (uiModule) uiModule.showToast(__t('galleryEditor.projectLoaded'), 3000);
     } catch (e) {
       if (uiModule) uiModule.showToast('Load failed: ' + (e.message || e), 6000);
     }
@@ -3380,7 +3382,7 @@ function _promptCanvasSize(opts) {
     }
     function onOk() {
       const dims = _parseCanvasSizePrompt(wInput.value, hInput.value, initialW, initialH);
-      if (!dims) { uiModule.showToast('Invalid size'); return; }
+      if (!dims) { uiModule.showToast(__t('galleryEditor.invalidSize')); return; }
       cleanup(dims);
     }
     function onCancel() { cleanup(null); }
@@ -3457,7 +3459,7 @@ function _mountEditorLoading(label, dims) {
   }
   const inner = document.createElement('div');
   inner.className = 'ge-loading-inner';
-  inner.innerHTML = `<span class="ge-loading-text">${label || 'Loading…'}</span>`;
+  inner.innerHTML = `<span class="ge-loading-text">${label || __t('common.loading')}</span>`;
   el.appendChild(inner);
   // Mount on the editor BODY (toolbar + canvas + panel) — it sits below the
   // gallery's search/select bar, so the cover doesn't bleed up over those.
@@ -3536,7 +3538,7 @@ export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) 
   if (!imageUrl && draftId) {
     // Re-open a saved draft by its server-side id — covers the
     // "Resume" buttons on the Edit-tab landing.
-    _mountEditorLoading('Loading draft…', presetSize || null);
+    _mountEditorLoading(__t('common.loading'), presetSize || null);
     // Bail if the user closes the editor while the async load is in
     // flight — without this guard, the .then() callbacks fire after
     // closeEditor and re-mount the spinner / draw into a dead canvas,
@@ -3546,7 +3548,7 @@ export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) 
         if (!state.editorOpen) return;
         if (!d) {
           _unmountEditorLoading();
-          if (uiModule) uiModule.showToast('Draft not found');
+          if (uiModule) uiModule.showToast(__t('galleryEditor.draftNotFound'));
           closeEditor();
           return;
         }
@@ -3562,14 +3564,14 @@ export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) 
           const sizeLabel = document.getElementById('ge-canvas-size');
           if (sizeLabel) sizeLabel.textContent = `${state.imgWidth}×${state.imgHeight}`;
           _unmountEditorLoading();
-          if (uiModule) uiModule.showToast('Resumed draft');
+          if (uiModule) uiModule.showToast(__t('galleryEditor.resumedDraft'));
         });
       })
       .catch(err => {
         if (!state.editorOpen) return;
         _unmountEditorLoading();
         console.warn('[ge] draft load failed', err);
-        if (uiModule) uiModule.showToast('Failed to load draft');
+        if (uiModule) uiModule.showToast(__t('galleryEditor.failedToLoadDraft'));
         closeEditor();
       });
   }
@@ -3609,14 +3611,14 @@ export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) 
   // Try to restore a previously-persisted draft for this image — that
   // way closing the gallery / editor mid-edit doesn't lose progress.
   // (Server-backed: look up by source_image_id.)
-  _mountEditorLoading('Looking up draft…');
+  _mountEditorLoading(__t('common.loading'));
   _findDraftForImage(imageId).then(_draft => {
     if (!state.editorOpen) return;
     if (!_draft) return null;
     state.draftId = _draft.id;
     state.draftName = _draft.name || displayName || 'Untitled';
     const innerLabel = state.editorLoadingEl?.querySelector('.ge-loading-text');
-    if (innerLabel) innerLabel.textContent = 'Resuming draft…';
+    if (innerLabel) innerLabel.textContent = __t('common.loading');
     return _restoreDraft(_draft).then(() => {
       if (!state.editorOpen) return null;
       // If the draft was broken/empty (0 layers reconstructed), fall
@@ -3633,7 +3635,7 @@ export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) 
       const sizeLabel = document.getElementById('ge-canvas-size');
       if (sizeLabel) sizeLabel.textContent = `${state.imgWidth}×${state.imgHeight}`;
       _unmountEditorLoading();
-      if (uiModule) uiModule.showToast('Resumed previous edit');
+      if (uiModule) uiModule.showToast(__t('galleryEditor.resumedPreviousEdit'));
       return 'restored';
     });
   }).then(restored => {
@@ -3652,10 +3654,10 @@ export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) 
   // downloads / decodes. Especially important for multi-MB photos where
   // the canvas would otherwise sit blank for several seconds with no
   // feedback. If a draft-lookup overlay is already mounted, reuse it.
-  if (!state.editorLoadingEl) _mountEditorLoading('Loading…');
+  if (!state.editorLoadingEl) _mountEditorLoading(__t('common.loading'));
   else {
     const inner = state.editorLoadingEl.querySelector('.ge-loading-text');
-    if (inner) inner.textContent = 'Loading…';
+    if (inner) inner.textContent = __t('common.loading');
   }
   const _removeLoading = () => _unmountEditorLoading();
 
@@ -3680,7 +3682,7 @@ export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) 
   img.onerror = (e) => {
     console.error('[_loadSourceImage] onerror — failed to load', imageUrl, e);
     _removeLoading();
-    if (uiModule) uiModule.showToast('Failed to load image');
+    if (uiModule) uiModule.showToast(__t('gallery.failedToLoadImage'));
     closeEditor();
   };
   img.src = imageUrl;
@@ -3695,12 +3697,12 @@ function _setEditTabLabel(name) {
   if (!tab) return;
   const labelEl = tab.querySelector('.gallery-tab-label') || tab;
   if (!name) {
-    labelEl.textContent = 'Edit';
+    labelEl.textContent = __t('common.edit');
     tab.classList.remove('has-edit');
     return;
   }
   const trimmed = name.length > 24 ? name.slice(0, 22) + '…' : name;
-  labelEl.textContent = `Edit: ${trimmed}`;
+  labelEl.textContent = __t('gallery.editPrefix', {name: trimmed});
   tab.classList.add('has-edit');
 }
 

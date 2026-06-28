@@ -839,7 +839,7 @@ export async function _runQuickCmd(panel, cmd) {
     fullCmd = _sshCmd(_envState.remoteHost, cmd);
   }
   const diag = panel.querySelector('.cookbook-diagnosis');
-  if (diag) { diag.classList.remove('hidden'); diag.textContent = `Running: ${fullCmd}...`; }
+  if (diag) { diag.classList.remove('hidden'); diag.textContent = (window.__t || (k=>k))('cookbook.running', { cmd: fullCmd }); }
 
   try {
     const res = await fetch('/api/shell/stream', {
@@ -850,6 +850,6 @@ export async function _runQuickCmd(panel, cmd) {
     });
     if (diag) diag.textContent = res.ok ? `Done: ${cmd}` : `Failed (HTTP ${res.status})`;
   } catch (e) {
-    if (diag) diag.textContent = `Error: ${e.message}`;
+    if (diag) diag.textContent = (window.__t || (k=>k))('common.error') + ': ' + e.message;
   }
 }

@@ -176,17 +176,16 @@ class AuthManager:
                 )
                 old_user = "admin"
             old_hash = self._config["password_hash"]
-            with self._config_lock:
-                self._config = {
-                    "users": {
-                        old_user: {
-                            "password_hash": old_hash,
-                            "created": time.time(),
-                            "is_admin": True,
-                        }
+            self._config = {
+                "users": {
+                    old_user: {
+                        "password_hash": old_hash,
+                        "created": time.time(),
+                        "is_admin": True,
                     }
                 }
-                self._save()
+            }
+            self._save()
             logger.info(f"Migrated single-user auth to multi-user (admin: {old_user})")
 
     def _drop_reserved_loaded_users(self):
@@ -205,9 +204,8 @@ class AuthManager:
                 continue
             normalized[key] = data
         if removed or normalized != users:
-            with self._config_lock:
-                self._config["users"] = normalized
-                self._save()
+            self._config["users"] = normalized
+            self._save()
         if removed:
             logger.warning(
                 "Removed reserved username(s) from auth config: %s",

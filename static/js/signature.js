@@ -507,7 +507,7 @@ export function pick(opts = {}) {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
         const id = btn.dataset.id;
-        if (!await window.styledConfirm('Delete this signature?', { confirmText: 'Delete', danger: true })) return;
+        if (!await window.styledConfirm('Delete this signature?', { confirmText: (window.__t || (k=>k))('common.delete'), danger: true })) return;
         await _deleteSignature(id);
         btn.closest('.sig-tile')?.remove();
       });

@@ -96,7 +96,7 @@ export function wireAIModelSelectors({ container, apiBase, openCookbookForImg2im
       const prevInpaintValue = aiInpaintSelect?.value || '';
       const res = await fetch(`${apiBase}/api/model-endpoints`);
       const endpoints = await res.json();
-      if (aiGenSelect) aiGenSelect.innerHTML = '<option value="">None</option>';
+      if (aiGenSelect) aiGenSelect.innerHTML = `<option value="">${(window.__t || (k=>k))('common.none')}</option>`;
       if (aiInpaintSelect) aiInpaintSelect.innerHTML = '<option value="">Auto</option>';
       const perToolSelects = Array.from(document.querySelectorAll('select.ge-tool-model'));
       for (const ts of perToolSelects) ts.innerHTML = '<option value="">Auto</option>';
