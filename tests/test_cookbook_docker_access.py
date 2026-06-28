@@ -3,10 +3,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from fastapi import HTTPException
 from starlette.requests import Request
 
 import routes.cookbook_routes as cookbook_routes
-from routes.cookbook_helpers import ServeRequest
+from routes.cookbook_helpers import ServeRequest, _validate_serve_cmd
 from src.host_docker_access import HOST_DOCKER_ACCESS_HINT
 
 
@@ -120,9 +121,17 @@ async def test_remote_docker_still_uses_ssh_probe(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "docker exec ollama-test ollama show llama3",
+        "docker exec ollama-rocm ollama show llama3",
+    ],
+)
 async def test_local_container_serve_returns_host_docker_opt_in_hint(
     monkeypatch,
     tmp_path,
+    cmd,
 ):
     async def binary_available(binary, remote, ssh_port, **kwargs):
         assert remote is None
@@ -151,13 +160,109 @@ async def test_local_container_serve_returns_host_docker_opt_in_hint(
         _admin_request(),
         ServeRequest(
             repo_id="example/model",
-            cmd="python docker",
+            cmd=cmd,
         ),
     )
 
     assert response["ok"] is False
     assert response["error"] == HOST_DOCKER_ACCESS_HINT
+    assert "cmd binary 'docker' is not allowed" not in response["error"]
     assert "docker/host-docker.yml" in response["error"]
+
+
+@pytest.mark.asyncio
+async def test_local_container_serve_allows_generated_docker_exec_when_enabled(
+    monkeypatch,
+    tmp_path,
+):
+    checked_binaries = []
+    launched_commands = []
+
+    async def binary_available(binary, remote, ssh_port, **kwargs):
+        checked_binaries.append(binary)
+        if binary == "docker":
+            assert cookbook_routes.running_in_container() is True
+            assert cookbook_routes.host_docker_access_enabled() is True
+        return True
+
+    class _Stderr:
+        async def read(self):
+            return b"mock launch stopped"
+
+    class _Process:
+        returncode = 1
+        stderr = _Stderr()
+
+        async def wait(self):
+            return None
+
+    async def launch(command, **kwargs):
+        launched_commands.append(command)
+        return _Process()
+
+    monkeypatch.setattr(cookbook_routes, "require_admin", lambda request: None)
+    monkeypatch.setattr(cookbook_routes, "_binary_available", binary_available)
+    monkeypatch.setattr(cookbook_routes, "running_in_container", lambda: True)
+    monkeypatch.setattr(
+        cookbook_routes,
+        "host_docker_access_enabled",
+        lambda: True,
+    )
+    monkeypatch.setattr(cookbook_routes, "TMUX_LOG_DIR", tmp_path)
+    monkeypatch.setattr(
+        cookbook_routes,
+        "load_stored_hf_token",
+        lambda **kwargs: "",
+    )
+    monkeypatch.setattr(
+        cookbook_routes.asyncio,
+        "create_subprocess_shell",
+        launch,
+    )
+
+    response = await _model_serve_endpoint()(
+        _admin_request(),
+        ServeRequest(
+            repo_id="llama3",
+            cmd="docker exec ollama-test ollama show llama3",
+        ),
+    )
+
+    assert checked_binaries == ["tmux", "docker"]
+    assert launched_commands
+    assert response["error"] == "mock launch stopped"
+    runner = next(tmp_path.glob("serve-*_run.sh")).read_text(encoding="utf-8")
+    assert "docker exec ollama-test ollama show llama3" in runner
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "docker run --rm alpine",
+        "docker exec random-container ollama show llama3",
+        "docker compose up",
+        "docker exec ollama-test sh -c 'ollama show llama3'",
+        "docker exec ollama-test ollama show llama3; id",
+        "docker exec ollama-rocm ollama show $(id)",
+        "docker exec ollama-rocm ollama show llama3 | cat",
+    ],
+)
+def test_arbitrary_docker_commands_stay_blocked(cmd):
+    assert cookbook_routes._is_generated_ollama_docker_exec_cmd(cmd) is False
+
+    with pytest.raises(HTTPException) as exc:
+        _validate_serve_cmd(cmd)
+
+    assert exc.value.status_code == 400
+
+
+def test_generated_ollama_import_shape_is_narrowly_allowed():
+    assert cookbook_routes._is_generated_ollama_docker_exec_cmd(
+        "docker exec ollama-test ollama-import org/model model 8192 model.gguf"
+    )
+    assert not cookbook_routes._is_generated_ollama_docker_exec_cmd(
+        "docker exec ollama-rocm ollama-import org/model model 8192 model.gguf"
+    )
 
 
 def test_local_ollama_docker_access_blocked_in_container_cli_only(monkeypatch, tmp_path):
