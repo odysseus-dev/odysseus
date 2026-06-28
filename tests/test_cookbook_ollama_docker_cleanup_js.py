@@ -88,6 +88,33 @@ def test_native_ready_url_still_wins(node_available):
     assert res["url"] == "http://127.0.0.1:11434", res
 
 
+def test_persisted_base_url_wins_with_empty_output(node_available):
+    """A fast Stop/Kill before any runner output lands must still target the
+    host daemon: the backend-returned `_ollamaBaseUrl` on the task payload is
+    used deterministically, independent of pane-output timing."""
+    script = textwrap.dedent("""
+        const { _ollamaBaseUrlForTask } = await import('./static/js/cookbookOllamaUrl.js');
+        const task = { payload: { _cmd: 'ollama serve', _ollamaBaseUrl: 'http://host.docker.internal:11434/' } };
+        const url = _ollamaBaseUrlForTask(task, '');
+        console.log(JSON.stringify({ url }));
+    """)
+    res = _run_node(script)
+    assert res["url"] == "http://host.docker.internal:11434", res
+    assert "127.0.0.1" not in res["url"]
+
+
+def test_persisted_base_url_honours_custom_port_no_output(node_available):
+    """Persisted host-gateway URL with a custom port survives with empty output."""
+    script = textwrap.dedent("""
+        const { _ollamaBaseUrlForTask } = await import('./static/js/cookbookOllamaUrl.js');
+        const task = { payload: { _cmd: 'OLLAMA_HOST=127.0.0.1:11435 ollama serve', _ollamaBaseUrl: 'http://host.docker.internal:11435' } };
+        const url = _ollamaBaseUrlForTask(task, '');
+        console.log(JSON.stringify({ url }));
+    """)
+    res = _run_node(script)
+    assert res["url"] == "http://host.docker.internal:11435", res
+
+
 def test_plain_serve_falls_back_to_loopback(node_available):
     """No host-gateway/ready log (native local serve) → loopback fallback as before."""
     script = textwrap.dedent("""

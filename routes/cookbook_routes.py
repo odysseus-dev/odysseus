@@ -37,6 +37,22 @@ from routes.cookbook_output import (
 
 logger = logging.getLogger(__name__)
 
+
+def _ollama_tag_served(repo_id: str, served: list) -> bool:
+    """Return True if `repo_id` matches a tag the host Ollama daemon serves.
+
+    Ollama tags are `[namespace/]model[:tag]`; an omitted `:tag` defaults to
+    `:latest` on both the request and the server side, so `qwen3` must match a
+    served `qwen3:latest`. Comparison is case-insensitive (Ollama tags are
+    lower-cased) and normalises the implicit `:latest`.
+    """
+    def _norm(name: str) -> str:
+        s = str(name or "").strip().lower()
+        return s if ":" in s else f"{s}:latest"
+    want = _norm(repo_id)
+    return any(_norm(m) == want for m in (served or []))
+
+
 from routes.cookbook_helpers import (
     _SESSION_ID_RE, _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_token,
     _validate_local_dir, _validate_gpus, _shell_path,
@@ -1389,25 +1405,49 @@ def setup_cookbook_routes() -> APIRouter:
         # were native `ollama serve`, prepending OLLAMA_HOST=… and then
         # running the ollama-not-found preflight which exits 127.
         _serve_in_container = not remote and os.path.exists("/.dockerenv")
-        # HF-GGUF + local Docker + Ollama is unsupported: the container has no
-        # ollama binary, so the runner only probes the host daemon — it can NOT
-        # import a HuggingFace GGUF repo into host Ollama or create the tag. A
-        # plain `ollama serve` here would report success and pin the HF repo as
-        # an available model the host daemon cannot actually serve, surfacing as
-        # a model-not-found failure at chat time. Reject early with guidance
-        # instead. (Remote hosts use the `docker exec … ollama-import` helper
-        # path built in cookbook.js, which does import the GGUF.)
-        if (_serve_in_container
-                and re.search(r"\bollama\s+serve\b", req.cmd)
-                and "/" in req.repo_id):
-            raise HTTPException(
-                400,
-                "Serving a HuggingFace GGUF repo through Ollama is not supported "
-                "when Odysseus runs in Docker: the container cannot import the "
-                "GGUF into your host's Ollama. Pull the model into host Ollama "
-                "first (e.g. `ollama pull <name>`), then select that Ollama tag "
-                "here; or run a llama.cpp/vLLM backend for the GGUF instead.",
-            )
+        # In-container `ollama serve` can ONLY proxy to the host daemon — the
+        # container has no ollama binary, so it cannot import a HuggingFace GGUF
+        # repo or `ollama pull` a missing tag. A plain serve here would report
+        # success and pin `req.repo_id` as an available model the host daemon may
+        # not actually serve (an HF-GGUF repo it never imported, or a tag the
+        # user hasn't pulled), surfacing as a model-not-found failure at chat
+        # time. Verify the selected model is already served by host Ollama before
+        # launching; reject early with guidance otherwise. This replaces the
+        # earlier slash-presence heuristic, which both rejected valid namespaced
+        # Ollama tags (`library/qwen3:8b`) and let unverified bare tags through.
+        # (Remote hosts use the `docker exec … ollama-import` helper path built
+        # in cookbook.js, which does import the GGUF, so this gate is local-only.)
+        if (_serve_in_container and re.search(r"\bollama\s+serve\b", req.cmd)):
+            _host_port = _ollama_bind_from_cmd(req.cmd, default_host="127.0.0.1")[1]
+            _host_tags_url = f"http://host.docker.internal:{_host_port}/v1"
+            try:
+                from routes.model_routes import _probe_endpoint
+                _served = _probe_endpoint(_host_tags_url, None, timeout=5)
+            except Exception as _pe:
+                logger.warning(f"host-Ollama tag probe failed for {_host_tags_url}: {_pe!r}")
+                _served = []
+            if not _ollama_tag_served(req.repo_id, _served):
+                # Distinguish "host Ollama unreachable" (empty probe) from "tag
+                # not installed" so the guidance points at the real fix.
+                if not _served:
+                    raise HTTPException(
+                        400,
+                        f"Could not reach your host's Ollama at "
+                        f"host.docker.internal:{_host_port} to verify "
+                        f"'{req.repo_id}'. Make sure Ollama is running on your "
+                        f"host machine (not inside this container) and, on Linux, "
+                        f"that docker-compose maps host.docker.internal "
+                        f"(extra_hosts: host-gateway).",
+                    )
+                raise HTTPException(
+                    400,
+                    f"'{req.repo_id}' is not available in your host's Ollama, so "
+                    f"Odysseus cannot serve it from inside Docker (the container "
+                    f"cannot import a HuggingFace GGUF or pull a missing tag). "
+                    f"Pull it into host Ollama first (`ollama pull {req.repo_id}`), "
+                    f"then select that tag here; or run a llama.cpp/vLLM backend "
+                    f"for a GGUF instead.",
+                )
         if (re.search(r"\bollama\s+serve\b", req.cmd) and "OLLAMA_HOST=" not in req.cmd
                 and not _serve_in_container):
             # Skip port-scan rewrite in container mode: the scan probes
@@ -1972,8 +2012,18 @@ def setup_cookbook_routes() -> APIRouter:
         except Exception:
             pass
 
+        # Hand the browser the deterministic host-gateway base URL for the
+        # in-container Ollama proxy case, so Stop/Kill cleanup targets the host
+        # daemon even if it fires before the runner's "detected on host" line
+        # reaches the task pane. Without this the JS resolver falls back to
+        # container loopback on empty output and leaves the host model loaded.
+        ollama_base_url = None
+        if (_serve_in_container and re.search(r"\bollama\s+serve\b", req.cmd)):
+            _ob_port = _ollama_bind_from_cmd(req.cmd, default_host="127.0.0.1")[1]
+            ollama_base_url = f"http://host.docker.internal:{_ob_port}"
+
         return {"ok": True, "session_id": session_id, "remote": remote or "local",
-                "endpoint_id": endpoint_id}
+                "endpoint_id": endpoint_id, "ollama_base_url": ollama_base_url}
 
     # ── Server setup (install deps on remote) ──
 

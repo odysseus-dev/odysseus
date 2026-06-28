@@ -1761,7 +1761,7 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
     // _fields = the exact structured serve-form values used for this launch,
     // so the "Edit / relaunch" button can re-open the Serve panel pre-filled
     // with these precise settings (not just the last-used-for-repo state).
-    const payload = { repo_id: repo, remote_host: _host || undefined, remote_server_key: _serverMetaKey || undefined, remote_server_name: _serverMetaName || undefined, ssh_port: _sp || undefined, _cmd: cmd, _fields: fields || undefined, _env: _usedEnv, _envPath: _usedEnvPath, _gpus: _usedGpus };
+    const payload = { repo_id: repo, remote_host: _host || undefined, remote_server_key: _serverMetaKey || undefined, remote_server_name: _serverMetaName || undefined, ssh_port: _sp || undefined, _cmd: cmd, _fields: fields || undefined, _env: _usedEnv, _envPath: _usedEnvPath, _gpus: _usedGpus, _ollamaBaseUrl: data.ollama_base_url || undefined };
     _addTask(data.session_id, shortName, 'serve', payload);
     uiModule.showToast(`Serving ${shortName}...`);
     // Auto-register may have enabled an existing (offline) endpoint for this
