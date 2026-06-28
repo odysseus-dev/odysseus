@@ -33,49 +33,64 @@ if (!fs.existsSync(USER_DATA_DIR)) {
   fs.mkdirSync(USER_DATA_DIR, { recursive: true });
 }
 
+const CHROMA_PORT = 8100;
 const APP_URL = `http://127.0.0.1:${PORT}`;
 
 let mainWindow = null;
 let pythonProcess = null;
 let chromaProcess = null;
+// Set if ChromaDB isn't reachable in packaged mode; shown to the user.
+let chromaWarning = null;
 
 function log(msg) {
   console.log(`[odysseus] ${msg}`);
 }
 
-// ── Start ChromaDB (background, optional) ──────────────────────────────
+// ── ChromaDB (optional sidecar) ───────────────────────────────────────
+// Odysseus uses `chromadb-client` (thin HTTP client), so the server expects
+// a standalone ChromaDB instance at 127.0.0.1:8100 — it does NOT embed it.
+// In dev mode, if the user has installed the full `chromadb` package
+// (which provides the `chroma` CLI), we spawn it as a convenience.
+// In packaged mode there's no `chroma` binary bundled (PyInstaller only
+// ships the client), so we just probe the port and warn the user if it's
+// down so they know RAG / vector memory won't be available.
 function startChromaDB() {
   return new Promise((resolve) => {
-    const chromaBin = path.join(CHROMA_DIR, 'chroma');
-
-    if (!fs.existsSync(chromaBin)) {
-      log('chroma not found, skipping');
-      return resolve();
-    }
-
-    // Check if already running
-    const req = http.get('http://127.0.0.1:8100/api/v1/heartbeat', (res) => {
+    // If already running, done.
+    const probe = http.get(`http://127.0.0.1:${CHROMA_PORT}/api/v1/heartbeat`, (res) => {
       res.destroy();
       log('chroma already running');
       resolve();
     });
-    req.on('error', () => {
-      log('starting chroma on 127.0.0.1:8100…');
-      chromaProcess = spawn(chromaBin, [
-        'run', '--host', '127.0.0.1', '--port', '8100',
-        '--path', path.join(USER_DATA_DIR, 'chroma')
-      ], {
-        cwd: PROJECT_DIR,
-        stdio: ['ignore', 'pipe', 'pipe']
-      });
-
-      chromaProcess.stdout?.on('data', (d) => log(`[chroma] ${d.toString().trim()}`));
-      chromaProcess.stderr?.on('data', (d) => log(`[chroma] ${d.toString().trim()}`));
-      chromaProcess.on('exit', () => { chromaProcess = null; });
-
-      setTimeout(resolve, 3000);
+    probe.on('error', () => {
+      const chromaBin = path.join(CHROMA_DIR, 'chroma');
+      if (fs.existsSync(chromaBin)) {
+        // Dev convenience: spawn the chroma CLI if present.
+        log(`starting chroma on 127.0.0.1:${CHROMA_PORT}…`);
+        chromaProcess = spawn(chromaBin, [
+          'run', '--host', '127.0.0.1', '--port', String(CHROMA_PORT),
+          '--path', path.join(USER_DATA_DIR, 'chroma')
+        ], {
+          cwd: PROJECT_DIR,
+          stdio: ['ignore', 'pipe', 'pipe']
+        });
+        chromaProcess.stdout?.on('data', (d) => log(`[chroma] ${d.toString().trim()}`));
+        chromaProcess.stderr?.on('data', (d) => log(`[chroma] ${d.toString().trim()}`));
+        chromaProcess.on('exit', () => { chromaProcess = null; });
+        // Give it a moment to bind, then resolve regardless.
+        setTimeout(resolve, 3000);
+      } else {
+        // No binary to spawn. In packaged mode this is expected — surface a
+        // clear warning instead of silently degrading RAG / vector memory.
+        chromaWarning =
+          `ChromaDB is not running at 127.0.0.1:${CHROMA_PORT}. ` +
+          `RAG (Personal Docs) and vector memory will be unavailable until you start a ChromaDB server. ` +
+          `Easiest: \`docker run -p 8100:8000 -v ~/.odysseus/chroma:/chroma/chroma chromadb/chroma:latest\`.`;
+        log(`chroma not found at ${chromaBin}; ${chromaWarning}`);
+        resolve();
+      }
     });
-    req.setTimeout(2000, () => { req.destroy(); resolve(); });
+    probe.setTimeout(2000, () => { probe.destroy(); resolve(); });
   });
 }
 
@@ -228,6 +243,32 @@ async function startBackend() {
     await startPythonServer();
     log('loading app URL');
     mainWindow?.loadURL(APP_URL);
+    // Surface a one-time warning if ChromaDB isn't reachable in packaged mode
+    // so users know RAG / vector memory degraded silently.
+    if (chromaWarning && mainWindow) {
+      mainWindow.webContents.once('dom-ready', () => {
+        mainWindow.webContents.executeJavaScript(`
+          (function() {
+            try {
+              var n = document.createElement('div');
+              n.style.cssText = 'position:fixed;bottom:16px;left:16px;right:16px;' +
+                'z-index:2147483647;padding:12px 16px;border-radius:8px;' +
+                'background:#2a1a1a;color:#ffb4b4;border:1px solid #ff6b6b;' +
+                'font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;' +
+                'box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+              n.textContent = ${JSON.stringify(chromaWarning)};
+              var b = document.createElement('button');
+              b.textContent = 'Dismiss';
+              b.style.cssText = 'margin-left:12px;background:transparent;border:1px solid #ff6b6b;' +
+                'color:#ffb4b4;padding:4px 10px;border-radius:4px;cursor:pointer;font:inherit;';
+              b.onclick = function() { n.remove(); };
+              n.appendChild(b);
+              document.body.appendChild(n);
+            } catch (e) { console.warn('chroma warning failed:', e); }
+          })();
+        `).catch(() => {});
+      });
+    }
   } catch (err) {
     log(`failed to start server: ${err.message}`);
     if (mainWindow) {
