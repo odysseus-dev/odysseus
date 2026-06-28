@@ -1702,6 +1702,16 @@ _EMAIL_REPLY_SYS_PROMPT_BASE = (
 )
 
 
+def _get_email_reply_sys_prompt():
+    """Return the email reply system prompt with the user's language directive injected."""
+    try:
+        from src.user_time import language_directive
+        suffix = language_directive()
+    except Exception:
+        suffix = ""
+    return _EMAIL_REPLY_SYS_PROMPT_BASE + suffix
+
+
 # ── Request models ──
 
 class SendEmailRequest(BaseModel):

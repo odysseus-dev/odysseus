@@ -317,13 +317,16 @@ def _set_user_time_from_request(request: Request) -> None:
     try:
         tz_offset = request.headers.get("x-tz-offset")
         tz_name = request.headers.get("x-tz-name")
-        from src.user_time import clear_user_time_context, set_user_tz_name, set_user_tz_offset
+        from src.user_time import clear_user_time_context, set_user_tz_name, set_user_tz_offset, set_user_language
 
         clear_user_time_context()
         if tz_offset is not None:
             set_user_tz_offset(tz_offset)
         if tz_name:
             set_user_tz_name(tz_name)
+        lang = request.headers.get("x-language")
+        if lang:
+            set_user_language(lang)
     except Exception:
         pass
 

@@ -796,6 +796,7 @@ async function _streamToHolder(modelIdx, sessionId, msg, holderEl, abortCtrl) {
     const res = await fetch(`${API_BASE}/api/chat_stream`, {
       method: 'POST',
       body: fd,
+      headers: { 'X-Language': localStorage.getItem('odysseus-lang') || '' },
       credentials: 'same-origin',
       signal: abortCtrl.signal,
     });
