@@ -99,6 +99,18 @@
     } catch(e){}
   })();
   </script>
+  <!-- Resolve the interface language before any module loads so the i18n core
+       and translateDOM() sweep apply the right dictionary from the first paint.
+       Mirrors the theme early-load pattern above. Default is pt-BR. -->
+  <script nonce="{{CSP_NONCE}}">
+  (function(){
+    try {
+      var lang = localStorage.getItem('odysseus-language') || 'pt-BR';
+      window.__ODY_LANG = lang;
+      document.documentElement.lang = (lang === 'pt-BR') ? 'pt-br' : lang;
+    } catch(e) { window.__ODY_LANG = 'pt-BR'; }
+  })();
+  </script>
   <!-- Per-route favicon. Bookmarking /calendar shows a calendar icon,
        /notes a notes icon, etc. Each shape is rendered in the current
        theme accent color. Falls back to the boat logo on the root path. -->
@@ -1712,6 +1724,16 @@
 
         <!-- ═══ APPEARANCE TAB ═══ -->
         <div data-settings-panel="appearance" class="settings-appearance-panel hidden">
+          <div class="admin-card" style="padding-bottom:6px;">
+            <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>Language</h2>
+            <div class="settings-row">
+              <label class="settings-label" for="set-language">Interface language</label>
+              <select id="set-language" class="settings-select" style="width:382.5px;flex:0 0 auto;margin-left:auto;">
+                <option value="pt-BR">Português (Brasil)</option>
+                <option value="en">English</option>
+              </select>
+            </div>
+          </div>
           <div class="admin-card" style="padding-bottom:6px;">
             <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>Sidebar<span style="flex:1"></span><button type="button" class="vis-reset-btn" data-vis-reset title="Reset this section to defaults" aria-label="Reset Sidebar to defaults" style="background:none;border:none;padding:2px 4px;cursor:pointer;color:inherit;opacity:0.55;display:inline-flex;align-items:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button></h2>
             <div class="vis-toggles">

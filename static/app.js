@@ -45,6 +45,11 @@ import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
+import { t, translateDOM } from './js/i18n.js';
+import { initLanguagePref } from './js/languagePref.js';
+// Static index.html strings + this orchestrator's own strings (pt-BR).
+import './js/i18n/index-html.pt-BR.js';
+import './js/i18n/app.pt-BR.js';
 
 const API_BASE = window.location.origin;
 window.themeModule = themeModule;
@@ -339,7 +344,7 @@ function initializeEventListeners() {
       const transcript = _serializeChatTranscript();
       // A new/empty chat has nothing to copy — don't write an empty string and
       // falsely report "Copied".
-      if (!transcript.trim()) { uiModule.showToast('Nothing to copy yet'); return; }
+      if (!transcript.trim()) { uiModule.showToast(t('Nothing to copy yet')); return; }
       await uiModule.copyToClipboard(transcript);
     });
   }
@@ -388,10 +393,10 @@ function initializeEventListeners() {
         if (!res.ok) throw new Error('Failed');
         const doc = await res.json();
         if (documentModule) documentModule.loadDocument(doc.id);
-        uiModule.showToast('Saved to documents');
+        uiModule.showToast(t('Saved to documents'));
       } catch (err) {
         console.error('Save to docs failed:', err);
-        uiModule.showError('Failed to save to documents');
+        uiModule.showError(t('Failed to save to documents'));
       }
     });
   }
@@ -438,7 +443,7 @@ function initializeEventListeners() {
           const _m = sessionModule.getSessions().find(s => s.id === sid);
           if (_m) _m.name = newName;
           metaEl.textContent = newName;
-          uiModule.showToast('Renamed');
+          uiModule.showToast(t('Renamed'));
           sessionModule.loadSessions();
         } else {
           metaEl.textContent = origText;
@@ -753,11 +758,11 @@ function initializeEventListeners() {
     if (active) {
       if (welcomeName) {
         if (!welcomeName.dataset.researchOrigHtml) welcomeName.dataset.researchOrigHtml = welcomeName.innerHTML;
-        welcomeName.innerHTML = _resIco + 'Deep Research';
+        welcomeName.innerHTML = _resIco + t('Deep Research');
       }
       if (welcomeSub) {
         if (!welcomeSub.dataset.researchOrigText) welcomeSub.dataset.researchOrigText = welcomeSub.textContent;
-        welcomeSub.textContent = 'Deep multi-step research with source gathering and synthesis.';
+        welcomeSub.textContent = t('Deep multi-step research with source gathering and synthesis.');
       }
       if (tipEl) {
         if (!tipEl.dataset.researchOrigTip) tipEl.dataset.researchOrigTip = tipEl.textContent;
@@ -1073,7 +1078,7 @@ function initializeEventListeners() {
         if (documentModule && documentModule.newDocument) await documentModule.newDocument();
       } catch (err) {
         console.error('New document from Library failed:', err);
-        if (uiModule && uiModule.showError) uiModule.showError('Could not create document');
+        if (uiModule && uiModule.showError) uiModule.showError(t('Could not create document'));
       }
     });
   }
@@ -1202,11 +1207,11 @@ function initializeEventListeners() {
         if (current === mode) {
           sessionModule.setSortMode(null);
           sortDropdown.style.display = 'none';
-          uiModule.showToast('Manual order');
+          uiModule.showToast(t('Manual order'));
         } else {
           sessionModule.setSortMode(mode);
           sortDropdown.style.display = 'none';
-          uiModule.showToast(`Sorted: ${opt.textContent.trim().toLowerCase()}`);
+          uiModule.showToast(t('Sorted: {label}', { label: opt.textContent.trim().toLowerCase() }));
         }
         _syncSortChecks();
       });
@@ -3342,6 +3347,9 @@ function initializeEventListeners() {
 function startOdysseusApp() {
   if (window.__odysseusAppStarted) return;
   window.__odysseusAppStarted = true;
+  // Translate the static DOM (sidebar, modals, settings, placeholders…) into the
+  // active language before the rest of the app renders. No-op in English.
+  try { translateDOM(document); } catch (e) { console.error('translateDOM error:', e); }
   // Set CSS variables
   document.documentElement.style.setProperty('--line-height', '20px');
 
@@ -3366,6 +3374,9 @@ function startOdysseusApp() {
 
   // Initialize all event listeners
   try { initializeEventListeners(); } catch(e) { console.error('Event init error:', e); }
+
+  // Wire the Settings → Appearance language selector
+  try { initLanguagePref(); } catch(e) { console.error('Language pref init error:', e); }
 
   // Reveal the toolbar now that all toggle/overflow state is resolved
   // (hidden via inline style="visibility:hidden" in HTML to prevent FOUC)
