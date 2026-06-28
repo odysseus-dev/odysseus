@@ -1063,8 +1063,19 @@ def setup_shell_routes() -> APIRouter:
         importlib.invalidate_caches()
         try:
             user_site = site.getusersitepackages()
-            if user_site and os.path.isdir(user_site) and user_site not in sys.path:
-                sys.path.append(user_site)
+            if user_site and os.path.isdir(user_site):
+                # Use addsitedir(), NOT a bare sys.path.append(). When a package
+                # is `pip install --user`'d at runtime (Cookbook → Install) the
+                # long-lived server process started before the user-site existed,
+                # so site never processed it — including its `.pth` hooks. On
+                # Python 3.12+ `distutils` is gone from stdlib and is only
+                # restored by setuptools' `distutils-precedence.pth`, which ships
+                # in user-site. basicsr (a realesrgan dep) does `import distutils`
+                # at import time, so a plain append left the package importable
+                # but `import distutils` failing → realesrgan probed as
+                # not-installed until a full process restart. addsitedir() replays
+                # the `.pth` files so the shim is active.
+                site.addsitedir(user_site)
         except Exception:
             pass
         if ssh_port and str(ssh_port).strip() not in ("", "22"):
@@ -1377,11 +1388,16 @@ def setup_shell_routes() -> APIRouter:
                     pkg["installed"] = False
                 except importlib_metadata.PackageNotFoundError:
                     pkg["installed"] = False
-                except Exception:
+                except (Exception, SystemExit):
                     # Installed but crashes on import — e.g. a CUDA build of
                     # llama-cpp-python raising FileNotFoundError when the CUDA
-                    # toolkit dir is absent. One broken optional package must not
-                    # 500 the entire packages panel; report it as not usable.
+                    # toolkit dir is absent, or rembg calling sys.exit(1) when no
+                    # onnxruntime backend can be loaded. SystemExit is a
+                    # BaseException, not Exception, so without catching it here a
+                    # single sys.exit-on-import package escapes and takes down the
+                    # whole packages panel / worker (the panel hangs forever). One
+                    # broken optional package must not 500 — or hang — the entire
+                    # panel; report it as not usable.
                     pkg["installed"] = False
 
             # llama_cpp partial-state probe: when the package is installed

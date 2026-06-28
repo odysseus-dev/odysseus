@@ -38,6 +38,8 @@ def test_untrusted_context_policy_marks_sources_as_data():
 
     assert "not instructions" in UNTRUSTED_CONTEXT_POLICY
     assert "overrides" in UNTRUSTED_CONTEXT_POLICY
+    assert "Do not quote" in UNTRUSTED_CONTEXT_POLICY
+    assert "acknowledge untrusted-source wrapper labels" in UNTRUSTED_CONTEXT_POLICY
 
 
 # ── secret_storage ─────────────────────────────────────────────
@@ -1097,9 +1099,9 @@ def _import_session_routes_for_filename():
 def _import_gallery_routes_for_filename():
     # Same rationale as the session route helper: import _sanitize_gallery_filename
     # against the real core.database and leave a clean, real module cached.
-    _drop_route_module_cache("routes.gallery_routes")
-    _drop_route_module_cache("routes.gallery_helpers")
-    return importlib.import_module("routes.gallery_routes")
+    _drop_route_module_cache("routes.gallery.gallery_routes")
+    _drop_route_module_cache("routes.gallery.gallery_helpers")
+    return importlib.import_module("routes.gallery.gallery_routes")
 
 
 def test_export_filename_sanitizer_blocks_header_and_path_chars():

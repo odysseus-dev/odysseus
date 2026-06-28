@@ -496,6 +496,7 @@ export function processWithThinking(text) {
 export function mdToHtml(src, opts) {
   const allowedHtmlBlocks = [];
   const codeBlocks = [];
+  const inlineCodeBlocks = [];
   const mermaidBlocks = [];
   let s = (src ?? '');
 
@@ -504,7 +505,15 @@ export function mdToHtml(src, opts) {
   // ___ALLOWED_HTML_0___) can leak into quoted HTML/JS samples, because the
   // placeholder gets captured as literal code content and never restored inside
   // the final <pre><code> block.
-  s = s.replace(/```(\w+)?\n([\s\S]*?)```/g, (_, lang, code) => {
+  //
+  // Handles both ``` and ~~~ fences of any length >=3 (CommonMark): the fence
+  // opens on a 3+ run at line start and closes on a line that is a run of the
+  // SAME char (\1). Pulling tilde and long fences out here — not just simple
+  // triple-backticks — keeps task-looking lines inside a fence from ever
+  // reaching the task-list pass, so the rendered checkbox indices stay in
+  // lockstep with core/notes_markdown.parse_task_lines (and notes.js). It also
+  // stops `~~~` fences from being mauled by the `~~`-strikethrough pass.
+  s = s.replace(/^[ \t]*(`{3,}|~{3,})[ \t]*(\w+)?[^\n]*\n([\s\S]*?)^[ \t]*\1[ \t]*$/gm, (_, _fence, lang, code) => {
     const cleaned = code
       .replace(/\r\n/g, '\n')
       .replace(/[ \t]+$/gm, '')
@@ -531,6 +540,19 @@ export function mdToHtml(src, opts) {
     const editBtn = `<button type="button" class="edit-code" title="Edit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>`;
     codeBlocks.push(`<pre><code${langClass} data-lang="${lang || ''}">${escapeHtml(escaped)}</code>${runBtn}${editBtn}<button type="button" class="copy-code" data-code="${escapeHtml(escaped)}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></pre>`);
 
+    return placeholder;
+  });
+
+  // Extract inline code spans before the link/autolink/HTML passes, mirroring
+  // the fenced-block handling above. A URL inside `inline code` (e.g.
+  // `irm http://127.0.0.1:3000/x`) is preceded by a space, so the bare-URL
+  // autolink matches it, wraps it in an <a> tag, and swaps that for an
+  // ___ALLOWED_HTML_ placeholder — corrupting the command. The old inline-code
+  // pass ran after those passes, too late to protect it.
+  s = s.replace(/`([^`]+?)`/g, (match, code) => {
+    if (code.startsWith('___CODE_BLOCK_') || code.startsWith('___MERMAID_BLOCK_')) return match;
+    const placeholder = `___INLINE_CODE_${inlineCodeBlocks.length}___`;
+    inlineCodeBlocks.push(`<code>${escapeHtml(code)}</code>`);
     return placeholder;
   });
 
@@ -706,12 +728,6 @@ export function mdToHtml(src, opts) {
     return html;
   });
 
-  // Inline code (but not placeholders)
-  s = s.replace(/`([^`]+?)`/g, (match, code) => {
-    if (code.startsWith('___CODE_BLOCK_') || code.startsWith('___ALLOWED_HTML_')) return match;
-    return `<code>${code}</code>`;
-  });
-
   // Horizontal rules (must come before bold/italic to avoid * conflicts)
   s = s.replace(/^(?:---|\*\*\*|___)\s*$/gm, '<hr>');
 
@@ -738,12 +754,36 @@ export function mdToHtml(src, opts) {
     // Notes preview: interactive checkboxes that notes.js wires up to toggle the
     // underlying task line. `data-task-index` is the 0-based ordinal among task
     // lines in the document and must match core/notes_markdown.parse_task_lines
-    // so toggle-by-index means the same thing on the server.
+    // (and notes.js _parseTasks) so toggle-by-index means the same thing on the
+    // card, in the preview, and on the server.
+    //
+    // This walks line-by-line tracking fenced code blocks instead of a single
+    // global regex: a task-looking line inside a ``` / ~~~ fence is a code
+    // sample, not a real item, so it must NOT consume an index. Triple-backtick
+    // blocks are already extracted to placeholders above, but tilde and longer
+    // fences survive as text — counting their task lines here would offset every
+    // real task's index and toggle the wrong line. A fence opens on a 3+ run of
+    // backticks/tildes and closes on the next delimiter of the same char that is
+    // at least as long (CommonMark); the same rule as the Python/notes helpers.
     let _taskIdx = 0;
+    let _fenceChar = null, _fenceLen = 0;
+    const _FENCE = /^[ \t]*(`{3,}|~{3,})/;
     // NOTE: the space before the text capture is `[ \t]?`, NOT `\s?` — `\s`
-    // matches a newline, so an empty task line ("- [ ]") would otherwise eat the
-    // following line and merge two items into one.
-    s = s.replace(/^([ \t]*)[-*+][ \t]+\[([ xX])\][ \t]?(.*)$/gm, (m, ws, box, text) => {
+    // matches a newline; line-by-line here that can't bite, but it keeps the
+    // box/text split identical to the Python and notes.js task regexes.
+    const _TASK = /^([ \t]*)[-*+][ \t]+\[([ xX])\][ \t]?(.*)$/;
+    s = s.split('\n').map((line) => {
+      const fm = _FENCE.exec(line);
+      if (fm) {
+        const marker = fm[1];
+        if (_fenceChar === null) { _fenceChar = marker[0]; _fenceLen = marker.length; }
+        else if (marker[0] === _fenceChar && marker.length >= _fenceLen) { _fenceChar = null; _fenceLen = 0; }
+        return line; // a fence delimiter line is never a task line
+      }
+      if (_fenceChar !== null) return line; // inside a fenced block -> code
+      const m = _TASK.exec(line);
+      if (!m) return line;
+      const ws = m[1], box = m[2], text = m[3];
       const done = box.toLowerCase() === 'x';
       let w = 0; for (const ch of ws) w += (ch === '\t') ? 2 : 1;
       const indent = Math.floor(w / 2);
@@ -755,7 +795,7 @@ export function mdToHtml(src, opts) {
       return `<tli data-task-index="${idx}" data-done="${done ? 1 : 0}"${pad}>` +
              `<span class="md-task-box" role="checkbox" aria-checked="${done}" tabindex="0" contenteditable="false">${check}</span>` +
              `<span class="md-task-text">${text}</span></tli>`;
-    });
+    }).join('\n');
     s = s.replace(/(^|\n)((?:<tli[\s\S]*?<\/tli>(?:\n|$))+)/g, (_, prefix, block) =>
       `${prefix}<ul class="md-tasklist">${block.trim()
         .replace(/<tli([^>]*)>/g, '<li class="md-task"$1>')
@@ -812,6 +852,14 @@ export function mdToHtml(src, opts) {
   // CRITICAL: Restore code blocks at the end
   codeBlocks.forEach((block, index) => {
     s = s.replace(`___CODE_BLOCK_${index}___`, block);
+  });
+
+  // Restore inline code spans last, so placeholders carried inside restored
+  // <a>/allowed-HTML blocks are resolved too. The function replacer keeps the
+  // escaped code literal — e.g. a shell snippet like `echo $1` is not treated
+  // as a regex back-reference.
+  inlineCodeBlocks.forEach((block, index) => {
+    s = s.replace(`___INLINE_CODE_${index}___`, () => block);
   });
 
   return _useSvgEmoji() ? svgifyEmoji(s, opts) : s;

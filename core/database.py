@@ -1112,18 +1112,29 @@ def _migrate_unify_notes():
             "WHERE items IS NOT NULL AND items != '' AND items != '[]'"
         ).fetchall()
         converted = 0
+        skipped = 0
         for note_id, content, items_raw in rows:
+            # Isolate every row: a single malformed legacy note (bad JSON, or a
+            # junk field that trips conversion) must not abort the whole batch
+            # and leave unrelated valid checklist rows unconverted. A skipped row
+            # keeps its original `items`, so a later boot retries it.
             try:
-                items = json.loads(items_raw) if items_raw else None
-            except (json.JSONDecodeError, TypeError):
-                items = None
-            new_content = merge_items_into_content(content, items)
-            conn.execute(
-                "UPDATE notes SET content = ?, items = NULL WHERE id = ?",
-                (new_content, note_id),
-            )
-            converted += 1
+                try:
+                    items = json.loads(items_raw) if items_raw else None
+                except (json.JSONDecodeError, TypeError):
+                    items = None
+                new_content = merge_items_into_content(content, items)
+                conn.execute(
+                    "UPDATE notes SET content = ?, items = NULL WHERE id = ?",
+                    (new_content, note_id),
+                )
+                converted += 1
+            except Exception as row_err:
+                skipped += 1
+                log.warning(f"notes unify migration: skipped note {note_id}: {row_err}")
         conn.commit()
+        if skipped:
+            log.warning(f"notes unify migration: {skipped} note(s) skipped due to malformed legacy data")
         conn.close()
         if converted:
             log.info(f"Migrated: unified {converted} note(s) with checklist items into markdown task lists")

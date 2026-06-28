@@ -128,7 +128,7 @@ def test_gallery_replace_rejects_symlink_escape(tmp_path, monkeypatch):
 
 
 def test_gallery_file_operations_use_confining_resolver():
-    source = Path("routes/gallery_routes.py").read_text(encoding="utf-8")
+    source = Path("routes/gallery/gallery_routes.py").read_text(encoding="utf-8")
 
     assert 'Path("data/generated_images") / img.filename' not in source
     assert 'os.path.join("data", "generated_images", img.filename)' not in source

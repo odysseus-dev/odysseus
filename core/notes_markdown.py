@@ -37,6 +37,20 @@ def _indent_level(ws: str) -> int:
     return width // _INDENT_UNIT
 
 
+def _coerce_indent(value) -> int:
+    """Best-effort int for a legacy item's `indent` field.
+
+    Legacy rows were free-form JSON, so `indent` can be missing, null, a float,
+    or junk like "oops". A bad value must never abort the conversion (it would
+    take unrelated valid checklist rows down with it during the startup
+    migration), so anything non-coercible degrades to 0 (no indent).
+    """
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _iter_task_candidate_lines(content: str):
     """Yield (lineno, raw) for lines that may hold a real task line.
 
@@ -143,7 +157,7 @@ def items_to_markdown(items: Optional[List[Dict]]) -> str:
         text = str(it.get("text", "")).strip()
         if not text:
             continue
-        indent = " " * (_INDENT_UNIT * int(it.get("indent", 0) or 0))
+        indent = " " * (_INDENT_UNIT * _coerce_indent(it.get("indent")))
         box = "x" if it.get("done") else " "
         out.append(f"{indent}- [{box}] {text}")
     return "\n".join(out)

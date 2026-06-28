@@ -181,6 +181,60 @@ def test_image_width_round_trips(node_available):
     assert out["md"] == '![](/api/upload/x "w=66")'
 
 
+def _run_task_helpers(cases_js: str):
+    # The fence-aware task helpers are pure (no DOM): pull them plus the two
+    # module-level regex consts they close over and run them under node. Keeps
+    # the card-side parse/toggle in lockstep with core/notes_markdown.py.
+    consts = "\n".join(
+        re.search(rf"^const {name} = .+$", _SRC, re.M).group(0)
+        for name in ("_TASK_RE", "_FENCE_RE")
+    )
+    fns = "\n".join(_extract_fn(n) for n in ("_fenceMask", "_parseTasks", "_toggleTaskContent"))
+    script = consts + "\n" + fns + "\n" + cases_js
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        cwd=_REPO, capture_output=True, timeout=15, text=True,
+    )
+    if result.returncode != 0:
+        raise AssertionError(f"node failed:\nSTDERR:\n{result.stderr}\nSTDOUT:\n{result.stdout}")
+    return json.loads(result.stdout.splitlines()[-1])
+
+
+def test_card_parse_skips_backtick_fenced_task(node_available):
+    # A `- [ ]` line inside a ``` fence is a code sample: the real task is the
+    # only checklist item and must be index 0, matching the rendered checkbox.
+    out = _run_task_helpers(r"""
+      const content = "```\n- [ ] code sample\n```\n- [ ] real task";
+      const tasks = _parseTasks(content);
+      console.log(JSON.stringify({ texts: tasks.map(t => t.text), n: tasks.length }));
+    """)
+    assert out["texts"] == ["real task"]
+    assert out["n"] == 1
+
+
+def test_card_parse_skips_tilde_and_long_fences(node_available):
+    # Tilde fences and >3-char fences are honoured the same as the Python helper.
+    out = _run_task_helpers(r"""
+      const content = "~~~\n- [ ] tilde code\n~~~\n````\n- [ ] long code\n````\n- [ ] real";
+      const tasks = _parseTasks(content);
+      console.log(JSON.stringify({ texts: tasks.map(t => t.text) }));
+    """)
+    assert out["texts"] == ["real"]
+
+
+def test_card_toggle_targets_real_task_not_fenced_lookalike(node_available):
+    # Clicking the visible checkbox (index 0) must flip the real task, never the
+    # fenced `code sample` line — the corruption the review flagged.
+    out = _run_task_helpers(r"""
+      const content = "```\n- [ ] code sample\n```\n- [ ] real task";
+      const res = _toggleTaskContent(content, 0);
+      console.log(JSON.stringify({ content: res.content, done: res.done }));
+    """)
+    assert out["done"] is True
+    assert "```\n- [ ] code sample\n```" in out["content"]  # fenced line untouched
+    assert "- [x] real task" in out["content"]              # real task flipped
+
+
 def test_preview_editor_event_fixes_present():
     """Source-assertions for the event-bound fixes (not runnable without a DOM)."""
     # Paste-as-plaintext: pasted HTML must never land live in the editor.

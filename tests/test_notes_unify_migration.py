@@ -138,6 +138,32 @@ def test_survives_malformed_items(monkeypatch):
         os.unlink(path)
 
 
+def test_malformed_indent_does_not_abort_batch(monkeypatch):
+    # A legacy item with a non-numeric `indent` ("oops") used to raise ValueError
+    # in items_to_markdown and abort the whole migration before the commit,
+    # silently leaving unrelated valid checklist rows unconverted. The bad indent
+    # must now degrade to 0 and the row converts; the valid row converts too.
+    path = _make_notes_db([
+        {"id": "badindent", "content": "Chores",
+         "items": json.dumps([{"text": "A", "indent": "oops"}, {"text": "B", "indent": 1}]),
+         "note_type": "checklist"},
+        {"id": "ok", "content": "x", "items": json.dumps([{"text": "C"}]),
+         "note_type": "checklist"},
+    ])
+    try:
+        _run_migration(monkeypatch, path)  # must not raise
+        bad = _fetch(path, "badindent")
+        assert bad["items"] is None
+        # "oops" indent collapses to no indent; the valid indent=1 -> two spaces.
+        assert "- [ ] A" in bad["content"]
+        assert "  - [ ] B" in bad["content"]
+        ok = _fetch(path, "ok")
+        assert ok["items"] is None
+        assert "- [ ] C" in ok["content"]
+    finally:
+        os.unlink(path)
+
+
 def test_skips_empty_and_bracket_items_rows(monkeypatch):
     # Rows whose items are NULL / '' / '[]' are filtered out (nothing to fold);
     # they're left exactly as-is.

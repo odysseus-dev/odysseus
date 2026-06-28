@@ -235,7 +235,7 @@ async def _call_teacher(teacher_model_spec: str, prompt: str,
     from src.llm_core import llm_call_async
     from src.ai_interaction import _resolve_model, _TEACHER_SYSTEM_PROMPT
     try:
-        url, model, headers = _resolve_model(teacher_model_spec, owner=owner)
+        url, model, headers = await asyncio.to_thread(_resolve_model, teacher_model_spec, owner=owner)
     except Exception as e:
         logger.warning(f"teacher endpoint not resolvable ({teacher_model_spec!r}): {e}")
         return None
@@ -366,6 +366,71 @@ def _format_trace(tool_results: List[Dict[str, Any]], agent_reply: str) -> str:
     return f"<<<UNTRUSTED_TRACE>>>\n{trace}\n<<<END_UNTRUSTED_TRACE>>>"
 
 
+_EVALUATE_TURN_LLM_PROMPT = """\
+You are an independent auditor evaluating a student AI agent's turn.
+Given the original request, the trace of tool calls and results, and the agent's final reply, determine whether the agent failed, gave up because it lacks the tools/capability/information, or encountered an error.
+
+Respond with exactly one of these two words:
+- "failure" if the agent failed, gave up, encountered an error, or asked the user for clarification/missing tools.
+- "ok" if the agent successfully completed the task or is making correct progress.
+
+ORIGINAL USER REQUEST:
+{user_request}
+
+AGENT TRACE:
+{trace}
+
+AGENT REPLY:
+{agent_reply}
+
+EVALUATION:"""
+
+
+async def evaluate_turn_llm(
+    user_request: str,
+    tool_results: List[Dict[str, Any]],
+    agent_reply: str,
+    student_endpoint_url: str,
+    owner: Optional[str] = None,
+) -> Tuple[str, Optional[str]]:
+    """Use a fast LLM (resolved via utility endpoint) to evaluate a turn."""
+    from src.endpoint_resolver import resolve_endpoint
+    from src.llm_core import llm_call_async
+
+    # Resolve utility model (falls back to default model, then student_endpoint_url)
+    url, model, headers = resolve_endpoint(
+        "utility",
+        fallback_url=student_endpoint_url,
+        owner=owner
+    )
+    if not url or not model:
+        return ("ok", None)
+
+    trace_str = _format_trace(tool_results, agent_reply)
+    prompt = _EVALUATE_TURN_LLM_PROMPT.format(
+        user_request=user_request or "(no user request)",
+        trace=trace_str,
+        agent_reply=agent_reply or "(no agent reply)",
+    )
+
+    try:
+        response = await llm_call_async(
+            url, model,
+            [{"role": "user", "content": prompt}],
+            headers=headers,
+            timeout=20,
+        )
+        if response:
+            cleaned_response = response.strip().strip("'\"").lower()
+            if cleaned_response == "failure":
+                return ("failure", f"LLM evaluation flagged failure: {response.strip()}")
+    except Exception as e:
+        logger.warning(f"Tier 2 LLM self-eval failed: {e}")
+
+    return ("ok", None)
+
+
+
 async def escalate_and_learn(
     user_request: str,
     tool_results: List[Dict[str, Any]],
@@ -459,13 +524,32 @@ def maybe_escalate(
 
     # Gate 3: regex eval — only escalate on detected failure.
     status, reason = evaluate_turn_regex(tool_results, agent_reply)
-    if status != "failure":
+    if status == "failure":
+        # Fire async — don't block the user's chat.
+        return asyncio.create_task(
+            escalate_and_learn(user_request, tool_results, agent_reply, reason or "", owner),
+            name="teacher_escalation",
+        )
+
+    # Gate 4: Tier 2 LLM self-evaluation requires teacher_tier2_enabled
+    if not get_setting("teacher_tier2_enabled", False):
         return None
 
-    # Fire async — don't block the user's chat.
+    # Tier 2: LLM self-evaluation background task
+    async def evaluate_and_maybe_escalate():
+        llm_status, llm_reason = await evaluate_turn_llm(
+            user_request=user_request,
+            tool_results=tool_results,
+            agent_reply=agent_reply,
+            student_endpoint_url=student_endpoint_url,
+            owner=owner,
+        )
+        if llm_status == "failure":
+            await escalate_and_learn(user_request, tool_results, agent_reply, llm_reason or "", owner)
+
     return asyncio.create_task(
-        escalate_and_learn(user_request, tool_results, agent_reply, reason or "", owner),
-        name="teacher_escalation",
+        evaluate_and_maybe_escalate(),
+        name="teacher_escalation_tier2",
     )
 
 
@@ -501,10 +585,6 @@ async def run_teacher_inline(
     except Exception:
         return
 
-    status, reason = evaluate_turn_regex(student_tool_events, student_reply)
-    if status != "failure":
-        return
-
     # Extract original user request — last user-role message
     user_request = ""
     for m in reversed(student_messages):
@@ -521,10 +601,25 @@ async def run_teacher_inline(
             )
         break
 
+    status, reason = evaluate_turn_regex(student_tool_events, student_reply)
+    if status != "failure":
+        # Tier 2: LLM self-evaluation check requires teacher_tier2_enabled
+        if not get_setting("teacher_tier2_enabled", False):
+            return
+        status, reason = await evaluate_turn_llm(
+            user_request=user_request,
+            tool_results=student_tool_events,
+            agent_reply=student_reply,
+            student_endpoint_url=student_endpoint_url,
+            owner=owner,
+        )
+        if status != "failure":
+            return
+
     # Resolve teacher endpoint
     try:
         from src.ai_interaction import _resolve_model
-        teacher_url, teacher_model, teacher_headers = _resolve_model(teacher_spec, owner=owner)
+        teacher_url, teacher_model, teacher_headers = await asyncio.to_thread(_resolve_model, teacher_spec, owner=owner)
     except Exception as e:
         logger.warning(f"teacher endpoint not resolvable ({teacher_spec!r}): {e}")
         yield (

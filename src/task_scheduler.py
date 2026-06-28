@@ -289,6 +289,42 @@ def _checkin_calendar_events(db, owner, start, end):
     )
 
 
+def _normalize_chat_endpoint(url: str) -> str:
+    """Repair a resolved task endpoint to a full chat-completions URL.
+
+    Unlike the chat path — which stores ``build_chat_url(normalize_base(base))``
+    on the session — the task executor passes ``task.endpoint_url`` verbatim to
+    the model HTTP call. A bare OpenAI-compatible base such as
+    ``http://host:11434/v1`` therefore POSTs to a 404 ("page not found") and the
+    model silently appears to "return an empty response".
+
+    Repair only bare OpenAI-compatible bases. Native-Ollama URLs (``/api...``)
+    and URLs that already point at a concrete endpoint are returned untouched, so
+    their own downstream normalizers keep working. Idempotent: a URL already
+    ending in ``/chat/completions`` is left as-is.
+    """
+    if not url:
+        return url
+    # Imports kept function-local (endpoint_resolver pulls in heavy deps) but
+    # OUTSIDE the try: an import failure is a real bug that should surface, not
+    # be silently swallowed into the un-normalized URL this function exists to
+    # repair.
+    from urllib.parse import urlparse
+    from src.endpoint_resolver import normalize_base, build_chat_url
+    path = (urlparse(url).path or "").rstrip("/")
+    if path == "/api" or path.startswith("/api/"):
+        return url  # native Ollama — handled by the native path downstream
+    if path.endswith(("/chat/completions", "/messages", "/responses", "/completions")):
+        return url  # already a concrete endpoint
+    try:
+        return build_chat_url(normalize_base(url))
+    except Exception:
+        # Guard only the actual normalization. Returning the URL un-normalized
+        # reverts to the 404 this fixes, so make the silent revert visible.
+        logger.debug("task endpoint normalization failed for %r; using as-is", url, exc_info=True)
+        return url
+
+
 class TaskScheduler:
     def __init__(self, session_manager):
         self._session_manager = session_manager
@@ -1357,6 +1393,7 @@ class TaskScheduler:
             endpoint_url, model = self._resolve_defaults(db, task.owner)
         if not endpoint_url or not model:
             raise RuntimeError("No model/endpoint configured")
+        endpoint_url = _normalize_chat_endpoint(endpoint_url)
         # Record the resolved model so _execute_task_locked can persist it on
         # the run (tasks rarely pin a model, so this is the only record of
         # which model actually produced the output).
@@ -1413,19 +1450,18 @@ class TaskScheduler:
                     system_prompt = f"{char_prompt}\n\n{system_prompt}"
             except Exception:
                 pass
-        # Inject current time so the model knows what's past vs upcoming
+        # Provide current date/time as a user-role message so the system prompt
+        # stays byte-identical across runs and doesn't bust the Anthropic prompt
+        # cache on every scheduled tick (see issue #2927 and the identical fix on
+        # the interactive-chat path in src/agent_loop.py).  The message is built
+        # once here and shared by both execution paths below (agent loop and the
+        # direct fallback) so time grounding is never lost on either path.
         tz_name = _resolve_task_timezone(db, task)
         try:
-            if tz_name:
-                from zoneinfo import ZoneInfo
-                from datetime import timezone
-                now_local = _utcnow().replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz_name))
-                time_str = now_local.strftime("%A, %B %d %Y, %H:%M %Z")
-            else:
-                time_str = _utcnow().strftime("%A, %B %d %Y, %H:%M UTC")
+            from src.user_time import current_datetime_context_message_for_tz
+            _dt_msg: dict | None = current_datetime_context_message_for_tz(tz_name)
         except Exception:
-            time_str = _utcnow().strftime("%A, %B %d %Y, %H:%M UTC")
-        system_prompt = f"Current time: {time_str}\n\n{system_prompt}"
+            _dt_msg = None
 
         # Compute the disabled-tools set: the crew's enabled_tools allowlist
         # (inverted) plus the operator's global disabled_tools setting. The
@@ -1473,14 +1509,15 @@ class TaskScheduler:
                 endpoint_url, model, task, session_id,
                 system_prompt=system_prompt, disabled_tools=disabled_tools or None,
                 relevant_tools=relevant_tools,
+                datetime_context_msg=_dt_msg,
             )
         except Exception as e:
             logger.warning(f"Agent loop failed for task '{task.name}', falling back to simple call: {e}")
             from src.task_endpoint import task_llm_call_async
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": task.prompt},
-            ]
+            messages: list = [{"role": "system", "content": system_prompt}]
+            if _dt_msg:
+                messages.append(_dt_msg)
+            messages.append({"role": "user", "content": task.prompt})
             result = await task_llm_call_async(
                 messages,
                 fallback_url=endpoint_url,
@@ -1547,6 +1584,8 @@ class TaskScheduler:
                 model_name = model_name or resolved_model
             except Exception:
                 pass
+
+        endpoint_url = _normalize_chat_endpoint(endpoint_url)
 
         session_id = task.session_id
         if not session_id:
@@ -1667,7 +1706,7 @@ class TaskScheduler:
             msg["X-Odysseus-Ref"] = str(task.id)
             msg.set_content(result or "")
             _send_smtp_message(cfg, from_addr, [to_addr], msg.as_string(), timeout=30)
-            logger.info("Task %s emailed result to %s (%sb)", task.id, to_addr, len(result or ""))
+            logger.info("Task %s emailed result (recipient_set=%s, %sb)", task.id, bool(to_addr), len(result or ""))
         except Exception as e:
             logger.error("Task %s email delivery failed: %s", task.id, e, exc_info=True)
             raise
@@ -1676,16 +1715,20 @@ class TaskScheduler:
                               system_prompt: str | None = None,
                               disabled_tools: set | None = None,
                               relevant_tools: set | None = None,
-                              override_user_message: str | None = None) -> str:
+                              override_user_message: str | None = None,
+                              datetime_context_msg: dict | None = None) -> str:
         """Run the full agent loop with tool access, collecting the final text."""
         from src.agent_loop import stream_agent_loop
 
         system_content = system_prompt or "You are a helpful assistant executing a scheduled task. Use available tools to complete the task thoroughly."
         user_content = override_user_message or task.prompt
-        messages = [
-            {"role": "system", "content": system_content},
-            {"role": "user", "content": user_content},
-        ]
+        # Build the message list. The datetime context message (user-role) is
+        # inserted immediately before the task prompt so the system prefix stays
+        # byte-identical and cacheable across runs (see issue #2927).
+        messages: list = [{"role": "system", "content": system_content}]
+        if datetime_context_msg:
+            messages.append(datetime_context_msg)
+        messages.append({"role": "user", "content": user_content})
 
         # Resolve headers from the endpoint's API key
         headers = {}
@@ -1821,6 +1864,7 @@ class TaskScheduler:
             endpoint_url, model = self._resolve_defaults(db, task.owner)
         if not endpoint_url or not model:
             raise RuntimeError("No model/endpoint configured for research")
+        endpoint_url = _normalize_chat_endpoint(endpoint_url)
         # Record the resolved model for the run record (see _execute_task_locked).
         self._last_run_model = model
 
@@ -2029,7 +2073,7 @@ class TaskScheduler:
                 # silent SMTP failure is easier to spot in the logs.
                 logger.info(
                     f"Task {task.id} delivered via MCP tool {tool_name} "
-                    f"(to={recipient or '<unset>'}, body={body_len}b, reply={stdout[:200]!r})"
+                    f"(recipient_set={bool(recipient)}, body={body_len}b, reply={stdout[:200]!r})"
                 )
         except Exception as e:
             logger.error(f"Task {task.id} MCP delivery failed: {e}")
