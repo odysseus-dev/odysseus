@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, Menu, dialog } = require('electron');
+const { app, BrowserWindow, shell, Menu, ipcMain } = require('electron');
 const { spawn, execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -69,6 +69,8 @@ let searxngProcess = null;
 let chromaWarning = null;
 // Set if SearXNG isn't reachable and we couldn't start it; shown to the user.
 let searxngWarning = null;
+// Each is { kind: 'chromadb'|'searxng', message: string } so the banner can
+// offer a "Launch for me" button that calls the launch-sidecar IPC.
 
 function log(msg) {
   console.log(`[odysseus] ${msg}`);
@@ -110,11 +112,15 @@ function startChromaDB() {
       } else {
         // No binary to spawn. In packaged mode this is expected — surface a
         // clear warning instead of silently degrading RAG / vector memory.
-        chromaWarning =
-          `ChromaDB is not running at 127.0.0.1:${CHROMA_PORT}. ` +
-          `RAG (Personal Docs) and vector memory will be unavailable until you start a ChromaDB server. ` +
-          `Easiest: \`docker run -p 8100:8000 -v ~/.odysseus/chroma:/chroma/chroma chromadb/chroma:latest\`.`;
-        log(`chroma not found at ${chromaBin}; ${chromaWarning}`);
+        chromaWarning = {
+          kind: 'chromadb',
+          message:
+            `ChromaDB is not running at 127.0.0.1:${CHROMA_PORT}. ` +
+            `RAG (Personal Docs) and vector memory will be unavailable until you start a ChromaDB server. ` +
+            `Click "Launch for me" to start one via Docker, or run ` +
+            `\`docker run -p 8100:8000 -v ~/.odysseus/chroma:/chroma/chroma chromadb/chroma:latest\` manually.`,
+        };
+        log(`chroma not found at ${chromaBin}; ${chromaWarning.message}`);
         resolve();
       }
     });
@@ -157,14 +163,90 @@ function startSearXNG() {
         searxngProcess.on('exit', () => { searxngProcess = null; });
         setTimeout(resolve, 3000);
       } else {
-        searxngWarning =
-          `SearXNG is not running at ${SEARXNG_URL}. Web search will be unavailable. ` +
-          `Easiest: \`docker run -p 8080:8080 searxng/searxng:latest\`.`;
-        log(`searxng not found; ${searxngWarning}`);
+        searxngWarning = {
+          kind: 'searxng',
+          message:
+            `SearXNG is not running at ${SEARXNG_URL}. Web search will be unavailable. ` +
+            `Click "Launch for me" to start one via Docker, or run ` +
+            `\`docker run -p 8080:8080 searxng/searxng:latest\` manually.`,
+        };
+        log(`searxng not found; ${searxngWarning.message}`);
         resolve();
       }
     });
     probe.setTimeout(2000, () => { probe.destroy(); resolve(); });
+  });
+}
+
+// ── IPC: launch an optional sidecar via Docker on the user's behalf ──
+// Called from the warning banner's "Launch <X> for me" button via preload.
+// Spawns `docker run -d ...` and resolves once the container is created
+// (not when it's healthy — the server probes lazily). Pinned image tags
+// match docker-compose.yml so the user gets the same version we test with.
+const SIDECAR_IMAGES = {
+  // Pinned in docker-compose.yml line 106 — SearXNG upstream :latest breaks often.
+  searxng: 'docker.io/searxng/searxng:2026.5.31-7159b8aed',
+  chromadb: 'docker.io/chromadb/chroma:latest',
+};
+
+function launchSidecarDocker(kind) {
+  return new Promise((resolve) => {
+    const image = SIDECAR_IMAGES[kind];
+    if (!image) return resolve({ ok: false, error: `Unknown sidecar: ${kind}` });
+
+    // Mirror docker-compose.yml port bindings (host:container).
+    let args;
+    if (kind === 'searxng') {
+      const dataDir = path.join(USER_DATA_DIR, 'searxng');
+      if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+      args = [
+        'run', '-d', '--name', 'odysseus-searxng',
+        '-p', '127.0.0.1:8080:8080',
+        '-v', `${dataDir}:/etc/searxng`,
+        '-e', 'SEARXNG_BASE_URL=http://localhost:8080/',
+        image,
+      ];
+    } else if (kind === 'chromadb') {
+      const dataDir = path.join(USER_DATA_DIR, 'chroma');
+      if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+      args = [
+        'run', '-d', '--name', 'odysseus-chromadb',
+        '-p', '127.0.0.1:8100:8000',
+        '-v', `${dataDir}:/chroma/chroma`,
+        '-e', 'ANONYMIZED_TELEMETRY=FALSE',
+        image,
+      ];
+    }
+
+    log(`launching ${kind} via docker: docker ${args.join(' ')}`);
+    const proc = spawn('docker', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', (d) => { stdout += d.toString(); });
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.on('error', (err) => {
+      const msg = err.code === 'ENOENT'
+        ? 'Docker is not installed or not on your PATH. Install Docker Desktop and try again.'
+        : String(err.message);
+      log(`docker launch failed for ${kind}: ${msg}`);
+      resolve({ ok: false, error: msg });
+    });
+    proc.on('exit', (code) => {
+      if (code === 0) {
+        log(`${kind} container started: ${stdout.trim()}`);
+        resolve({ ok: true });
+      } else {
+        // Container name conflict is the common case on re-launch —
+        // offer a clear hint rather than the raw docker error.
+        let msg = stderr.trim() || `docker exited with code ${code}`;
+        if (/already.*in use|conflict.*already exists/i.test(msg)) {
+          msg += `\n\nA container named "odysseus-${kind}" already exists. ` +
+                 `Run \`docker rm -f odysseus-${kind}\` and try again.`;
+        }
+        log(`${kind} docker run failed (exit ${code}): ${msg}`);
+        resolve({ ok: false, error: msg });
+      }
+    });
   });
 }
 
@@ -292,6 +374,10 @@ function createWindow() {
   // Hide default menu
   Menu.setApplicationMenu(null);
 
+  // IPC: launch an optional sidecar (SearXNG / ChromaDB) via Docker.
+  // Invoked from the warning banner's "Launch <X> for me" button via preload.
+  ipcMain.handle('launch-sidecar', (_event, kind) => launchSidecarDocker(kind));
+
   // Open external links in the system browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -325,6 +411,9 @@ async function startBackend() {
     mainWindow?.loadURL(APP_URL);
     // Surface one-time warnings for any sidecars that aren't reachable so
     // users know which features degraded silently instead of guessing.
+    // Each warning is { kind, message } — the banner offers a "Launch for me"
+    // button that calls the launch-sidecar IPC (preload exposes it as
+    // window.odysseusElectron.launchSidecar(kind)).
     const warnings = [chromaWarning, searxngWarning].filter(Boolean);
     if (warnings.length && mainWindow) {
       mainWindow.webContents.once('dom-ready', () => {
@@ -332,20 +421,54 @@ async function startBackend() {
           (function() {
             try {
               var warnings = ${JSON.stringify(warnings)};
-              warnings.forEach(function(msg) {
+              var api = (window.odysseusElectron && window.odysseusElectron.launchSidecar)
+                ? window.odysseusElectron.launchSidecar.bind(window.odysseusElectron)
+                : null;
+              warnings.forEach(function(w) {
                 var n = document.createElement('div');
                 n.style.cssText = 'position:fixed;bottom:16px;left:16px;right:16px;' +
                   'z-index:2147483647;padding:12px 16px;border-radius:8px;' +
                   'background:#2a1a1a;color:#ffb4b4;border:1px solid #ff6b6b;' +
                   'font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;' +
-                  'box-shadow:0 4px 12px rgba(0,0,0,0.3);margin-bottom:8px;';
-                n.textContent = msg;
+                  'box-shadow:0 4px 12px rgba(0,0,0,0.3);margin-bottom:8px;' +
+                  'display:flex;align-items:flex-start;gap:12px;';
+                var txt = document.createElement('span');
+                txt.style.cssText = 'flex:1;';
+                txt.textContent = w.message;
+                n.appendChild(txt);
+
+                // "Launch for me" — calls IPC to spawn the docker container.
+                if (w.kind && api) {
+                  var launch = document.createElement('button');
+                  launch.textContent = 'Launch for me';
+                  launch.style.cssText = 'background:#ff6b6b;color:#1a1a1a;border:none;' +
+                    'padding:4px 10px;border-radius:4px;cursor:pointer;font:inherit;font-weight:600;';
+                  launch.onclick = function() {
+                    launch.disabled = true;
+                    launch.textContent = 'Starting…';
+                    api(w.kind).then(function(r) {
+                      if (r && r.ok) {
+                        n.remove();
+                      } else {
+                        launch.disabled = false;
+                        launch.textContent = 'Launch for me';
+                        var err = document.createElement('span');
+                        err.style.cssText = 'display:block;margin-top:6px;color:#ff9999;font-size:12px;white-space:pre-wrap;';
+                        err.textContent = (r && r.error) ? r.error : 'Failed to start — see logs.';
+                        txt.appendChild(err);
+                      }
+                    });
+                  };
+                  n.appendChild(launch);
+                }
+
                 var b = document.createElement('button');
                 b.textContent = 'Dismiss';
-                b.style.cssText = 'margin-left:12px;background:transparent;border:1px solid #ff6b6b;' +
+                b.style.cssText = 'background:transparent;border:1px solid #ff6b6b;' +
                   'color:#ffb4b4;padding:4px 10px;border-radius:4px;cursor:pointer;font:inherit;';
                 b.onclick = function() { n.remove(); };
                 n.appendChild(b);
+
                 document.body.appendChild(n);
               });
             } catch (e) { console.warn('warning banner failed:', e); }
