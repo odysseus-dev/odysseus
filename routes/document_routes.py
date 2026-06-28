@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, 
 from sqlalchemy import case, func, or_
 from core.database import SessionLocal, Document, DocumentVersion
 from core.database import Session as DbSession
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, _auth_disabled
 from src.constants import MAIL_ATTACHMENTS_DIR
 
 logger = logging.getLogger(__name__)
@@ -388,7 +388,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         db = SessionLocal()
         try:
             if not user:
-                raise HTTPException(403, "Authentication required")
+                if not _auth_disabled():
+                    raise HTTPException(403, "Authentication required")
             # v2 review HIGH-9: raise 403 explicitly when the caller
             # can't see this session, instead of returning [] which the
             # UI treats identically to "no docs" and silently masks
@@ -503,7 +504,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         user = get_current_user(request)
         try:
             data = await request.json()
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to parse export request body, defaulting to empty", exc_info=e)
             data = {}
         ids = data.get("ids") or []
         if not ids:
@@ -645,8 +647,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     try:
                         from src.agent_tools.document_tools import clear_active_document
                         clear_active_document(doc_id)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("Failed to clear active document %r on detach", doc_id, exc_info=e)
             db.commit()
             db.refresh(doc)
             return _doc_to_dict(doc)
@@ -1330,6 +1332,12 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             pdf_path = _locate_current_user_upload(request, upload_id, user)
             if not pdf_path:
                 raise HTTPException(404, f"Source PDF {upload_id} not found")
+
+            # Fail fast with a clear 503 if the optional PyMuPDF dependency
+            # is missing — fill_fields/stamp_annotations will otherwise
+            # raise RuntimeError deep inside and bubble out as a 500.
+            # Mirrors the convention in _load_pdf_viewer_fitz above.
+            _load_pdf_viewer_fitz()
 
             values = parse_markdown_to_values(doc.current_content or "")
             out_path = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False).name

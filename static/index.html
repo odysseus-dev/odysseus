@@ -76,7 +76,7 @@
       }
       // Apply font early
       if (t && t.font) {
-        var fm = {mono:"'Fira Code', monospace",sans:"system-ui, -apple-system, 'Segoe UI', sans-serif",serif:"Georgia, 'Times New Roman', serif"};
+        var fm = {mono:"'Fira Code', monospace",sans:"system-ui, -apple-system, 'Segoe UI', sans-serif",serif:"Georgia, 'Times New Roman', serif",opendyslexic:"'OpenDyslexic', sans-serif"};
         if (fm[t.font]) { s.setProperty('--font-family', fm[t.font]); }
         else { s.setProperty('--font-family', "'" + t.font.replace(/'/g,'') + "', sans-serif"); }
       }
@@ -84,6 +84,12 @@
       if (t && t.density && t.density !== 'comfortable') {
         document.documentElement.classList.add('density-' + t.density);
       }
+      // Apply UI text-size scale early (global accessibility pref, independent
+      // of the active theme) so there's no flash on load.
+      try {
+        var _us = localStorage.getItem('odysseus-ui-scale');
+        if (_us && _us !== '100') document.documentElement.classList.add('ui-scale-' + _us);
+      } catch(e){}
       // Apply background pattern on body once available
       if (t && t.bgPattern && t.bgPattern !== 'none') {
         document.addEventListener('DOMContentLoaded', function() {
@@ -258,21 +264,29 @@
         <div class="memory-tab-panel" data-memory-panel="browse">
           <div class="admin-card" style="display:flex;flex-direction:column;overflow:hidden;flex:1;min-height:0;">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
-              <h2 style="display:flex;align-items:center;gap:6px;margin:0;padding:0;line-height:1;">Memories <span id="memory-count-h2" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
+              <h2 style="display:flex;align-items:center;gap:6px;margin:0;padding:0;line-height:1;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;"><path d="M12 2a7 7 0 0 1 7 7c0 2.4-1.2 4.5-3 5.7V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.3C6.2 13.5 5 11.4 5 9a7 7 0 0 1 7-7z"/><line x1="10" y1="22" x2="14" y2="22"/></svg>Memories <span id="memory-count-h2" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
               <span style="flex:1"></span>
+              <span class="admin-toggle-state"></span>
               <label class="admin-switch" title="Include memories in chat context"><input type="checkbox" id="memory-enabled-header-toggle" checked /><span class="admin-slider"></span></label>
             </div>
             <p class="memory-desc doclib-desc" style="margin-top:6px;">Long-term facts the AI remembers across chats — recall, edit, or curate.</p>
             <div class="memory-toolbar">
               <div class="memory-toolbar-row">
-                <select id="memory-sort" class="memory-sort-select" aria-label="Sort memories">
-                  <option value="newest">Newest</option>
-                  <option value="oldest">Oldest</option>
-                  <option value="alpha">A-Z</option>
-                  <option value="uses">Most used</option>
-                </select>
-                <button id="memory-select-btn" class="memory-toolbar-btn" title="Select multiple memories">Select</button>
-                <button id="memory-tidy-btn" class="memory-toolbar-btn" title="AI tidy: deduplicate and clean up memories"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:2px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg> Tidy</button>
+                <div class="memory-sort-picker" id="memory-sort-picker" style="position:relative;">
+                  <select id="memory-sort" class="memory-sort-select" aria-label="Sort memories" style="display:none;">
+                    <option value="newest">Newest</option>
+                    <option value="oldest">Oldest</option>
+                    <option value="alpha">A-Z</option>
+                    <option value="uses">Most used</option>
+                  </select>
+                  <button type="button" class="memory-sort-btn" id="memory-sort-btn" aria-haspopup="listbox" aria-expanded="false">
+                    <span class="memory-sort-current"><span class="memory-sort-icon-cur"></span><span class="memory-sort-label">Newest</span></span>
+                    <svg class="memory-sort-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                  </button>
+                  <div class="memory-sort-menu" id="memory-sort-menu" role="listbox" hidden></div>
+                </div>
+                <button id="memory-tidy-btn" class="memory-toolbar-btn" title="AI tidy: deduplicate and clean up memories"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:2px;color:var(--accent, var(--red));"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg> Tidy</button>
+                <button id="memory-select-btn" class="memory-toolbar-btn" title="Select multiple memories" style="position:relative;left:-2px;"><svg class="memory-select-btn-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>Select</button>
               </div>
               <input type="text" id="memory-search" placeholder="Search memories…" class="memory-search-input" aria-label="Search memories" />
               <div id="memory-category-filters" class="memory-category-filters">
@@ -293,7 +307,7 @@
         <div class="memory-tab-panel hidden" data-memory-panel="add">
           <div class="admin-card">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
-              <h2 style="margin:0;padding:0;line-height:1;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M12 2a7 7 0 0 1 7 7c0 2.4-1.2 4.5-3 5.7V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.3C6.2 13.5 5 11.4 5 9a7 7 0 0 1 7-7z"/><line x1="10" y1="22" x2="14" y2="22"/></svg>Add Memory</h2>
+              <h2 style="margin:0;padding:0;line-height:1;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;color:var(--accent, var(--red));"><path d="M12 2a7 7 0 0 1 7 7c0 2.4-1.2 4.5-3 5.7V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.3C6.2 13.5 5 11.4 5 9a7 7 0 0 1 7-7z"/><line x1="10" y1="22" x2="14" y2="22"/></svg>Add Memory</h2>
               <span style="flex:1"></span>
               <button id="memory-import-btn" class="theme-io-btn" title="Import memories from a file" style="height:26px;font-size:12px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Import</button>
               <button id="memory-export-btn" class="theme-io-btn" title="Export all memories as JSON" style="height:26px;font-size:12px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Export</button>
@@ -312,7 +326,7 @@
           </div>
           <div class="admin-card">
             <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">
-              <h2 style="margin:0;padding:0;line-height:1;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Add Skill</h2>
+              <h2 style="margin:0;padding:0;line-height:1;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;color:var(--accent, var(--red));"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Add Skill</h2>
             </div>
             <p class="memory-desc doclib-desc" style="margin-top:6px;">Import a skill from GitHub or <a href="https://skills.sh" target="_blank" rel="noopener noreferrer">skills.sh</a> (folder with <code>SKILL.md</code> and optional templates).</p>
             <div class="memory-add-row" style="margin-top:6px;margin-bottom:10px;">
@@ -348,8 +362,9 @@
         <div class="memory-tab-panel hidden" data-memory-panel="skills">
           <div class="admin-card" style="display:flex;flex-direction:column;overflow:hidden;flex:1;min-height:0;">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
-              <h2 style="margin:0;padding:0;line-height:1;">Skills <span id="skills-count-h2" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
+              <h2 style="display:flex;align-items:center;gap:6px;margin:0;padding:0;line-height:1;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Skills <span id="skills-count-h2" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
               <span style="flex:1"></span>
+              <span class="admin-toggle-state"></span>
               <label class="admin-switch" title="Inject relevant skills into chat context"><input type="checkbox" id="skills-enabled-header-toggle" checked /><span class="admin-slider"></span></label>
             </div>
             <p class="memory-desc doclib-desc" style="margin-top:6px;">Reusable procedures the AI can call via /skill — sort by confidence to surface the proven ones.</p>
@@ -374,8 +389,8 @@
                     <option value="filter:conf70">Confidence ≤ 70%</option>
                   </optgroup>
                 </select>
-                <button id="skills-select-btn" class="memory-toolbar-btn" title="Select multiple skills">Select</button>
-                <button id="skills-audit-btn" class="memory-toolbar-btn" title="Test every skill, auto-fix the weak ones, flag what still fails"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:3px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>Audit all</button>
+                <button id="skills-audit-btn" class="memory-toolbar-btn" title="Test every skill, auto-fix the weak ones, flag what still fails"><svg width="11" height="11" viewBox="0 0 24 24" fill="var(--accent, var(--red))" style="vertical-align:-1px;margin-right:3px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>Audit</button>
+                <button id="skills-select-btn" class="memory-toolbar-btn" title="Select multiple skills"><svg class="memory-select-btn-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>Select</button>
               </div>
               <input type="text" id="skills-search" placeholder="Search skills…" class="memory-search-input" aria-label="Search skills" />
             </div>
@@ -395,34 +410,23 @@
         <!-- ── Settings tab ── -->
         <div class="memory-tab-panel hidden" data-memory-panel="settings">
           <div class="admin-card">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-              <h2 style="margin:0">Auto-extract memories</h2>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:32px">
+              <h2 style="margin:0;display:inline-flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="var(--accent, var(--red))" aria-hidden="true"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>Auto-extract memories</h2>
               <label class="admin-switch" style="flex-shrink:0"><input type="checkbox" id="auto-memory-toggle" checked /><span class="admin-slider"></span></label>
             </div>
             <span class="admin-toggle-sub" style="display:block;margin-top:6px">Automatically extract memories from conversations.</span>
           </div>
           <div class="admin-card">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-              <h2 style="margin:0">Auto-extract skills</h2>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:32px">
+              <h2 style="margin:0;display:inline-flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="var(--accent, var(--red))" aria-hidden="true"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>Auto-extract skills</h2>
               <label class="admin-switch" style="flex-shrink:0"><input type="checkbox" id="auto-skills-toggle" /><span class="admin-slider"></span></label>
             </div>
             <span class="admin-toggle-sub" style="display:block;margin-top:6px;opacity:0.6">Automatically draft reusable skills from your workflows. Audit all can publish passing skills using the threshold below.</span>
             <span class="admin-toggle-sub" style="display:block;margin-top:6px;opacity:0.6">The library can grow; cleanup retires weak/duplicate skills only after review.</span>
           </div>
           <div class="admin-card">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-              <h2 style="margin:0">Inject Skills</h2>
-            </div>
-            <span class="admin-toggle-sub" style="display:block;margin-top:6px;opacity:0.6">Controls how many relevant published or approved skills are added to each agent request.</span>
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px">
-              <span class="admin-toggle-sub" style="margin:0">Max skills per request</span>
-              <input type="number" id="skill-max-input" min="0" max="12" step="1" value="3" aria-label="Max skills to inject" style="flex-shrink:0;width:72px;background:var(--input-bg,var(--panel));color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:12px;text-align:right;font-variant-numeric:tabular-nums" />
-            </div>
-            <span class="admin-toggle-sub" style="display:block;margin-top:6px;opacity:0.5">Set to 0 to disable skill injection.</span>
-          </div>
-          <div class="admin-card">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-              <h2 style="margin:0">Auto-approve skills</h2>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:32px">
+              <h2 style="margin:0;display:inline-flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="var(--accent, var(--red))" aria-hidden="true"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>Auto-approve skills</h2>
               <label class="admin-switch" style="flex-shrink:0"><input type="checkbox" id="auto-approve-skills-toggle" checked /><span class="admin-slider"></span></label>
             </div>
             <span class="admin-toggle-sub" style="display:block;margin-top:6px;opacity:0.6">Audit all publishes passing, necessary skills at or above this confidence. Off = keep audit results as drafts unless manually approved.</span>
@@ -433,6 +437,17 @@
                 <input type="range" id="skill-confidence-slider" class="preset-range" min="50" max="100" step="5" value="85" style="width:120px;margin:0" />
               </span>
             </div>
+          </div>
+          <div class="admin-card">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:32px">
+              <h2 style="margin:0;display:inline-flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="opacity:0.7"><path d="M12 5v14"/><polyline points="6 11 12 17 18 11"/><path d="M5 20h14"/></svg>Inject Skills</h2>
+            </div>
+            <span class="admin-toggle-sub" style="display:block;margin-top:6px;opacity:0.6">Controls how many relevant published or approved skills are added to each agent request.</span>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px">
+              <span class="admin-toggle-sub" style="margin:0">Max skills per request</span>
+              <input type="number" id="skill-max-input" min="0" max="12" step="1" value="3" aria-label="Max skills to inject" style="flex-shrink:0;width:72px;background:var(--input-bg,var(--panel));color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:12px;text-align:right;font-variant-numeric:tabular-nums" />
+            </div>
+            <span class="admin-toggle-sub" style="display:block;margin-top:6px;opacity:0.5">Set to 0 to disable skill injection.</span>
           </div>
         </div>
       </div>
@@ -572,6 +587,7 @@
               <option value="mono">Monospace</option>
               <option value="sans">Sans-serif</option>
               <option value="serif">Serif</option>
+              <option value="opendyslexic">OpenDyslexic (dyslexia-friendly)</option>
             </select>
           </div>
           <div class="theme-fd-group">
@@ -580,6 +596,13 @@
               <option value="compact">Compact</option>
               <option value="comfortable">Comfortable</option>
               <option value="spacious">Spacious</option>
+            </select>
+          </div>
+          <div class="theme-fd-group">
+            <label class="theme-fd-label">Text size</label>
+            <select id="theme-text-size-select" class="theme-fd-select" aria-label="Text size">
+              <option value="100">Default</option>
+              <option value="125">Larger</option>
             </select>
           </div>
           <div class="theme-fd-group" id="theme-frosted-group">
@@ -704,12 +727,9 @@
         <div class="section-header-flex">
           <span class="section-title" id="chats-section-title"><svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span id="chats-section-label" class="section-title-label">Chats</span><span id="chats-notif-dot" class="sidebar-notif-dot" style="display:none"></span></span>
           <div style="position:relative; display:inline-block; display:flex; gap:4px; align-items:center;">
-            <button type="button" class="section-header-btn chats-manage-btn" id="chats-library-btn" title="Manage Chats (Library)">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
-                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
-                <path d="M9 7h6M9 11h4"/>
-              </svg>
+            <button type="button" class="section-header-btn list-item-plus-btn chats-manage-btn" id="chats-library-btn" title="Manage Chats (Library)">
+              <span aria-hidden="true" style="display:inline-block;width:13px;height:13px;"></span>
+              <span class="list-item-plus-label">manage</span>
             </button>
             <button type="button" class="section-header-btn" id="session-sort-btn" title="Sort sessions">
               <svg class="sort-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -726,14 +746,11 @@
               <div class="dropdown-item sort-option sort-dropdown-item" data-sort="newest">Newest First</div>
               <div class="dropdown-item sort-option sort-dropdown-item" data-sort="group">By Folder</div>
               <div class="dropdown-item sort-dropdown-item sort-dropdown-sep" id="auto-sort-sessions-row" style="display:flex;align-items:center;padding:0;">
-                <span id="auto-sort-sessions-btn" style="flex:1;padding:5px 10px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">
-                  <span class="auto-sort-icon"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:2px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg> Tidy</span>
+                <span id="auto-sort-sessions-btn" style="flex:1;padding:5px 10px 5px 4px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+                  <span class="auto-sort-icon"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg></span>
+                  <span>Group</span>
                   <span class="auto-sort-spinner" style="display:none;">Sorting...</span>
                 </span>
-                <button type="button" id="auto-sort-sessions-more" title="Tidy options" aria-label="Tidy options" style="background:none;border:none;border-left:1px solid var(--border);color:inherit;cursor:pointer;padding:5px 8px;font-size:9px;opacity:0.7;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
-              </div>
-              <div class="dropdown-item sort-dropdown-item" id="auto-sort-sessions-noai-btn" style="display:none;padding-left:24px;">
-                Tidy <span class="auto-sort-noai-spinner" style="display:none;font-size:9px;opacity:0.6;margin-left:4px;">Cleaning...</span>
               </div>
               <div class="dropdown-item rearrange-toggle sort-dropdown-item sort-dropdown-sep" id="session-rearrange-toggle">
                 &#8593;&#8595; Rearrange <span class="rearrange-check" style="float:right; opacity:0;">&#x2022;</span>
@@ -876,7 +893,7 @@
           <span class="grow">Library</span>
           <button type="button" class="list-item-plus-btn" id="library-new-doc-btn" title="New document">
             <svg class="list-item-plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            <span class="list-item-plus-label">new</span>
+            <span class="list-item-plus-label">document</span>
           </button>
         </div>
         <div class="list-item" id="tool-notes-btn">
@@ -1002,7 +1019,12 @@
           <button type="button" class="model-picker-btn" id="model-picker-btn" title="Switch model"><span id="model-picker-label">Select model</span> <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg></button>
           <div class="model-picker-menu hidden" id="model-picker-menu">
             <div class="model-picker-search-row">
-              <input type="text" id="model-picker-search" placeholder="Search models..." autocomplete="off" aria-label="Search models">
+              <div class="model-picker-search-wrap">
+                <input type="text" id="model-picker-search" placeholder="Search models..." autocomplete="off" aria-label="Search models">
+                <button type="button" class="model-picker-refresh-btn" id="model-picker-refresh-btn" title="Refresh model picker" aria-label="Refresh model picker">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                </button>
+              </div>
               <button type="button" class="model-picker-action-btn primary" id="model-picker-add-models-btn" title="Add model endpoints" aria-label="Add model endpoints">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
               </button>
@@ -1310,7 +1332,7 @@
 
   <!-- Cookbook Modal -->
   <div id="cookbook-modal" class="modal hidden">
-    <div class="modal-content" role="dialog" aria-label="Cookbook" style="width: min(780px, 92vw); height: 94vh; max-height: 94vh; background: var(--bg);">
+    <div class="modal-content" role="dialog" aria-label="Cookbook" style="width: min(780px, 92vw); background: var(--bg);">
       <div class="modal-header">
         <h4 style="margin:0;margin-right:auto"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>Cookbook</h4>
         <button class="close-btn" id="close-cookbook-modal" aria-label="Close cookbook">✖</button>
@@ -1330,13 +1352,16 @@
         </button>
         <button class="close-btn" aria-label="Close settings">✖</button>
       </div>
-      <div class="admin-toggle-sub" style="padding:0 12px 8px;opacity:0.6;font-size:11px;">Toggle on/off visibility of tools and modules across the interface.</div>
       <div class="settings-layout">
         <div class="settings-sidebar">
           <!-- Section 1: AI plumbing (Add Models → AI Defaults → Search) -->
           <button class="settings-nav-item active" data-settings-tab="services">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>
             <span>Add Models</span>
+          </button>
+          <button class="settings-nav-item" data-settings-tab="added-models">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            <span>Added Models</span>
           </button>
           <button class="settings-nav-item" data-settings-tab="ai">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 0-4 4v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2h-2V6a4 4 0 0 0-4-4z"/></svg>
@@ -1404,14 +1429,21 @@
             <div class="settings-col">
               <div class="settings-row">
                 <label class="settings-label">Endpoint</label>
+                <span class="adm-model-logo" id="set-defaultEpSelect-logo" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex-shrink:0;opacity:0.9;color:var(--fg);"></span>
                 <select id="set-defaultEpSelect" class="settings-select"></select>
               </div>
               <div class="settings-row">
                 <label class="settings-label">Model</label>
+                <span class="adm-model-logo" id="set-defaultModelSelect-logo" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex-shrink:0;opacity:0.9;color:var(--fg);"></span>
                 <select id="set-defaultModelSelect" class="settings-select"></select>
               </div>
-              <div id="set-defaultFallbacks" class="settings-fallbacks"></div>
-              <button type="button" class="settings-fallback-add" id="set-defaultAddFallback" title="Add a model to try if the one above fails">+ Add fallback</button>
+              <div class="settings-row" style="align-items:flex-start;">
+                <label class="settings-label" style="margin-top:6px;">Fallbacks</label>
+                <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+                  <div id="set-defaultFallbacks" class="settings-fallbacks"></div>
+                  <button type="button" class="settings-fallback-add" id="set-defaultAddFallback" title="Add a model to try if the one above fails">+ Add fallback</button>
+                </div>
+              </div>
               <div id="set-defaultChatMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
@@ -1421,14 +1453,21 @@
             <div class="settings-col">
               <div class="settings-row">
                 <label class="settings-label">Endpoint</label>
+                <span class="adm-model-logo" id="set-utilityEpSelect-logo" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex-shrink:0;opacity:0.9;color:var(--fg);"></span>
                 <select id="set-utilityEpSelect" class="settings-select"><option value="">—</option></select>
               </div>
               <div class="settings-row">
                 <label class="settings-label">Model</label>
+                <span class="adm-model-logo" id="set-utilityModelSelect-logo" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex-shrink:0;opacity:0.9;color:var(--fg);"></span>
                 <select id="set-utilityModelSelect" class="settings-select"><option value="">—</option></select>
               </div>
-              <div id="set-utilityFallbacks" class="settings-fallbacks"></div>
-              <button type="button" class="settings-fallback-add" id="set-utilityAddFallback" title="Add a model to try if the utility model fails">+ Add fallback</button>
+              <div class="settings-row" style="align-items:flex-start;">
+                <label class="settings-label" style="margin-top:6px;">Fallbacks</label>
+                <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+                  <div id="set-utilityFallbacks" class="settings-fallbacks"></div>
+                  <button type="button" class="settings-fallback-add" id="set-utilityAddFallback" title="Add a model to try if the utility model fails">+ Add fallback</button>
+                </div>
+              </div>
               <div id="set-utilityChatMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
@@ -1438,16 +1477,22 @@
             <div style="display:flex;flex-direction:column;gap:0.5rem;">
               <div style="display:flex;align-items:center;gap:0.75rem;">
                 <label class="settings-label">Model</label>
+                <span class="adm-model-logo" id="set-vlModelSelect-logo" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex-shrink:0;opacity:0.9;color:var(--fg);"></span>
                 <select id="set-vlModelSelect" class="settings-select"><option value="">Auto-detect</option></select>
               </div>
-              <div id="set-visionFallbacks" class="settings-fallbacks"></div>
-              <button type="button" class="settings-fallback-add" id="set-visionAddFallback" title="Add a vision model to try if the one above fails">+ Add fallback</button>
+              <div class="settings-row" style="align-items:flex-start;">
+                <label class="settings-label" style="margin-top:6px;">Fallbacks</label>
+                <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+                  <div id="set-visionFallbacks" class="settings-fallbacks"></div>
+                  <button type="button" class="settings-fallback-add" id="set-visionAddFallback" title="Add a vision model to try if the one above fails">+ Add fallback</button>
+                </div>
+              </div>
               <div id="set-visionSettingsMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>Research Model</h2>
-            <div class="admin-toggle-sub" style="margin-bottom:8px">Model used for Deep Research. Falls back to the default chat model if not set.</div>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Model used for Deep Research, more settings under <a href="#" data-go-settings-tab="search" style="color:var(--accent, var(--red));text-decoration:underline;font-weight:600;">Search →</a></div>
             <div class="settings-col">
               <div class="settings-row">
                 <label class="settings-label">Endpoint</label>
@@ -1457,48 +1502,17 @@
               </div>
               <div class="settings-row">
                 <label class="settings-label">Model</label>
+                <span class="adm-model-logo" id="set-researchModel-logo" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex-shrink:0;opacity:0.9;color:var(--fg);"></span>
                 <select id="set-researchModel" class="settings-select">
                   <option value="">Same as chat</option>
                 </select>
               </div>
-              <div class="settings-row">
-                <label class="settings-label">Search</label>
-                <select id="set-researchSearch" class="settings-select">
-                  <option value="">Same as web search</option>
-                  <option value="searxng">SearXNG</option>
-                  <option value="duckduckgo">DuckDuckGo</option>
-                  <option value="tavily">Tavily</option>
-                  <option value="brave">Brave</option>
-                  <option value="google">Google</option>
-                  <option value="serper">Serper</option>
-                </select>
-              </div>
-              <div class="settings-row">
-                <label class="settings-label">Max Tokens</label>
-                <input id="set-researchMaxTokens" type="text" inputmode="numeric" placeholder="8192 (default)" class="settings-select" style="width:120px;">
-              </div>
-              <div class="settings-row">
-                <label class="settings-label">Extract Timeout</label>
-                <input id="set-researchExtractTimeout" type="text" inputmode="numeric" placeholder="90 sec" class="settings-select" style="width:120px;">
-              </div>
-              <div class="settings-row">
-                <label class="settings-label">Extract Parallel</label>
-                <input id="set-researchExtractConcurrency" type="text" inputmode="numeric" placeholder="3" class="settings-select" style="width:120px;">
-              </div>
-              <div class="settings-row">
-                <label class="settings-label">Max Time</label>
-                <input id="set-researchRunTimeout" type="text" inputmode="numeric" placeholder="1800 sec (0 = no limit)" class="settings-select" style="width:120px;">
-              </div>
-              <div id="set-researchMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+              <div id="set-researchMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);margin-top:2px;"></div>
             </div>
           </div>
           <!-- Agent card moved to the Agent Tools tab. -->
-          <!-- Image Generation removed — only inpaint remains in this build,
-               and inpaint is configured via the gallery editor not this card.
-               Keeping the DOM (hidden) so JS wiring against the inputs
-               doesn't throw. -->
-          <div class="admin-card" hidden style="display:none">
-            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>Image Generation<span style="flex:1"></span><label class="admin-switch"><input type="checkbox" id="set-imgEnabledToggle" checked><span class="admin-slider"></span></label></h2>
+          <div class="admin-card">
+            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>Image Generation<span style="flex:1"></span><label class="admin-switch"><input type="checkbox" id="set-imgEnabledToggle"><span class="admin-slider"></span></label></h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Configure which model to use for image generation.</div>
             <div style="display:flex;flex-direction:column;gap:0.5rem;">
               <div style="display:flex;align-items:center;gap:0.75rem;">
@@ -1570,20 +1584,15 @@
               <div id="set-ttsSettingsMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
+          <!-- Teacher Model settings card hidden as part of the 2.0
+               "harden the core" pass. The escalation flow is dormant when
+               `teacher_model` is unset (its default), so the backend keeps
+               working for anyone who wired it via `manage_settings` /
+               settings backup. Re-add this card to surface the toggle
+               again once the core experience is faster. -->
           <div class="admin-card">
-            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>Teacher Model <span style="font-size:0.72em;opacity:0.55;font-weight:normal;">(Experimental)</span><span style="flex:1"></span><label class="admin-switch"><input type="checkbox" id="set-teacherEnabledToggle"><span class="admin-slider"></span></label></h2>
-            <div class="admin-toggle-sub" style="margin-bottom:8px">When a self-hosted student fails an agent-mode task, escalate to a SOTA teacher that writes a SKILL.md procedure so the student can do it next time. Off by default.</div>
-            <div class="settings-col">
-              <div class="settings-row">
-                <label class="settings-label">Endpoint</label>
-                <select id="set-teacherEpSelect" class="settings-select"><option value="">—</option></select>
-              </div>
-              <div class="settings-row">
-                <label class="settings-label">Model</label>
-                <select id="set-teacherModelSelect" class="settings-select"><option value="">—</option></select>
-              </div>
-              <div id="set-teacherChatMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
-            </div>
+            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2 6 12 13 22 6"/></svg>Email Safety<span style="flex:1"></span><label class="admin-switch" title="When on, agent send_email and reply_to_email tools stage a draft for your approval instead of sending immediately."><input type="checkbox" id="set-agentEmailConfirm" checked><span class="admin-slider"></span></label></h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">When on, agent <code>send_email</code> / <code>reply_to_email</code> tools stage a draft for your approval (in the chat) instead of SMTPing immediately. Stops models from inventing a signature and sending it to a real recipient before you can review.</div>
           </div>
         </div>
 
@@ -1614,10 +1623,12 @@
                   <option value="serper" data-search-logo="serper">Serper.dev</option>
                   <option value="disabled" data-search-logo="disabled">Disabled</option>
                 </select>
-                <button type="button" class="admin-btn-sm" id="set-searchTestBtn" title="Run a test query against the configured provider" style="margin-left:6px;flex-shrink:0;position:relative;top:2px;">Test</button>
+                <button type="button" class="admin-btn-sm" id="set-searchTestBtn" title="Run a test query against the configured provider" style="margin-left:2px;flex-shrink:0;position:relative;top:2px;display:inline-flex;align-items:center;gap:4px;">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Test
+                </button>
               </div>
               <div class="settings-row">
-                <label class="settings-label">Results</label>
+                <label class="settings-label" title="How many web search results to fetch per query">Results per query</label>
                 <div style="display:flex;gap:8px;flex:1;">
                   <select id="set-searchResultCount" class="settings-select" style="flex:1;">
                     <option value="3">3</option>
@@ -1631,22 +1642,70 @@
               </div>
               <div id="set-searchUrlRow" class="settings-row">
                 <label class="settings-label">URL</label>
-                <input id="set-searchUrl" type="text" placeholder="http://localhost:8080" class="settings-select">
+                <input id="set-searchUrl" type="text" placeholder="http://localhost:8080 (optional)" class="settings-select">
               </div>
               <div id="set-searchKeyRow" class="settings-row" style="display:none;">
                 <label class="settings-label">API Key</label>
-                <input id="set-searchApiKey" type="password" placeholder="API key" class="settings-select">
+                <div style="position:relative;flex:1;display:flex;align-items:center;">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position:absolute;left:9px;top:50%;transform:translateY(-50%);opacity:0.55;pointer-events:none;"><path d="M21 2l-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/><path d="M15.5 7.5l3 3"/></svg>
+                  <input id="set-searchApiKey" type="password" placeholder="API key" class="settings-select" style="flex:1;padding-left:28px;">
+                </div>
               </div>
               <div id="set-searchCxRow" class="settings-row" style="display:none;">
                 <label class="settings-label">CX ID</label>
                 <input id="set-searchCx" type="text" placeholder="Google PSE engine ID" class="settings-select">
               </div>
-              <div class="settings-row">
-                <label class="settings-label" title="Providers tried in order when the primary fails or hits a rate limit">Fallbacks</label>
-                <div class="search-fallback-chain" id="set-searchFallbackChain"></div>
+              <div class="settings-row" style="align-items:flex-start;">
+                <label class="settings-label" style="margin-top:6px;" title="Providers tried in order when the primary fails or hits a rate limit">Fallbacks</label>
+                <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+                  <div class="settings-fallbacks" id="set-searchFallbackChain"></div>
+                  <button type="button" class="settings-fallback-add" id="set-searchAddFallback" title="Add a search provider to try if the primary fails">+ Add fallback</button>
+                </div>
               </div>
               <div id="set-searchHint" class="admin-toggle-sub"></div>
               <div id="set-searchMsg" style="font-size:11px;"></div>
+            </div>
+          </div>
+
+          <div class="admin-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>Deep Research</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Deep Research runtime settings. Default Model is picked in <a href="#" data-go-settings-tab="ai" style="color:var(--accent, var(--red));text-decoration:underline;font-weight:600;">AI Defaults →</a></div>
+            <div class="settings-col">
+              <div class="settings-row">
+                <label class="settings-label">Search</label>
+                <span style="margin-left:auto;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex-shrink:0;color:var(--fg);" id="set-researchSearch-logo"></span>
+                <select id="set-researchSearch" class="settings-select" style="width:358.5px;flex:0 0 auto;max-width:calc(100% - 24px);">
+                  <option value="" data-search-logo="">Same as web search</option>
+                  <option value="searxng" data-search-logo="searxng">SearXNG</option>
+                  <option value="duckduckgo" data-search-logo="duckduckgo">DuckDuckGo</option>
+                  <option value="tavily" data-search-logo="tavily">Tavily</option>
+                  <option value="brave" data-search-logo="brave">Brave</option>
+                  <option value="google" data-search-logo="google_pse">Google</option>
+                  <option value="serper" data-search-logo="serper">Serper</option>
+                </select>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">Max Tokens</label>
+                <input id="set-researchMaxTokens" type="text" inputmode="numeric" placeholder="8192 (default)" class="settings-select" style="width:382.5px;flex:0 0 auto;margin-left:auto;">
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">Extract Timeout</label>
+                <div style="position:relative;width:382.5px;flex:0 0 auto;margin-left:auto;">
+                  <input id="set-researchExtractTimeout" type="text" inputmode="numeric" placeholder="90 sec" class="settings-select" style="width:100%;padding-right:30px;">
+                  <span title="How long the researcher waits for a single URL to fetch and extract before giving up on it. Slow sites get skipped. Default 90 seconds." style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:16px;height:16px;border-radius:50%;border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;opacity:0.55;cursor:help;user-select:none;">?</span>
+                </div>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">Extract Parallel</label>
+                <div style="position:relative;width:382.5px;flex:0 0 auto;margin-left:auto;">
+                  <input id="set-researchExtractConcurrency" type="text" inputmode="numeric" placeholder="3" class="settings-select" style="width:100%;padding-right:30px;">
+                  <span title="How many URLs the researcher fetches and extracts in parallel. Higher is faster but uses more memory/CPU. Default 3." style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:16px;height:16px;border-radius:50%;border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;opacity:0.55;cursor:help;user-select:none;">?</span>
+                </div>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">Timeout</label>
+                <input id="set-researchRunTimeout" type="text" inputmode="numeric" placeholder="1800 sec (0 = no limit)" class="settings-select" style="width:382.5px;flex:0 0 auto;margin-left:auto;">
+              </div>
             </div>
           </div>
         </div>
@@ -1654,7 +1713,7 @@
         <!-- ═══ APPEARANCE TAB ═══ -->
         <div data-settings-panel="appearance" class="settings-appearance-panel hidden">
           <div class="admin-card" style="padding-bottom:6px;">
-            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>Sidebar</h2>
+            <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>Sidebar<span style="flex:1"></span><button type="button" class="vis-reset-btn" data-vis-reset title="Reset this section to defaults" aria-label="Reset Sidebar to defaults" style="background:none;border:none;padding:2px 4px;cursor:pointer;color:inherit;opacity:0.55;display:inline-flex;align-items:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button></h2>
             <div class="vis-toggles">
               <label class="vis-row">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M8 12l2.5 2.5L16 9"/></svg></span>
@@ -1754,12 +1813,17 @@
             </div>
           </div>
           <div class="admin-card" style="padding-bottom:6px;">
-            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>Chat Area</h2>
+            <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>Chat Area<span style="flex:1"></span><button type="button" class="vis-reset-btn" data-vis-reset title="Reset this section to defaults" aria-label="Reset Chat Area to defaults" style="background:none;border:none;padding:2px 4px;cursor:pointer;color:inherit;opacity:0.55;display:inline-flex;align-items:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button></h2>
             <div class="vis-toggles">
               <label class="vis-row">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16"/><path d="M4 10h8"/></svg></span>
                 <span class="vis-label">Session Header <span class="vis-hint">Model name &amp; export above chat</span></span>
                 <input type="checkbox" checked data-ui-key="chat-meta"><span class="vis-switch"></span>
+              </label>
+              <label class="vis-row">
+                <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16"/><path d="M4 10h8"/></svg></span>
+                <span class="vis-label">Full-width chat <span class="vis-hint">Use the full window width (desktop)</span></span>
+                <input type="checkbox" data-ui-key="chat-fullwidth"><span class="vis-switch"></span>
               </label>
               <label class="vis-row">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v2m0 14v2m-7-9H3m18 0h-2m-1.5-6.5L16 7m-8-1.5L6.5 7m11 11l-1.5-1.5M8 18l-1.5 1.5"/><circle cx="12" cy="12" r="4"/></svg></span>
@@ -1789,7 +1853,7 @@
             </div>
           </div>
           <div class="admin-card" style="padding-bottom:6px;">
-            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><line x1="17" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="17" y1="18" x2="3" y2="18"/></svg>Chat Bar</h2>
+            <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><line x1="17" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="17" y1="18" x2="3" y2="18"/></svg>Chat Bar<span style="flex:1"></span><button type="button" class="vis-reset-btn" data-vis-reset title="Reset this section to defaults" aria-label="Reset Chat Bar to defaults" style="background:none;border:none;padding:2px 4px;cursor:pointer;color:inherit;opacity:0.55;display:inline-flex;align-items:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button></h2>
             <div class="vis-toggles">
               <label class="vis-row">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
@@ -1833,9 +1897,6 @@
               </label>
             </div>
           </div>
-          <div style="text-align:right;padding:0 4px;">
-            <button type="button" class="admin-btn-sm" id="set-uiVisResetBtn" style="opacity:0.5;">Reset All</button>
-          </div>
         </div>
 
         <!-- ═══ THEME TAB ═══ -->
@@ -1848,7 +1909,7 @@
               <h2 style="margin:0;font-size:13px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></svg>Keyboard Shortcuts</h2>
               <p style="font-size:10px;opacity:0.4;margin:2px 0 0;">Click a shortcut to rebind. Press Escape to cancel.</p>
             </div>
-            <button type="button" class="shortcut-action-btn is-reset" id="shortcuts-reset-btn" title="Reset Shortcuts" style="width:28px;height:28px;font-size:15px;">&#x21A9;</button>
+            <button type="button" class="vis-reset-btn" id="shortcuts-reset-btn" title="Reset shortcuts to defaults" aria-label="Reset shortcuts to defaults" style="background:none;border:none;padding:2px 4px;cursor:pointer;color:inherit;opacity:0.55;display:inline-flex;align-items:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button>
           </div>
           <div class="admin-card">
             <div id="shortcuts-list"></div>
@@ -1860,7 +1921,7 @@
         <div data-settings-panel="account" class="hidden">
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Account</h2>
-            <div style="display:flex;align-items:center;gap:10px;margin:4px 0 12px;">
+            <div style="display:flex;align-items:center;gap:10px;margin:12px 0 12px;">
               <div class="user-bar-avatar" id="settings-account-avatar" style="width:32px;height:32px;font-size:14px;"></div>
               <div style="flex:1;">
                 <div id="settings-account-username" style="font-size:13px;font-weight:600;"></div>
@@ -1876,7 +1937,7 @@
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Change Password</h2>
             <div class="settings-col">
               <input id="settings-pw-current" type="password" placeholder="Current password" autocomplete="current-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;">
-              <input id="settings-pw-new" type="password" placeholder="New password (min 8)" autocomplete="new-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;">
+              <input id="settings-pw-new" type="password" placeholder="New password" autocomplete="new-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;">
               <input id="settings-pw-confirm" type="password" placeholder="Confirm new password" autocomplete="new-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;">
               <div class="settings-row" style="margin-top:2px;justify-content:flex-end;">
                 <span id="settings-pw-msg" style="font-size:11px;margin-right:auto;"></span>
@@ -1898,7 +1959,7 @@
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>Email Accounts</h2>
             <div class="settings-row" style="align-items:center;">
               <div class="admin-toggle-sub" style="margin:0;flex:1;">Add, edit, delete, and test accounts in Integrations.</div>
-              <button class="admin-btn-add" id="set-email-open-integrations" style="display:inline-flex;align-items:center;gap:6px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="opacity:0.7"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Manage in Integrations</button>
+              <button class="admin-btn-add" id="set-email-open-integrations" style="display:inline-flex;align-items:center;gap:6px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="opacity:0.7"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Open Integrations</button>
             </div>
           </div>
 
@@ -1914,10 +1975,10 @@
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Writing Style</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">AI-extracted from your sent emails. Used when AI drafts replies.</div>
             <div class="settings-col">
-              <textarea id="set-email-style" rows="4" class="settings-select" style="font-family:inherit;resize:vertical" placeholder="e.g. I write emails in this style. I don't use exclamation marks. I sign emails with: ..."></textarea>
+              <textarea id="set-email-style" rows="6" class="settings-select" style="font-family:inherit;resize:none" placeholder="e.g. I write emails in this style. I don't use exclamation marks. I sign emails with: ..."></textarea>
               <div class="settings-row" style="margin-top:4px">
                 <span id="set-email-style-msg" style="font-size:11px;"></span>
-                <button class="admin-btn-add" id="set-email-style-extract" style="margin-left:auto;">Extract from Sent (15 emails)</button>
+                <button class="admin-btn-add" id="set-email-style-extract" style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>Extract from Sent (15 emails)</button>
                 <button class="admin-btn-add" id="set-email-style-save">Save</button>
               </div>
             </div>
@@ -1927,7 +1988,7 @@
         <!-- ═══ REMINDERS TAB ═══ -->
         <div data-settings-panel="reminders" class="hidden">
           <div class="admin-card">
-            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>How you're reminded</h2>
+            <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>How you're reminded<span style="flex:1"></span><span id="set-reminder-test-msg" style="font-size:11px;font-weight:normal;"></span><button class="admin-btn-sm" id="set-reminder-test-btn" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Test</button></h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Controls how fired note reminders are delivered.</div>
             <div class="settings-col">
               <div class="settings-row">
@@ -1965,7 +2026,19 @@
           </div>
           <div class="admin-card">
             <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>AI Synthesis<span style="flex:1"></span><label class="admin-switch" title="Use the utility model to write reminder messages"><input type="checkbox" id="set-reminder-llm-toggle"><span class="admin-slider"></span></label></h2>
-            <div class="admin-toggle-sub" style="margin-bottom:8px">When on, the utility model writes a short, warm one-line reminder for browser, email, ntfy, AND webhook reminders instead of just the raw note content.</div>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">When on, the utility model writes a short, warm one-line reminder for browser, email, ntfy, and webhook reminders instead of just the raw note content.</div>
+            <div class="settings-col">
+              <div class="settings-row">
+                <label class="settings-label" title="Optional — write the reminder in the voice of a saved character">Persona</label>
+                <select id="set-reminder-llm-persona" class="settings-select" style="flex:1;">
+                  <option value="">Default (warm, neutral)</option>
+                </select>
+              </div>
+              <div style="font-size:11px;opacity:0.7;margin-top:2px;">
+                <a href="#" data-open-prompt-modal style="color:var(--accent, var(--red));text-decoration:underline;font-weight:600;">Edit persona settings here →</a>
+              </div>
+              <div id="set-reminder-llm-persona-msg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 55%, transparent);"></div>
+            </div>
           </div>
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Public App URL</h2>
@@ -1976,14 +2049,6 @@
                 <input id="set-app-public-url" class="settings-select" type="url" placeholder="https://chat.example.com" style="flex:1;" />
               </div>
               <div id="set-app-public-url-msg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 55%, transparent);"></div>
-            </div>
-          </div>
-          <div class="admin-card">
-            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Test</h2>
-            <div class="admin-toggle-sub" style="margin-bottom:8px">Fire a test reminder using your current settings to verify everything works.</div>
-            <div class="settings-row">
-              <span id="set-reminder-test-msg" style="font-size:11px;"></span>
-              <button class="admin-btn-add" id="set-reminder-test-btn" style="margin-left:auto;">Send Test Reminder</button>
             </div>
           </div>
         </div>
@@ -2001,6 +2066,16 @@
             </div>
           </div>
           <div class="admin-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M12 15v3m-3-3h6M12 3v2m0 16v-2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M3 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/><circle cx="12" cy="12" r="3"/></svg>Model Defaults</h2>
+            <div class="admin-toggle-row">
+              <div>
+                <div class="admin-toggle-label">Share defaults with users</div>
+                <div class="admin-toggle-sub">When on, users without a personal default inherit the global default model (only if those models are allowed for them).</div>
+              </div>
+              <label class="admin-switch"><input type="checkbox" id="adm-shareDefaultsToggle"><span class="admin-slider"></span></label>
+            </div>
+          </div>
+          <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Users</h2>
             <div id="adm-userList"><div class="admin-empty">Loading...</div></div>
           </div>
@@ -2008,7 +2083,7 @@
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>Add User</h2>
             <div class="admin-add-form">
               <input id="adm-newUsername" type="text" placeholder="Username">
-              <input id="adm-newPassword" type="password" placeholder="Password (min 8)">
+              <input id="adm-newPassword" type="password" placeholder="Password">
               <div class="admin-switch-inline" title="Grant full admin access"><label class="admin-switch"><input type="checkbox" id="adm-newIsAdmin"><span class="admin-slider"></span></label> Admin</div>
             </div>
             <div class="settings-row" style="margin-top:6px;">
@@ -2020,75 +2095,96 @@
 
         <!-- ═══ SERVICES TAB ═══ -->
         <div data-settings-panel="services">
-          <div class="admin-card">
-            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>Add Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoints)</span></h2>
-            <div class="admin-toggle-sub" style="margin-bottom:10px">Connect local models first, or add a cloud API.</div>
 
-            <!-- Local subsection -->
-            <div class="adm-add-section collapsible collapsed" id="adm-add-local">
-              <div class="adm-ep-section-head adm-section-toggle" role="button" tabindex="0" aria-expanded="false">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
-                <span>Local</span>
-                <svg class="adm-section-caret" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          <!-- ── Local card ─────────────────────────────────────────── -->
+          <div class="admin-card">
+            <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>Add Local Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoint)</span>
+              <span style="flex:1"></span>
+              <button class="admin-btn-sm" id="adm-epLocalTestBtn" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Test
+              </button>
+              <div style="position:relative;display:inline-block;">
+                <button class="admin-btn-sm" id="adm-epLocalMoreBtn" title="More options" aria-haspopup="true" aria-expanded="false" style="font-size:11px;font-weight:normal;padding:4px 8px;line-height:1;">
+                  <svg width="14" height="4" viewBox="0 0 14 4" fill="currentColor"><circle cx="2" cy="2" r="1.4"/><circle cx="7" cy="2" r="1.4"/><circle cx="12" cy="2" r="1.4"/></svg>
+                </button>
+                <div id="adm-epLocalMoreMenu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;z-index:50;min-width:170px;padding:4px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,0.22);flex-direction:column;gap:1px;">
+                  <button class="admin-btn-sm adm-more-item" id="adm-epDiscoverBtn" title="Scan your network for running model servers" style="background:none;border:0;border-radius:5px;padding:7px 9px;display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-size:12px;font-weight:normal;color:var(--fg);cursor:pointer;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Scan network
+                  </button>
+                  <button class="admin-btn-sm adm-more-item" id="adm-epOllamaBtn" title="Fill the default Ollama endpoint" style="background:none;border:0;border-radius:5px;padding:7px 9px;display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-size:12px;font-weight:normal;color:var(--fg);cursor:pointer;"><span class="adm-ollama-logo" style="display:inline-flex;width:13px;height:13px;"></span>Add Ollama</button>
+                  <button class="admin-btn-sm adm-more-item" id="adm-epLocalKeyBtn" title="Show / hide the API key field" aria-expanded="false" aria-controls="adm-epLocalApiKey-row" style="background:none;border:0;border-radius:5px;padding:7px 9px;display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-size:12px;font-weight:normal;color:var(--fg);cursor:pointer;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/><path d="M15.5 7.5l3 3"/></svg>API key
+                  </button>
+                </div>
               </div>
+            </h2>
+            <div class="admin-toggle-sub" style="margin:0 0 10px 2px;">Add a local model server (Ollama, llama.cpp, vLLM).</div>
+            <div class="adm-add-section">
               <div class="admin-model-form">
                 <div class="admin-model-form-row">
-                  <input id="adm-epLocalUrl" type="text" placeholder="Paste endpoint URL, e.g. http://localhost:11434/v1" style="flex:1">
-                </div>
-                <!-- API key row stays in the DOM but is collapsed until the
-                     user clicks the Key button on the action row. Local
-                     endpoints rarely need a key; hiding it by default keeps
-                     the form a single visual line. -->
-                <div class="admin-model-form-row" id="adm-epLocalApiKey-row" style="display:none;">
-                  <input id="adm-epLocalApiKey" type="password" placeholder="API key (optional — for protected local endpoints)" autocomplete="off" style="flex:1">
-                </div>
-                <!-- Action row: LLM/Image type, Quickstart buttons (Scan,
-                     Ollama), Key reveal toggle, Test, Add — all inline so
-                     the Quickstart fold is gone and Type sits with the
-                     primary actions. -->
-                <div class="admin-model-form-row">
-                  <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;opacity:0.6;flex-shrink:0;">Type:<select id="adm-epLocalType" style="padding:5px;width:72px;flex-shrink:0;">
-                    <option value="llm" selected>LLM</option>
-                    <option value="image">Image</option>
-                  </select></label>
-                  <button class="admin-btn-sm" id="adm-epDiscoverBtn" title="Scan your network for running model servers" style="display:inline-flex;align-items:center;gap:4px;">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Scan
-                  </button>
-                  <button class="admin-btn-sm" id="adm-epOllamaBtn" title="Fill the default Ollama endpoint" style="display:inline-flex;align-items:center;gap:5px;"><span class="adm-ollama-logo" style="display:inline-flex;width:13px;height:13px;"></span>Ollama</button>
-                  <span style="flex:1"></span>
-                  <button class="admin-btn-sm" id="adm-epLocalKeyBtn" title="Show / hide the API key field" aria-expanded="false" aria-controls="adm-epLocalApiKey-row" style="opacity:0.75;display:inline-flex;align-items:center;gap:4px;">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/><path d="M15.5 7.5l3 3"/></svg>API
-                  </button>
-                  <button class="admin-btn-sm" id="adm-epLocalTestBtn" style="min-width:55px;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:4px;">
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Test
-                  </button>
-                  <button class="admin-btn-add" id="adm-epLocalAddBtn" style="min-width:55px;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:4px;">
+                  <div class="adm-fused-group" style="display:flex;flex:1 1 180px;min-width:0;">
+                    <select id="adm-epLocalType" style="padding:5px;width:66px;flex-shrink:0;border-top-right-radius:0;border-bottom-right-radius:0;border-right:0;">
+                      <option value="llm" selected>LLM</option>
+                      <option value="image">Image</option>
+                    </select>
+                    <input id="adm-epLocalUrl" type="text" placeholder="Paste endpoint URL, e.g. http://localhost:11434/v1" style="flex:1;min-width:0;border-top-left-radius:0;border-bottom-left-radius:0;">
+                  </div>
+                  <button class="admin-btn-add" id="adm-epLocalAddBtn" style="min-width:55px;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:4px;flex-shrink:0;">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Add
                   </button>
+                </div>
+                <div class="admin-model-form-row" id="adm-epLocalApiKey-row" style="display:none;">
+                  <input id="adm-epLocalApiKey" type="password" placeholder="API key (optional — for protected local endpoints)" autocomplete="off" style="flex:1">
                 </div>
                 <div id="adm-epLocalMsg" class="adm-ep-inline-msg"></div>
               </div>
             </div>
+          </div>
 
-            <!-- API subsection -->
-            <div class="adm-add-section collapsible collapsed" id="adm-add-api" style="margin-top:14px">
-              <div class="adm-ep-section-head adm-section-toggle" role="button" tabindex="0" aria-expanded="false">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                <span>API</span>
-                <svg class="adm-section-caret" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-              </div>
-              <div class="admin-model-form">
-                <!-- Custom picker (with logos). Hidden native <select> mirrors
-                     its value so the existing JS that reads adm-epProvider
-                     keeps working unchanged. -->
-                <div class="adm-provider-picker adm-provider-combo" id="adm-provider-picker">
-                  <input id="adm-epUrl" type="text" placeholder="Base URL or pick provider" autocomplete="off">
-                  <button type="button" class="adm-provider-btn" id="adm-provider-btn" title="Pick provider">
-                    <span class="adm-provider-current"><span class="adm-provider-logo"></span><span class="adm-provider-name">Provider</span></span>
-                    <svg class="adm-provider-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          <!-- ── API card ───────────────────────────────────────────── -->
+          <div class="admin-card">
+            <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>Add API Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoint)</span>
+              <span style="flex:1"></span>
+              <button class="admin-btn-sm" id="adm-epApiTestBtn" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Test
+              </button>
+              <button class="admin-btn-sm hidden" id="adm-epApiCancelTestBtn" style="font-size:11px;font-weight:normal;">Cancel</button>
+              <div style="position:relative;display:inline-block;">
+                <button class="admin-btn-sm" id="adm-epApiMoreBtn" title="More options" aria-haspopup="true" aria-expanded="false" style="font-size:11px;font-weight:normal;padding:4px 8px;line-height:1;">
+                  <svg width="14" height="4" viewBox="0 0 14 4" fill="currentColor"><circle cx="2" cy="2" r="1.4"/><circle cx="7" cy="2" r="1.4"/><circle cx="12" cy="2" r="1.4"/></svg>
+                </button>
+                <div id="adm-epApiMoreMenu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;z-index:50;min-width:200px;padding:4px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,0.22);flex-direction:column;gap:1px;">
+                  <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;opacity:0.55;padding:6px 9px 2px;">Connection mode</div>
+                  <button class="admin-btn-sm adm-more-item adm-kind-opt" data-kind="proxy" style="background:none;border:0;border-radius:5px;padding:7px 9px;display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-size:12px;font-weight:normal;color:var(--fg);cursor:pointer;">
+                    <svg class="adm-kind-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    <span>Proxy</span>
+                    <span style="margin-left:auto;opacity:0.5;font-size:10px;">routed via server</span>
                   </button>
-                  <div class="adm-provider-menu hidden" id="adm-provider-menu"></div>
+                  <button class="admin-btn-sm adm-more-item adm-kind-opt" data-kind="api" style="background:none;border:0;border-radius:5px;padding:7px 9px;display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-size:12px;font-weight:normal;color:var(--fg);cursor:pointer;">
+                    <svg class="adm-kind-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="visibility:hidden;"><polyline points="20 6 9 17 4 12"/></svg>
+                    <span>API (direct)</span>
+                    <span style="margin-left:auto;opacity:0.5;font-size:10px;">browser→provider</span>
+                  </button>
                 </div>
+              </div>
+            </h2>
+            <div class="admin-toggle-sub" style="margin:0 0 10px 2px;">Connect a cloud provider (OpenAI, Anthropic, DeepSeek, OpenRouter, etc.).</div>
+            <div class="adm-add-section">
+              <div class="admin-model-form">
+                <div class="admin-model-form-row">
+                  <div class="adm-provider-picker adm-provider-combo" id="adm-provider-picker" style="flex:1 1 220px;min-width:0;margin-bottom:0;">
+                    <button type="button" class="adm-provider-btn" id="adm-provider-btn" title="Pick provider" style="border-top-right-radius:0;border-bottom-right-radius:0;border-top-left-radius:6px;border-bottom-left-radius:6px;border-left:1px solid var(--border);border-right:1px solid var(--border);">
+                      <span class="adm-provider-current"><span class="adm-provider-logo"></span><span class="adm-provider-name">Provider</span></span>
+                      <svg class="adm-provider-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <input id="adm-epUrl" type="text" placeholder="Base URL or pick provider" autocomplete="off" style="border-left:0;border-top-left-radius:0;border-bottom-left-radius:0;border-top-right-radius:6px;border-bottom-right-radius:6px;">
+                    <div class="adm-provider-menu hidden" id="adm-provider-menu"></div>
+                  </div>
+                </div>
+                <select id="adm-epKind" style="display:none">
+                  <option value="proxy">proxy</option>
+                  <option value="api" selected>api</option>
+                </select>
                 <select id="adm-epProvider" style="display:none">
                   <option value="">Custom URL</option>
                   <option value="https://api.anthropic.com" data-logo="anthropic">Anthropic</option>
@@ -2110,41 +2206,27 @@
                   <option value="https://api.z.ai/api/coding/paas/v4" data-logo="zhipu">Z.AI Coding Plan</option>
                   <option value="https://integrate.api.nvidia.com/v1" data-logo="nvidia">NVIDIA</option>
                 </select>
-                <!-- API key row stays in DOM, hidden until Key button is
-                     clicked. Mirrors the Local section pattern: most users
-                     paste a key via the provider preset flow rather than
-                     typing it free-form, so the row only appears on demand. -->
-                <div class="admin-model-form-row" id="adm-epApiKey-row" style="display:none;">
-                  <input id="adm-epApiKey" type="password" placeholder="API key" autocomplete="off" style="flex:1">
-                </div>
-                <div class="admin-model-form-row" style="margin-top:-4px;">
-                  <select id="adm-epKind" style="padding:5px;width:82px;">
-                    <option value="proxy">Proxy</option>
-                    <option value="api">API</option>
-                  </select>
-                  <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;opacity:0.6;flex-shrink:0;">Type:<select id="adm-epType" style="padding:5px;width:80px;flex-shrink:0;">
-                    <option value="llm" selected>LLM</option>
-                    <option value="image">Image</option>
-                  </select></label>
-                  <span style="flex:1"></span>
-                  <button class="admin-btn-sm" id="adm-epApiKeyBtn" title="Show / hide the API key field" aria-expanded="false" aria-controls="adm-epApiKey-row" style="opacity:0.75;display:inline-flex;align-items:center;gap:4px;">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/><path d="M15.5 7.5l3 3"/></svg>API
-                  </button>
-                  <button class="admin-btn-sm" id="adm-epApiTestBtn" style="min-width:55px;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:4px;">
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Test
-                  </button>
-                  <button class="admin-btn-sm hidden" id="adm-epApiCancelTestBtn" style="width:62px;text-align:center;">Cancel</button>
-                  <button class="admin-btn-add" id="adm-epAddBtn" style="min-width:55px;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:4px;">
+                <div class="admin-model-form-row" id="adm-epApiKey-row">
+                  <div style="position:relative;flex:1;display:flex;align-items:center;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position:absolute;left:9px;top:50%;transform:translateY(-50%);opacity:0.55;pointer-events:none;"><path d="M21 2l-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/><path d="M15.5 7.5l3 3"/></svg>
+                    <input id="adm-epApiKey" type="password" placeholder="API key, e.g. sk-proj-AbCdEf…" autocomplete="off" style="flex:1;padding-left:28px;height:32px;box-sizing:border-box;">
+                  </div>
+                  <button class="admin-btn-add" id="adm-epAddBtn" style="height:32px;min-width:55px;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:4px;flex-shrink:0;box-sizing:border-box;">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Add
                   </button>
                 </div>
                 <div id="adm-epApiMsg" class="adm-ep-inline-msg"></div>
-                <div id="adm-deviceAuthStatus" class="adm-ep-inline-msg"></div>
+                <div id="adm-deviceAuthStatus" class="adm-ep-inline-msg" style="min-height:0;margin-top:0;"></div>
               </div>
             </div>
           </div>
+
+        </div>
+
+        <!-- ═══ ADDED MODELS TAB ═══ -->
+        <div data-settings-panel="added-models" class="hidden">
           <div class="admin-card">
-            <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>Added Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoints)</span>
+            <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><polyline points="20 6 9 17 4 12"/></svg>Added Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoints)</span>
               <span style="flex:1"></span>
               <button class="admin-btn-sm" id="adm-epProbeAllBtn" title="Re-test every endpoint and refresh online status" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Probe
@@ -2153,20 +2235,18 @@
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Clear offline <span id="adm-epOfflineCount" style="opacity:0.6;margin-left:2px;"></span>
               </button>
             </h2>
-            <div class="admin-toggle-sub" style="margin-bottom:10px">Manage the endpoints you've added.</div>
+            <div class="admin-toggle-sub" style="margin-bottom:12px">Endpoints you've connected. Probe re-tests them all; Clear offline removes the dead ones.</div>
             <div class="adm-ep-section">
-              <div class="adm-ep-section-head">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
-                <span>Local</span>
+              <div class="adm-ep-section-head" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;opacity:0.7;margin-bottom:6px;display:inline-flex;align-items:center;gap:5px;">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>Local
               </div>
               <div id="adm-epList-local"><div class="admin-empty">Loading...</div></div>
             </div>
-            <div class="adm-ep-section" style="margin-top:14px">
-              <div class="adm-ep-section-head">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                <span>API</span>
+            <div class="adm-ep-section" style="margin-top:18px;">
+              <div class="adm-ep-section-head" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;opacity:0.7;margin-bottom:6px;display:inline-flex;align-items:center;gap:5px;">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>API
               </div>
-              <div id="adm-epList-api"></div>
+              <div id="adm-epList-api"><div class="admin-empty">No API endpoints yet.</div></div>
             </div>
           </div>
         </div>
@@ -2179,24 +2259,8 @@
             <div class="admin-toggle-sub" style="margin-bottom:8px">All external service connections in one place.</div>
             <div id="unified-integrations-list"></div>
             <div id="unified-intg-form" style="display:none"></div>
-            <div style="text-align:center;padding:8px 0;">
-              <button type="button" class="admin-btn-sm" id="unified-intg-add-btn" style="display:inline-flex;align-items:center;gap:6px;">+ Add Integration<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.7;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
-            </div>
-          </div>
-          <div class="admin-card admin-only" style="margin-top:12px;">
-            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>API Tokens</h2>
-            <div class="admin-toggle-sub" style="margin-bottom:8px">Bearer tokens for external integrations (scripts, Codex, headless agent runs). Token value shown ONCE on create — copy it then.</div>
-            <div id="adm-tokenList" style="margin-bottom:8px;"></div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start;">
-              <input type="text" id="adm-tokenName" placeholder="Token name (e.g. agent-test)" class="settings-select" style="flex:1;min-width:160px;">
-              <input type="text" id="adm-tokenScopes" placeholder="scopes (comma-separated, blank = chat)" class="settings-select" style="flex:2;min-width:220px;" title="Allowed: chat, cookbook:read, cookbook:launch, documents:read|write, todos:read|write, email:read|draft|send, calendar:read|write, memory:read|write">
-              <button class="admin-btn-add" id="adm-tokenAddBtn">Create token</button>
-            </div>
-            <div id="adm-tokenMsg" style="font-size:11px;margin-top:6px;"></div>
-            <div id="adm-tokenReveal" style="display:none;margin-top:8px;padding:8px 10px;background:color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);border:1px solid color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);border-radius:6px;">
-              <div style="font-size:11px;font-weight:600;margin-bottom:4px;">Copy now — this is the only time you'll see it:</div>
-              <code id="adm-tokenValue" style="font-family:'Berkeley Mono','SF Mono','Fira Code',monospace;font-size:11px;word-break:break-all;display:block;background:var(--bg);padding:6px 8px;border-radius:4px;margin-bottom:6px;user-select:all;"></code>
-              <button class="admin-btn-sm" id="adm-tokenCopyBtn">Copy</button>
+            <div style="text-align:right;padding:8px 0;">
+              <button type="button" class="admin-btn-add" id="unified-intg-add-btn" style="text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:5px;flex-shrink:0;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Add Integration</button>
             </div>
           </div>
         </div>
@@ -2217,10 +2281,6 @@
               </div>
               <div id="set-agentMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
-          </div>
-          <div class="admin-card" style="margin-bottom:12px;">
-            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Agent loop<span style="flex:1"></span><label class="admin-switch" title="On a failing effectful turn, climb verify → different-method → teacher → stop-and-summarize instead of silently quitting." style="flex-shrink:0"><input type="checkbox" id="set-agentSupervisorLadder"><span class="admin-slider"></span></label></h2>
-            <div class="admin-toggle-sub" style="margin-bottom:8px">Supervisor ladder. When on, every effectful agent turn that claims done is verified; on FAIL the ladder escalates verify → different method → teacher → stop-with-blocker, each rung visible in chat. Teacher rung requires <code>teacher_model</code> to be set.</div>
           </div>
           <div class="admin-card" style="margin-bottom:12px;">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Built-in Tools</h2>
@@ -2303,68 +2363,76 @@
 
             <div style="display:flex;justify-content:space-between;align-items:center;">
               <div>
-                <div class="admin-toggle-label">Wipe all chats</div>
+                <div class="admin-toggle-label">Delete all chats</div>
                 <div class="admin-toggle-sub">Every session, message, and chat history. Documents/notes/etc. stay.</div>
               </div>
-              <button class="admin-btn-delete" data-wipe-kind="chats" style="white-space:nowrap;">Wipe</button>
+              <button class="admin-btn-delete" data-wipe-kind="chats" title="Delete all chats" aria-label="Delete all chats" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>Delete</button>
             </div>
 
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
               <div>
-                <div class="admin-toggle-label">Wipe all memory</div>
+                <div class="admin-toggle-label">Delete all memory</div>
                 <div class="admin-toggle-sub">Clears `memory.json`, the Memory table, and the vector store. Skills not affected.</div>
               </div>
-              <button class="admin-btn-delete" data-wipe-kind="memory" style="white-space:nowrap;">Wipe</button>
+              <button class="admin-btn-delete" data-wipe-kind="memory" title="Delete all memory" aria-label="Delete all memory" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>Delete</button>
             </div>
 
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
               <div>
-                <div class="admin-toggle-label">Wipe all skills</div>
+                <div class="admin-toggle-label">Delete all skills</div>
                 <div class="admin-toggle-sub">Drops `data/skills/` (all SKILL.md files). Memory not affected.</div>
               </div>
-              <button class="admin-btn-delete" data-wipe-kind="skills" style="white-space:nowrap;">Wipe</button>
+              <button class="admin-btn-delete" data-wipe-kind="skills" title="Delete all skills" aria-label="Delete all skills" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>Delete</button>
             </div>
 
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
               <div>
-                <div class="admin-toggle-label">Wipe all notes</div>
+                <div class="admin-toggle-label">Delete all notes</div>
                 <div class="admin-toggle-sub">Every note, todo, and checklist.</div>
               </div>
-              <button class="admin-btn-delete" data-wipe-kind="notes" style="white-space:nowrap;">Wipe</button>
+              <button class="admin-btn-delete" data-wipe-kind="notes" title="Delete all notes" aria-label="Delete all notes" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>Delete</button>
             </div>
 
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
               <div>
-                <div class="admin-toggle-label">Wipe all tasks</div>
+                <div class="admin-toggle-label">Delete all tasks</div>
                 <div class="admin-toggle-sub">Every scheduled task and its run history (Tasks tool).</div>
               </div>
-              <button class="admin-btn-delete" data-wipe-kind="tasks" style="white-space:nowrap;">Wipe</button>
+              <button class="admin-btn-delete" data-wipe-kind="tasks" title="Delete all tasks" aria-label="Delete all tasks" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>Delete</button>
             </div>
 
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
               <div>
-                <div class="admin-toggle-label">Wipe all documents</div>
+                <div class="admin-toggle-label">Delete all documents</div>
                 <div class="admin-toggle-sub">Every document and version. Drafts, exports, library — all gone.</div>
               </div>
-              <button class="admin-btn-delete" data-wipe-kind="documents" style="white-space:nowrap;">Wipe</button>
+              <button class="admin-btn-delete" data-wipe-kind="documents" title="Delete all documents" aria-label="Delete all documents" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>Delete</button>
             </div>
 
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
               <div>
-                <div class="admin-toggle-label">Wipe all gallery</div>
+                <div class="admin-toggle-label">Delete all gallery</div>
                 <div class="admin-toggle-sub">Every image record and the upload directory on disk.</div>
               </div>
-              <button class="admin-btn-delete" data-wipe-kind="gallery" style="white-space:nowrap;">Wipe</button>
+              <button class="admin-btn-delete" data-wipe-kind="gallery" title="Delete all gallery" aria-label="Delete all gallery" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>Delete</button>
             </div>
 
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
               <div>
-                <div class="admin-toggle-label">Wipe all calendar</div>
+                <div class="admin-toggle-label">Delete all calendar</div>
                 <div class="admin-toggle-sub">Every event and every calendar (incl. CalDAV-synced ones; resync to restore).</div>
               </div>
-              <button class="admin-btn-delete" data-wipe-kind="calendar" style="white-space:nowrap;">Wipe</button>
+              <button class="admin-btn-delete" data-wipe-kind="calendar" title="Delete all calendar" aria-label="Delete all calendar" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>Delete</button>
             </div>
 
+            <hr style="border:0;border-top:1px solid color-mix(in srgb, #e55 25%, var(--border));margin:14px 0 10px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <div class="admin-toggle-label" style="color:#e55;">Delete everything</div>
+                <div class="admin-toggle-sub">All eight categories above, in one go. Same effect as wiping each one in sequence.</div>
+              </div>
+              <button class="admin-btn-delete" data-wipe-kind="__all__" title="Delete every category" aria-label="Delete everything" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;font-weight:600;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>Delete All</button>
+            </div>
             <div id="adm-wipeMsg" style="margin-top:8px;"></div>
           </div>
         </div>

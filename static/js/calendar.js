@@ -5,6 +5,7 @@
 import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
 import * as Modals from './modalManager.js';
+import { topPortalZ } from './toolWindowZOrder.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { attachColorPicker } from './colorPicker.js';
 import { bindMenuDismiss } from './escMenuStack.js';
@@ -12,7 +13,7 @@ import {
   WEEKDAYS, WEEKDAYS_SUN, MONTHS, MON_SHORT,
   CAL_PALETTE, CAL_COLORS, _CAL_CUSTOM_GRADIENT, _TYPE_PALETTE,
   _trashIcon, _moreIcon, _bellIcon,
-  _isCalBgImage, _calBgImageUrl, _calBgCss,
+  _isCalBgImage, _calBgImageUrl, _calBgCss, _cssUrlEscape,
   _calReadableTextColor,
   _ds, _addDays, _shiftDT, _tzOffset, _localDateOf,
 } from './calendar/utils.js';
@@ -413,8 +414,8 @@ function _calEventFg(ev) {
 // Returns '' for normal solid-color events.
 function _calItemBgStyle(ev) {
   if (!_isCalBgImage(ev.color)) return '';
-  const url = _calBgImageUrl(ev.color).replace(/'/g, "\\'");
-  return `background-image: linear-gradient(color-mix(in srgb, var(--bg) 70%, transparent), color-mix(in srgb, var(--bg) 70%, transparent)), url('${url}'); background-size: cover; background-position: center;`;
+  const url = _calBgImageUrl(ev.color);
+  return `background-image: linear-gradient(color-mix(in srgb, var(--bg) 70%, transparent), color-mix(in srgb, var(--bg) 70%, transparent)), url('${_cssUrlEscape(url)}'); background-size: cover; background-position: center;`;
 }
 
 function _todayCount() {
@@ -470,7 +471,7 @@ function _showEventMoreMenu(ev, anchor) {
   dropdown.className = 'cal-event-dropdown';
   let closeMenu = () => dropdown.remove();
   const rect = anchor.getBoundingClientRect();
-  dropdown.style.cssText = `position:fixed;z-index:10001;min-width:180px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:12px;top:${rect.bottom + 4}px;left:0px;visibility:hidden;`;
+  dropdown.style.cssText = `position:fixed;z-index:${topPortalZ()};min-width:180px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:12px;top:${rect.bottom + 4}px;left:0px;visibility:hidden;`;
 
   const _item = (icon, label, onClick, danger) => {
     const it = document.createElement('div');
@@ -631,6 +632,28 @@ function _getModal() {
 }
 
 // ── Render dispatch ──
+
+// Quick-add hint examples — the placeholder cycles through these every few
+// seconds so users see different prompt shapes (events, deadlines, recurring).
+const _QA_HINT_EXAMPLES = [
+  'return home to Ithaca 1pm tmrw',
+  'dinner with Penelope Friday 8pm',
+  'coffee with Athena 9am Saturday',
+  'call Telemachus tomorrow morning',
+  'dentist appointment 3pm next Tuesday',
+  'finish the wooden horse by Friday EOD',
+  'gym 7am every weekday',
+  'flight to Athens Sunday 6:30am',
+  'crew muster 10am daily',
+  'council on Ithaca Monday 2pm',
+];
+function _initQuickAddHintCycle() {
+  const span = document.getElementById('qa-hint-example');
+  if (!span) return;
+  // Pick one random example per calendar open — no interval cycling.
+  const idx = Math.floor(Math.random() * _QA_HINT_EXAMPLES.length);
+  span.textContent = _QA_HINT_EXAMPLES[idx];
+}
 
 // Stash the quick-add input's state (focus + caret + value) before a
 // re-render so background fetches don't kick the user out mid-type. Picked
@@ -846,7 +869,7 @@ function _headerHTML() {
       placeholder=" "
       autocomplete="off"
     />
-    <span class="cal-quickadd-hint" id="cal-quickadd-hint" aria-hidden="true"><span class="qa-hint-accent">Quick add</span> — return home to Ithaca 1pm tmrw <svg class="qa-hint-enter" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg></span>
+    <span class="cal-quickadd-hint" id="cal-quickadd-hint" aria-hidden="true"><span class="qa-hint-accent">Quick add</span> — <span class="qa-hint-example" id="qa-hint-example">return home to Ithaca 1pm tmrw</span> <svg class="qa-hint-enter" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg></span>
     <span class="cal-quickadd-status" id="cal-quickadd-status"></span>
   </div>`;
 }
@@ -1238,8 +1261,8 @@ async function _renderWeek() {
       // events keep the original tinted treatment.
       let bgDecl;
       if (_isCalBgImage(ev.color)) {
-        const _url = _calBgImageUrl(ev.color).replace(/'/g, "\\'");
-        bgDecl = `background-image: linear-gradient(color-mix(in srgb, var(--bg) 55%, transparent), color-mix(in srgb, var(--bg) 55%, transparent)), url('${_url}'); background-size: cover; background-position: center;`;
+        const _url = _calBgImageUrl(ev.color);
+        bgDecl = `background-image: linear-gradient(color-mix(in srgb, var(--bg) 55%, transparent), color-mix(in srgb, var(--bg) 55%, transparent)), url('${_cssUrlEscape(_url)}'); background-size: cover; background-position: center;`;
       } else {
         bgDecl = `background:color-mix(in srgb, ${_calColor(ev)} 18%, var(--bg));`;
       }
@@ -1913,6 +1936,7 @@ function _wireAll(body) {
   // ── Quick-add input ─────────────────────────────────────────────
   const _qaInput = document.getElementById('cal-quickadd');
   const _qaStatus = document.getElementById('cal-quickadd-status');
+  _initQuickAddHintCycle();
   if (_qaInput && !_qaInput._wired) {
     _qaInput._wired = true;
     const _submitQA = async () => {
@@ -2830,7 +2854,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
             let bg;
             if (isCustom) {
               const url = _calBgImageUrl(cur);
-              bg = url ? `center/cover no-repeat url('${url}')` : _CAL_CUSTOM_GRADIENT;
+              bg = url ? `center/cover no-repeat url('${_cssUrlEscape(url)}')` : _CAL_CUSTOM_GRADIENT;
             } else {
               bg = c.hex || 'var(--border)';
             }
@@ -2905,7 +2929,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
       // stays readable. Chrome accent falls back to the theme accent.
       const url = _calBgImageUrl(hex);
       _formCard.style.setProperty('--ev-color', 'var(--accent)');
-      _formCard.style.backgroundImage = `linear-gradient(color-mix(in srgb, var(--panel) 65%, transparent), color-mix(in srgb, var(--panel) 65%, transparent)), url('${url.replace(/'/g, "\\'")}')`;
+      _formCard.style.backgroundImage = `linear-gradient(color-mix(in srgb, var(--panel) 65%, transparent), color-mix(in srgb, var(--panel) 65%, transparent)), url('${_cssUrlEscape(url)}')`;
       _formCard.style.backgroundSize = 'cover';
       _formCard.style.backgroundPosition = 'center';
       _formCard.classList.add('cal-form-bg-image');
@@ -2927,7 +2951,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
         if (!url) return;
         const sentinel = 'bg:' + url;
         dot.dataset.color = sentinel;
-        dot.style.background = `center/cover no-repeat url('${url}')`;
+        dot.style.background = `center/cover no-repeat url('${_cssUrlEscape(url)}')`;
         document.querySelectorAll('#cal-f-colors .note-color-dot').forEach(d => d.classList.remove('active'));
         dot.classList.add('active');
         _applyFormTint(sentinel);
@@ -3138,6 +3162,29 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
   // Focusing the title input unfolds the details once (new events). Edit
   // mode opens already expanded when there's any detail content to see.
   titleInput?.addEventListener('focus', () => setExpanded(true), { once: true });
+
+  // Live time parse: typing a time like "11pm" or "15:30" into the title
+  // updates the hero clock + start input on the fly. The same parser still
+  // runs again on submit, but doing it live makes the hero clock track
+  // intent immediately instead of jumping at save.
+  if (titleInput) {
+    titleInput.addEventListener('input', () => {
+      if (document.getElementById('cal-f-allday')?.checked) return;
+      const tt = _parseTitleTime(titleInput.value);
+      if (!tt) return;
+      const startEl = document.getElementById('cal-f-start');
+      const endEl = document.getElementById('cal-f-end');
+      const newStart = `${String(tt.h).padStart(2, '0')}:${String(tt.m).padStart(2, '0')}`;
+      if (!startEl || startEl.value === newStart) return;
+      const toMin = (v) => { const p = (v || '').split(':'); return p.length === 2 ? (+p[0]) * 60 + (+p[1]) : null; };
+      const s0 = toMin(startEl.value), e0 = toMin(endEl?.value);
+      const dur = (s0 != null && e0 != null && e0 > s0) ? e0 - s0 : 60;
+      startEl.value = newStart;
+      const endMin = (tt.h * 60 + tt.m + dur) % 1440;
+      if (endEl) endEl.value = `${String(Math.floor(endMin / 60)).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`;
+      startEl.dispatchEvent(new Event('input'));
+    });
+  }
 
   // Location → Apple Maps. The pin button next to the input is enabled
   // only when there's a non-empty location, and its href tracks the live

@@ -13,6 +13,8 @@ set -e
 
 PUID="${PUID:-1000}"
 PGID="${PGID:-1000}"
+GOSU_BIN="$(command -v gosu)"
+PYTHON_BIN="$(command -v python)"
 
 # Reuse an existing matching group/user if the host's UID/GID already
 # corresponds to one in /etc/passwd (e.g. when the image is rebuilt
@@ -24,32 +26,78 @@ if ! getent passwd "$PUID" >/dev/null 2>&1; then
     useradd -u "$PUID" -g "$PGID" -M -s /bin/sh -d /app odysseus
 fi
 
-# Repair ownership on every writable path the app touches at runtime.
-#
-# Bind-mounted dirs (/app/data, /app/logs) are the obvious ones, but
-# the app ALSO writes inside the image's own source tree at runtime:
-#   - services/cache/{search,content}/*  (search cache LRU)
-#   - services/search_analytics.json
-#   - services/search_engine_error.log
-#   - services/tts cache, etc.
-# These dirs were created as root during `docker build`, so dropping
-# to PUID:PGID would otherwise crash on the first import that tries
-# to mkdir them. Repair the image tree while pruning bind-mounted runtime
-# caches; those can be large and can block startup before uvicorn starts.
-if [ -d /app ]; then
-    find /app -xdev \
-        \( -path /app/data -o -path /app/logs -o -path /app/.ssh -o -path /app/.local -o -path /app/.cache \) -prune \
-        -o -not -uid "$PUID" -print0 2>/dev/null \
-        | xargs -0 -r chown "$PUID:$PGID" 2>/dev/null || true
+ODY_USER="$(getent passwd "$PUID" | cut -d: -f1)"
+[ -z "$ODY_USER" ] && ODY_USER=odysseus
+
+# Docker-socket group plumbing. When /var/run/docker.sock is bind-mounted
+# (Cookbook uses docker exec to reach sibling containers), the socket is
+# owned by root:<host docker gid>. Add the app user to that group and later
+# call gosu by username so supplementary groups are retained.
+DOCKER_SOCK="${DOCKER_SOCK:-/var/run/docker.sock}"
+if [ -S "$DOCKER_SOCK" ]; then
+    SOCK_GID="$(stat -c '%g' "$DOCKER_SOCK" 2>/dev/null || echo '')"
+    if [ -n "$SOCK_GID" ] && [ "$SOCK_GID" != "0" ]; then
+        if ! getent group "$SOCK_GID" >/dev/null 2>&1; then
+            groupadd -g "$SOCK_GID" docker_host || true
+        fi
+        SOCK_GROUP="$(getent group "$SOCK_GID" | cut -d: -f1)"
+        if [ -n "$SOCK_GROUP" ]; then
+            usermod -aG "$SOCK_GROUP" "$ODY_USER" 2>/dev/null || true
+        fi
+    fi
 fi
 
-# Repair the mount roots themselves so the app can create new children. Leave
-# existing nested bind-mounted content alone unless explicitly requested.
-for dir in /app/data /app/logs /app/.ssh /app/.local /app/.cache; do
+mount_root_for() {
+    awk -v target="$1" '$5 == target { print $4; exit }' /proc/self/mountinfo 2>/dev/null || true
+}
+
+is_broad_mount_root() {
+    case "$1" in
+        /|/home|/srv|/var|/usr|/opt|/tmp|/mnt|/media)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+repair_tree_ownership() {
+    dir="$1"
     if [ -d "$dir" ]; then
-        find "$dir" -maxdepth 1 -not -uid "$PUID" -print0 2>/dev/null \
+        find "$dir" -xdev -not -uid "$PUID" -print0 2>/dev/null \
             | xargs -0 -r chown "$PUID:$PGID" 2>/dev/null || true
     fi
+}
+
+repair_app_tree_ownership() {
+    if [ -d /app ]; then
+        find /app -xdev \
+            \( -path /app/data -o -path /app/logs -o -path /app/.ssh -o -path /app/.cache -o -path /app/.local \) -prune \
+            -o -not -uid "$PUID" -print0 2>/dev/null \
+            | xargs -0 -r chown "$PUID:$PGID" 2>/dev/null || true
+    fi
+}
+
+repair_bind_mount_ownership() {
+    dir="$1"
+    if [ ! -d "$dir" ]; then
+        return
+    fi
+
+    mount_root="$(mount_root_for "$dir")"
+    if is_broad_mount_root "$mount_root"; then
+        echo "Skipping recursive ownership repair for $dir because it maps to broad host path $mount_root" >&2
+        chown "$PUID:$PGID" "$dir" 2>/dev/null || true
+        return
+    fi
+
+    repair_tree_ownership "$dir"
+}
+
+# Repair image-owned writable paths without walking into bind-mounted host
+# trees, then repair the app-owned mount roots separately.
+repair_app_tree_ownership
+for dir in /app/data /app/logs /app/.ssh /app/.cache/huggingface /app/.local; do
+    repair_bind_mount_ownership "$dir"
 done
 
 if [ "${ODYSSEUS_CHOWN_BIND_RECURSIVE:-0}" = "1" ]; then
@@ -85,6 +133,7 @@ for cu in \
         break
     fi
 done
+
 # Disable the FlashInfer JIT sampler unconditionally — it is sampler-only
 # and has no impact on the attention path, but requires nvcc + matching
 # CUDA headers at startup. Without this, vLLM crashes with "Could not find
@@ -98,9 +147,9 @@ export PATH="/app/.local/bin:$PATH"
 # Run first-time setup as the app user so data/ files get the right ownership.
 # setup.py is idempotent — skips auth.json / .env if they already exist.
 # || true so a setup failure never prevents the container from starting.
-gosu "$PUID:$PGID" python /app/setup.py || true
+"$GOSU_BIN" "$ODY_USER" "$PYTHON_BIN" /app/setup.py || true
 
 # Drop root and run the actual app. `gosu` is preferred over `su` /
 # `sudo` because it cleans up the process tree (no extra shell layer)
 # so signals (SIGTERM from `docker stop`) reach uvicorn directly.
-exec gosu "$PUID:$PGID" "$@"
+exec "$GOSU_BIN" "$ODY_USER" "$@"

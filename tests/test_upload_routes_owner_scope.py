@@ -313,3 +313,32 @@ def test_put_vision_text_allows_same_owner_to_write_cache(tmp_path, monkeypatch)
     assert (upload_dir / ".vision" / f"{alice_id}.txt").read_text(
         encoding="utf-8"
     ) == "edited alice text"
+
+
+def test_download_file_survives_corrupted_uploads_json(tmp_path, monkeypatch):
+    # A truncated/corrupt uploads.json must not 500 the download endpoint —
+    # metadata simply becomes unavailable and the file is still served.
+    handler, alice_id, _bob_id, upload_dir = _make_upload_store(tmp_path, monkeypatch)
+    download_file = _upload_endpoints(handler, monkeypatch)["download_file"]
+    (upload_dir / "uploads.json").write_text('{"alice:h1": {', encoding="utf-8")
+
+    # No auth configured -> owner gate skipped.
+    response = asyncio.run(download_file(_Request(), alice_id))
+
+    assert str(response.path).endswith(alice_id)
+    # Metadata unreadable, so the display filename falls back to the file_id.
+    assert response.filename == alice_id
+
+
+def test_put_vision_text_returns_400_on_malformed_json(tmp_path, monkeypatch):
+    # A non-JSON request body must yield 400, not an unhandled JSONDecodeError -> 500.
+    handler, alice_id, _bob_id, _upload_dir = _make_upload_store(tmp_path, monkeypatch)
+    put_vision_text = _upload_endpoints(handler, monkeypatch)["put_vision_text"]
+
+    class _BadJsonRequest(_Request):
+        async def json(self):
+            raise json.JSONDecodeError("Expecting value", "not json", 0)
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(put_vision_text(_BadJsonRequest(), alice_id))
+    assert exc.value.status_code == 400

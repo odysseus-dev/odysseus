@@ -40,6 +40,7 @@ try:
         _workspace_display_label,
         _compute_final_metrics,
         _append_tool_results,
+        _insert_before_latest_user,
         _MCP_KEYWORDS,
     )
     _IMPORTED_AGENT_LOOP = sys.modules.get("src.agent_loop")
@@ -113,6 +114,36 @@ def test_workspace_display_label_maps_default_mount(monkeypatch):
 
     assert _workspace_display_label("/workspace") == r"D:\Odysseus_Workspace (mounted as /workspace)"
     assert _workspace_display_label("/tmp/other") == "/tmp/other"
+
+
+def test_insert_before_latest_user_places_context_before_last_user_turn():
+    messages = [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "reply"},
+        {"role": "user", "content": "latest"},
+    ]
+    context = {"role": "system", "content": "context"}
+
+    out = _insert_before_latest_user(messages, context)
+
+    assert out == [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "reply"},
+        context,
+        {"role": "user", "content": "latest"},
+    ]
+    assert messages == [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "reply"},
+        {"role": "user", "content": "latest"},
+    ]
+
+
+def test_insert_before_latest_user_appends_when_no_user_message_exists():
+    messages = [{"role": "assistant", "content": "reply"}]
+    context = {"role": "system", "content": "context"}
+
+    assert _insert_before_latest_user(messages, context) == [messages[0], context]
 
 
 # ---------------------------------------------------------------------------

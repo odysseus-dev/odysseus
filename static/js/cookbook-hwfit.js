@@ -31,6 +31,44 @@ import {
 } from './cookbook.js';
 import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
+import { _loadTasks, _tmuxGracefulKill, _nextAvailablePort, _taskPort } from './cookbookRunning.js';
+import { openCookbookDependencies } from './cookbook-diagnosis.js';
+
+// Map a serve-backend code (vllm / sglang / llamacpp) → the package name
+// the Dependencies API reports. Used to look up "is this backend installed
+// on the target server" before firing a launch.
+const _BACKEND_PKG = { vllm: 'vllm', sglang: 'sglang', llamacpp: 'llama_cpp' };
+
+// Pre-launch: ask the deps API whether the chosen backend is present on
+// the target server. Returns true if it's good to go, false if we should
+// block and route the user into Dependencies.
+async function _ensureBackendInstalled(runBackend, host, port, envPath, modelName) {
+  const pkgName = _BACKEND_PKG[runBackend];
+  if (!pkgName) return true; // unknown backend — don't block
+  try {
+    const params = new URLSearchParams();
+    if (host) {
+      params.set('host', host);
+      if (port) params.set('ssh_port', String(port));
+      if (envPath) params.set('venv', envPath);
+    }
+    const r = await fetch('/api/cookbook/packages' + (params.toString() ? '?' + params : ''));
+    const d = await r.json();
+    const pkg = (d.packages || []).find(p => p.name === pkgName);
+    if (pkg && pkg.installed) return true;
+  } catch (_) {
+    // If we can't tell, don't block — the server's own serve route will
+    // surface a clearer error anyway.
+    return true;
+  }
+  const targetLabel = host || 'this server';
+  uiModule.showToast(
+    `${pkgName} not installed on ${targetLabel}. Opening Dependencies — pick your model and click Run.`,
+    6000
+  );
+  openCookbookDependencies(pkgName, { expandRecipe: pkgName, model: modelName });
+  return false;
+}
 
 // ── What Fits? (hardware model fitting) ──
 
@@ -127,7 +165,12 @@ export function _renderGpuToggles(system) {
     _gpuToggleTotal = 0;
     return;
   }
-  if (!_gpuToggleTotal) _gpuToggleTotal = total;
+  // Update on every scan that returns a positive total — previously this
+   // only set on the first scan, so switching servers (e.g. local 1-GPU
+   // first, then a 4-GPU remote) left the Run-panel GPU buttons stuck on
+   // the original count. Zero/missing totals still don't clobber a known
+   // good value (avoids flicker during an in-flight re-probe).
+  if (total > 0) _gpuToggleTotal = total;
 
   container._groups = groups;
   if (container._activeGroup === undefined) container._activeGroup = 0;  // auto = largest pool
@@ -159,8 +202,17 @@ export function _renderGpuToggles(system) {
   // visual highlight. Before this, _activeCount stayed undefined → no
   // gpu_count param sent → backend's fallback could rank against RAM on
   // mixed-resource boxes ("tightest" sorted by RAM instead of GPU).
-  if (container._activeCount === undefined && validCounts.length) {
-    container._activeCount = maxGpu;
+  //
+  // On boxes where total RAM > total VRAM, default to RAM (count=0) instead
+  // — RAM is the dominant pool so it's the better starting filter.
+  if (container._activeCount === undefined) {
+    const ramGb = Number(system.total_ram_gb) || 0;
+    const vramGb = Number(system.gpu_vram_gb) || 0;
+    if (ramGb > vramGb) {
+      container._activeCount = 0;
+    } else if (validCounts.length) {
+      container._activeCount = maxGpu;
+    }
   }
   html += '<button class="hwfit-gpu-btn" data-count="0" title="CPU / RAM only">RAM</button>';
   const hasExplicitCount = typeof container._activeCount === 'number';
@@ -363,7 +415,7 @@ function _scanSig() {
     hk: _currentServerValue(),
     u: document.getElementById('hwfit-usecase')?.value || '',
     s: document.getElementById('hwfit-search')?.value?.trim() || '',
-    o: sortEl?.value || 'score',
+    o: sortEl?.value || 'newest',
     r: sortEl?.dataset.reverse === '1' ? 1 : 0,
     q: document.getElementById('hwfit-quant')?.value || '',
     c: _ctxValue(),
@@ -526,7 +578,9 @@ export async function _hwfitFetch(fresh = false) {
   const _cached = fresh ? null : _readScanCache(_sig);
   const wp = spinnerModule.createWhirlpool(18);
   if (_cached) {
-    _hwfitCache = _cached;
+    // Tag the restored cache with its host too (scan-sig keys cache per
+    // host, so a hit here is always for the current remoteHost).
+    _hwfitCache = { ..._cached, _scannedHost: remoteHost || '' };
     _hwfitRenderHw(hw, _cached.system);
     if (!remoteHost && _cached.system && _cached.system.platform) {
       _envState.platform = _cached.system.platform;
@@ -582,7 +636,7 @@ export async function _hwfitFetch(fresh = false) {
       }).catch(() => {});
   }
   try {
-    const sortBy = document.getElementById('hwfit-sort')?.value || 'score';
+    const sortBy = document.getElementById('hwfit-sort')?.value || 'newest';
     const quantPref = document.getElementById('hwfit-quant')?.value || '';
     const targetCtx = _ctxValue();
     // Get active GPU count from toggles
@@ -698,7 +752,11 @@ export async function _hwfitFetch(fresh = false) {
         : _olRows;
       data.models = (data.models || []).concat(_olFiltered);
     }
-    _hwfitCache = data;
+    // Tag the cache with the host this scan was for, so downstream
+    // code (_gpuEnvVarName, backend-aware command builders) can avoid
+    // trusting a stale scan when the user switches the server picker
+    // to a different target without re-running hwfit.
+    _hwfitCache = { ...data, _scannedHost: remoteHost || '' };
     _hwfitRenderHw(hw, data.system);
     // Propagate local platform from hardware probe so _isWindows(task) works
     // for local tasks (menu items, shell commands, etc.).
@@ -710,7 +768,7 @@ export async function _hwfitFetch(fresh = false) {
     // 1st click on a column = highest first; clicking it again = lowest first.
     if (!isImageMode) {
       const sortSel = document.getElementById('hwfit-sort');
-      const sortKey = sortSel?.value || 'score';
+      const sortKey = sortSel?.value || 'newest';
       const asc = sortSel?.dataset.reverse === '1';   // reversed → ascending (lowest first)
       if (sortKey === 'fit') {
         // fit_level is categorical (perfect→good→marginal→too_tight), not numeric,
@@ -722,6 +780,18 @@ export async function _hwfitFetch(fresh = false) {
           if (ar !== br) return asc ? ar - br : br - ar;
           const as = Number(a.score) || 0, bs = Number(b.score) || 0;
           return asc ? as - bs : bs - as;
+        });
+      } else if (sortKey === 'newest') {
+        // release_date is an ISO-ish "YYYY-MM-DD" string — lexical sort is
+        // chronological. Default direction: newest first (reverse=undefined).
+        data.models.sort((a, b) => {
+          const ad = String(a.release_date || ''), bd = String(b.release_date || '');
+          if (ad === bd) return 0;
+          // Empty dates land last regardless of direction so the column never
+          // floats undated rows above real releases.
+          if (!ad) return 1;
+          if (!bd) return -1;
+          return asc ? (ad < bd ? -1 : 1) : (ad < bd ? 1 : -1);
         });
       } else {
         const field = { score: 'score', vram: 'required_gb', speed: 'speed_tps', params: 'params_b', context: 'context' }[sortKey] || 'score';
@@ -1043,7 +1113,7 @@ function _modeLabel(model) {
 
 export const _hwfitColumns = [
   { key: 'fit', label: 'Fit',    cls: 'hwfit-fit' },
-  { key: null,    label: 'Model',  cls: 'hwfit-name' },
+  { key: 'newest', label: 'Model (latest)',  cls: 'hwfit-name' },
   { key: 'params',label: 'Param', cls: 'hwfit-c-params' },
   { key: null,    label: 'Quant',  cls: 'hwfit-c-quant' },
   { key: 'vram',  label: 'VRAM',   cls: 'hwfit-c-vram' },
@@ -1073,7 +1143,7 @@ export function _hwfitRenderList(el, models) {
     return;
   }
   const sortSel = document.getElementById('hwfit-sort');
-  const currentSort = sortSel?.value || 'score';
+  const currentSort = sortSel?.value || 'newest';
   const isReversed = sortSel?.dataset.reverse === '1';
   // Active budget for the Fit column label \u2014 make it obvious whether the
   // ranking is against GPU or RAM so "tightest" can't be ambiguous on a
@@ -1101,6 +1171,13 @@ export function _hwfitRenderList(el, models) {
       label = `<span class="hwfit-fit-dot${_fitOnly ? ' active' : ''}" title="${_fitOnly ? 'Showing only models that fit. Click to also show too-tight rows.' : 'Click to show only models that fit your hardware.'}" data-fit-dot>●</span>${col.label}`;
       // (Budget tag removed — the GPU/RAM/N-GPU suffix next to "Fit" was noise;
       // the toggle row already shows which budget is active.)
+    }
+    // The Model column's "(newest)" / "(oldest)" suffix flips with the sort
+    // direction so the user can see at a glance which way they're sorted.
+    if (col.key === 'newest' && col.key === currentSort) {
+      label = isReversed ? 'Model (oldest)' : 'Model (latest)';
+    } else if (col.key === 'newest') {
+      label = 'Model (latest)';
     }
     html += `<span class="hwfit-col ${col.cls}${sortable}${active}"${dataAttr}>${label}${arrow}</span>`;
   }
@@ -1256,6 +1333,72 @@ function _syncHostFromScanDropdown() {
   return host;
 }
 
+// Minimum backend version a given model needs. Returns a semver string like
+// "0.10.0" or null when the model has no known floor. Hardcoded for now —
+// when the vLLM-recipes integration lands we can pull this from the upstream
+// recipe page instead. Keep this conservative: a null return means "any
+// installed version passes", so we don't false-positive launches.
+function _minBackendVersion(modelName, backend) {
+  const n = (modelName || '').toLowerCase();
+  if (backend === 'vllm') {
+    // MiniMax M2 / M2.5 / M2.7 — minimax_m2 parser shipped in 0.10.0
+    if (n.includes('minimax') && n.match(/\bm2(?:\.\d)?\b/)) return '0.10.0';
+    // MiniMax M3 — newer parser registered in 0.11.x
+    if (n.includes('minimax') && n.includes('m3')) return '0.11.0';
+    // DeepSeek V3 / V3.1 / R1 — MoE expert-parallel paths matured in 0.7.0+
+    if (n.includes('deepseek') && (n.includes('v3') || n.includes('r1'))) return '0.7.0';
+    // Qwen3 reasoning models — qwen3 reasoning parser added in 0.7.0
+    if (n.includes('qwen3') && !n.includes('coder') && !n.includes('instruct')) return '0.7.0';
+    // GLM-4.5 / GLM-4.6 — glm45 reasoning parser added in 0.8.0
+    if (n.includes('glm-4.5') || n.includes('glm-4.6') || n.includes('glm-5')) return '0.8.0';
+    // gpt-oss reasoning models — gpt_oss parser
+    if (n.includes('gpt-oss')) return '0.10.0';
+    // Llama-4 multimodal — landed in 0.7.0
+    if (n.includes('llama-4') || n.includes('llama4')) return '0.7.0';
+  }
+  return null;
+}
+
+// Tiny semver compare: returns <0 / 0 / >0 like strcmp. Tolerates "0.10",
+// "0.10.0", "0.10.0+cu124" — pre-release / build suffixes are stripped.
+function _cmpSemver(a, b) {
+  const _parse = (s) => String(s || '').split(/[.+-]/).filter(p => /^\d+$/.test(p)).map(Number);
+  const A = _parse(a), B = _parse(b);
+  for (let i = 0; i < Math.max(A.length, B.length); i++) {
+    const av = A[i] || 0, bv = B[i] || 0;
+    if (av !== bv) return av - bv;
+  }
+  return 0;
+}
+
+// Map the detected GPU + the model's quant to SGLang's URL-hash params so
+// the cookbook page lands on the right preset. SGLang supports:
+//   hw      = b200 | b300 | gb200 | gb300 | mi300x | mi325x | mi350x | mi355x | h200
+//   quant   = mxfp8 | bf16
+//   variant = default        strategy = balanced       nodes = single
+// We only set what we can confidently infer; anything missing degrades to
+// SGLang's own default (which is `h200` + bf16 single-node balanced).
+function _sglangHashFor(modelData) {
+  const sys = (typeof _hwfitCache !== 'undefined' ? _hwfitCache?.system : null) || {};
+  const gpuName = String(sys.gpu_name || '').toLowerCase();
+  let hw = '';
+  if (/\bgb300/.test(gpuName)) hw = 'gb300';
+  else if (/\bgb200/.test(gpuName)) hw = 'gb200';
+  else if (/\bb300/.test(gpuName)) hw = 'b300';
+  else if (/\bb200/.test(gpuName)) hw = 'b200';
+  else if (/\bh200/.test(gpuName)) hw = 'h200';
+  else if (/mi355/.test(gpuName)) hw = 'mi355x';
+  else if (/mi350/.test(gpuName)) hw = 'mi350x';
+  else if (/mi325/.test(gpuName)) hw = 'mi325x';
+  else if (/mi300/.test(gpuName)) hw = 'mi300x';
+  const qRaw = String(modelData?.quant || '').toLowerCase();
+  // mxfp8 covers fp8 / mxfp8 / nvfp4; bf16 covers everything else cheap.
+  const quant = /fp8|mxfp|nvfp/.test(qRaw) ? 'mxfp8' : 'bf16';
+  const parts = ['variant=default', `quant=${quant}`, 'strategy=balanced', 'nodes=single'];
+  if (hw) parts.unshift(`hw=${hw}`);
+  return '#' + parts.join('&');
+}
+
 export function _expandModelRow(row, modelData) {
   const list = row.closest('.hwfit-list');
   if (!list) return;
@@ -1350,6 +1493,130 @@ export function _expandModelRow(row, modelData) {
         }
         return;
       }
+      // Detect backend and port now — the pre-launch guard below needs them.
+      const _qrBackendDetect = _detectBackend(modelData);
+      const _qrRunBackend = _qrBackendDetect.backend || 'vllm';
+      const _qrPort = _nextAvailablePort();
+
+      // ─── Pre-launch: stop colliding serves on the same port ───────
+      // Different ports coexist fine (e.g. vLLM on 8000 + Qwen VL on
+      // 8001). Only block when the new model's port genuinely collides
+      // with a running serve. (Issue #4507)
+      try {
+        const _qrHostStr = _envState.remoteHost || '';
+        const _allServes = _loadTasks().filter(t =>
+          t && t.type === 'serve'
+          && (t.remoteHost || '') === _qrHostStr
+          && (t.status === 'running' || t.status === 'ready' || t._serveReady)
+        );
+        const _clashing = _allServes.filter(t => _taskPort(t) === _qrPort);
+        if (_clashing.length) {
+          const _names = _clashing.map(t => t.payload?.repo_id || t.repo || t.name || '?').filter(Boolean);
+          const _ok = await window.styledConfirm?.(
+            `${_clashing.length} model${_clashing.length === 1 ? '' : 's'} on port ${_qrPort} (${_names.join(', ')}). Stop it and launch this one?`,
+            { confirmText: 'Stop & launch', cancelText: 'Cancel' }
+          );
+          if (!_ok) return;
+          quickRunBtn.disabled = true;
+          quickRunBtn.textContent = 'Stopping…';
+          for (const t of _clashing) {
+            try {
+              const _taskEl = document.querySelector(`.cookbook-task[data-task-id="${t.sessionId}"]`);
+              const _stopBtn = _taskEl?.querySelector('.cookbook-task-action-stop');
+              if (_stopBtn) {
+                _stopBtn.click();
+              } else {
+                await fetch('/api/shell/exec', {
+                  method: 'POST',
+                  credentials: 'same-origin',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ command: _tmuxGracefulKill(t) }),
+                });
+              }
+            } catch (_killErr) { /* best-effort */ }
+          }
+          await new Promise(r => setTimeout(r, 2500));
+        }
+      } catch (_e) { /* best-effort */ }
+
+      // -- Launch ───────────────────────────────────────────────────
+
+      // ─── Pre-launch driver check ─────────────────────────────────────
+      // vLLM/SGLang need a working CUDA/ROCm driver. nvidia-smi failures
+      // surface as system.gpu_error from our hardware probe; "no GPU
+      // detected" is the other common case. Bail with a clear message
+      // before kicking off the long install/launch chain — otherwise the
+      // user watches `pip install vllm` finish, then sees a cryptic CUDA
+      // error 10 minutes later. (llama.cpp / Ollama have CPU fallbacks
+      // so they skip this gate.)
+      if (_qrRunBackend === 'vllm' || _qrRunBackend === 'sglang') {
+        const _sys = _hwfitCache?.system || {};
+        if (_sys.gpu_error) {
+          uiModule.showError(`Can't launch: GPU driver error — ${_sys.gpu_error}. Reinstall or repair the NVIDIA driver, then re-scan.`);
+          return;
+        }
+        if (!_sys.has_gpu || !(_sys.gpu_count > 0)) {
+          uiModule.showError(`Can't launch: no GPU detected by nvidia-smi. ${_qrRunBackend === 'vllm' ? 'vLLM' : 'SGLang'} needs a working CUDA or ROCm device.`);
+          return;
+        }
+      }
+
+      // ─── Pre-launch install + version check ─────────────────────────
+      // Catches:
+      //   a) "command not found" (binary not in PATH)
+      //   b) "version too old" (model needs e.g. vllm >= 0.10.0 for the
+      //      reasoning/tool parser registered for it).
+      // Both cases would otherwise fail 10s-3min into the launch with a
+      // cryptic shell error. Best-effort: a venv activated only by the
+      // launch wrapper can false-negative the PATH check, in which case
+      // the launch proceeds and the existing diagnosis layer handles it.
+      if (_qrRunBackend === 'vllm' || _qrRunBackend === 'sglang') {
+        try {
+          const _qrHostStr = _envState.remoteHost || '';
+          const _coreCheck = _qrRunBackend === 'vllm'
+            ? "command -v vllm >/dev/null 2>&1 && vllm --version 2>&1 | grep -oE '[0-9]+\\.[0-9]+(\\.[0-9]+)?' | head -1 || echo MISSING"
+            : "python3 -c 'import sglang, sys; sys.stdout.write(sglang.__version__)' 2>/dev/null || echo MISSING";
+          const _wrappedCheck = _qrHostStr
+            ? `ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new ${_qrHostStr} "bash -lc ${JSON.stringify(_coreCheck)}"`
+            : `bash -lc ${JSON.stringify(_coreCheck)}`;
+          const _chkRes = await fetch('/api/shell/exec', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command: _wrappedCheck, timeout: 10 }),
+          });
+          if (_chkRes.ok) {
+            const _chk = await _chkRes.json();
+            const _stdout = String(_chk.stdout || '').trim();
+            const _stderr = String(_chk.stderr || '').trim();
+            const _out = `${_stdout}\n${_stderr}`;
+            if (_out.includes('MISSING')) {
+              const _pkg = _qrRunBackend === 'vllm' ? 'vLLM' : 'SGLang';
+              const _hint = _qrRunBackend === 'vllm'
+                ? 'uv pip install -U vllm --torch-backend auto'
+                : "pip install -U 'sglang[all]'";
+              uiModule.showError(`Can't launch: ${_pkg} isn't installed${_qrHostStr ? ' on ' + _qrHostStr : ''}. Install it first:\n${_hint}`);
+              return;
+            }
+            // Version-floor check. _minBackendVersion returns null when this
+            // model has no known requirement — in which case any installed
+            // version passes.
+            const _minVer = _minBackendVersion(modelData.name, _qrRunBackend);
+            const _verMatch = _stdout.match(/(\d+\.\d+(?:\.\d+)?)/);
+            const _curVer = _verMatch ? _verMatch[1] : '';
+            if (_minVer && _curVer && _cmpSemver(_curVer, _minVer) < 0) {
+              const _pkg = _qrRunBackend === 'vllm' ? 'vLLM' : 'SGLang';
+              const _hint = _qrRunBackend === 'vllm'
+                ? 'uv pip install -U vllm --torch-backend auto'
+                : "pip install -U 'sglang[all]'";
+              uiModule.showError(`Can't launch: ${modelData.name} needs ${_pkg} ≥ ${_minVer}, but ${_curVer} is installed${_qrHostStr ? ' on ' + _qrHostStr : ''}. Upgrade:\n${_hint}`);
+              return;
+            }
+          }
+        } catch (_e) {
+          // Network/exec failed — fall through and let the launch try.
+        }
+      }
 
       quickRunBtn.disabled = true;
       quickRunBtn.textContent = 'Starting...';
@@ -1388,7 +1655,7 @@ export function _expandModelRow(row, modelData) {
 
       const host = _envState.remoteHost || '';
       const hostIp = host.includes('@') ? host.split('@').pop() : host;
-      const port = '8000';
+      const port = _qrPort;
       const detected = _detectBackend(modelData);
       const runBackend = detected.backend || 'vllm';
 
@@ -1403,7 +1670,7 @@ export function _expandModelRow(row, modelData) {
       } else if (runBackend === 'llamacpp') {
         const dir = `"$HOME/.cache/huggingface/hub/models--${modelData.name.replace(/\//g, '--')}/snapshots"`;
         const ggufPath = `$({ find ${dir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${dir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`;
-        cmd = `MODEL_FILE=${ggufPath} && { [ -n "$MODEL_FILE" ] && [ -f "$MODEL_FILE" ]; } || { echo "ERROR: No GGUF found on this host. Download a GGUF quant or switch backend."; exit 1; } && llama-server --model "$MODEL_FILE" --host 0.0.0.0 --port 8080 -ngl 99 -c ${maxCtx} || python3 -m llama_cpp.server --model "$MODEL_FILE" --host 0.0.0.0 --port 8080 --n_gpu_layers 99 --n_ctx ${maxCtx}`;
+        cmd = `llama-server --model "${ggufPath}" --host 0.0.0.0 --port ${port} -ngl 99 -c ${maxCtx} --flash-attn auto`;
       } else {
         cmd = `vllm serve ${modelData.name} --host 0.0.0.0 --port ${port}`;
         cmd += ` --tensor-parallel-size ${tp}`;
@@ -1428,6 +1695,23 @@ export function _expandModelRow(row, modelData) {
       // schema (repo_id + cmd) — sending `command`/`model` failed Pydantic
       // validation (422), which is why Run silently did nothing.
       const _srv = _serverByVal(_envState.remoteServerKey || host);
+
+      // Pre-flight: if the backend isn't installed on the target server,
+      // route the user into Dependencies → recipe panel for that backend
+      // instead of launching into an obvious "command not found" failure.
+      const _ok = await _ensureBackendInstalled(
+        runBackend,
+        host,
+        (_srv && _srv.port) || undefined,
+        _envState.envPath || '',
+        modelData.name,
+      );
+      if (!_ok) {
+        quickRunBtn.disabled = false;
+        quickRunBtn.textContent = 'Run';
+        return;
+      }
+
       const payload = {
         repo_id: modelData.name,
         cmd: cmd,

@@ -181,7 +181,7 @@ function handleVote(winnerIdx) {
 
     let html = '';
     const caret = ' <span class="pane-title-caret">&#x25BE;</span>';
-    if (isWinner) html = '<span style="color:var(--red);margin-right:4px;">&#x2605;</span><strong>' + escapeHtml(name) + '</strong> <span style="color:var(--red);font-size:0.82em;font-weight:800;text-transform:uppercase;letter-spacing:1px;position:relative;top:-2px;">Winner!</span>' + caret;
+    if (isWinner) html = '<span style="color:var(--green, #50fa7b);margin-right:4px;">&#x2605;</span><strong>' + escapeHtml(name) + '</strong> <span style="color:var(--green, #50fa7b);font-size:0.82em;font-weight:800;text-transform:uppercase;letter-spacing:1px;position:relative;top:0;">Winner!</span>' + caret;
     else if (isTie) html = '<span style="opacity:0.5;margin-right:4px;">=</span><strong>' + escapeHtml(name) + '</strong>' + caret;
     else html = '<strong>' + escapeHtml(name) + '</strong>' + caret;
     el.innerHTML = html;
