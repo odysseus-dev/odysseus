@@ -73,9 +73,9 @@ function _attachIcon(mimeOrName) {
   return '<svg class="attach-card-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
 }
 function _formatSize(bytes) {
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-  return (bytes / 1048576).toFixed(1) + ' MB';
+  if (bytes < 1024) return bytes + ' ' + (window.__t || (k=>k))('chatRenderer.bytes');
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' ' + (window.__t || (k=>k))('chatRenderer.kilobytes');
+  return (bytes / 1048576).toFixed(1) + ' ' + (window.__t || (k=>k))('chatRenderer.megabytes');
 }
 
 // Build the `.attach-cards` element for a message's attachment list. Shared by
@@ -129,7 +129,7 @@ function buildAttachCards(attachments) {
         const img = document.createElement('img');
         // Small cached thumbnail — the preview is tiny, no need to pull the
         // full-resolution photo. Click still opens the full image.
-        img.alt = att.name || 'Image';
+        img.alt = att.name || (window.__t || (k=>k))('chatRenderer.image');
         img.loading = 'lazy';
         img.style.cssText = 'max-width:300px;max-height:200px;border-radius:6px;display:' + (att.previewUrl ? 'block' : 'none') + ';';
         let _revealed = false;
@@ -162,8 +162,8 @@ function buildAttachCards(attachments) {
           const ocrBtn = document.createElement('button');
           ocrBtn.type = 'button';
           ocrBtn.className = 'attach-ocr-btn';
-          ocrBtn.title = 'View / edit OCR text';
-          ocrBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg><span class="attach-ocr-label">Caption</span>';
+          ocrBtn.title = (window.__t || (k=>k))('chatRenderer.viewEditOCRText');
+          ocrBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg><span class="attach-ocr-label">' + ((window.__t || (k=>k))('chatRenderer.caption')) + '</span>';
           ocrBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             _openVisionEditor(att, ocrBtn.closest('.msg'));
@@ -175,7 +175,7 @@ function buildAttachCards(attachments) {
       if (att.vision_model) {
         const visionLabel = document.createElement('div');
         visionLabel.className = 'attach-vision-model';
-        visionLabel.textContent = 'Vision: ' + String(att.vision_model).split('/').pop();
+        visionLabel.textContent = (window.__t || (k=>k))('chatRenderer.vision') + ': ' + String(att.vision_model).split('/').pop();
         imgWrap.appendChild(visionLabel);
       }
       if (att.name) {
@@ -250,7 +250,7 @@ function _openImageLightbox(att) {
   full.addEventListener('error', () => {
     const err = document.createElement('div');
     err.className = 'attach-lightbox-err';
-    err.textContent = 'Failed to load full-resolution image.';
+    err.textContent = (window.__t || (k=>k))('chat.failedToLoadImage');
     overlay.appendChild(err);
   });
   full.src = `/api/upload/${att.id}`;
@@ -302,16 +302,16 @@ function _openVisionEditor(att, userMsgEl) {
   title.className = 'vision-editor-title';
   // Eye icon matches the one in Settings → Vision so users recognise where
   // this text originates.
-  title.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.7;flex-shrink:0"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg><span>Vision text</span>';
+  title.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.7;flex-shrink:0"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg><span>' + ((window.__t || (k=>k))('chatRenderer.visionText')) + '</span>';
   panel.appendChild(title);
   const desc = document.createElement('div');
   desc.className = 'vision-editor-desc';
-  desc.textContent = 'Edit text and save, new chats will have the new context. Regenerate or continue from there.';
+  desc.textContent = (window.__t || (k=>k))('chat.ocrDesc');
   panel.appendChild(desc);
   const ta = document.createElement('textarea');
   ta.className = 'vision-editor-text';
   ta.rows = 10;
-  ta.placeholder = 'Loading…';
+  ta.placeholder = (window.__t || (k=>k))('common.loading');
   ta.disabled = true;
   panel.appendChild(ta);
   const actions = document.createElement('div');
@@ -319,7 +319,7 @@ function _openVisionEditor(att, userMsgEl) {
   const closeBtn = document.createElement('button');
   closeBtn.type = 'button';
   closeBtn.className = 'vision-editor-btn';
-  closeBtn.innerHTML = '<span class="vision-btn-label">Close</span>';
+  closeBtn.innerHTML = '<span class="vision-btn-label">' + ((window.__t || (k=>k))('chatRenderer.close')) + '</span>';
   closeBtn.addEventListener('click', _closeVisionEditor);
   const _saveVisionText = async () => {
     const res = await fetch(`/api/upload/${att.id}/vision`, {
@@ -333,19 +333,19 @@ function _openVisionEditor(att, userMsgEl) {
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
   saveBtn.className = 'vision-editor-btn vision-editor-btn-primary';
-  saveBtn.innerHTML = '<span class="vision-btn-label">Save</span>';
+  saveBtn.innerHTML = '<span class="vision-btn-label">' + ((window.__t || (k=>k))('chatRenderer.save')) + '</span>';
   saveBtn.disabled = true;
   saveBtn.addEventListener('click', async () => {
     saveBtn.disabled = true;
-    saveBtn.innerHTML = '<span class="vision-btn-label">Saving…</span>';
+    saveBtn.innerHTML = '<span class="vision-btn-label">' + (window.__t || (k=>k))('common.loading') + '</span>';
     try {
       await _saveVisionText();
-      if (uiModule?.showToast) uiModule.showToast('Saved');
+      if (uiModule?.showToast) uiModule.showToast((window.__t || (k=>k))('settings.saved'));
       _closeVisionEditor();
     } catch (e) {
       saveBtn.disabled = false;
-      saveBtn.innerHTML = '<span class="vision-btn-label">Save</span>';
-      if (uiModule?.showError) uiModule.showError('Failed to save OCR text');
+  saveBtn.innerHTML = '<span class="vision-btn-label">' + ((window.__t || (k=>k))('chatRenderer.save')) + '</span>';
+      if (uiModule?.showError) uiModule.showError((window.__t || (k=>k))('chat.failedToSaveOCR'));
     }
   });
   // Regenerate-message: save the edited text, close, then trigger a resend of
@@ -353,8 +353,8 @@ function _openVisionEditor(att, userMsgEl) {
   const regenBtn = document.createElement('button');
   regenBtn.type = 'button';
   regenBtn.className = 'vision-editor-btn vision-editor-btn-primary';
-  regenBtn.title = 'Save and regenerate the message';
-  regenBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.74 9.74 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg><span class="vision-btn-label">Regenerate message</span>';
+  regenBtn.title = (window.__t || (k=>k))('chatRenderer.saveAndRegenerate');
+  regenBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.74 9.74 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg><span class="vision-btn-label">' + ((window.__t || (k=>k))('chat.regenerateMessage')) + '</span>';
   regenBtn.disabled = true;
   regenBtn.addEventListener('click', async () => {
     regenBtn.disabled = true;
@@ -365,12 +365,12 @@ function _openVisionEditor(att, userMsgEl) {
       if (userMsgEl && window.chatModule?.resendUserMessage) {
         window.chatModule.resendUserMessage(userMsgEl, { replaceFromHere: true });
       } else if (uiModule?.showToast) {
-        uiModule.showToast('Saved');
+        uiModule.showToast((window.__t || (k=>k))('settings.saved'));
       }
     } catch (e) {
       regenBtn.disabled = false;
       saveBtn.disabled = false;
-      if (uiModule?.showError) uiModule.showError('Failed to save OCR text');
+      if (uiModule?.showError) uiModule.showError((window.__t || (k=>k))('chat.failedToSaveOCR'));
     }
   });
   actions.appendChild(closeBtn);
@@ -398,7 +398,7 @@ function _openVisionEditor(att, userMsgEl) {
     })
     .catch(() => {
       ta.value = '';
-      ta.placeholder = 'Could not load OCR text — type your correction and save.';
+      ta.placeholder = (window.__t || (k=>k))('chat.ocrLoadFailed');
       ta.disabled = false;
       saveBtn.disabled = false;
       regenBtn.disabled = !userMsgEl;
@@ -673,21 +673,21 @@ export function applyModelColor(roleEl, modelName) {
       let html = '<div style="font-weight:600;margin-bottom:6px;color:var(--fg);display:flex;align-items:center;gap:6px;">';
       if (logoHtml) html += '<span class="role-provider-logo" style="opacity:0.7">' + logoHtml + '</span>';
       html += uiModule.esc(short) + '</div>';
-      html += '<div><span class="ctx-label">Model</span> ' + uiModule.esc(modelName.split('/').pop()) + '</div>';
+      html += '<div><span class="ctx-label">' + (window.__t || (k=>k))('chatRenderer.model') + '</span> ' + uiModule.esc(modelName.split('/').pop()) + '</div>';
       // Provider = the serving endpoint, distinct from the model vendor/logo
       // (e.g. the same model via OpenRouter vs Copilot vs Anthropic direct).
       const _epUrl = (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
         ? window.sessionModule.getCurrentEndpointUrl() : null;
       const _provLabel = providerLabel(_epUrl);
-      if (_provLabel) html += '<div><span class="ctx-label">Provider</span> ' + uiModule.esc(_provLabel) + '</div>';
+      if (_provLabel) html += '<div><span class="ctx-label">' + (window.__t || (k=>k))('chatRenderer.provider') + '</span> ' + uiModule.esc(_provLabel) + '</div>';
       // Show static context initially, then fetch real from server
       const _realCtx = window._realContextLengths && window._realContextLengths[modelName];
       if (_realCtx) {
-        html += '<div><span class="ctx-label">Context</span> ' + _fmtCtx(_realCtx) + ' tokens';
-        if (info && info.ctx && info.ctx !== _realCtx) html += ' <span style="opacity:0.35">(spec: ' + _fmtCtx(info.ctx) + ')</span>';
+        html += '<div><span class="ctx-label">' + (window.__t || (k=>k))('chatRenderer.context') + '</span> ' + _fmtCtx(_realCtx) + ' ' + (window.__t || (k=>k))('chatRenderer.tokens');
+        if (info && info.ctx && info.ctx !== _realCtx) html += ' <span style="opacity:0.35">(' + (window.__t || (k=>k))('chatRenderer.spec') + ': ' + _fmtCtx(info.ctx) + ')</span>';
         html += '</div>';
       } else if (info && info.ctx) {
-        html += '<div><span class="ctx-label">Context</span> <span id="_ctx-val">' + _fmtCtx(info.ctx) + ' tokens</span></div>';
+        html += '<div><span class="ctx-label">' + (window.__t || (k=>k))('chatRenderer.context') + '</span> <span id="_ctx-val">' + _fmtCtx(info.ctx) + ' ' + (window.__t || (k=>k))('chatRenderer.tokens') + '</span></div>';
       }
       // Fetch real context from server async
       if (!_realCtx && window.sessionModule) {
@@ -699,9 +699,9 @@ export function applyModelColor(roleEl, modelName) {
               window._realContextLengths[modelName] = d.context_length;
               const el = document.getElementById('_ctx-val');
               if (el) {
-                el.innerHTML = _fmtCtx(d.context_length) + ' tokens';
+                el.innerHTML = _fmtCtx(d.context_length) + ' ' + (window.__t || (k=>k))('chatRenderer.tokens');
                 if (info && info.ctx && info.ctx !== d.context_length) {
-                  el.innerHTML += ' <span style="opacity:0.35">(spec: ' + _fmtCtx(info.ctx) + ')</span>';
+                  el.innerHTML += ' <span style="opacity:0.35">(' + (window.__t || (k=>k))('chatRenderer.spec') + ': ' + _fmtCtx(info.ctx) + ')</span>';
                 }
               }
             }
@@ -714,13 +714,13 @@ export function applyModelColor(roleEl, modelName) {
         const _preset = _pid ? window.presetsModule.getPreset(_pid) : null;
         const _mt = _preset?.max_tokens;
         if (_mt && _mt > 0 && _mt <= 8192) {
-          html += '<div><span class="ctx-label">Max tokens</span> ' + _mt.toLocaleString() + ' <span style="opacity:0.4">(configured)</span></div>';
+          html += '<div><span class="ctx-label">' + (window.__t || (k=>k))('chatRenderer.maxTokens') + '</span> ' + _mt.toLocaleString() + ' <span style="opacity:0.4">(' + (window.__t || (k=>k))('chatRenderer.configured') + ')</span></div>';
         }
       }
       if (isCostTrackedEndpoint(_epUrl)) {
-        if (info && info.input != null) html += '<div><span class="ctx-label">Input</span> $' + info.input.toFixed(2) + ' / 1M</div>';
-        if (info && info.output != null) html += '<div><span class="ctx-label">Output</span> $' + info.output.toFixed(2) + ' / 1M</div>';
-        if (!info) html += '<div style="opacity:0.4;font-size:0.85em;margin-top:4px;">No pricing data available</div>';
+        if (info && info.input != null) html += '<div><span class="ctx-label">' + (window.__t || (k=>k))('chatRenderer.input') + '</span> $' + info.input.toFixed(2) + ' / 1M</div>';
+        if (info && info.output != null) html += '<div><span class="ctx-label">' + (window.__t || (k=>k))('chatRenderer.output') + '</span> $' + info.output.toFixed(2) + ' / 1M</div>';
+        if (!info) html += '<div style="opacity:0.4;font-size:0.85em;margin-top:4px;">' + (window.__t || (k=>k))('chatRenderer.noPricingData') + '</div>';
       }
       popup.innerHTML = html;
       const rect = roleEl.getBoundingClientRect();
@@ -920,7 +920,7 @@ export function buildSourcesBox(sources, type, expanded) {
   var esc = uiModule.esc;
   var id = 'sources-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
   var count = sources.length;
-  var label = type === 'research' ? 'Research sources' : 'Web sources';
+  var label = type === 'research' ? (window.__t || (k=>k))('chat.researchSources') : (window.__t || (k=>k))('chat.webSources');
   var lines = '';
   for (var i = 0; i < count; i++) {
     var s = sources[i];
@@ -963,7 +963,7 @@ export function buildRagSourcesBox(sources) {
       + (pct ? ' <span class="rag-similarity">' + pct + '</span>' : '')
       + '<div class="rag-snippet">' + esc(s.snippet || '') + '</div></div>';
   }
-  return '<details class="rag-sources"><summary>Sources (' + sources.length + ' documents)</summary>' + items + '</details>';
+  return '<details class="rag-sources"><summary>' + (window.__t || (k=>k))('chat.ragSources') + ' (' + sources.length + ')</summary>' + items + '</details>';
 }
 
 /**
@@ -998,7 +998,7 @@ export function buildFindingsBox(findings, expanded) {
   var expandedClass = expanded ? ' expanded' : '';
   return '<div class="sources-section">'
     + '<div class="sources-header" data-sources-id="' + id + '" onclick="window.toggleSources(\'' + id + '\')">'
-    + '<div class="sources-header-left">' + FINDINGS_ICON + '<span>' + count + ' Raw collected findings</span></div>'
+    + '<div class="sources-header-left">' + FINDINGS_ICON + '<span>' + count + ' ' + (window.__t || (k=>k))('chat.rawFindings') + '</span></div>'
     + '<span class="sources-toggle" id="' + id + '-toggle" data-arrow="' + arrow + '"></span>'
     + '</div>'
     + '<div class="sources-content' + expandedClass + '" id="' + id + '">'
@@ -1018,7 +1018,7 @@ function _appendContinuePrompt(container) {
   wrap.innerHTML =
     '<div class="continue-research-hint">'
     + '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>'
-    + '<span>Dig deeper? Activate Research again and type a follow-up question to continue this research.</span>'
+    + '<span>' + (window.__t || (k=>k))('chat.digDeeper') + '</span>'
     + '</div>';
   container.appendChild(wrap);
 }
@@ -1032,7 +1032,7 @@ function _appendReportButton(container, sessionId) {
   var btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'view-report-btn';
-  btn.innerHTML = REPORT_ICON + ' Open Visual Report';
+  btn.innerHTML = REPORT_ICON + ' ' + (window.__t || (k=>k))('chat.openVisualReport');
 
   var reportUrl = apiBase + '/api/research/report/' + sessionId;
   btn.addEventListener('click', function() {
@@ -1043,12 +1043,12 @@ function _appendReportButton(container, sessionId) {
   var chatBtn = document.createElement('button');
   chatBtn.type = 'button';
   chatBtn.className = 'view-report-btn chat-about-btn';
-  chatBtn.innerHTML = CHAT_ABOUT_ICON + ' Discuss';
+  chatBtn.innerHTML = CHAT_ABOUT_ICON + ' ' + (window.__t || (k=>k))('chat.discuss');
   chatBtn.addEventListener('click', async function() {
     if (chatBtn.disabled) return;
     var origLabel = chatBtn.innerHTML;
     chatBtn.disabled = true;
-    chatBtn.innerHTML = CHAT_ABOUT_ICON + ' Creating…';
+    chatBtn.innerHTML = CHAT_ABOUT_ICON + ' ' + (window.__t || (k=>k))('chat.creating');
     try {
       var res = await fetch(apiBase + '/api/research/spinoff/' + sessionId, { method: 'POST' });
       if (!res.ok) {
@@ -1065,9 +1065,9 @@ function _appendReportButton(container, sessionId) {
       chatBtn.disabled = false;
       chatBtn.innerHTML = origLabel;
       if (window.uiModule && uiModule.showError) {
-        uiModule.showError('Could not start follow-up chat: ' + e.message);
+        uiModule.showError((window.__t || (k=>k))('chat.followUpChatFailed') + ': ' + e.message);
       } else {
-        alert('Could not start follow-up chat: ' + e.message);
+        alert((window.__t || (k=>k))('chat.followUpChatFailed') + ': ' + e.message);
       }
     }
   });
@@ -1197,15 +1197,15 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
 
   const safeImageUrl = safeDisplayImageSrc(imageUrl);
   if (!safeImageUrl) {
-    body.textContent = '[Image unavailable]';
+    body.textContent = (window.__t || (k=>k))('chat.imageUnavailable');
     wrap.appendChild(body);
     return wrap;
   }
 
   const img = document.createElement('img');
   img.className = 'generated-image';
-  img.alt = prompt || 'Generated image';
-  img.title = prompt || 'Generated image';
+  img.alt = prompt || (window.__t || (k=>k))('chat.generatedImage');
+  img.title = prompt || (window.__t || (k=>k))('chat.generatedImage');
   img.src = safeImageUrl;
   img.addEventListener('click', () => { window.open(safeImageUrl, '_blank', 'noopener,noreferrer'); });
   body.appendChild(img);
@@ -1228,7 +1228,7 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
   const copyBtn = document.createElement('button');
   copyBtn.className = 'footer-copy-btn';
   copyBtn.type = 'button';
-  copyBtn.title = 'Copy prompt';
+  copyBtn.title = (window.__t || (k=>k))('chatRenderer.copyPrompt');
   copyBtn.innerHTML = COPY_ICON;
   copyBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1241,7 +1241,7 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
   const dlBtn = document.createElement('button');
   dlBtn.className = 'footer-copy-btn';
   dlBtn.type = 'button';
-  dlBtn.title = 'Download image';
+  dlBtn.title = (window.__t || (k=>k))('chatRenderer.downloadImage');
   dlBtn.textContent = '\u2913';
   dlBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
@@ -1264,7 +1264,7 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
   const editBtn = document.createElement('button');
   editBtn.className = 'footer-copy-btn';
   editBtn.type = 'button';
-  editBtn.title = 'Edit in image editor';
+  editBtn.title = (window.__t || (k=>k))('chatRenderer.editInImageEditor');
   editBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
   editBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
@@ -1287,7 +1287,7 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
       if (albumsContainer) albumsContainer.style.display = 'none';
       const editorContainer = document.getElementById('gallery-editor-container');
       if (editorContainer) editorContainer.style.display = 'flex';
-      const label = (prompt || '').trim().slice(0, 60) || 'Generated image';
+      const label = (prompt || '').trim().slice(0, 60) || (window.__t || (k=>k))('chat.generatedImage');
       editorMod.openEditor(imageUrl, null, null, label);
     } catch (err) {
       console.error('[chat] open in editor failed', err);
@@ -1298,13 +1298,13 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
   const delBtn = document.createElement('button');
   delBtn.className = 'footer-copy-btn footer-delete-btn';
   delBtn.type = 'button';
-  delBtn.title = 'Delete image';
+  delBtn.title = (window.__t || (k=>k))('chatRenderer.deleteImage');
   delBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
   delBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
-    const ok = await uiModule.styledConfirm('Delete this image?', {
-      confirmText: 'Delete',
-      cancelText: 'Cancel',
+    const ok = await uiModule.styledConfirm((window.__t || (k=>k))('chatRenderer.deleteThisImage'), {
+      confirmText: (window.__t || (k=>k))('common.delete'),
+      cancelText: (window.__t || (k=>k))('common.cancel'),
       danger: true,
     });
     if (!ok) return;
@@ -1316,12 +1316,12 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
           method: 'DELETE', credentials: 'same-origin',
         });
         if (!res.ok && res.status !== 404) {
-          uiModule.showToast?.('Delete failed', 4000);
+          uiModule.showToast?.((window.__t || (k=>k))('chatRenderer.deleteFailed'), 4000);
           return;
         }
         window.dispatchEvent(new CustomEvent('gallery-refresh'));
       } catch (_) {
-        uiModule.showToast?.('Delete failed', 4000);
+        uiModule.showToast?.((window.__t || (k=>k))('chatRenderer.deleteFailed'), 4000);
         return;
       }
     }
@@ -1420,34 +1420,34 @@ export function createMsgFooter(msgElement) {
 
   // Define all available actions: { id, icon, title, className, handler }
   const allActions = [
-    { id: 'copy', icon: COPY_ICON, title: 'Copy message', cls: 'footer-copy-btn', html: true, handler(e) {
+    { id: 'copy', icon: COPY_ICON, title: (window.__t || (k=>k))('chatRenderer.copyMessage'), cls: 'footer-copy-btn', html: true, handler(e) {
       e.stopPropagation();
       const btn = e.currentTarget;
       uiModule.copyToClipboard(copyMessageText(msgElement));
       btn.innerHTML = CHECK_ICON;
       setTimeout(() => { btn.innerHTML = COPY_ICON; }, 1500);
     }},
-    { id: 'edit', icon: '\u270E', title: 'Edit', cls: 'msg-action-btn', handler(e) {
+    { id: 'edit', icon: '\u270E', title: (window.__t || (k=>k))('chatRenderer.edit'), cls: 'msg-action-btn', handler(e) {
       e.stopPropagation();
       if (window.chatModule?.editAIMessage) window.chatModule.editAIMessage(msgElement);
     }},
-    { id: 'regen', icon: '\u21BB', title: 'Regenerate from here', cls: 'msg-action-btn', handler(e) {
+    { id: 'regen', icon: '\u21BB', title: (window.__t || (k=>k))('chatRenderer.regenerateFromHere'), cls: 'msg-action-btn', handler(e) {
       e.stopPropagation();
       if (window.chatModule?.regenerateFrom) window.chatModule.regenerateFrom(msgElement);
     }},
-    { id: 'shorten', icon: '\u2702', title: 'Rewrite shorter', cls: 'msg-action-btn', handler(e) {
+    { id: 'shorten', icon: '\u2702', title: (window.__t || (k=>k))('chatRenderer.rewriteShorter'), cls: 'msg-action-btn', handler(e) {
       e.stopPropagation();
       if (window.chatModule?.rewriteWith) window.chatModule.rewriteWith(msgElement, 'Rewrite your last response to be shorter and more concise. Keep the key information but cut the fluff.');
     }},
-    { id: 'explain', icon: '?', title: 'Explain simpler', cls: 'msg-action-btn', handler(e) {
+    { id: 'explain', icon: '?', title: (window.__t || (k=>k))('chatRenderer.explainSimpler'), cls: 'msg-action-btn', handler(e) {
       e.stopPropagation();
       if (window.chatModule?.rewriteWith) window.chatModule.rewriteWith(msgElement, 'Explain your last response in simpler terms. Use plain language and short sentences.');
     }},
-    { id: 'fork', icon: '\u2ADD', title: 'Fork conversation', cls: 'msg-action-btn', handler(e) {
+    { id: 'fork', icon: '\u2ADD', title: (window.__t || (k=>k))('chatRenderer.forkConversation'), cls: 'msg-action-btn', handler(e) {
       e.stopPropagation();
       if (window.chatModule?.forkFrom) window.chatModule.forkFrom(msgElement);
     }},
-    { id: 'delete', icon: '\u2715', title: 'Delete message', cls: 'msg-action-btn msg-delete-btn', handler(e) {
+    { id: 'delete', icon: '\u2715', title: (window.__t || (k=>k))('chatRenderer.deleteMessage'), cls: 'msg-action-btn msg-delete-btn', handler(e) {
       e.stopPropagation();
       if (window.chatModule?.deleteMessage) window.chatModule.deleteMessage(msgElement);
     }},
@@ -1488,7 +1488,7 @@ export function createMsgFooter(msgElement) {
     const moreBtn = document.createElement('button');
     moreBtn.className = 'msg-action-btn msg-more-btn';
     moreBtn.type = 'button';
-    moreBtn.title = 'More actions';
+    moreBtn.title = (window.__t || (k=>k))('chatRenderer.moreActions');
     moreBtn.textContent = '\u00B7\u00B7\u00B7';
     moreBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1563,7 +1563,7 @@ export function createMsgFooter(msgElement) {
         const row = document.createElement('div');
         row.className = 'memory-used-row';
         row.style.cursor = 'pointer';
-        row.title = 'Click to open memory manager';
+        row.title = (window.__t || (k=>k))('chatRenderer.clickToOpenMemoryManager');
         const badge = document.createElement('span');
         badge.className = 'memory-used-badge ' + (m.type === 'pinned' ? 'pinned' : 'recalled');
         badge.textContent = m.type === 'pinned' ? '\u25CF' : '\u21BB';
@@ -1631,22 +1631,22 @@ export function createUserMsgFooter(msgElement) {
   actions.className = 'msg-actions';
 
   const allActions = [
-    { id: 'edit', icon: '\u270E', title: 'Edit message', cls: 'msg-action-btn', handler(e) {
+    { id: 'edit', icon: '\u270E', title: (window.__t || (k=>k))('chatRenderer.editMessage'), cls: 'msg-action-btn', handler(e) {
       e.stopPropagation();
       if (window.chatModule?.editUserMessage) window.chatModule.editUserMessage(msgElement);
     }},
-    { id: 'delete', icon: '\u2715', title: 'Delete message', cls: 'msg-action-btn msg-delete-btn', handler(e) {
+    { id: 'delete', icon: '\u2715', title: (window.__t || (k=>k))('chatRenderer.deleteMessage'), cls: 'msg-action-btn msg-delete-btn', handler(e) {
       e.stopPropagation();
       if (window.chatModule?.deleteMessage) window.chatModule.deleteMessage(msgElement);
     }},
-    { id: 'copy', icon: COPY_ICON, title: 'Copy message', cls: 'footer-copy-btn', html: true, handler(e) {
+    { id: 'copy', icon: COPY_ICON, title: (window.__t || (k=>k))('chatRenderer.copyMessage'), cls: 'footer-copy-btn', html: true, handler(e) {
       e.stopPropagation();
       const btn = e.currentTarget;
       uiModule.copyToClipboard(msgElement.querySelector('.body')?.textContent || '');
       btn.innerHTML = CHECK_ICON;
       setTimeout(() => { btn.innerHTML = COPY_ICON; }, 1500);
     }},
-    { id: 'resend', icon: '\u21BB', title: 'Resend message', cls: 'msg-action-btn', handler(e) {
+    { id: 'resend', icon: '\u21BB', title: (window.__t || (k=>k))('chatRenderer.resendMessage'), cls: 'msg-action-btn', handler(e) {
       e.stopPropagation();
       if (window.chatModule?.resendUserMessage) window.chatModule.resendUserMessage(msgElement);
     }},
@@ -1679,7 +1679,7 @@ export function createUserMsgFooter(msgElement) {
     const moreBtn = document.createElement('button');
     moreBtn.className = 'msg-action-btn msg-more-btn';
     moreBtn.type = 'button';
-    moreBtn.title = 'More actions';
+    moreBtn.title = (window.__t || (k=>k))('chatRenderer.moreActions');
     moreBtn.textContent = '\u00B7\u00B7\u00B7';
     moreBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1738,7 +1738,7 @@ export function displayMetrics(messageElement, metrics) {
   const tps = metrics.tokens_per_second;
   const isReal = metrics.usage_source === 'real';
   const ctxPct = metrics.context_percent;
-  const model = metrics.model || 'Unknown';
+  const model = metrics.model || (window.__t || (k=>k))('chatRenderer.unknown');
   const cost = _billableCost(model, inputTokens, outputTokens);
 
   // Nothing useful to show — bail out (only if ALL metrics are missing)
@@ -1771,7 +1771,7 @@ export function displayMetrics(messageElement, metrics) {
   if (!metricsLabel) return;
   metricsContainer.textContent = metricsLabel;
   metricsContainer.style.cursor = 'pointer';
-  metricsContainer.title = 'Click for details';
+  metricsContainer.title = (window.__t || (k=>k))('chatRenderer.clickForDetails');
   const metricsDivider = document.createElement('span');
   metricsDivider.textContent = ' | ';
   metricsDivider.style.color = 'var(--color-muted-alt)';
@@ -1781,8 +1781,8 @@ export function displayMetrics(messageElement, metrics) {
     document.querySelectorAll('.ctx-popup').forEach(p => { if (typeof p._dismiss === 'function') p._dismiss(); else p.remove(); });
 
     const costStr = cost !== null ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}` : '';
-    const costRows = costStr ? `<div><span class="ctx-label">Cost</span> ${costStr}</div>` : '';
-    const speedStr = tps != null && tps !== 'undefined' ? `${tps} tok/s` : 'n/a';
+    const costRows = costStr ? `<div><span class="ctx-label">${(window.__t || (k=>k))('chatRenderer.cost')}</span> ${costStr}</div>` : '';
+    const speedStr = tps != null && tps !== 'undefined' ? `${tps} tok/s` : (window.__t || (k=>k))('chatRenderer.notAvailable');
     const totalTok = inputTokens + outputTokens;
     const ctxColor = ctxPct >= 85 ? 'var(--red, #e06c75)' : ctxPct >= 70 ? '#ff9900' : 'var(--color-muted-alt, #6b7280)';
     const prepTime = metrics.agent_prep_time;
@@ -1796,31 +1796,31 @@ export function displayMetrics(messageElement, metrics) {
     let sessionCostStr = '';
     const sc = getSessionCost();
     if (costStr && sc > 0) {
-      sessionCostStr = `<div><span class="ctx-label">Session</span> $${sc < 0.01 ? sc.toFixed(4) : sc.toFixed(3)}</div>`;
+      sessionCostStr = `<div><span class="ctx-label">${(window.__t || (k=>k))('chatRenderer.session')}</span> $${sc < 0.01 ? sc.toFixed(4) : sc.toFixed(3)}</div>`;
     }
 
     const popup = document.createElement('div');
     popup.className = 'ctx-popup';
     popup.innerHTML = `
-      <div style="font-weight:600;margin-bottom:6px;color:var(--fg);">Message Stats</div>
-      <div><span class="ctx-label">Model</span> ${model.split('/').pop()}</div>
-      <div><span class="ctx-label">Input</span> ${inputTokens.toLocaleString()} tokens${isReal ? '' : '~'}</div>
-      <div><span class="ctx-label">Output</span> ${outputTokens.toLocaleString()} tokens${isReal ? '' : '~'}</div>
-      <div><span class="ctx-label">Total</span> ${totalTok.toLocaleString()} tokens</div>
-      <div><span class="ctx-label">Speed</span> ${speedStr}</div>
-      <div><span class="ctx-label">Time</span> ${responseTime}s</div>
-      ${prepTime != null ? `<div><span class="ctx-label">Prep</span> ${prepTime}s</div>` : ''}
-      ${modelWaitTime != null ? `<div><span class="ctx-label">Model wait</span> ${modelWaitTime}s</div>` : ''}
+      <div style="font-weight:600;margin-bottom:6px;color:var(--fg);">${(window.__t || (k=>k))('chatRenderer.messageStats')}</div>
+      <div><span class="ctx-label">${(window.__t || (k=>k))('chatRenderer.model')}</span> ${model.split('/').pop()}</div>
+      <div><span class="ctx-label">${(window.__t || (k=>k))('chatRenderer.input')}</span> ${inputTokens.toLocaleString()} ${(window.__t || (k=>k))('chatRenderer.tokens')}${isReal ? '' : '~'}</div>
+      <div><span class="ctx-label">${(window.__t || (k=>k))('chatRenderer.output')}</span> ${outputTokens.toLocaleString()} ${(window.__t || (k=>k))('chatRenderer.tokens')}${isReal ? '' : '~'}</div>
+      <div><span class="ctx-label">${(window.__t || (k=>k))('chatRenderer.total')}</span> ${totalTok.toLocaleString()} ${(window.__t || (k=>k))('chatRenderer.tokens')}</div>
+      <div><span class="ctx-label">${(window.__t || (k=>k))('chatRenderer.speed')}</span> ${speedStr}</div>
+      <div><span class="ctx-label">${(window.__t || (k=>k))('chatRenderer.time')}</span> ${responseTime}s</div>
+      ${prepTime != null ? `<div><span class="ctx-label">${(window.__t || (k=>k))('chatRenderer.prep')}</span> ${prepTime}s</div>` : ''}
+      ${modelWaitTime != null ? `<div><span class="ctx-label">${(window.__t || (k=>k))('chatRenderer.modelWait')}</span> ${modelWaitTime}s</div>` : ''}
       ${costRows}
       ${sessionCostStr}
       ${prepDetails ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:0.85em;opacity:0.8;">
-        <div style="font-weight:600;margin-bottom:4px;color:var(--fg);">Agent prep</div>
+        <div style="font-weight:600;margin-bottom:4px;color:var(--fg);">${(window.__t || (k=>k))('chatRenderer.agentPrep')}</div>
         ${prepDetails}
       </div>` : ''}
       ${ctxPct !== undefined && ctxPct > 0 ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);">
-        <span class="ctx-label">Context</span> <span style="color:${ctxColor};font-weight:600;">${ctxPct}%</span> used
+        <span class="ctx-label">${(window.__t || (k=>k))('chatRenderer.context')}</span> <span style="color:${ctxColor};font-weight:600;">${ctxPct}%</span> ${(window.__t || (k=>k))('chatRenderer.used')}
       </div>` : ''}
-      ${isReal ? '' : '<div style="margin-top:4px;font-size:0.8em;opacity:0.4;">~ estimated token count</div>'}
+      ${isReal ? '' : '<div style="margin-top:4px;font-size:0.8em;opacity:0.4;">~ ' + (window.__t || (k=>k))('chatRenderer.estimatedTokenCount') + '</div>'}
     `;
 
     const rect = metricsContainer.getBoundingClientRect();
@@ -1880,20 +1880,20 @@ export function displayMetrics(messageElement, metrics) {
       const popup = document.createElement('div');
       popup.className = 'ctx-detail-popup';
       popup.innerHTML = `
-        <div style="font-weight:600;margin-bottom:8px;color:var(--fg);">Context Window</div>
+        <div style="font-weight:600;margin-bottom:8px;color:var(--fg);">${(window.__t || (k=>k))('chatRenderer.contextWindow')}</div>
         <div class="ctx-bar-wrap">
           <div class="ctx-bar-fill" style="width:${Math.min(ctxPct, 100)}%;background:${ctxColor};"></div>
         </div>
         <div style="display:flex;justify-content:space-between;font-size:0.75rem;margin-top:4px;opacity:0.6;">
-          <span>${fmtNum(usedTokens)} used</span>
-          <span>${fmtNum(totalCtx)} total</span>
+          <span>${fmtNum(usedTokens)} ${(window.__t || (k=>k))('chatRenderer.used')}</span>
+          <span>${fmtNum(totalCtx)} ${(window.__t || (k=>k))('chatRenderer.total')}</span>
         </div>
         <div style="margin-top:8px;font-size:0.8rem;">
-          <div><span class="ctx-label">Model</span> ${modelShort}</div>
-          <div><span class="ctx-label">Usage</span> <span style="color:${ctxColor};font-weight:600;">${ctxPct}%</span></div>
-          <div><span class="ctx-label">Window</span> ${fmtNum(totalCtx)} tokens</div>
+          <div><span class="ctx-label">${(window.__t || (k=>k))('chatRenderer.model')}</span> ${modelShort}</div>
+          <div><span class="ctx-label">${(window.__t || (k=>k))('chatRenderer.usage')}</span> <span style="color:${ctxColor};font-weight:600;">${ctxPct}%</span></div>
+          <div><span class="ctx-label">${(window.__t || (k=>k))('chatRenderer.window')}</span> ${fmtNum(totalCtx)} ${(window.__t || (k=>k))('chatRenderer.tokens')}</div>
         </div>
-        ${ctxPct >= 70 ? `<button class="ctx-compact-btn" title="Summarize older messages to free up context">Compact context</button>` : ''}
+        ${ctxPct >= 70 ? `<button class="ctx-compact-btn" title="${(window.__t || (k=>k))('chatRenderer.summarizeOlderMessages')}">${(window.__t || (k=>k))('chatRenderer.compactContext')}</button>` : ''}
       `;
 
       const compactBtn = popup.querySelector('.ctx-compact-btn');
@@ -1911,10 +1911,10 @@ export function displayMetrics(messageElement, metrics) {
           compactMsg.className = 'msg msg-ai';
           const compactRole = document.createElement('div');
           compactRole.className = 'role';
-          compactRole.textContent = 'Odysseus';
+          compactRole.textContent = (window.__t || (k=>k))('chatRenderer.odysseus');
           const compactBody = document.createElement('div');
           compactBody.className = 'body';
-          compactBody.innerHTML = 'Compacting context <span class="compact-wave">▁▂▃▅▂▁</span>';
+          compactBody.innerHTML = (window.__t || (k=>k))('chatRenderer.compactingContext') + ' <span class="compact-wave">▁▂▃▅▂▁</span>';
           compactMsg.appendChild(compactRole);
           compactMsg.appendChild(compactBody);
           chatBox.appendChild(compactMsg);
@@ -1950,7 +1950,7 @@ export function displayMetrics(messageElement, metrics) {
                 }
               }, 200);
             } else {
-              let detail = 'Compaction failed. Try again later.';
+              let detail = (window.__t || (k=>k))('chatRenderer.compactionFailed');
               try {
                 const err = await res.json();
                 if (err.detail) detail = err.detail;
@@ -1961,7 +1961,7 @@ export function displayMetrics(messageElement, metrics) {
           } catch (err) {
             clearInterval(waveInterval);
             console.warn('compact failed:', err);
-            compactBody.innerHTML = '<span style="color:var(--red);">Compaction failed: ' + err.message + '</span>';
+            compactBody.innerHTML = '<span style="color:var(--red);">' + (window.__t || (k=>k))('chatRenderer.compactionFailed') + ': ' + err.message + '</span>';
           }
         });
       }
@@ -2045,7 +2045,7 @@ export function renderAskUserCard(payload, options) {
   const closeBtn = document.createElement('button');
   closeBtn.type = 'button';
   closeBtn.className = 'modal-close ask-user-close';
-  closeBtn.setAttribute('aria-label', 'Dismiss question');
+  closeBtn.setAttribute('aria-label', (window.__t || (k=>k))('chatRenderer.dismissQuestion'));
   closeBtn.textContent = '×';
   closeBtn.addEventListener('click', () => {
     card.remove();
@@ -2109,13 +2109,13 @@ export function renderAskUserCard(payload, options) {
   const otherInput = document.createElement('input');
   otherInput.type = 'text';
   otherInput.className = 'styled-prompt-input ask-user-other-input';
-  otherInput.placeholder = multi ? 'Other (added to selection)…' : 'Other… (type your own answer)';
-  otherInput.setAttribute('aria-label', multi ? 'Add a custom option' : 'Type a custom answer');
+  otherInput.placeholder = multi ? (window.__t || (k=>k))('chatRenderer.otherAddedToSelection') : (window.__t || (k=>k))('chatRenderer.otherTypeYourOwn');
+  otherInput.setAttribute('aria-label', multi ? (window.__t || (k=>k))('chatRenderer.addCustomOption') : (window.__t || (k=>k))('chatRenderer.typeCustomAnswer'));
   const otherSend = document.createElement('button');
   otherSend.type = 'button';
   otherSend.className = 'confirm-btn confirm-btn-primary ask-user-other-send';
-  otherSend.setAttribute('aria-label', 'Send answer');
-  otherSend.textContent = multi ? 'Send selection' : 'Send';
+  otherSend.setAttribute('aria-label', (window.__t || (k=>k))('chatRenderer.sendAnswer'));
+  otherSend.textContent = multi ? (window.__t || (k=>k))('chatRenderer.sendSelection') : (window.__t || (k=>k))('chatRenderer.send');
   const submit = () => {
     const freeText = otherInput.value.trim();
     if (multi) {
@@ -2249,11 +2249,11 @@ export function addMessage(role, content, modelName, metadata) {
             const ok = (ev.exit_code === 0 || ev.exit_code == null);
             let outHtml = '';
             if (ev.output && ev.output.trim()) {
-              outHtml = `<details class="agent-tool-output"><summary>Output</summary><pre>${esc(ev.output)}</pre></details>`;
+              outHtml = `<details class="agent-tool-output"><summary>${(window.__t || (k=>k))('chatRenderer.output')}</summary><pre>${esc(ev.output)}</pre></details>`;
             }
             const screenshotSrc = safeToolScreenshotSrc(ev.screenshot);
             if (screenshotSrc) {
-              outHtml += `<details class="agent-tool-output"><summary>Screenshot</summary><img src="${esc(screenshotSrc)}" style="max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border)" /></details>`;
+              outHtml += `<details class="agent-tool-output"><summary>${(window.__t || (k=>k))('chatRenderer.screenshot')}</summary><img src="${esc(screenshotSrc)}" style="max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border)" /></details>`;
             }
             // File-write/edit diff (persisted in the tool event) \u2014 re-render it
             // so it survives reload, matching the live stream.
@@ -2281,7 +2281,7 @@ export function addMessage(role, content, modelName, metadata) {
             node.className = 'agent-thread-node' + (ok ? '' : ' error');
             // Hide the raw JSON command when a diff says it better (same as live).
             const evCmdHtml = (ev.command && !(ev.diff && ev.diff.text)) ? `<pre class="agent-thread-cmd">${esc(ev.command)}</pre>` : '';
-            node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(ev.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${evCmdHtml}${outHtml}${evDiffHtml}</div>`;
+            node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(ev.tool)}</span><span class="agent-thread-status">${ok ? (window.__t || (k=>k))('chatRenderer.done') : (window.__t || (k=>k))('chatRenderer.failed')}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${evCmdHtml}${outHtml}${evDiffHtml}</div>`;
             // Click handling is delegated globally \u2014 see chat.js init.
             threadWrap.appendChild(node);
           }
@@ -2350,9 +2350,9 @@ export function addMessage(role, content, modelName, metadata) {
     const isCompacted = metadata?.compacted;
     const replyModels = replyModelPair(modelName, metadata);
     const resolvedModel = replyModels.actualModel || replyModels.requestedModel;
-    var _roleText = role === 'user' ? 'You' : (isSlash || isCompacted) ? 'Odysseus' : modelRouteLabel(replyModels.requestedModel, resolvedModel);
+    var _roleText = role === 'user' ? (window.__t || (k=>k))('chatRenderer.you') : (isSlash || isCompacted) ? (window.__t || (k=>k))('chatRenderer.odysseus') : modelRouteLabel(replyModels.requestedModel, resolvedModel);
     if (role === 'assistant' && (metadata?.research || metadata?.research_clarification)) {
-      _roleText += ' (Research)';
+      _roleText += ' (' + (window.__t || (k=>k))('chatRenderer.research') + ')';
     }
     if (metadata?.group_model && role !== 'user') {
       _roleText = metadata.group_model;
@@ -2473,15 +2473,15 @@ export function addMessage(role, content, modelName, metadata) {
       // Differentiate between "stopped mid-stream" (had content, can continue)
       // and "cancelled before any content" — the latter has no Continue affordance.
       stoppedLabel.textContent = metadata.cancelled
-        ? '[Cancelled by user]'
-        : '[Message interrupted]';
+        ? (window.__t || (k=>k))('chatRenderer.cancelledByUser')
+        : (window.__t || (k=>k))('chatRenderer.messageInterrupted');
       stoppedIndicator.appendChild(stoppedLabel);
       // Continue button only makes sense when there's partial content to
       // resume from \u2014 skip it for fully-cancelled (empty) turns.
       if (!metadata.cancelled) {
         const continueBtn = document.createElement('button');
         continueBtn.className = 'continue-btn';
-        continueBtn.title = 'Continue';
+        continueBtn.title = (window.__t || (k=>k))('chatRenderer.continue');
         continueBtn.textContent = '\u25B8';
         continueBtn.addEventListener('click', () => {
           stoppedIndicator.remove();
@@ -2492,7 +2492,7 @@ export function addMessage(role, content, modelName, metadata) {
             const cutoff = rawText;
             const msgInput = document.getElementById('message');
             if (msgInput) {
-              msgInput.value = 'Your previous response was interrupted. It ended with:\n\n' + cutoff.slice(-500) + '\n\nDo NOT repeat what you already said. Continue exactly from where you were cut off.';
+              msgInput.value = (window.__t || (k=>k))('chatRenderer.continuePrompt') + '\n\n' + cutoff.slice(-500) + '\n\n' + (window.__t || (k=>k))('chatRenderer.continueInstruction');
               const sb = document.querySelector('.send-btn');
               if (sb) sb.click();
             }
@@ -2506,7 +2506,7 @@ export function addMessage(role, content, modelName, metadata) {
     if (metadata?.edited) {
       const editedIndicator = document.createElement('div');
       editedIndicator.className = 'edited-indicator';
-      editedIndicator.textContent = '[Message edited]';
+      editedIndicator.textContent = (window.__t || (k=>k))('chatRenderer.messageEdited');
       b.appendChild(editedIndicator);
     }
 
@@ -2624,7 +2624,7 @@ export function addMessage(role, content, modelName, metadata) {
     return wrap;
   } catch (error) {
     console.error('Error in addMessage:', error);
-    if (uiModule) uiModule.showError('Failed to add message: ' + error.message);
+    if (uiModule) uiModule.showError((window.__t || (k=>k))('chatRenderer.failedToAddMessage') + ': ' + error.message);
   }
 }
 

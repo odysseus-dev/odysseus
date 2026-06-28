@@ -118,7 +118,7 @@ try { (function () {
             <line x1="8" y1="2" x2="8" y2="6"/>
             <line x1="3" y1="10" x2="21" y2="10"/>
           </svg>
-          <span class="hwfit-schedule-title-text">Schedule serve: <strong>${esc(cfg.title)}</strong></span>
+          <span class="hwfit-schedule-title-text">${(window.__t || (k=>k))('common.schedule')}: <strong>${esc(cfg.title)}</strong></span>
           <span class="hwfit-schedule-title-spacer"></span>
           <label class="hwfit-schedule-mirror-toggle" title="Also create a calendar event on the Cookbook calendar">
             <span class="hwfit-schedule-mirror-label">Create event in calendar</span>
@@ -147,13 +147,13 @@ try { (function () {
             </div>
           </label>
           <div class="hwfit-schedule-actions-inline">
-            <button type="button" class="cookbook-btn hwfit-sched-cancel" title="Cancel">
+            <button type="button" class="cookbook-btn hwfit-sched-cancel" title="${(window.__t || (k=>k))('common.cancel')}">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;flex-shrink:0;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              <span>Cancel</span>
+              <span>${(window.__t || (k=>k))('common.cancel')}</span>
             </button>
-            <button type="button" class="cookbook-btn hwfit-sched-save" title="Save schedule" aria-label="Save schedule">
+            <button type="button" class="cookbook-btn hwfit-sched-save" title="${(window.__t || (k=>k))('common.save')}" aria-label="${(window.__t || (k=>k))('common.save')}">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;flex-shrink:0;"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-              <span>Save</span>
+              <span>${(window.__t || (k=>k))('common.save')}</span>
             </button>
           </div>
         </div>
@@ -170,7 +170,7 @@ try { (function () {
       || arrowBtn.parentElement?.parentElement
       || arrowBtn.parentElement;
     if (!anchor) {
-      toast("Couldn't find a panel to mount the schedule form");
+      toast((window.__t || (k=>k))('common.error'));
       return;
     }
     // Toggle.
@@ -205,10 +205,10 @@ try { (function () {
         errEl.classList.add("is-visible");
       }
       if (!/^\d\d:\d\d$/.test(startTime) || !/^\d\d:\d\d$/.test(endTime)) {
-        return fail("Start and end must be HH:MM");
+        return fail((window.__t || (k=>k))('common.error'));
       }
       if (!days.length) {
-        return fail("Pick at least one day");
+        return fail((window.__t || (k=>k))('common.error'));
       }
 
       const [sh, sm] = startTime.split(":").map(Number);
@@ -272,7 +272,7 @@ try { (function () {
       };
       const saveBtn = form.querySelector(".hwfit-sched-save");
       saveBtn.disabled = true;
-      saveBtn.textContent = "Saving…";
+      saveBtn.textContent = (window.__t || (k=>k))('common.loading');
       try {
         const r = await fetch("/api/tasks", {
           method: "POST", credentials: "same-origin",
@@ -283,8 +283,8 @@ try { (function () {
         if (!r.ok || data.error) {
           fail(data.error || data.detail || `HTTP ${r.status}`);
           saveBtn.disabled = false;
-          saveBtn.textContent = "Save schedule";
-          toast(`Schedule save failed: ${data.error || data.detail || r.status}`);
+          saveBtn.textContent = (window.__t || (k=>k))('common.save');
+          toast(`${(window.__t || (k=>k))('common.error')}: ${data.error || data.detail || r.status}`);
           return;
         }
         if (mirrorToCalendar) {
@@ -361,7 +361,7 @@ try { (function () {
         }
         form.remove();
         const newTaskId = data.id || data.task_id || "";
-        toast(`Created task: Serve: ${fullName}`, {
+        toast(`${(window.__t || (k=>k))('common.schedule')}: ${fullName}`, {
           leadingIcon: "check",
           action: "Open",
           duration: 5000,
@@ -370,8 +370,8 @@ try { (function () {
       } catch (e) {
         fail(String(e));
         saveBtn.disabled = false;
-        saveBtn.textContent = "Save schedule";
-        toast(`Schedule save failed: ${e}`);
+        saveBtn.textContent = (window.__t || (k=>k))('common.save');
+        toast(`${(window.__t || (k=>k))('common.error')}: ${e}`);
       }
     }));
   }

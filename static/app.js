@@ -45,6 +45,7 @@ import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
+import { initI18n, t, getLang, setLang, applyTranslations } from './js/i18n.js';
 
 const API_BASE = window.location.origin;
 window.themeModule = themeModule;
@@ -3339,9 +3340,22 @@ function initializeEventListeners() {
 // ============================================
 // INITIALIZATION ON PAGE LOAD
 // ============================================
-function startOdysseusApp() {
+async function startOdysseusApp() {
   if (window.__odysseusAppStarted) return;
   window.__odysseusAppStarted = true;
+
+  // Initialize i18n before anything else uses translated strings
+  try { await initI18n(); } catch(e) { console.warn('i18n init failed:', e); }
+
+  // Apply translations to all static HTML elements with data-i18n attributes
+  try { applyTranslations(); } catch(e) { console.warn('applyTranslations failed:', e); }
+
+  // Re-apply translations when language changes
+  document.addEventListener('i18n:changed', (e) => {
+    // Only re-apply if this is NOT a reload-triggered change
+    if (!window.__i18nReloading) applyTranslations();
+  });
+
   // Set CSS variables
   document.documentElement.style.setProperty('--line-height', '20px');
 
@@ -4076,6 +4090,24 @@ function startOdysseusApp() {
       window.hljs.highlightElement(block);
     });
   }
+
+  // Re-apply translations after all modules have initialized
+  // (modules create DOM elements asynchronously during init)
+  requestAnimationFrame(() => {
+    applyTranslations();
+    // One more pass after a short delay for late-rendering modules
+    setTimeout(applyTranslations, 100);
+  });
+
+  // Auto-translate new elements as they're added to the DOM
+  new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      for (const node of m.addedNodes) {
+        if (node.nodeType !== 1) continue;
+        applyTranslations(node);
+      }
+    }
+  }).observe(document.body, { childList: true, subtree: true });
 }
 
 if (document.readyState === 'loading') {

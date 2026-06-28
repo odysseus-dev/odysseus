@@ -5,6 +5,8 @@ import { VOTES_STORAGE_KEY } from './icons.js';
 import themeModule from '../theme.js';
 import uiModule from '../ui.js';
 
+const __t = (k, v) => (window.__t || (kk=>kk))(k, v);
+
 const escapeHtml = uiModule.esc;
 
 // Type icons for the mode tabs — match the Compare selector's tab icons.
@@ -50,7 +52,7 @@ export function showScoreboard() {
   const header = document.createElement('div');
   header.className = 'modal-header';
   const title = document.createElement('h3');
-  title.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Scoreboard';
+  title.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>' + (window.__t || (k=>k))('compare.score');
   title.style.margin = '0';
   const closeX = document.createElement('button');
   closeX.className = 'close-btn';
@@ -178,7 +180,7 @@ export function showScoreboard() {
   // Clear history button
   const clearBtn = document.createElement('button');
   clearBtn.className = 'scoreboard-clear-btn';
-  clearBtn.textContent = 'Clear History';
+  clearBtn.textContent = (window.__t || (k=>k))('compare.reset');
   clearBtn.style.cssText = 'display:block;margin:16px 0 4px auto;padding:4px 12px;background:none;border:1px solid var(--border);color:var(--fg);border-radius:4px;cursor:pointer;font-size:11px;opacity:0.4;transition:opacity 0.15s;';
   clearBtn.addEventListener('mouseenter', () => { clearBtn.style.opacity = '1'; });
   clearBtn.addEventListener('mouseleave', () => { clearBtn.style.opacity = '0.6'; });
@@ -190,7 +192,7 @@ export function showScoreboard() {
     confirmLabel.style.cssText = 'font-size:12px;opacity:0.7;';
     confirmLabel.textContent = 'Clear all vote history?';
     const yesBtn = document.createElement('button');
-    yesBtn.textContent = 'Clear';
+    yesBtn.textContent = (window.__t || (k=>k))('common.delete');
     yesBtn.style.cssText = 'padding:4px 12px;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;';
     yesBtn.addEventListener('click', () => {
       Storage.setJSON(VOTES_STORAGE_KEY, []);
@@ -198,7 +200,7 @@ export function showScoreboard() {
       showScoreboard();
     });
     const noBtn = document.createElement('button');
-    noBtn.textContent = 'Cancel';
+    noBtn.textContent = (window.__t || (k=>k))('common.cancel');
     noBtn.className = 'cmp-btn-secondary';
     noBtn.style.cssText = 'padding:4px 12px;border-radius:4px;font-size:12px;';
     noBtn.addEventListener('click', () => confirmRow.remove());

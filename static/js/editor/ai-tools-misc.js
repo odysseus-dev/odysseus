@@ -111,9 +111,9 @@ export function wireAIToolsMisc({
       btn.innerHTML = '';
       btn.appendChild(upWp.element);
       const lbl = document.createElement('span');
-      lbl.textContent = 'Upscaling…';
+      lbl.textContent = (window.__t || (k=>k))('common.loading');
       btn.appendChild(lbl);
-    } catch (_) { btn.textContent = 'Upscaling…'; }
+    } catch (_) { btn.textContent = (window.__t || (k=>k))('common.loading'); }
     try {
       const flat = flatten();
       const imageB64 = flat.toDataURL('image/png').split(',')[1];
@@ -149,7 +149,7 @@ export function wireAIToolsMisc({
         throw new Error(data.error || 'No image returned');
       }
     } catch (e) {
-      uiModule.showToast('AI upscale failed: ' + e.message);
+      uiModule.showToast((window.__t || (k=>k))('common.error') + ': ' + e.message);
     }
     try { upWp?.destroy(); } catch (_) {}
     btn.disabled = false;
@@ -165,7 +165,7 @@ export function wireAIToolsMisc({
     const prompt = document.getElementById('ge-style-prompt').value.trim();
     if (!prompt) { uiModule.showToast('Enter a style prompt'); return; }
     const strength = parseInt(document.getElementById('ge-style-strength').value) / 100;
-    btn.disabled = true; btn.textContent = 'Applying...';
+    btn.disabled = true; btn.textContent = (window.__t || (k=>k))('common.loading');
     try {
       const flat = flatten();
       const blob = await new Promise(r => flat.toBlob(r, 'image/png'));
@@ -194,9 +194,9 @@ export function wireAIToolsMisc({
         throw new Error(data.error || 'No image returned');
       }
     } catch (e) {
-      uiModule.showToast('Style transfer failed: ' + e.message);
+      uiModule.showToast((window.__t || (k=>k))('common.error') + ': ' + e.message);
     }
-    btn.disabled = false; btn.textContent = 'Apply Style';
+    btn.disabled = false; btn.textContent = (window.__t || (k=>k))('common.save');
   });
 
   // ── Add empty layer (used by the layer-panel header button + the

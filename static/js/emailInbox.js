@@ -958,7 +958,7 @@ function _showRemindSubmenu(em, parentDropdown) {
   const header = document.createElement('div');
   header.className = 'dropdown-item-compact';
   header.style.cssText = 'opacity:0.5;font-size:10px;pointer-events:none;text-transform:uppercase;letter-spacing:0.5px;padding-top:6px;';
-  header.innerHTML = '<span>Remind me</span>';
+  header.innerHTML = '<span>' + ((window.__t || (k=>k))('email.remindMe')) + '</span>';
   parentDropdown.appendChild(header);
 
   const now = new Date();
@@ -989,7 +989,7 @@ function _showRemindSubmenu(em, parentDropdown) {
   }
   const customItem = document.createElement('div');
   customItem.className = 'dropdown-item-compact';
-  customItem.innerHTML = '<span>Pick date and time…</span>';
+  customItem.innerHTML = '<span>' + ((window.__t || (k=>k))('email.pickDateTime')) + '</span>';
   customItem.addEventListener('click', async (e) => {
     e.stopPropagation();
     dismissOrRemove(parentDropdown);
@@ -1077,7 +1077,7 @@ async function _archiveEmail(em) {
 async function _deleteEmail(em) {
   const subject = em.subject || '(no subject)';
   const { styledConfirm } = await import('./ui.js');
-  const ok = await styledConfirm(`Delete "${subject}"?`, { confirmText: 'Delete', cancelText: 'Cancel', danger: true });
+  const ok = await styledConfirm(`Delete "${subject}"?`, { confirmText: (window.__t || (k=>k))('common.delete'), cancelText: 'Cancel', danger: true });
   if (!ok) return;
   try {
     await fetch(`${API_BASE}/api/email/delete/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}`, { method: 'DELETE' });

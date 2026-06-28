@@ -213,7 +213,7 @@ async function _fetchModelEndpoints() {
 }
 
 function _endpointLabel(ep) {
-  return ep.name + (ep.online ? '' : ' (offline)');
+  return ep.name + (ep.online ? '' : ' (' + (window.__t || (k=>k))('common.disabled') + ')');
 }
 
 function _fillEndpointSelect(selectEl, endpoints, selected, keepBlank) {
@@ -385,7 +385,7 @@ function _bindFallbackWidget(opts) {
       enabledEps().forEach(function(ep) {
         var o = document.createElement('option');
         o.value = ep.id;
-        o.textContent = ep.name + (ep.online ? '' : ' (offline)');
+        o.textContent = ep.name + (ep.online ? '' : ' ' + (window.__t || (k=>k))('settings.offlineSuffix'));
         epS.appendChild(o);
       });
       var first = enabledEps()[0];
@@ -409,7 +409,7 @@ function _bindFallbackWidget(opts) {
       var rm = document.createElement('button');
       rm.type = 'button';
       rm.className = 'settings-fallback-remove';
-      rm.title = 'Remove fallback';
+      rm.title = (window.__t || (k=>k))('common.delete');
       rm.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
       rm.addEventListener('click', function() {
         current.splice(idx, 1);
@@ -488,7 +488,7 @@ async function initDefaultChat() {
       enabledEndpoints().forEach(function(ep) {
         var o = document.createElement('option');
         o.value = ep.id;
-        o.textContent = ep.name + (ep.online ? '' : ' (offline)');
+        o.textContent = ep.name + (ep.online ? '' : ' ' + (window.__t || (k=>k))('settings.offlineSuffix'));
         epS.appendChild(o);
       });
       var first = enabledEndpoints()[0];
@@ -513,7 +513,7 @@ async function initDefaultChat() {
       var rm = document.createElement('button');
       rm.type = 'button';
       rm.className = 'settings-fallback-remove';
-      rm.title = 'Remove fallback';
+      rm.title = (window.__t || (k=>k))('common.delete');
       rm.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
       rm.addEventListener('click', function() {
         _fallbacks.splice(idx, 1);
@@ -553,9 +553,9 @@ async function initDefaultChat() {
           default_model_fallbacks: clean
         })
       });
-      msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
+      msg.textContent = (window.__t || (k=>k))('settings.saved'); msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = (window.__t || (k=>k))('settings.failedToSave'); msg.style.color = 'var(--red)'; }
   }
 
   epSel.addEventListener('change', function() { refreshModels(''); saveDefault(); });
@@ -580,8 +580,8 @@ async function initUtilityModel() {
   var msg = el('set-utilityChatMsg');
   var _endpoints = [];
   var fallbackWidget = null;
-  if (epSel && epSel.options[0]) epSel.options[0].textContent = 'Same as chat';
-  if (modelSel && modelSel.options[0]) modelSel.options[0].textContent = 'Same as chat';
+  if (epSel && epSel.options[0]) epSel.options[0].textContent = (window.__t || (k=>k))('settings.sameAsChat');
+  if (modelSel && modelSel.options[0]) modelSel.options[0].textContent = (window.__t || (k=>k))('settings.sameAsChat');
 
   try {
     _endpoints = await _fetchModelEndpoints();
@@ -622,9 +622,9 @@ async function initUtilityModel() {
           utility_model: modelSel.value || ''
         })
       });
-      msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
+      msg.textContent = (window.__t || (k=>k))('settings.saved'); msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 1500);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = (window.__t || (k=>k))('settings.failedToSave'); msg.style.color = 'var(--red)'; }
   }
 
   epSel.addEventListener('change', function() { refreshModels(''); saveUtility(); });
@@ -717,10 +717,10 @@ async function initTeacherModel() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ teacher_enabled: enabled, teacher_model: spec })
       });
-      msg.textContent = enabled ? (spec ? 'Saved' : 'Pick an endpoint + model') : 'Disabled';
+      msg.textContent = enabled ? (spec ? (window.__t || (k=>k))('settings.saved') : (window.__t || (k=>k))('settings.pickProviderFirst')) : (window.__t || (k=>k))('common.disabled');
       msg.style.color = enabled && !spec ? 'var(--red)' : 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = (window.__t || (k=>k))('settings.failedToSave'); msg.style.color = 'var(--red)'; }
   }
 
   if (enabledToggle) {
@@ -770,7 +770,7 @@ async function initImageSettings() {
     // Hardcoded fallbacks shown as "(not detected)" so users know what to
     // download/serve to enable inpaint here.
     ['stable-diffusion-3.5-medium', 'stable-diffusion-inpainting'].forEach(mid => {
-      if (!imageModels.includes(mid)) { const opt = document.createElement('option'); opt.value = mid; opt.textContent = mid + ' (not detected)'; modelSel.appendChild(opt); }
+      if (!imageModels.includes(mid)) { const opt = document.createElement('option'); opt.value = mid; opt.textContent = mid + ' ' + (window.__t || (k=>k))('settings.notDetectedSuffix'); modelSel.appendChild(opt); }
     });
   } catch (e) { console.warn('Failed to load models for image settings', e); }
   try {
@@ -793,8 +793,8 @@ async function initImageSettings() {
     try {
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image_gen_enabled: enabledToggle ? enabledToggle.checked : false, image_model: modelSel.value, image_quality: qualSel.value }) });
-      msg.textContent = 'Saved'; msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+      msg.textContent = (window.__t || (k=>k))('settings.saved'); msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
+    } catch (e) { msg.textContent = (window.__t || (k=>k))('settings.failedToSave'); msg.style.color = 'var(--red)'; }
   }
   modelSel.addEventListener('change', saveSettings);
   qualSel.addEventListener('change', saveSettings);
@@ -867,8 +867,8 @@ async function initVisionSettings() {
     try {
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ vision_enabled: enabledToggle ? enabledToggle.checked : true, vision_model: vlSel.value }) });
-      msg.textContent = 'Saved'; msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+      msg.textContent = (window.__t || (k=>k))('settings.saved'); msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
+    } catch (e) { msg.textContent = (window.__t || (k=>k))('settings.failedToSave'); msg.style.color = 'var(--red)'; }
   }
   vlSel.addEventListener('change', saveSettings);
   if (enabledToggle) enabledToggle.addEventListener('change', function() { syncVisionDisabled(); saveSettings(); });
@@ -922,7 +922,7 @@ async function initTtsSettings() {
       if (!ep.is_enabled) return;
       var hasTTS = (ep.models || []).some(m => ttsKeywords.some(kw => m.toLowerCase().includes(kw)));
       if (!hasTTS) return;
-      var opt = document.createElement('option'); opt.value = 'endpoint:' + ep.id; opt.textContent = ep.name + ' (API)'; provSel.appendChild(opt);
+      var opt = document.createElement('option'); opt.value = 'endpoint:' + ep.id; opt.textContent = ep.name + ' ' + (window.__t || (k=>k))('settings.apiSuffix'); provSel.appendChild(opt);
     });
   } catch (e) { console.warn('Failed to load endpoints for TTS', e); }
 
@@ -949,9 +949,9 @@ async function initTtsSettings() {
     try {
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tts_enabled: ttsEnabledToggle ? ttsEnabledToggle.checked : true, tts_provider: provSel.value, tts_model: getModel() || 'tts-1', tts_voice: getVoice() || 'alloy', tts_speed: speedSelect.value || '1' }) });
-      ttsMsg.textContent = 'Saved'; ttsMsg.style.color = 'var(--fg)'; setTimeout(() => { ttsMsg.textContent = ''; }, 2000);
+      ttsMsg.textContent = (window.__t || (k=>k))('settings.saved'); ttsMsg.style.color = 'var(--fg)'; setTimeout(() => { ttsMsg.textContent = ''; }, 2000);
       if (window.aiTTSManager) window.aiTTSManager.checkAvailability();
-    } catch (e) { ttsMsg.textContent = 'Failed to save'; ttsMsg.style.color = 'var(--red)'; }
+    } catch (e) { ttsMsg.textContent = (window.__t || (k=>k))('settings.failedToSave'); ttsMsg.style.color = 'var(--red)'; }
   }
 
   async function saveAndClearCache() {
@@ -963,7 +963,7 @@ async function initTtsSettings() {
     var prov = provSel.value;
     if (prov === 'local') voiceInput.value = 'af_heart';
     else if (isEndpoint()) { voiceSelect.value = 'alloy'; modelSelect.value = 'tts-1'; }
-    else if (prov === 'browser') { voiceInput.value = ''; voiceInput.placeholder = 'OS default voice'; }
+    else if (prov === 'browser') { voiceInput.value = ''; voiceInput.placeholder = (window.__t || (k=>k))('settings.osDefaultVoice'); }
     updateVisibility();
     saveTTS();
   });
@@ -979,7 +979,7 @@ async function initTtsSettings() {
   if (previewBtn) {
     var previewAudio = null;
     var previewPlaying = false;
-    function resetPreview() { previewPlaying = false; previewBtn.textContent = 'Preview'; previewBtn.style.borderColor = ''; }
+    function resetPreview() { previewPlaying = false; previewBtn.textContent = (window.__t || (k=>k))('settings.preview'); previewBtn.style.borderColor = ''; }
 
     previewBtn.addEventListener('click', async function() {
       if (previewPlaying) {
@@ -989,11 +989,11 @@ async function initTtsSettings() {
       }
       var prov = provSel.value;
       if (prov === 'disabled') {
-        ttsMsg.textContent = 'Select a provider first'; ttsMsg.style.color = 'var(--red, #e55)';
+        ttsMsg.textContent = (window.__t || (k=>k))('settings.selectProviderFirst'); ttsMsg.style.color = 'var(--red, #e55)';
         setTimeout(function() { ttsMsg.textContent = ''; }, 2000); return;
       }
-      var testText = 'Hello, this is a test of text to speech.';
-      previewPlaying = true; previewBtn.textContent = 'Loading...';
+      var testText = (window.__t || (k=>k))('settings.ttsPreviewText');
+      previewPlaying = true; previewBtn.textContent = (window.__t || (k=>k))('settings.loading');
       try {
         if (prov === 'browser') {
           if (!('speechSynthesis' in window)) throw new Error('Browser TTS not supported');
@@ -1007,7 +1007,7 @@ async function initTtsSettings() {
             if (match) utt.voice = match;
           }
           utt.rate = parseFloat(speedSelect.value) || 1;
-          previewBtn.textContent = 'Stop'; previewBtn.style.borderColor = 'var(--red, #e55)';
+          previewBtn.textContent = (window.__t || (k=>k))('settings.stop'); previewBtn.style.borderColor = 'var(--red, #e55)';
           await new Promise(function(resolve, reject) {
             utt.onend = resolve;
             utt.onerror = function(e) { reject(new Error('Browser TTS: ' + e.error)); };
@@ -1019,19 +1019,19 @@ async function initTtsSettings() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text: testText, format: 'audio' })
           });
-          if (!res.ok) { var err = await res.json().catch(function() { return {}; }); throw new Error(err.detail?.message || 'Synthesis failed'); }
+          if (!res.ok) { var err = await res.json().catch(function() { return {}; }); throw new Error(err.detail?.message || (window.__t || (k=>k))('settings.connectionFailed')); }
           var blob = await res.blob();
           var url = URL.createObjectURL(blob);
           previewAudio = new Audio(url);
-          previewBtn.textContent = 'Stop'; previewBtn.style.borderColor = 'var(--red, #e55)';
+          previewBtn.textContent = (window.__t || (k=>k))('settings.stop'); previewBtn.style.borderColor = 'var(--red, #e55)';
           await new Promise(function(resolve, reject) {
             previewAudio.onended = function() { URL.revokeObjectURL(url); previewAudio = null; resolve(); };
-            previewAudio.onerror = function() { URL.revokeObjectURL(url); previewAudio = null; reject(new Error('Playback failed')); };
+            previewAudio.onerror = function() { URL.revokeObjectURL(url); previewAudio = null; reject(new Error((window.__t || (k=>k))('settings.playbackFailed'))); };
             previewAudio.play().catch(reject);
           });
         }
       } catch (e) {
-        ttsMsg.textContent = 'Preview failed: ' + e.message; ttsMsg.style.color = 'var(--red, #e55)';
+        ttsMsg.textContent = (window.__t || (k=>k))('common.error') + ': ' + e.message; ttsMsg.style.color = 'var(--red, #e55)';
         setTimeout(function() { ttsMsg.textContent = ''; }, 3000);
       } finally {
         resetPreview();
@@ -1089,7 +1089,7 @@ async function initSttSettings() {
     var endpoints = await epRes.json();
     endpoints.forEach(function(ep) {
       if (!ep.is_enabled) return;
-      var opt = document.createElement('option'); opt.value = 'endpoint:' + ep.id; opt.textContent = ep.name + ' (API)'; provSel.appendChild(opt);
+      var opt = document.createElement('option'); opt.value = 'endpoint:' + ep.id; opt.textContent = ep.name + ' ' + (window.__t || (k=>k))('settings.apiSuffix'); provSel.appendChild(opt);
     });
   } catch (e) { console.warn('Failed to load endpoints for STT', e); }
 
@@ -1112,11 +1112,11 @@ async function initSttSettings() {
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ stt_enabled: enabled, stt_provider: provSel.value, stt_model: getModel() || 'base', stt_language: langInput.value.trim() }) });
-      sttMsg.textContent = 'Saved'; sttMsg.style.color = 'var(--fg)'; setTimeout(() => { sttMsg.textContent = ''; }, 2000);
+      sttMsg.textContent = (window.__t || (k=>k))('settings.saved'); sttMsg.style.color = 'var(--fg)'; setTimeout(() => { sttMsg.textContent = ''; }, 2000);
       // Notify voiceRecorder of effective provider and update send button icon
       if (window.voiceRecorderModule) window.voiceRecorderModule._sttProvider = effectiveProvider();
       if (window._updateSendBtnIcon) window._updateSendBtnIcon();
-    } catch (e) { sttMsg.textContent = 'Failed to save'; sttMsg.style.color = 'var(--red)'; }
+    } catch (e) { sttMsg.textContent = (window.__t || (k=>k))('settings.failedToSave'); sttMsg.style.color = 'var(--red)'; }
   }
 
   provSel.addEventListener('change', function() { updateVisibility(); saveSTT(); });
@@ -1133,15 +1133,18 @@ async function initSttSettings() {
 var _LINK = function(href, text) {
   return '<a href="' + href + '" target="_blank" rel="noopener noreferrer" style="color:var(--accent, var(--red));text-decoration:underline;">' + text + '</a>';
 };
-var _searchProviderHints = {
-  searxng: 'Private, self-hosted instance. Leave URL empty to use the SEARXNG_INSTANCE env var.',
-  duckduckgo: 'No API key needed, but rate-limited — heavy use can return empty results. Configure a fallback below.',
-  brave: 'Get your API key from ' + _LINK('https://brave.com/search/api/', 'brave.com/search/api'),
-  google_pse: 'Requires a Google API key and a Programmable Search Engine ID (CX). Create one at ' + _LINK('https://programmablesearchengine.google.com/', 'programmablesearchengine.google.com'),
-  tavily: 'AI-optimized search. 1,000 free credits/month at ' + _LINK('https://tavily.com/', 'tavily.com'),
-  serper: 'Google results via API. 2,500 free queries at ' + _LINK('https://serper.dev/', 'serper.dev'),
-  disabled: 'Web search and deep research tools will be unavailable.',
-};
+function _getSearchProviderHints() {
+  var _l = window.__t || (k=>k);
+  return {
+    searxng: _l('settings.searchHint.searxng'),
+    duckduckgo: _l('settings.searchHint.duckduckgo'),
+    brave: _l('settings.searchHint.brave').replace('{link}', _LINK('https://brave.com/search/api/', 'brave.com/search/api')),
+    google_pse: _l('settings.searchHint.googlePse').replace('{link}', _LINK('https://programmablesearchengine.google.com/', 'programmablesearchengine.google.com')),
+    tavily: _l('settings.searchHint.tavily').replace('{link}', _LINK('https://tavily.com/', 'tavily.com')),
+    serper: _l('settings.searchHint.serper').replace('{link}', _LINK('https://serper.dev/', 'serper.dev')),
+    disabled: _l('settings.searchHint.disabled'),
+  };
+}
 var _searchNeedsKey = { brave: 1, google_pse: 1, tavily: 1, serper: 1 };
 var _searchLabels = {
   searxng: 'SearXNG', duckduckgo: 'DuckDuckGo', brave: 'Brave Search',
@@ -1178,7 +1181,7 @@ async function initSearchSettings() {
     urlRow.style.display = prov === 'searxng' ? 'flex' : 'none';
     keyRow.style.display = _searchNeedsKey[prov] ? 'flex' : 'none';
     cxRow.style.display = prov === 'google_pse' ? 'flex' : 'none';
-    hint.innerHTML = _searchProviderHints[prov] || '';
+    hint.innerHTML = (_getSearchProviderHints())[prov] || '';
     if (prov === 'brave') keyInput.placeholder = 'Brave API key';
     else if (prov === 'google_pse') keyInput.placeholder = 'Google API key';
     else if (prov === 'tavily') keyInput.placeholder = 'Tavily API key';
@@ -1231,12 +1234,12 @@ async function initSearchSettings() {
       var kf = keyFieldFor(active);
       var hasKey = kf ? ((s[kf] || '').trim() || (s.search_api_key || '').trim()) : false;
       if (_searchNeedsKey[active]) {
-        extra = hasKey ? ' (key set)' : ' (no key)';
+        extra = hasKey ? ' (' + (window.__t || (k=>k))('common.enabled') + ')' : ' (' + (window.__t || (k=>k))('common.disabled') + ')';
       } else if (active === 'searxng' && (s.search_url || '').trim()) {
         extra = ' (' + s.search_url + ')';
       }
       var count = s.search_result_count || 5;
-      msg.textContent = 'Active: ' + label + extra + ' \u00b7 ' + count + ' results';
+      msg.textContent = (window.__t || (k=>k))('settings.active') + ': ' + label + extra + ' \u00b7 ' + count + ' ' + (window.__t || (k=>k))('settings.results');
       msg.style.color = active === 'disabled' ? 'var(--red)' : (_searchNeedsKey[active] && !hasKey) ? 'var(--red)' : 'var(--fg)';
     } catch (e) { /* ignore */ }
   }
@@ -1271,10 +1274,10 @@ async function initSearchSettings() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
+      msg.textContent = (window.__t || (k=>k))('settings.saved'); msg.style.color = 'var(--fg)';
       setTimeout(refreshStatus, 2000);
       if (searchModule && searchModule.refresh) searchModule.refresh();
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = (window.__t || (k=>k))('settings.failedToSave'); msg.style.color = 'var(--red)'; }
   }
 
   provSel.addEventListener('change', function() { updateVisibility(); saveSearch(); _syncSearchPicker(); });
@@ -1393,7 +1396,7 @@ async function initSearchSettings() {
       var rm = document.createElement('button');
       rm.type = 'button';
       rm.className = 'settings-fallback-remove';
-      rm.title = 'Remove fallback';
+      rm.title = (window.__t || (k=>k))('common.delete');
       rm.innerHTML = TRASH_SVG;
       rm.addEventListener('click', function() {
         var next = (_settings.search_fallback_chain || []).filter(function(x, i) { return i !== idx; });
@@ -1427,9 +1430,9 @@ async function initSearchSettings() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ search_fallback_chain: chain }),
       });
-      msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
+      msg.textContent = (window.__t || (k=>k))('settings.saved'); msg.style.color = 'var(--fg)';
       setTimeout(refreshStatus, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = (window.__t || (k=>k))('settings.failedToSave'); msg.style.color = 'var(--red)'; }
     _renderFallbackChain();
   }
   _renderFallbackChain();
@@ -1442,7 +1445,7 @@ async function initSearchSettings() {
     testBtn.addEventListener('click', async function() {
       var prov = provSel.value;
       if (!prov || prov === 'disabled') {
-        msg.textContent = 'Pick a provider first';
+        msg.textContent = (window.__t || (k=>k))('settings.pickProviderFirst');
         msg.style.color = 'var(--red)';
         return;
       }
@@ -1457,9 +1460,9 @@ async function initSearchSettings() {
         wp.element.style.cssText = 'display:inline-flex;width:11px;height:11px;margin:0 4px 0 0;';
         testBtn.innerHTML = '';
         testBtn.appendChild(wp.element);
-        testBtn.appendChild(document.createTextNode('Testing'));
+        testBtn.appendChild(document.createTextNode((window.__t || (k=>k))('settings.testing')));
       } catch (_) {
-        testBtn.innerHTML = origHtml.replace(/>Test\s*$/, '>Testing...');
+        testBtn.innerHTML = origHtml.replace(/>Test\s*$/, '>' + (window.__t || (k=>k))('settings.testing') + '...');
       }
       msg.textContent = '';
       var t0 = performance.now();
@@ -1472,18 +1475,18 @@ async function initSearchSettings() {
         var d = await r.json();
         var ms = Math.round(performance.now() - t0);
         if (d.error) {
-          msg.textContent = '✗ ' + d.error + ' (' + ms + 'ms)';
+          msg.textContent = '\u2717 ' + d.error + ' (' + ms + 'ms)';
           msg.style.color = 'var(--red)';
         } else if (!d.results || !d.results.length) {
-          msg.textContent = '⚠ No results returned (' + ms + 'ms)';
+          msg.textContent = '\u26a0 ' + (window.__t || (k=>k))('settings.noIntegrations') + ' (' + ms + 'ms)';
           msg.style.color = 'var(--red)';
         } else {
           var topTitle = (d.results[0].title || d.results[0].url || '').slice(0, 60);
-          msg.textContent = '✓ ' + d.results.length + ' result' + (d.results.length === 1 ? '' : 's') + ' · ' + ms + 'ms · top: ' + topTitle;
+          msg.textContent = '\u2713 ' + d.results.length + ' ' + (window.__t || (k=>k))('settings.results') + (d.results.length === 1 ? '' : '') + ' \u00b7 ' + ms + 'ms \u00b7 top: ' + topTitle;
           msg.style.color = 'var(--fg)';
         }
       } catch (e) {
-        msg.textContent = '✗ Test failed: ' + (e && e.message ? e.message : e);
+        msg.textContent = '\u2717 ' + (window.__t || (k=>k))('common.error') + ': ' + (e && e.message ? e.message : e);
         msg.style.color = 'var(--red)';
       } finally {
         if (wp) { try { wp.destroy(); } catch (_) {} }
@@ -1565,7 +1568,7 @@ async function initResearchSettings() {
       msg.textContent = parts.join(' · ');
       msg.style.color = 'var(--fg)';
     } else {
-      msg.textContent = 'Using chat defaults';
+      msg.textContent = (window.__t || (k=>k))('settings.usingChatDefaults');
       msg.style.color = 'var(--fg)';
     }
   }
@@ -1594,9 +1597,9 @@ async function initResearchSettings() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
+      msg.textContent = (window.__t || (k=>k))('settings.saved'); msg.style.color = 'var(--fg)';
       setTimeout(showStatus, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = (window.__t || (k=>k))('settings.failedToSave'); msg.style.color = 'var(--red)'; }
   }
 
   epSel.addEventListener('change', async function() {
@@ -1638,7 +1641,7 @@ async function initResearchSearchSettings() {
       if (!kf) return;
       var hasKey = ((settings[kf] || '').trim() || (settings.search_api_key || '').trim());
       if (!hasKey) {
-        opt.textContent = (_searchLabels[prov] || prov) + ' (no key)';
+        opt.textContent = (_searchLabels[prov] || prov) + ' ' + (window.__t || (k=>k))('settings.noKey');
         opt.style.color = 'var(--red)';
       } else {
         opt.textContent = _searchLabels[prov] || prov;
@@ -1661,9 +1664,9 @@ async function initResearchSearchSettings() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ research_search_provider: searchSel.value })
       });
-      msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
+      msg.textContent = (window.__t || (k=>k))('settings.saved'); msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = (window.__t || (k=>k))('settings.failedToSave'); msg.style.color = 'var(--red)'; }
   }
 
   searchSel.addEventListener('change', function() { updateSearchLogo(); saveResearchSearch(); });
@@ -1710,7 +1713,7 @@ async function initAgentSettings() {
         (rounds != null ? ' · ' + rounds + ' steps/message' : '') +
         (supInput && supInput.checked ? ' · supervisor on' : '');
       msg.style.color = 'var(--fg)';
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) { msg.textContent = (window.__t || (k=>k))('settings.failedToSave'); msg.style.color = 'var(--red)'; }
   }
 
   toolsInput.addEventListener('change', save);
@@ -1749,6 +1752,15 @@ function initAppearance() {
   syncAppearanceCheckboxes();
   syncPrivacyCheckboxes();
 
+  // Language selector
+  var langSelect = document.getElementById('i18n-lang-select');
+  if (langSelect) {
+    langSelect.value = (window.__getLang && window.__getLang()) || 'en';
+    langSelect.addEventListener('change', function() {
+      if (window.__setLang) window.__setLang(langSelect.value);
+    });
+  }
+
   modalEl.querySelectorAll('[data-ui-key]').forEach(function(chk) {
     chk.addEventListener('change', async function() {
       var key = chk.dataset.uiKey;
@@ -1756,7 +1768,7 @@ function initAppearance() {
       if (window.UI_VIS_ADMIN_ONLY && window.UI_VIS_ADMIN_ONLY.has(key) && !chk.checked && !window._isAdmin) {
         chk.checked = true;
         if (uiModule && uiModule.showToast) {
-          uiModule.showToast('Only admins can hide Settings.');
+          uiModule.showToast((window.__t || (k=>k))('settings.onlyAdminsCanHide'));
         }
         return;
       }
@@ -1770,16 +1782,16 @@ function initAppearance() {
           ok = await (uiModule && uiModule.styledConfirm
             ? uiModule.styledConfirm(
                 'Hide the Settings cog?\n\nYou can re-open this panel any time by typing /settings in the chat input.',
-                { confirmText: 'Hide', cancelText: 'Cancel' }
+                { confirmText: (window.__t || (k=>k))('settings.hide'), cancelText: (window.__t || (k=>k))('common.cancel') }
               )
-            : Promise.resolve(window.confirm('Hide the Settings cog?\n\nYou can re-open this panel any time by typing /settings in the chat input.')));
+              : Promise.resolve(window.confirm('Hide the Settings cog?\n\nYou can re-open this panel any time by typing /settings in the chat input.')));
         } catch (_) { ok = false; }
         if (!ok) {
           chk.checked = true;
           return;
         }
         if (uiModule && uiModule.showToast) {
-          uiModule.showToast('Settings cog hidden — type /settings to bring it back.', 5000);
+          uiModule.showToast((window.__t || (k=>k))('settings.cogHidden'), 5000);
         }
       }
 
@@ -1888,34 +1900,36 @@ const SHORTCUT_ICONS = {
   open_theme:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20 5 5 0 0 0 5-5 3 3 0 0 0-3-3h-2a3 3 0 0 1-3-3 5 5 0 0 1 5-5"/></svg>',
 };
 
+const _t = (k, v) => (window.__t || (kk=>kk))(k, v);
+
 const SHORTCUT_LABELS = {
-  search:         'Search conversations',
-  toggle_sidebar: 'Toggle sidebar',
-  new_session:    'New session',
-  fav_session:    'Favorite session',
-  delete_session: 'Delete session',
-  cancel:         'Cancel / close',
-  tts:            'Play/stop TTS',
-  incognito:      'Toggle incognito',
-  settings:       'Toggle Window',
-  focus_input:    'Focus chat input',
-  open_calendar:  'Open Calendar',
-  open_compare:   'Open Compare',
-  open_cookbook:  'Open Cookbook',
-  open_research:  'Open Deep Research',
-  open_gallery:   'Open Gallery',
-  open_library:   'Open Library',
-  open_memory:    'Open Memory',
-  open_notes:     'Open Notes',
-  open_tasks:     'Open Tasks',
-  open_theme:     'Open Theme',
+  search:         'settings.shortcut.search',
+  toggle_sidebar: 'settings.shortcut.toggleSidebar',
+  new_session:    'settings.shortcut.newSession',
+  fav_session:    'settings.shortcut.favSession',
+  delete_session: 'settings.shortcut.deleteSession',
+  cancel:         'settings.shortcut.cancelClose',
+  tts:            'settings.shortcut.playTts',
+  incognito:      'settings.shortcut.toggleIncognito',
+  settings:       'settings.shortcut.toggleWindow',
+  focus_input:    'settings.shortcut.focusInput',
+  open_calendar:  'settings.shortcut.openCalendar',
+  open_compare:   'settings.shortcut.openCompare',
+  open_cookbook:  'settings.shortcut.openCookbook',
+  open_research:  'settings.shortcut.openResearch',
+  open_gallery:   'settings.shortcut.openGallery',
+  open_library:   'settings.shortcut.openLibrary',
+  open_memory:    'settings.shortcut.openMemory',
+  open_notes:     'settings.shortcut.openNotes',
+  open_tasks:     'settings.shortcut.openTasks',
+  open_theme:     'settings.shortcut.openTheme',
 };
 
 const SHORTCUT_CATEGORIES = [
-  { name: 'Navigation', keys: ['search', 'toggle_sidebar', 'focus_input', 'settings'] },
-  { name: 'Sessions', keys: ['new_session', 'fav_session', 'delete_session'] },
-  { name: 'Tools', keys: ['incognito', 'tts', 'cancel'] },
-  { name: 'Open Tools', keys: ['open_calendar', 'open_compare', 'open_cookbook', 'open_research', 'open_gallery', 'open_library', 'open_memory', 'open_notes', 'open_tasks', 'open_theme'] },
+  { nameKey: 'settings.shortcut.cat.navigation', keys: ['search', 'toggle_sidebar', 'focus_input', 'settings'] },
+  { nameKey: 'settings.shortcut.cat.sessions', keys: ['new_session', 'fav_session', 'delete_session'] },
+  { nameKey: 'settings.shortcut.cat.tools', keys: ['incognito', 'tts', 'cancel'] },
+  { nameKey: 'settings.shortcut.cat.openTools', keys: ['open_calendar', 'open_compare', 'open_cookbook', 'open_research', 'open_gallery', 'open_library', 'open_memory', 'open_notes', 'open_tasks', 'open_theme'] },
 ];
 
 function _formatKeyCaps(combo) {
@@ -1983,7 +1997,7 @@ async function initShortcuts() {
     for (const cat of SHORTCUT_CATEGORIES) {
       const catHeader = document.createElement('div');
       catHeader.className = 'shortcut-category';
-      catHeader.textContent = cat.name;
+      catHeader.textContent = _t(cat.nameKey);
       listEl.appendChild(catHeader);
 
       for (const action of cat.keys) {
@@ -1991,20 +2005,20 @@ async function initShortcuts() {
         const combo = keybinds[action];
         // Unbound shortcuts (empty combo) still render so the user can
         // assign one \u2014 they show a "Set" affordance instead of keycaps.
-        const label = SHORTCUT_LABELS[action] || action;
+        const label = _t(SHORTCUT_LABELS[action] || action);
         const icon = SHORTCUT_ICONS[action] || '';
         const isCustom = combo !== (SHORTCUT_DEFAULTS[action] || '');
         const hasConflict = combo && conflicts.has(action);
         const row = document.createElement('div');
         row.className = 'shortcut-row' + (hasConflict ? ' shortcut-conflict' : '');
         row.dataset.action = action;
-        const keyContent = combo ? _formatKeyCaps(combo) : '<span class="shortcut-unset">Set</span>';
+        const keyContent = combo ? _formatKeyCaps(combo) : '<span class="shortcut-unset">' + (window.__t || (k=>k))('settings.set') + '</span>';
         row.innerHTML = `
           <span class="shortcut-label"><span class="shortcut-icon">${icon}</span>${esc(label)}${hasConflict ? '<span class="shortcut-warn" title="Duplicate shortcut">!</span>' : ''}</span>
           <div class="shortcut-controls">
             <span class="shortcut-hint" hidden></span>
             <button class="shortcut-key${combo ? '' : ' shortcut-key-unset'}" data-action="${action}" title="Click to rebind">${keyContent}</button>
-            <button class="shortcut-action-btn ${isCustom ? 'is-reset' : ''}" data-action="${action}" title="${isCustom ? 'Reset to default' : 'Confirm'}" style="${isCustom ? '' : 'visibility:hidden'}">
+            <button class="shortcut-action-btn ${isCustom ? 'is-reset' : ''}" data-action="${action}" title="${isCustom ? (window.__t || (k=>k))('settings.resetToDefault') : (window.__t || (k=>k))('common.confirm')}" style="${isCustom ? '' : 'visibility:hidden'}">
               ${isCustom
                 ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>'
                 : '\u2713'}
@@ -2045,16 +2059,16 @@ async function initShortcuts() {
     });
 
     btn.classList.add('listening');
-    btn.textContent = 'Press keys...';
+    btn.textContent = (window.__t || (k=>k))('settings.pressKeys');
     // Show confirm button
     actionBtn.textContent = '\u2713';
     actionBtn.classList.remove('is-reset');
     actionBtn.style.visibility = 'visible';
-    actionBtn.title = 'Confirm';
+    actionBtn.title = (window.__t || (k=>k))('common.confirm');
     // Hint: tell the user how to commit / cancel the rebind.
     if (hintEl) {
       hintEl.hidden = false;
-      hintEl.textContent = 'press a key';
+      hintEl.textContent = (window.__t || (k=>k))('settings.pressKeys');
     }
 
     let pendingCombo = null;
@@ -2081,7 +2095,7 @@ async function initShortcuts() {
         if (isCustom) {
           actionBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
           actionBtn.classList.add('is-reset');
-          actionBtn.title = 'Reset to default';
+          actionBtn.title = (window.__t || (k=>k))('settings.resetToDefault');
         } else {
           actionBtn.style.visibility = 'hidden';
         }
@@ -2103,7 +2117,7 @@ async function initShortcuts() {
       pendingCombo = combo;
       btn.innerHTML = _formatKeyCaps(combo);
       // Now that a combo is captured, prompt to commit with Enter.
-      if (hintEl) hintEl.textContent = '\u21B5 Enter to save';
+      if (hintEl) hintEl.textContent = (window.__t || (k=>k))('settings.enterToSend');
     }
 
     function cleanup() {
@@ -2125,7 +2139,7 @@ async function initShortcuts() {
       });
       // Update global keybinds so they take effect immediately
       window._odysseusKeybinds = keybinds;
-      if (uiModule && uiModule.showToast) uiModule.showToast('Shortcut saved');
+      if (uiModule && uiModule.showToast) uiModule.showToast((window.__t || (k=>k))('settings.saved'));
     } catch (e) {
       console.error('Failed to save keybinds:', e);
     }
@@ -2136,7 +2150,7 @@ async function initShortcuts() {
       keybinds = { ...SHORTCUT_DEFAULTS };
       render();
       await saveKeybinds();
-      if (uiModule && uiModule.showToast) uiModule.showToast('Shortcuts reset to defaults');
+      if (uiModule && uiModule.showToast) uiModule.showToast((window.__t || (k=>k))('settings.saved'));
     });
   }
 
@@ -2155,7 +2169,7 @@ function initAccount() {
       const roleEl = el('settings-account-role');
       const avatarEl = el('settings-account-avatar');
       if (nameEl) nameEl.textContent = d.username || 'Unknown';
-      if (roleEl) roleEl.textContent = d.is_admin ? 'Admin' : 'User';
+      if (roleEl) roleEl.textContent = d.is_admin ? (window.__t || (k=>k))('settings.adminLabel') : (window.__t || (k=>k))('settings.userLabel');
       if (avatarEl) {
         const initial = (d.username || '?')[0].toUpperCase();
         avatarEl.textContent = initial;
@@ -2169,7 +2183,7 @@ function initAccount() {
       if (!policy) return;
       _authPolicy = policy;
       const pwNew = el('settings-pw-new');
-      if (pwNew) pwNew.placeholder = `New password (min ${policy.password_min_length})`;
+      if (pwNew) pwNew.placeholder = (window.__t || (k=>k))('settings.passwordMinChars', {n: policy.password_min_length});
     }).catch(() => {});
 
   // Change password
@@ -2181,9 +2195,9 @@ function initAccount() {
       const nw = el('settings-pw-new').value;
       const conf = el('settings-pw-confirm').value;
       msgEl.style.color = '';
-      if (!cur || !nw) { msgEl.textContent = 'Fill in all fields'; msgEl.style.color = 'var(--red)'; return; }
-      if (nw.length < _authPolicy.password_min_length) { msgEl.textContent = `Min ${_authPolicy.password_min_length} characters`; msgEl.style.color = 'var(--red)'; return; }
-      if (nw !== conf) { msgEl.textContent = 'Passwords don\'t match'; msgEl.style.color = 'var(--red)'; return; }
+      if (!cur || !nw) { msgEl.textContent = (window.__t || (k=>k))('settings.fillAllFields'); msgEl.style.color = 'var(--red)'; return; }
+      if (nw.length < _authPolicy.password_min_length) { msgEl.textContent = (window.__t || (k=>k))('settings.minCharacters', {n: _authPolicy.password_min_length}); msgEl.style.color = 'var(--red)'; return; }
+      if (nw !== conf) { msgEl.textContent = (window.__t || (k=>k))('settings.passwordsDontMatch'); msgEl.style.color = 'var(--red)'; return; }
       saveBtn.disabled = true;
       try {
         const res = await fetch('/api/auth/change-password', {
@@ -2193,7 +2207,7 @@ function initAccount() {
         });
         if (!res.ok) { const d = await res.json(); throw new Error(d.detail || 'Failed'); }
         msgEl.style.color = 'var(--green)';
-        msgEl.textContent = 'Password updated';
+        msgEl.textContent = (window.__t || (k=>k))('settings.passwordUpdated');
         el('settings-pw-current').value = '';
         el('settings-pw-new').value = '';
         el('settings-pw-confirm').value = '';
@@ -2217,18 +2231,18 @@ function initAccount() {
           // 2FA is ON — show disable option
           tfaContent.innerHTML = `
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-              <span style="color:var(--color-save-green, #4caf50);font-size:12px;font-weight:600;">&#x2713; Enabled</span>
+              <span style="color:var(--color-save-green, #4caf50);font-size:12px;font-weight:600;">&#x2713; ${(window.__t || (k=>k))('common.enabled')}</span>
               <span style="font-size:11px;opacity:0.5;">Authenticator app required on login</span>
             </div>
-            <input id="tfa-disable-pw" type="password" placeholder="Enter password to disable" autocomplete="current-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;width:100%;box-sizing:border-box;margin-bottom:6px;">
+            <input id="tfa-disable-pw" type="password" placeholder="${(window.__t || (k=>k))('settings.enterPassword')}" autocomplete="current-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;width:100%;box-sizing:border-box;margin-bottom:6px;">
             <div class="settings-row" style="justify-content:flex-end;">
               <span id="tfa-msg" style="font-size:11px;margin-right:auto;"></span>
-              <button class="admin-btn-add" id="tfa-disable-btn" style="opacity:0.7;">Disable 2FA</button>
+              <button class="admin-btn-add" id="tfa-disable-btn" style="opacity:0.7;">${(window.__t || (k=>k))('common.disabled')} 2FA</button>
             </div>`;
           el('tfa-disable-btn').addEventListener('click', async () => {
             const pw = el('tfa-disable-pw').value;
             const msg = el('tfa-msg');
-            if (!pw) { msg.textContent = 'Enter your password'; msg.style.color = 'var(--red)'; return; }
+            if (!pw) { msg.textContent = (window.__t || (k=>k))('settings.enterPassword'); msg.style.color = 'var(--red)'; return; }
             try {
               const r = await fetch('/api/auth/2fa/disable', {
                 method: 'POST', credentials: 'same-origin',
@@ -2263,10 +2277,10 @@ function initAccount() {
                   Scan with your authenticator app, or enter manually:
                 </div>
                 <div style="font-family:monospace;font-size:12px;text-align:center;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;margin-bottom:12px;word-break:break-all;user-select:all;cursor:text;">${esc(setup.secret)}</div>
-                <input id="tfa-verify-code" type="text" placeholder="Enter 6-digit code to verify" autocomplete="one-time-code" inputmode="numeric" maxlength="8" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:13px;box-sizing:border-box;text-align:center;letter-spacing:3px;margin-bottom:6px;">
+                <input id="tfa-verify-code" type="text" placeholder="${(window.__t || (k=>k))('settings.enterCode')}" autocomplete="one-time-code" inputmode="numeric" maxlength="8" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:13px;box-sizing:border-box;text-align:center;letter-spacing:3px;margin-bottom:6px;">
                 <div class="settings-row" style="justify-content:flex-end;">
                   <span id="tfa-msg" style="font-size:11px;margin-right:auto;"></span>
-                  <button class="admin-btn-add" id="tfa-cancel-btn" style="opacity:0.5;">Cancel</button>
+                  <button class="admin-btn-add" id="tfa-cancel-btn" style="opacity:0.5;">${(window.__t || (k=>k))('common.cancel')}</button>
                   <button class="admin-btn-add" id="tfa-verify-btn">Verify & Enable</button>
                 </div>`;
               el('tfa-verify-code').focus();
@@ -2274,7 +2288,7 @@ function initAccount() {
               el('tfa-verify-btn').addEventListener('click', async () => {
                 const code = el('tfa-verify-code').value.trim();
                 const vmsg = el('tfa-msg');
-                if (!code) { vmsg.textContent = 'Enter the code'; vmsg.style.color = 'var(--red)'; return; }
+                if (!code) { vmsg.textContent = (window.__t || (k=>k))('settings.enterCode'); vmsg.style.color = 'var(--red)'; return; }
                 try {
                   const vr = await fetch('/api/auth/2fa/confirm', {
                     method: 'POST', credentials: 'same-origin',
@@ -2286,10 +2300,10 @@ function initAccount() {
                   // Show backup codes
                   const codes = result.backup_codes || [];
                   tfaContent.innerHTML = `
-                    <div style="color:var(--color-save-green, #4caf50);font-size:13px;font-weight:600;margin-bottom:8px;">&#x2713; 2FA Enabled!</div>
+                    <div style="color:var(--color-save-green, #4caf50);font-size:13px;font-weight:600;margin-bottom:8px;">&#x2713; ${(window.__t || (k=>k))('common.enabled')}!</div>
                     <div style="font-size:12px;opacity:0.7;margin-bottom:8px;">Save these backup codes somewhere safe. Each can be used once if you lose your authenticator:</div>
                     <div style="font-family:monospace;font-size:12px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;columns:2;column-gap:16px;margin-bottom:8px;">${codes.map(c => '<div style="margin-bottom:2px;">' + c + '</div>').join('')}</div>
-                    <button class="admin-btn-add" id="tfa-done-btn">Done</button>`;
+                    <button class="admin-btn-add" id="tfa-done-btn">${(window.__t || (k=>k))('common.close')}</button>`;
                   el('tfa-done-btn').addEventListener('click', () => render2FA());
                 } catch (e) { vmsg.textContent = e.message; vmsg.style.color = 'var(--red)'; }
               });
@@ -2297,7 +2311,7 @@ function initAccount() {
           });
         }
       } catch (_) {
-        tfaContent.innerHTML = '<div style="font-size:11px;opacity:0.4;">Could not load 2FA status</div>';
+        tfaContent.innerHTML = '<div style="font-size:11px;opacity:0.4;">' + ((window.__t || (k=>k))('settings.couldNotLoad2FA')) + '</div>';
       }
     }
     render2FA();
@@ -2391,13 +2405,13 @@ async function initReminderSettings() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ app_public_url: val }),
           });
-          if (pubUrlMsg) {
-            pubUrlMsg.textContent = val ? 'Saved' : 'Cleared (deep-links disabled)';
+            if (pubUrlMsg) {
+              pubUrlMsg.textContent = val ? (window.__t || (k=>k))('settings.saved') : 'Cleared (deep-links disabled)';
             pubUrlMsg.style.color = 'var(--green,#50fa7b)';
             setTimeout(() => { pubUrlMsg.textContent = ''; }, 2000);
           }
         } catch (_) {
-          if (pubUrlMsg) { pubUrlMsg.textContent = 'Save failed'; pubUrlMsg.style.color = 'var(--red)'; }
+          if (pubUrlMsg) { pubUrlMsg.textContent = (window.__t || (k=>k))('settings.saveFailed'); pubUrlMsg.style.color = 'var(--red)'; }
         }
       }, 600);
     });
@@ -2440,7 +2454,7 @@ async function initReminderSettings() {
 
   if (!smtpConfigured && emailOpt) {
     emailOpt.disabled = true;
-    emailOpt.textContent = 'Email (add an account in Integrations)';
+    emailOpt.textContent = (window.__t || (k=>k))('settings.emailAddAccount');
   }
 
   // Detect whether ntfy integration exists — try admin endpoint, fall back to
@@ -2466,7 +2480,7 @@ async function initReminderSettings() {
 
   if (!ntfyConfigured && ntfyOpt) {
     ntfyOpt.disabled = true;
-    ntfyOpt.textContent = 'ntfy (add in Integrations first)';
+    ntfyOpt.textContent = (window.__t || (k=>k))('settings.noIntegrations');
   }
 
   // Webhook: available whenever at least one integration with a base_url exists.
@@ -2483,7 +2497,7 @@ async function initReminderSettings() {
   } catch (_) {}
   if (!webhookConfigured && webhookOpt) {
     webhookOpt.disabled = true;
-    webhookOpt.textContent = 'Webhook (add an Integration first)';
+    webhookOpt.textContent = (window.__t || (k=>k))('settings.webhookAddFirst');
   }
 
   const emailFromRow = el('set-reminder-email-from-row');
@@ -2500,7 +2514,7 @@ async function initReminderSettings() {
   function populateReminderEmailAccounts(selectedId = '') {
     if (!emailAcctSel) return;
     emailAcctSel.innerHTML = emailAccounts.map(a =>
-      `<option value="${a.id}">${esc(a.name || a.from_address || a.imap_user || 'Unnamed')}${a.is_default ? ' (default)' : ''}</option>`
+      `<option value="${a.id}">${esc(a.name || a.from_address || a.imap_user || (window.__t || (k=>k))('settings.unnamed'))}${a.is_default ? ' (' + (window.__t || (k=>k))('settings.defaultAccount') + ')' : ''}</option>`
     ).join('');
     const fallback = (emailAccounts.find(a => a.is_default) || emailAccounts[0] || {}).id || '';
     emailAcctSel.value = (selectedId && emailAccounts.some(a => a.id === selectedId)) ? selectedId : fallback;
@@ -2517,15 +2531,15 @@ async function initReminderSettings() {
   function applyReminderChannelAvailability() {
     if (emailOpt) {
       emailOpt.disabled = !smtpConfigured;
-      emailOpt.textContent = smtpConfigured ? 'Email' : 'Email (add an account in Integrations)';
+      emailOpt.textContent = smtpConfigured ? (window.__t || (k=>k))('settings.email') : (window.__t || (k=>k))('settings.emailAddAccount');
     }
     if (ntfyOpt) {
       ntfyOpt.disabled = !ntfyConfigured;
-      ntfyOpt.textContent = ntfyConfigured ? 'ntfy' : 'ntfy (add in Integrations first)';
+      ntfyOpt.textContent = ntfyConfigured ? 'ntfy' : (window.__t || (k=>k))('settings.noIntegrations');
     }
     if (webhookOpt) {
       webhookOpt.disabled = !webhookConfigured;
-      webhookOpt.textContent = webhookConfigured ? 'Webhook' : 'Webhook (add an Integration first)';
+      webhookOpt.textContent = webhookConfigured ? 'Webhook' : (window.__t || (k=>k))('settings.webhookAddFirst');
     }
   }
 
@@ -2758,7 +2772,7 @@ async function initReminderSettings() {
   if (testBtn) {
     testBtn.addEventListener('click', async () => {
       testBtn.disabled = true;
-      if (testMsg) { testMsg.textContent = 'Sending'; testMsg.style.color = 'var(--fg)'; }
+      if (testMsg) { testMsg.textContent = (window.__t || (k=>k))('settings.sending'); testMsg.style.color = 'var(--fg)'; }
       // Whirlpool loader right next to the "Sending" text while it sends.
       let _testSpin = null;
       try {
@@ -2778,8 +2792,8 @@ async function initReminderSettings() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             note_id: 'test-' + Date.now(),
-            title: 'Test Reminder',
-            body: 'This is a test reminder to verify your settings are working.',
+            title: (window.__t || (k=>k))('settings.testReminder'),
+            body: (window.__t || (k=>k))('settings.testReminderBody'),
             channel: channelSel.value,
             // Mirror the in-UI AI Synthesis toggle + persona so the test never
             // races a pending save and lets the user preview changes before
@@ -2804,7 +2818,7 @@ async function initReminderSettings() {
           const activeChannel = data.channel ? ` (server used channel: "${data.channel}")` : '';
           throw new Error((data.webhook_error || 'Webhook reminder was not sent') + activeChannel);
         }
-        let status = 'Delivered via ' + channelSel.value;
+        let status = (window.__t || (k=>k))('settings.deliveredVia', {channel: channelSel.value});
         if (data.synthesis) status += ' (AI: "' + data.synthesis.slice(0, 60) + '...")';
         if (data.email_sent) status += ' — email sent';
         if (data.ntfy_sent) status += ' — ntfy sent';
@@ -2813,15 +2827,15 @@ async function initReminderSettings() {
         // Also fire a browser notification so user can see it
         if ('Notification' in window && Notification.permission === 'granted') {
           try {
-            new Notification('Test Reminder', {
-              body: data.synthesis || 'This is a test reminder.',
+            new Notification((window.__t || (k=>k))('settings.testReminder'), {
+              body: data.synthesis || (window.__t || (k=>k))('settings.testReminderBody'),
               tag: 'reminder-test',
               icon: '/static/favicon.ico',
             });
           } catch {}
         }
       } catch (e) {
-        if (testMsg) { testMsg.textContent = 'Failed: ' + e.message; testMsg.style.color = 'var(--red)'; }
+        if (testMsg) { testMsg.textContent = (window.__t || (k=>k))('common.error') + ': ' + e.message; testMsg.style.color = 'var(--red)'; }
       } finally {
         _stopTestSpin();
         testBtn.disabled = false;
@@ -2869,23 +2883,23 @@ async function initEmailAccountsSettings() {
   function renderRow(a) {
     const imap = a.imap_host ? `${a.imap_host}:${a.imap_port}` : '<no IMAP>';
     const badge = a.is_default
-      ? '<span style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;padding:1px 6px;border-radius:3px;background:color-mix(in srgb, var(--accent,#50fa7b) 15%, transparent);color:var(--accent,#50fa7b)">Default</span>'
-      : (a.enabled ? '' : '<span style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;padding:1px 6px;border-radius:3px;opacity:0.4">Disabled</span>');
+      ? `<span style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;padding:1px 6px;border-radius:3px;background:color-mix(in srgb, var(--accent,#50fa7b) 15%, transparent);color:var(--accent,#50fa7b)">${(window.__t || (k=>k))('common.enabled')}</span>`
+      : (a.enabled ? '' : `<span style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;padding:1px 6px;border-radius:3px;opacity:0.4">${(window.__t || (k=>k))('common.disabled')}</span>`);
     return `<div class="email-account-row" data-acc-id="${esc(a.id)}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:6px">
       <div style="flex:1;min-width:0">
         <div style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px">${esc(a.name)} ${badge}</div>
         <div style="font-size:11px;opacity:0.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.imap_user || a.from_address || '')} — ${esc(imap)}</div>
       </div>
-      ${a.is_default ? '' : `<button class="admin-btn-sm email-acc-default-btn" style="font-size:10px">Make Default</button>`}
-      <button class="admin-btn-sm email-acc-edit-btn" style="font-size:10px">Edit</button>
-      <button class="admin-btn-sm email-acc-del-btn" style="font-size:10px;opacity:0.6">Delete</button>
+      ${a.is_default ? '' : `<button class="admin-btn-sm email-acc-default-btn" style="font-size:10px">${(window.__t || (k=>k))('common.add')}</button>`}
+      <button class="admin-btn-sm email-acc-edit-btn" style="font-size:10px">${(window.__t || (k=>k))('common.edit')}</button>
+      <button class="admin-btn-sm email-acc-del-btn" style="font-size:10px;opacity:0.6">${(window.__t || (k=>k))('common.delete')}</button>
     </div>`;
   }
 
   async function renderList() {
     const accs = await fetchAccounts();
     if (!accs.length) {
-      listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center">No email accounts configured</div>';
+      listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center">' + ((window.__t || (k=>k))('settings.noEmailAccounts')) + '</div>';
       return;
     }
     listEl.innerHTML = accs.map(renderRow).join('');
@@ -2902,7 +2916,7 @@ async function initEmailAccountsSettings() {
       });
       row.querySelector('.email-acc-del-btn')?.addEventListener('click', async (e) => {
         e.stopPropagation();
-        if (!await window.styledConfirm(`Delete account "${accs.find(a => a.id === id)?.name}"?`, { confirmText: 'Delete', danger: true })) return;
+        if (!await window.styledConfirm(`Delete account "${accs.find(a => a.id === id)?.name}"?`, { confirmText: (window.__t || (k=>k))('common.delete'), danger: true })) return;
         await fetch(`/api/email/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
         renderList();
       });
@@ -2939,7 +2953,7 @@ async function initEmailAccountsSettings() {
       .join('');
     const _smtpSecurity = (acct) => acct?.smtp_security || ((parseInt(acct?.smtp_port || 465) === 587) ? 'starttls' : 'ssl');
     formEl.innerHTML = `
-      <h3 style="font-size:12px;margin:0 0 8px">${isEdit ? 'Edit Account' : 'New Account'}</h3>
+      <h3 style="font-size:12px;margin:0 0 8px">${isEdit ? (window.__t || (k=>k))('settings.editIntegration') : (window.__t || (k=>k))('common.new')}</h3>
       <div class="settings-col">
         <div class="settings-row"><label class="settings-label">Provider${_hint('Pick a known provider to auto-fill the IMAP and SMTP host/port. Choose Custom to type your own.')}</label><select id="eaf-provider" class="settings-select"><option value="">Custom…</option>${_providerOptions}</select></div>
         <div id="eaf-provider-note" style="display:none;font-size:11px;line-height:1.5;padding:8px 10px;margin:2px 0 4px;border:1px solid color-mix(in srgb, var(--fg) 15%, transparent);border-left:3px solid var(--accent, var(--red));border-radius:4px;background:color-mix(in srgb, var(--fg) 4%, transparent);"></div>
@@ -2947,17 +2961,17 @@ async function initEmailAccountsSettings() {
         <div class="settings-row"><label class="settings-label">Email${_hint('Your email address. Used as the From: header on outgoing mail and as the display label when Name is blank.')}</label><input id="eaf-from" class="settings-input" placeholder="you@example.com" value="${esc(a.from_address || '')}"></div>
         <div class="settings-row"><label class="settings-label">Display Name${_hint('Your name as it appears in the From: field of emails you send, e.g. Jane Smith. Auto-filled from Google during OAuth.')}</label><input id="eaf-display-name" class="settings-input" placeholder="Your Name" value="${esc(a.display_name || '')}"></div>
         <div id="eaf-oauth-section" style="display:none;margin:8px 0;padding:10px;border:1px solid var(--border);border-radius:6px;background:color-mix(in srgb,var(--accent,#50fa7b) 6%,transparent)">
-          <div style="font-size:11px;font-weight:600;margin-bottom:6px">Google OAuth2 — required for Workspace / .edu accounts</div>
-          <div id="eaf-oauth-status" style="font-size:11px;opacity:0.7;margin-bottom:6px">${a.oauth_provider === 'google' ? '✓ Connected via Google OAuth' : 'Not connected — click below to authorize'}</div>
+          <div style="font-size:11px;font-weight:600;margin-bottom:6px">${(window.__t || (k=>k))('settings.googleOAuth2')}</div>
+          <div id="eaf-oauth-status" style="font-size:11px;opacity:0.7;margin-bottom:6px">${a.oauth_provider === 'google' ? '\u2713 ' + (window.__t || (k=>k))('settings.connected') : (window.__t || (k=>k))('settings.disconnected')}</div>
           <button type="button" id="eaf-oauth-btn" class="admin-btn-add" style="font-size:11px">${a.oauth_provider === 'google' ? 'Reconnect with Google' : 'Connect with Google'}</button>
         </div>
-        <div style="font-size:11px;font-weight:600;opacity:0.6;margin:6px 0 2px">IMAP (Receiving)</div>
+        <div style="font-size:11px;font-weight:600;opacity:0.6;margin:6px 0 2px">${(window.__t || (k=>k))('settings.imapReceiving')}</div>
         <div class="settings-row"><label class="settings-label">Host${_hint('Your IMAP server, e.g. imap.gmail.com, imap.migadu.com, a LAN host, or a Tailscale IP for Dovecot.')}</label><input id="eaf-imap-host" class="settings-input" value="${esc(a.imap_host || '')}"></div>
         <div class="settings-row"><label class="settings-label">Port${_hint('993 for IMAPS (most providers), 143 for plain or STARTTLS. Local servers often use a custom port like 31143.')}</label><input id="eaf-imap-port" class="settings-input" type="number" value="${esc(a.imap_port || 993)}" style="max-width:100px"></div>
         <div class="settings-row"><label class="settings-label">Username${_hint('Usually your full email address.')}</label><input id="eaf-imap-user" class="settings-input" value="${esc(a.imap_user || '')}"></div>
         <div class="eaf-password-section"><div class="settings-row"><label class="settings-label">Password${_hint('Your IMAP login password. Use an app-specific password if your provider requires 2FA. Outlook / Office 365 generally requires OAuth and will not work with a normal password here.')}</label><input id="eaf-imap-pass" class="settings-input" type="password" placeholder="${isEdit && a.has_imap_password ? '(unchanged)' : ''}"></div></div>
         <div class="settings-row"><label class="settings-label">STARTTLS${_hint('Turn ON for port 143/587 to upgrade plain to TLS. Turn OFF for port 993 (IMAPS — already encrypted) or a local server with no TLS configured.')}</label><label class="admin-switch"><input type="checkbox" id="eaf-imap-starttls" ${a.imap_starttls !== false ? 'checked' : ''}><span class="admin-slider"></span></label></div>
-        <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px">SMTP (Sending) <span style="font-weight:normal;opacity:0.7">— optional, leave blank for read-only</span></div>
+        <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px">${(window.__t || (k=>k))('settings.smtpOptional')}</div>
         <div class="settings-row"><label class="settings-label">Host${_hint('Your outgoing-mail server, e.g. smtp.gmail.com, smtp.migadu.com. Leave blank to make this account read-only.')}</label><input id="eaf-smtp-host" class="settings-input" value="${esc(a.smtp_host || '')}"></div>
         <div class="settings-row"><label class="settings-label">Port${_hint('465 for SSL/SMTPS, 587 for STARTTLS. 25 is usually blocked by ISPs.')}</label><input id="eaf-smtp-port" class="settings-input" type="number" value="${esc(a.smtp_port || 465)}" style="max-width:100px"></div>
         <div class="settings-row"><label class="settings-label">Security${_hint('SSL for port 465, STARTTLS for port 587, or None for local SMTP bridges such as Proton Mail Bridge.')}</label><select id="eaf-smtp-security" class="settings-select"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option><option value="none">None</option></select></div>
@@ -2967,12 +2981,12 @@ async function initEmailAccountsSettings() {
         <div class="settings-row" style="margin-top:10px;align-items:center;">
           <button class="admin-btn-add" id="eaf-save" style="background:var(--red);border-color:var(--red);color:#fff;display:inline-flex;align-items:center;gap:5px;font-weight:600;">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-            ${isEdit ? 'Save' : 'Create'}
+            ${isEdit ? (window.__t || (k=>k))('common.save') : (window.__t || (k=>k))('common.new')}
           </button>
           <span id="eaf-msg" style="font-size:11px;flex:1;margin-left:8px;"></span>
           <button class="admin-btn-add" id="eaf-cancel" style="opacity:0.7;display:inline-flex;align-items:center;gap:5px;position:relative;top:1px;margin-left:auto;">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            Cancel
+            ${(window.__t || (k=>k))('common.cancel')}
           </button>
         </div>
       </div>
@@ -3039,12 +3053,12 @@ async function initEmailAccountsSettings() {
         smtp_port: parseInt(el('eaf-smtp-port').value) || 587,
         smtp_user: el('eaf-imap-user').value.trim(),
       };
-      if (!body.name) { el('eaf-msg').textContent = 'Enter a Name or Email first'; el('eaf-msg').style.color = 'var(--red)'; return; }
+      if (!body.name) { el('eaf-msg').textContent = (window.__t || (k=>k))('settings.nameRequired'); el('eaf-msg').style.color = 'var(--red)'; return; }
       const url = isEdit ? `/api/email/accounts/${a.id}` : '/api/email/accounts';
       const method = isEdit ? 'PUT' : 'POST';
       const r = await fetch(url, { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const d = await r.json();
-      if (!d.ok) { el('eaf-msg').textContent = d.error || 'Save failed'; el('eaf-msg').style.color = 'var(--red)'; return; }
+      if (!d.ok) { el('eaf-msg').textContent = d.error || (window.__t || (k=>k))('settings.saveFailed'); el('eaf-msg').style.color = 'var(--red)'; return; }
       const accId = isEdit ? a.id : d.id;
       window.location.href = `/api/email/oauth/google/authorize?account_id=${encodeURIComponent(accId)}`;
     });
@@ -3089,7 +3103,7 @@ async function initEmailAccountsSettings() {
       // Name is optional — fall back to the From address so the list view
       // still has a label to render. Only refuse if both are blank.
       if (!body.name) body.name = body.from_address;
-      if (!body.name) { el('eaf-msg').textContent = 'Need at least a Name or Email'; el('eaf-msg').style.color = 'var(--red)'; return; }
+      if (!body.name) { el('eaf-msg').textContent = (window.__t || (k=>k))('settings.nameRequired'); el('eaf-msg').style.color = 'var(--red)'; return; }
 
       try {
         const url = isEdit ? `/api/email/accounts/${a.id}` : '/api/email/accounts';
@@ -3101,15 +3115,15 @@ async function initEmailAccountsSettings() {
         });
         const d = await r.json();
         if (d.ok || d.id) {
-          el('eaf-msg').textContent = 'Saved';
+          el('eaf-msg').textContent = (window.__t || (k=>k))('settings.saved');
           el('eaf-msg').style.color = 'var(--green,#50fa7b)';
           setTimeout(() => { formEl.style.display = 'none'; renderList(); }, 400);
         } else {
-          el('eaf-msg').textContent = d.error || 'Save failed';
+          el('eaf-msg').textContent = d.error || (window.__t || (k=>k))('settings.saveFailed');
           el('eaf-msg').style.color = 'var(--red)';
         }
       } catch (e) {
-        el('eaf-msg').textContent = 'Error: ' + e.message;
+        el('eaf-msg').textContent = (window.__t || (k=>k))('common.error') + ': ' + e.message;
         el('eaf-msg').style.color = 'var(--red)';
       }
     });
@@ -3157,7 +3171,7 @@ async function initEmailSettings() {
   // Save email config
   el('set-email-save')?.addEventListener('click', async () => {
     const msg = el('set-email-msg');
-    if (msg) msg.textContent = 'Saving...';
+    if (msg) msg.textContent = (window.__t || (k=>k))('misc.saving');
     const data = {
       imap_host: el('set-email-imap-host').value,
       imap_port: parseInt(el('set-email-imap-port').value) || 0,
@@ -3178,17 +3192,17 @@ async function initEmailSettings() {
         body: JSON.stringify(data),
       });
       const result = await res.json();
-      if (msg) msg.textContent = result.success ? '✓ Saved' : (result.error || 'Failed');
+      if (msg) msg.textContent = result.success ? '\u2713 ' + (window.__t || (k=>k))('settings.saved') : (result.error || (window.__t || (k=>k))('settings.saveFailed'));
       setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
     } catch (e) {
-      if (msg) msg.textContent = 'Failed';
+        if (msg) msg.textContent = (window.__t || (k=>k))('settings.failedToSave');
     }
   });
 
   // Save CardDAV config
   el('set-carddav-save')?.addEventListener('click', async () => {
     const msg = el('set-carddav-msg');
-    if (msg) msg.textContent = 'Saving...';
+    if (msg) msg.textContent = (window.__t || (k=>k))('settings.loading');
     const data = {
       carddav_url: el('set-carddav-url').value,
       carddav_username: el('set-carddav-user').value,
@@ -3202,10 +3216,10 @@ async function initEmailSettings() {
         body: JSON.stringify(data),
       });
       const result = await res.json();
-      if (msg) msg.textContent = result.success ? '✓ Saved' : (result.error || 'Failed');
+      if (msg) msg.textContent = result.success ? '\u2713 ' + (window.__t || (k=>k))('settings.saved') : (result.error || (window.__t || (k=>k))('settings.saveFailed'));
       setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
     } catch (e) {
-      if (msg) msg.textContent = 'Failed';
+        if (msg) msg.textContent = (window.__t || (k=>k))('misc.failed');
     }
   });
 
@@ -3228,12 +3242,12 @@ async function initEmailSettings() {
         wrap.style.cssText = 'display:inline-flex;align-items:center;';
         wrap.appendChild(wp.element);
         const txt = document.createElement('span');
-        txt.textContent = 'Analyzing your sent emails…';
+        txt.textContent = (window.__t || (k=>k))('settings.analyzingEmails');
         txt.style.cssText = 'font-size:12px;opacity:0.7;';
         wrap.appendChild(txt);
         msg.appendChild(wrap);
       } catch (_) {
-        msg.textContent = 'Analyzing your sent emails…';
+        msg.textContent = (window.__t || (k=>k))('settings.analyzingEmails');
       }
     }
     try {
@@ -3243,14 +3257,14 @@ async function initEmailSettings() {
         body: JSON.stringify({ sample_count: 15 }),
       });
       const data = await res.json();
-      if (data.success && data.style) {
-        if (el('set-email-style')) el('set-email-style').value = data.style;
-        if (msg) msg.textContent = '✓ Style extracted';
-      } else {
-        if (msg) msg.textContent = data.error || 'Failed';
+        if (data.success && data.style) {
+          if (el('set-email-style')) el('set-email-style').value = data.style;
+          if (msg) msg.textContent = '\u2713 ' + (window.__t || (k=>k))('common.success');
+        } else {
+          if (msg) msg.textContent = data.error || (window.__t || (k=>k))('common.error');
       }
     } catch (e) {
-      if (msg) msg.textContent = 'Failed to extract';
+      if (msg) msg.textContent = (window.__t || (k=>k))('settings.failedToExtract');
     } finally {
       if (wp && wp.destroy) { try { wp.destroy(); } catch (_) {} }
       btn.disabled = false;
@@ -3261,7 +3275,7 @@ async function initEmailSettings() {
   // Save writing style manually
   el('set-email-style-save')?.addEventListener('click', async () => {
     const msg = el('set-email-style-msg');
-    if (msg) msg.textContent = 'Saving...';
+    if (msg) msg.textContent = (window.__t || (k=>k))('misc.saving');
     try {
       const res = await fetch('/api/email/style', {
         method: 'PUT',
@@ -3269,10 +3283,10 @@ async function initEmailSettings() {
         body: JSON.stringify({ style: el('set-email-style').value }),
       });
       const result = await res.json();
-      if (msg) msg.textContent = result.success ? '✓ Saved' : 'Failed';
+      if (msg) msg.textContent = result.success ? '\u2713 ' + (window.__t || (k=>k))('settings.saved') : (window.__t || (k=>k))('settings.saveFailed');
       setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
     } catch (e) {
-      if (msg) msg.textContent = 'Failed';
+        if (msg) msg.textContent = (window.__t || (k=>k))('misc.failed');
     }
   });
 }
@@ -3345,11 +3359,11 @@ async function initIntegrations() {
   async function renderList() {
     try {
       const res = await fetch('/api/auth/integrations', { credentials: 'same-origin' });
-      if (!res.ok) { listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:12px;">Admin access required</div>'; return; }
+      if (!res.ok) { listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:12px;">' + ((window.__t || (k=>k))('settings.adminAccessRequired')) + '</div>'; return; }
       const data = await res.json();
       const items = data.integrations || [];
       if (!items.length) {
-        listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center;">No integrations configured</div>';
+        listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center;">' + ((window.__t || (k=>k))('settings.noIntegrations')) + '</div>';
         return;
       }
       listEl.innerHTML = items.map(i => `
@@ -3359,14 +3373,14 @@ async function initIntegrations() {
             <div style="font-size:11px;opacity:0.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(i.base_url || '')}</div>
           </div>
           <div style="display:flex;gap:4px;flex-shrink:0;">
-            <button class="admin-btn-sm intg-edit-btn" data-id="${i.id}" style="font-size:11px;">Edit</button>
-            <button class="admin-btn-sm intg-del-btn" data-id="${i.id}" style="font-size:11px;opacity:0.6;">Del</button>
+            <button class="admin-btn-sm intg-edit-btn" data-id="${i.id}" style="font-size:11px;">${(window.__t || (k=>k))('common.edit')}</button>
+            <button class="admin-btn-sm intg-del-btn" data-id="${i.id}" style="font-size:11px;opacity:0.6;">${(window.__t || (k=>k))('common.delete')}</button>
           </div>
         </div>
       `).join('');
       listEl.querySelectorAll('.intg-edit-btn').forEach(b => b.addEventListener('click', () => startEdit(b.dataset.id)));
       listEl.querySelectorAll('.intg-del-btn').forEach(b => b.addEventListener('click', () => doDelete(b.dataset.id)));
-    } catch (e) { listEl.innerHTML = '<div style="padding:12px;color:var(--red);font-size:12px;">Failed to load</div>'; }
+    } catch (e) { listEl.innerHTML = '<div style="padding:12px;color:var(--red);font-size:12px;">' + ((window.__t || (k=>k))('settings.failedToLoad')) + '</div>'; }
   }
 
   function _esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
@@ -3374,7 +3388,7 @@ async function initIntegrations() {
   // Start editing
   async function startEdit(id) {
     editingId = id;
-    formTitle.textContent = 'Edit Integration';
+    formTitle.textContent = (window.__t || (k=>k))('settings.editIntegration');
     // Fetch full data (with unmasked key from a dedicated edit fetch — we'll just load what we have)
     try {
       const res = await fetch('/api/auth/integrations', { credentials: 'same-origin' });
@@ -3397,7 +3411,7 @@ async function initIntegrations() {
   // Show add form
   addBtn.addEventListener('click', () => {
     editingId = null;
-    formTitle.textContent = 'Add Integration';
+    formTitle.textContent = (window.__t || (k=>k))('settings.addIntegration');
     presetSel.value = '';
     nameIn.value = '';
     urlIn.value = '';
@@ -3427,49 +3441,49 @@ async function initIntegrations() {
     };
     if (presetSel.value) payload.preset = presetSel.value;
     if (keyIn.value.trim()) payload.api_key = keyIn.value.trim();
-    if (!payload.name) { statusEl.textContent = 'Name required'; statusEl.style.color = 'var(--red)'; return; }
-    if (!payload.base_url) { statusEl.textContent = 'URL required'; statusEl.style.color = 'var(--red)'; return; }
+    if (!payload.name) { statusEl.textContent = (window.__t || (k=>k))('settings.nameRequired'); statusEl.style.color = 'var(--red)'; return; }
+    if (!payload.base_url) { statusEl.textContent = (window.__t || (k=>k))('settings.urlRequired'); statusEl.style.color = 'var(--red)'; return; }
 
     try {
       const url = editingId ? `/api/auth/integrations/${editingId}` : '/api/auth/integrations';
       const method = editingId ? 'PUT' : 'POST';
       const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), credentials: 'same-origin' });
       if (res.ok) {
-        statusEl.textContent = 'Saved';
+        statusEl.textContent = (window.__t || (k=>k))('settings.saved');
         statusEl.style.color = 'var(--green, #98c379)';
         formCard.style.display = 'none';
         await renderList();
         notifyIntegrationsChanged();
       } else {
         const err = await res.json().catch(() => ({}));
-        statusEl.textContent = err.detail || 'Save failed';
+        statusEl.textContent = err.detail || (window.__t || (k=>k))('settings.saveFailed');
         statusEl.style.color = 'var(--red)';
       }
     } catch (e) {
-      statusEl.textContent = 'Error saving';
+      statusEl.textContent = (window.__t || (k=>k))('settings.errorSaving');
       statusEl.style.color = 'var(--red)';
     }
   });
 
   // Test
   testBtn.addEventListener('click', async () => {
-    if (!editingId) { statusEl.textContent = 'Save first, then test'; statusEl.style.color = 'var(--fg)'; return; }
-    statusEl.textContent = 'Testing...';
+    if (!editingId) { statusEl.textContent = (window.__t || (k=>k))('settings.saveFirstThenTest'); statusEl.style.color = 'var(--fg)'; return; }
+    statusEl.textContent = (window.__t || (k=>k))('settings.testing');
     statusEl.style.color = 'var(--fg)';
     try {
       const res = await fetch(`/api/auth/integrations/${editingId}/test`, { method: 'POST', credentials: 'same-origin' });
       const data = await res.json();
-      statusEl.textContent = data.message || (data.ok ? 'OK' : 'Failed');
+      statusEl.textContent = data.message || (data.ok ? (window.__t || (k=>k))('common.success') : (window.__t || (k=>k))('common.error'));
       statusEl.style.color = data.ok ? 'var(--green, #98c379)' : 'var(--red)';
     } catch (e) {
-      statusEl.textContent = 'Connection failed';
+      statusEl.textContent = (window.__t || (k=>k))('settings.connectionFailed');
       statusEl.style.color = 'var(--red)';
     }
   });
 
   // Delete
   async function doDelete(id) {
-    if (!await window.styledConfirm('Delete this integration?', { confirmText: 'Delete', danger: true })) return;
+    if (!await window.styledConfirm('Delete this integration?', { confirmText: (window.__t || (k=>k))('common.delete'), danger: true })) return;
     try {
       await fetch(`/api/auth/integrations/${id}`, { method: 'DELETE', credentials: 'same-origin' });
       if (editingId === id) { formCard.style.display = 'none'; editingId = null; }
@@ -3600,7 +3614,7 @@ async function initUnifiedIntegrations() {
     const items = [];
     // API integrations
     for (const intg of (apiRes.integrations || [])) {
-      items.push({ type: 'api', id: intg.id, name: intg.name || 'Unnamed', detail: intg.base_url || '', enabled: intg.enabled !== false, data: intg });
+      items.push({ type: 'api', id: intg.id, name: intg.name || (window.__t || (k=>k))('settings.unnamed'), detail: intg.base_url || '', enabled: intg.enabled !== false, data: intg });
     }
     // CalDAV — one card per account
     for (const acc of (calRes.accounts || [])) {
@@ -3637,8 +3651,8 @@ async function initUnifiedIntegrations() {
     // MCP servers
     const mcpList = Array.isArray(mcpRes) ? mcpRes : (mcpRes.servers || []);
     for (const srv of mcpList) {
-      const statusText = srv.needs_oauth ? 'needs auth' : srv.status === 'connected' ? `${srv.enabled_tool_count}/${srv.tool_count} tools` : srv.status === 'error' ? 'error' : 'disconnected';
-      items.push({ type: 'mcp', id: srv.id || srv.name, name: srv.name || 'MCP Server', detail: statusText, enabled: srv.is_enabled !== false, data: srv });
+      const statusText = srv.needs_oauth ? (window.__t || (k=>k))('settings.testingConnection') : srv.status === 'connected' ? `${srv.enabled_tool_count}/${srv.tool_count} tools` : srv.status === 'error' ? (window.__t || (k=>k))('common.error') : (window.__t || (k=>k))('settings.disconnected');
+      items.push({ type: 'mcp', id: srv.id || srv.name, name: srv.name || 'MCP', detail: statusText, enabled: srv.is_enabled !== false, data: srv });
     }
     for (const tok of (Array.isArray(tokenRes) ? tokenRes : [])) {
       const scopes = tok.scopes || [];
@@ -3684,10 +3698,10 @@ async function initUnifiedIntegrations() {
     const noticeHtml = integrationNotice ? `
       <div class="intg-followup-note" style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:8px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);border-left:3px solid var(--accent, var(--red));border-radius:5px;background:color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);font-size:11px;">
         <span style="flex:1;line-height:1.35">${integrationNotice}</span>
-        <button type="button" class="admin-btn-sm intg-open-email-settings" style="white-space:nowrap;">Email settings</button>
+        <button type="button" class="admin-btn-sm intg-open-email-settings" style="white-space:nowrap;">${(window.__t || (k=>k))('settings.email')}</button>
       </div>` : '';
     if (items.length === 0) {
-      listEl.innerHTML = noticeHtml + '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center">No integrations configured</div>';
+      listEl.innerHTML = noticeHtml + '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center">' + ((window.__t || (k=>k))('settings.noIntegrations')) + '</div>';
     } else {
       listEl.innerHTML = noticeHtml + items.map(renderCard).join('');
     }
@@ -3714,7 +3728,7 @@ async function initUnifiedIntegrations() {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
         const intgName = btn.dataset.intgName || 'this integration';
-        if (!await window.styledConfirm(`Remove "${intgName}"?`, { confirmText: 'Remove', danger: true })) return;
+        if (!await window.styledConfirm(`Remove "${intgName}"?`, { confirmText: (window.__t || (k=>k))('common.delete'), danger: true })) return;
         const type = btn.dataset.intgType;
         const id = btn.dataset.intgId;
         try {
@@ -3798,7 +3812,7 @@ async function initUnifiedIntegrations() {
       .map(([k, label]) => `<button type="button" class="ufapi-option" data-value="${esc(k)}" style="display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;background:transparent;border:0;color:var(--fg);font:inherit;cursor:pointer;text-align:left;">${_apiIconFor(k)}<span>${esc(label)}</span></button>`).join('');
     formEl.innerHTML = `
       <div class="admin-card" style="margin-top:8px">
-        <h2 style="font-size:13px;display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>API Integration</h2>
+        <h2 style="font-size:13px;display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>${(window.__t || (k=>k))('settings.addIntegration')}</h2>
         <div class="settings-col">
           <div class="settings-row"><label class="settings-label">Preset</label>
             <div style="position:relative;flex:1;min-width:0;">
@@ -3819,9 +3833,9 @@ async function initUnifiedIntegrations() {
           <div class="settings-row"><label class="settings-label">API Key${_apiHint('The secret token the service issued you (generated in its admin panel / settings). Used to prove your identity on each request. Required for any Auth mode except None.')}</label><input id="uf-api-key" class="settings-input" type="password" placeholder="Token/key"></div>
           <div class="settings-row" style="margin-top:10px;align-items:center;justify-content:flex-end;gap:6px;">
             <span id="uf-api-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
-            <button class="admin-btn-add" id="uf-api-test" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Test</button>
-            <button class="admin-btn-add" id="uf-api-save" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));font-weight:600;">Save</button>
-            <button class="admin-btn-add" id="uf-api-cancel" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Cancel</button>
+            <button class="admin-btn-add" id="uf-api-test" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">${(window.__t || (k=>k))('settings.testing')}</button>
+            <button class="admin-btn-add" id="uf-api-save" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));font-weight:600;">${(window.__t || (k=>k))('common.save')}</button>
+            <button class="admin-btn-add" id="uf-api-cancel" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">${(window.__t || (k=>k))('common.cancel')}</button>
           </div>
         </div>
       </div>`;
@@ -3915,8 +3929,8 @@ async function initUnifiedIntegrations() {
       const presetKey = preset.value || undefined;
       const nameValue = name.value.trim();
       const urlValue = url.value.trim();
-      if (!nameValue) { el('uf-api-msg').textContent = 'Name required'; el('uf-api-msg').style.color = 'var(--red)'; return; }
-      if (!urlValue) { el('uf-api-msg').textContent = 'Base URL required'; el('uf-api-msg').style.color = 'var(--red)'; return; }
+      if (!nameValue) { el('uf-api-msg').textContent = (window.__t || (k=>k))('settings.nameRequired'); el('uf-api-msg').style.color = 'var(--red)'; return; }
+      if (!urlValue) { el('uf-api-msg').textContent = (window.__t || (k=>k))('settings.urlRequired'); el('uf-api-msg').style.color = 'var(--red)'; return; }
       const body = { name: nameValue, base_url: urlValue, auth_type: auth.value, auth_header: header.value, preset: presetKey };
       if (key.value) body.api_key = key.value;
       try {
@@ -3931,25 +3945,25 @@ async function initUnifiedIntegrations() {
         // level would silently miss, leaving Test perpetually stuck on
         // "Save first" until the form was reopened.
         if (!_editId && saved) _editId = saved.integration?.id || saved.id;
-        el('uf-api-msg').textContent = 'Saved'; el('uf-api-msg').style.color = 'var(--green,#50fa7b)';
+        el('uf-api-msg').textContent = (window.__t || (k=>k))('settings.saved'); el('uf-api-msg').style.color = 'var(--green,#50fa7b)';
         await renderList();
         notifyIntegrationsChanged();
-      } catch (_) { el('uf-api-msg').textContent = 'Failed'; el('uf-api-msg').style.color = 'var(--red)'; }
+      } catch (_) { el('uf-api-msg').textContent = (window.__t || (k=>k))('misc.failed'); el('uf-api-msg').style.color = 'var(--red)'; }
     });
     el('uf-api-test').addEventListener('click', async () => {
-      if (!_editId) { el('uf-api-msg').textContent = 'Save first'; return; }
+      if (!_editId) { el('uf-api-msg').textContent = (window.__t || (k=>k))('settings.saveFirstThenTest'); return; }
       try {
         const r = await fetch(`/api/auth/integrations/${_editId}/test`, { method: 'POST', credentials: 'same-origin' });
         const d = await r.json();
         // Backend returns {ok: bool, message: str}
         if (d.ok) {
-          el('uf-api-msg').textContent = d.message || 'Connected';
+          el('uf-api-msg').textContent = d.message || (window.__t || (k=>k))('common.success');
           el('uf-api-msg').style.color = 'var(--green,#50fa7b)';
         } else {
           el('uf-api-msg').textContent = (d.message || d.error || d.detail || `HTTP ${r.status}`).slice(0, 360);
           el('uf-api-msg').style.color = 'var(--red)';
         }
-      } catch (e) { el('uf-api-msg').textContent = 'Error: ' + e.message; el('uf-api-msg').style.color = 'var(--red)'; }
+      } catch (e) { el('uf-api-msg').textContent = (window.__t || (k=>k))('common.error') + ': ' + e.message; el('uf-api-msg').style.color = 'var(--red)'; }
     });
   }
 
@@ -3958,7 +3972,7 @@ async function initUnifiedIntegrations() {
     const isNew = !editId || editId === 'new';
     formEl.innerHTML = `
       <div class="admin-card" style="margin-top:8px">
-        <h2 style="font-size:13px;display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>${isNew ? 'Add CalDAV Calendar' : 'Edit CalDAV Calendar'}</h2>
+        <h2 style="font-size:13px;display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>${isNew ? (window.__t || (k=>k))('settings.addIntegration') : (window.__t || (k=>k))('settings.editIntegration')}</h2>
         <div class="settings-col">
           <div class="settings-row"><label class="settings-label">Label</label><input id="uf-caldav-label" class="settings-input" placeholder="e.g. Work, Personal"></div>
           <div class="settings-row"><label class="settings-label">Server URL</label><input id="uf-caldav-url" class="settings-input" placeholder="https://www.google.com/calendar/dav/you@gmail.com/user/"></div>
@@ -3966,9 +3980,9 @@ async function initUnifiedIntegrations() {
           <div class="settings-row"><label class="settings-label">Password</label><input id="uf-caldav-pass" class="settings-input" type="password" placeholder="${isNew ? '' : 'Leave blank to keep existing'}"></div>
           <div class="settings-row" style="margin-top:10px;align-items:center;justify-content:flex-end;gap:6px;">
             <span id="uf-caldav-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
-            <button class="admin-btn-add" id="uf-caldav-test" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Test</button>
-            <button class="admin-btn-add" id="uf-caldav-save" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));font-weight:600;">Save</button>
-            <button class="admin-btn-add" id="uf-caldav-cancel" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Cancel</button>
+            <button class="admin-btn-add" id="uf-caldav-test" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">${(window.__t || (k=>k))('settings.testing')}</button>
+            <button class="admin-btn-add" id="uf-caldav-save" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));font-weight:600;">${(window.__t || (k=>k))('common.save')}</button>
+            <button class="admin-btn-add" id="uf-caldav-cancel" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">${(window.__t || (k=>k))('common.cancel')}</button>
           </div>
         </div>
       </div>`;
@@ -4014,11 +4028,11 @@ async function initUnifiedIntegrations() {
     };
 
     el('uf-caldav-save').addEventListener('click', async () => {
-      _setCalDavMsg('Testing…', true);
+      _setCalDavMsg((window.__t || (k=>k))('settings.testing'), true);
       el('uf-caldav-msg').style.color = '';
       const d = await _runCalDavTest();
       if (!d.ok) {
-        _setCalDavMsg(d.error || 'Connection failed — not saved', false);
+        _setCalDavMsg(d.error || (window.__t || (k=>k))('settings.connectionFailed'), false);
         return;
       }
       try {
@@ -4044,23 +4058,23 @@ async function initUnifiedIntegrations() {
         }
         if (!resp.ok) {
           const err = await resp.json().catch(() => ({}));
-          _setCalDavMsg(err.detail || 'Save failed', false);
+          _setCalDavMsg(err.detail || (window.__t || (k=>k))('settings.saveFailed'), false);
           return;
         }
-        _setCalDavMsg('Saved', true);
+        _setCalDavMsg((window.__t || (k=>k))('settings.saved'), true);
         formEl.style.display = 'none';
         await renderList();
         notifyIntegrationsChanged();
       } catch (_) {
-        _setCalDavMsg('Save failed', false);
+        _setCalDavMsg((window.__t || (k=>k))('settings.saveFailed'), false);
       }
     });
 
     el('uf-caldav-test').addEventListener('click', async () => {
-      _setCalDavMsg('Testing…', true);
+      _setCalDavMsg((window.__t || (k=>k))('settings.testing'), true);
       el('uf-caldav-msg').style.color = '';
       const d = await _runCalDavTest();
-      _setCalDavMsg(d.ok ? 'Connected' : (d.error || 'Failed'), d.ok);
+      _setCalDavMsg(d.ok ? (window.__t || (k=>k))('common.success') : (d.error || (window.__t || (k=>k))('common.error')), d.ok);
     });
   }
 
@@ -4068,7 +4082,7 @@ async function initUnifiedIntegrations() {
   async function showCardDavForm() {
     formEl.innerHTML = `
       <div class="admin-card" style="margin-top:8px">
-        <h2 style="font-size:13px;display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Contacts (CardDAV)</h2>
+        <h2 style="font-size:13px;display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>${(window.__t || (k=>k))('settings.integrations')}</h2>
         <div class="settings-col">
           <div class="settings-row"><label class="settings-label">URL</label><input id="uf-carddav-url" class="settings-input" placeholder="http://localhost:5232/user/contacts/"></div>
           <div class="settings-row"><label class="settings-label">Username</label><input id="uf-carddav-user" class="settings-input"></div>
@@ -4077,33 +4091,33 @@ async function initUnifiedIntegrations() {
             <span id="uf-carddav-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
             <button class="admin-btn-add" id="uf-carddav-save" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));font-weight:600;">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-              Save
+              ${(window.__t || (k=>k))('common.save')}
             </button>
             <button class="admin-btn-add" id="uf-carddav-cancel" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              Cancel
+              ${(window.__t || (k=>k))('common.cancel')}
             </button>
           </div>
         </div>
       </div>
       <div class="admin-card contacts-manager" style="margin-top:8px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-          <h2 style="font-size:13px;margin:0;display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Contacts Import <span id="cm-count" style="opacity:0.5;font-weight:normal;font-size:11px;"></span></h2>
-          <button class="admin-btn-sm" id="cm-import-btn" style="margin-left:auto;">Import</button>
-          <button class="admin-btn-sm" id="cm-export-vcf-btn">Export .vcf</button>
-          <button class="admin-btn-sm" id="cm-export-csv-btn">Export .csv</button>
-          <button class="admin-btn-sm" id="cm-add-toggle">+ Add</button>
+          <h2 style="font-size:13px;margin:0;display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>${(window.__t || (k=>k))('settings.integrations')} <span id="cm-count" style="opacity:0.5;font-weight:normal;font-size:11px;"></span></h2>
+          <button class="admin-btn-sm" id="cm-import-btn" style="margin-left:auto;">${(window.__t || (k=>k))('common.add')}</button>
+          <button class="admin-btn-sm" id="cm-export-vcf-btn">${(window.__t || (k=>k))('common.export')} .vcf</button>
+          <button class="admin-btn-sm" id="cm-export-csv-btn">${(window.__t || (k=>k))('common.export')} .csv</button>
+          <button class="admin-btn-sm" id="cm-add-toggle">+ ${(window.__t || (k=>k))('common.add')}</button>
           <input type="file" id="cm-import-file" accept=".vcf,.csv,text/vcard,text/csv" multiple style="display:none">
         </div>
         <div id="cm-add-row" class="contacts-add-row" style="display:none;flex-direction:column;gap:4px;">
           <input id="cm-add-name" class="settings-input" placeholder="Name">
           <input id="cm-add-email" class="settings-input" placeholder="email@example.com">
-          <input id="cm-add-phone" class="settings-input" placeholder="Phone (optional)">
-          <input id="cm-add-address" class="settings-input" placeholder="Address (optional)">
-          <div style="display:flex;gap:6px;justify-content:flex-end;"><button class="admin-btn-sm" id="cm-add-save">Save</button></div>
+          <input id="cm-add-phone" class="settings-input" placeholder="${(window.__t || (k=>k))('settings.phoneOptional')}">
+          <input id="cm-add-address" class="settings-input" placeholder="${(window.__t || (k=>k))('settings.addressOptional')}">
+          <div style="display:flex;gap:6px;justify-content:flex-end;"><button class="admin-btn-sm" id="cm-add-save">${(window.__t || (k=>k))('common.save')}</button></div>
         </div>
-        <input type="text" id="cm-search" class="settings-input" placeholder="Search contacts (name, email, phone, address)" style="margin-top:6px;">
-        <div id="cm-list" class="contacts-list"><div style="opacity:0.4;font-size:11px;padding:8px 2px;">Loading…</div></div>
+        <input type="text" id="cm-search" class="settings-input" placeholder="${(window.__t || (k=>k))('settings.searchContacts')}" style="margin-top:6px;">
+        <div id="cm-list" class="contacts-list"><div style="opacity:0.4;font-size:11px;padding:8px 2px;">${(window.__t || (k=>k))('settings.loading')}</div></div>
       </div>`;
     try {
       const r = await fetch('/api/contacts/config', { credentials: 'same-origin' }); const d = await r.json();
@@ -4120,7 +4134,7 @@ async function initUnifiedIntegrations() {
       if (el('uf-carddav-pass').value) body.carddav_password = el('uf-carddav-pass').value;
       try {
         await fetch('/api/contacts/config', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        el('uf-carddav-msg').textContent = 'Saved';
+        el('uf-carddav-msg').textContent = (window.__t || (k=>k))('settings.saved');
         el('uf-carddav-msg').style.color = 'var(--green, #50fa7b)';
         // Refresh both the sub-panel (contacts manager) AND the
         // outer integrations list so the CardDAV row appears
@@ -4129,7 +4143,7 @@ async function initUnifiedIntegrations() {
         await renderList();
         notifyIntegrationsChanged();
       } catch (_) {
-        el('uf-carddav-msg').textContent = 'Failed';
+        el('uf-carddav-msg').textContent = (window.__t || (k=>k))('misc.failed');
         el('uf-carddav-msg').style.color = 'var(--red)';
       }
     });
@@ -4161,10 +4175,10 @@ async function initUnifiedIntegrations() {
     const _downloadContacts = async (format) => {
       const btn = el(format === 'csv' ? 'cm-export-csv-btn' : 'cm-export-vcf-btn');
       const orig = btn ? btn.textContent : '';
-      if (btn) { btn.textContent = 'Exporting...'; btn.disabled = true; }
+      if (btn) { btn.textContent = (window.__t || (k=>k))('settings.loading'); btn.disabled = true; }
       try {
         const res = await fetch(`/api/contacts/export?format=${encodeURIComponent(format)}`, { credentials: 'same-origin' });
-        if (!res.ok) throw new Error('Export failed');
+        if (!res.ok) throw new Error((window.__t || (k=>k))('settings.failedToSave'));
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -4175,7 +4189,7 @@ async function initUnifiedIntegrations() {
         a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
       } catch (_) {
-        uiModule.showError ? uiModule.showError('Export failed') : alert('Export failed');
+        uiModule.showError ? uiModule.showError((window.__t || (k=>k))('settings.failedToSave')) : alert((window.__t || (k=>k))('settings.failedToSave'));
       } finally {
         if (btn) { btn.textContent = orig; btn.disabled = false; }
       }
@@ -4192,7 +4206,7 @@ async function initUnifiedIntegrations() {
       if (!files.length) return;
       const btn = el('cm-import-btn');
       const orig = btn ? btn.textContent : '';
-      if (btn) { btn.textContent = 'Importing…'; btn.disabled = true; }
+      if (btn) { btn.textContent = (window.__t || (k=>k))('settings.loading'); btn.disabled = true; }
       try {
         const texts = await Promise.all(files.map(f => f.text()));
         const vcfParts = [];
@@ -4217,11 +4231,11 @@ async function initUnifiedIntegrations() {
         };
         if (vcfParts.length) await _postImport({ vcf: vcfParts.join('\n') });
         if (csvParts.length) await _postImport({ csv: csvParts.join('\n') });
-        if (!vcfParts.length && !csvParts.length) throw new Error('No contact data found');
+        if (!vcfParts.length && !csvParts.length) throw new Error((window.__t || (k=>k))('settings.noContactsYet'));
         const msg = `Imported ${imported}/${total}` + (failed ? ` (${failed} failed)` : '');
         uiModule.showToast ? uiModule.showToast(msg) : null;
       } catch (err) {
-        uiModule.showError ? uiModule.showError(err?.message || 'Import failed') : alert(err?.message || 'Import failed');
+        uiModule.showError ? uiModule.showError(err?.message || (window.__t || (k=>k))('settings.failedToSave')) : alert(err?.message || (window.__t || (k=>k))('settings.failedToSave'));
       } finally {
         if (btn) { btn.textContent = orig; btn.disabled = false; }
         e.target.value = '';
@@ -4242,13 +4256,13 @@ async function initUnifiedIntegrations() {
       const d = await r.json();
       contacts = d.contacts || [];
     } catch (_) {
-      list.innerHTML = '<div style="opacity:0.5;font-size:11px;padding:8px 2px;">Failed to load contacts (check CardDAV config above).</div>';
+      list.innerHTML = '<div style="opacity:0.5;font-size:11px;padding:8px 2px;">' + ((window.__t || (k=>k))('settings.failedToLoadContacts')) + '</div>';
       return;
     }
     const cnt = el('cm-count');
     if (cnt) cnt.textContent = contacts.length ? `(${contacts.length})` : '';
     if (!contacts.length) {
-      list.innerHTML = '<div style="opacity:0.4;font-size:11px;padding:8px 2px;">No contacts yet.</div>';
+      list.innerHTML = '<div style="opacity:0.4;font-size:11px;padding:8px 2px;">' + ((window.__t || (k=>k))('settings.noContactsYet')) + '</div>';
       return;
     }
     // Sort by name for a stable list.
@@ -4269,7 +4283,7 @@ async function initUnifiedIntegrations() {
     if (cnt) cnt.textContent = contacts.length ? `(${filtered.length}/${contacts.length})` : '';
 
     if (!filtered.length) {
-      list.innerHTML = `<div style="opacity:0.4;font-size:11px;padding:8px 2px;">${q ? 'No matches.' : 'No contacts yet.'}</div>`;
+      list.innerHTML = `<div style="opacity:0.4;font-size:11px;padding:8px 2px;">${q ? (window.__t || (k=>k))('settings.noContactsYet') : (window.__t || (k=>k))('settings.noContactsYet')}</div>`;
     } else {
       list.innerHTML = filtered.map(c => {
         const emails = (c.emails || []).join(', ');
@@ -4279,16 +4293,16 @@ async function initUnifiedIntegrations() {
         return `<div class="contact-row" data-uid="${esc(c.uid)}">
           <div class="contact-row-view" style="display:flex;align-items:center;gap:8px;">
             <div style="flex:1;min-width:0;">
-              <div class="contact-name" style="font-size:12px;font-weight:600;">${esc(c.name || '(no name)')}</div>
+              <div class="contact-name" style="font-size:12px;font-weight:600;">${esc(c.name || (window.__t || (k=>k))('settings.noName'))}</div>
               <div class="contact-sub" style="font-size:10px;opacity:0.55;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(sub)}</div>
             </div>
-            <button class="admin-btn-sm contact-edit" title="Edit" style="display:inline-flex;align-items:center;gap:4px;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 35%, var(--border));">
+            <button class="admin-btn-sm contact-edit" title="${(window.__t || (k=>k))('common.edit')}" style="display:inline-flex;align-items:center;gap:4px;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 35%, var(--border));">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-              Edit
+              ${(window.__t || (k=>k))('common.edit')}
             </button>
-            <button class="admin-btn-sm contact-del" title="Delete" style="opacity:0.85;display:inline-flex;align-items:center;gap:4px;">
+            <button class="admin-btn-sm contact-del" title="${(window.__t || (k=>k))('common.delete')}" style="opacity:0.85;display:inline-flex;align-items:center;gap:4px;">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-              Delete
+              ${(window.__t || (k=>k))('common.delete')}
             </button>
           </div>
           <div class="contact-row-edit" style="display:none;flex-direction:column;gap:4px;">
@@ -4296,7 +4310,7 @@ async function initUnifiedIntegrations() {
             <input class="settings-input contact-edit-emails" value="${esc(emails)}" placeholder="email1, email2">
             <input class="settings-input contact-edit-phones" value="${esc(phones)}" placeholder="phone1, phone2">
             <input class="settings-input contact-edit-address" value="${esc(address)}" placeholder="Address">
-            <div style="display:flex;gap:6px;"><button class="admin-btn-sm contact-save">Save</button><button class="admin-btn-sm contact-cancel" style="opacity:0.7;">Cancel</button></div>
+            <div style="display:flex;gap:6px;"><button class="admin-btn-sm contact-save">${(window.__t || (k=>k))('common.save')}</button><button class="admin-btn-sm contact-cancel" style="opacity:0.7;">${(window.__t || (k=>k))('common.cancel')}</button></div>
           </div>
         </div>`;
       }).join('');
@@ -4340,7 +4354,7 @@ async function initUnifiedIntegrations() {
       });
       row.querySelector('.contact-del')?.addEventListener('click', async () => {
         const ok = uiModule.styledConfirm
-          ? await uiModule.styledConfirm('Delete this contact?', { confirmText: 'Delete', danger: true })
+          ? await uiModule.styledConfirm('Delete this contact?', { confirmText: (window.__t || (k=>k))('common.delete'), danger: true })
           : window.confirm('Delete this contact?');
         if (!ok) return;
         try {
@@ -4408,7 +4422,7 @@ async function initUnifiedIntegrations() {
     const _smtpSecurity = (acct) => acct?.smtp_security || ((parseInt(acct?.smtp_port || 465) === 587) ? 'starttls' : 'ssl');
     formEl.innerHTML = `
       <div class="admin-card" style="margin-top:8px">
-        <h2 style="font-size:13px">${isEdit ? 'Edit' : 'Add'} Email Account</h2>
+        <h2 style="font-size:13px">${isEdit ? (window.__t || (k=>k))('settings.editIntegration') : (window.__t || (k=>k))('common.add')} Email</h2>
         <div class="settings-col">
           <div class="settings-row"><label class="settings-label">Provider${_hint('Pick a known provider to auto-fill the IMAP and SMTP host/port. Choose Custom to type your own.')}</label>
             <div class="ufp-wrap" style="position:relative;flex:1;min-width:0;">
@@ -4426,17 +4440,17 @@ async function initUnifiedIntegrations() {
           <div class="settings-row"><label class="settings-label">Email${_hint('Your email address. Used as the From: header on outgoing mail and as the display label when Name is blank.')}</label><input id="uf-email-from" class="settings-input" placeholder="you@example.com"></div>
           <div class="settings-row"><label class="settings-label">Display Name${_hint('Your name as it appears in the From: field of emails you send, e.g. Jane Smith. Auto-filled from Google during OAuth.')}</label><input id="uf-display-name" class="settings-input" placeholder="Your Name"></div>
           <div id="uf-oauth-section" style="display:none;margin:8px 0;padding:10px;border:1px solid var(--border);border-radius:6px;background:color-mix(in srgb,var(--accent,#50fa7b) 6%,transparent)">
-            <div style="font-size:11px;font-weight:600;margin-bottom:6px">Google OAuth2 — required for Workspace / .edu accounts</div>
-            <div id="uf-oauth-status" style="font-size:11px;opacity:0.7;margin-bottom:6px">${existing && existing.oauth_provider === 'google' ? '✓ Connected via Google OAuth' : 'Not connected — click below to authorize'}</div>
+            <div style="font-size:11px;font-weight:600;margin-bottom:6px">${(window.__t || (k=>k))('settings.googleOAuth2')}</div>
+            <div id="uf-oauth-status" style="font-size:11px;opacity:0.7;margin-bottom:6px">${existing && existing.oauth_provider === 'google' ? '\u2713 ' + (window.__t || (k=>k))('settings.connected') : (window.__t || (k=>k))('settings.disconnected')}</div>
             <button type="button" id="uf-oauth-btn" class="admin-btn-add" style="font-size:11px">${existing && existing.oauth_provider === 'google' ? 'Reconnect with Google' : 'Connect with Google'}</button>
           </div>
-          <div style="font-size:11px;font-weight:600;opacity:0.6;margin:4px 0 2px;display:flex;align-items:center;gap:5px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;" aria-hidden="true"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>IMAP (Receiving)</div>
+          <div style="font-size:11px;font-weight:600;opacity:0.6;margin:4px 0 2px;display:flex;align-items:center;gap:5px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;" aria-hidden="true"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>${(window.__t || (k=>k))('settings.imapReceiving')}</div>
           <div class="settings-row"><label class="settings-label">Host${_hint('Your IMAP server, e.g. imap.gmail.com, imap.migadu.com, a LAN host, or a Tailscale IP for Dovecot.')}</label><input id="uf-imap-host" class="settings-input" placeholder="imap.example.com"></div>
           <div class="settings-row"><label class="settings-label">Port${_hint('993 for IMAPS (most providers), 143 for plain or STARTTLS. Local servers often use a custom port like 31143.')}</label><input id="uf-imap-port" class="settings-input" type="number" placeholder="993" style="max-width:100px"></div>
           <div class="settings-row"><label class="settings-label">Username${_hint('Yes — your full email address goes here too (e.g. you@gmail.com). Same as the Email field above for almost every provider.')}</label><input id="uf-imap-user" class="settings-input" placeholder="you@example.com"></div>
           <div class="uf-password-section"><div class="settings-row"><label class="settings-label">Password${_hint('For Gmail, iCloud, and Yahoo: paste your App Password (NOT your normal account password). For Migadu and Fastmail, your mailbox password usually works. Outlook / Office 365 generally requires OAuth and will not work with this password form.')}</label><input id="uf-imap-pass" class="settings-input" type="password" placeholder="${placeholderPass}"></div></div>
           <div class="settings-row"><label class="settings-label">STARTTLS${_hint('Turn ON for port 143/587 to upgrade plain to TLS. Turn OFF for port 993 (IMAPS — already encrypted) or a local server with no TLS configured.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-imap-starttls" checked><span class="admin-slider"></span></label></div>
-          <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px;display:flex;align-items:center;gap:5px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>SMTP (Sending) <span style="font-weight:normal;opacity:0.7">— optional, leave blank for read-only</span></div>
+          <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px;display:flex;align-items:center;gap:5px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>${(window.__t || (k=>k))('settings.smtpOptional')}</div>
           <div class="settings-row"><label class="settings-label">Host${_hint('Your outgoing-mail server, e.g. smtp.gmail.com. Leave blank to make this account read-only.')}</label><input id="uf-smtp-host" class="settings-input" placeholder="smtp.example.com"></div>
           <div class="settings-row"><label class="settings-label">Port${_hint('465 for SSL/SMTPS, 587 for STARTTLS. 25 is usually blocked by ISPs.')}</label><input id="uf-smtp-port" class="settings-input" type="number" placeholder="465" style="max-width:100px"></div>
           <div class="settings-row"><label class="settings-label">Security${_hint('SSL for port 465, STARTTLS for port 587, or None for local SMTP bridges such as Proton Mail Bridge.')}</label><select id="uf-smtp-security" class="settings-select"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option><option value="none">None</option></select></div>
@@ -4446,21 +4460,21 @@ async function initUnifiedIntegrations() {
           <div class="settings-row" style="margin-top:4px"><label class="settings-label">Default${_hint('Use this account whenever no specific account is chosen.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-email-default"><span class="admin-slider"></span></label><span style="font-size:10px;opacity:0.5;margin-left:6px">Used when nothing else is selected</span></div>
           <div class="settings-row" style="margin-top:10px;align-items:center;justify-content:flex-end;gap:6px;">
             <span id="uf-email-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
-            <button class="admin-btn-add" id="uf-email-test" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">
+              <button class="admin-btn-add" id="uf-email-test" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">
               <span class="uf-email-test-ico" style="display:inline-flex;width:11px;height:11px;align-items:center;justify-content:center;">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 4 12 14.01 9 11.01"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
               </span>
-              Test
+              ${(window.__t || (k=>k))('settings.testing')}
             </button>
             <button class="admin-btn-add" id="uf-email-save" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));font-weight:600;">
               <span class="uf-email-save-ico" style="display:inline-flex;width:11px;height:11px;align-items:center;justify-content:center;">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
               </span>
-              <span class="uf-email-save-label">${isEdit ? 'Save' : 'Create'}</span>
+              <span class="uf-email-save-label">${isEdit ? (window.__t || (k=>k))('common.save') : (window.__t || (k=>k))('common.new')}</span>
             </button>
             <button class="admin-btn-add" id="uf-email-cancel" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              Cancel
+              ${(window.__t || (k=>k))('common.cancel')}
             </button>
           </div>
         </div>
@@ -4530,11 +4544,11 @@ async function initUnifiedIntegrations() {
         const orig = copyBtn.innerHTML;
         const ok = await _copyProviderUrl(url);
         if (!ok) {
-          uiModule.showError?.('Copy failed');
+          uiModule.showError?.((window.__t || (k=>k))('settings.failedToSave'));
           return;
         }
-        uiModule.showToast?.('Copied');
-        copyBtn.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Copied';
+        uiModule.showToast?.((window.__t || (k=>k))('common.success'));
+        copyBtn.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> ' + (window.__t || (k=>k))('common.success');
         setTimeout(() => {
           if (copyBtn.isConnected) copyBtn.innerHTML = orig;
         }, 1500);
@@ -4554,7 +4568,7 @@ async function initUnifiedIntegrations() {
           </a>
           <button type="button" class="admin-btn-sm uf-prov-copy" data-url="${esc(n.url)}" style="opacity:0.7;display:inline-flex;align-items:center;gap:5px;">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-            Copy link
+            ${(window.__t || (k=>k))('common.copy')}
           </button>
         </div>`;
     };
@@ -4650,12 +4664,12 @@ async function initUnifiedIntegrations() {
     el('uf-oauth-btn').addEventListener('click', async () => {
       const body = _collectBody();
       if (!body.name) body.name = body.from_address;
-      if (!body.name) { el('uf-email-msg').textContent = 'Enter a Name or Email first'; el('uf-email-msg').style.color = 'var(--red)'; return; }
+      if (!body.name) { el('uf-email-msg').textContent = (window.__t || (k=>k))('settings.nameRequired'); el('uf-email-msg').style.color = 'var(--red)'; return; }
       const url = isEdit ? `/api/email/accounts/${editId}` : '/api/email/accounts';
       const method = isEdit ? 'PUT' : 'POST';
       const r = await fetch(url, { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const d = await r.json();
-      if (!(d.ok || d.id)) { el('uf-email-msg').textContent = d.error || 'Save failed'; el('uf-email-msg').style.color = 'var(--red)'; return; }
+      if (!(d.ok || d.id)) { el('uf-email-msg').textContent = d.error || (window.__t || (k=>k))('settings.saveFailed'); el('uf-email-msg').style.color = 'var(--red)'; return; }
       const accId = isEdit ? editId : d.id;
       window.location.href = `/api/email/oauth/google/authorize?account_id=${encodeURIComponent(accId)}`;
     });
@@ -4813,7 +4827,7 @@ async function initUnifiedIntegrations() {
         btn.style.borderColor = 'var(--red)';
         btn.style.color = '#fff';
         ico.innerHTML = btn.dataset.origIco;
-        msg.textContent = 'Test error: ' + e.message;
+        msg.textContent = (window.__t || (k=>k))('common.error') + ': ' + e.message;
         msg.style.color = 'var(--red)';
       } finally {
         btn.disabled = false;
@@ -4824,7 +4838,7 @@ async function initUnifiedIntegrations() {
       const body = _collectBody();
       // Name is optional — fall back to Email so the list still has a label.
       if (!body.name) body.name = body.from_address;
-      if (!body.name) { el('uf-email-msg').textContent = 'Need at least a Name or Email'; el('uf-email-msg').style.color = 'var(--red)'; return; }
+      if (!body.name) { el('uf-email-msg').textContent = (window.__t || (k=>k))('settings.nameRequired'); el('uf-email-msg').style.color = 'var(--red)'; return; }
       const saveBtn = el('uf-email-save');
       saveBtn.disabled = true;
       const saveIcoEl = saveBtn.querySelector('.uf-email-save-ico');
@@ -4832,7 +4846,7 @@ async function initUnifiedIntegrations() {
       const prevIco = saveIcoEl.innerHTML;
       const prevLbl = saveLblEl.textContent;
       saveIcoEl.innerHTML = _spinner;
-      saveLblEl.textContent = 'Saving…';
+      saveLblEl.textContent = (window.__t || (k=>k))('misc.saving');
       try {
         const url = isEdit ? `/api/email/accounts/${editId}` : '/api/email/accounts';
         const method = isEdit ? 'PUT' : 'POST';
@@ -4843,18 +4857,18 @@ async function initUnifiedIntegrations() {
         });
         const d = await r.json();
         if (!(d.ok || d.id)) {
-          el('uf-email-msg').textContent = d.error || 'Failed';
+          el('uf-email-msg').textContent = d.error || (window.__t || (k=>k))('misc.failed');
           el('uf-email-msg').style.color = 'var(--red)';
           return;
         }
-        el('uf-email-msg').textContent = 'Saved';
+        el('uf-email-msg').textContent = (window.__t || (k=>k))('settings.saved');
         el('uf-email-msg').style.color = 'var(--green,#50fa7b)';
-        integrationNotice = 'Email account saved. For more settings, go to Settings > Email.';
+        integrationNotice = (window.__t || (k=>k))('settings.email') + ' ' + (window.__t || (k=>k))('settings.saved');
         formEl.style.display = 'none';
         await renderList();
         notifyIntegrationsChanged();
       } catch (e) {
-        el('uf-email-msg').textContent = 'Error: ' + e.message;
+        el('uf-email-msg').textContent = (window.__t || (k=>k))('common.error') + ': ' + e.message;
         el('uf-email-msg').style.color = 'var(--red)';
       } finally {
         saveBtn.disabled = false;
@@ -4868,24 +4882,24 @@ async function initUnifiedIntegrations() {
   async function showVaultForm() {
     formEl.innerHTML = `
       <div class="admin-card" style="margin-top:8px">
-        <h2 style="font-size:13px">Vaultwarden (Password Vault)</h2>
-        <div id="uf-vault-status" style="font-size:11px;opacity:0.7;margin-bottom:8px">Loading...</div>
+        <h2 style="font-size:13px">Vaultwarden</h2>
+        <div id="uf-vault-status" style="font-size:11px;opacity:0.7;margin-bottom:8px">${(window.__t || (k=>k))('settings.loading')}</div>
         <div class="settings-col">
           <div class="settings-row"><label class="settings-label">Server URL</label><input id="uf-vault-url" class="settings-input" placeholder="https://vault.example.com"></div>
           <div class="settings-row"><label class="settings-label">Email</label><input id="uf-vault-email" class="settings-input" placeholder="you@example.com"></div>
-          <div class="settings-row"><label class="settings-label">Master Password</label><input id="uf-vault-pass" class="settings-input" type="password" placeholder="Only required for Login / Unlock"></div>
+          <div class="settings-row"><label class="settings-label">${(window.__t || (k=>k))('settings.masterPasswordRequired')}</label><input id="uf-vault-pass" class="settings-input" type="password" placeholder="${(window.__t || (k=>k))('settings.login')} / ${(window.__t || (k=>k))('settings.unlock')}"></div>
           <div class="settings-row" style="margin-top:10px;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap;">
             <span id="uf-vault-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
-            <button class="admin-btn-add" id="uf-vault-save" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));font-weight:600;">Save Config</button>
-            <button class="admin-btn-add" id="uf-vault-login" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Login</button>
-            <button class="admin-btn-add" id="uf-vault-unlock" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Unlock</button>
-            <button class="admin-btn-add" id="uf-vault-lock" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Lock</button>
-            <button class="admin-btn-add" id="uf-vault-logout" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Logout</button>
-            <button class="admin-btn-add" id="uf-vault-cancel" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Cancel</button>
+            <button class="admin-btn-add" id="uf-vault-save" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));font-weight:600;">${(window.__t || (k=>k))('common.save')}</button>
+            <button class="admin-btn-add" id="uf-vault-login" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">${(window.__t || (k=>k))('settings.login')}</button>
+            <button class="admin-btn-add" id="uf-vault-unlock" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">${(window.__t || (k=>k))('settings.unlock')}</button>
+            <button class="admin-btn-add" id="uf-vault-lock" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">${(window.__t || (k=>k))('settings.lock')}</button>
+            <button class="admin-btn-add" id="uf-vault-logout" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">${(window.__t || (k=>k))('settings.logout')}</button>
+            <button class="admin-btn-add" id="uf-vault-cancel" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">${(window.__t || (k=>k))('common.cancel')}</button>
           </div>
           <div style="font-size:10px;opacity:0.5;margin-top:6px;line-height:1.4">
-            <strong>Login</strong> registers this device with your Vaultwarden account (once per account).<br>
-            <strong>Unlock</strong> decrypts the vault — required after restart or Lock. Session is saved so the assistant can read passwords.
+            <strong>${(window.__t || (k=>k))('settings.login')}</strong> ${(window.__t || (k=>k))('settings.vaultLoginHint')}<br>
+            <strong>${(window.__t || (k=>k))('settings.unlock')}</strong> ${(window.__t || (k=>k))('settings.vaultUnlockHint')}
           </div>
         </div>
       </div>`;
@@ -4904,14 +4918,14 @@ async function initUnifiedIntegrations() {
         el('uf-vault-email').value = d.email || '';
         const installed = d.bw_installed;
         const parts = [];
-        parts.push(installed ? 'bw CLI: installed' : 'bw CLI: NOT installed (install nodejs-bitwarden-cli)');
-        parts.push(d.unlocked ? 'Status: UNLOCKED' : 'Status: locked');
-        if (d.unlocked_at) parts.push(`Last unlock: ${d.unlocked_at.replace('T',' ').slice(0,19)}`);
+        parts.push(installed ? (window.__t || (k=>k))('settings.bwCliInstalled') : (window.__t || (k=>k))('settings.bwCliNotInstalled'));
+        parts.push(d.unlocked ? (window.__t || (k=>k))('settings.statusUnlocked') : (window.__t || (k=>k))('settings.statusLocked'));
+        if (d.unlocked_at) parts.push((window.__t || (k=>k))('settings.lastUnlock') + ': ' + d.unlocked_at.replace('T',' ').slice(0,19));
         const statusEl = el('uf-vault-status');
         statusEl.textContent = parts.join(' — ');
         statusEl.style.color = !installed ? 'var(--red)' : d.unlocked ? 'var(--green,#50fa7b)' : '';
       } catch (_) {
-        el('uf-vault-status').textContent = 'Failed to load vault status';
+        el('uf-vault-status').textContent = (window.__t || (k=>k))('settings.failedToLoadVault');
       }
     }
     await refreshStatus();
@@ -4919,7 +4933,7 @@ async function initUnifiedIntegrations() {
     el('uf-vault-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
 
     el('uf-vault-save').addEventListener('click', async () => {
-      msg('Saving...');
+      msg((window.__t || (k=>k))('settings.loading'));
       try {
         const r = await fetch('/api/vault/config', {
           method: 'POST', credentials: 'same-origin',
@@ -4927,16 +4941,16 @@ async function initUnifiedIntegrations() {
           body: JSON.stringify({ server_url: el('uf-vault-url').value, email: el('uf-vault-email').value }),
         });
         const d = await r.json();
-        if (d.ok) { msg('Saved', 'var(--green,#50fa7b)'); await refreshStatus(); await renderList(); }
-        else msg(d.error || 'Failed', 'var(--red)');
-      } catch (e) { msg('Error: ' + e.message, 'var(--red)'); }
+        if (d.ok) { msg((window.__t || (k=>k))('settings.saved'), 'var(--green,#50fa7b)'); await refreshStatus(); await renderList(); }
+        else msg(d.error || (window.__t || (k=>k))('common.error'), 'var(--red)');
+      } catch (e) { msg((window.__t || (k=>k))('common.error') + ': ' + e.message, 'var(--red)'); }
     });
 
     el('uf-vault-login').addEventListener('click', async () => {
       const email = el('uf-vault-email').value.trim();
       const pass = el('uf-vault-pass').value;
-      if (!email || !pass) { msg('Email + master password required', 'var(--red)'); return; }
-      msg('Logging in...');
+      if (!email || !pass) { msg((window.__t || (k=>k))('settings.emailMasterPasswordRequired'), 'var(--red)'); return; }
+      msg((window.__t || (k=>k))('settings.loading'));
       try {
         const r = await fetch('/api/vault/login', {
           method: 'POST', credentials: 'same-origin',
@@ -4945,17 +4959,17 @@ async function initUnifiedIntegrations() {
         });
         const d = await r.json();
         if (d.ok) {
-          msg(d.already ? 'Already logged in — use Unlock' : 'Logged in', 'var(--green,#50fa7b)');
+          msg(d.already ? (window.__t || (k=>k))('settings.saved') : (window.__t || (k=>k))('common.success'), 'var(--green,#50fa7b)');
           el('uf-vault-pass').value = '';
           await refreshStatus(); await renderList();
-        } else msg(d.error || 'Login failed', 'var(--red)');
-      } catch (e) { msg('Error: ' + e.message, 'var(--red)'); }
+        } else msg(d.error || (window.__t || (k=>k))('common.error'), 'var(--red)');
+      } catch (e) { msg((window.__t || (k=>k))('common.error') + ': ' + e.message, 'var(--red)'); }
     });
 
     el('uf-vault-unlock').addEventListener('click', async () => {
       const pass = el('uf-vault-pass').value;
-      if (!pass) { msg('Master password required', 'var(--red)'); return; }
-      msg('Unlocking...');
+      if (!pass) { msg((window.__t || (k=>k))('settings.masterPasswordRequired'), 'var(--red)'); return; }
+      msg((window.__t || (k=>k))('settings.loading'));
       try {
         const r = await fetch('/api/vault/unlock', {
           method: 'POST', credentials: 'same-origin',
@@ -4964,30 +4978,30 @@ async function initUnifiedIntegrations() {
         });
         const d = await r.json();
         if (d.ok) {
-          msg('Vault unlocked', 'var(--green,#50fa7b)');
+          msg((window.__t || (k=>k))('common.success'), 'var(--green,#50fa7b)');
           el('uf-vault-pass').value = '';
           await refreshStatus(); await renderList();
-        } else msg(d.error || 'Unlock failed', 'var(--red)');
-      } catch (e) { msg('Error: ' + e.message, 'var(--red)'); }
+        } else msg(d.error || (window.__t || (k=>k))('common.error'), 'var(--red)');
+      } catch (e) { msg((window.__t || (k=>k))('common.error') + ': ' + e.message, 'var(--red)'); }
     });
 
     el('uf-vault-lock').addEventListener('click', async () => {
-      msg('Locking...');
+      msg((window.__t || (k=>k))('settings.loading'));
       try {
         await fetch('/api/vault/lock', { method: 'POST', credentials: 'same-origin' });
-        msg('Locked', 'var(--green,#50fa7b)');
+        msg((window.__t || (k=>k))('common.success'), 'var(--green,#50fa7b)');
         await refreshStatus(); await renderList();
-      } catch (e) { msg('Error: ' + e.message, 'var(--red)'); }
+      } catch (e) { msg((window.__t || (k=>k))('common.error') + ': ' + e.message, 'var(--red)'); }
     });
 
     el('uf-vault-logout').addEventListener('click', async () => {
-      if (!await window.styledConfirm('Log out of Bitwarden CLI? You\'ll need to re-enter your master password to log back in.', { confirmText: 'Log out' })) return;
-      msg('Logging out...');
+      if (!await window.styledConfirm('Log out of Bitwarden CLI? You\'ll need to re-enter your master password to log back in.', { confirmText: (window.__t || (k=>k))('common.confirm'), danger: true })) return;
+      msg((window.__t || (k=>k))('settings.loading'));
       try {
         await fetch('/api/vault/logout', { method: 'POST', credentials: 'same-origin' });
-        msg('Logged out', 'var(--green,#50fa7b)');
+        msg((window.__t || (k=>k))('common.success'), 'var(--green,#50fa7b)');
         await refreshStatus(); await renderList();
-      } catch (e) { msg('Error: ' + e.message, 'var(--red)'); }
+      } catch (e) { msg((window.__t || (k=>k))('common.error') + ': ' + e.message, 'var(--red)'); }
     });
   }
 
@@ -5005,19 +5019,19 @@ async function initUnifiedIntegrations() {
       const msg = el('uf-mcp-msg'); if (!msg) return;
       if (el('uf-mcp-pasteback')) return;  // already shown
       msg.innerHTML =
-        'Authorize in the opened tab. If the redirect fails (remote access), paste the resulting URL here: ' +
+        (window.__t || (k=>k))('settings.authorizeInTab') +
         '<input id="uf-mcp-pasteback" class="settings-input" placeholder="http://localhost:7000/api/mcp/oauth/callback?code=..." style="margin-top:4px">' +
-        '<button class="admin-btn-sm" id="uf-mcp-paste-go" style="margin-top:4px">Submit</button>';
+        '<button class="admin-btn-sm" id="uf-mcp-paste-go" style="margin-top:4px">' + (window.__t || (k=>k))('settings.submit') + '</button>';
       const pasteGo = el('uf-mcp-paste-go');
       if (pasteGo) pasteGo.addEventListener('click', async () => {
         const cb = el('uf-mcp-pasteback').value.trim();
         if (!cb) return;
         const pf = new FormData(); pf.append('callback_url', cb);
-        _setBtnLoading(pasteGo, true, 'Submitting…');
+        _setBtnLoading(pasteGo, true, (window.__t || (k=>k))('settings.submitting'));
         try {
           await fetch(`/api/mcp/oauth/exchange/${id}`, { method: 'POST', credentials: 'same-origin', body: pf });
         } finally {
-          _setBtnLoading(pasteGo, false, 'Submit');
+          _setBtnLoading(pasteGo, false, (window.__t || (k=>k))('settings.submit'));
         }
       });
     }
@@ -5050,23 +5064,23 @@ async function initUnifiedIntegrations() {
         } catch (e) {
           // Tolerate a single blip, but surface persistent failures instead of
           // silently polling until timeout.
-          if (++fails >= 5 && msg) msg.textContent = `Status check failing (${e.message || 'network error'}) — still retrying…`;
+          if (++fails >= 5 && msg) msg.textContent = (window.__t || (k=>k))('settings.statusCheckFailing');
         }
       }
-      if (msg) msg.textContent = 'Authorization timed out. Reconnect from the server list to retry.';
+      if (msg) msg.textContent = (window.__t || (k=>k))('settings.connectionFailed');
     }
     if (editId && editId !== 'new') {
       // Show management view for existing server
-      formEl.innerHTML = '<div class="admin-card" style="margin-top:8px"><span style="opacity:0.5;font-size:11px">Loading...</span></div>';
+      formEl.innerHTML = '<div class="admin-card" style="margin-top:8px"><span style="opacity:0.5;font-size:11px">' + (window.__t || (k=>k))('settings.loading') + '</span></div>';
       try {
         const res = await fetch('/api/mcp/servers', { credentials: 'same-origin' });
         const servers = await res.json();
         const srv = servers.find(s => (s.id || s.name) === editId);
-        if (!srv) { formEl.innerHTML = '<div class="admin-card" style="margin-top:8px">Server not found</div>'; return; }
+        if (!srv) { formEl.innerHTML = '<div class="admin-card" style="margin-top:8px">' + ((window.__t || (k=>k))('settings.serverNotFound')) + '</div>'; return; }
         const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
         const statusColor = srv.needs_oauth ? '#e5a33a' : srv.status === 'connected' ? 'var(--green,#50fa7b)' : srv.status === 'error' ? 'var(--red)' : 'var(--fg)';
         const toolInfo = srv.status === 'connected' ? `${srv.enabled_tool_count}/${srv.tool_count} tools` : '';
-        const statusText = srv.needs_oauth ? 'Needs authorization' : srv.status === 'connected' ? `Connected (${toolInfo})` : srv.status === 'error' ? `Error: ${esc(srv.error || 'unknown')}` : 'Disconnected';
+        const statusText = srv.needs_oauth ? (window.__t || (k=>k))('settings.testingConnection') : srv.status === 'connected' ? ((window.__t || (k=>k))('settings.connected') + ' (' + toolInfo + ')') : srv.status === 'error' ? ((window.__t || (k=>k))('common.error') + ': ' + esc(srv.error || 'unknown')) : (window.__t || (k=>k))('settings.disconnected');
         formEl.innerHTML = `
           <div class="admin-card" style="margin-top:8px">
             <h2 style="font-size:13px">${esc(srv.name)}</h2>
@@ -5076,23 +5090,23 @@ async function initUnifiedIntegrations() {
             </div>
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px;justify-content:flex-end;">
               <span id="uf-mcp-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
-              ${srv.needs_oauth ? `<a href="/api/mcp/oauth/authorize/${srv.id}" target="_blank" class="admin-btn-add" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));text-decoration:none;font-weight:600;">Authorize</a>` : ''}
-              <button class="admin-btn-add" id="uf-mcp-reconnect" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Reconnect</button>
-              <button class="admin-btn-add" id="uf-mcp-toggle" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">${srv.is_enabled ? 'Disable' : 'Enable'}</button>
-              <button class="admin-btn-add" id="uf-mcp-cancel" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Close</button>
+              ${srv.needs_oauth ? `<a href="/api/mcp/oauth/authorize/${srv.id}" target="_blank" class="admin-btn-add" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));text-decoration:none;font-weight:600;">${(window.__t || (k=>k))('settings.authorize')}</a>` : ''}
+              <button class="admin-btn-add" id="uf-mcp-reconnect" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">${(window.__t || (k=>k))('common.retry')}</button>
+              <button class="admin-btn-add" id="uf-mcp-toggle" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">${srv.is_enabled ? (window.__t || (k=>k))('common.disabled') : (window.__t || (k=>k))('common.enabled')}</button>
+              <button class="admin-btn-add" id="uf-mcp-cancel" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">${(window.__t || (k=>k))('common.close')}</button>
             </div>
             <div id="uf-mcp-tools-panel"></div>
           </div>`;
         // Reconnect
         el('uf-mcp-reconnect').addEventListener('click', async () => {
-          const msg = el('uf-mcp-msg'); msg.textContent = 'Reconnecting...';
+          const msg = el('uf-mcp-msg'); msg.textContent = (window.__t || (k=>k))('settings.loading');
           try {
             const r = await fetch(`/api/mcp/servers/${srv.id}/reconnect`, { method: 'POST', credentials: 'same-origin' });
             const d = await r.json();
-            msg.textContent = d.connected ? `Connected (${d.tool_count} tools)` : `Failed: ${d.error || 'unknown'}`;
+            msg.textContent = d.connected ? `Connected (${d.tool_count} tools)` : (window.__t || (k=>k))('common.error') + ': ' + (d.error || 'unknown');
             await renderList();
             showMcpForm(editId); // refresh this view
-          } catch (e) { msg.textContent = 'Failed'; }
+          } catch (e) { msg.textContent = (window.__t || (k=>k))('common.error'); }
         });
         // Toggle enable/disable
         el('uf-mcp-toggle').addEventListener('click', async () => {
@@ -5110,7 +5124,7 @@ async function initUnifiedIntegrations() {
             const tools = await tr.json();
             if (tools.length) {
               const disabled = new Set(tools.filter(t => t.is_disabled).map(t => t.name));
-              panel.innerHTML = `<div class="mcp-tools-header"><span>Tools</span><span style="display:flex;gap:8px;align-items:center"><span class="mcp-tools-count">${tools.length - disabled.size}/${tools.length} enabled</span><a href="#" id="uf-mcp-all">All</a> <a href="#" id="uf-mcp-none">None</a></span></div><div class="mcp-tools-list">${tools.map(t => `<label title="${esc(t.description)}"><input type="checkbox" data-mcp-tool-name="${esc(t.name)}" ${!t.is_disabled ? 'checked' : ''}><span><strong>${esc(t.name)}</strong> <span style="opacity:0.5">— ${esc((t.description||'').slice(0,80))}</span></span></label>`).join('')}</div>`;
+              panel.innerHTML = `<div class="mcp-tools-header"><span>${(window.__t || (k=>k))('settings.toolsEnabledCount').split(' ')[0] || 'Tools'}</span><span style="display:flex;gap:8px;align-items:center"><span class="mcp-tools-count">${tools.length - disabled.size}/${tools.length} ${(window.__t || (k=>k))('common.enabled')}</span><a href="#" id="uf-mcp-all">${(window.__t || (k=>k))('common.confirm')}</a> <a href="#" id="uf-mcp-none">${(window.__t || (k=>k))('common.disabled')}</a></span></div><div class="mcp-tools-list">${tools.map(t => `<label title="${esc(t.description)}"><input type="checkbox" data-mcp-tool-name="${esc(t.name)}" ${!t.is_disabled ? 'checked' : ''}><span><strong>${esc(t.name)}</strong> <span style="opacity:0.5">— ${esc((t.description||'').slice(0,80))}</span></span></label>`).join('')}</div>`;
               const saveFn = async () => {
                 const dis = [];
                 panel.querySelectorAll('input[type=checkbox]').forEach(cb => { if (!cb.checked) dis.push(cb.dataset.mcpToolName); });
@@ -5122,14 +5136,14 @@ async function initUnifiedIntegrations() {
               el('uf-mcp-all')?.addEventListener('click', (e) => { e.preventDefault(); panel.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = true); saveFn(); });
               el('uf-mcp-none')?.addEventListener('click', (e) => { e.preventDefault(); panel.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false); saveFn(); });
             }
-          } catch (_) { panel.innerHTML = '<span style="opacity:0.5;font-size:11px">Failed to load tools</span>'; }
+          } catch (_) { panel.innerHTML = '<span style="opacity:0.5;font-size:11px">' + ((window.__t || (k=>k))('settings.failedToLoadTools')) + '</span>'; }
         }
-      } catch (_) { formEl.innerHTML = '<div class="admin-card" style="margin-top:8px">Failed to load server</div>'; }
+      } catch (_) { formEl.innerHTML = '<div class="admin-card" style="margin-top:8px">' + ((window.__t || (k=>k))('settings.failedToLoadServer')) + '</div>'; }
     } else {
       // Add new MCP server form
       formEl.innerHTML = `
         <div class="admin-card" style="margin-top:8px">
-          <h2 style="font-size:13px">Add MCP Server</h2>
+          <h2 style="font-size:13px">${(window.__t || (k=>k))('common.add')} MCP</h2>
           <div class="settings-col">
             <div class="settings-row"><label class="settings-label">Name</label><input id="uf-mcp-name" class="settings-input" placeholder="Server name"></div>
             <div class="settings-row"><label class="settings-label">Transport</label><select id="uf-mcp-transport" class="settings-input"><option value="stdio">stdio</option><option value="sse">SSE</option><option value="http">Streamable HTTP</option></select></div>
@@ -5143,8 +5157,8 @@ async function initUnifiedIntegrations() {
             </div>
             <div class="settings-row" style="margin-top:10px;align-items:center;justify-content:flex-end;gap:6px;">
               <span id="uf-mcp-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
-              <button class="admin-btn-add" id="uf-mcp-save" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));font-weight:600;">Save</button>
-              <button class="admin-btn-add" id="uf-mcp-cancel" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Cancel</button>
+              <button class="admin-btn-add" id="uf-mcp-save" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));font-weight:600;">${(window.__t || (k=>k))('common.save')}</button>
+              <button class="admin-btn-add" id="uf-mcp-cancel" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">${(window.__t || (k=>k))('common.cancel')}</button>
             </div>
           </div>
         </div>`;
@@ -5174,22 +5188,22 @@ async function initUnifiedIntegrations() {
         }
         const saveBtn = el('uf-mcp-save'), cancelBtn = el('uf-mcp-cancel');
         const _origLabel = saveBtn.textContent;
-        _setBtnLoading(saveBtn, true, 'Saving…'); if (cancelBtn) cancelBtn.disabled = true;
+        _setBtnLoading(saveBtn, true, (window.__t || (k=>k))('settings.loading')); if (cancelBtn) cancelBtn.disabled = true;
         try {
           const r = await fetch('/api/mcp/servers', { method: 'POST', credentials: 'same-origin', body: fd });
           const data = await r.json().catch(() => ({}));
           if (r.ok && data.needs_auth) {
-            el('uf-mcp-msg').textContent = 'Preparing authorization…';
+            el('uf-mcp-msg').textContent = (window.__t || (k=>k))('settings.loading');
             _handleMcpAuth(data.id, data.auth_url);
           } else if (r.ok && (data.connected || data.status === 'connected')) {
-            el('uf-mcp-msg').textContent = `Connected (${data.tool_count || 0} tools)`;
+            el('uf-mcp-msg').textContent = (window.__t || (k=>k))('settings.connectedTools', {n: data.tool_count || 0});
             formEl.style.display = 'none'; await renderList();
           } else if (r.ok) {
-            el('uf-mcp-msg').textContent = 'Saved'; formEl.style.display = 'none'; await renderList();
+            el('uf-mcp-msg').textContent = (window.__t || (k=>k))('settings.saved'); formEl.style.display = 'none'; await renderList();
           } else {
-            el('uf-mcp-msg').textContent = `Failed (${r.status})`;
+            el('uf-mcp-msg').textContent = (window.__t || (k=>k))('settings.failedWithStatus', {status: r.status});
           }
-        } catch (_) { el('uf-mcp-msg').textContent = 'Failed'; }
+        } catch (_) { el('uf-mcp-msg').textContent = (window.__t || (k=>k))('misc.failed'); }
         finally { _setBtnLoading(saveBtn, false, _origLabel); if (cancelBtn) cancelBtn.disabled = false; }
       });
     }
@@ -5264,10 +5278,10 @@ async function initUnifiedIntegrations() {
     const editExistingHtml = current ? `
       <div style="border:1px solid var(--border);border-radius:6px;padding:9px 10px;margin-bottom:8px;">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-          <input type="text" id="uf-codex-existing-rename" data-token-id="${esc(current.id)}" value="${esc(current.name || cfg.defaultName)}" style="font-size:12px;font-weight:600;padding:3px 6px;flex:1;background:transparent;border:1px solid transparent;border-radius:4px;" title="Click to rename">
-          <span style="font-size:10px;opacity:0.55;">${esc(current.token_prefix || 'token')}...${current.last_used_at ? ` · Last used ${new Date(current.last_used_at).toLocaleDateString()}` : ' · Never used'}</span>
+          <input type="text" id="uf-codex-existing-rename" data-token-id="${esc(current.id)}" value="${esc(current.name || cfg.defaultName)}" style="font-size:12px;font-weight:600;padding:3px 6px;flex:1;background:transparent;border:1px solid transparent;border-radius:4px;" title="${(window.__t || (k=>k))('settings.clickToRename')}">
+          <span style="font-size:10px;opacity:0.55;">${esc(current.token_prefix || 'token')}...${current.last_used_at ? ' · ' + (window.__t || (k=>k))('settings.lastUsed') + ' ' + new Date(current.last_used_at).toLocaleDateString() : ' · ' + (window.__t || (k=>k))('settings.neverUsed')}</span>
         </div>
-        <div style="font-size:11px;font-weight:600;opacity:0.62;margin-bottom:4px;">Permissions</div>
+        <div style="font-size:11px;font-weight:600;opacity:0.62;margin-bottom:4px;">${(window.__t || (k=>k))('settings.permissions')}</div>
         ${scopeToggles(current)}
         <div id="uf-codex-existing-msg" style="font-size:11px;min-height:14px;margin-top:4px;"></div>
       </div>` : '';
@@ -5282,54 +5296,53 @@ async function initUnifiedIntegrations() {
           </div>
           <div id="uf-codex-pending" style="display:none;align-items:center;gap:8px;padding:6px 0;font-size:11px;opacity:0.7;"></div>
           <div id="uf-codex-reveal" style="display:none;width:100%;box-sizing:border-box;">
-            <div style="font-weight:600;font-size:12px;margin-bottom:6px;">Token</div>
+            <div style="font-weight:600;font-size:12px;margin-bottom:6px;">${(window.__t || (k=>k))('settings.token')}</div>
 
-            <div style="font-size:11px;opacity:0.62;margin-bottom:4px;">Copy this token, it won't be shown again.</div>
+            <div style="font-size:11px;opacity:0.62;margin-bottom:4px;">${(window.__t || (k=>k))('settings.copyThisToken')}</div>
             <div style="position:relative;">
               <code id="uf-codex-token" style="display:block;word-break:break-all;font-size:11px;padding:6px 30px 6px 8px;background:rgba(0,0,0,0.08);border-radius:4px;"></code>
-              <button type="button" class="admin-btn-sm" id="uf-codex-copy-token" title="Copy token" aria-label="Copy token" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);padding:3px 5px;background:none;border:none;color:inherit;opacity:0.7;cursor:pointer;display:inline-flex;align-items:center;">
+              <button type="button" class="admin-btn-sm" id="uf-codex-copy-token" title="${(window.__t || (k=>k))('settings.copyToken')}" aria-label="${(window.__t || (k=>k))('settings.copyToken')}" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);padding:3px 5px;background:none;border:none;color:inherit;opacity:0.7;cursor:pointer;display:inline-flex;align-items:center;">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
               </button>
             </div>
 
-            <div style="margin-top:14px;font-weight:600;font-size:11px;margin-bottom:4px;">Quickstart &mdash; simply paste directly in your terminal.</div>
+            <div style="margin-top:14px;font-weight:600;font-size:11px;margin-bottom:4px;">${(window.__t || (k=>k))('settings.quickstart')} &mdash; ${(window.__t || (k=>k))('common.copy')}.</div>
             <div style="font-size:11px;opacity:0.62;margin-bottom:6px;">${cfg.setupDescription}</div>
             <pre style="margin:0;white-space:pre;overflow-x:auto;max-height:220px;overflow-y:auto;font-size:10px;line-height:1.45;padding:8px 10px;background:rgba(0,0,0,0.08);border-radius:4px;width:100%;box-sizing:border-box;"><code id="uf-codex-setup-code"></code></pre>
 
             <div style="margin-top:14px;display:flex;align-items:center;gap:8px;">
-              <span style="font-weight:600;font-size:11px;">Configure access</span>
+              <span style="font-weight:600;font-size:11px;">${(window.__t || (k=>k))('settings.configureAccess')}</span>
               <span style="flex:1"></span>
-              <button type="button" class="admin-btn-sm" id="uf-codex-copy-setup" title="Copy setup" aria-label="Copy setup" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:5px;opacity:0.85;">
+              <button type="button" class="admin-btn-sm" id="uf-codex-copy-setup" title="${(window.__t || (k=>k))('settings.copySetup')}" aria-label="${(window.__t || (k=>k))('settings.copySetup')}" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:5px;opacity:0.85;">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                <span>Copy</span>
+                <span>${(window.__t || (k=>k))('common.copy')}</span>
               </button>
               <button type="button" class="admin-btn-sm" id="uf-codex-toggle-config" aria-expanded="false" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:5px;opacity:0.85;">
                 <svg id="uf-codex-toggle-config-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.15s"><polyline points="6 9 12 15 18 9"/></svg>
-                <span>Configure</span>
+                <span>${(window.__t || (k=>k))('settings.configure')}</span>
               </button>
             </div>
             <div id="uf-codex-config-body" style="display:none;">
-              <div style="font-size:11px;opacity:0.62;margin:4px 0 6px;">Toggle which Odysseus tools this agent can use. New agents start with chat only.</div>
+              <div style="font-size:11px;opacity:0.62;margin:4px 0 6px;">${(window.__t || (k=>k))('settings.configureAccess')}</div>
               <div id="uf-codex-inline-scopes"></div>
             </div>
           </div>
           <div class="settings-row" style="margin-top:10px;align-items:center;gap:6px;">
             <button class="admin-btn-add" id="uf-codex-cancel" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              Cancel
+              ${(window.__t || (k=>k))('common.cancel')}
             </button>
             <span id="uf-codex-msg" style="font-size:11px;flex:1;text-align:center;"></span>
             <button class="admin-btn-add" id="uf-codex-revoke" style="display:none;align-items:center;gap:5px;background:color-mix(in srgb, var(--color-error) 10%, transparent);color:var(--color-error);border:1px solid var(--color-error);font-weight:600;">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-              Revoke
-            </button>
+              ${(window.__t || (k=>k))('misc.revoke')}</button>
             <button class="admin-btn-add" id="uf-codex-create-btn" style="display:${current ? 'none' : 'inline-flex'};align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 2l-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/><path d="M15.5 7.5l3 3"/></svg>
-              Create token
+              ${(window.__t || (k=>k))('common.add')}
             </button>
             <button class="admin-btn-add" id="uf-codex-save" style="display:none;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));font-weight:600;">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-              Save
+              ${(window.__t || (k=>k))('common.save')}
             </button>
           </div>
         </div>
@@ -5375,7 +5388,7 @@ async function initUnifiedIntegrations() {
             });
             const d = await r.json().catch(() => ({}));
             if (!r.ok) throw new Error(d.detail || 'Failed');
-            if (msg) { msg.textContent = 'Saved'; msg.style.color = 'var(--green, #50fa7b)'; setTimeout(() => { msg.textContent = ''; }, 1200); }
+            if (msg) { msg.textContent = (window.__t || (k=>k))('settings.saved'); msg.style.color = 'var(--green, #50fa7b)'; setTimeout(() => { msg.textContent = ''; }, 1200); }
             notifyIntegrationsChanged();
           } catch (err) {
             cb.checked = !cb.checked;
@@ -5416,7 +5429,7 @@ async function initUnifiedIntegrations() {
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.detail || 'Failed');
-        if (msg) { msg.textContent = 'Saved'; msg.style.color = 'var(--green, #50fa7b)'; }
+            if (msg) { msg.textContent = (window.__t || (k=>k))('settings.saved'); msg.style.color = 'var(--green, #50fa7b)'; }
         await renderList();
         setTimeout(() => { formEl.style.display = 'none'; }, 350);
       } catch (err) {
@@ -5430,18 +5443,18 @@ async function initUnifiedIntegrations() {
       const tokenId = formEl.dataset.createdTokenId;
       if (!tokenId) return;
       const ok = window.styledConfirm
-        ? await window.styledConfirm(`Revoke this ${cfg.word} agent token? Integrations using it will lose access.`, { confirmText: 'Revoke', danger: true })
+        ? await window.styledConfirm(`Revoke this ${cfg.word} agent token? Integrations using it will lose access.`, { confirmText: (window.__t || (k=>k))('common.delete'), danger: true })
         : confirm(`Revoke this ${cfg.word} agent token? Integrations using it will lose access.`);
       if (!ok) return;
       const msg = el('uf-codex-msg');
       try {
         const r = await fetch(`/api/tokens/${tokenId}`, { method: 'DELETE', credentials: 'same-origin' });
-        if (!r.ok) throw new Error('Revoke failed');
-        if (msg) { msg.textContent = 'Revoked'; msg.style.color = 'var(--color-error)'; }
+        if (!r.ok) throw new Error((window.__t || (k=>k))('settings.failedRevoke'));
+        if (msg) { msg.textContent = (window.__t || (k=>k))('settings.revoked'); msg.style.color = 'var(--color-error)'; }
         await renderList();
         setTimeout(() => { formEl.style.display = 'none'; }, 350);
       } catch (err) {
-        if (msg) { msg.textContent = err?.message || 'Revoke failed'; msg.style.color = 'var(--red)'; }
+        if (msg) { msg.textContent = err?.message || (window.__t || (k=>k))('settings.failedToSave'); msg.style.color = 'var(--red)'; }
       }
     });
 
@@ -5462,9 +5475,9 @@ async function initUnifiedIntegrations() {
           _wp = sp.createWhirlpool(14);
           _wp.element.style.cssText = 'display:inline-flex;width:14px;height:14px;margin:0 4px 0 0;';
           pending.appendChild(_wp.element);
-          pending.appendChild(document.createTextNode('Creating token…'));
+          pending.appendChild(document.createTextNode((window.__t || (k=>k))('settings.loading')));
         } catch (_) {
-          pending.textContent = 'Creating token…';
+          pending.textContent = (window.__t || (k=>k))('settings.loading');
         }
       }
       const existingNames = new Set(agentTokens.map(t => (t.name || '').trim()));
@@ -5619,7 +5632,7 @@ async function initUnifiedIntegrations() {
             });
             const d = await r.json().catch(() => ({}));
             if (!r.ok) throw new Error(d.detail || 'Failed');
-            if (msg) { msg.textContent = 'Saved'; msg.style.color = 'var(--green, #50fa7b)'; }
+        if (msg) { msg.textContent = (window.__t || (k=>k))('settings.saved'); msg.style.color = 'var(--green, #50fa7b)'; }
             await renderList();
           } catch (err) {
             cb.checked = !cb.checked;
@@ -5637,13 +5650,13 @@ async function initUnifiedIntegrations() {
   // ── Add button now drops a type-picker menu directly anchored to itself ──
   if (addBtn) {
     const _typeOptions = [
-      ['api', 'API Service'],
+      ['api', (window.__t || (k=>k))('settings.addIntegration')],
       ['caldav', 'CalDAV Calendar'],
       ['claude', 'Claude Agent'],
       ['codex', 'Codex Agent'],
       ['carddav', 'Contacts (CardDAV)'],
       ['contacts', 'Contacts Import'],
-      ['email', 'Email (IMAP/SMTP)'],
+      ['email', (window.__t || (k=>k))('settings.email')],
       ['mcp', 'MCP Tool Server'],
     ];
     const _iconFor = (k) => (INTG_TYPES[k]?.icon || '').replace(/width="14"/, 'width="16"').replace(/height="14"/, 'height="16"');

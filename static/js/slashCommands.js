@@ -200,23 +200,23 @@ function _showSetupEndpointChoices() {
   return slashReply(
     '<div class="setup-guide-no-censor" style="display:grid;gap:10px;">' +
       '<div>' +
-        '<div>Quick start: add your first AI endpoint by pasting it in chat.</div>' +
+        '<div>' + window.__t('slash.setup.quickStart') + '</div>' +
       '</div>' +
       '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:color-mix(in srgb,var(--bg) 88%,var(--fg) 12%);">' +
-        '<div style="font-weight:700;margin-bottom:6px;">' + SETUP_LOCAL_ICON + 'Local setup</div>' +
-        '<div>Paste endpoint URL in chat (example):</div>' +
+        '<div style="font-weight:700;margin-bottom:6px;">' + SETUP_LOCAL_ICON + window.__t('slash.setup.localSetup') + '</div>' +
+        '<div>' + window.__t('slash.setup.pasteUrlInChat') + '</div>' +
         '<pre style="margin:4px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">http://localhost:11434/v1</code></pre>' +
-        '<div style="margin-top:4px;">or</div>' +
+        '<div style="margin-top:4px;">' + window.__t('slash.setup.or') + '</div>' +
         '<pre style="margin:2px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">http://llm-host.local:8000/v1</code></pre>' +
-        '<div style="margin-top:4px;">or llama.cpp (llama-server):</div>' +
+        '<div style="margin-top:4px;">' + window.__t('slash.setup.orLlamaCpp') + '</div>' +
         '<pre style="margin:2px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">http://localhost:8080/v1</code></pre>' +
       '</div>' +
       '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:color-mix(in srgb,var(--bg) 88%,var(--fg) 12%);">' +
-        '<div style="font-weight:700;margin-bottom:6px;">' + SETUP_API_ICON + 'API setup</div>' +
-        '<div>Paste provider name then API key (example):</div>' +
+        '<div style="font-weight:700;margin-bottom:6px;">' + SETUP_API_ICON + window.__t('slash.setup.apiSetup') + '</div>' +
+        '<div>' + window.__t('slash.setup.pasteProviderThenKey') + '</div>' +
         '<pre style="margin:4px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">deepseek sk-...</code></pre>' +
-        '<div style="margin-top:8px;font-size:1em;"><span>Supported providers:</span><br>' + providers + '</div>' +
-        '<div style="margin-top:8px;font-size:1em;"><span>Account sign-in:</span><br>' + deviceAuthProviders + '</div>' +
+        '<div style="margin-top:8px;font-size:1em;"><span>' + window.__t('slash.setup.supportedProviders') + '</span><br>' + providers + '</div>' +
+        '<div style="margin-top:8px;font-size:1em;"><span>' + window.__t('slash.setup.accountSignIn') + '</span><br>' + deviceAuthProviders + '</div>' +
       '</div>' +
     '</div>'
   );
@@ -225,36 +225,36 @@ function _showSetupEndpointChoices() {
 function _showSetupEndpointChoicesStreamed(options = {}) {
   const blocks = [
     options.simple
-      ? { kind: 'p', text: 'Paste in chat below either' }
-      : { kind: 'p', html: '<strong>Quick start:</strong> add your first AI endpoint by pasting it in chat.' },
-    { kind: 'heading', html: SETUP_LOCAL_ICON + 'Local setup' },
-    { kind: 'p', text: 'Paste endpoint URL in chat (example):' },
+      ? { kind: 'p', text: window.__t('slash.setup.pasteInChatBelow') }
+      : { kind: 'p', text: window.__t('slash.setup.quickStart') },
+    { kind: 'heading', html: SETUP_LOCAL_ICON + window.__t('slash.setup.localSetup') },
+    { kind: 'p', text: window.__t('slash.setup.pasteUrlInChat') },
     {
       kind: 'code',
       text: 'http://localhost:11434/v1',
       copyText: 'http://localhost:11434/v1',
     },
-    { kind: 'p', text: 'or' },
+    { kind: 'p', text: window.__t('slash.setup.or') },
     {
       kind: 'code',
       text: 'http://llm-host.local:8000/v1',
       copyText: 'http://llm-host.local:8000/v1',
     },
-    { kind: 'p', text: 'or llama.cpp (llama-server):' },
+    { kind: 'p', text: window.__t('slash.setup.orLlamaCpp') },
     {
       kind: 'code',
       text: 'http://localhost:8080/v1',
       copyText: 'http://localhost:8080/v1',
     },
-    { kind: 'heading', html: SETUP_API_ICON + 'API setup' },
-    { kind: 'p', text: 'Paste provider name then API key (example):' },
+    { kind: 'heading', html: SETUP_API_ICON + window.__t('slash.setup.apiSetup') },
+    { kind: 'p', text: window.__t('slash.setup.pasteProviderThenKey') },
     {
       kind: 'code',
       text: 'deepseek sk-...',
       copyText: 'deepseek sk-...',
     },
-    { kind: 'p', html: '<strong>Supported providers:</strong><br>' + _setupApiProviderChips() },
-    { kind: 'p', html: '<strong>Account sign-in:</strong><br>' + _setupDeviceAuthProviderChips() },
+    { kind: 'p', html: '<strong>' + window.__t('slash.setup.supportedProviders') + '</strong><br>' + _setupApiProviderChips() },
+    { kind: 'p', html: '<strong>' + window.__t('slash.setup.accountSignIn') + '</strong><br>' + _setupDeviceAuthProviderChips() },
   ];
   return typewriterBlocksReply(blocks, { gap: '4px', bodyClass: 'setup-guide-no-censor', interval: 3 });
 }
@@ -390,7 +390,7 @@ function _slashFooter(msgEl) {
   const copyBtn = document.createElement('button');
   copyBtn.className = 'footer-copy-btn';
   copyBtn.type = 'button';
-  copyBtn.title = 'Copy message';
+  copyBtn.title = window.__t('slash.footer.copyMessage');
   const _copySvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
   const _checkSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
   copyBtn.innerHTML = _copySvg;
@@ -404,7 +404,7 @@ function _slashFooter(msgEl) {
   const delBtn = document.createElement('button');
   delBtn.className = 'msg-action-btn msg-delete-btn';
   delBtn.type = 'button';
-  delBtn.title = 'Dismiss';
+  delBtn.title = window.__t('slash.footer.dismiss');
   delBtn.textContent = '\u2715';
   delBtn.onclick = (e) => { e.stopPropagation(); msgEl.remove(); };
   actions.appendChild(copyBtn);
@@ -494,7 +494,7 @@ function typewriterBlocksReply(blocks, options = {}) {
         const useBtn = document.createElement('button');
         useBtn.type = 'button';
         useBtn.className = 'use-code';
-        useBtn.title = 'Use in Chat';
+        useBtn.title = window.__t('slash.code.useInChat');
         useBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>';
         const copyText = block.copyText || block.text || '';
         const useNow = (e) => {
@@ -522,7 +522,7 @@ function typewriterBlocksReply(blocks, options = {}) {
         btn.type = 'button';
         btn.className = 'copy-code';
         btn.setAttribute('data-code', copyText);
-        btn.title = 'Copy';
+        btn.title = window.__t('slash.code.copy');
         btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
         const copyNow = (e) => {
           e.preventDefault();
@@ -661,7 +661,7 @@ async function connectDetectedSetupEndpoint(detected) {
   spinnerBody.className = 'body';
   spinnerDiv.appendChild(spinnerBody);
   chatBox.appendChild(spinnerDiv);
-  const setupSpinner = spinnerModule.create(`Detected ${providerLabel}. Connecting`, 'right', 'wave');
+  const setupSpinner = spinnerModule.create(window.__t('slash.setup.detectedConnecting', {provider: providerLabel}), 'right', 'wave');
   spinnerBody.appendChild(setupSpinner.createElement());
   setupSpinner.start(150);
   uiModule.scrollHistory();
@@ -685,7 +685,7 @@ async function connectDetectedSetupEndpoint(detected) {
       setupSpinner.destroy();
       spinnerDiv.remove();
       setupMode = 'endpoint-provider-first';
-      await typewriterReply(`Endpoint was not saved: ${data.detail || 'connection failed'}`);
+      await typewriterReply(window.__t('slash.setup.endpointNotSaved') + ': ' + (data.detail || 'connection failed'));
       return;
     }
 
@@ -693,14 +693,14 @@ async function connectDetectedSetupEndpoint(detected) {
     if (count > 0) {
       setupSpinner.destroy();
       spinnerDiv.remove();
-      await typewriterReply(`Found ${count} model${count > 1 ? 's' : ''} on ${providerLabel}. Starting a chat...`);
+      await typewriterReply(window.__t('slash.setup.foundModelsStarting', {count: count, provider: providerLabel}));
       if (modelsModule) await modelsModule.refreshModels(true);
       const firstModel = data.models[0];
       const chatUrl = setupChatUrlForEndpoint(detected);
       if (sessionModule) {
         await sessionModule.createDirectChat(chatUrl, firstModel, data.id);
       }
-      await typewriterReply("You're all set. Type /tour for a walkthrough, or /setup endpoint to add another endpoint or key.");
+      await typewriterReply(window.__t('slash.setup.allSet'));
       _clearSetupGuideMessages();
       return;
     }
@@ -708,13 +708,13 @@ async function connectDetectedSetupEndpoint(detected) {
     setupSpinner.destroy();
     spinnerDiv.remove();
     setupMode = 'endpoint-provider-first';
-    await typewriterReply("Endpoint saved, but no models were found. Check the provider, key, or service status, then try /setup endpoint again.");
+    await typewriterReply(window.__t('slash.setup.noModelsFound'));
     if (modelsModule) modelsModule.refreshModels(true);
   } catch {
     setupSpinner.destroy();
     spinnerDiv.remove();
     setupMode = 'endpoint-provider-first';
-    await typewriterReply("Endpoint setup failed before it could finish. Check the provider, key, or service status, then try /setup endpoint again.");
+    await typewriterReply(window.__t('slash.setup.setupFailed'));
   }
 }
 
@@ -737,7 +737,7 @@ async function handleSetupInput(input) {
     } else {
       pendingSetupProvider = paired.provider;
       setupMode = 'endpoint-key-for-provider';
-      await _setupReply(`Paste your ${paired.provider.name} API key now.`);
+      await _setupReply(window.__t('slash.setup.pasteApiKeyFor', {name: paired.provider.name}));
     }
     return;
   }
@@ -745,7 +745,7 @@ async function handleSetupInput(input) {
   const detected = detectProvider(input);
   if (!detected) {
     setupMode = false;
-    await typewriterReply("Unrecognised format. Type /setup endpoint to try again.");
+    await typewriterReply(window.__t('slash.setup.unrecognisedFormat'));
     return;
   }
   if (detected.ambiguous) {
@@ -787,7 +787,7 @@ async function handleSetupWizard(mode, input) {
     if (!provider) {
       _addMessage('user', input);
       setupMode = false;
-      await _setupReply('Provider not recognised. Try ' + SETUP_PROVIDER_HINT + '. Type /setup endpoint to try again.');
+      await _setupReply(window.__t('slash.setup.providerNotRecognised', {hint: SETUP_PROVIDER_HINT}));
       return;
     }
     if (paired?.credential) {
@@ -798,7 +798,7 @@ async function handleSetupWizard(mode, input) {
     _addMessage('user', provider.name);
     pendingSetupProvider = provider;
     setupMode = 'endpoint-key-for-provider';
-    await _setupReply(`Paste your ${provider.name} API key.`);
+    await _setupReply(window.__t('slash.setup.pasteApiKeyFor', {name: provider.name}));
     return;
   }
 
@@ -806,7 +806,7 @@ async function handleSetupWizard(mode, input) {
     const provider = pendingSetupProvider;
     pendingSetupProvider = null;
     if (!provider) {
-      await _setupReply('No provider selected. Type /setup endpoint and choose a provider again.');
+      await _setupReply(window.__t('slash.setup.noProviderSelected'));
       return;
     }
     _showSetupUserBubble(input, /^https?:\/\//i.test(input));
@@ -830,7 +830,7 @@ async function handleSetupWizard(mode, input) {
     if (paired?.provider) {
       const credential = paired.credential || key;
       if (!credential) {
-        await typewriterReply('No API key found. Type /setup endpoint and paste the key again.');
+        await typewriterReply(window.__t('slash.setup.noApiKeyFound'));
         return;
       }
       await connectDetectedSetupEndpoint({ base_url: paired.provider.url, api_key: credential, name: paired.provider.name });
@@ -838,7 +838,7 @@ async function handleSetupWizard(mode, input) {
     }
 
     if (!key) {
-      await typewriterReply('No pending API key. Type /setup endpoint and paste the key again.');
+      await typewriterReply(window.__t('slash.setup.noPendingApiKey'));
       return;
     }
     let provider = _setupProviderFromInput(raw);
@@ -848,7 +848,7 @@ async function handleSetupWizard(mode, input) {
     if (!provider) {
       pendingSetupApiKey = '';
       setupMode = false;
-      await typewriterReply('Provider not recognised. Try ' + SETUP_PROVIDER_HINT + '. Type /setup endpoint to try again.');
+      await typewriterReply(window.__t('slash.setup.providerNotRecognised', {hint: SETUP_PROVIDER_HINT}));
       return;
     }
     await connectDetectedSetupEndpoint({ base_url: provider.url, api_key: key, name: provider.name });
@@ -887,15 +887,15 @@ async function handleSetupWizard(mode, input) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(features),
         });
-        await typewriterReply(`${name}: ${features[name] ? 'on' : 'off'}`);
+        await typewriterReply(window.__t('slash.setup.featureToggled', {name: name, state: features[name] ? window.__t('common.on') : window.__t('common.off')}));
       } else {
-        await typewriterReply(`Unknown feature "${name}". Available: ${Object.keys(features).join(', ')}`);
+        await typewriterReply(window.__t('slash.misc.unknownFeature', {name: name, features: Object.keys(features).join(', ')}));
       }
-    } catch { await typewriterReply('Could not update features.'); }
+    } catch { await typewriterReply(window.__t('slash.setup.couldNotUpdateFeatures')); }
     return;
   }
 
-  await typewriterReply("I didn't understand that. Try /setup to see options.");
+  await typewriterReply(window.__t('slash.setup.didNotUnderstand'));
 }
 
 function _syncToggleUI(name, state) {
@@ -917,7 +917,7 @@ async function _quickToggle(name) {
   chk.checked = !chk.checked;
   _syncToggleUI(name, chk.checked);
   Storage.setToggle(name, chk.checked);
-  await typewriterReply(`${name}: ${chk.checked ? 'on' : 'off'}`);
+  await typewriterReply(window.__t('slash.toggle.state', {name: name, state: chk.checked ? 'on' : 'off'}));
   return true;
 }
 
@@ -929,7 +929,7 @@ async function _applyToggle(name, val) {
   chk.checked = newState;
   _syncToggleUI(name, newState);
   Storage.setToggle(name, newState);
-  await typewriterReply(`${name}: ${newState ? 'on' : 'off'}`);
+  await typewriterReply(window.__t('slash.toggle.state', {name: name, state: newState ? 'on' : 'off'}));
 }
 
 // ── Extracted handler functions ─────────────────────────────────────
@@ -989,7 +989,7 @@ async function _cmdSessionNew(args, ctx) {
     } catch (e) { /* ignore */ }
   }
   if (!endpointUrl || !model) {
-    slashReply('No model available — open the model picker and use the <code>+</code> button to add a model endpoint.');
+    slashReply(window.__t('slash.session.noModelAvailable'));
     return true;
   }
 
@@ -1006,8 +1006,8 @@ async function _cmdSessionNew(args, ctx) {
     await sessionModule.selectSession(data.id);
     _hideWelcomeScreen();
     const shortModel = (model || '').split('/').pop();
-    await typewriterReply(`New session — ${shortModel || 'ready'}.`);
-  } else { const err = await res.json().catch(() => null); slashReply('Failed to create session' + (err?.detail ? ': ' + ctx.esc(err.detail) : '')); }
+    await typewriterReply(window.__t('slash.session.newSession', {model: shortModel || 'ready'}));
+  } else { const err = await res.json().catch(() => null); slashReply(window.__t('slash.session.failedToCreate') + (err?.detail ? ': ' + ctx.esc(err.detail) : '')); }
   return true;
 }
 
@@ -1021,14 +1021,14 @@ async function _cmdSessionDelete(args, ctx) {
     const sessions = sessionModule.getSessions().filter(s => !s.archived);
     const targets = force ? sessions : sessions.filter(s => !s.important);
     const skipped = sessions.length - targets.length;
-    if (!targets.length) { slashReply('Nothing to delete' + (skipped ? ` (${skipped} starred)` : '')); return true; }
+    if (!targets.length) { slashReply(window.__t('slash.session.nothingToDelete') + (skipped ? ` (${skipped} starred)` : '')); return true; }
     let deleted = 0, failed = 0;
     for (const s of targets) {
       const res = await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE', credentials: 'same-origin' });
       if (res.ok) deleted++; else failed++;
     }
     await sessionModule.loadSessions();
-    let msg = `Deleted ${deleted} session${deleted !== 1 ? 's' : ''}`;
+    let msg = window.__t('slash.session.deletedSessions', {count: deleted});
     if (skipped && !force) msg += `, kept ${skipped} starred`;
     if (failed) msg += `, ${failed} failed`;
     slashReply(msg);
@@ -1037,59 +1037,59 @@ async function _cmdSessionDelete(args, ctx) {
 
   // Single session delete
   const target = _resolveSession(cleanArg) || ctx.sid;
-  if (!target) { slashReply('No session to delete'); return true; }
+  if (!target) { slashReply(window.__t('slash.session.noSessionToDelete')); return true; }
   const sessions = sessionModule.getSessions();
   const sess = sessions.find(s => s.id === target);
   const label = sess ? `"${ctx.esc(sess.name || target.slice(0,8))}"` : target.slice(0,8);
   const res = await fetch(`${API_BASE}/api/session/${target}`, { method: 'DELETE', credentials: 'same-origin' });
   if (res.ok) {
-    await typewriterReply(`Deleted ${label}`);
+    await typewriterReply(window.__t('slash.session.deletedSingle', {label: label}));
     await sessionModule.loadSessions();
   } else if (res.status === 403) {
-    slashReply('Cannot delete a starred session — unstar it first, or use <code>/s rm -rf</code>');
-  } else { const err = await res.json().catch(() => null); slashReply('Delete failed' + (err?.detail ? ': ' + ctx.esc(err.detail) : '')); }
+    slashReply(window.__t('slash.session.cannotDeleteStarred'));
+  } else { const err = await res.json().catch(() => null); slashReply(window.__t('slash.session.deleteFailed') + (err?.detail ? ': ' + ctx.esc(err.detail) : '')); }
   return true;
 }
 
 async function _cmdSessionArchive(args, ctx) {
   const target = _resolveSession(args[0]) || ctx.sid;
-  if (!target) { slashReply('No session to archive'); return true; }
+  if (!target) { slashReply(window.__t('slash.session.noSessionToArchive')); return true; }
   const sessions = sessionModule.getSessions();
   const sess = sessions.find(s => s.id === target);
   const label = sess ? `"${ctx.esc(sess.name || target.slice(0,8))}"` : target.slice(0,8);
-  if (sess && sess.archived) { await typewriterReply(`${label} is already archived`); return true; }
+  if (sess && sess.archived) { await typewriterReply(window.__t('slash.session.alreadyArchived', {label: label})); return true; }
   const res = await fetch(`${API_BASE}/api/session/${target}/archive`, { method: 'POST', credentials: 'same-origin' });
-  if (res.ok) { await typewriterReply(`Archived ${label}`); await sessionModule.loadSessions(); }
-  else { slashReply('Archive failed'); }
+  if (res.ok) { await typewriterReply(window.__t('slash.session.archived', {label: label})); await sessionModule.loadSessions(); }
+  else { slashReply(window.__t('slash.session.archiveFailed')); }
   return true;
 }
 
 async function _cmdSessionRename(args, ctx) {
   const newName = args.join(' ');
-  if (!newName) { slashReply('Usage: /rename New Name'); return true; }
+  if (!newName) { slashReply(window.__t('slash.session.usageRename')); return true; }
   const fd = new FormData(); fd.append('name', newName);
   const res = await fetch(`${API_BASE}/api/session/${ctx.sid}`, { method: 'PATCH', body: fd, credentials: 'same-origin' });
-  if (res.ok) { await typewriterReply(`Renamed to "${ctx.esc(newName)}"`); await sessionModule.loadSessions(); }
-  else { slashReply('Rename failed'); }
+  if (res.ok) { await typewriterReply(window.__t('slash.session.renamed', {name: ctx.esc(newName)})); await sessionModule.loadSessions(); }
+  else { slashReply(window.__t('slash.session.renameFailed')); }
   return true;
 }
 
 async function _cmdSessionImportant(args, ctx) {
   const fd = new FormData(); fd.append('important', 'true');
   await fetch(`${API_BASE}/api/session/${ctx.sid}/important`, { method: 'POST', body: fd, credentials: 'same-origin' });
-  await typewriterReply('Session marked as important');
+  await typewriterReply(window.__t('slash.session.markedImportant'));
   return true;
 }
 
 async function _cmdSessionUnimportant(args, ctx) {
   const fd = new FormData(); fd.append('important', 'false');
   await fetch(`${API_BASE}/api/session/${ctx.sid}/important`, { method: 'POST', body: fd, credentials: 'same-origin' });
-  await typewriterReply('Session unmarked');
+  await typewriterReply(window.__t('slash.session.unmarked'));
   return true;
 }
 
 async function _cmdSessionFork(args, ctx) {
-  if (!ctx.sid) { slashReply('No active session'); return true; }
+  if (!ctx.sid) { slashReply(window.__t('slash.session.noActiveSession')); return true; }
   const keepCount = parseInt(args[0]) || 0;
   const res = await fetch(`${API_BASE}/api/session/${ctx.sid}/fork`, {
     method: 'POST', credentials: 'same-origin',
@@ -1100,29 +1100,29 @@ async function _cmdSessionFork(args, ctx) {
     const data = await res.json();
     await sessionModule.loadSessions();
     await sessionModule.selectSession(data.id);
-    await typewriterReply(`Forked session (${data.kept || 0} messages)`);
-  } else { slashReply('Fork failed'); }
+    await typewriterReply(window.__t('slash.session.forked', {count: data.kept || 0}));
+  } else { slashReply(window.__t('slash.session.forkFailed')); }
   return true;
 }
 
 async function _cmdSessionTruncate(args, ctx) {
-  if (!ctx.sid) { slashReply('No active session'); return true; }
+  if (!ctx.sid) { slashReply(window.__t('slash.session.noActiveSession')); return true; }
   const keep = parseInt(args[0]);
-  if (!keep || keep < 1) { slashReply('Usage: /truncate N — deletes older messages, keeps the last N'); return true; }
+  if (!keep || keep < 1) { slashReply(window.__t('slash.session.usageTruncate')); return true; }
   const res = await fetch(`${API_BASE}/api/session/${ctx.sid}/truncate`, {
     method: 'POST', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keep_count: keep })
   });
-  if (res.ok) { await typewriterReply(`Truncated to ${keep} messages`); }
-  else { slashReply('Truncate failed'); }
+  if (res.ok) { await typewriterReply(window.__t('slash.session.truncated', {count: keep})); }
+  else { slashReply(window.__t('slash.session.truncateFailed')); }
   return true;
 }
 
 async function _cmdSessionList(args, ctx) {
   const sessions = sessionModule.getSessions();
   const active = sessions.filter(s => !s.archived);
-  if (!active.length) { slashReply('No active sessions'); return true; }
+  if (!active.length) { slashReply(window.__t('slash.session.noActiveSessions')); return true; }
   const lines = active.slice(0, 40).map(s => {
     const current = s.id === ctx.sid ? ' <b>(current)</b>' : '';
     return `${ctx.esc(s.name || 'Untitled')} <span style="opacity:0.5">${s.id.slice(0,8)}</span>${current}`;
@@ -1134,40 +1134,40 @@ async function _cmdSessionList(args, ctx) {
 
 async function _cmdSessionSwitch(args, ctx) {
   const query = args.join(' ').toLowerCase();
-  if (!query) { slashReply('Usage: /switch &lt;name or id&gt;'); return true; }
+  if (!query) { slashReply(window.__t('slash.session.usageSwitch')); return true; }
   const sessions = sessionModule.getSessions();
   const match = sessions.find(s => !s.archived && (
     s.id.startsWith(query) || (s.name || '').toLowerCase().includes(query)
   ));
   if (match) {
     await sessionModule.selectSession(match.id);
-    await typewriterReply(`Switched to "${ctx.esc(match.name)}"`);
-  } else { await typewriterReply(`No session matching "${ctx.esc(query)}"`); }
+    await typewriterReply(window.__t('slash.session.switchedTo', {name: ctx.esc(match.name)}));
+  } else { await typewriterReply(window.__t('slash.session.noMatching', {query: ctx.esc(query)})); }
   return true;
 }
 
 async function _cmdSessionSort(args, ctx) {
-  slashReply('Auto-sorting sessions...');
+  slashReply(window.__t('slash.session.autoSorting'));
   const res = await fetch(`${API_BASE}/api/sessions/auto-sort`, { method: 'POST', credentials: 'same-origin' });
   if (res.ok) {
     const data = await res.json();
     await sessionModule.loadSessions();
     // Handle skipped status
     if (data.status === 'skipped') {
-      await typewriterReply(`Auto-sort skipped: ${data.reason || 'No sessions to sort'}`);
+      await typewriterReply(window.__t('slash.session.autoSortSkipped', {reason: data.reason || 'No sessions to sort'}));
     } else {
       const del_msg = data.deleted_empty ? ` (${data.deleted_empty} empty deleted)` : '';
-      await typewriterReply(`Sorted ${data.updated || 0} sessions into ${data.folders?.length || 0} folders${del_msg}`);
+      await typewriterReply(window.__t('slash.session.sorted', {count: data.updated || 0, folders: data.folders?.length || 0}) + del_msg);
     }
-  } else { slashReply('Auto-sort failed'); }
+  } else { slashReply(window.__t('slash.session.autoSortFailed')); }
   return true;
 }
 
 async function _cmdSessionInfo(args, ctx) {
-  if (!ctx.sid) { slashReply('No active session'); return true; }
+  if (!ctx.sid) { slashReply(window.__t('slash.session.noActiveSession')); return true; }
   const sessions = sessionModule.getSessions();
   const s = sessions.find(ss => ss.id === ctx.sid);
-  if (!s) { slashReply('Session not found'); return true; }
+  if (!s) { slashReply(window.__t('slash.session.sessionNotFound')); return true; }
   slashReply(`<pre>Session: ${ctx.esc(s.name || 'Untitled')}
 ID:      ${s.id}
 Model:   ${ctx.esc(s.model || '?')}
@@ -1179,12 +1179,12 @@ Created: ${s.created_at || '?'}</pre>`);
 
 async function _cmdSessionClear(args, ctx) {
   document.getElementById('chat-history').innerHTML = '';
-  slashReply('Chat display cleared');
+  slashReply(window.__t('slash.session.chatDisplayCleared'));
   return true;
 }
 
 async function _cmdSessionExport(args, ctx) {
-  if (!ctx.sid) { slashReply('No active session'); return true; }
+  if (!ctx.sid) { slashReply(window.__t('slash.session.noActiveSession')); return true; }
   // Parse linux-style: cat > file.json, cat > notes.txt, cat > chat.html
   let filename = '';
   let fmt = 'md';
@@ -1201,7 +1201,7 @@ async function _cmdSessionExport(args, ctx) {
   const params = new URLSearchParams({ fmt });
   if (filename) params.set('filename', filename);
   window.open(`${API_BASE}/api/session/${ctx.sid}/export?${params}`, '_blank');
-  slashReply(`Exporting as .${fmt}${filename ? ' → ' + filename : ''}...`);
+  slashReply(window.__t('slash.session.exportingAs', {fmt: fmt}) + (filename ? ' → ' + filename : ''));
   return true;
 }
 
@@ -1215,7 +1215,7 @@ async function _cmdToggleIncognito(args, ctx) {
   const sessions = sessionModule.getSessions();
   const sess = ctx.sid ? sessions.find(s => s.id === ctx.sid) : null;
   if (sess && sess.message_count > 0) {
-    slashReply(`Can't toggle Nobody mode mid-conversation — start a new session first`);
+    slashReply(window.__t('slash.toggle.cannotToggleNobody'));
     return true;
   }
   const v = (args[0]||'').toLowerCase();
@@ -1229,7 +1229,7 @@ async function _cmdToggleDoc(args, ctx) {
       documentModule.closePanel();
       const btn = document.getElementById('overflow-doc-btn');
       if (btn) btn.classList.remove('active');
-      slashReply('Document editor: closed');
+      slashReply(window.__t('slash.session.docEditorClosed'));
     } else {
       const sessionId = sessionModule && sessionModule.getCurrentSessionId();
       if (sessionId) {
@@ -1239,9 +1239,9 @@ async function _cmdToggleDoc(args, ctx) {
       }
       const btn = document.getElementById('overflow-doc-btn');
       if (btn) btn.classList.add('active');
-      slashReply('Document editor: opened');
+      slashReply(window.__t('slash.session.docEditorOpened'));
     }
-  } else { slashReply('Document module not available'); }
+  } else { slashReply(window.__t('slash.session.docModuleNotAvailable')); }
   return true;
 }
 
@@ -1252,30 +1252,30 @@ async function _cmdWorkspace(args, ctx) {
   const rest = args.slice(1).join(' ').trim();
   const cur = workspaceModule.getWorkspace();
   if (!sub || sub === 'show' || sub === 'status' || sub === 'info') {
-    slashReply(cur ? `Workspace: <code>${uiModule.esc(cur)}</code>` : 'No workspace set. <code>/workspace pick</code> or <code>/workspace set /path</code>.');
+    slashReply(cur ? window.__t('slash.workspace.current', {path: '<code>' + uiModule.esc(cur) + '</code>'}) : window.__t('slash.workspace.noWorkspace'));
     return true;
   }
   if (sub === 'set' || sub === 'cd' || sub === 'use') {
-    if (!rest) { slashReply('Usage: <code>/workspace set /absolute/path</code>'); return true; }
+    if (!rest) { slashReply(window.__t('slash.workspace.usage')); return true; }
     // Validate server-side before persisting so the pill never claims a
     // workspace the backend will refuse to bind (typo, file path, deleted
     // folder, sensitive dir, filesystem root).
     workspaceModule.vetAndSetWorkspace(rest).then(({ ok, path }) => {
-      if (ok) slashReply(`Workspace set: <code>${uiModule.esc(path)}</code>`);
-      else slashReply(`Not a usable workspace folder: <code>${uiModule.esc(rest)}</code>. It must be an existing directory, not a filesystem root or sensitive path.`);
+      if (ok) slashReply(window.__t('slash.workspace.set', {path: '<code>' + uiModule.esc(path) + '</code>'}));
+      else slashReply(window.__t('slash.workspace.notUsableFolder', {path: '<code>' + uiModule.esc(rest) + '</code>'}));
     });
     return true;
   }
   if (sub === 'clear' || sub === 'off' || sub === 'none' || sub === 'unset') {
     workspaceModule.clearWorkspace();
-    slashReply('Workspace cleared.');
+    slashReply(window.__t('slash.workspace.cleared'));
     return true;
   }
   if (sub === 'pick' || sub === 'browse' || sub === 'open') {
     workspaceModule.openWorkspaceBrowser();
     return true;
   }
-  slashReply('Usage: <code>/workspace</code> · <code>set /path</code> · <code>clear</code> · <code>pick</code>');
+  slashReply(window.__t('slash.workspace.usageGeneral'));
   return true;
 }
 
@@ -1298,7 +1298,7 @@ async function _cmdToggleShow(args, ctx) {
 async function _cmdToggleSidebar(args, ctx) {
   const sidebar = document.getElementById('sidebar');
   const iconRail = document.getElementById('icon-rail');
-  if (!sidebar) { slashReply('Sidebar not found'); return true; }
+  if (!sidebar) { slashReply(window.__t('slash.session.sidebarNotFound')); return true; }
 
   const sidebarHidden = sidebar.classList.contains('hidden');
   const railHidden = iconRail ? iconRail.classList.contains('rail-hidden') : true;
@@ -1328,7 +1328,7 @@ async function _cmdToggleSidebar(args, ctx) {
     if (iconRail) iconRail.classList.add('rail-hidden');
   }
   if (window.syncRailSide) window.syncRailSide();
-  await typewriterReply(`Sidebar: ${target}`);
+  await typewriterReply(window.__t('slash.session.sidebarTarget', {target: target}));
   return true;
 }
 
@@ -1337,7 +1337,7 @@ async function _cmdToggleSidebar(args, ctx) {
 async function _cmdOpen(args, ctx) {
   const target = (args[0] || '').trim().toLowerCase();
   if (!target) {
-    slashReply('Open what? Try /open Cookbook, /open Settings, /open Gallery, /open Notes, /open Tasks, /open Library, /open Research, or /open Compare.');
+    slashReply(window.__t('slash.misc.openWhat'));
     return true;
   }
   const clickFirst = (...ids) => {
@@ -1378,7 +1378,7 @@ async function _cmdOpen(args, ctx) {
   } catch (e) {
     console.warn('/open failed', target, e);
   }
-  slashReply(`I don't know how to open "${ctx.esc(target)}" yet.`);
+  slashReply(window.__t('slash.misc.cannotOpen', {target: ctx.esc(target)}));
   return true;
 }
 
@@ -1404,7 +1404,7 @@ async function _cmdToolPanel(tool, args, ctx) {
           document.getElementById('tool-cookbook-btn')?.click();
         }
       } catch (e) {
-        slashReply(`Could not open Cookbook Serve${e?.message ? `: ${ctx.esc(e.message)}` : ''}`);
+        slashReply(window.__t('slash.misc.openCompareFailed') + (e?.message ? ': ' + ctx.esc(e.message) : ''));
       }
       return true;
     }
@@ -1418,7 +1418,7 @@ async function _cmdToolPanel(tool, args, ctx) {
   if (target === 'email') {
     const btn = document.getElementById('rail-email') || document.getElementById('email-section-title');
     if (btn) btn.click();
-    else slashReply('Could not open Email.');
+    else slashReply(window.__t('slash.misc.openEmailFailed'));
     return true;
   }
   if (target === 'settings') {
@@ -1443,7 +1443,7 @@ async function _cmdSettings(args, ctx) {
     }
   } catch (e) {
     console.warn('/settings open failed', e);
-    slashReply('Could not open Settings.');
+    slashReply(window.__t('slash.misc.openSettingsFailed'));
     return true;
   }
   return true;
@@ -1464,25 +1464,25 @@ async function _cmdTheme(args, ctx) {
   }
   if (sub === 'save' && args[1]) {
     const saveName = args[1].toLowerCase().replace(/\s+/g, '-');
-    if (tm.THEMES[saveName]) { slashReply('Cannot overwrite a built-in theme.'); return true; }
+    if (tm.THEMES[saveName]) { slashReply(window.__t('slash.theme.cannotOverwrite')); return true; }
     const s = tm.getSaved();
     const colors = s ? s.colors : tm.THEMES.dark;
     tm.saveCustomTheme(saveName, colors);
     tm.save(saveName, colors);
-    await typewriterReply(`Custom theme "${saveName}" saved`);
+    await typewriterReply(window.__t('slash.theme.customSaved', {name: saveName}));
     return true;
   }
   if (sub === 'delete' || sub === 'del' || sub === 'rm' || sub === 'remove') {
     if (!args[1]) { slashReply('Usage: /theme delete &lt;name&gt; or /theme delete all'); return true; }
     const delArg = args[1].toLowerCase().replace(/\s+/g, '-');
     if (delArg === 'all') {
-      if (!customNames.length) { slashReply('No custom themes to delete'); return true; }
+      if (!customNames.length) { slashReply(window.__t('slash.theme.noCustomToDelete')); return true; }
       for (const n of customNames) { if (tm.deleteCustomTheme) tm.deleteCustomTheme(n); }
-      await typewriterReply(`Deleted ${customNames.length} custom theme${customNames.length !== 1 ? 's' : ''}`);
+      await typewriterReply(window.__t('slash.theme.deletedCount', {count: customNames.length}));
       return true;
     }
     if (tm.deleteCustomTheme) tm.deleteCustomTheme(delArg);
-    await typewriterReply(`Theme "${delArg}" deleted`);
+    await typewriterReply(window.__t('slash.theme.deleted', {name: delArg}));
     return true;
   }
   const name = sub;
@@ -1500,14 +1500,14 @@ async function _cmdTheme(args, ctx) {
     const sw = grid.querySelector(`[data-theme="${name}"]`);
     if (sw) sw.classList.add('active');
   }
-  await typewriterReply(`Theme: ${name}`);
+  await typewriterReply(window.__t('slash.theme.current', {name: name}));
   return true;
 }
 
 // ── Models ──
 
 async function _cmdModels(args, ctx) {
-  slashReply('Fetching models...');
+  slashReply(window.__t('slash.models.fetching'));
   const res = await fetch(`${API_BASE}/api/models`, { credentials: 'same-origin' });
   const data = await res.json();
   let lines = [];
@@ -1515,7 +1515,7 @@ async function _cmdModels(args, ctx) {
     lines.push(`<b>${ctx.esc(ep.endpoint_name || ep.url)}</b>`);
     (ep.models || []).forEach(m => lines.push(`  ${ctx.esc(m)}`));
   });
-  slashReply(`<pre>${lines.join('\n') || 'No models found'}</pre>`);
+  slashReply(`<pre>${lines.join('\n') || window.__t('slash.models.noModelsFound')}</pre>`);
   return true;
 }
 
@@ -1526,8 +1526,8 @@ async function _cmdModel(args, ctx) {
   const model = sessionModule.getCurrentModel ? sessionModule.getCurrentModel() : '';
   const endpoint = sessionModule.getCurrentEndpointUrl ? sessionModule.getCurrentEndpointUrl() : '';
   slashReply(`<pre>${[
-    `Current model: ${ctx.esc(model || 'None selected')}`,
-    endpoint ? `Endpoint: ${ctx.esc(endpoint)}` : 'Endpoint: not available',
+    window.__t('slash.models.currentModel', {model: ctx.esc(model || 'None selected')}),
+    endpoint ? window.__t('slash.models.endpointUrl', {url: ctx.esc(endpoint)}) : window.__t('slash.models.endpointNotAvailable'),
     '',
     'Usage: /model list to show all available models'
   ].join('\n')}</pre>`);
@@ -1537,12 +1537,12 @@ async function _cmdModel(args, ctx) {
 async function _cmdMcp(args, ctx) {
   const res = await fetch(`${API_BASE}/api/mcp/servers`, { credentials: 'same-origin' });
   if (!res.ok) {
-    slashReply('MCP status is unavailable for this user.');
+    slashReply(window.__t('slash.models.mcpUnavailable'));
     return true;
   }
   const servers = await res.json();
   if (!Array.isArray(servers) || !servers.length) {
-    slashReply('No MCP servers configured.');
+    slashReply(window.__t('slash.models.noMcpServers'));
     return true;
   }
   const lines = servers.map(s => {
@@ -1561,7 +1561,7 @@ async function _cmdMemoryList(args, ctx) {
   const res = await fetch(`${API_BASE}/api/memory`, { credentials: 'same-origin' });
   const data = await res.json();
   const mems = data.memory || [];
-  if (!mems.length) { slashReply('No memories stored'); return true; }
+  if (!mems.length) { slashReply(window.__t('slash.memory.noMemoriesStored')); return true; }
   const lines = mems.slice(0, 40).map(m => `[${m.category||'fact'}] ${m.id.slice(0,8)} — ${ctx.esc(m.text)}`);
   if (mems.length > 40) lines.push(`... and ${mems.length - 40} more`);
   slashReply(`<pre>${lines.join('\n')}</pre>`);
@@ -1570,14 +1570,14 @@ async function _cmdMemoryList(args, ctx) {
 
 async function _cmdMemoryAdd(args, ctx) {
   const text = args.join(' ');
-  if (!text) { slashReply('Usage: /memory add Your text here'); return true; }
+  if (!text) { slashReply(window.__t('slash.memory.usageAdd')); return true; }
   const res = await fetch(`${API_BASE}/api/memory/add`, {
     method: 'POST', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text, category: 'fact', source: 'user' })
   });
-  if (res.ok) await typewriterReply(`Memory added: ${ctx.esc(text)}`);
-  else slashReply('Failed to add memory');
+  if (res.ok) await typewriterReply(window.__t('slash.memory.added', {text: ctx.esc(text)}));
+  else slashReply(window.__t('slash.memory.failedToAdd'));
   return true;
 }
 
@@ -1590,9 +1590,9 @@ async function _cmdMemoryDelete(args, ctx) {
     const listRes = await fetch(`${API_BASE}/api/memory`, { credentials: 'same-origin' });
     const listData = await listRes.json();
     const mems = listData.memory || [];
-    if (!mems.length) { slashReply('No memories to delete'); return true; }
+    if (!mems.length) { slashReply(window.__t('slash.memory.noMemoriesToDelete')); return true; }
     if (!force) {
-      slashReply(`This will delete all ${mems.length} memories. Use <code>/m rm -rf</code> to confirm.`);
+      slashReply(window.__t('slash.memory.willDeleteAll', {count: mems.length}));
       return true;
     }
     let deleted = 0;
@@ -1600,12 +1600,12 @@ async function _cmdMemoryDelete(args, ctx) {
       const res = await fetch(`${API_BASE}/api/memory/${m.id}`, { method: 'DELETE', credentials: 'same-origin' });
       if (res.ok) deleted++;
     }
-    await typewriterReply(`Deleted ${deleted}/${mems.length} memories`);
+    await typewriterReply(window.__t('slash.memory.deletedCount', {deleted: deleted, total: mems.length}));
     return true;
   }
 
   let memId = cleanArg;
-  if (!memId) { slashReply('Usage: /memory delete &lt;id&gt; or /m rm -rf to wipe all'); return true; }
+  if (!memId) { slashReply(window.__t('slash.memory.usageDelete')); return true; }
   // Resolve short ID to full UUID and get preview
   let preview = memId.slice(0, 8);
   if (memId.length < 36) {
@@ -1616,18 +1616,18 @@ async function _cmdMemoryDelete(args, ctx) {
   }
   const res = await fetch(`${API_BASE}/api/memory/${memId}`, { method: 'DELETE', credentials: 'same-origin' });
   if (res.ok) await typewriterReply(`Deleted: ${preview}${preview.length >= 50 ? '...' : ''}`);
-  else slashReply('Delete failed — check the ID');
+  else slashReply(window.__t('slash.memory.deleteFailed'));
   return true;
 }
 
 async function _cmdMemorySearch(args, ctx) {
   const query = args.join(' ');
-  if (!query) { slashReply('Usage: /memory search query'); return true; }
+  if (!query) { slashReply(window.__t('slash.memory.usageSearch')); return true; }
   const fd = new FormData(); fd.append('query', query);
   const res = await fetch(`${API_BASE}/api/memory/search`, { method: 'POST', body: fd, credentials: 'same-origin' });
   const data = await res.json();
   const mems = data.memories || [];
-  if (!mems.length) { await typewriterReply(`No memories matching "${ctx.esc(query)}"`); return true; }
+  if (!mems.length) { await typewriterReply(window.__t('slash.memory.noMatching', {query: ctx.esc(query)})); return true; }
   const lines = mems.map(m => `[${m.category||'fact'}] ${ctx.esc(m.text)}`);
   slashReply(`<pre>${lines.join('\n')}</pre>`);
   return true;
@@ -1642,7 +1642,7 @@ async function _cmdSkills(args, ctx) {
   if (sub === 'list' || sub === 'ls') {
     const skills = await _loadSkillSlashCatalog(true);
     if (!skills.length) {
-      slashReply('No published skills available for slash commands.');
+      slashReply(window.__t('slash.skills.noPublishedSkills'));
       return true;
     }
     const lines = skills.map(s => {
@@ -1656,17 +1656,17 @@ async function _cmdSkills(args, ctx) {
 
   if (sub === 'search' || sub === 'find') {
     const query = rest.join(' ').trim();
-    if (!query) { slashReply('Usage: /skills search query'); return true; }
+    if (!query) { slashReply(window.__t('slash.skills.usageSearch')); return true; }
     const res = await fetch(`${API_BASE}/api/skills/search`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query })
     });
-    if (!res.ok) { slashReply('Skill search failed.'); return true; }
+    if (!res.ok) { slashReply(window.__t('slash.skills.searchFailed')); return true; }
     const data = await res.json();
     const skills = Array.isArray(data.skills) ? data.skills : [];
-    if (!skills.length) { slashReply(`No skills found for "${ctx.esc(query)}".`); return true; }
+    if (!skills.length) { slashReply(window.__t('slash.skills.noSkillsFound', {query: ctx.esc(query)})); return true; }
     const lines = skills.map(s =>
       ctx.esc(`/${s.name || s.id || ''}`.padEnd(24)) + ctx.esc(s.description || '')
     );
@@ -1676,9 +1676,9 @@ async function _cmdSkills(args, ctx) {
 
   if (sub === 'view' || sub === 'cat' || sub === 'show') {
     const name = (rest[0] || '').trim();
-    if (!name) { slashReply('Usage: /skills view name'); return true; }
+    if (!name) { slashReply(window.__t('slash.skills.usageView')); return true; }
     const res = await fetch(`${API_BASE}/api/skills/${encodeURIComponent(name)}/markdown`, { credentials: 'same-origin' });
-    if (!res.ok) { slashReply(`Skill "${ctx.esc(name)}" was not found.`); return true; }
+    if (!res.ok) { slashReply(window.__t('slash.skills.notFound', {name: ctx.esc(name)})); return true; }
     const data = await res.json();
     slashReply(`<pre>${ctx.esc(data.markdown || '')}</pre>`);
     return true;
@@ -1686,17 +1686,17 @@ async function _cmdSkills(args, ctx) {
 
   if (sub === 'use' || sub === 'run') {
     const name = (rest[0] || '').trim();
-    if (!name) { slashReply('Usage: /skills use name request'); return true; }
+    if (!name) { slashReply(window.__t('slash.skills.usageUse')); return true; }
     return _invokeSkillByName(name, rest.slice(1).join(' ').trim(), ctx);
   }
 
-  slashReply('Usage: /skills list | search query | view name | use name request');
+  slashReply(window.__t('slash.skills.usageGeneral'));
   return true;
 }
 
 async function _cmdReloadSkills(args, ctx) {
   const skills = await _loadSkillSlashCatalog(true);
-  slashReply(`Reloaded skills. ${skills.length} skill command${skills.length === 1 ? '' : 's'} available.`);
+  slashReply(window.__t('slash.skills.reloaded', {count: skills.length}));
   return true;
 }
 
@@ -1704,14 +1704,14 @@ async function _cmdReloadSkills(args, ctx) {
 
 async function _cmdNote(args, ctx) {
   const text = args.join(' ');
-  if (!text) { slashReply('Usage: /note Your note here'); return true; }
+  if (!text) { slashReply(window.__t('slash.notes.usage')); return true; }
   const res = await fetch(`${API_BASE}/api/notes`, {
     method: 'POST', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title: text, content: '', note_type: 'note', source: 'slash' })
   });
-  if (res.ok) await typewriterReply(`Note added: ${ctx.esc(text)}`);
-  else slashReply('Failed to save note');
+  if (res.ok) await typewriterReply(window.__t('slash.notes.added', {text: ctx.esc(text)}));
+  else slashReply(window.__t('slash.notes.failedToSave'));
   return true;
 }
 
@@ -1800,24 +1800,24 @@ async function _cmdTodo(args, ctx) {
   const sub = (args[0] || '').toLowerCase();
   if (sub === 'list' || sub === 'ls') {
     const res = await fetch(`${API_BASE}/api/notes?note_type=note`, { credentials: 'same-origin' });
-    if (!res.ok) { slashReply('Failed to load todos'); return true; }
+    if (!res.ok) { slashReply(window.__t('slash.todo.failedToLoad')); return true; }
     const data = await res.json();
     const items = (data.notes || data || []).filter(n => !n.archived).slice(0, 30);
-    if (!items.length) { slashReply('No todos'); return true; }
+    if (!items.length) { slashReply(window.__t('slash.todo.noTodos')); return true; }
     const lines = items.map(n => `• ${ctx.esc(n.title || n.content || '').slice(0, 80)}`);
     slashReply(`<pre>${lines.join('\n')}</pre>`);
     return true;
   }
   // Treat everything after /todo (or after /todo add) as the todo text
   const rest = (sub === 'add' ? args.slice(1) : args).join(' ').trim();
-  if (!rest) { slashReply('Usage: /todo Your task here  ·  /todo list'); return true; }
+  if (!rest) { slashReply(window.__t('slash.todo.usage')); return true; }
   const res = await fetch(`${API_BASE}/api/notes`, {
     method: 'POST', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title: rest, note_type: 'note', source: 'slash', label: 'todo' }),
   });
-  if (res.ok) await typewriterReply(`Todo added: ${ctx.esc(rest)}`);
-  else slashReply('Failed to add todo');
+  if (res.ok) await typewriterReply(window.__t('slash.todo.added', {text: ctx.esc(rest)}));
+  else slashReply(window.__t('slash.todo.failedToAdd'));
   return true;
 }
 
@@ -1825,7 +1825,7 @@ async function _cmdEvent(args, ctx) {
   const raw = args.join(' ').trim();
   if (!raw) { slashReply('Usage: /event tomorrow 14:00 Title  ·  /event in 30m Title  ·  /event 2026-04-20 15:00 Title'); return true; }
   const parsed = _parseTimeSpec(raw);
-  if (!parsed || !parsed.rest) { slashReply(`Could not parse time from: ${ctx.esc(raw)}`); return true; }
+  if (!parsed || !parsed.rest) { slashReply(window.__t('slash.event.couldNotParseTime', {text: ctx.esc(raw)})); return true; }
   const start = parsed.date;
   const end = new Date(start.getTime() + 60 * 60 * 1000); // default 1h block
   const body = {
@@ -1852,7 +1852,7 @@ async function _cmdEvent(args, ctx) {
 
 async function _cmdShell(args, ctx) {
   const cmd = args.join(' ');
-  if (!cmd) { slashReply('Usage: /sh command'); return true; }
+  if (!cmd) { slashReply(window.__t('slash.shell.usage')); return true; }
   slashReply(`<pre>$ ${ctx.esc(cmd)}\nRunning...</pre>`);
   try {
     const res = await fetch(`${API_BASE}/api/shell/exec`, {
@@ -1864,7 +1864,7 @@ async function _cmdShell(args, ctx) {
     let out = '';
     if (data.stdout) out += data.stdout;
     if (data.stderr) out += (out ? '\n' : '') + data.stderr;
-    if (!out) out = '(no output)';
+    if (!out) out = window.__t('slash.shell.noOutput');
     const code = data.exit_code != null ? data.exit_code : '?';
     slashReply(`<pre>$ ${ctx.esc(cmd)}\n${ctx.esc(out)}\n[exit ${code}]</pre>`);
   } catch (e) {
@@ -1888,13 +1888,13 @@ async function _cmdRagList(args, ctx) {
     data.files.slice(0, 30).forEach(f => lines.push(`  ${ctx.esc(f.name || f.path || String(f))}`));
     if (data.files.length > 30) lines.push(`  ... and ${data.files.length - 30} more`);
   }
-  slashReply(lines.length ? `<pre>${lines.join('\n')}</pre>` : 'No files or directories indexed');
+  slashReply(lines.length ? `<pre>${lines.join('\n')}</pre>` : window.__t('slash.rag.noFilesIndexed'));
   return true;
 }
 
 async function _cmdRagAdd(args, ctx) {
   const dir = args.join(' ');
-  if (!dir) { slashReply('Usage: /rag add /path/to/directory'); return true; }
+  if (!dir) { slashReply(window.__t('slash.rag.usageAdd')); return true; }
   const res = await fetch(`${API_BASE}/api/personal/add_directory`, {
     method: 'POST', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
@@ -1903,7 +1903,7 @@ async function _cmdRagAdd(args, ctx) {
   if (res.ok) {
     const data = await res.json();
     await typewriterReply(`Indexed "${ctx.esc(dir)}" (${data.indexed_count || 0} files)`);
-  } else { slashReply('Failed to add directory'); }
+  } else { slashReply(window.__t('slash.rag.failedToAdd')); }
   return true;
 }
 
@@ -1916,9 +1916,9 @@ async function _cmdRagRemove(args, ctx) {
     const listRes = await fetch(`${API_BASE}/api/personal`, { credentials: 'same-origin' });
     const listData = await listRes.json();
     const dirs = listData.directories || [];
-    if (!dirs.length) { slashReply('No RAG directories to remove'); return true; }
+    if (!dirs.length) { slashReply(window.__t('slash.rag.noDirectoriesToRemove')); return true; }
     if (!force) {
-      slashReply(`This will remove all ${dirs.length} directories from RAG. Use <code>/rag rm -rf</code> to confirm.`);
+      slashReply(window.__t('slash.rag.willRemoveAll', {count: dirs.length}));
       return true;
     }
     let removed = 0;
@@ -1928,17 +1928,17 @@ async function _cmdRagRemove(args, ctx) {
       const res = await fetch(`${API_BASE}/api/personal/remove_directory?directory=${encodeURIComponent(path)}`, { method: 'DELETE', credentials: 'same-origin' });
       if (res.ok) removed++;
     }
-    await typewriterReply(`Removed ${removed}/${dirs.length} directories from RAG`);
+    await typewriterReply(window.__t('slash.rag.removedCount', {removed: removed, total: dirs.length}));
     return true;
   }
 
   const dir = cleanArg;
-  if (!dir) { slashReply('Usage: /rag remove /path or /rag rm -rf to remove all'); return true; }
+  if (!dir) { slashReply(window.__t('slash.rag.usageRemove')); return true; }
   const res = await fetch(`${API_BASE}/api/personal/remove_directory?directory=${encodeURIComponent(dir)}`, {
     method: 'DELETE', credentials: 'same-origin'
   });
   if (res.ok) await typewriterReply(`Removed "${ctx.esc(dir)}" from RAG`);
-  else slashReply('Failed to remove directory');
+  else slashReply(window.__t('slash.rag.failedToRemove'));
   return true;
 }
 
@@ -1965,7 +1965,7 @@ async function _cmdSearch(args, ctx) {
   if (res.ok) {
     const data = await res.json();
     const results = Array.isArray(data) ? data : (data.results || []);
-    if (!results.length) { slashReply(`No results for "${ctx.esc(query)}"`); return true; }
+    if (!results.length) { slashReply(window.__t('slash.search.noResults', {query: ctx.esc(query)})); return true; }
     const lines = results.slice(0, 20).map(r => {
       const name = ctx.esc(r.session_name || r.name || 'Untitled');
       const snippet = ctx.esc((r.content_snippet || r.content || r.snippet || '').slice(0, 100));
@@ -1973,7 +1973,7 @@ async function _cmdSearch(args, ctx) {
       return `<a href="#${sid}" style="color:var(--red);text-decoration:none">${name}</a>  ${snippet}`;
     });
     slashReply(`<pre>${lines.join('\n')}</pre>`);
-  } else { slashReply('Search failed'); }
+  } else { slashReply(window.__t('slash.search.failed')); }
   return true;
 }
 
@@ -1988,14 +1988,14 @@ Messages:  ${d.messages || '?'}
 Memories:  ${d.memories || '?'}
 Documents: ${d.documents || '?'}
 Uploads:   ${d.uploads || '?'}</pre>`);
-  } else { slashReply('Failed to fetch stats'); }
+  } else { slashReply(window.__t('slash.stats.failedToFetch')); }
   return true;
 }
 
 async function _cmdUsage(args, ctx) {
   const sid = ctx.sid;
   if (!sid) {
-    slashReply('No active session.');
+    slashReply(window.__t('slash.usage.noActiveSession'));
     return true;
   }
 
@@ -2042,7 +2042,7 @@ async function _cmdUsage(args, ctx) {
 // ── Context compaction ──
 
 async function _cmdCompact(args, ctx) {
-  if (!ctx.sid) { slashReply('No active chat to compact'); return true; }
+  if (!ctx.sid) { slashReply(window.__t('slash.compact.noActiveChat')); return true; }
   const reply = slashReply('Compacting context ');
   const compactSpinner = spinnerModule.create('Compacting context', 'inline', 'whirlpool');
   if (reply?.body) {
@@ -2060,10 +2060,10 @@ async function _cmdCompact(args, ctx) {
   compactSpinner.destroy();
   if (res.ok) {
     const d = await res.json();
-    slashReply(`Conversation compacted. Summarized ${d.summarized || 0} older messages, kept ${d.kept || 0} recent messages.`);
+    slashReply(window.__t('slash.compact.compacted', {summarized: d.summarized || 0, kept: d.kept || 0}));
     if (sessionModule?.selectSession) await sessionModule.selectSession(ctx.sid);
   } else {
-    let detail = 'Compaction failed';
+    let detail = window.__t('slash.compact.failed');
     try {
       const err = await res.json();
       detail = err.detail || detail;
@@ -2077,8 +2077,8 @@ async function _cmdCompact(args, ctx) {
 
 async function _cmdTts(args, ctx) {
   const text = args.join(' ');
-  if (!text) { slashReply('Usage: /tts &lt;text to speak&gt;'); return true; }
-  slashReply('Synthesizing...');
+  if (!text) { slashReply(window.__t('slash.tts.usage')); return true; }
+  slashReply(window.__t('slash.tts.synthesizing'));
   try {
     const res = await fetch(`${API_BASE}/api/tts/synthesize`, {
       method: 'POST', credentials: 'same-origin',
@@ -2090,10 +2090,10 @@ async function _cmdTts(args, ctx) {
       if (data.audio) {
         const audio = new Audio('data:audio/wav;base64,' + data.audio);
         audio.play();
-        slashReply('Playing...');
-      } else { slashReply('No audio returned'); }
-    } else { slashReply('TTS failed (is Kokoro running?)'); }
-  } catch(e) { slashReply('TTS service unavailable'); }
+        slashReply(window.__t('slash.tts.playing'));
+      } else { slashReply(window.__t('slash.tts.noAudio')); }
+    } else { slashReply(window.__t('slash.tts.failed')); }
+  } catch(e) { slashReply(window.__t('slash.tts.unavailable')); }
   return true;
 }
 
@@ -2102,7 +2102,7 @@ async function _cmdTts(args, ctx) {
 async function _cmdDemo(args, ctx) {
   const hasModels = await _hasConfiguredModels();
   if (!hasModels) {
-    await typewriterReply('Before the tour, add your first AI endpoint with /setup or in /settings.');
+    await typewriterReply(window.__t('slash.tour.beforeTour'));
     return true;
   }
 
@@ -2331,10 +2331,10 @@ async function _cmdDemo(args, ctx) {
       targets[0].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
       tooltip.innerHTML = `<div class="tour-text">${text}</div>
-        ${breathing ? '<div style="font-size:0.72rem;opacity:0.35;margin-bottom:6px">Click the highlighted element to continue</div>' : ''}
+        ${breathing ? '<div style="font-size:0.72rem;opacity:0.35;margin-bottom:6px">' + window.__t('slash.tour.clickToContinue') + '</div>' : ''}
         <div class="tour-nav" style="${breathing ? 'justify-content:center' : ''}">
           ${breathing ? '' : `<button class="tour-btn-arrow${isFirst ? ' disabled' : ''}" data-act="back">\u2190</button>`}
-          <button class="tour-btn-skip" data-act="skip">${stepOpts.finishLabel ? 'finish tour' : 'skip tour'}</button>
+          <button class="tour-btn-skip" data-act="skip">${stepOpts.finishLabel ? window.__t('slash.tour.finishTour') : window.__t('slash.tour.skipTour')}</button>
           ${breathing ? '' : `<button class="tour-btn-arrow${pulseNext ? ' tour-btn-arrow-pulse' : ''}" data-act="next">\u2192</button>`}
         </div>`;
 
@@ -2465,7 +2465,7 @@ async function _cmdDemo(args, ctx) {
   const delay = ms => new Promise(r => setTimeout(r, ms));
 
   // ── Welcome ──
-  await typewriterReply('Welcome to Odysseus! Lets begin the tour!');
+  await typewriterReply(window.__t('slash.tour.welcome'));
   // Beat between the welcome line and the first hint so it doesn't snap in.
   await delay(900);
 
@@ -2500,14 +2500,14 @@ async function _cmdDemo(args, ctx) {
   const sidebar = document.getElementById('sidebar');
 
   const steps = [
-    { sel: '#sidebar-new-chat-btn', text: 'Start a new chat here. <b>Click it.</b> You can do it!', mode: 'click',
+    { sel: '#sidebar-new-chat-btn', text: window.__t('slash.tour.step.newChat'), mode: 'click',
       before() { if (sidebar?.classList.contains('hidden')) sidebar.classList.remove('hidden'); } },
-    { sel: '#model-picker-btn',   text: 'Pick your LLM, Local or API.', advanceOnClick: true },
-    { sel: '#mode-agent-btn',     text: '<b>Agent mode</b> gives Odysseus more control of the app when your model supports tools: create a theme, download a model, make a daily task, organize things, and more.', mode: 'click' },
-    { sel: '#web-toggle-btn',     text: 'Toggle tools like <b>web search</b>. Odysseus comes with private built-in <b>SearXNG</b> search.', mode: 'click' },
-    { sel: '#overflow-plus-btn',  text: 'More tools can be found here, or in your sidebar. <b>Click to peek.</b>',
+    { sel: '#model-picker-btn',   text: window.__t('slash.tour.step.pickModel'), advanceOnClick: true },
+    { sel: '#mode-agent-btn',     text: window.__t('slash.tour.step.agentMode'), mode: 'click' },
+    { sel: '#web-toggle-btn',     text: window.__t('slash.tour.step.webToggle'), mode: 'click' },
+    { sel: '#overflow-plus-btn',  text: window.__t('slash.tour.step.moreTools'),
       advanceOnClick: true, pulseNext: true, afterDelay: 2200 },
-    { sel: '#message',            text: 'Write your prompt here. Drag and drop files to attach them. <b>/prompt</b> for random prompt, <b>/help</b> for more.',
+    { sel: '#message',            text: window.__t('slash.tour.step.writePrompt'),
       finishLabel: true,
       before() { document.getElementById('overflow-menu')?.classList.add('hidden'); } },
   ];
@@ -2534,7 +2534,7 @@ async function _cmdDemo(args, ctx) {
   }
 
   _clearTour();
-  await typewriterReply('Odysseus is yours to explore, enjoy the voyage!');
+  await typewriterReply(window.__t('slash.tour.endMessage'));
   return true;
 }
 
@@ -2582,7 +2582,7 @@ async function _cmdTourCompare(args, ctx) {
     }
   }
   if (!overlay) {
-    slashReply('Could not open Model Comparison. Try clicking the Compare tool first.');
+    slashReply(window.__t('slash.tour.couldNotOpenCompare'));
     return true;
   }
 
@@ -2672,13 +2672,13 @@ async function _cmdTourCompare(args, ctx) {
 
       tooltip.classList.remove('tour-fade-in');
       const hint = advanceOnClick
-        ? '<div style="font-size:0.72rem;opacity:0.45;margin-bottom:6px;">Click the highlighted element to continue.</div>'
+        ? '<div style="font-size:0.72rem;opacity:0.45;margin-bottom:6px;">' + window.__t('slash.tour.clickToContinue') + '</div>'
         : '';
       tooltip.innerHTML =
         '<div class="tour-text">' + text + '</div>' + hint +
         '<div class="tour-nav">' +
           '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
-          '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
+          '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : window.__t('slash.tour.skipTour')) + '</button>' +
           '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
         '</div>';
       requestAnimationFrame(() => {
@@ -2817,7 +2817,7 @@ async function _cmdTourCompare(args, ctx) {
   }
 
   _clear();
-  await typewriterReply('That’s it, you’ll figure out the rest! Have fun!');
+  await typewriterReply(window.__t('slash.tour.comparisonDone'));
   return true;
 }
 
@@ -2866,7 +2866,7 @@ async function _cmdTourCookbook(args, ctx) {
     }
   }
   if (!modal || modal.classList.contains('hidden')) {
-    slashReply('Could not open Cookbook. Try clicking the Cookbook tool first.');
+    slashReply(window.__t('slash.misc.openCompareFailed'));
     return true;
   }
 
@@ -2964,7 +2964,7 @@ async function _cmdTourCookbook(args, ctx) {
         '<div class="tour-text">' + text + '</div>' +
         '<div class="tour-nav">' +
           '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
-          '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
+          '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : window.__t('slash.tour.skipTour')) + '</button>' +
           '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
         '</div>';
       requestAnimationFrame(() => {
@@ -3201,7 +3201,7 @@ async function _cmdTourTheme(args, ctx) {
           '<div class="tour-text">' + text + '</div>' +
           '<div class="tour-nav">' +
             '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
-            '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
+            '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : window.__t('slash.tour.skipTour')) + '</button>' +
             '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
           '</div>';
         requestAnimationFrame(() => {
@@ -3339,7 +3339,7 @@ async function _cmdTourSettings(args, ctx) {
     }
   }
   if (!modal || modal.classList.contains('hidden')) {
-    slashReply('Could not open Settings. Try clicking the gear icon first.');
+    slashReply(window.__t('slash.misc.openSettingsFailed'));
     return true;
   }
 
@@ -3445,7 +3445,7 @@ async function _cmdTourSettings(args, ctx) {
           '<div class="tour-text">' + text + '</div>' +
           '<div class="tour-nav">' +
             '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
-            '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
+            '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : window.__t('slash.tour.skipTour')) + '</button>' +
             '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
           '</div>';
         requestAnimationFrame(() => {
@@ -3677,7 +3677,7 @@ async function _cmdTourGallery(args, ctx) {
           '<div class="tour-text">' + text + '</div>' +
           '<div class="tour-nav">' +
             '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
-            '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
+            '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : window.__t('slash.tour.skipTour')) + '</button>' +
             '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
           '</div>';
         requestAnimationFrame(() => {
@@ -3890,7 +3890,7 @@ async function _cmdTourNotes(args, ctx) {
           '<div class="tour-text">' + text + '</div>' +
           '<div class="tour-nav">' +
             '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
-            '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
+            '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : window.__t('slash.tour.skipTour')) + '</button>' +
             '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
           '</div>';
         requestAnimationFrame(() => {
@@ -4090,7 +4090,7 @@ async function _cmdTourBrain(args, ctx) {
           '<div class="tour-text">' + text + '</div>' +
           '<div class="tour-nav">' +
             '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
-            '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
+            '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : window.__t('slash.tour.skipTour')) + '</button>' +
             '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
           '</div>';
         requestAnimationFrame(() => {
@@ -4527,7 +4527,7 @@ async function _cmdTourResearch(args, ctx) {
         '<div class="tour-text">' + text + '</div>' +
         '<div class="tour-nav">' +
           '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
-          '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
+          '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : window.__t('slash.tour.skipTour')) + '</button>' +
           '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
         '</div>';
       requestAnimationFrame(() => {
@@ -4743,7 +4743,7 @@ async function _cmdTourLibrary(args, ctx) {
         '<div class="tour-text">' + text + '</div>' +
         '<div class="tour-nav">' +
           '<button class="tour-btn-arrow' + (isFirst ? ' disabled' : '') + '" data-act="back">←</button>' +
-          '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : 'skip tour') + '</button>' +
+          '<button class="tour-btn-skip" data-act="skip">' + (isLast ? 'done' : window.__t('slash.tour.skipTour')) + '</button>' +
           '<button class="tour-btn-arrow" data-act="next">' + (isLast ? '✓' : '→') + '</button>' +
         '</div>';
       requestAnimationFrame(() => {
@@ -5027,10 +5027,10 @@ async function _setupProviderDeviceFlow(providerKey) {
   _clearSetupGuideMessages();
   const config = PROVIDER_DEVICE_FLOWS[providerKey];
   if (!config) {
-    await _setupReply('Provider not recognised.');
+    await _setupReply(window.__t('slash.setup.providerNotRecognisedSimple'));
     return;
   }
-  await _setupReply(`Starting ${config.label} sign-in...`);
+  await _setupReply(window.__t('slash.setup.startingSignIn', {label: config.label}));
   try {
     const result = await runProviderDeviceFlow(providerKey, {
       onStart: async ({ start, authUrl }) => {
@@ -5055,16 +5055,16 @@ async function _setupProviderDeviceFlow(providerKey) {
     });
     if (result.status === 'authorized') {
       const n = ((result.endpoint && result.endpoint.models) || []).length;
-      await _setupReply(`Connected - ${n} ${config.label} model${n !== 1 ? 's' : ''} available.`);
+      await _setupReply(window.__t('slash.setup.connectedModels', {count: n, label: config.label}));
       if (modelsModule) modelsModule.refreshModels(true);
       return;
     }
     if (result.status === 'failed') {
-      await _setupReply(`${config.label} sign-in failed (${result.error || 'denied'}).`);
+      await _setupReply(window.__t('slash.setup.signInFailed', {label: config.label, error: result.error || 'denied'}));
       return;
     }
     if (result.status === 'expired') {
-      await _setupReply(`${config.label} sign-in expired - run /setup ${providerKey} again.`);
+      await _setupReply(window.__t('slash.setup.signInExpired', {label: config.label, provider: providerKey}));
       return;
     }
   } catch (e) {
@@ -5229,19 +5229,19 @@ async function _cmdShortcuts(args, ctx) {
   }).join('+');
 
   const entries = [
-    [formatCombo(keybinds.search), 'Search conversations'],
-    [formatCombo(keybinds.toggle_sidebar), 'Toggle sidebar'],
-    [formatCombo(keybinds.new_session), 'New session'],
-    [formatCombo(keybinds.star_session), 'Star / unstar session'],
-    [formatCombo(keybinds.delete_session), 'Delete session'],
-    [formatCombo(keybinds.admin_panel), 'Admin panel'],
-    [formatCombo(keybinds.cancel), 'Cancel stream / close panel'],
-    ['Enter', 'Send message'],
-    ['Shift+Enter', 'New line'],
+    [formatCombo(keybinds.search), window.__t('slash.shortcuts.searchConversations')],
+    [formatCombo(keybinds.toggle_sidebar), window.__t('slash.shortcuts.toggleSidebar')],
+    [formatCombo(keybinds.new_session), window.__t('slash.shortcuts.newSession')],
+    [formatCombo(keybinds.star_session), window.__t('slash.shortcuts.starSession')],
+    [formatCombo(keybinds.delete_session), window.__t('slash.shortcuts.deleteSession')],
+    [formatCombo(keybinds.admin_panel), window.__t('slash.shortcuts.adminPanel')],
+    [formatCombo(keybinds.cancel), window.__t('slash.shortcuts.cancelStream')],
+    ['Enter', window.__t('slash.shortcuts.sendMessage')],
+    ['Shift+Enter', window.__t('slash.shortcuts.newLine')],
   ];
   const maxKey = Math.max(...entries.map(e => e[0].length));
   const lines = entries.map(([key, desc]) => `  ${key.padEnd(maxKey + 2)}${desc}`);
-  const body = await typewriterReply('Keyboard shortcuts:');
+  const body = await typewriterReply(window.__t('slash.shortcuts.title'));
   const pre = document.createElement('pre');
   pre.style.lineHeight = '1.7';
   pre.textContent = lines.join('\n');
@@ -5533,12 +5533,12 @@ async function _cmdUptime(args, ctx) {
 }
 
 async function _cmdPing(args, ctx) {
-  slashReply('<span style="opacity:0.5">Pinging endpoints...</span>');
+  slashReply('<span style="opacity:0.5">' + window.__t('slash.ping.pinging') + '</span>');
   try {
     const res = await fetch(`${API_BASE}/api/ping`, { credentials: 'same-origin' });
     const data = await res.json();
     const eps = data.endpoints || [];
-    if (!eps.length) { slashReply('No endpoints configured.'); return true; }
+    if (!eps.length) { slashReply(window.__t('slash.ping.noEndpoints')); return true; }
     let html = '<div style="font-family:inherit;font-size:0.9em">';
     for (const ep of eps) {
       const isUp = ep.status === 'online';
@@ -5589,7 +5589,7 @@ async function _cmdProbe(args, ctx) {
     }
   }
 
-  slashReply('<span style="opacity:0.5">Probing models... this may take a while.</span>');
+  slashReply('<span style="opacity:0.5">' + window.__t('slash.probe.probing') + '</span>');
   // Get reference to the message we just added so we can update it live
   const chatBox = document.getElementById('chat-history');
   const msgEl = chatBox ? chatBox.lastElementChild : null;
@@ -5665,7 +5665,7 @@ async function _cmdProbe(args, ctx) {
     if (uiModule) uiModule.scrollHistory();
 
   } catch (e) {
-    bodyEl.innerHTML = 'Failed to probe: ' + ctx.esc(e.message);
+    bodyEl.innerHTML = (window.__t || (k=>k))('slash.failedToProbe', {error: ctx.esc(e.message)});
   }
   return true;
 }
@@ -5733,8 +5733,8 @@ async function _cmdHelp(args, ctx) {
     }
     lines.push('');
   }
-  lines.push('Tip: /<command> --help for details');
-  lines.push('Shortcuts: /new /rename /fork /web /bash /memories /skills');
+  lines.push(window.__t('slash.help.tip'));
+  lines.push(window.__t('slash.help.shortcutsHint'));
   slashReply(`<pre style="line-height:1.7">${lines.join('\n')}</pre>`);
   return true;
 }
