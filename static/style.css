@@ -38356,3 +38356,15 @@ body.theme-frosted .modal {
 .log-line-default {
   color: var(--fg, #9cdef2);
 }
+
+/* The mobile sidebar drawer's backdrop scrim is fully wired (the rules above
+   plus the .visible toggle and backdrop-tap-to-dismiss in sidebar-layout.js),
+   but a later global `#sidebar-backdrop { display:none !important }` overrides
+   it at every viewport. That leaves the open drawer with no scrim on phones:
+   the page behind stays at full brightness and interactive (taps fall through),
+   and there is no clear way to close it. Re-enable the scrim only while the
+   drawer is open on phones; `#sidebar-backdrop.visible` (id+class) out-specifies
+   the id-only killer, so no other rule needs to change. */
+@media (max-width: 768px) {
+  #sidebar-backdrop.visible { display: block !important; }
+}
