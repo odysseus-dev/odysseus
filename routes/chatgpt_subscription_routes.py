@@ -55,6 +55,8 @@ def _provision_endpoint(tokens: Dict, owner: Optional[str]) -> Dict:
         auth.base_url = base
         auth.access_token = access_token
         auth.refresh_token = refresh_token
+        auth.chatgpt_account_id = chatgpt_subscription.chatgpt_account_id_from_tokens(tokens)
+        chatgpt_subscription.remember_chatgpt_account_id(access_token, auth.chatgpt_account_id)
         auth.last_refresh = utcnow_naive()
         auth.auth_mode = "chatgpt"
 
@@ -82,7 +84,7 @@ def _provision_endpoint(tokens: Dict, owner: Optional[str]) -> Dict:
         ep.api_key = None
         ep.provider_auth_id = auth.id
         ep.is_enabled = True
-        ep.supports_tools = False
+        ep.supports_tools = True
         ep.model_type = "llm"
         ep.endpoint_kind = "api"
         ep.model_refresh_mode = "manual"

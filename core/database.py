@@ -414,6 +414,7 @@ class ProviderAuthSession(TimestampMixin, Base):
     base_url = Column(String, nullable=False)
     access_token = Column(EncryptedText, nullable=True)
     refresh_token = Column(EncryptedText, nullable=True)
+    chatgpt_account_id = Column(EncryptedText, nullable=True)
     last_refresh = Column(DateTime, nullable=True)
     auth_mode = Column(String, nullable=True)
 
@@ -904,6 +905,30 @@ def _migrate_add_provider_auth_id_column():
             logging.getLogger(__name__).info("Migrated: added 'provider_auth_id' column + index to model_endpoints")
     except Exception as e:
         logging.getLogger(__name__).warning(f"model_endpoints.provider_auth_id migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _migrate_add_provider_auth_session_account_id_column():
+    """Add ChatGPT account metadata to provider_auth_sessions if missing."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(provider_auth_sessions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "chatgpt_account_id" not in columns:
+            conn.execute("ALTER TABLE provider_auth_sessions ADD COLUMN chatgpt_account_id TEXT")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'chatgpt_account_id' column to provider_auth_sessions")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"provider_auth_sessions.chatgpt_account_id migration failed: {e}")
     finally:
         try:
             conn.close()
@@ -1793,6 +1818,7 @@ def init_db():
     _migrate_add_model_endpoint_refresh_columns()
     _migrate_add_model_endpoint_owner_column()
     _migrate_add_provider_auth_id_column()
+    _migrate_add_provider_auth_session_account_id_column()
     _migrate_add_supports_tools_column()
     _migrate_add_task_run_model_column()
     _migrate_add_owner_column()

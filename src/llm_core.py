@@ -762,8 +762,9 @@ def _build_chatgpt_responses_payload(
     max_tokens: int,
     *,
     stream: bool = False,
+    tools: Optional[List[Dict]] = None,
 ) -> Dict:
-    from src.chatgpt_subscription import build_responses_input
+    from src.chatgpt_subscription import build_responses_input, build_responses_tools
 
     conversation = [msg for msg in (messages or []) if (msg.get("role") or "") != "system"]
     payload: Dict = {
@@ -775,6 +776,9 @@ def _build_chatgpt_responses_payload(
     }
     if not _restricts_temperature(model):
         payload["temperature"] = temperature
+    response_tools = build_responses_tools(tools)
+    if response_tools:
+        payload["tools"] = response_tools
     # ChatGPT Subscription Codex API does not support max_output_tokens —
     # passing it returns HTTP 400 "Unsupported parameter: max_output_tokens".
     # Do not include it in the payload.
@@ -1706,7 +1710,10 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     elif provider == "chatgpt-subscription":
         target_url = _normalize_chatgpt_subscription_url(url)
         h = _provider_headers(provider, headers)
-        payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
+        payload = _build_chatgpt_responses_payload(
+            model, messages_copy, temperature, max_tokens,
+            stream=True, tools=tools,
+        )
     else:
         target_url = url
         payload = {
@@ -1752,6 +1759,65 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         event_name = ""
         input_tokens = 0
         output_tokens = 0
+        _responses_tool_calls: Dict[str, Dict] = {}
+        _responses_tool_order: List[str] = []
+        _responses_tool_aliases: Dict[str, str] = {}
+
+        def _alias_values(data: Dict, item: Optional[Dict] = None) -> List[str]:
+            aliases: List[str] = []
+            src = item if isinstance(item, dict) else {}
+            for value in (src.get("id"), src.get("call_id"), data.get("item_id"), data.get("output_item_id")):
+                if value is not None:
+                    aliases.append(str(value))
+            if data.get("output_index") is not None:
+                aliases.append(f"output_index:{data.get('output_index')}")
+            return aliases
+
+        def _tool_call_key(data: Dict, item: Optional[Dict] = None) -> str:
+            for alias in _alias_values(data, item):
+                if alias in _responses_tool_aliases:
+                    return _responses_tool_aliases[alias]
+            aliases = _alias_values(data, item)
+            key = aliases[0] if aliases else f"response_tool_{len(_responses_tool_order)}"
+            for alias in aliases:
+                _responses_tool_aliases[alias] = key
+            return key
+
+        def _remember_tool_item(data: Dict, item: Dict) -> Optional[Dict]:
+            if not isinstance(item, dict):
+                return None
+            if item.get("type") not in {"function_call", "custom_tool_call"}:
+                return None
+            key = _tool_call_key(data, item)
+            if key not in _responses_tool_calls:
+                _responses_tool_calls[key] = {"id": "", "name": "", "arguments": ""}
+                _responses_tool_order.append(key)
+            for alias in _alias_values(data, item):
+                _responses_tool_aliases[alias] = key
+            call = _responses_tool_calls[key]
+            call_id = item.get("call_id") or item.get("id")
+            if call_id:
+                call["id"] = str(call_id)
+            if item.get("name"):
+                call["name"] = str(item["name"])
+            if "arguments" in item and item.get("arguments") is not None:
+                call["arguments"] = str(item.get("arguments") or "")
+            return call
+
+        def _emit_responses_tool_calls() -> Optional[str]:
+            calls = [
+                _responses_tool_calls[key]
+                for key in _responses_tool_order
+                if _responses_tool_calls.get(key, {}).get("name")
+            ]
+            if not calls:
+                return None
+            for idx, call in enumerate(calls):
+                if not call.get("id"):
+                    call["id"] = f"call_{idx}"
+                call.setdefault("arguments", "")
+            return f'data: {json.dumps({"type": "tool_calls", "calls": calls})}\n\n'
+
         try:
             client = _get_http_client()
             async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
@@ -1772,6 +1838,12 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                     raw = line[5:].strip()
                     if not raw:
                         continue
+                    if raw == "[DONE]":
+                        tc_event = _emit_responses_tool_calls()
+                        if tc_event:
+                            yield tc_event
+                        yield "data: [DONE]\n\n"
+                        return
                     try:
                         data = json.loads(raw)
                     except json.JSONDecodeError:
@@ -1781,8 +1853,33 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                         delta = data.get("delta") or ""
                         if delta:
                             yield f'data: {json.dumps({"delta": delta})}\n\n'
+                    elif evt in {"response.output_item.added", "response.output_item.done"}:
+                        _remember_tool_item(data, data.get("item") or data.get("output_item") or {})
+                    elif evt in {"response.function_call_arguments.delta", "response.custom_tool_call_input.delta"}:
+                        key = _tool_call_key(data)
+                        if key not in _responses_tool_calls:
+                            _responses_tool_calls[key] = {"id": "", "name": "", "arguments": ""}
+                            _responses_tool_order.append(key)
+                        delta = data.get("delta") or ""
+                        _responses_tool_calls[key]["arguments"] += str(delta)
+                        name = _responses_tool_calls[key].get("name")
+                        if delta and name in ("create_document", "update_document", "edit_document"):
+                            yield f'data: {json.dumps({"type": "tool_call_delta", "index": _responses_tool_order.index(key), "name": name, "arg_delta": delta})}\n\n'
+                    elif evt in {"response.function_call_arguments.done", "response.custom_tool_call_input.done"}:
+                        key = _tool_call_key(data)
+                        if key not in _responses_tool_calls:
+                            _responses_tool_calls[key] = {"id": "", "name": "", "arguments": ""}
+                            _responses_tool_order.append(key)
+                        if data.get("arguments") is not None:
+                            _responses_tool_calls[key]["arguments"] = str(data.get("arguments") or "")
                     elif evt == "response.completed":
-                        usage = (data.get("response") or {}).get("usage") or data.get("usage") or {}
+                        response = data.get("response") or {}
+                        for item in response.get("output") or []:
+                            _remember_tool_item(data, item)
+                        tc_event = _emit_responses_tool_calls()
+                        if tc_event:
+                            yield tc_event
+                        usage = response.get("usage") or data.get("usage") or {}
                         input_tokens = usage.get("input_tokens") or usage.get("prompt_tokens") or input_tokens
                         output_tokens = usage.get("output_tokens") or usage.get("completion_tokens") or output_tokens
                         if input_tokens or output_tokens:
@@ -1794,6 +1891,9 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                         text = err.get("message") if isinstance(err, dict) else str(err or "ChatGPT Subscription request failed")
                         yield f'event: error\ndata: {json.dumps({"status": 502, "text": text})}\n\n'
                         return
+                tc_event = _emit_responses_tool_calls()
+                if tc_event:
+                    yield tc_event
                 yield "data: [DONE]\n\n"
         except (httpx.ConnectError, httpx.ConnectTimeout) as e:
             _cooled = _mark_host_dead(target_url)

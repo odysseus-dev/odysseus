@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from src import llm_core
+from src import chatgpt_subscription
 
 
 @pytest.mark.parametrize(
@@ -104,6 +105,74 @@ def test_chatgpt_subscription_payload_omits_max_output_tokens_when_zero():
     )
 
     assert "max_output_tokens" not in payload
+
+
+def test_chatgpt_subscription_payload_converts_function_tools():
+    payload = llm_core._build_chatgpt_responses_payload(
+        "gpt-5.3-codex-spark",
+        [{"role": "user", "content": "Read the README"}],
+        temperature=0.2,
+        max_tokens=0,
+        tools=[{
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read a file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            },
+        }],
+    )
+
+    assert payload["tools"] == [{
+        "type": "function",
+        "name": "read_file",
+        "description": "Read a file",
+        "parameters": {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        },
+    }]
+
+
+def test_chatgpt_subscription_input_preserves_native_tool_turns():
+    items = chatgpt_subscription.build_responses_input([
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{
+                "id": "call_read",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": '{"path": "/workspace/README.txt"}',
+                },
+            }],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_read",
+            "content": "README contents",
+        },
+    ])
+
+    assert items == [
+        {
+            "type": "function_call",
+            "call_id": "call_read",
+            "name": "read_file",
+            "arguments": '{"path": "/workspace/README.txt"}',
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call_read",
+            "output": "README contents",
+        },
+    ]
 
 
 def _anthropic_payload(temperature):

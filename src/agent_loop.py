@@ -2295,6 +2295,12 @@ async def stream_agent_loop(
             _db.close()
     except Exception as _e:
         logger.debug(f"endpoint supports_tools lookup failed: {_e}")
+    try:
+        from src.chatgpt_subscription import is_chatgpt_subscription_base as _is_chatgpt_subscription_base
+        if _is_chatgpt_subscription_base(endpoint_url or ""):
+            _endpoint_supports = True
+    except Exception:
+        pass
     _model_supports_tools = any(kw in _model_lc for kw in (
         "gpt-4", "gpt-5", "gpt-o", "claude", "gemini", "gemma",
         "qwen3", "qwen2.5", "mixtral", "mistral", "llama-3.1", "llama-3.2",
