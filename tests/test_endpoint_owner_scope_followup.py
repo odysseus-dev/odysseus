@@ -377,7 +377,7 @@ def test_compare_endpoint_key_lookup_is_owner_scoped():
 
 
 def test_gallery_image_endpoint_lookups_are_owner_scoped():
-    body = Path("routes/gallery_routes.py").read_text(encoding="utf-8")
+    body = Path("routes/gallery/gallery_routes.py").read_text(encoding="utf-8")
     helper_body = body.split("def _visible_image_endpoint_query", 1)[1].split(
         "def _first_visible_image_endpoint", 1
     )[0]

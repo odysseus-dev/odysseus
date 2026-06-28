@@ -10,7 +10,8 @@ import { attachColorPicker } from './colorPicker.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
 import { applyEdgeDock, clearDockSide } from './modalSnap.js';
-import { topToolWindowZ } from './toolWindowZOrder.js';
+import { topToolWindowZ, topPortalZ } from './toolWindowZOrder.js';
+import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -608,7 +609,7 @@ function _isNoteFullyDone(note) {
 // A "checklist note" — todo or goal — has structured items[] that the cards
 // render as checkboxes and that "fully done" / progress logic reads from.
 function _hasItems(note) {
-  return note && (note.note_type === 'todo' || note.note_type === 'goal');
+  return note && (note.note_type === 'todo' || note.note_type === 'goal' || note.note_type === 'checklist');
 }
 
 // Compact " N/M" progress string for a goal's checklist. Empty when the goal
@@ -1120,8 +1121,6 @@ export function openPanel() {
   }
   _open = true;
   _editingId = null;
-  // Reset the search filter — the rebuilt pane's search input renders empty, so a
-  // stale _searchQuery would silently hide non-matching notes after a reopen.
   _searchQuery = '';
   _clearViewedReminderGlows();
   _firedDotDismissedAt = Date.now();
@@ -1822,10 +1821,23 @@ function _renderNotes() {
       for (let i = 0; i < note.items.length; i++) {
         const item = note.items[i];
         const doneClass = item.done ? ' done' : '';
+        const agentStatus = (item.agent_status || '').toLowerCase();
+        const agentDoneClass = agentStatus === 'stream_complete' ? ' is-agent-stream-complete' : '';
+        const agentTitle = agentStatus === 'stream_complete'
+          ? 'Agent stream finished for this todo'
+          : (agentStatus === 'running' ? 'Agent is working on this todo' : 'Solve this todo with the agent');
+        const agentSessionAttr = item.agent_session_id ? ` data-session-id="${_attrEsc(item.agent_session_id)}"` : '';
+        const agentMenuTitle = item.agent_session_title || `Agent: ${(item.text || '').slice(0, 40)}`;
         const indent = Math.min(item.indent || 0, 3);
         contentHtml += `<div class="note-checkbox${doneClass}" data-note-id="${note.id}" data-idx="${i}" style="padding-left:${indent * 16}px">
           <span class="note-check-dot" title="Mark done"></span>
           <span class="note-check-text">${_linkify(item.text)}</span>
+          <button class="note-checkbox-agent${agentDoneClass}" data-note-id="${_attrEsc(note.id)}" data-idx="${i}"${agentSessionAttr} data-agent-title="${_attrEsc(agentMenuTitle)}" title="${_attrEsc(agentTitle)}">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></svg>
+          </button>
+          <button class="note-checkbox-edit" data-note-id="${note.id}" data-idx="${i}" title="Edit item">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
           <button class="note-checkbox-rm" data-note-id="${note.id}" data-idx="${i}" title="Delete item">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
@@ -1889,10 +1901,6 @@ function _renderNotes() {
       ${_hasItems(note) ? `<div class="note-cl-quickadd"><input type="text" class="note-cl-quickadd-input" placeholder="+ Add item" data-note-id="${note.id}" /></div>` : ''}
       ${reminderTagHtml}
       ${noteTags.length ? `<div class="note-card-label">${noteTags.map(t => `<button type="button" class="note-card-label-chip" data-note-label-filter="${_esc(t)}" title="Filter #${_esc(t)}">#${_esc(t)}</button>`).join(' ')}</div>` : ''}
-      ${note.agent_session_id ? `<button class="note-agent-tag" data-note-id="${note.id}" data-session-id="${_esc(note.agent_session_id)}" title="Open the agent's chat for this note">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></svg>
-        <span>Agent</span>
-      </button>` : ''}
       <div class="note-card-actions">
         <div class="note-card-colors">${colorDots}</div>
         <span style="flex:1"></span>
@@ -2177,7 +2185,7 @@ function _bindCardEvents(body) {
   // Click empty area of checklist preview (not on checkbox/X) — edit
   body.querySelectorAll('.note-checklist-preview').forEach(el => {
     el.addEventListener('click', (e) => {
-      if (e.target.closest('.note-checkbox, .note-checkbox-rm, .note-cl-quickadd, input')) return;
+      if (e.target.closest('.note-checkbox, .note-checkbox-rm, .note-checkbox-agent, .note-cl-quickadd, input')) return;
       e.stopPropagation();
       tapToEditOrSelect(el.closest('.note-card'));
     });
@@ -2203,7 +2211,7 @@ function _bindCardEvents(body) {
   // title / content preview triggered edit, so padding + empty gutters were
   // dead zones that felt broken on mobile.
   if (_isNotesMobileMode() && !_selectMode) {
-    const _INTERACTIVE = 'button, a, input, label, .note-card-color-dot, .note-checkbox, .note-checkbox-rm, .note-cl-quickadd, .note-agent-tag, .note-card-pin, .note-card-corner-trash, .note-card-corner-menu, .note-card-corner-unarchive, .note-card-edit-corner, .note-card-reminder, .note-card-cb';
+    const _INTERACTIVE = 'button, a, input, label, .note-card-color-dot, .note-checkbox, .note-checkbox-rm, .note-checkbox-agent, .note-cl-quickadd, .note-agent-tag, .note-card-pin, .note-card-corner-trash, .note-card-corner-menu, .note-card-corner-unarchive, .note-card-edit-corner, .note-card-reminder, .note-card-cb';
     body.querySelectorAll('.note-card').forEach(card => {
       card.addEventListener('click', (e) => {
         if (e.target.closest(_INTERACTIVE)) return;
@@ -2295,16 +2303,6 @@ function _bindCardEvents(body) {
       e.preventDefault();
       e.stopPropagation();
       _openNoteCornerMenu(btn);
-    });
-  });
-  // Agent tag — opens the chat session the agent ran for this note.
-  body.querySelectorAll('.note-agent-tag').forEach(tag => {
-    tag.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const sid = tag.dataset.sessionId;
-      const _sm = window.sessionModule;
-      if (sid && _sm && _sm.selectSession) { closePanel(); _sm.selectSession(sid); }
     });
   });
   body.querySelectorAll('.note-card-label-chip').forEach(chip => {
@@ -2520,6 +2518,97 @@ function _bindCardEvents(body) {
         _renderNotes();
         uiModule.showError('Failed to remove item');
       });
+    });
+  });
+
+  function _startChecklistItemEdit(noteId, idx, span) {
+    if (span.isContentEditable) return;
+    const note = _notes.find(n => n.id === noteId);
+    if (!note || !Array.isArray(note.items) || !note.items[idx]) return;
+    
+    span.textContent = note.items[idx].text || '';
+    span.contentEditable = "true";
+    span.spellcheck = false;
+    span.focus();
+    
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(span);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    const save = () => {
+      if (!span.isContentEditable) return;
+      span.contentEditable = "false";
+      const newText = span.textContent.trim();
+      const oldText = (note.items[idx].text || '').trim();
+      
+      if (newText === oldText) {
+        _renderNotes();
+        return;
+      }
+
+      const oldItem = note.items[idx];
+      if (!newText) {
+        note.items.splice(idx, 1);
+      } else {
+        note.items[idx].text = newText;
+      }
+
+      _patchNote(noteId, { items: note.items }).catch(() => {
+        if (!newText) note.items.splice(idx, 0, oldItem);
+        else note.items[idx].text = oldText;
+        _renderNotes();
+        uiModule.showError('Failed to update item');
+      });
+      _renderNotes();
+    };
+
+    const onKeydown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        save();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        span.contentEditable = "false";
+        _renderNotes();
+      }
+    };
+
+    span.addEventListener('blur', save, { once: true });
+    span.addEventListener('keydown', onKeydown);
+  }
+
+  // Edit a single checklist item (hover Edit button)
+  body.querySelectorAll('.note-checkbox-edit').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (_selectMode) return;
+      const noteId = btn.dataset.noteId;
+      const idx = parseInt(btn.dataset.idx);
+      const span = btn.parentElement.querySelector('.note-check-text');
+      if (span) _startChecklistItemEdit(noteId, idx, span);
+    });
+  });
+
+  // Prevent clicks from toggling the row while actively editing inline
+  body.querySelectorAll('.note-check-text').forEach(span => {
+    span.addEventListener('click', (e) => {
+      if (span.isContentEditable) {
+        e.stopPropagation();
+      }
+    });
+  });
+
+  // Per-item agent solve (hover button next to the X). Scoped to one todo
+  // item — uses the note title as context if present, but only the single
+  // item's text as the work. Mirrors the per-note _agentSolveNote pattern.
+  body.querySelectorAll('.note-checkbox-agent').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (_selectMode) return;
+      _openTodoAgentMenu(btn);
     });
   });
 
@@ -3354,7 +3443,7 @@ function _buildForm(note = null) {
 
   function _pickCustomDate() {
     // Replace the dropdown menu with a small inline picker
-    document.querySelectorAll('.note-reminder-menu').forEach(m => m.remove());
+    document.querySelectorAll('.note-reminder-menu').forEach(dismissOrRemove);
     const menu = document.createElement('div');
     menu.className = 'note-reminder-menu';
     const initial = dueInput.value || _toLocalDatetimeStr(_tomorrowDate());
@@ -3388,14 +3477,11 @@ function _buildForm(note = null) {
     if (typeof dInput.showPicker === 'function') {
       try { dInput.showPicker(); } catch {}
     }
+    const close = bindMenuDismiss(menu, () => { menu.remove(); });
     menu.querySelector('.note-reminder-menu-confirm').addEventListener('click', () => {
       if (dInput.value) _setReminder(dInput.value);
-      menu.remove();
+      close();
     });
-    setTimeout(() => {
-      const close = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('click', close); } };
-      document.addEventListener('click', close);
-    }, 0);
   }
 
   if (remindBtn) remindBtn.addEventListener('click', (e) => { e.stopPropagation(); _openReminderMenu(remindBtn, !!dueInput.value); });
@@ -4305,7 +4391,7 @@ function _serializeNoteForCopy(note) {
 // toast. Shared by the corner-copy button click and the Ctrl/Cmd+C shortcut.
 // ── ⋯ corner menu (Copy + Agent) ───────────────────────────────────
 function _openNoteCornerMenu(btn) {
-  document.querySelectorAll('.note-corner-menu-dropdown').forEach(d => d.remove());
+  document.querySelectorAll('.note-corner-menu-dropdown').forEach(dismissOrRemove);
   const id = btn.dataset.noteId;
   const note = _notes.find(n => n.id === id);
   if (!note) return;
@@ -4331,15 +4417,58 @@ function _openNoteCornerMenu(btn) {
   const mh = menu.offsetHeight || 96;
   const below = window.innerHeight - r.bottom;
   const top = (below < mh + 8 && r.top > mh + 8) ? (r.top - mh - 4) : (r.bottom + 4);
-  menu.style.cssText += `position:fixed;z-index:11000;top:${Math.round(top)}px;left:${Math.round(left)}px;`;
+  menu.style.cssText += `position:fixed;z-index:${topPortalZ()};top:${Math.round(top)}px;left:${Math.round(left)}px;`;
+  const close = bindMenuDismiss(menu, () => { menu.remove(); });
+  menu.querySelector('[data-act="copy"]').addEventListener('click', () => { close(); _copyNote(id, btn); });
+  menu.querySelector('[data-act="agent"]').addEventListener('click', () => { close(); _agentSolveNote(id); });
+}
+
+function _positionNoteMenu(menu, btn, width = 196) {
+  document.body.appendChild(menu);
+  const r = btn.getBoundingClientRect();
+  let left = Math.min(r.right - width, window.innerWidth - width - 8);
+  left = Math.max(8, left);
+  const mh = menu.offsetHeight || 112;
+  const below = window.innerHeight - r.bottom;
+  const top = (below < mh + 8 && r.top > mh + 8) ? (r.top - mh - 4) : (r.bottom + 4);
+  menu.style.cssText += `position:fixed;z-index:${topPortalZ()};top:${Math.round(top)}px;left:${Math.round(left)}px;min-width:${width}px;`;
   const close = (ev) => {
     if (ev && menu.contains(ev.target)) return;
     menu.remove();
     document.removeEventListener('click', close, true);
   };
   setTimeout(() => document.addEventListener('click', close, true), 0);
-  menu.querySelector('[data-act="copy"]').addEventListener('click', () => { menu.remove(); _copyNote(id, btn); });
-  menu.querySelector('[data-act="agent"]').addEventListener('click', () => { menu.remove(); _agentSolveNote(id); });
+}
+
+function _openTodoAgentMenu(btn) {
+  document.querySelectorAll('.note-corner-menu-dropdown').forEach(d => d.remove());
+  const noteId = btn.dataset.noteId;
+  const idx = parseInt(btn.dataset.idx);
+  const sid = btn.dataset.sessionId || '';
+  const menu = document.createElement('div');
+  menu.className = 'note-corner-menu-dropdown note-agent-item-menu';
+  menu.innerHTML = `
+    ${sid ? `<button type="button" class="ncm-item" data-act="open">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+      <span>Open</span>
+    </button>` : ''}
+    <button type="button" class="ncm-item" data-act="run">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></svg>
+      <span>${sid ? 'Run again' : 'Run Agent'}</span>
+    </button>`;
+  _positionNoteMenu(menu, btn);
+  const openBtn = menu.querySelector('[data-act="open"]');
+  if (openBtn) {
+    openBtn.addEventListener('click', () => {
+      menu.remove();
+      const _sm = window.sessionModule;
+      if (sid && _sm && _sm.selectSession) { closePanel(); _sm.selectSession(sid); }
+    });
+  }
+  menu.querySelector('[data-act="run"]').addEventListener('click', () => {
+    menu.remove();
+    _agentSolveTodoItem(noteId, idx);
+  });
 }
 
 // Build the prompt the agent gets from a note: title + body, plus any
@@ -4353,7 +4482,7 @@ function _noteToAgentPrompt(note) {
       .forEach(it => parts.push('- ' + it.text.trim()));
   }
   const body = parts.join('\n');
-  return body ? `Help me get this done:\n\n${body}` : '';
+  return body ? `Help me get this done:\n\n${body}\n\nThe source note is read-only. Do not edit, replace, or update it.` : '';
 }
 
 // Agent-solve: create a chat session server-side, kick off an agent run
@@ -4395,6 +4524,7 @@ async function _agentSolveNote(id) {
     fd.append('message', prompt);
     fd.append('session', sid);
     fd.append('mode', 'agent');
+    fd.append('disabled_tools', JSON.stringify(['manage_notes']));
     fetch(`${API_BASE}/api/chat_stream`, { method: 'POST', credentials: 'same-origin', body: fd })
       .then(async (res) => {
         if (!res.ok || !res.body) return;
@@ -4408,6 +4538,86 @@ async function _agentSolveNote(id) {
       .catch(() => {});
 
     uiModule.showToast('Agent working in background — tap the Agent tag when ready');
+  } catch (e) {
+    uiModule.showError('Agent failed: ' + (e.message || e));
+  }
+}
+
+// Per-item version of _agentSolveNote. Scoped to a single checklist item;
+// the note title (if any) is included as context, but only this one item's
+// text is the work the agent is asked to do. agent_session_id is set on the
+// PARENT note (latest-wins) so the Agent tag still surfaces the most recent
+// run from this note — same UX as a per-note solve.
+async function _agentSolveTodoItem(noteId, idx) {
+  const note = _notes.find(n => n.id === noteId);
+  if (!note || !Array.isArray(note.items)) return;
+  const item = note.items[idx];
+  const itemText = (item && (item.text || '').trim()) || '';
+  if (!itemText) {
+    uiModule.showToast('Nothing to solve — item is empty');
+    return;
+  }
+  const titleCtx = (note.title || '').trim();
+  const prompt = titleCtx
+    ? `Context (from note "${titleCtx}").\n\nHelp me with this todo: ${itemText}\n\nThe source note is read-only. Do not edit, replace, or update it.`
+    : `Help me with this todo: ${itemText}\n\nThe source note is read-only. Do not edit, replace, or update it.`;
+  try {
+    const dc = await (await fetch(`${API_BASE}/api/default-chat`, { credentials: 'same-origin' })).json();
+    if (!dc.endpoint_url || !dc.model) { uiModule.showError('No default chat model configured'); return; }
+
+    const label = itemText.slice(0, 40);
+    const csFd = new FormData();
+    csFd.append('name', 'Agent: ' + label);
+    csFd.append('endpoint_url', dc.endpoint_url);
+    csFd.append('model', dc.model);
+    if (dc.endpoint_id) csFd.append('endpoint_id', dc.endpoint_id);
+    csFd.append('skip_validation', 'true');
+    const csRes = await fetch(`${API_BASE}/api/session`, { method: 'POST', credentials: 'same-origin', body: csFd });
+    if (!csRes.ok) { uiModule.showError('Could not create agent session'); return; }
+    const sess = await csRes.json();
+    const sid = sess.id;
+    const sessionTitle = 'Agent: ' + label;
+
+    const n = _notes.find(x => x.id === noteId);
+    if (n) {
+      n.agent_session_id = sid;
+      if (Array.isArray(n.items) && n.items[idx]) {
+        n.items[idx].agent_session_id = sid;
+        n.items[idx].agent_session_title = sessionTitle;
+        n.items[idx].agent_status = 'running';
+        n.items[idx].agent_stream_completed_at = '';
+      }
+    }
+    _renderNotes();
+    _patchNote(noteId, { items: n && Array.isArray(n.items) ? n.items : note.items, agent_session_id: sid }).catch(() => {});
+
+    const fd = new FormData();
+    fd.append('message', prompt);
+    fd.append('session', sid);
+    fd.append('mode', 'agent');
+    fd.append('disabled_tools', JSON.stringify(['manage_notes']));
+    fetch(`${API_BASE}/api/chat_stream`, { method: 'POST', credentials: 'same-origin', body: fd })
+      .then(async (res) => {
+        if (!res.ok || !res.body) return;
+        const reader = res.body.getReader();
+        while (true) { const { done } = await reader.read(); if (done) break; }
+        if (window.sessionModule && window.sessionModule.markStreamComplete) {
+          try { window.sessionModule.markStreamComplete(sid); } catch {}
+        }
+        const doneNote = _notes.find(x => x.id === noteId);
+        if (doneNote && Array.isArray(doneNote.items) && doneNote.items[idx]) {
+          doneNote.agent_session_id = sid;
+          doneNote.items[idx].agent_session_id = sid;
+          doneNote.items[idx].agent_session_title = sessionTitle;
+          doneNote.items[idx].agent_status = 'stream_complete';
+          doneNote.items[idx].agent_stream_completed_at = new Date().toISOString();
+          _renderNotes();
+          _patchNote(noteId, { items: doneNote.items, agent_session_id: sid }).catch(() => {});
+        }
+      })
+      .catch(() => {});
+
+    uiModule.showToast('Agent working on this item — tap the Agent tag when ready');
   } catch (e) {
     uiModule.showError('Agent failed: ' + (e.message || e));
   }

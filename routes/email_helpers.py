@@ -40,6 +40,16 @@ from src.secret_storage import decrypt as _decrypt
 logger = logging.getLogger(__name__)
 
 
+class EmailNotConfiguredError(RuntimeError):
+    """Raised when an IMAP operation is attempted on an account that has no
+    inbox configured (e.g. a send-only / SMTP-only account).
+
+    Subclasses RuntimeError so existing broad ``except Exception`` handlers
+    keep working; callers that want to treat "no inbox" as an empty result
+    rather than a failure can catch this type specifically.
+    """
+
+
 def _xoauth2_raw(user: str, access_token: str) -> str:
     """The SASL XOAUTH2 initial-response string (unencoded).
 
@@ -225,8 +235,9 @@ def _strip_think(text: str) -> str:
     """
     if not text:
         return ""
-    from src.text_helpers import strip_think as _central, _THINK_CLOSED_RE, _THINK_OPEN_RE, _THINK_TAG_RE
-    had_think = bool(_THINK_CLOSED_RE.search(text) or _THINK_OPEN_RE.search(text) or _THINK_TAG_RE.search(text))
+    from src.text_helpers import strip_think as _central, _THINK_TAG_RE
+    # Single linear tag check; the old closed/open `.search()` calls could ReDoS.
+    had_think = bool(_THINK_TAG_RE.search(text))
     return _central(text, prose=had_think, prompt_echo=True)
 
 
@@ -928,6 +939,14 @@ def _imap_connect(account_id: str | None = None, owner: str = "",
     # `timeout` is overridable so short-lived callers (e.g. the service-health
     # probe) can impose a tighter budget than the default IMAP timeout.
     cfg = _get_email_config(account_id, owner=owner)
+    # Send-only (SMTP-only) account: no IMAP host means there is no inbox to
+    # read. Bail out with a clear, typed error instead of handing an empty
+    # host to imaplib — IMAP4("", 993) silently dials localhost:993 and fails
+    # with a confusing "[Errno 111] Connection refused" on every inbox poll.
+    if not cfg.get("imap_host"):
+        raise EmailNotConfiguredError(
+            f"IMAP is not configured for account {cfg.get('account_name') or 'default'!r}"
+        )
     # Connection mode:
     #   STARTTLS on → plain + upgrade
     #   STARTTLS off + port 993 → implicit SSL (IMAPS)
@@ -1233,22 +1252,30 @@ def _list_attachments_from_msg(msg):
         return attachments
     idx = 0
     for part in msg.walk():
-        if part.is_multipart():
-            continue
         cd = str(part.get("Content-Disposition", ""))
         ct = part.get_content_type()
+        is_attached_email = ct == "message/rfc822" and ("attachment" in cd.lower() or part.get_filename())
+        if part.is_multipart() and not is_attached_email:
+            continue
         # Skip text/html body parts (only consider real attachments)
         if ct in ("text/plain", "text/html") and "attachment" not in cd:
             continue
         filename = part.get_filename()
         if filename:
             filename = _decode_header(filename)
+            if ct == "message/rfc822" and not re.search(r"\.[A-Za-z0-9]{1,8}$", filename):
+                filename = f"{filename}.eml"
         else:
             # Inline images, etc. - generate a name
-            ext = ct.split("/")[-1] if "/" in ct else "bin"
+            ext = "eml" if ct == "message/rfc822" else (ct.split("/")[-1] if "/" in ct else "bin")
             filename = f"attachment_{idx}.{ext}"
         payload = part.get_payload(decode=True)
-        size = len(payload) if payload else 0
+        if payload is None and ct == "message/rfc822":
+            try:
+                payload = part.as_bytes()
+            except Exception:
+                payload = b""
+        size = len(payload) if payload is not None else 0
         attachments.append({
             "index": idx,
             "filename": filename,
@@ -1260,29 +1287,58 @@ def _list_attachments_from_msg(msg):
     return attachments
 
 
+def _is_likely_signature_image_attachment(att: dict) -> bool:
+    """Match the reader's inline signature/logo image filter."""
+    filename = str((att or {}).get("filename") or "").lower()
+    if not re.search(r"\.(png|jpe?g|gif|bmp|svg|webp)$", filename):
+        return False
+    size = int((att or {}).get("size") or 0)
+    if re.search(r"^image\d{3,}\.(png|jpe?g|gif)$", filename):
+        return True
+    if re.search(r"^(signature|logo|sig|footer|banner)[-_\d]*\.(png|jpe?g|gif|svg)$", filename):
+        return True
+    return 0 < size < 30 * 1024
+
+
+def _has_visible_attachments(msg) -> bool:
+    """Return True only for attachments the reader will render as chips."""
+    return any(
+        not _is_likely_signature_image_attachment(att)
+        for att in _list_attachments_from_msg(msg)
+    )
+
+
 def _extract_attachment_to_disk(msg, index, target_dir):
     """Extract a specific attachment to disk and return the file path."""
     if not msg.is_multipart():
         return None
     idx = 0
     for part in msg.walk():
-        if part.is_multipart():
-            continue
         cd = str(part.get("Content-Disposition", ""))
         ct = part.get_content_type()
+        is_attached_email = ct == "message/rfc822" and ("attachment" in cd.lower() or part.get_filename())
+        if part.is_multipart() and not is_attached_email:
+            continue
         if ct in ("text/plain", "text/html") and "attachment" not in cd:
             continue
         if idx == index:
             filename = part.get_filename()
             if filename:
                 filename = _decode_header(filename)
+                if ct == "message/rfc822" and not re.search(r"\.[A-Za-z0-9]{1,8}$", filename):
+                    filename = f"{filename}.eml"
             else:
-                ext = ct.split("/")[-1] if "/" in ct else "bin"
+                ext = "eml" if ct == "message/rfc822" else (ct.split("/")[-1] if "/" in ct else "bin")
                 filename = f"attachment_{idx}.{ext}"
             # Sanitize
             safe_name = re.sub(r"[^\w\s\-.]", "_", filename).strip()
             payload = part.get_payload(decode=True)
-            if not payload:
+            if payload is None and ct == "message/rfc822":
+                try:
+                    payload = part.as_bytes()
+                except Exception:
+                    payload = b""
+            if payload is None:
                 return None
             target_dir.mkdir(parents=True, exist_ok=True)
             filepath = target_dir / safe_name

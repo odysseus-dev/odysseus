@@ -267,6 +267,10 @@ _DOMAIN_RULES = {
 - Use `resolve_contact` to look up a contact's email or phone number by name. Searches the CardDAV address book and sent email history.
 - Use `manage_contact` to list, add, update, or delete contacts in the address book.
 - Do NOT use `manage_memory` for contact lookups — contact details live in the address book, not memory.""",
+    "integrations": """\
+## Integration/API rules
+- To query or control a configured service integration (Home Assistant, Miniflux, Gitea, Linkding, Jellyfin, or any other registered service), use `api_call` with the integration name, HTTP method, path, and optional JSON body.
+- Do not use shell, curl, or `app_api` to reach a user's connected integration when `api_call` is available.""",
 }
 
 _DOMAIN_TOOL_MAP = {
@@ -277,9 +281,10 @@ _DOMAIN_TOOL_MAP = {
     "notes_calendar_tasks": {"manage_notes", "manage_calendar", "manage_tasks"},
     "ui": {"ui_control"},
     "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
-    "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls", "get_workspace"},
+    "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls", "get_workspace", "manage_bg_jobs"},
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
     "contacts": {"resolve_contact", "manage_contact"},
+    "integrations": {"api_call"},
 }
 
 def _domain_rules_for_tools(tool_names: set) -> list[str]:
@@ -536,17 +541,44 @@ def _section_text(name: str, default: str) -> str:
     return val if isinstance(val, str) and val.strip() else default
 
 
+def _compact_tool_line(name: str, section: str) -> str:
+    """One-line fenced-tool usage hint for compact/local prompts."""
+    text = (section or "").strip()
+    if not text:
+        return f"- `{name}`"
+    if text.startswith("- "):
+        return text
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    usage = []
+    in_fence = False
+    for ln in lines:
+        if ln.startswith("```"):
+            usage.append(ln)
+            in_fence = not in_fence
+            if len(usage) >= 3:
+                break
+            continue
+        if in_fence and len(usage) < 3:
+            usage.append(ln)
+    if usage:
+        return f"- `{name}` — " + " ".join(usage)
+    return f"- `{name}` — " + lines[0][:160]
+
+
 def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool = False) -> str:
     """Build the system prompt with only the specified tools included."""
     disabled = disabled_tools or set()
     included = tool_names - disabled
 
     if compact:
-        tool_list = ", ".join(sorted(included)) if included else "none"
+        tool_lines = []
+        for name, _default_section in TOOL_SECTIONS.items():
+            if name in included:
+                tool_lines.append(_compact_tool_line(name, _section_text(name, _default_section)))
         parts = [
-            "You are an AI assistant with tool access.",
-            f"Available tools: {tool_list}.",
-            _API_AGENT_RULES,
+            _AGENT_PREAMBLE,
+            "## Available tools\n" + ("\n".join(tool_lines) if tool_lines else "none"),
+            _AGENT_RULES,
         ]
         parts.extend(_domain_rules_for_tools(included))
         return "\n\n".join(parts)
@@ -612,11 +644,6 @@ _API_HOSTS = frozenset([
     "api.perplexity.ai", "api.x.ai",
     "ollama.com", "api.venice.ai", "api.kimi.com",
     "api.githubcopilot.com",
-    # Local OpenAI-compatible endpoints (llama.cpp, vLLM, LM Studio, etc.).
-    # Without these, `_is_api_model` falls back to keyword sniffing on the
-    # model name, so well-behaved local servers don't get native tool
-    # schemas and the agent silently degrades to fenced-block parsing.
-    "localhost", "127.0.0.1", "host.docker.internal",
 ])
 _MCP_KEYWORDS = frozenset(["mcp", "browse", "browser", "website", "calendar", "event", "email",
                            "gmail", "screenshot", "navigate", "click", "miniflux", "rss", "feed"])
@@ -642,6 +669,28 @@ def _is_ollama_openai_compat_url(endpoint_url: str) -> bool:
         return False
     path = (parsed.path or "").rstrip("/")
     return parsed.port == 11434 and (path == "/v1" or path.startswith("/v1/"))
+
+
+def _is_local_openai_compat_url(endpoint_url: str) -> bool:
+    try:
+        parsed = urlparse(endpoint_url or "")
+    except Exception:
+        return False
+    host = (parsed.hostname or "").lower()
+    path = (parsed.path or "").rstrip("/")
+    if not (path == "/v1" or path.startswith("/v1/")):
+        return False
+    if host in {"localhost", "127.0.0.1", "0.0.0.0", "host.docker.internal"}:
+        return True
+    if host.startswith("192.168.") or host.startswith("10."):
+        return True
+    if host.startswith("172."):
+        try:
+            second = int(host.split(".")[1])
+            return 16 <= second <= 31
+        except Exception:
+            return False
+    return False
 
 
 def _endpoint_lookup_keys(endpoint_url: str) -> List[str]:
@@ -706,14 +755,113 @@ def _extract_last_user_message(messages: List[Dict]) -> str:
     return ""
 
 
+def _insert_before_latest_user(messages: List[Dict], context_msg: Dict) -> List[Dict]:
+    """Insert a context message immediately before the latest user turn."""
+    out = list(messages or [])
+    for idx in range(len(out) - 1, -1, -1):
+        if out[idx].get("role") == "user":
+            out.insert(idx, context_msg)
+            return out
+    out.append(context_msg)
+    return out
+
+
+def _uploaded_files_context_message(uploaded_files: Optional[List[Dict]]) -> Optional[Dict]:
+    if not uploaded_files:
+        return None
+
+    lines = [
+        "Uploaded files attached to the latest user turn:",
+    ]
+    for item in uploaded_files[:20]:
+        name = str(item.get("name") or item.get("id") or "upload")
+        bits = [
+            f"id={item.get('id', '')}",
+            f"name={name}",
+        ]
+        if item.get("mime"):
+            bits.append(f"mime={item.get('mime')}")
+        if item.get("size") is not None:
+            bits.append(f"size={item.get('size')} bytes")
+        if item.get("path"):
+            bits.append(f"path={item.get('path')}")
+        lines.append("- " + "; ".join(bits))
+    if len(uploaded_files) > 20:
+        lines.append(f"- ... {len(uploaded_files) - 20} more upload(s) omitted from this manifest")
+    lines.extend([
+        "",
+        "The attachment contents may already be in the latest user message. If an attachment is marked truncated or omitted, read its listed path with `read_file` when that tool is available. Do not say uploaded files are undiscoverable when they are listed here.",
+    ])
+    return untrusted_context_message("current chat uploaded files", "\n".join(lines))
+
+
+def _strip_think_blocks(text: str) -> str:
+    """Linear-time equivalent of
+    ``re.sub(r'<think>.*?</think>', '', text, flags=DOTALL|IGNORECASE)``.
+
+    The lazy regex rescans to end-of-string from every ``<think>`` opener when
+    a closer is missing -> O(n^2) on untrusted model output (prompt injection
+    can echo thousands of openers). This forward-only scan pairs each opener
+    with the next closer in a single pass. Output is byte-for-byte identical to
+    the original narrow regex: only literal ``<think>``/``</think>`` (any case)
+    are matched, a dangling opener with no closer is left intact, and an orphan
+    ``</think>`` is never stripped.
+    """
+    if not text:
+        return text
+    lowered = text.lower()
+    parts = []
+    pos = 0
+    while True:
+        start = lowered.find("<think>", pos)
+        if start == -1:
+            parts.append(text[pos:])
+            break
+        end = lowered.find("</think>", start + 7)
+        if end == -1:
+            # No closer for this opener: lazy regex matches nothing here.
+            parts.append(text[pos:])
+            break
+        parts.append(text[pos:start])
+        pos = end + 8  # len("</think>")
+    return "".join(parts)
+
+
 _LOW_SIGNAL_RE = re.compile(r"^[\W_]*$", re.UNICODE)
+_CASUAL_OPENING_RE = re.compile(
+    r"^\s*(?:h+i+|hey+|hello+|yo+|sup+|what'?s up|wass?up|hiya|howdy|"
+    r"lol|lmao|haha+|hehe+|thanks?|thank you|ty|idk|dunno|meh|bruh|bro)\b(?P<tail>.*)$",
+    re.IGNORECASE,
+)
+_CASUAL_BLOCKLIST_RE = re.compile(
+    r"\b(?:cookbook|serve|serving|launch|start|vllm|sglang|llama\.?cpp|ollama|"
+    r"download|model|email|document|doc|note|calendar|task|search|web|research|"
+    r"file|folder|repo|git|settings?|endpoint|api|token|mcp)\b",
+    re.IGNORECASE,
+)
 _EXPLICIT_CONTINUATION_RE = re.compile(
     r"^\s*(?:"
     r"yes|y|yeah|yep|ok|okay|sure|do it|go ahead|continue|carry on|"
     r"run it|launch it|start it|use that|that one|same|the same|"
     r"first|second|third|the first one|the second one|the third one|"
     r"[123]|[abc]"
-    r")\s*[.!?]*\s*$",
+    # `\s*[.!?]*\s*$` put two \s-matching quantifiers around `[.!?]*`, which
+    # backtracks O(n^2) on a terse reply + whitespace flood (py/polynomial-redos).
+    # `\s*(?:[.!?]+\s*)?$` accepts the same "trailing space/punctuation" tails
+    # (the inner \s* only engages after `[.!?]+`, so no two \s* are adjacent) and
+    # is linear.
+    r")\s*(?:[.!?]+\s*)?$",
+    re.IGNORECASE,
+)
+_RETRY_CONTINUATION_RE = re.compile(
+    r"\b(?:try again|retry|again|rerun|re-run|run it again|launch it again|"
+    r"start it again|failed|fails?|died|crashed|broke|insta|instantly)\b",
+    re.IGNORECASE,
+)
+_COOKBOOK_CONTEXT_RE = re.compile(
+    r"\b(?:cookbook|serve|serving|served|launch|start|preset|vllm|sglang|"
+    r"llama\.?cpp|ollama|download|cached models?|model servers?|running models?|"
+    r"gpu box|ajax|qwen|gemma|llama|mistral|minimax)\b",
     re.IGNORECASE,
 )
 
@@ -721,6 +869,37 @@ _EXPLICIT_CONTINUATION_RE = re.compile(
 def _is_explicit_continuation(text: str) -> bool:
     """Only these terse replies may inherit older user turns for tool retrieval."""
     return bool(_EXPLICIT_CONTINUATION_RE.match(str(text or "").strip()))
+
+
+def _is_casual_low_signal(text: str) -> bool:
+    """True for short greetings/slang that should not inherit stale context."""
+    s = str(text or "").strip()
+    m = _CASUAL_OPENING_RE.match(s)
+    if not m:
+        return False
+    tail = m.group("tail") or ""
+    if _CASUAL_BLOCKLIST_RE.search(tail):
+        return False
+    # Allow a short vocative/address after the opener without hardcoding the
+    # address term itself: "hey man", "yo dude", "sup <name>". Longer tails are
+    # more likely to be an actual request and should get normal context/tooling.
+    tail_words = re.findall(r"[A-Za-z0-9_'-]+", tail)
+    return len(tail_words) <= 2
+
+
+def _is_contextual_retry_continuation(messages: List[Dict], text: str) -> bool:
+    """Treat "try again / it failed" as a continuation only for active tool work.
+
+    These follow-ups are common after Cookbook launches: the latest user turn
+    says only "try again it failed", while the actionable model/host/command
+    details live one or two turns back. Keep this intentionally narrow so
+    ordinary chat does not inherit stale Cookbook context.
+    """
+    latest = str(text or "").strip()
+    if not latest or not _RETRY_CONTINUATION_RE.search(latest):
+        return False
+    recent = _recent_context_for_retrieval(messages, max_user=5, max_chars=1200)
+    return bool(_COOKBOOK_CONTEXT_RE.search(recent))
 
 
 def _assistant_requested_followup(messages: List[Dict]) -> bool:
@@ -764,11 +943,12 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
     which domain rule packs get appended to the system prompt.
     """
     text = str(last_user or "").strip()
-    continuation = _is_explicit_continuation(text) or _assistant_requested_followup(messages)
+    retry_continuation = _is_contextual_retry_continuation(messages, text)
+    continuation = _is_explicit_continuation(text) or _assistant_requested_followup(messages) or retry_continuation
     retrieval_query = _recent_context_for_retrieval(messages) if continuation else text
     q = retrieval_query.lower()
 
-    if not text or bool(_LOW_SIGNAL_RE.match(text)):
+    if not text or bool(_LOW_SIGNAL_RE.match(text)) or _is_casual_low_signal(text):
         return {
             "low_signal": True,
             "continuation": False,
@@ -811,10 +991,25 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("sessions")
     if has(r"\b(file|folder|directory|repo|git|grep|find in files|read file|edit file|shell|terminal|bash|python)\b"):
         domains.add("files")
+    # Managing detached bash jobs: "kill the background job", "stop the job",
+    # "kill that job", "check the job output", "is the bg job done".
+    if (has(r"\b(background|bg)\s+(jobs?|task)\b")
+            or has(r"\b(kill|stop|cancel|terminate|check|tail|show|list)\b.{0,16}\bjobs?\b")
+            or has(r"\bjobs?\b.{0,16}\b(output|status|done|finished|running)\b")):
+        domains.add("files")
     if has(r"\b(endpoint|api token|mcp|webhook|preference|configure|config|setting)\b"):
         domains.add("settings")
     if has(r"\b(contact|contacts|phone|phone number|address book|vcard)\b"):
         domains.add("contacts")
+    # API-integration intent — calling a configured service via the api_call
+    # tool. Without this the #3794 repro ("Use the api_call tool to call Home
+    # Assistant GET /api/states") matched no domain, classified as low-signal,
+    # and the tool never reached the schema filter. Detect it explicitly so the
+    # "integrations" domain seeds api_call deterministically (see
+    # _DOMAIN_TOOL_MAP), independent of embedding retrieval.
+    if has(r"\bapi[ _]call\b", r"\bintegrations?\b",
+           r"\b(?:home ?assistant|miniflux|gitea|linkding|jellyfin)\b"):
+        domains.add("integrations")
 
     low_signal = not continuation and not domains
     return {
@@ -866,6 +1061,7 @@ def _build_system_prompt(
     compact: bool = False,
     owner: Optional[str] = None,
     suppress_local_context: bool = False,
+    suppress_skills: bool = False,
     active_email: Optional[Dict[str, str]] = None,
 ) -> List[Dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
@@ -883,7 +1079,7 @@ def _build_system_prompt(
         _ov_sig = _hl.sha256(_json.dumps(get_builtin_overrides() or {}, sort_keys=True).encode()).hexdigest()
     except Exception:
         _ov_sig = ""
-    cache_key = (frozenset(disabled_tools or []), bool(mcp_mgr), needs_admin, _rt_key, compact, _ov_sig, owner, suppress_local_context)
+    cache_key = (frozenset(disabled_tools or []), bool(mcp_mgr), needs_admin, _rt_key, compact, _ov_sig, owner, suppress_local_context, suppress_skills)
     if _cached_base_prompt and _cached_base_prompt_key == cache_key and not active_document:
         agent_prompt = _cached_base_prompt
         # Skill index is user-editable (name + description), so it must never
@@ -893,6 +1089,7 @@ def _build_system_prompt(
             disabled_tools, mcp_mgr, needs_admin, relevant_tools,
             mcp_disabled_map=mcp_disabled_map, compact=compact, owner=owner,
             suppress_local_context=suppress_local_context,
+            suppress_skills=suppress_skills,
         )
     else:
         agent_prompt, _skill_index_block = _build_base_prompt(
@@ -904,6 +1101,7 @@ def _build_system_prompt(
             compact=compact,
             owner=owner,
             suppress_local_context=suppress_local_context,
+            suppress_skills=suppress_skills,
         )
         if not active_document:
             _cached_base_prompt = agent_prompt
@@ -1187,7 +1385,7 @@ def _build_system_prompt(
     # few. If the teacher wrote a procedure for "open my X chat" last
     # time the student failed, this is where the student finds it
     # before deciding which tool to call.
-    if not suppress_local_context:
+    if not suppress_local_context and not suppress_skills:
         try:
             last_user = _extract_last_user_message(messages)
             # Respect the user's skills-enabled toggle (mirrors memory_enabled).
@@ -1354,6 +1552,7 @@ def _build_base_prompt(
     compact: bool = False,
     owner: Optional[str] = None,
     suppress_local_context: bool = False,
+    suppress_skills: bool = False,
 ):
     """Build the agent prompt with only relevant tools included.
 
@@ -1406,7 +1605,7 @@ def _build_base_prompt(
     # The caller wraps it in untrusted_context_message and ships it as a
     # user-role message — same treatment as the matched-skills block.
     skill_index_block = ""
-    if not suppress_local_context:
+    if not suppress_local_context and not suppress_skills:
         try:
             from services.memory.skills import SkillsManager
             from src.constants import DATA_DIR
@@ -1454,6 +1653,7 @@ def _build_base_prompt(
 def _resolve_tool_blocks(round_response: str, native_tool_calls: list, round_num: int, is_api_model: bool = False):
     """Choose native function calls or fenced code block parsing. Returns (tool_blocks, used_native)."""
     used_native = False
+    converted_calls = []  # native calls that converted, ALIGNED with tool_blocks
     if native_tool_calls:
         tool_blocks = []
         for tc in native_tool_calls:
@@ -1462,6 +1662,7 @@ def _resolve_tool_blocks(round_response: str, native_tool_calls: list, round_num
             block = function_call_to_tool_block(tc_name, tc_args)
             if block:
                 tool_blocks.append(block)
+                converted_calls.append(tc)
                 logger.info(f"  -> converted: {tc_name} -> {block.tool_type}")
             else:
                 logger.warning(f"  -> FAILED to convert native call: {tc_name} args={tc_args[:200]}")
@@ -1491,7 +1692,7 @@ def _resolve_tool_blocks(round_response: str, native_tool_calls: list, round_num
                 f"{len(native_tool_calls)} native calls, "
                 f"{len(tool_blocks)} tool blocks. Preview: {resp_preview}")
 
-    return tool_blocks, used_native
+    return tool_blocks, used_native, converted_calls
 
 
 def _append_tool_results(
@@ -1715,7 +1916,7 @@ async def _run_verifier_subagent(
     except Exception as e:
         logger.warning(f"[agent] verifier subagent failed: {e}")
         return []
-    raw = re.sub(r"<think>.*?</think>", "", raw or "", flags=re.DOTALL | re.IGNORECASE)
+    raw = _strip_think_blocks(raw or "")
     last_v = None
     for line in raw.splitlines():
         if "VERIFICATION:" in line:
@@ -1831,6 +2032,8 @@ async def stream_agent_loop(
     approved_plan: Optional[str] = None,
     tool_policy: Optional[ToolPolicy] = None,
     workspace: Optional[str] = None,
+    forced_tools: Optional[Set[str]] = None,
+    uploaded_files: Optional[List[Dict]] = None,
     _is_teacher_run: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
@@ -1866,10 +2069,29 @@ async def stream_agent_loop(
         # filtered to read-only tools below (after the disabled map is loaded).
         disabled_tools.update(plan_mode_disabled_tools())
 
+    uploaded_files = uploaded_files or []
+    _upload_msg = _uploaded_files_context_message(uploaded_files)
+    if _upload_msg:
+        messages = _insert_before_latest_user(messages, _upload_msg)
+
     _t0 = time.time()
     _needs_admin = _detect_admin_intent(messages)
     _last_user = _extract_last_user_message(messages)
     _intent = _classify_agent_request(messages, _last_user)
+    _low_signal_turn = bool(_intent.get("low_signal"))
+    _casual_low_signal_turn = _is_casual_low_signal(_last_user)
+    _direct_low_signal = (
+        _low_signal_turn
+        and not bool(_intent.get("continuation"))
+        and not plan_mode
+        and not approved_plan
+        and not guide_only
+        and (_casual_low_signal_turn or active_document is None)
+        and (_casual_low_signal_turn or not active_email)
+        and (_casual_low_signal_turn or not workspace)
+        and not forced_tools
+        and not relevant_tools
+    )
     # Tool retrieval uses the latest message by default. It may inherit recent
     # user turns only for explicit continuations ("yes", "do it", "1").
     _retrieval_query = str(_intent.get("retrieval_query") or _last_user)
@@ -1877,11 +2099,86 @@ async def stream_agent_loop(
         "[agent-intent] latest=%r continuation=%s low_signal=%s domains=%s retrieval_query=%r",
         _last_user[:120],
         bool(_intent.get("continuation")),
-        bool(_intent.get("low_signal")),
+        _low_signal_turn,
         sorted(_intent.get("domains") or []),
         _retrieval_query[:200],
     )
     _mcp_disabled_map = _load_mcp_disabled_map() if mcp_mgr else {}
+    if _direct_low_signal:
+        logger.info("[agent] direct low-signal reply path for latest=%r", _last_user[:80])
+        direct_messages = [{"role": "user", "content": _last_user}]
+        direct_response = ""
+        direct_start = time.time()
+        direct_actual_model = model
+        real_input_tokens = 0
+        real_output_tokens = 0
+        try:
+            async for chunk in stream_llm_with_fallback(
+                [(endpoint_url, model, headers)] + list(fallbacks or []),
+                direct_messages,
+                temperature=temperature,
+                max_tokens=min(max_tokens or 128, 128),
+                prompt_type=None,
+                tools=None,
+                timeout=int(get_setting("agent_stream_timeout_seconds", 300) or 300),
+                session_id=session_id,
+            ):
+                if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
+                    try:
+                        data = json.loads(chunk[6:])
+                    except json.JSONDecodeError:
+                        yield chunk
+                        continue
+                    if data.get("type") == "usage":
+                        usage = data.get("data", {}) or {}
+                        direct_actual_model = usage.get("model") or direct_actual_model
+                        real_input_tokens += usage.get("input_tokens", 0) or 0
+                        real_output_tokens += usage.get("output_tokens", 0) or 0
+                        continue
+                    if data.get("type") == "model_actual":
+                        direct_actual_model = data.get("model") or direct_actual_model
+                        data["requested_model"] = model
+                        yield f"data: {json.dumps(data)}\n\n"
+                        continue
+                    if data.get("type") == "fallback":
+                        direct_actual_model = data.get("answered_by") or direct_actual_model
+                        yield chunk
+                        continue
+                    if "delta" in data:
+                        if not data.get("thinking"):
+                            direct_response += data.get("delta", "")
+                        yield chunk
+                        continue
+                    yield chunk
+                elif chunk.startswith("event: "):
+                    yield chunk
+        except Exception as _direct_err:
+            logger.warning("[agent] direct low-signal path failed: %s", _direct_err)
+            fallback = "Hey."
+            direct_response += fallback
+            yield f"data: {json.dumps({'delta': fallback})}\n\n"
+
+        if not direct_response.strip():
+            fallback = "Hey."
+            direct_response = fallback
+            yield f"data: {json.dumps({'delta': fallback})}\n\n"
+
+        duration = time.time() - direct_start
+        metrics = {
+            "model": direct_actual_model,
+            "requested_model": model,
+            "input_tokens": real_input_tokens or estimate_tokens(direct_messages),
+            "output_tokens": real_output_tokens or max(len(direct_response) // 4, 1),
+            "total_time": round(duration, 2),
+            "response_time": round(duration, 2),
+            "agent_rounds": 0,
+            "tool_calls": 0,
+            "direct_low_signal": True,
+        }
+        yield f"data: {json.dumps({'type': 'metrics', 'data': metrics})}\n\n"
+        yield "data: [DONE]\n\n"
+        return
+
     if plan_mode and mcp_mgr:
         # Allow read-only MCP tools to investigate, block write/unknown ones:
         # hide them from the schemas AND reject them at runtime by qualified name.
@@ -1893,11 +2190,11 @@ async def stream_agent_loop(
 
     # RAG-based tool selection: retrieve relevant tools for this query.
     # If caller provided a pre-computed set (e.g. task_scheduler), use that.
-    _relevant_tools = set() if guide_only else relevant_tools
+    _relevant_tools = relevant_tools
     _t1 = time.time()
     if _relevant_tools:
         logger.info(f"[tool-rag] Using caller-provided relevant_tools ({len(_relevant_tools)} tools)")
-    if not guide_only and not _relevant_tools and bool(_intent.get("low_signal")):
+    if not guide_only and not _relevant_tools and _low_signal_turn:
         from src.tool_index import ALWAYS_AVAILABLE
         if workspace:
             # An active workspace IS the file-work signal: a vague "look at the
@@ -1988,6 +2285,24 @@ async def stream_agent_loop(
     if _relevant_tools is not None and active_document is not None:
         _relevant_tools.update({"edit_document", "update_document", "suggest_document"})
 
+    # Current-turn chat uploads are real files under the upload/data root. Make
+    # the read-side file/document tools visible immediately so the agent can
+    # inspect files whose inline text was truncated or omitted.
+    if not guide_only and uploaded_files:
+        if _relevant_tools is None:
+            from src.tool_index import ALWAYS_AVAILABLE
+            _relevant_tools = set(ALWAYS_AVAILABLE)
+        _relevant_tools.update({"read_file", "grep", "ls", "manage_documents"})
+
+    # Per-request UI toggles are stronger than retrieval. If the user turns on
+    # Search, the model must see the search tools even when the latest text is a
+    # typo or otherwise low-signal for tool RAG.
+    if not guide_only and forced_tools:
+        if _relevant_tools is None:
+            from src.tool_index import ALWAYS_AVAILABLE
+            _relevant_tools = set(ALWAYS_AVAILABLE)
+        _relevant_tools.update(t for t in forced_tools if t not in disabled_tools)
+
     # The skill index injected by _build_system_prompt tells the model to
     # call `manage_skills action=view`, and Jaccard-matched skills are pasted
     # into the prompt as procedures to follow — but neither path goes through
@@ -1995,7 +2310,7 @@ async def stream_agent_loop(
     # (grep, read_file, ...) that aren't in its schema list. Keep the schemas
     # in lockstep: manage_skills is callable whenever any skill is indexed,
     # and a matched skill's declared requires_toolsets ride along with it.
-    if not guide_only and _relevant_tools is not None:
+    if not guide_only and _relevant_tools is not None and not _low_signal_turn:
         try:
             from services.memory.skills import SkillsManager
             from src.constants import DATA_DIR
@@ -2060,7 +2375,7 @@ async def stream_agent_loop(
     _model_supports_tools = any(kw in _model_lc for kw in (
         "gpt-4", "gpt-5", "gpt-o", "claude", "gemini", "gemma",
         "qwen3", "qwen2.5", "mixtral", "mistral", "llama-3.1", "llama-3.2",
-        "llama-3.3", "llama-4",
+        "llama-3.3", "llama-4", "llama3.1", "llama3.2", "llama3.3", "llama4",
         # Local-served models that follow OpenAI-style function calling
         # via vLLM's `--enable-auto-tool-choice`. Belt-and-suspenders
         # with the per-endpoint flag above.
@@ -2102,13 +2417,15 @@ async def stream_agent_loop(
         _is_api_model = False
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
+    _compact_agent_prompt = _is_api_model or _is_ollama_native or _ollama_openai_compat
     messages, mcp_schemas = _build_system_prompt(
         messages, model, active_document, mcp_mgr, disabled_tools,
         needs_admin=_needs_admin, relevant_tools=_relevant_tools,
         mcp_disabled_map=_mcp_disabled_map,
-        compact=_is_api_model,
+        compact=_compact_agent_prompt,
         owner=owner,
         suppress_local_context=guide_only,
+        suppress_skills=_low_signal_turn,
         active_email=active_email,
     )
     if plan_mode and not guide_only:
@@ -2194,6 +2511,14 @@ async def stream_agent_loop(
     # Strip internal metadata keys before sending to the LLM API
     messages = [{k: v for k, v in msg.items() if k != "_protected"} for msg in messages]
 
+    agent_prompt_tokens = estimate_tokens(messages)
+    logger.info(
+        "[agent-timing] prep_done model=%s prompt_tokens=%s context_length=%s prep=%s",
+        model,
+        agent_prompt_tokens,
+        context_length,
+        {k: round(v, 3) for k, v in prep_timings.items()},
+    )
     yield f"data: {json.dumps({'type': 'agent_prep', 'data': {k: round(v, 3) for k, v in prep_timings.items()}})}\n\n"
 
     full_response = ""
@@ -2228,7 +2553,6 @@ async def stream_agent_loop(
     # backstop. Counting identical repeats — not distinct same-tool calls —
     # lets a legit batch (e.g. 18 calendar events at once) through.
     _call_freq: collections.Counter = collections.Counter()
-    _THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
     _force_answer = False  # set by loop-breaker → next round runs with NO tools
     # Supervisor: how many times we've nudged the model after it announced
     # an action without emitting the tool call. Capped to prevent a model
@@ -2338,6 +2662,19 @@ async def stream_agent_loop(
         # complementary cap for the rare stream that trickles bytes forever and
         # so never trips the inactivity timeout. Generous — only catches runaway.
         _round_deadline = time.time() + max(agent_stream_timeout * 4, 1200)
+        _round_start = time.time()
+        _round_first_event_logged = False
+        _round_first_token_logged = False
+        logger.info(
+            "[agent-timing] round_start round=%s model=%s endpoint=%s prompt_tokens=%s tools=%s native_tools=%s timeout=%s",
+            round_num,
+            model,
+            endpoint_url,
+            estimate_tokens(messages),
+            len(_tool_names_sent),
+            bool(all_tool_schemas),
+            agent_stream_timeout,
+        )
         async for chunk in stream_llm_with_fallback(
             _candidates,
             messages,
@@ -2348,11 +2685,30 @@ async def stream_agent_loop(
             timeout=agent_stream_timeout,
             session_id=session_id,
         ):
+            if not _round_first_event_logged:
+                _round_first_event_logged = True
+                logger.info(
+                    "[agent-timing] first_event round=%s elapsed=%.3fs kind=%s",
+                    round_num,
+                    time.time() - _round_start,
+                    "error" if chunk.startswith("event: error") else "data",
+                )
             if time.time() > _round_deadline:
-                logger.warning(f"[agent] round {round_num} stream exceeded wall-clock deadline; cutting off")
+                logger.warning(
+                    "[agent-timing] round_deadline round=%s elapsed=%.3fs deadline_s=%s",
+                    round_num,
+                    time.time() - _round_start,
+                    max(agent_stream_timeout * 4, 1200),
+                )
                 break
             # Forward error events from stream_llm to the frontend
             if chunk.startswith("event: error"):
+                logger.warning(
+                    "[agent-timing] stream_error round=%s elapsed=%.3fs chunk=%r",
+                    round_num,
+                    time.time() - _round_start,
+                    chunk[:500],
+                )
                 yield chunk
                 continue
             if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
@@ -2432,6 +2788,15 @@ async def stream_agent_loop(
                         if not first_token_received:
                             time_to_first_token = time.time() - total_start
                             first_token_received = True
+                        if not _round_first_token_logged:
+                            _round_first_token_logged = True
+                            logger.info(
+                                "[agent-timing] first_visible_token round=%s elapsed=%.3fs total_elapsed=%.3fs thinking=%s",
+                                round_num,
+                                time.time() - _round_start,
+                                time.time() - total_start,
+                                bool(data.get("thinking")),
+                            )
                         # Keep reasoning deltas in a separate accumulator so
                         # we can echo them back via `reasoning_content` on the
                         # next request (DeepSeek requires this; harmless for
@@ -2501,7 +2866,21 @@ async def stream_agent_loop(
                 yield chunk
             # Intercept [DONE] — don't forward until all rounds finish
 
-        tool_blocks, used_native = _resolve_tool_blocks(round_response, native_tool_calls, round_num, is_api_model=_is_api_model)
+        logger.info(
+            "[agent-timing] round_stream_done round=%s elapsed=%.3fs text_chars=%s tool_calls=%s first_event=%s first_token=%s",
+            round_num,
+            time.time() - _round_start,
+            len(round_response),
+            len(native_tool_calls),
+            _round_first_event_logged,
+            _round_first_token_logged,
+        )
+        tool_blocks, used_native, converted_calls = _resolve_tool_blocks(
+            round_response,
+            native_tool_calls,
+            round_num,
+            is_api_model=(_is_api_model and not guide_only),
+        )
 
         # Force-answer round: we told the model to STOP calling tools and
         # answer. If it ignored that and emitted a (possibly DSML) tool
@@ -2511,7 +2890,7 @@ async def stream_agent_loop(
             if tool_blocks:
                 logger.info(f"[agent] force-answer round {round_num}: discarding {len(tool_blocks)} ignored tool call(s)")
             tool_blocks = []
-            if not _THINK_RE.sub("", strip_tool_blocks(round_response)).strip():
+            if not _strip_think_blocks(strip_tool_blocks(round_response)).strip():
                 # The model burned its budget gathering data but never wrote a
                 # final answer (common with weaker models on multi-source
                 # briefings). Salvage it: one blunt non-streaming synthesis call
@@ -2534,7 +2913,7 @@ async def stream_agent_loop(
                         url=endpoint_url, model=model, messages=_synth_messages,
                         headers=headers, temperature=0.3, max_tokens=max_tokens, timeout=60,
                     )
-                    _synth = _THINK_RE.sub("", strip_tool_blocks(_raw or "")).strip()
+                    _synth = _strip_think_blocks(strip_tool_blocks(_raw or "")).strip()
                 except Exception as _e:
                     logger.warning(f"[agent] grace synthesis failed: {_e}")
                 if _synth:
@@ -2585,7 +2964,7 @@ async def stream_agent_loop(
         # model with no real native_tool_calls) must not be stripped from the
         # persisted text either — otherwise it streams once and then disappears
         # on reload (#3222 follow-up).
-        cleaned_round = strip_tool_blocks(round_response, skip_fenced=(_is_api_model and not used_native)).strip()
+        cleaned_round = strip_tool_blocks(round_response, skip_fenced=(_is_api_model and not used_native and not guide_only)).strip()
         round_texts.append(cleaned_round)
 
         if not tool_blocks:
@@ -2596,7 +2975,7 @@ async def stream_agent_loop(
             # the model fix them (capped, and it must do new effectful work
             # to re-trigger). Skipped on force-answer rounds (no tools to
             # fix with), pure Q&A, and when the toggle is off.
-            _claimed_done = bool(_THINK_RE.sub("", cleaned_round).strip())
+            _claimed_done = bool(_strip_think_blocks(cleaned_round).strip())
             if (_effectful_used and not _force_answer
                     and _claimed_done
                     and _verifier_rounds < _VERIFIER_MAX_ROUNDS
@@ -2640,7 +3019,7 @@ async def stream_agent_loop(
             # actual tool now") and loop again. Capped at
             # _MAX_INTENT_NUDGES so a model that genuinely cannot use the
             # tool doesn't pin us in a forever loop.
-            _intent_text = _THINK_RE.sub("", cleaned_round).strip()
+            _intent_text = _strip_think_blocks(cleaned_round).strip()
             _intent_match = _INTENT_RE.search(_intent_text) if _intent_text else None
             # Only nudge when the round REALLY looks like an unfinished
             # promise: short response (<400 chars), no fenced code/answer,
@@ -2657,6 +3036,15 @@ async def stream_agent_loop(
                 _intent_nudge_count += 1
                 _matched_phrase = _intent_match.group(0).strip()
                 logger.info(f"[agent] intent-without-action nudge #{_intent_nudge_count} on round {round_num}: {_matched_phrase!r}")
+                _lower_phrase = _matched_phrase.lower()
+                _cookbook_log_hint = ""
+                if any(_word in _lower_phrase for _word in ("log", "logs", "output", "tail", "status")):
+                    _cookbook_log_hint = (
+                        " If this is about a Cookbook/model serve, the concrete calls are: "
+                        "`list_served_models` first, then `tail_serve_output` with the "
+                        "session_id from the serve/list result. Never answer with "
+                        "\"check logs\" when those tools are available."
+                    )
                 messages.append({
                     "role": "system",
                     "content": (
@@ -2665,6 +3053,7 @@ async def stream_agent_loop(
                         "see you announced the action but didn't run it, which "
                         "is the most frustrating thing you can do. "
                         "DO IT NOW: emit the actual function call this turn. "
+                        f"{_cookbook_log_hint}"
                         "If you decided not to do it after all, say so plainly in "
                         "one sentence instead of restating the plan."
                     ),
@@ -2693,7 +3082,7 @@ async def stream_agent_loop(
         # "Real" answer text = round text minus <think> blocks. Empty-think
         # rounds (just "<think>\n\n</think>" + a tool call) must not read as
         # progress, so strip think before checking.
-        _real_text = _THINK_RE.sub("", cleaned_round).strip()
+        _real_text = _strip_think_blocks(cleaned_round).strip()
         # Circling = repeating a recent call with nothing written. Any
         # progress (a NEW distinct call, or actual answer text) resets it.
         if _is_repeat and not _real_text:
@@ -2919,9 +3308,12 @@ async def stream_agent_loop(
                     f'data: {json.dumps({"type": "ui_control", "data": result})}\n\n'
                 )
 
-            # ask_user: the agent posed a multiple-choice question. Emit it so the
-            # frontend renders clickable options, then end the turn (below) and
-            # wait — the user's pick becomes the next message.
+            # ask_user: remember the payload now, but emit the interactive event
+            # only *after* tool_output below.  Emitting it before tool_output let
+            # the subsequent tool-card rewrite/scroll push the choices out of
+            # view.  The payload is also copied into the persisted tool event so
+            # history reload can reconstruct an unanswered card.
+            _pending_ask_user_event = None
             if "ask_user" in result:
                 # The question lives in the tool args. ChatMessage.to_dict()
                 # replays only role+content to the model next turn — tool_event
@@ -2936,9 +3328,7 @@ async def stream_agent_loop(
                     _auq_delta = ("\n\n" if full_response.strip() else "") + _auq_q
                     full_response += _auq_delta
                     yield 'data: ' + json.dumps({"delta": _auq_delta}) + '\n\n'
-                yield (
-                    f'data: {json.dumps({"type": "ask_user", "data": result["ask_user"]})}\n\n'
-                )
+                _pending_ask_user_event = _auq
                 _awaiting_user = True
 
             # update_plan: agent wrote back to the plan (ticked a step / revised).
@@ -2993,6 +3383,10 @@ async def stream_agent_loop(
 
             # Emit tool_output (include ui_event data if present)
             tool_output_data = {"type": "tool_output", "tool": block.tool_type, "command": cmd_display, "output": output_text, "exit_code": result.get("exit_code")}
+            if _pending_ask_user_event:
+                # Keep enough state in the streamed tool result for alternate
+                # clients to render the prompt without depending on event order.
+                tool_output_data["ask_user"] = _pending_ask_user_event
             if "ui_event" in result:
                 tool_output_data["ui_event"] = result["ui_event"]
                 for k in (
@@ -3022,6 +3416,14 @@ async def stream_agent_loop(
             if "diff" in result:
                 tool_output_data["diff"] = result["diff"]
             yield f'data: {json.dumps(tool_output_data)}\n\n'
+
+            # This must be the final UI event for ask_user: the frontend appends
+            # the card below the now-settled tool node and cancels any between-
+            # round spinner.  The turn ends after the current tool batch.
+            if _pending_ask_user_event:
+                yield (
+                    f'data: {json.dumps({"type": "ask_user", "data": _pending_ask_user_event})}\n\n'
+                )
 
             # Native document tools open in the editor + carry the REAL doc id.
             # Emit a doc_update so the frontend opens/activates it and sends it
@@ -3080,6 +3482,11 @@ async def stream_agent_loop(
             # this the diff shows live but vanishes from saved history.
             if result.get("diff"):
                 tool_event["diff"] = result["diff"]
+            if _pending_ask_user_event:
+                # Persist the structured question with the tool event.  On a
+                # reload, chatRenderer can restore the card; a later user
+                # message removes it as answered.
+                tool_event["ask_user"] = _pending_ask_user_event
             tool_events.append(tool_event)
             if block.tool_type in _VERIFIER_EFFECTFUL_TOOLS:
                 _effectful_used = True
@@ -3100,7 +3507,12 @@ async def stream_agent_loop(
             break
 
         # Feed results back to LLM for next round
-        _append_tool_results(messages, round_response, native_tool_calls,
+        # Pass the CONVERTED calls (aligned 1:1 with tool_result_texts), not the
+        # raw native_tool_calls: a call that failed to convert is dropped from
+        # tool_blocks but stayed in native_tool_calls, so indexing results by
+        # native position mis-attached each result to the wrong tool_call_id
+        # (and left the real call answered empty).
+        _append_tool_results(messages, round_response, converted_calls,
                              tool_results, tool_result_texts, used_native, round_num,
                              round_reasoning=round_reasoning)
 

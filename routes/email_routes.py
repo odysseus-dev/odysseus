@@ -46,8 +46,9 @@ from routes.email_helpers import (
     _send_smtp_message, _smtp_security_mode,
     _IMAP_TIMEOUT_SECONDS, _open_imap_connection,
     make_oauth_state, verify_oauth_state,
+    EmailNotConfiguredError,
     _imap_connect, _imap, _decode_header, _detect_sent_folder, _detect_drafts_folder,
-    _extract_attachment_text, _list_attachments_from_msg,
+    _extract_attachment_text, _list_attachments_from_msg, _has_visible_attachments, _is_likely_signature_image_attachment,
     _extract_attachment_to_disk, _extract_html, _extract_text,
     _fetch_sender_thread_context, _pre_retrieve_context,
     _EMAIL_REPLY_SYS_PROMPT_BASE, _POOL_HOOKS,
@@ -61,6 +62,22 @@ from routes.email_pollers import _start_poller
 logger = logging.getLogger(__name__)
 
 ODYSSEUS_MAIL_ORIGIN = "odysseus-ui"
+EMAIL_READ_ATTACHMENT_VERSION = 2
+
+
+def _coerce_port(value, default):
+    """Coerce a user-supplied port to int.
+
+    Returns ``(port, error)``. A missing or blank value yields ``default``; a
+    non-numeric value yields ``(None, message)`` so callers can return a clean
+    error instead of letting ``int()`` raise and surface as an HTTP 500.
+    """
+    if value in (None, ""):
+        return default, None
+    try:
+        return int(value), None
+    except (TypeError, ValueError):
+        return None, f"Invalid port {value!r}; must be a whole number"
 
 
 def _email_tag_owner_aliases(account_id: str | None, owner: str = "") -> list[str]:
@@ -248,6 +265,21 @@ def _imap_uid_fetch(conn, uid_set: str | bytes, query: str):
     return conn.uid("FETCH", _uid_bytes(uid_set), query)
 
 
+def _imap_search_quote(value: str) -> str:
+    return '"' + str(value or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _message_id_chain(*values: str) -> list[str]:
+    seen = set()
+    out = []
+    for value in values:
+        for mid in re.findall(r"<[^>]+>", value or ""):
+            if mid not in seen:
+                seen.add(mid)
+                out.append(mid)
+    return out
+
+
 def _uid_from_fetch_meta(meta_b: bytes) -> str:
     m = re.search(rb"\bUID\s+(\d+)\b", meta_b)
     return m.group(1).decode() if m else ""
@@ -364,6 +396,21 @@ def _apply_odysseus_headers(msg, kind: str | None = None, ref_id: str | None = N
         msg["X-Odysseus-Kind"] = re.sub(r"[^A-Za-z0-9_.-]", "-", kind)[:64]
     if ref_id:
         msg["X-Odysseus-Ref"] = re.sub(r"[^A-Za-z0-9_.:-]", "-", ref_id)[:128]
+
+
+def _normalize_addr_field(field: str) -> str:
+    """Strip the malformed-but-common trailing/leading commas and stray
+    whitespace from a To/Cc/Bcc string before it lands in the MIME header
+    or the SMTP envelope. Users often paste a single address with a
+    trailing comma (e.g. `felix@pewdiepie.com,`) and most MTAs reject the
+    resulting `To: felix@pewdiepie.com,` line as a syntax error. Collapse
+    any run of separator junk between addresses too."""
+    if not field:
+        return field
+    # Split on commas, drop empty tokens, rejoin with a single ', '.
+    parts = [p.strip() for p in field.split(",")]
+    parts = [p for p in parts if p]
+    return ", ".join(parts)
 
 
 def _envelope_recipients(*fields: str) -> list:
@@ -983,6 +1030,11 @@ def setup_email_routes():
                 logger.debug(f"Bulk summary attach skipped: {_summary_err}")
 
             return {"emails": emails, "total": total, "folder": folder, "offset": offset}
+        except EmailNotConfiguredError:
+            # Send-only (SMTP-only) account: there is no inbox to read, so the
+            # poll returns an empty list instead of a per-minute error. SMTP
+            # send is unaffected.
+            return {"emails": [], "total": 0, "folder": folder, "offset": offset}
         except Exception as e:
             logger.error(f"Failed to list emails: {e}")
             detail = str(e).strip()
@@ -993,6 +1045,65 @@ def setup_email_routes():
                     conn.logout()
                 except Exception:
                     pass
+
+    def _related_thread_attachments_sync(
+        folder: str,
+        account_id: str | None,
+        owner: str,
+        current_uid: str,
+        current_message_id: str,
+        in_reply_to: str,
+        references: str,
+        limit: int = 12,
+    ) -> list[dict]:
+        """Return visible attachments from referenced messages in this folder."""
+        wanted_ids = _message_id_chain(references, in_reply_to)
+        current_mid = (current_message_id or "").strip()
+        wanted_ids = [mid for mid in wanted_ids if mid and mid != current_mid]
+        if not wanted_ids:
+            return []
+
+        related: list[dict] = []
+        try:
+            with _imap(account_id, owner=owner) as conn:
+                conn.select(_q(folder), readonly=True)
+                # Search newest referenced messages first; cap work so opening
+                # a long thread stays bounded.
+                for mid in reversed(wanted_ids[-10:]):
+                    if len(related) >= limit:
+                        break
+                    status, data = _imap_uid_search(conn, f'(HEADER Message-ID {_imap_search_quote(mid)})')
+                    if status != "OK" or not data or not data[0]:
+                        continue
+                    for uid_b in reversed(data[0].split()[-3:]):
+                        source_uid = uid_b.decode(errors="ignore")
+                        if not source_uid or source_uid == str(current_uid):
+                            continue
+                        st2, msg_data = _imap_uid_fetch(conn, source_uid, "(BODY.PEEK[])")
+                        if st2 != "OK" or not msg_data or not isinstance(msg_data[0], tuple):
+                            continue
+                        msg = email_mod.message_from_bytes(msg_data[0][1])
+                        source_from = _decode_header(msg.get("From", ""))
+                        source_subject = _decode_header(msg.get("Subject", ""))
+                        source_date = msg.get("Date", "")
+                        for att in _list_attachments_from_msg(msg):
+                            if _is_likely_signature_image_attachment(att):
+                                continue
+                            enriched = dict(att)
+                            enriched.update({
+                                "source_uid": source_uid,
+                                "source_folder": folder,
+                                "source_message_id": (msg.get("Message-ID") or "").strip(),
+                                "source_from": source_from,
+                                "source_subject": source_subject,
+                                "source_date": source_date,
+                            })
+                            related.append(enriched)
+                            if len(related) >= limit:
+                                break
+        except Exception as e:
+            logger.debug(f"related thread attachment lookup failed uid={current_uid}: {e}")
+        return related
 
     @router.get("/list")
     async def list_emails(
@@ -1264,6 +1375,17 @@ def setup_email_routes():
             sender_name, sender_addr = email.utils.parseaddr(sender)
             parsed_date = email.utils.parsedate_to_datetime(date_str) if date_str else None
             attachments = _list_attachments_from_msg(msg)
+            related_attachments = []
+            if not _has_visible_attachments(msg):
+                related_attachments = _related_thread_attachments_sync(
+                    folder,
+                    account_id,
+                    owner,
+                    uid,
+                    message_id,
+                    in_reply_to,
+                    references,
+                )
 
             if mark_seen:
                 # Set \Seen in a separate readwrite session so concurrent reads
@@ -1372,6 +1494,8 @@ def setup_email_routes():
                 "body": body,
                 "body_html": body_html,
                 "attachments": attachments,
+                "related_attachments": related_attachments,
+                "attachment_version": EMAIL_READ_ATTACHMENT_VERSION,
                 "cached_summary": cached_summary,
                 "cached_ai_reply": cached_ai_reply,
                 "boundaries": cached_boundaries,
@@ -1402,6 +1526,12 @@ def setup_email_routes():
         """Read email body. Cached for 30m, sync IMAP work runs in a thread."""
         ck = _read_cache_key(account_id, folder, uid, owner=owner)
         cached = _read_cache_get(ck)
+        if cached is not None:
+            # Older cached read responses lack the thread-attachment fallback.
+            # Fetch once so replies that reference prior attachments can show
+            # those files without waiting for cache expiry.
+            if cached.get("attachment_version") != EMAIL_READ_ATTACHMENT_VERSION:
+                cached = None
         if cached is not None:
             if mark_seen:
                 try:
@@ -1536,6 +1666,12 @@ def setup_email_routes():
                 return {"error": f"Attachment index {index} not found"}
 
             from pathlib import Path as _Path
+            target_root = os.path.abspath(str(target_dir))
+            filepath_str = os.path.abspath(str(filepath))
+            if os.path.commonpath([target_root, filepath_str]) != target_root:
+                logger.warning("Rejected attachment path outside extraction dir: %s", filepath)
+                return {"error": "Invalid attachment path"}
+            filepath = _Path(filepath_str)
             base = _Path(filepath).name
             if base.startswith("."):
                 return {"error": "Invalid filename", "filename": base}
@@ -1590,6 +1726,65 @@ def setup_email_routes():
                     return None
             doc_session_id = _resolve_doc_session()
 
+            def _create_markdown_doc(content: str, summary: str):
+                from src.database import SessionLocal as _SL, Document as _Doc, DocumentVersion as _DV
+                doc_id = str(uuid.uuid4())
+                ver_id = str(uuid.uuid4())
+                _db = _SL()
+                try:
+                    _db.query(_Doc).filter(_Doc.is_active == True).update({"is_active": False})
+                    _db.add(_Doc(
+                        id=doc_id, session_id=doc_session_id, title=title,
+                        language="markdown", current_content=content,
+                        version_count=1, is_active=True,
+                    ))
+                    _db.add(_DV(
+                        id=ver_id, document_id=doc_id, version_number=1,
+                        content=content, summary=summary, source="upload",
+                    ))
+                    _db.commit()
+                finally:
+                    _db.close()
+                _tag_doc_with_source(doc_id)
+                return doc_id
+
+            def _attached_email_markdown(raw_bytes: bytes):
+                if not raw_bytes:
+                    return f"# Attached email: {base}\n\n_(empty email attachment)_"
+                try:
+                    attached_msg = email_mod.message_from_bytes(raw_bytes)
+                except Exception:
+                    logger.exception("Failed to parse attached email %s", base)
+                    return f"# Attached email: {base}\n\nCould not parse this email attachment."
+
+                attached_subject = _decode_header(attached_msg.get("Subject", "")) or base
+                attached_from = _decode_header(attached_msg.get("From", ""))
+                attached_to = _decode_header(attached_msg.get("To", ""))
+                attached_cc = _decode_header(attached_msg.get("Cc", ""))
+                attached_date = attached_msg.get("Date", "")
+                attached_body = _extract_text(attached_msg).strip()
+                attached_atts = _list_attachments_from_msg(attached_msg)
+
+                lines = [f"# Attached email: {attached_subject}", ""]
+                if attached_from:
+                    lines.append(f"**From:** {attached_from}")
+                if attached_to:
+                    lines.append(f"**To:** {attached_to}")
+                if attached_cc:
+                    lines.append(f"**Cc:** {attached_cc}")
+                if attached_date:
+                    lines.append(f"**Date:** {attached_date}")
+                lines.extend(["", "## Body", "", attached_body or "_(no readable body)_"])
+                if attached_atts:
+                    lines.extend(["", "## Attachments", ""])
+                    for att in attached_atts:
+                        size = int(att.get("size") or 0)
+                        size_label = f"{size} B" if size < 1024 else f"{round(size / 1024)} KB"
+                        name = att.get("filename") or f"attachment_{att.get('index', '')}"
+                        ctype = att.get("content_type") or "application/octet-stream"
+                        lines.append(f"- {name} ({ctype}, {size_label})")
+                return "\n".join(lines).strip()
+
             # ── PDF path (existing) ────────────────────────────────────
             if ext == ".pdf":
                 import shutil as _shutil
@@ -1636,6 +1831,39 @@ def setup_email_routes():
                 _tag_doc_with_source(doc_id)
                 return {"doc_id": doc_id, "filename": filepath.name}
 
+            # ── Attached email (.eml / message/rfc822) ────────────────
+            if ext == ".eml":
+                def _attachment_bytes_from_msg():
+                    if not msg.is_multipart():
+                        return b""
+                    idx = 0
+                    for part in msg.walk():
+                        cd = str(part.get("Content-Disposition", ""))
+                        ct = part.get_content_type()
+                        is_attached_email = ct == "message/rfc822" and ("attachment" in cd.lower() or part.get_filename())
+                        if part.is_multipart() and not is_attached_email:
+                            continue
+                        if ct in ("text/plain", "text/html") and "attachment" not in cd:
+                            continue
+                        if idx == index:
+                            payload = part.get_payload(decode=True)
+                            if payload is None and ct == "message/rfc822":
+                                try:
+                                    payload = part.as_bytes()
+                                except Exception:
+                                    payload = b""
+                            return payload or b""
+                        idx += 1
+                    return b""
+
+                try:
+                    content = _attached_email_markdown(_attachment_bytes_from_msg())
+                except Exception:
+                    logger.exception("Failed to read email attachment %s", base)
+                    return {"error": "Failed to read email attachment", "filename": base}
+                doc_id = _create_markdown_doc(content, "Imported attached email")
+                return {"doc_id": doc_id, "filename": filepath.name}
+
             # ── DOCX path: extract text → markdown document ───────────
             if ext == ".docx":
                 try:
@@ -1673,25 +1901,7 @@ def setup_email_routes():
                     lines.append("")
                 content = "\n".join(lines).strip() or f"_(empty {base})_"
 
-                from src.database import SessionLocal as _SL, Document as _Doc, DocumentVersion as _DV
-                doc_id = str(uuid.uuid4())
-                ver_id = str(uuid.uuid4())
-                _db = _SL()
-                try:
-                    _db.query(_Doc).filter(_Doc.is_active == True).update({"is_active": False})
-                    _db.add(_Doc(
-                        id=doc_id, session_id=doc_session_id, title=title,
-                        language="markdown", current_content=content,
-                        version_count=1, is_active=True,
-                    ))
-                    _db.add(_DV(
-                        id=ver_id, document_id=doc_id, version_number=1,
-                        content=content, summary="Imported from DOCX", source="upload",
-                    ))
-                    _db.commit()
-                finally:
-                    _db.close()
-                _tag_doc_with_source(doc_id)
+                doc_id = _create_markdown_doc(content, "Imported from DOCX")
                 return {"doc_id": doc_id, "filename": filepath.name}
 
             # ── Plain text / markdown ────────────────────────────────
@@ -1700,25 +1910,7 @@ def setup_email_routes():
                     content = filepath.read_text(encoding="utf-8", errors="replace")
                 except Exception as e:
                     return {"error": f"Failed to read text file: {e}", "filename": base}
-                from src.database import SessionLocal as _SL, Document as _Doc, DocumentVersion as _DV
-                doc_id = str(uuid.uuid4())
-                ver_id = str(uuid.uuid4())
-                _db = _SL()
-                try:
-                    _db.query(_Doc).filter(_Doc.is_active == True).update({"is_active": False})
-                    _db.add(_Doc(
-                        id=doc_id, session_id=doc_session_id, title=title,
-                        language="markdown", current_content=content,
-                        version_count=1, is_active=True,
-                    ))
-                    _db.add(_DV(
-                        id=ver_id, document_id=doc_id, version_number=1,
-                        content=content, summary="Imported from email attachment", source="upload",
-                    ))
-                    _db.commit()
-                finally:
-                    _db.close()
-                _tag_doc_with_source(doc_id)
+                doc_id = _create_markdown_doc(content, "Imported from email attachment")
                 return {"doc_id": doc_id, "filename": filepath.name}
 
             return {"error": f"Unsupported attachment type: {ext}", "filename": base}
@@ -2027,6 +2219,9 @@ def setup_email_routes():
             outer = MIMEMultipart("alternative")
             body_container = outer
 
+        to = _normalize_addr_field(to or "")
+        cc = _normalize_addr_field(cc or "")
+        bcc = _normalize_addr_field(bcc or "")
         outer["From"] = email.utils.formataddr((cfg.get("display_name") or "", cfg["from_address"]))
         outer["To"] = to
         if cc:
@@ -2302,6 +2497,9 @@ def setup_email_routes():
             outer = MIMEMultipart("alternative")
             body_container = outer
 
+        req.to = _normalize_addr_field(req.to or "")
+        req.cc = _normalize_addr_field(req.cc or "")
+        req.bcc = _normalize_addr_field(req.bcc or "")
         outer["From"] = email.utils.formataddr((cfg.get("display_name") or "", cfg["from_address"]))
         outer["To"] = req.to
         if req.cc:
@@ -3152,6 +3350,12 @@ def setup_email_routes():
         name = (data.get("name") or "").strip()
         if not name:
             return {"ok": False, "error": "name required"}
+        imap_port, port_err = _coerce_port(data.get("imap_port"), 993)
+        if port_err:
+            return {"ok": False, "error": port_err}
+        smtp_port, port_err = _coerce_port(data.get("smtp_port"), 465)
+        if port_err:
+            return {"ok": False, "error": port_err}
         db = SessionLocal()
         try:
             row = EmailAccount(
@@ -3160,13 +3364,13 @@ def setup_email_routes():
                 is_default=bool(data.get("is_default", False)),
                 enabled=bool(data.get("enabled", True)),
                 imap_host=(data.get("imap_host") or "").strip(),
-                imap_port=int(data.get("imap_port") or 993),
+                imap_port=imap_port,
                 imap_user=(data.get("imap_user") or "").strip(),
                 imap_password=_enc(data.get("imap_password") or ""),
                 imap_starttls=bool(data.get("imap_starttls", True)),
                 smtp_host=(data.get("smtp_host") or "").strip(),
-                smtp_port=int(data.get("smtp_port") or 465),
-                smtp_security=_smtp_security_mode({"smtp_security": data.get("smtp_security"), "smtp_port": data.get("smtp_port") or 465}),
+                smtp_port=smtp_port,
+                smtp_security=_smtp_security_mode({"smtp_security": data.get("smtp_security"), "smtp_port": smtp_port}),
                 smtp_user=(data.get("smtp_user") or "").strip(),
                 smtp_password=_enc(data.get("smtp_password") or ""),
                 from_address=(data.get("from_address") or "").strip(),
@@ -3210,7 +3414,10 @@ def setup_email_routes():
                     setattr(row, key, (data[key] or "").strip())
             for key in ("imap_port", "smtp_port"):
                 if data.get(key) not in (None, ""):
-                    setattr(row, key, int(data[key]))
+                    port, port_err = _coerce_port(data.get(key), None)
+                    if port_err:
+                        return {"ok": False, "error": port_err}
+                    setattr(row, key, port)
             if "smtp_security" in data:
                 row.smtp_security = _smtp_security_mode({"smtp_security": data.get("smtp_security"), "smtp_port": data.get("smtp_port") or row.smtp_port})
             for key in ("imap_starttls", "enabled"):
@@ -3314,12 +3521,14 @@ def setup_email_routes():
         smtp_result = None
 
         imap_host = (body.get("imap_host") or "").strip()
-        imap_port = int(body.get("imap_port") or 993)
+        imap_port, imap_port_err = _coerce_port(body.get("imap_port"), 993)
         imap_user = (body.get("imap_user") or "").strip()
         imap_pass = body.get("imap_password") or ""
         imap_starttls = bool(body.get("imap_starttls"))
 
-        if not (imap_host and imap_user and imap_pass):
+        if imap_port_err:
+            imap_result = {"ok": False, "error": imap_port_err}
+        elif not (imap_host and imap_user and imap_pass):
             imap_result = {"ok": False, "error": "Need IMAP host, username, and password"}
         else:
             # Connection mode resolution:
@@ -3346,8 +3555,10 @@ def setup_email_routes():
                 imap_result = {"ok": False, "error": _friendly_email_auth_error("IMAP", imap_host, e)}
 
         smtp_host = (body.get("smtp_host") or "").strip()
-        if smtp_host:
-            smtp_port = int(body.get("smtp_port") or 465)
+        smtp_port, smtp_port_err = _coerce_port(body.get("smtp_port"), 465)
+        if smtp_host and smtp_port_err:
+            smtp_result = {"ok": False, "error": smtp_port_err}
+        elif smtp_host:
             smtp_security = _smtp_security_mode({"smtp_security": body.get("smtp_security"), "smtp_port": smtp_port})
             smtp_user = (body.get("smtp_user") or imap_user).strip()
             smtp_pass = body.get("smtp_password") or imap_pass
