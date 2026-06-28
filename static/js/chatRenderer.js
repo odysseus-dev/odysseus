@@ -2068,7 +2068,17 @@ export function buildAgentProcessPanel(metadata, modelName, options = {}) {
   const summary = document.createElement('summary');
   summary.className = 'agent-process-summary';
   const actionCount = toolEvents.length;
-  summary.innerHTML = `<span class="agent-process-title">Process</span><span class="agent-process-count">${actionCount} action${actionCount === 1 ? '' : 's'}</span>`;
+  summary.innerHTML = `
+    <span class="agent-process-summary-left">
+      <span class="agent-process-title">
+        <span class="agent-process-title-view">View agent process</span>
+        <span class="agent-process-title-hide">Hide agent process</span>
+      </span>
+    </span>
+    <span class="agent-process-summary-right">
+      <span class="agent-process-count">${actionCount} action${actionCount === 1 ? '' : 's'}</span>
+      <span class="agent-process-toggle" aria-hidden="true"></span>
+    </span>`;
   details.appendChild(summary);
 
   const body = document.createElement('div');

@@ -8725,10 +8725,13 @@ body.hide-thinking .thinking-section { display: none !important; }
 }
 
 .agent-process {
-  margin: 0 0 10px;
-  border: 1px solid color-mix(in srgb, var(--red) 22%, transparent);
+  margin: 12px 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--red) 30%, transparent);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--red) 4%, transparent);
+  background: color-mix(in srgb, var(--red) 5%, transparent);
   overflow: hidden;
 }
 .agent-process > summary {
@@ -8743,36 +8746,70 @@ body.hide-thinking .thinking-section { display: none !important; }
 .agent-process-summary {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 30px;
-  padding: 6px 10px;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 12px;
   cursor: pointer;
   user-select: none;
-  color: color-mix(in srgb, var(--fg) 72%, transparent);
-  font-size: 12px;
-  font-weight: 600;
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+  transition: background 0.2s ease;
 }
-.agent-process-summary::after {
-  content: '\25B6';
-  margin-left: auto;
-  font-size: 10px;
-  opacity: 0.55;
-  transition: transform 0.18s ease;
+.agent-process[open] > .agent-process-summary {
+  border-bottom: 1px solid color-mix(in srgb, var(--red) 20%, transparent);
 }
-.agent-process[open] > .agent-process-summary::after {
-  transform: rotate(90deg);
+.agent-process-summary:hover {
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+}
+.agent-process-summary-left,
+.agent-process-summary-right {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.agent-process-summary-left {
+  gap: 8px;
+  overflow: hidden;
+}
+.agent-process-summary-right {
+  flex-shrink: 0;
+  gap: 6px;
 }
 .agent-process-title {
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--red);
+  font-size: 0.9em;
+  font-weight: 500;
+}
+.agent-process-title-hide {
+  display: none;
+}
+.agent-process[open] .agent-process-title-view {
+  display: none;
+}
+.agent-process[open] .agent-process-title-hide {
+  display: inline;
 }
 .agent-process-count {
   opacity: 0.58;
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
+.agent-process-toggle {
+  color: var(--red);
+  font-size: 0.9em;
+  transition: transform 0.3s ease;
+}
+.agent-process-toggle::after {
+  content: '\25BC';
+}
+.agent-process[open] .agent-process-toggle {
+  transform: rotate(180deg);
+}
 .agent-process-body {
-  border-top: 1px solid color-mix(in srgb, var(--red) 14%, transparent);
   padding: 8px 10px 10px;
 }
 .agent-process-meta {
