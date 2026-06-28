@@ -34,6 +34,17 @@ def test_decode_png_data_rejects_invalid_base64(monkeypatch):
         raise AssertionError("expected invalid base64 to exit")
 
 
+def test_decode_png_data_rejects_non_string_values(monkeypatch):
+    cli = _load_signature_cli(monkeypatch)
+
+    try:
+        cli._decode_png_data({"bad": "row"})
+    except SystemExit as exc:
+        assert exc.code == 1
+    else:
+        raise AssertionError("expected non-string data to exit")
+
+
 def test_decode_png_data_rejects_non_png_bytes(monkeypatch):
     cli = _load_signature_cli(monkeypatch)
 

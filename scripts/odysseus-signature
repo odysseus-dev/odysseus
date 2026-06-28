@@ -30,6 +30,8 @@ except ModuleNotFoundError as e:
 
 
 def _decode_png_data(data_png: str) -> bytes:
+    if not isinstance(data_png, str):
+        fail("data_png is not valid base64: expected a string")
     raw = data_png or ""
     if "," in raw:
         raw = raw.split(",", 1)[1]
