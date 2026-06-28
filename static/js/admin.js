@@ -3075,7 +3075,7 @@ function initAll() {
   const inits = [
     initSignupToggle, initShareDefaultsToggle, initAddUser, initEndpointForm, initMcpForm,
     initCalDAV, initBackup, initDangerZone, initTokenForm, initLogsView,
-    () => settingsModule.initIntegrations()
+    () => settingsModule.initIntegrations(), initRag
   ];
   for (const fn of inits) {
     try { fn(); } catch (e) { console.error('Admin init error in', fn.name || 'anonymous', e); }
@@ -3091,6 +3091,7 @@ function refreshAll() {
   loadMcpServers();
   loadTokens();
   loadLogs(false);
+  loadRag();
 }
 
 /* ═══════════════════════════════════════════

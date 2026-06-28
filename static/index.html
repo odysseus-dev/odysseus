@@ -1417,6 +1417,12 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             <span>System</span>
           </button>
+          <button class="settings-nav-item admin-only" data-settings-tab="rag">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+            </svg>
+            <span>RAG</span>
+          </button>
         </div>
         <div class="settings-panels">
 
@@ -1902,6 +1908,11 @@
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
                 <span class="vis-label">Personas <span class="vis-hint">Persona picker &amp; system prompt</span></span>
                 <input type="checkbox" checked data-ui-key="preset-mini-btn"><span class="vis-switch"></span>
+              </label>
+              <label class="vis-row">
+                <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></span>
+                <span class="vis-label">RAG</span>
+                <input type="checkbox" checked data-ui-key="rag-toggle-btn"><span class="vis-switch"></span>
               </label>
             </div>
           </div>
@@ -2458,6 +2469,44 @@
               <button class="admin-btn-delete" data-wipe-kind="__all__" title="Delete every category" aria-label="Delete everything" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;font-weight:600;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>Delete All</button>
             </div>
             <div id="adm-wipeMsg" style="margin-top:8px;"></div>
+          </div>
+        </div>
+
+        <!-- ═══ RAG TAB ═══ -->
+        <div data-settings-panel="rag" class="hidden">
+          <div class="admin-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>RAG Knowledge Base</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:12px">Upload files or index directories to build your personal RAG knowledge base.</div>
+
+            <div class="admin-model-form">
+              <!-- Upload section -->
+              <div class="admin-model-form-row" style="margin-bottom:12px;display:block;">
+                <div id="adm-ragDropZone" class="admin-rag-upload-zone" style="border: 2.5px dashed var(--border); border-radius: 8px; padding: 24px; text-align: center; cursor: pointer; transition: border-color 0.2s;">
+                  <p style="margin:0;opacity:0.75;">Drag &amp; drop files here or click to browse</p>
+                  <input type="file" id="adm-ragFileInput" multiple style="display:none;">
+                </div>
+              </div>
+
+              <!-- Directory section -->
+              <div class="admin-model-form-row" style="display:flex; gap:8px; margin-bottom:12px;">
+                <input id="adm-ragDirInput" type="text" placeholder="Index directory path, e.g. /Users/name/documents" style="flex:1;height:32px;box-sizing:border-box;">
+                <button class="admin-btn-add" id="adm-ragAddDirBtn" style="height:32px;min-width:110px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;">Add Directory</button>
+              </div>
+
+              <div class="admin-model-form-row" style="display:flex; gap:12px; margin-bottom:18px; align-items:center;">
+                <button class="admin-btn-add" id="adm-ragReloadBtn" style="height:32px;min-width:110px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;">Reload Index</button>
+                <span id="adm-ragStatus" style="font-size:11px;"></span>
+              </div>
+            </div>
+
+            <!-- Indexed Lists -->
+            <div style="margin-top:16px;">
+              <h3 style="font-size:13px;font-weight:600;margin-bottom:8px;opacity:0.85;">Indexed Directories</h3>
+              <div id="adm-ragDirList" class="admin-user-list" style="margin-bottom:16px;min-height:30px;"></div>
+
+              <h3 style="font-size:13px;font-weight:600;margin-bottom:8px;opacity:0.85;">Indexed Files</h3>
+              <div id="adm-ragFileList" class="admin-user-list" style="min-height:30px;"></div>
+            </div>
           </div>
         </div>
 
