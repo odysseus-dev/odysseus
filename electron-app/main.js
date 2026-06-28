@@ -324,6 +324,11 @@ function startPythonServer() {
 }
 
 // ── Build a UTF-8 loading screen as a data URL ────────────────────────
+// Theme matches Odysseus's own tokens (static/style.css :root and :root.light)
+// so the loading screen matches whichever theme the OS is in. We can't read
+// the user's saved Odysseus preference here because the Python server (which
+// serves settings.json) hasn't started yet — but prefers-color-scheme tracks
+// the OS setting, which is what Odysseus defaults to on first launch anyway.
 function buildLoadingUrl() {
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -333,20 +338,38 @@ function buildLoadingUrl() {
 <title>Odysseus</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  /* Odysseus theme tokens — copied from static/style.css so the loading
+     screen matches the app before the server is up. */
+  :root {
+    --bg: #282c34;
+    --fg: #9cdef2;
+    --panel: #111;
+    --red: #e06c75;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f5f5f5;
+      --fg: #2b2b2b;
+      --panel: #fff;
+      --red: #d04545;
+    }
+  }
+
   body {
-    background: #1e1e2e;
-    color: #cdd6f4;
+    background: var(--bg);
+    color: var(--fg);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     height: 100vh; text-align: center; user-select: none;
   }
   .logo { font-size: 4rem; margin-bottom: 1rem; }
-  h1 { font-size: 1.8rem; font-weight: 600; margin-bottom: 0.5rem; }
-  p { font-size: 1rem; color: #a6adc8; }
+  h1 { font-size: 1.8rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--fg); }
+  p { font-size: 1rem; color: color-mix(in srgb, var(--fg) 60%, transparent); }
   .spinner {
     width: 40px; height: 40px; margin-top: 2rem;
-    border: 4px solid rgba(205, 214, 244, 0.15);
-    border-top-color: #89b4fa;
+    border: 4px solid color-mix(in srgb, var(--fg) 15%, transparent);
+    border-top-color: var(--red);
     border-radius: 50%;
     animation: spin 1s linear infinite;
   }
