@@ -13,9 +13,10 @@ and case-insensitive tag semantics.
 
 The route probes the host daemon's NATIVE `/api/tags` via
 `model_routes._probe_ollama_tags` — NOT the chat-filtered `/v1/models` path —
-so presence verification sees every served tag, including embedding models whose
-names (e.g. `nomic-embed-text`) the chat filter would drop. That unfiltered
-probe is covered by `test_probe_ollama_tags_unfiltered`.
+so presence verification sees every served tag, including embedding models the
+chat filter would drop (e.g. `bge-m3`/`bge-large` via the `bge` substring,
+`embeddinggemma` via the `embedding` prefix). That unfiltered probe is covered
+by `test_probe_ollama_tags_unfiltered`.
 """
 
 import pytest
@@ -29,8 +30,16 @@ _ollama_tag_served = cb._ollama_tag_served
 
 def test_probe_ollama_tags_unfiltered(monkeypatch):
     """`_probe_ollama_tags` must return EVERY served tag (no chat filter), hit
-    the native `/api/tags`, and strip an accidental `/v1` suffix from the base."""
+    the native `/api/tags`, and strip an accidental `/v1` suffix from the base.
+
+    Uses `bge-m3`, a real embedding tag the chat filter genuinely drops — asserted
+    below — so this test actually exercises the gap the native probe closes (the
+    chat-filtered `/v1/models` path would omit it and the gate would false-reject)."""
     mr = pytest.importorskip("routes.model_routes")
+
+    # Guard the premise: the chat filter really would drop this tag, so the
+    # unfiltered native probe is load-bearing and not just incidental.
+    assert mr._is_chat_model("bge-m3:latest") is False
 
     captured = {}
 
@@ -41,7 +50,7 @@ def test_probe_ollama_tags_unfiltered(monkeypatch):
         def json(self):
             return {"models": [
                 {"name": "qwen3:latest"},
-                {"name": "nomic-embed-text:latest"},  # embedding: chat filter would drop it
+                {"name": "bge-m3:latest"},  # embedding: chat filter drops it (see assert above)
             ]}
 
     def _fake_get(url, **kwargs):
@@ -51,7 +60,7 @@ def test_probe_ollama_tags_unfiltered(monkeypatch):
     monkeypatch.setattr(mr.httpx, "get", _fake_get)
     served = mr._probe_ollama_tags("http://host.docker.internal:11434/v1", timeout=5)
     assert captured["url"] == "http://host.docker.internal:11434/api/tags"
-    assert served == ["qwen3:latest", "nomic-embed-text:latest"]
+    assert served == ["qwen3:latest", "bge-m3:latest"]
 
 
 def test_probe_ollama_tags_returns_empty_on_error(monkeypatch):
@@ -72,7 +81,7 @@ def test_probe_ollama_tags_returns_empty_on_error(monkeypatch):
     ("library/qwen3:8b", ["library/qwen3:8b"]),          # namespaced tag (was wrongly rejected)
     ("Qwen3", ["qwen3:latest"]),                         # case-insensitive
     ("llama3.2", ["llama3.2"]),                          # both implicit :latest
-    ("nomic-embed-text", ["nomic-embed-text:latest"]),   # embedding tag (non-chat name)
+    ("bge-m3", ["bge-m3:latest"]),                       # embedding tag dropped by chat filter
 ])
 def test_served_tags_match(repo_id, served):
     assert _ollama_tag_served(repo_id, served) is True

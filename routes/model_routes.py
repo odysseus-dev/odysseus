@@ -770,9 +770,13 @@ def _probe_ollama_tags(base_url: str, timeout: int = 5) -> List[str]:
 
     Unlike :func:`_probe_endpoint`, this hits Ollama's native list endpoint and
     does NOT chat-filter the result: callers that need to verify *presence* of a
-    tag (e.g. embedding models whose names contain ``embed``) must see every
-    served tag, not just chat-capable ones. ``base_url`` is the daemon root
-    (no ``/v1``/``/api`` suffix). Returns ``[]`` on any error.
+    tag must see every served tag, not just chat-capable ones. The chat filter
+    (:func:`_is_chat_model`) drops some embedding tags Ollama actually serves —
+    e.g. ``bge-m3``/``bge-large`` (``bge`` substring) and ``embeddinggemma``
+    (``embedding`` prefix) — so the ``/v1/models`` path would omit them. (Note it
+    matches on prefixes/substrings, not merely the word ``embed``: ``nomic-embed-text``
+    is NOT dropped.) ``base_url`` is the daemon root (no ``/v1``/``/api`` suffix).
+    Returns ``[]`` on any error.
     """
     base = _normalize_base(base_url).rstrip("/")
     # Strip an accidental /v1 or /api suffix so we always hit the native root.
