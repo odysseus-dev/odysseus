@@ -71,6 +71,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         is_tool_render = path.startswith("/api/tools/") and path.endswith("/render")
         # Document library PDF preview endpoint
         is_document_pdf_preview = path.startswith("/api/document/") and path.endswith("/render-pdf")
+        # Design Maker page preview — standalone LLM-authored HTML loaded into a
+        # sandboxed iframe (opaque origin). Served via <iframe src> (NOT srcdoc)
+        # so it gets THIS response's CSP instead of inheriting the SPA's, which
+        # would block the design's Tailwind/Google-Fonts CDNs.
+        is_design_render = path.startswith("/api/design/page/") and path.endswith("/render")
         # Visual report pages are self-contained HTML — need inline scripts + external images
         is_report = path.startswith("/api/research/report/")
 
@@ -102,6 +107,30 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["X-Frame-Options"] = "SAMEORIGIN"
             response.headers["Content-Security-Policy"] = (
                 "default-src 'none'; "
+                "frame-ancestors 'self'"
+            )
+        elif is_design_render:
+            # Embeddable by our own SPA only. The iframe carries
+            # sandbox="allow-scripts" (no allow-same-origin) so this document is
+            # opaque-origin: it can't read cookies/storage or reach the parent.
+            # connect-src 'none' blocks fetch/XHR/WebSocket/beacon exfiltration;
+            # the CDN allowlist lets generated designs load Tailwind + fonts so
+            # the preview actually renders styled.
+            response.headers["X-Frame-Options"] = "SAMEORIGIN"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'none'; "
+                # `sandbox allow-scripts` makes THIS document opaque-origin even
+                # if it's opened as a top-level page (not just via the iframe's
+                # sandbox attr) — defense-in-depth so isolation never depends on
+                # how the URL is loaded. No allow-same-origin → no cookies/storage.
+                "sandbox allow-scripts; "
+                "script-src 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; "
+                "style-src 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; "
+                "font-src https://fonts.gstatic.com https://cdn.jsdelivr.net data:; "
+                "img-src data: https:; "
+                "connect-src 'none'; "
+                "form-action 'none'; "
+                "base-uri 'none'; "
                 "frame-ancestors 'self'"
             )
         else:

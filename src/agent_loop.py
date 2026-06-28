@@ -224,6 +224,11 @@ _DOMAIN_RULES = {
 - If an active document is open, "fix this", "add X", "change Y", etc. usually refers to that document.
 - Use `edit_document` for targeted changes. Use `update_document` only for genuine full rewrites.
 - For feedback/review/suggestions on an open document, use `suggest_document`.""",
+    "design": """\
+## Design rules
+- For visual UI/design requests (landing page, website, dashboard, mockup, wireframe, deck, hero section, UI component), use `create_design` — it generates a live, self-contained HTML preview, not plain code.
+- To change a design already open in the editor (colors, spacing, layout, copy, add/remove a section), use `edit_design`, not `update_document`.
+- Use `create_document` only for plain code/text the user wants as a file, not for the look of a page/screen.""",
     "email": """\
 ## Email rules
 - Email UIDs are the values after `UID:` in tool output, never list row numbers.
@@ -276,6 +281,7 @@ _DOMAIN_RULES = {
 _DOMAIN_TOOL_MAP = {
     "web": {"web_search", "web_fetch", "trigger_research", "manage_research"},
     "documents": {"create_document", "edit_document", "update_document", "suggest_document", "manage_documents"},
+    "design": {"create_design", "edit_design"},
     "email": {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "archive_email", "delete_email", "mark_email_read", "resolve_contact", "manage_contact"},
     "cookbook": {"download_model", "serve_model", "serve_preset", "list_serve_presets", "list_served_models", "stop_served_model", "tail_serve_output", "list_downloads", "cancel_download", "search_hf_models", "list_cached_models", "list_cookbook_servers", "adopt_served_model"},
     "notes_calendar_tasks": {"manage_notes", "manage_calendar", "manage_tasks"},
@@ -371,6 +377,18 @@ Return the absolute path of the active workspace folder. File tools are CONFINED
 <content>
 ```
 Create a NEW document in the editor panel. Only use when the user explicitly asks for a new file/document. If a document is already open in the editor, the user's request "fix this", "add X", "change Y", etc. refers to THAT document — use edit_document, never create_document.""",
+
+    "create_design": """\
+```create_design
+{"prompt": "<full natural-language description of the UI/design to create>", "title": "<short title>"}
+```
+Generate a visual UI/design (landing page, dashboard, mockup, deck, UI component) as a live, self-contained HTML preview in the editor panel. Use when the user asks to design, prototype, mock up, or build the LOOK of a page/screen/UI/website. For plain code or text documents use create_document instead.""",
+
+    "edit_design": """\
+```edit_design
+{"instruction": "<the visual change to apply to the current design>"}
+```
+Modify the design currently open in the editor panel by re-prompting (returns a new version). Use for visual change requests like 'make the hero bigger' or 'change the palette to green'.""",
 
     "edit_document": """\
 ```edit_document
@@ -970,6 +988,13 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("documents")
     if "notes_calendar_tasks" not in domains and has(r"\bwrite\b"):
         domains.add("documents")
+    # Design/UI generation intent (Odysseus Design). PT + EN. No trailing \b so
+    # stems (prototyp-, protótip-) match their inflections.
+    if has(r"\b(?:design|mockup|wireframe|landing[\s-]*page|prototyp|prot[óo]tip|interface|dashboard|hero\s+section|web\s*page|webpage)",
+           r"\b(?:ui|ux)\b",
+           r"\bp[áa]gina\s+(?:web|de\s+vendas)\b",
+           r"\btela\b"):
+        domains.add("design")
     if has(r"\b(search|web|google|look up|latest|news|current|weather|forecast|stock price|price of|website|url|https?://|www\.)\b"):
         domains.add("web")
     if has(
@@ -2279,6 +2304,9 @@ async def stream_agent_loop(
     # or what keywords were in the latest user message.
     if _relevant_tools is not None and active_document is not None:
         _relevant_tools.update({"edit_document", "update_document", "suggest_document"})
+        # A design doc open in the editor needs the design editor available.
+        if (getattr(active_document, "language", "") or "") == "design":
+            _relevant_tools.add("edit_design")
 
     # Current-turn chat uploads are real files under the upload/data root. Make
     # the read-side file/document tools visible immediately so the agent can
@@ -3165,7 +3193,7 @@ async def stream_agent_loop(
             total_tool_calls += 1
             # Build a short display string for the frontend tool bubble.
             # Document tools show a brief summary instead of dumping full content.
-            is_doc_tool = block.tool_type in ("create_document", "update_document", "edit_document", "suggest_document")
+            is_doc_tool = block.tool_type in ("create_document", "update_document", "edit_document", "suggest_document", "create_design", "edit_design")
             if is_doc_tool:
                 cmd_display = block.content.split("\n")[0].strip()[:80]
             else:
@@ -3297,6 +3325,13 @@ async def stream_agent_loop(
                         f'data: {json.dumps({"type": "doc_update", "doc_id": result["doc_id"], "content": result["content"], "version": result["version"], "title": result.get("title", ""), "language": result.get("language")})}\n\n'
                     )
 
+            # create_design: tell the frontend to open the Design Maker surface
+            # for the new project (instead of rendering a doc in the editor).
+            if "design_open" in result:
+                yield (
+                    f'data: {json.dumps({"type": "design_open", "data": result["design_open"]})}\n\n'
+                )
+
             # Emit ui_control event for frontend to apply UI changes
             if "ui_event" in result:
                 yield (
@@ -3347,6 +3382,8 @@ async def stream_agent_loop(
                     output_text = f'Document edited: "{title}" (v{ver}, {result.get("applied", 0)} edit(s))'
                 elif action == "update":
                     output_text = f'Document updated: "{title}" (v{ver})'
+            elif "design_open" in result:
+                output_text = result.get("summary") or f'Design aberto: {result["design_open"].get("title", "")}'
             elif "stdout" in result:
                 # On a bash/python timeout the result carries error + (often
                 # empty) stdout/stderr; fall back to the error so the "timed

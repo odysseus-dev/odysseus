@@ -310,6 +310,100 @@ class GalleryImage(TimestampMixin, Base):
     )
 
 
+class DesignProject(TimestampMixin, Base):
+    """A Design Maker project — groups pages, comments, and assets.
+
+    Mirrors the GalleryAlbum -> GalleryImage container pattern. Each page is a
+    Document(language="design") so generation, versioning (DocumentVersion) and
+    the Library are reused; this table only adds the project grouping.
+    """
+    __tablename__ = "design_projects"
+
+    id            = Column(String, primary_key=True, index=True)
+    name          = Column(String, nullable=False, default="Untitled design")
+    owner         = Column(String, nullable=True, index=True)
+    session_id    = Column(String, ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True, index=True)
+    cover_page_id = Column(String, nullable=True)            # DesignPage.id used for the thumbnail
+    settings      = Column(Text, nullable=True)              # JSON: default device, theme, model, etc.
+    archived      = Column(Boolean, default=False)
+
+    pages    = relationship("DesignPage", back_populates="project",
+                            cascade="all, delete-orphan", order_by="DesignPage.order_index")
+    comments = relationship("DesignComment", back_populates="project", cascade="all, delete-orphan")
+    assets   = relationship("DesignAsset", back_populates="project", cascade="all, delete-orphan")
+    session  = relationship("Session", backref=backref("design_projects", cascade="save-update, merge"))
+
+
+class DesignPage(TimestampMixin, Base):
+    """A page/screen in a design project, backed by a Document (language=design)."""
+    __tablename__ = "design_pages"
+
+    id          = Column(String, primary_key=True, index=True)
+    project_id  = Column(String, ForeignKey("design_projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    document_id = Column(String, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    title       = Column(String, nullable=False, default="Page")
+    order_index = Column(Integer, default=0)
+
+    project  = relationship("DesignProject", back_populates="pages")
+    document = relationship("Document")
+
+
+class DesignComment(TimestampMixin, Base):
+    """A pinned comment / markup anchored on a design page."""
+    __tablename__ = "design_comments"
+
+    id         = Column(String, primary_key=True, index=True)
+    project_id = Column(String, ForeignKey("design_projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    page_id    = Column(String, ForeignKey("design_pages.id", ondelete="CASCADE"), nullable=True, index=True)
+    version_id = Column(String, nullable=True)             # DocumentVersion.id the comment was made on
+    anchor     = Column(Text, nullable=True)               # JSON {x,y,w,h} normalized 0..1
+    body       = Column(Text, nullable=False, default="")
+    author     = Column(String, nullable=True)
+    resolved   = Column(Boolean, default=False)
+
+    project = relationship("DesignProject", back_populates="comments")
+
+
+class DesignAsset(TimestampMixin, Base):
+    """A shared asset (css/js/image/font) belonging to a design project."""
+    __tablename__ = "design_assets"
+
+    id         = Column(String, primary_key=True, index=True)
+    project_id = Column(String, ForeignKey("design_projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind       = Column(String, nullable=False)            # "css" | "js" | "image" | "font"
+    name       = Column(String, nullable=False)
+    content    = Column(Text, nullable=True)               # inline text (css/js)
+    path       = Column(String, nullable=True)             # or path/URL for binaries
+
+    project = relationship("DesignProject", back_populates="assets")
+
+
+class DesignSystem(TimestampMixin, Base):
+    """A reusable brand/style guide (fonts, palette, voice, components) that a
+    generation can be told to obey. Owner-scoped like the other Design* tables."""
+    __tablename__ = "design_systems"
+
+    id       = Column(String, primary_key=True, index=True)
+    name     = Column(String, nullable=False, default="Design system")
+    owner    = Column(String, nullable=True, index=True)
+    spec     = Column(Text, nullable=False, default="")     # freeform brand/style guide text
+    tokens   = Column(Text, nullable=True)                  # optional JSON of design tokens
+    archived = Column(Boolean, default=False)
+
+
+class DesignTemplate(TimestampMixin, Base):
+    """A starting HTML document a new page can be seeded from (no LLM call)."""
+    __tablename__ = "design_templates"
+
+    id        = Column(String, primary_key=True, index=True)
+    name      = Column(String, nullable=False, default="Template")
+    owner     = Column(String, nullable=True, index=True)
+    kind      = Column(String, nullable=True)               # prototype/slides/document/wireframe/generic
+    html      = Column(Text, nullable=False, default="")    # the starting HTML document
+    thumbnail = Column(Text, nullable=True)
+    archived  = Column(Boolean, default=False)
+
+
 class EmailAccount(TimestampMixin, Base):
     """A configured IMAP/SMTP account. Supports multiple accounts per user —
     exactly one row per owner has is_default=True.

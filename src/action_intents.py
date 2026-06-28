@@ -109,6 +109,9 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         ("shell", "imperative shell command request", rf"{_PLEASE}(deploy|build|install|restart|reboot|kill|tail|grep|cat|ls|cd|cp|mv|rm)\b\s+\S+"),
         ("shell", "assistant shell command request", rf"{_ACTION_QUESTION}(deploy|build|install|restart|reboot|kill|tail|grep|cat|ls|cd|cp|mv|rm)\b\s+\S+"),
         ("shell", "system/file check request", r"\b(check|see)\s+(if|whether|what)\s+.{1,40}\b(running|process|service|port|file|exists?)\b"),
+        # Design Maker: route UI/design-generation requests into agent mode.
+        ("documents", "pt design request", r"^\s*(?:por\s+favor[\s,]+)?(?:cri[ae]\w*|fa.a|faz(?:er)?|monte|montar|construa|constr.\w*|ger[ae]\w*|desenh\w*|prototip\w*|design\w*)\s+(?:um|uma|o|a|me|meu|minha)?\s*(?:design|prot.tipo|prototipo|mockup|wireframe|landing\s*page|p.gina|site|tela|interface|ui|ux|dashboard|layout|app|aplicativo|formul.rio)\b"),
+        ("documents", "en design request", r"^\s*(?:please[\s,]+)?(?:create|make|build|design|generate|mock\s*up|prototype|put\s+together)\s+(?:a|an|the|me)?\s*(?:design|prototype|mockup|wireframe|landing\s*page|web\s*page|webpage|website|page|ui|ux|dashboard|layout|app|form|hero\s+section|component)\b"),
     )
 )
 

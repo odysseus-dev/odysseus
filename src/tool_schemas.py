@@ -1203,6 +1203,37 @@ FUNCTION_TOOL_SCHEMAS = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_design",
+            "description": "Generate a visual UI/design (landing page, dashboard, mockup, deck, UI component) as a live, self-contained HTML preview in the editor panel. Use when the user asks to design, prototype, mock up, or build the LOOK of a page/screen/UI/website. For plain code or text documents use create_document instead.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "Full natural-language description of the UI/design to create."},
+                    "title": {"type": "string", "description": "Short title for the design document."},
+                    "model": {"type": "string", "description": "Optional model override as 'modelId@endpoint_id'."}
+                },
+                "required": ["prompt"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "edit_design",
+            "description": "Modify the design currently open in the editor panel by re-prompting (returns a new version). Use for visual change requests like 'make the hero bigger' or 'change the palette to green'.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "instruction": {"type": "string", "description": "The visual change to apply to the current design."},
+                    "model": {"type": "string", "description": "Optional model override as 'modelId@endpoint_id'."}
+                },
+                "required": ["instruction"]
+            }
+        }
+    },
 ]
 
 
@@ -1286,6 +1317,8 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
             parts.append(args["language"])
         parts.append(args.get("content", ""))
         content = "\n".join(parts)
+    elif tool_type in ("create_design", "edit_design"):
+        content = json.dumps(args)
     elif tool_type == "edit_document":
         blocks = []
         edits = args.get("edits", [])

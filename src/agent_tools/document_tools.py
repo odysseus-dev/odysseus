@@ -203,6 +203,7 @@ class CreateDocumentTool:
             "python", "javascript", "typescript", "html", "css", "markdown", "json",
             "yaml", "bash", "sql", "rust", "go", "java", "c", "cpp", "xml", "toml",
             "ini", "ruby", "php", "csv", "email", "text", "plain", "svg",
+            "design",
         }
 
         # Try XML tag extraction first

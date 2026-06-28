@@ -151,6 +151,7 @@ const ALIASES = {
   md: 'markdown',
   py: 'python',
   htm: 'html',
+  design: 'html',
   js: 'javascript',
   ts: 'typescript',
   yml: 'yaml',

@@ -656,6 +656,10 @@ app.include_router(setup_embedding_routes())
 from routes.model_routes import setup_model_routes
 app.include_router(setup_model_routes(model_discovery))
 
+# Odysseus Design (generate UI from prompt → language="design" document)
+from routes.design_routes import router as design_router
+app.include_router(design_router)
+
 # GitHub Copilot device-flow login
 from routes.copilot_routes import setup_copilot_routes
 app.include_router(setup_copilot_routes())

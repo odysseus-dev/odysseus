@@ -57,7 +57,19 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   // render as inline content in an HTML document, so they share the HTML
   // "Run / Preview" path. (hljs maps detected `xml` → `html` already; this also
   // covers the doc being explicitly typed svg/xml.)
-  const _isRenderLang = (l) => ['html', 'svg', 'xml'].includes((l || '').toLowerCase());
+  const _isRenderLang = (l) => ['html', 'svg', 'xml', 'design'].includes((l || '').toLowerCase());
+  // Odysseus Design: CSP injected into the design preview iframe so LLM-authored
+  // HTML runs with no network/storage reach (opaque origin via the sandbox attr
+  // set in toggleHtmlPreview). connect-src 'none' blocks fetch/XHR/WebSocket/
+  // beacon; img-src is allow-listed (placeholders + Google fonts CDN) so the
+  // page can't beacon out via new Image().src to an arbitrary host.
+  const _DESIGN_CSP = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\' https://cdn.tailwindcss.com; style-src \'unsafe-inline\' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; img-src data: https://placehold.co https://*.gstatic.com; connect-src \'none\'; form-action \'none\'; base-uri \'none\'; frame-ancestors \'self\'">';
+  function _wrapDesignCsp(html) {
+    const h = html || '';
+    if (/<head[^>]*>/i.test(h)) return h.replace(/<head[^>]*>/i, (m) => m + _DESIGN_CSP);
+    if (/<html[^>]*>/i.test(h)) return h.replace(/<html[^>]*>/i, (m) => m + '<head>' + _DESIGN_CSP + '</head>');
+    return _DESIGN_CSP + h;
+  }
   // Languages that get the segmented Code / Run-or-View toggle in the toolbar
   // (the same UX as markdown's Edit / Preview switch). CSV's "run" view is the
   // table; Python/JS/etc.'s is the code-run output; HTML/SVG/XML render via
@@ -2097,6 +2109,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const lang = (document.getElementById('doc-language-select')?.value || '').toLowerCase();
     const canPreview = ['markdown', 'csv'].includes(lang) || _isRenderLang(lang);
     const canRun = ['javascript', 'js', 'python', 'py', 'bash', 'sh', 'shell', 'zsh'].includes(lang);
+    // Odysseus Design: the in-editor design bar is deprecated — design editing
+    // now lives in the dedicated Design Maker surface (design-maker.js). Legacy
+    // design docs still RENDER here (read-only preview via _isRenderLang) but
+    // the regenerate/edit/model bar stays hidden.
+    const _designBar = document.getElementById('doc-design-bar');
+    if (_designBar) _designBar.style.display = 'none';
 
     const _eyeIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
     const _penIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
@@ -3768,6 +3786,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     // Exit HTML preview on switch
     exitHtmlPreview();
 
+    // Odysseus Design: auto-open the live preview for design docs so the user
+    // lands on the rendered result (not the raw HTML), mirroring Claude Design.
+    if (doc.language === 'design') {
+      requestAnimationFrame(() => { if (!_htmlPreviewActive) toggleHtmlPreview(); });
+    }
+
     // Show/hide email fields. Markdown preview uses the same editor wrapper
     // as email source mode, so clear it before showing the rich email body;
     // otherwise the source wrapper can reappear over the composer.
@@ -4053,9 +4077,21 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           <option value="csv">csv</option>
           <option value="email">email</option>
           <option value="pdf">pdf</option>
+          <option value="design">design</option>
         </select>
         <!-- Close + Copy/Export moved to the bottom action footer (#doc-actions-footer)
              so regular docs match the email footer layout. -->
+      </div>
+      <!-- Odysseus Design control bar: model picker + regenerate + scoped edit + download.
+           Shown only for language="design" docs (toggled in _syncHeaderActions). -->
+      <div id="doc-design-bar" class="doc-design-bar" style="display:none;align-items:center;gap:6px;padding:5px 8px;border-bottom:1px solid var(--border-color,#2a2a2a);flex-wrap:wrap;font-size:12px;">
+        <span style="opacity:0.6;font-weight:600;">Design</span>
+        <select id="doc-design-model" class="doc-language-select" title="Modelo de design" style="max-width:200px;"><option value="">(modelo padrão)</option></select>
+        <button id="doc-design-regen" class="doc-action-icon-btn" type="button" title="Refazer este design com o modelo selecionado" style="gap:4px;"><span style="font-size:11px;">↻ Regenerar</span></button>
+        <input id="doc-design-edit" type="text" placeholder="Editar: ex. 'CTA verde, hero maior'" style="flex:1;min-width:140px;font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--border-color,#2a2a2a);background:transparent;color:inherit;" />
+        <button id="doc-design-apply" class="doc-action-icon-btn" type="button" title="Aplicar edição" style="gap:4px;"><span style="font-size:11px;">Aplicar</span></button>
+        <button id="doc-design-download" class="doc-action-icon-btn" type="button" title="Baixar HTML" style="gap:4px;"><span style="font-size:11px;">⬇ .html</span></button>
+        <span id="doc-design-status" style="opacity:0.7;"></span>
       </div>
       <div class="doc-tab-bar" id="doc-tab-bar"></div>
       <div id="doc-email-header" class="doc-email-header" style="display:none">
@@ -4817,6 +4853,107 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       }
       _syncHeaderActions();
     });
+
+    // ---- Odysseus Design panel controls (model picker / regenerate / edit / download) ----
+    (function _initDesignBar() {
+      const modelSel = document.getElementById('doc-design-model');
+      const statusEl = document.getElementById('doc-design-status');
+      if (!modelSel) return;
+      const _setStatus = (t) => { if (statusEl) statusEl.textContent = t || ''; };
+
+      // Populate the design-model dropdown from the same source the chat uses.
+      // Build via the DOM API (NOT innerHTML): model ids / endpoint names are
+      // untrusted (come from /v1/models of a user-configured endpoint) and a
+      // stray quote/'<' would break the attribute or inject markup.
+      (async () => {
+        try {
+          const res = await fetch(`${API_BASE}/api/models`, { credentials: 'same-origin' });
+          const data = await res.json();
+          modelSel.replaceChildren();
+          const def = document.createElement('option');
+          def.value = ''; def.textContent = '(modelo padrão)';
+          modelSel.appendChild(def);
+          (data.items || []).forEach(ep => {
+            const disp = ep.models_display || ep.models || [];
+            (ep.models || []).forEach((mid, i) => {
+              const epId = (ep.endpoint_id !== null && ep.endpoint_id !== undefined) ? `@${ep.endpoint_id}` : '';
+              const o = document.createElement('option');
+              o.value = `${mid}${epId}`;
+              o.textContent = (disp[i] || mid) + (ep.endpoint_name ? ` · ${ep.endpoint_name}` : '');
+              modelSel.appendChild(o);
+            });
+          });
+        } catch (e) { /* keep the default option on failure */ }
+      })();
+
+      async function _postDesign(prompt) {
+        const doc = activeDocId && docs.get(activeDocId);
+        if (!doc || !activeDocId) return;
+        const fd = new FormData();
+        fd.append('prompt', prompt || '');
+        fd.append('session_id', doc.session_id || '');
+        fd.append('model', modelSel.value || '');
+        fd.append('doc_id', activeDocId);
+        fd.append('mode', 'edit');
+        _setStatus('Gerando…');
+        try {
+          const res = await fetch(`${API_BASE}/api/design`, { method: 'POST', body: fd, credentials: 'same-origin' });
+          const j = await res.json().catch(() => ({}));
+          if (!res.ok || !j || j.error) { _setStatus('Erro: ' + ((j && (j.error || j.detail)) || res.status)); return; }
+          _setStatus('');
+          const cached = docs.get(activeDocId);
+          // Use the POST response directly — it already returns the new
+          // content+version. Avoids a redundant GET that can 404 right after
+          // the write. Fall back to GET only if the body lacks content.
+          let content = j.content;
+          if (content == null) {
+            const dr = await fetch(`${API_BASE}/api/document/${activeDocId}`, { credentials: 'same-origin' });
+            if (dr.ok) { const full = await dr.json(); content = full && full.current_content; if (cached && full) cached.version = full.version_count || cached.version; }
+          } else if (cached) {
+            cached.version = j.version || cached.version;
+          }
+          if (cached && content != null) {
+            cached.content = content;
+            const ta = document.getElementById('doc-editor-textarea');
+            if (ta) ta.value = content;
+            syncHighlighting();
+            if (_htmlPreviewActive) exitHtmlPreview();
+            requestAnimationFrame(() => toggleHtmlPreview());
+            const badge = document.getElementById('doc-version-badge');
+            if (badge && cached.version) { badge.textContent = `v${cached.version}`; badge.style.display = cached.version > 1 ? '' : 'none'; }
+            const _dbtn = document.getElementById('doc-diff-toggle-btn');
+            if (_dbtn) _dbtn.style.display = (cached.version > 1) ? '' : 'none';
+            _syncHeaderActions();
+          }
+        } catch (e) { _setStatus('Erro de rede'); }
+      }
+
+      document.getElementById('doc-design-regen')?.addEventListener('click', () => {
+        _postDesign('Refaça este design inteiro do zero, mantendo a intenção, o conteúdo e a estrutura, mas pode melhorar layout, tipografia e espaçamento.');
+      });
+      const _applyEdit = () => {
+        const inp = document.getElementById('doc-design-edit');
+        const v = (inp?.value || '').trim();
+        if (!v) return;
+        _postDesign(v);
+        if (inp) inp.value = '';
+      };
+      document.getElementById('doc-design-apply')?.addEventListener('click', _applyEdit);
+      document.getElementById('doc-design-edit')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); _applyEdit(); }
+      });
+      document.getElementById('doc-design-download')?.addEventListener('click', () => {
+        const html = document.getElementById('doc-editor-textarea')?.value || '';
+        const blob = new Blob([html], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const doc = activeDocId && docs.get(activeDocId);
+        a.href = url;
+        a.download = (((doc && doc.title) || 'design').replace(/[^a-z0-9_-]+/gi, '_') || 'design') + '.html';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      });
+    })();
 
     // Font size toggle (S → M → L)
     const fontBtn = document.getElementById('doc-fontsize-btn');
@@ -6585,7 +6722,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const lang = document.getElementById('doc-language-select')?.value;
     // hljs has no 'svg' grammar — highlight it as xml (the dropdown value stays
     // 'svg' so the preview/run routing still treats it as renderable markup).
-    const _hlLang = lang === 'svg' ? 'xml' : lang;
+    const _hlLang = (lang === 'svg' || lang === 'design') ? 'xml' : lang;
     codeEl.className = _hlLang ? `language-${_hlLang}` : '';
     if (window.hljs && _hlLang) {
       codeEl.removeAttribute('data-highlighted');
@@ -8402,6 +8539,18 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const textarea = document.getElementById('doc-editor-textarea');
     if (!textarea) return;
 
+    // Anti-clobber: a design doc's textarea sits hidden behind the live
+    // preview and may be empty even though the stored HTML is valid. A blind
+    // autosave would wipe it (the original "blank file" bug). Never let an
+    // empty body overwrite a non-empty design doc — these are owned by the
+    // Design Maker surface now, not hand-edited here.
+    const _cd = docs.get(activeDocId);
+    if (_cd && _cd.language === 'design'
+        && (textarea.value || '').trim() === ''
+        && (_cd.content || '').trim() !== '') {
+      return;
+    }
+
     try {
       const res = await fetch(`${API_BASE}/api/document/${activeDocId}`, {
         method: 'PUT',
@@ -9040,7 +9189,16 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       const mdPreview = document.getElementById('doc-md-preview');
       if (mdPreview) mdPreview.style.display = 'none';
       const code = textarea.value || '';
-      iframe.srcdoc = code;
+      // Odysseus Design previews are LLM-authored: lock the iframe to scripts
+      // only (opaque origin — no same-origin/storage/cookies) and inject CSP.
+      const _lang = (document.getElementById('doc-language-select')?.value || '').toLowerCase();
+      if (_lang === 'design') {
+        iframe.setAttribute('sandbox', 'allow-scripts');
+        iframe.srcdoc = _wrapDesignCsp(code);
+      } else {
+        iframe.setAttribute('sandbox', 'allow-scripts allow-modals');
+        iframe.srcdoc = code;
+      }
       iframe.style.display = '';
       wrap.style.display = 'none';
       _htmlPreviewActive = true;

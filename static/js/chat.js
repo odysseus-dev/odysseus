@@ -2313,6 +2313,17 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   documentModule.handleDocSuggestions(json);
                 }
 
+              } else if (json.type === 'design_open') {
+                // create_design built a project — open the dedicated Design
+                // Maker surface for it (not the document editor).
+                if (_isBg) continue;
+                var _dm = (json.data && json.data.project_id) || '';
+                if (_dm) {
+                  import('./design-maker.js').then(function (m) {
+                    (m.open || (m.default && m.default.open)).call(null, _dm);
+                  }).catch(function () {});
+                }
+
               } else if (json.type === 'ui_control') {
                 if (_isBg) continue;
                 chatStream.handleUIControl(json.data || {});

@@ -79,6 +79,8 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "write_file": "Write/create or fully rewrite a file ON DISK (source code, configs, project files). Use for new files or full rewrites — NOT create_document (editor panel) and NOT a bash heredoc.",
     "edit_file": "Edit an existing file ON DISK by exact string replacement (fix a bug, change a function). Shows a diff. The tool for changing files on disk — NOT edit_document (editor panel) and NOT bash sed/heredoc.",
     "create_document": "Create a new document in the editor panel. For code, articles, text content longer than 15 lines, unless an already-open document/email draft is the obvious target. If an email compose draft is open, edit that draft instead of creating another document.",
+    "create_design": "Generate a visual UI/design from a prompt — landing page, website, dashboard, mockup, wireframe, deck, hero section, or UI component — as a live, self-contained HTML preview in the editor panel. Use when the user wants to design, prototype, mock up, or build the LOOK/layout of a page or screen. Distinct from create_document (plain code/text).",
+    "edit_design": "Edit the design currently open in the editor panel by re-prompting — apply a visual change (colors, spacing, layout, copy, add/remove a section) and produce a new version. Use for tweaks to an existing generated design/UI/mockup.",
     "edit_document": "Preferred tool for editing an existing document — targeted find-and-replace. Use for any small change: add a function, fix a bug, tweak a section, rename things.",
     "update_document": "Replace the entire active document content. ONLY for full rewrites (>50% changed). Do not use for small edits — use edit_document instead.",
     "suggest_document": "Suggest changes to the active document with explanations. For code review, proofreading, feedback requests.",
@@ -442,6 +444,11 @@ class ToolIndex:
                    "replace", "add a", "tweak", "modify", "rename", "paragraph",
                    "section", "line", "the doc", "the docs", "the document", "the documents", "in the doc", "in the docs", "in document"}):
             {"edit_document", "update_document", "create_document", "suggest_document"},
+        # Design / UI generation intent
+        frozenset({"design", "mockup", "wireframe", "landing page", "landing-page",
+                   "prototype", "protótipo", "prototipo", "ui", "ux", "dashboard",
+                   "hero section", "web page", "webpage", "página de vendas", "interface"}):
+            {"create_design", "edit_design"},
         # Document deletion / management — include generic open/find/read/show
         # verbs + file/doc synonyms so "open my <X>", "find the <X>", "delete
         # <X>" reach manage_documents even without the literal word "document".
