@@ -21,7 +21,7 @@ from src.upload_limits import (
 from src.constants import GENERATED_IMAGES_DIR
 from src.optional_deps import patch_realesrgan_torchvision_compat
 
-from routes.gallery_helpers import (
+from routes.gallery.gallery_helpers import (
     GalleryPatch, _extract_exif, _image_to_dict, _owner_filter, _human_size,
 )
 
