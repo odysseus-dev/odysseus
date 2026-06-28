@@ -212,6 +212,17 @@ else
     echo "  ⚠ No icon source found, using default"
 fi
 
+# Copy the Odysseus wordmark into the build directory so the loading screen
+# can use real branding instead of a generic emoji. The source PNG has a
+# transparent background, so it renders correctly on both light and dark themes.
+WORDMARK_SOURCE="$PROJECT_DIR/docs/odysseus-wordmark.png"
+if [[ -f "$WORDMARK_SOURCE" ]]; then
+    cp "$WORDMARK_SOURCE" "$BUILD_DIR/odysseus-wordmark.png"
+    echo "  ✓ Wordmark copied"
+else
+    echo "  ⚠ No wordmark source found"
+fi
+
 # ── Step 3: Copy server into Electron resources ───────────────────────
 echo ""
 echo "▶ Step 3: Copy server into Electron build dir"
@@ -275,6 +286,10 @@ cat > "$ELECTRON_DIR/package.json" << 'PKGJSON'
       {
         "from": "build/icon.png",
         "to": "icon.png"
+      },
+      {
+        "from": "build/odysseus-wordmark.png",
+        "to": "odysseus-wordmark.png"
       }
     ],
     "mac": {

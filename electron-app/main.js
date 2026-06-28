@@ -323,13 +323,23 @@ function startPythonServer() {
   });
 }
 
+// ┌──────────────────────────────────────────────────────────────────┐
+// │   Loading screen helpers                                           │
+// └──────────────────────────────────────────────────────────────────┘
+
 // ── Build a UTF-8 loading screen as a data URL ────────────────────────
 // Theme matches Odysseus's own tokens (static/style.css :root and :root.light)
 // so the loading screen matches whichever theme the OS is in. We can't read
 // the user's saved Odysseus preference here because the Python server (which
 // serves settings.json) hasn't started yet — but prefers-color-scheme tracks
 // the OS setting, which is what Odysseus defaults to on first launch anyway.
+//
+// Branding: the wordmark is inlined as a base64 data URI so it loads instantly
+// and is not blocked by file:// or custom-scheme restrictions inside the
+// data-URL loading page. In dev it is read from docs/odysseus-wordmark.png;
+// in packaged mode electron-builder copies it to Resources/odysseus-wordmark.png.
 function buildLoadingUrl() {
+  const wordmarkBase64 = loadWordmarkBase64();
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -363,7 +373,18 @@ function buildLoadingUrl() {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     height: 100vh; text-align: center; user-select: none;
   }
-  .logo { font-size: 4rem; margin-bottom: 1rem; }
+  .logo-wrap {
+    background: var(--panel);
+    padding: 1rem 1.5rem;
+    border-radius: 12px;
+    margin-bottom: 1.25rem;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+  }
+  .logo {
+    display: block;
+    max-width: 220px;
+    max-height: 90px;
+  }
   h1 { font-size: 1.8rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--fg); }
   p { font-size: 1rem; color: color-mix(in srgb, var(--fg) 60%, transparent); }
   .spinner {
@@ -377,13 +398,35 @@ function buildLoadingUrl() {
 </style>
 </head>
 <body>
-  <div class="logo">&#9973;</div>
-  <h1>Odysseus</h1>
+  ${wordmarkBase64
+    ? `<div class="logo-wrap"><img class="logo" src="${wordmarkBase64}" alt="Odysseus" onerror="this.parentElement.style.display='none'; document.querySelector('h1').style.display='block';"></div>`
+    : ''}
+  <h1 style="${wordmarkBase64 ? 'display:none;' : ''}">Odysseus</h1>
   <p>Starting background services&hellip;</p>
   <div class="spinner"></div>
 </body>
 </html>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+}
+
+// Find the Odysseus wordmark in the packaged app or repo and return it as a
+// PNG base64 data URI. Returns '' if the asset is missing.
+function loadWordmarkBase64() {
+  const candidates = [];
+  if (process.resourcesPath) {
+    candidates.push(path.join(process.resourcesPath, 'odysseus-wordmark.png'));
+  }
+  candidates.push(
+    path.join(PROJECT_DIR, 'odysseus-wordmark.png'),
+    path.join(PROJECT_DIR, 'docs', 'odysseus-wordmark.png')
+  );
+  for (const p of candidates) {
+    if (fs.existsSync(p)) {
+      const buf = fs.readFileSync(p);
+      return `data:image/png;base64,${buf.toString('base64')}`;
+    }
+  }
+  return '';
 }
 
 // ── Create the main window ────────────────────────────────────────────

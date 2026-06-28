@@ -44,6 +44,10 @@
       {
         "from": "build/icon.png",
         "to": "icon.png"
+      },
+      {
+        "from": "build/odysseus-wordmark.png",
+        "to": "odysseus-wordmark.png"
       }
     ],
     "mac": {
