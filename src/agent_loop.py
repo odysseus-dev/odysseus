@@ -755,6 +755,76 @@ def _extract_last_user_message(messages: List[Dict]) -> str:
     return ""
 
 
+def _insert_before_latest_user(messages: List[Dict], context_msg: Dict) -> List[Dict]:
+    """Insert a context message immediately before the latest user turn."""
+    out = list(messages or [])
+    for idx in range(len(out) - 1, -1, -1):
+        if out[idx].get("role") == "user":
+            out.insert(idx, context_msg)
+            return out
+    out.append(context_msg)
+    return out
+
+
+def _uploaded_files_context_message(uploaded_files: Optional[List[Dict]]) -> Optional[Dict]:
+    if not uploaded_files:
+        return None
+
+    lines = [
+        "Uploaded files attached to the latest user turn:",
+    ]
+    for item in uploaded_files[:20]:
+        name = str(item.get("name") or item.get("id") or "upload")
+        bits = [
+            f"id={item.get('id', '')}",
+            f"name={name}",
+        ]
+        if item.get("mime"):
+            bits.append(f"mime={item.get('mime')}")
+        if item.get("size") is not None:
+            bits.append(f"size={item.get('size')} bytes")
+        if item.get("path"):
+            bits.append(f"path={item.get('path')}")
+        lines.append("- " + "; ".join(bits))
+    if len(uploaded_files) > 20:
+        lines.append(f"- ... {len(uploaded_files) - 20} more upload(s) omitted from this manifest")
+    lines.extend([
+        "",
+        "The attachment contents may already be in the latest user message. If an attachment is marked truncated or omitted, read its listed path with `read_file` when that tool is available. Do not say uploaded files are undiscoverable when they are listed here.",
+    ])
+    return untrusted_context_message("current chat uploaded files", "\n".join(lines))
+
+
+def _strip_think_blocks(text: str) -> str:
+    """Linear-time equivalent of
+    ``re.sub(r'<think>.*?</think>', '', text, flags=DOTALL|IGNORECASE)``.
+
+    The lazy regex rescans to end-of-string from every ``<think>`` opener when
+    a closer is missing -> O(n^2) on untrusted model output (prompt injection
+    can echo thousands of openers). This forward-only scan pairs each opener
+    with the next closer in a single pass. Output is byte-for-byte identical to
+    the original narrow regex: only literal ``<think>``/``</think>`` (any case)
+    are matched, a dangling opener with no closer is left intact, and an orphan
+    ``</think>`` is never stripped.
+    """
+    if not text:
+        return text
+    lowered = text.lower()
+    parts = []
+    pos = 0
+    while True:
+        start = lowered.find("<think>", pos)
+        if start == -1:
+            parts.append(text[pos:])
+            break
+        end = lowered.find("</think>", start + 7)
+        if end == -1:
+            # No closer for this opener: lazy regex matches nothing here.
+            parts.append(text[pos:])
+            break
+        parts.append(text[pos:start])
+        pos = end + 8  # len("</think>")
+    return "".join(parts)
 _LOW_SIGNAL_RE = re.compile(r"^[\W_]*$", re.UNICODE)
 _CASUAL_OPENING_RE = re.compile(
     r"^\s*(?:h+i+|hey+|hello+|yo+|sup+|what'?s up|wass?up|hiya|howdy|"
@@ -773,7 +843,12 @@ _EXPLICIT_CONTINUATION_RE = re.compile(
     r"run it|launch it|start it|use that|that one|same|the same|"
     r"first|second|third|the first one|the second one|the third one|"
     r"[123]|[abc]"
-    r")\s*[.!?]*\s*$",
+    # `\s*[.!?]*\s*$` put two \s-matching quantifiers around `[.!?]*`, which
+    # backtracks O(n^2) on a terse reply + whitespace flood (py/polynomial-redos).
+    # `\s*(?:[.!?]+\s*)?$` accepts the same "trailing space/punctuation" tails
+    # (the inner \s* only engages after `[.!?]+`, so no two \s* are adjacent) and
+    # is linear.
+    r")\s*(?:[.!?]+\s*)?$",
     re.IGNORECASE,
 )
 _RETRY_CONTINUATION_RE = re.compile(
@@ -1576,6 +1651,7 @@ def _build_base_prompt(
 def _resolve_tool_blocks(round_response: str, native_tool_calls: list, round_num: int, is_api_model: bool = False):
     """Choose native function calls or fenced code block parsing. Returns (tool_blocks, used_native)."""
     used_native = False
+    converted_calls = []  # native calls that converted, ALIGNED with tool_blocks
     if native_tool_calls:
         tool_blocks = []
         for tc in native_tool_calls:
@@ -1584,6 +1660,7 @@ def _resolve_tool_blocks(round_response: str, native_tool_calls: list, round_num
             block = function_call_to_tool_block(tc_name, tc_args)
             if block:
                 tool_blocks.append(block)
+                converted_calls.append(tc)
                 logger.info(f"  -> converted: {tc_name} -> {block.tool_type}")
             else:
                 logger.warning(f"  -> FAILED to convert native call: {tc_name} args={tc_args[:200]}")
@@ -1613,7 +1690,7 @@ def _resolve_tool_blocks(round_response: str, native_tool_calls: list, round_num
                 f"{len(native_tool_calls)} native calls, "
                 f"{len(tool_blocks)} tool blocks. Preview: {resp_preview}")
 
-    return tool_blocks, used_native
+    return tool_blocks, used_native, converted_calls
 
 
 def _append_tool_results(
@@ -1954,6 +2031,7 @@ async def stream_agent_loop(
     tool_policy: Optional[ToolPolicy] = None,
     workspace: Optional[str] = None,
     forced_tools: Optional[Set[str]] = None,
+    uploaded_files: Optional[List[Dict]] = None,
     _is_teacher_run: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
@@ -1988,6 +2066,11 @@ async def stream_agent_loop(
         # the loop is safe regardless of caller. MCP stays available but is
         # filtered to read-only tools below (after the disabled map is loaded).
         disabled_tools.update(plan_mode_disabled_tools())
+
+    uploaded_files = uploaded_files or []
+    _upload_msg = _uploaded_files_context_message(uploaded_files)
+    if _upload_msg:
+        messages = _insert_before_latest_user(messages, _upload_msg)
 
     _t0 = time.time()
     _needs_admin = _detect_admin_intent(messages)
@@ -2199,6 +2282,15 @@ async def stream_agent_loop(
     # or what keywords were in the latest user message.
     if _relevant_tools is not None and active_document is not None:
         _relevant_tools.update({"edit_document", "update_document", "suggest_document"})
+
+    # Current-turn chat uploads are real files under the upload/data root. Make
+    # the read-side file/document tools visible immediately so the agent can
+    # inspect files whose inline text was truncated or omitted.
+    if not guide_only and uploaded_files:
+        if _relevant_tools is None:
+            from src.tool_index import ALWAYS_AVAILABLE
+            _relevant_tools = set(ALWAYS_AVAILABLE)
+        _relevant_tools.update({"read_file", "grep", "ls", "manage_documents"})
 
     # Per-request UI toggles are stronger than retrieval. If the user turns on
     # Search, the model must see the search tools even when the latest text is a
@@ -2782,7 +2874,7 @@ async def stream_agent_loop(
             _round_first_event_logged,
             _round_first_token_logged,
         )
-        tool_blocks, used_native = _resolve_tool_blocks(
+        tool_blocks, used_native, converted_calls = _resolve_tool_blocks(
             round_response,
             native_tool_calls,
             round_num,
@@ -3414,7 +3506,12 @@ async def stream_agent_loop(
             break
 
         # Feed results back to LLM for next round
-        _append_tool_results(messages, round_response, native_tool_calls,
+        # Pass the CONVERTED calls (aligned 1:1 with tool_result_texts), not the
+        # raw native_tool_calls: a call that failed to convert is dropped from
+        # tool_blocks but stayed in native_tool_calls, so indexing results by
+        # native position mis-attached each result to the wrong tool_call_id
+        # (and left the real call answered empty).
+        _append_tool_results(messages, round_response, converted_calls,
                              tool_results, tool_result_texts, used_native, round_num,
                              round_reasoning=round_reasoning)
 

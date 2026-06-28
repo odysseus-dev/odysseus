@@ -201,14 +201,13 @@ def setup_upload_routes(upload_handler):
         import mimetypes as _mt
         # Look up original filename and owner from uploads.json
         original_name = file_id
-        info = None
-        uploads_db = os.path.join(_upload_root(), "uploads.json")
-        if os.path.exists(uploads_db):
-            with open(uploads_db, encoding="utf-8") as f:
-                db = json.load(f)
-            info = next((fi for fi in db.values() if fi.get("id") == file_id), None)
-            if info:
-                original_name = info.get("name", file_id)
+        # _load_upload_index() tolerates a missing/corrupt uploads.json (it falls
+        # back to the .bak sibling, then to {}), so a truncated DB degrades to
+        # "no metadata" instead of a 500 from an unhandled JSONDecodeError.
+        db = upload_handler._load_upload_index()
+        info = next((fi for fi in db.values() if fi.get("id") == file_id), None)
+        if info:
+            original_name = info.get("name", file_id)
         auth_mgr = getattr(request.app.state, "auth_manager", None)
         auth_configured = bool(auth_mgr and auth_mgr.is_configured)
         current_user = effective_user(request)
@@ -254,13 +253,10 @@ def setup_upload_routes(upload_handler):
 
     def _load_upload_info(file_id: str):
         """Look up the uploads.json record for a file_id, with owner/auth checks."""
-        info = None
-        uploads_db = os.path.join(_upload_root(), "uploads.json")
-        if os.path.exists(uploads_db):
-            with open(uploads_db, encoding="utf-8") as f:
-                db = json.load(f)
-            info = next((fi for fi in db.values() if fi.get("id") == file_id), None)
-        return info
+        # Corruption-tolerant load (see download_file): a bad uploads.json yields
+        # {} rather than raising JSONDecodeError out of the vision path.
+        db = upload_handler._load_upload_index()
+        return next((fi for fi in db.values() if fi.get("id") == file_id), None)
 
     def _vision_cache_path(file_id: str) -> str:
         cache_dir = os.path.join(_upload_root(), ".vision")
@@ -328,7 +324,10 @@ def setup_upload_routes(upload_handler):
             if file_owner != current_user and not auth_mgr.is_admin(current_user):
                 raise HTTPException(404, "File not found")
         _resolve_upload_path(file_id)
-        body = await request.json()
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            raise HTTPException(400, "Request body must be valid JSON")
         text = (body or {}).get("text", "")
         if not isinstance(text, str):
             raise HTTPException(400, "text must be a string")

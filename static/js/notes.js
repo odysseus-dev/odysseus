@@ -1835,6 +1835,9 @@ function _renderNotes() {
           <button class="note-checkbox-agent${agentDoneClass}" data-note-id="${_attrEsc(note.id)}" data-idx="${i}"${agentSessionAttr} data-agent-title="${_attrEsc(agentMenuTitle)}" title="${_attrEsc(agentTitle)}">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></svg>
           </button>
+          <button class="note-checkbox-edit" data-note-id="${note.id}" data-idx="${i}" title="Edit item">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
           <button class="note-checkbox-rm" data-note-id="${note.id}" data-idx="${i}" title="Delete item">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
@@ -2515,6 +2518,85 @@ function _bindCardEvents(body) {
         _renderNotes();
         uiModule.showError('Failed to remove item');
       });
+    });
+  });
+
+  function _startChecklistItemEdit(noteId, idx, span) {
+    if (span.isContentEditable) return;
+    const note = _notes.find(n => n.id === noteId);
+    if (!note || !Array.isArray(note.items) || !note.items[idx]) return;
+    
+    span.textContent = note.items[idx].text || '';
+    span.contentEditable = "true";
+    span.spellcheck = false;
+    span.focus();
+    
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(span);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    const save = () => {
+      if (!span.isContentEditable) return;
+      span.contentEditable = "false";
+      const newText = span.textContent.trim();
+      const oldText = (note.items[idx].text || '').trim();
+      
+      if (newText === oldText) {
+        _renderNotes();
+        return;
+      }
+
+      const oldItem = note.items[idx];
+      if (!newText) {
+        note.items.splice(idx, 1);
+      } else {
+        note.items[idx].text = newText;
+      }
+
+      _patchNote(noteId, { items: note.items }).catch(() => {
+        if (!newText) note.items.splice(idx, 0, oldItem);
+        else note.items[idx].text = oldText;
+        _renderNotes();
+        uiModule.showError('Failed to update item');
+      });
+      _renderNotes();
+    };
+
+    const onKeydown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        save();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        span.contentEditable = "false";
+        _renderNotes();
+      }
+    };
+
+    span.addEventListener('blur', save, { once: true });
+    span.addEventListener('keydown', onKeydown);
+  }
+
+  // Edit a single checklist item (hover Edit button)
+  body.querySelectorAll('.note-checkbox-edit').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (_selectMode) return;
+      const noteId = btn.dataset.noteId;
+      const idx = parseInt(btn.dataset.idx);
+      const span = btn.parentElement.querySelector('.note-check-text');
+      if (span) _startChecklistItemEdit(noteId, idx, span);
+    });
+  });
+
+  // Prevent clicks from toggling the row while actively editing inline
+  body.querySelectorAll('.note-check-text').forEach(span => {
+    span.addEventListener('click', (e) => {
+      if (span.isContentEditable) {
+        e.stopPropagation();
+      }
     });
   });
 

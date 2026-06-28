@@ -564,9 +564,20 @@ class ManageDocumentTool:
                 if not doc:
                     return {"error": f"Document '{doc_id}' not found", "exit_code": 1}
                 body = doc.current_content or ""
-                preview_limit = int(args.get("limit", MAX_READ_CHARS))
-                truncated = len(body) > preview_limit
-                preview = body[:preview_limit] + (f"\n... (truncated, {len(body)} chars total)" if truncated else "")
+                try:
+                    preview_limit = max(1, min(int(args.get("limit", MAX_READ_CHARS)), MAX_READ_CHARS))
+                except (TypeError, ValueError):
+                    preview_limit = MAX_READ_CHARS
+                try:
+                    offset = max(0, int(args.get("offset", 0) or 0))
+                except (TypeError, ValueError):
+                    offset = 0
+                offset = min(offset, len(body))
+                end = min(offset + preview_limit, len(body))
+                truncated = end < len(body)
+                preview = body[offset:end]
+                if truncated:
+                    preview += f"\n... (truncated, {len(body)} chars total; next_offset={end})"
                 anchor = f"[{doc.title}](#document-{doc.id})"
                 return {
                     "response": f"{anchor} — click to open in editor.\n\n```{doc.language or ''}\n{preview}\n```",
@@ -577,6 +588,8 @@ class ManageDocumentTool:
                         "size": len(body),
                         "content": preview,
                         "truncated": truncated,
+                        "offset": offset,
+                        "next_offset": end if truncated else None,
                     },
                     "exit_code": 0,
                 }

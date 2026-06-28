@@ -17,31 +17,27 @@ import re
 
 _THINK_TAG_NAME = r"(?:think(?:ing)?|thought)"
 
-# Closed reasoning blocks. Multi-pass loop in `strip_think` handles nested
-# `<think><think>...</think></think>` patterns some models emit.
-_THINK_CLOSED_RE = re.compile(rf"<{_THINK_TAG_NAME}(?:\s+[^>]*)?>[\s\S]*?</{_THINK_TAG_NAME}>\s*", re.IGNORECASE)
-# Orphan opening or closing tags that survive after the closed-pass.
-_THINK_TAG_RE = re.compile(rf"</?{_THINK_TAG_NAME}[^>]*>\s*", re.IGNORECASE)
-# Dangling opener anywhere in the response with no closer — strip everything
-# from `<think>` to the end of string.
-_THINK_OPEN_RE = re.compile(rf"<{_THINK_TAG_NAME}(?:\s+[^>]*)?>[\s\S]*$", re.IGNORECASE)
-# Streaming models occasionally emit `<thinking time="0.42">`-style attributes.
-# Normalize to a plain `<think>` so the regexes above catch them.
-_THINK_ATTR_RE = re.compile(rf"<{_THINK_TAG_NAME}\s+[^>]*>", re.IGNORECASE)
-_THINK_ATTR_CLOSE_RE = re.compile(rf"</{_THINK_TAG_NAME}\s+[^>]*>", re.IGNORECASE)
+# Think-tag matchers. `[^<>]` (not `[^>]`) bounds attribute scans at the next
+# `<` so an opener flood with no closing `>` can't backtrack to end-of-string
+# (ReDoS, CodeQL py/polynomial-redos); capture is identical for well-formed tags.
+# Opener/closer are split for the forward-only block strip (_sub_delimited).
+_THINK_OPEN_TAG_RE = re.compile(rf"<{_THINK_TAG_NAME}(?:\s[^<>]*)?>", re.IGNORECASE)
+_THINK_CLOSE_TAG_RE = re.compile(rf"</{_THINK_TAG_NAME}>\s*", re.IGNORECASE)
+# Orphan opening/closing tags left after the block strip.
+_THINK_TAG_RE = re.compile(rf"</?{_THINK_TAG_NAME}[^<>]*>\s*", re.IGNORECASE)
+# Dangling opener with no closer: strip from `<think>` to end of string.
+_THINK_OPEN_RE = re.compile(rf"<{_THINK_TAG_NAME}(?:\s[^<>]*)?>[\s\S]*$", re.IGNORECASE)
+# Normalize `<thinking time="0.42">`-style attributes to a plain `<think>`.
+_THINK_ATTR_RE = re.compile(rf"<{_THINK_TAG_NAME}\s[^<>]*>", re.IGNORECASE)
+_THINK_ATTR_CLOSE_RE = re.compile(rf"</{_THINK_TAG_NAME}\s[^<>]*>", re.IGNORECASE)
 _GEMMA_THOUGHT_OPEN_RE = re.compile(r"<\|channel>thought\s*\n?[\s\S]*$", re.IGNORECASE)
-_GEMMA_RESPONSE_CHANNEL_RE = re.compile(
-    r"<\|channel>response\s*\n?([\s\S]*?)<channel\|>",
-    re.IGNORECASE,
-)
 _GEMMA_RESPONSE_OPEN_RE = re.compile(r"<\|channel>response\s*\n?", re.IGNORECASE)
 _GEMMA_CHANNEL_CLOSE_RE = re.compile(r"<channel\|>", re.IGNORECASE)
-_THOUGHT_TAG_OPEN_RE = re.compile(r"<thought(\s+[^>]*)?>", re.IGNORECASE)
+_THOUGHT_TAG_OPEN_RE = re.compile(r"<thought(\s[^<>]*)?>", re.IGNORECASE)
 _THOUGHT_TAG_CLOSE_RE = re.compile(r"</thought>", re.IGNORECASE)
-_GEMMA_THOUGHT_CHANNEL_CAPTURE_RE = re.compile(
-    r"<\|channel>thought\s*\n?([\s\S]*?)<channel\|>\s*",
-    re.IGNORECASE,
-)
+# Gemma thought-channel delimiters, split for the forward-only sub (_sub_delimited).
+_GEMMA_THOUGHT_CHANNEL_OPEN_RE = re.compile(r"<\|channel>thought\s*\n?", re.IGNORECASE)
+_GEMMA_CHANNEL_CLOSE_TRIM_RE = re.compile(r"<channel\|>\s*", re.IGNORECASE)
 # Qwen and a few other models prefix the response with a "Thinking Process:"
 # block before the real answer.
 _QWEN_THINKING_RE = re.compile(
@@ -93,6 +89,31 @@ def _strip_reasoning_prose(text: str) -> str:
     return "\n\n".join(keep).strip() if keep else text
 
 
+def _sub_delimited(text, open_re, close_re, repl):
+    """Forward-only ``re.sub`` of ``open_re...close_re`` that can't ReDoS.
+
+    Pairs each opener with the first closer after it and stops once no closer is
+    reachable, so it stays O(n) instead of re.sub's rescan-to-end from every
+    opener (O(n^2) on "many openers, no closer" input). ``repl`` gets the inner
+    text. A whole-string "closer present?" guard is not enough: a stale closer
+    before an opener flood keeps it true while every opener still rescans.
+    """
+    out = []
+    pos = 0
+    while True:
+        om = open_re.search(text, pos)
+        if om is None:
+            break
+        cm = close_re.search(text, om.end())
+        if cm is None:
+            break
+        out.append(text[pos:om.start()])
+        out.append(repl(text[om.end():cm.start()]))
+        pos = cm.end()
+    out.append(text[pos:])
+    return "".join(out)
+
+
 def normalize_thinking_markup(text: str) -> str:
     """Canonicalize supported thinking wrappers to `<think>` markup.
 
@@ -106,12 +127,17 @@ def normalize_thinking_markup(text: str) -> str:
     out = _THOUGHT_TAG_OPEN_RE.sub(lambda m: "<think" + (m.group(1) or "") + ">", text)
     out = _THOUGHT_TAG_CLOSE_RE.sub("</think>", out)
 
-    def _replace_gemma_thought(match: re.Match) -> str:
-        thought = match.group(1).strip()
+    def _replace_gemma_thought(inner: str) -> str:
+        thought = inner.strip()
         return f"<think>{thought}</think>\n" if thought else ""
 
-    out = _GEMMA_THOUGHT_CHANNEL_CAPTURE_RE.sub(_replace_gemma_thought, out)
-    out = _GEMMA_RESPONSE_CHANNEL_RE.sub(lambda m: m.group(1), out)
+    # Forward-only so a stale/unreachable `<channel|>` can't drive a ReDoS rescan.
+    out = _sub_delimited(
+        out, _GEMMA_THOUGHT_CHANNEL_OPEN_RE, _GEMMA_CHANNEL_CLOSE_TRIM_RE, _replace_gemma_thought
+    )
+    out = _sub_delimited(
+        out, _GEMMA_RESPONSE_OPEN_RE, _GEMMA_CHANNEL_CLOSE_RE, lambda inner: inner
+    )
     out = _GEMMA_RESPONSE_OPEN_RE.sub("", out)
     out = _GEMMA_CHANNEL_CLOSE_RE.sub("", out)
     return out
@@ -149,12 +175,9 @@ def strip_think(text: str, *, prose: bool = False, prompt_echo: bool = True) -> 
     # Normalize attributes so the closed/open regexes can catch them.
     text = _THINK_ATTR_RE.sub("<think>", text)
     text = _THINK_ATTR_CLOSE_RE.sub("</think>", text)
-    # Multi-pass for nested blocks.
-    prev = None
-    out = text
-    while prev != out:
-        prev = out
-        out = _THINK_CLOSED_RE.sub("", out)
+    # Forward-only block strip (see _sub_delimited): one pass collapses nested
+    # and sequential blocks without the old lazy re.sub loop's ReDoS rescan.
+    out = _sub_delimited(text, _THINK_OPEN_TAG_RE, _THINK_CLOSE_TAG_RE, lambda _inner: "")
     out = _THINK_OPEN_RE.sub("", out)
     out = _THINK_TAG_RE.sub("", out)
     if prompt_echo:

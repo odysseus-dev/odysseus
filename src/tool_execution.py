@@ -535,7 +535,7 @@ async def execute_tool_block(
     """
     token = _active_workspace.set(workspace or None)
     try:
-        return await _execute_tool_block_impl(
+        output = await _execute_tool_block_impl(
             block,
             session_id=session_id,
             disabled_tools=disabled_tools,
@@ -543,6 +543,7 @@ async def execute_tool_block(
             progress_cb=progress_cb,
             tool_policy=tool_policy,
         )
+        return output
     finally:
         _active_workspace.reset(token)
 
@@ -575,6 +576,22 @@ async def _execute_tool_block_impl(
         do_vault_search, do_vault_get, do_vault_unlock,
         do_app_api,
     )
+
+    # HACK:
+    # This is a temporary workaround for a circular dependency between
+    # tool_execution.py and agent_tools.__init__.py.
+    #
+    # See issue #4277:
+    # refactor(tools): Move the registry from __init__.py into a
+    # dedicated registry.py module.
+    #
+    # Do not copy this pattern elsewhere. This import should be removed
+    # once the registry refactor is completed.
+    try:
+        agent_tools_mod = __import__("src.agent_tools", fromlist=["TOOL_HANDLERS"])
+        dynamic_handlers = getattr(agent_tools_mod, "TOOL_HANDLERS", {})
+    except ImportError:
+        dynamic_handlers = {}
 
     tool = block.tool_type
     content = block.content
@@ -639,86 +656,6 @@ async def _execute_tool_block_impl(
         logger.warning("Public tool policy blocked owner=%r tool=%s", owner, tool)
         return desc, result
 
-    # ask_user: the agent poses a multiple-choice question to the user to get a
-    # decision/clarification. This is a pure UI-control marker — no subprocess,
-    # no filesystem. It returns an `ask_user` payload that the agent loop turns
-    # into an `ask_user` SSE event and then ENDS the turn, so the chat waits for
-    # the user's selection (their choice arrives as the next message).
-    if tool == "ask_user":
-        question, options, multi = "", [], False
-        raw = (content or "").strip()
-        try:
-            parsed = json.loads(raw) if raw else {}
-        except (ValueError, TypeError):
-            parsed = {}
-        if isinstance(parsed, dict):
-            question = str(parsed.get("question", "")).strip()
-            multi = bool(parsed.get("multi") or parsed.get("multiSelect"))
-            for opt in (parsed.get("options") or []):
-                if isinstance(opt, dict):
-                    label = str(opt.get("label", "")).strip()
-                    descr = str(opt.get("description", "")).strip()
-                elif isinstance(opt, str):
-                    label, descr = opt.strip(), ""
-                else:
-                    continue
-                if label:
-                    options.append({"label": label, "description": descr})
-        else:
-            question = raw
-        if not question or len(options) < 2:
-            return "ask_user: invalid", {
-                "error": (
-                    "ask_user needs a non-empty `question` and at least 2 `options` "
-                    "(each an object with a `label`, optional `description`)."
-                ),
-                "exit_code": 1,
-            }
-        options = options[:6]  # keep the choice list sane
-        desc = f"ask_user: {question[:80]}"
-        labels = ", ".join(o["label"] for o in options)
-        result = {
-            "ask_user": {"question": question, "options": options, "multi": multi},
-            "output": f"Asked the user: {question}\nOptions: {labels}\nAwaiting their selection.",
-            "exit_code": 0,
-        }
-        logger.info("Tool executed: %s (%d options, multi=%s)", desc, len(options), multi)
-        return desc, result
-
-    # update_plan: the agent writes back to the active plan — tick an item done
-    # or revise steps (e.g. when the user asks to change something). Pure UI
-    # marker: returns a `plan_update` payload the agent loop turns into a
-    # `plan_update` SSE event; the frontend replaces the stored plan and refreshes
-    # the docked plan window. Does NOT end the turn.
-    if tool == "update_plan":
-        import json as _json
-        raw = (content or "").strip()
-        plan = ""
-        try:
-            parsed = _json.loads(raw) if raw else {}
-        except (ValueError, TypeError):
-            parsed = {}
-        if isinstance(parsed, dict) and parsed.get("plan"):
-            plan = str(parsed.get("plan", "")).strip()
-        else:
-            # Plain-string call (raw checklist) or JSON without a usable `plan`.
-            plan = raw
-        if not plan:
-            return "update_plan: invalid", {
-                "error": "update_plan needs a non-empty `plan` (the full updated checklist as markdown).",
-                "exit_code": 1,
-            }
-        plan = plan[:8192]
-        done = plan.count("- [x]") + plan.count("- [X]")
-        total = done + plan.count("- [ ]")
-        desc = f"update_plan: {done}/{total} done" if total else "update_plan"
-        result = {
-            "plan_update": {"plan": plan},
-            "output": f"Plan updated ({done}/{total} steps complete)." if total else "Plan updated.",
-            "exit_code": 0,
-        }
-        logger.info("Tool executed: %s", desc)
-        return desc, result
 
     # Background execution: a `bash` block whose first line is the `#!bg`
     # marker runs DETACHED — returns a job id immediately so the chat stream
@@ -902,9 +839,24 @@ async def _execute_tool_block_impl(
         else:
             desc = f"mcp: {tool}"
             result = {"error": "MCP manager not available", "exit_code": 1}
+
+    
+    elif tool in dynamic_handlers:
+        first_line = content.split(chr(10))[0][:80]
+        desc = f"registry: {tool} {first_line}".strip()
+        res = await _direct_fallback(tool, content, progress_cb=progress_cb)
+        
+        if isinstance(res, tuple):
+            desc, result = res
+        else:
+            result = res or {"error": f"{tool}: execution failed", "exit_code": 1}
+
     else:
         desc = f"unknown: {tool}"
-        result = {"error": f"Unknown tool type: {tool}", "exit_code": 1}
+        result = {
+            "error": f"Unknown tool: {tool}",
+            "exit_code": 1
+        }
 
     logger.info(f"Tool executed: {desc} -> exit_code={result.get('exit_code', 'n/a')}")
     return desc, result
