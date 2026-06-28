@@ -84,6 +84,15 @@ function log(msg) {
 // In packaged mode there's no `chroma` binary bundled (PyInstaller only
 // ships the client), so we just probe the port and warn the user if it's
 // down so they know RAG / vector memory won't be available.
+//
+// FUTURE: if the server ever supports embedded ChromaDB via CHROMA_DB_PATH
+// (i.e. the project switches from `chromadb-client` to the full `chromadb`
+// package — which is ~300 MB heavier and reintroduces the macOS SIGSEGV
+// regression from PR #3389), this block should be replaced with:
+//   env: { ...process.env, CHROMA_DB_PATH: path.join(USER_DATA_DIR, 'chroma') }
+// passed to the Python server, and the probe+warn+spawn logic dropped.
+// Until then, keep the external-service model — it matches docker-compose.yml
+// and src/chroma_client.py as written.
 function startChromaDB() {
   return new Promise((resolve) => {
     // If already running, done.
