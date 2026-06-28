@@ -447,7 +447,7 @@ function toggleSelectItem(id) {
 function updateBulkCount() {
   const countEl = document.getElementById('memory-selected-count');
   const deleteBtn = document.getElementById('memory-bulk-delete');
-  if (countEl) countEl.textContent = `${selectedIds.size} Selected`;
+  if (countEl) countEl.textContent = (window.__t || (k=>k))('memory.selected', {n: selectedIds.size});
   if (deleteBtn) deleteBtn.disabled = selectedIds.size === 0;
 }
 
@@ -469,7 +469,7 @@ function toggleSelectAll() {
 async function bulkDelete() {
   if (selectedIds.size === 0) return;
   const count = selectedIds.size;
-  if (!await uiModule.styledConfirm(`Delete ${count} ${count === 1 ? 'memory' : 'memories'}?`, { confirmText: 'Delete', danger: true })) return;
+  if (!await uiModule.styledConfirm(`Delete ${count} ${count === 1 ? 'memory' : 'memories'}?`, { confirmText: (window.__t || (k=>k))('common.delete'), danger: true })) return;
 
   let deleted = 0;
   const deletedIds = [];
@@ -1081,7 +1081,7 @@ export function updateMemoryCount() {
   const num = visible.length === scopeTotal ? `${scopeTotal}` : `${visible.length}/${scopeTotal}`;
   // Header (next to the "Memories" title) reads "N memories", like the
   // Documents header. The bare number still feeds any tab badge if present.
-  if (h2Count) h2Count.textContent = `${num} ${scopeTotal === 1 && visible.length === scopeTotal ? 'memory' : 'memories'}`;
+  if (h2Count) h2Count.textContent = `${num} ${(window.__t || (k=>k))('memory.memories')}`;
   if (tabCount) tabCount.textContent = num;
 }
 
@@ -1154,7 +1154,7 @@ export async function deleteMemory(id) {
   const memory = memories.find(m => m.id === id);
   if (!memory) return;
 
-  if (!await uiModule.styledConfirm(`Delete this memory?\n"${memory.text}"`, { confirmText: 'Delete', danger: true })) return;
+  if (!await uiModule.styledConfirm(`Delete this memory?\n"${memory.text}"`, { confirmText: (window.__t || (k=>k))('common.delete'), danger: true })) return;
 
   try {
     const response = await fetch(`${window.location.origin}/api/memory/${id}`, {
@@ -1199,11 +1199,11 @@ export async function extractMemory(sessionId) {
   if (memList) memList.classList.add('hidden');
 
   if (suggestions.length === 0) {
-    body.innerHTML = '<div class="memory-empty">No useful information detected.</div>';
+    body.innerHTML = '<div class="memory-empty">' + ((window.__t || (k=>k))('memory.noUsefulInfoDetected')) + '</div>';
   } else {
     const header = document.createElement('div');
     header.className = 'memory-suggestions-header';
-    header.innerHTML = '<span>Suggested memories</span>';
+    header.innerHTML = '<span>' + ((window.__t || (k=>k))('memory.suggestedMemories')) + '</span>';
     const backBtn = document.createElement('button');
     backBtn.className = 'memory-item-btn';
     backBtn.textContent = 'back';
@@ -1232,7 +1232,7 @@ export async function extractMemory(sessionId) {
         });
         btn.disabled = true;
         btn.textContent = 'saved';
-        showToast('Saved to memory');
+        showToast((window.__t || (k=>k))('settings.saved'));
       });
       div.appendChild(txt);
       div.appendChild(btn);
@@ -1318,7 +1318,7 @@ async function handleImportFile(file) {
     if (memList) memList.classList.add('hidden');
 
     if (suggestions.length === 0) {
-      body.innerHTML = '<div class="memory-empty">No useful information found in file.</div>';
+      body.innerHTML = '<div class="memory-empty">' + ((window.__t || (k=>k))('memory.noUsefulInfoInFile')) + '</div>';
     } else {
       const reviewItems = suggestions
         .map((s) => ({
@@ -1332,7 +1332,7 @@ async function handleImportFile(file) {
       const headerTitle = document.createElement('span');
       const updateHeaderTitle = () => {
         const remaining = reviewItems.filter((item) => item.active).length;
-        headerTitle.textContent = `Imported from ${data.filename || file.name} (${remaining}) Review`;
+        headerTitle.textContent = (window.__t || (k=>k))('memory.importedFrom', {filename: data.filename || file.name, remaining});
       };
       updateHeaderTitle();
       const headerActions = document.createElement('div');
@@ -1405,7 +1405,7 @@ async function handleImportFile(file) {
           updateHeaderTitle();
           btn.disabled = true;
           btn.textContent = 'saved';
-          showToast('Saved to memory');
+          showToast((window.__t || (k=>k))('settings.saved'));
         });
         const deleteBtn = document.createElement('button');
         deleteBtn.className = 'memory-item-btn delete';

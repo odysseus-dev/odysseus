@@ -102,11 +102,11 @@ function _downloadTaskName(shortName, payload) {
 }
 
 function _missingGgufMessage(model) {
-  const name = model?.name || 'this model';
+  const name = model?.name || (window.__t || (k=>k))('cookbook.thisModel');
   if (/\bnvfp4\b/i.test(name)) {
-    return `${name} is an NVIDIA NVFP4 checkpoint, not a GGUF download. Pick the base model row with an Unsloth GGUF source, or paste the GGUF repo directly.`;
+    return (window.__t || (k=>k))('cookbook.nvfp4NotGguf', { name });
   }
-  return `No GGUF source is configured for ${name}. Pick a model with a GGUF source, or paste the GGUF repo in Download.`;
+  return (window.__t || (k=>k))('cookbook.noGgufSource', { name });
 }
 
 function _bashQuote(value) {
@@ -299,8 +299,8 @@ export function _wirePanelEvents(panel, model, backend) {
     copyBtn.addEventListener('click', () => {
       const cmd = panel.querySelector('.hwfit-panel-cmd')?.textContent || '';
       _copyText(cmd).then(() => {
-        copyBtn.textContent = 'Copied';
-        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+        copyBtn.textContent = (window.__t || (k=>k))('common.copied');
+        setTimeout(() => { copyBtn.textContent = (window.__t || (k=>k))('common.copy'); }, 1500);
       });
     });
   }
@@ -310,13 +310,13 @@ export function _wirePanelEvents(panel, model, backend) {
   if (saveBtn) {
     saveBtn.addEventListener('click', () => {
       const shortName = model.name.split('/').pop() || model.name;
-      const name = prompt('Preset name:', shortName);
+      const name = prompt((window.__t || (k=>k))('cookbook.presetName'), shortName);
       if (!name) return;
       const fields = _getPanelFields(panel);
       const presets = _loadPresets();
       presets.push({ name, model: model.name, backend, fields });
       _savePresets(presets);
-      uiModule.showToast('Preset saved');
+      uiModule.showToast((window.__t || (k=>k))('cookbook.presetSaved'));
     });
   }
 
@@ -392,7 +392,7 @@ export async function _runPanelCmd(panel, cmd, opts = {}) {
 
     if (!res.ok) {
       output.classList.add('cookbook-output-error');
-      output.textContent = 'HTTP ' + res.status + ': ' + (await res.text());
+      output.textContent = (window.__t || (k=>k))('cookbook.httpError', { status: res.status }) + ': ' + (await res.text());
       return;
     }
 
@@ -443,7 +443,7 @@ export async function _runPanelCmd(panel, cmd, opts = {}) {
       }
     }
 
-    if (!output.textContent) output.textContent = '(no output)';
+    if (!output.textContent) output.textContent = (window.__t || (k=>k))('cookbook.noOutput');
     if (exitCode !== null && exitCode !== 0) {
       output.classList.add('cookbook-output-error');
       const diag = _diagnose(fullOutput);
@@ -451,10 +451,10 @@ export async function _runPanelCmd(panel, cmd, opts = {}) {
     }
   } catch (err) {
     if (err.name === 'AbortError') {
-      output.textContent += (output.textContent ? '\n' : '') + '(stopped)';
+      output.textContent += (output.textContent ? '\n' : '') + (window.__t || (k=>k))('cookbook.stopped');
     } else {
       output.classList.add('cookbook-output-error');
-      output.textContent += (output.textContent ? '\n' : '') + 'Request failed: ' + err.message;
+      output.textContent += (output.textContent ? '\n' : '') + (window.__t || (k=>k))('cookbook.requestFailed') + ': ' + err.message;
     }
   } finally {
     if (serveBtn) serveBtn.style.display = '';
@@ -548,7 +548,9 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
   const duplicate = tasks.find(t => sameDownload(t) && (t.status === 'running' || t.status === 'queued'));
   if (duplicate) {
     _renderRunningTab();
-    uiModule.showToast(`${shortName} is already ${duplicate.status === 'queued' ? 'queued' : 'downloading'}`);
+    uiModule.showToast(duplicate.status === 'queued'
+      ? (window.__t || (k=>k))('cookbook.alreadyQueued', { name: shortName })
+      : (window.__t || (k=>k))('cookbook.alreadyDownloading', { name: shortName }));
     return;
   }
   // Also catch zombie "done" tasks — the cookbook may have lost track of a
@@ -583,7 +585,7 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
           _saveTasks(_fresh);
         }
         _renderRunningTab();
-        uiModule.showToast(`${shortName} is still downloading (was marked finished after a restart — revived)`);
+        uiModule.showToast((window.__t || (k=>k))('cookbook.stillDownloading', { name: shortName }));
         return;
       }
     } catch { /* probe failed — fall through and let the user launch */ }
@@ -596,7 +598,7 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
     allTasks.push({ id: queueId, sessionId: queueId, name: taskName, type: 'download', status: 'queued', output: '', ts: Date.now(), payload, remoteHost: host });
     _saveTasks(allTasks);
     _renderRunningTab();
-    uiModule.showToast(`Queued ${shortName} — waiting for current download`);
+    uiModule.showToast((window.__t || (k=>k))('cookbook.queuedWaiting', { name: shortName }));
     return;
   }
 
@@ -610,18 +612,18 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
     if (!res.ok) {
       // Errors carry actionable text (e.g. "tmux is required …"); keep them up
       // long enough to read, matching the serve path's duration (issue #1355).
-      uiModule.showToast('Download failed: HTTP ' + res.status, 9000);
+      uiModule.showToast((window.__t || (k=>k))('cookbook.downloadFailedHttp', { status: res.status }), 9000);
       return;
     }
     const data = await res.json();
     if (!data.ok) {
-      uiModule.showToast('Download failed: ' + (data.error || ''), 9000);
+      uiModule.showToast((window.__t || (k=>k))('cookbook.downloadFailed', { error: data.error || '' }), 9000);
       return;
     }
     _addTask(data.session_id, taskName, 'download', payload);
-    uiModule.showToast(`Downloading ${taskName}...`);
+    uiModule.showToast((window.__t || (k=>k))('cookbook.downloadingModel', { name: taskName }));
   } catch (e) {
-    uiModule.showToast('Download failed: ' + e.message, 9000);
+    uiModule.showToast((window.__t || (k=>k))('cookbook.downloadFailed', { error: e.message }), 9000);
   }
 }
 

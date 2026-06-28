@@ -2,6 +2,8 @@
  * Calendar Module — CalDAV-backed month/week/year calendar.
  */
 
+const _t = (k, v) => (window.__t || (kk=>kk))(k, v);
+
 import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
 import * as Modals from './modalManager.js';
@@ -86,7 +88,7 @@ function _showCalUndoToast(label, undoFn) {
   _pushCalUndo({ label, run: undoFn });
   const isMac = /Mac|iPhone|iPad/.test(navigator.platform || '') || /Mac/.test(navigator.userAgent || '');
   uiModule.showToast(label, {
-    action: 'Undo',
+    action: (window.__t || (k=>k))('calendar.undo'),
     actionHint: isMac ? '⌘Z' : 'Ctrl+Z',
     duration: 6000,
     onAction: _popAndRunCalUndo,
@@ -220,7 +222,7 @@ async function _syncCaldav(interactive) {
       _render();
     }
   } catch (e) {
-    if (interactive) return { errors: [e.message || 'Sync failed'] };
+    if (interactive) return { errors: [e.message || (window.__t || (k=>k))('calendar.syncFailed', {error: ''})] };
   }
 }
 
@@ -267,7 +269,7 @@ async function _createEvent(data) {
   }).catch((e) => {
     delete _allEvents[tempUid];
     if (_open) _render();
-    if (window.uiModule) window.uiModule.showError('Failed to create event: ' + (e?.message || 'unknown'));
+    if (window.uiModule) window.uiModule.showError((window.__t || (k=>k))('calendar.failedToCreate', {error: e?.message || 'unknown'}));
   });
   return { uid: tempUid };
 }
@@ -296,7 +298,7 @@ async function _updateEvent(uid, data) {
     if (_preMergeBackup) _allEvents[uid] = _preMergeBackup;
     else delete _allEvents[uid];
     if (_open) _render();
-    if (window.uiModule) window.uiModule.showError('Failed to update event: ' + (e?.message || 'unknown'));
+    if (window.uiModule) window.uiModule.showError((window.__t || (k=>k))('calendar.failedToUpdate', {error: e?.message || 'unknown'}));
   });
   return { ok: true };
 }
@@ -348,7 +350,7 @@ async function _deleteEvent(uid) {
       _allEvents[k] = ev;
       if (Array.isArray(_events)) _events.push(ev);
     }
-    if (window.uiModule) window.uiModule.showError('Failed to delete event: ' + (e?.message || 'unknown'));
+    if (window.uiModule) window.uiModule.showError((window.__t || (k=>k))('calendar.failedToDelete', {error: e?.message || 'unknown'}));
     if (_open) _render();
   });
   return { ok: true };
@@ -483,15 +485,15 @@ function _showEventMoreMenu(ev, anchor) {
 
   const _editIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
 
-  dropdown.appendChild(_item(_editIcon, 'Edit', () => {
+  dropdown.appendChild(_item(_editIcon, (window.__t || (k=>k))('calendar.edit'), () => {
     closeMenu();
     _showEventForm(ev);
   }));
 
-  dropdown.appendChild(_item(_trashIcon, 'Delete', async () => {
+  dropdown.appendChild(_item(_trashIcon, (window.__t || (k=>k))('calendar.delete'), async () => {
     closeMenu();
-    const name = ev.summary ? `"${ev.summary}"` : 'this event';
-    const ok = await uiModule.styledConfirm(`Delete ${name}?`, { confirmText: 'Delete', danger: true });
+    const name = ev.summary ? `"${ev.summary}"` : (window.__t || (k=>k))('calendar.thisEvent');
+    const ok = await uiModule.styledConfirm((window.__t || (k=>k))('calendar.deleteConfirm', {name}), { confirmText: (window.__t || (k=>k))('common.delete'), danger: true });
     if (!ok) return;
     try { await _deleteEvent(ev.uid); setTimeout(() => _render(), 100); } catch (_) {}
   }, true));
@@ -610,7 +612,7 @@ function _getModal() {
   _modal.innerHTML = `
     <div class="modal-content cal-modal-content">
       <div class="modal-header">
-        <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Calendar</h4>
+        <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>${_t('calendar.title')}</h4>
         <button class="close-btn" id="cal-close">✖</button>
       </div>
       <div class="modal-body" id="cal-body"></div>
@@ -778,7 +780,7 @@ function _renderEmpty() {
         <button class="cal-btn cal-btn-primary" id="cal-goto-settings">Open Settings</button>
       ` : `
         <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:4px;">
-          <button class="cal-btn cal-btn-primary" id="cal-empty-new">New calendar</button>
+            <button class="cal-btn cal-btn-primary" id="cal-empty-new">${_t('calendar.newCalendar')}</button>
           <button class="cal-btn" id="cal-empty-import">Import .ics</button>
         </div>
         <div style="margin-top:10px;font-size:11px;opacity:0.55;">Or <a href="#" id="cal-empty-caldav" style="color:var(--accent, var(--red));text-decoration:none;font-weight:600;">set up CalDAV sync</a>.</div>
@@ -845,20 +847,20 @@ function _headerHTML() {
   return `<div class="cal-toolbar">
     <div class="cal-toolbar-nav">
       <button class="cal-nav" id="cal-prev">&larr;</button>
-      <button class="cal-nav cal-today-btn" id="cal-today">Today</button>
-      <span class="cal-title">${_view === 'agenda' ? 'Upcoming' : MONTHS[_currentDate.getMonth()] + ' ' + _currentDate.getFullYear()}${weekSuffix}</span>
+      <button class="cal-nav cal-today-btn" id="cal-today">${_t('calendar.today')}</button>
+      <span class="cal-title">${_view === 'agenda' ? _t('calendar.agenda') : MONTHS()[_currentDate.getMonth()] + ' ' + _currentDate.getFullYear()}${weekSuffix}</span>
       <button class="cal-nav" id="cal-next">&rarr;</button>
     </div>
     <div class="cal-toolbar-right">
       <div class="cal-view-toggle">
-        ${['week', 'month', 'year', 'agenda'].map(v =>
-          `<button class="cal-view-btn${_view === v ? ' active' : ''}" data-view="${v}">${v[0].toUpperCase() + v.slice(1)}</button>`
+        ${[['week', 'calendar.week'], ['month', 'calendar.month'], ['year', 'calendar.year'], ['agenda', 'calendar.agenda']].map(([v, k]) =>
+          `<button class="cal-view-btn${_view === v ? ' active' : ''}" data-view="${v}">${_t(k)}</button>`
         ).join('')}
       </div>
       <button class="cal-nav" id="cal-settings" title="Calendar settings" style="position:relative;top:-3px;"><svg width="13" height="13" style="position:relative;top:2px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.68 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
       <button class="cal-nav${window._calSyncing ? ' cal-syncing' : ''}${window._calSyncDone ? ' cal-sync-done' : ''}" id="cal-sync" title="Refresh from database" style="position:relative;top:-3px;">${window._calSyncDone ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>'}</button>
       ${_filtersToggleHTML()}
-      <button class="cal-add-btn cal-add-btn-text" id="cal-add" title="New event"><span class="cal-add-plus">+</span><span class="cal-add-label">New</span></button>
+      <button class="cal-add-btn cal-add-btn-text" id="cal-add" title="${_t('calendar.new')}"><span class="cal-add-plus">+</span><span class="cal-add-label">${_t('calendar.new')}</span></button>
     </div>
   </div>
   <div class="cal-quickadd-row" id="cal-quickadd-row">
@@ -869,7 +871,7 @@ function _headerHTML() {
       placeholder=" "
       autocomplete="off"
     />
-    <span class="cal-quickadd-hint" id="cal-quickadd-hint" aria-hidden="true"><span class="qa-hint-accent">Quick add</span> — <span class="qa-hint-example" id="qa-hint-example">return home to Ithaca 1pm tmrw</span> <svg class="qa-hint-enter" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg></span>
+    <span class="cal-quickadd-hint" id="cal-quickadd-hint" aria-hidden="true"><span class="qa-hint-accent">${_t('calendar.quickAdd')}</span> — <span class="qa-hint-example" id="qa-hint-example">return home to Ithaca 1pm tmrw</span> <svg class="qa-hint-enter" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg></span>
     <span class="cal-quickadd-status" id="cal-quickadd-status"></span>
   </div>`;
 }
@@ -953,7 +955,7 @@ async function _renderMonth() {
   _slideDir = 0;
   let h = _headerHTML() + _filtersRowHTML() + `<div class="cal-grid${slideClass}">`;
   h += '<div class="cal-week-headers">';
-  for (const wd of (_weekStartSun ? WEEKDAYS_SUN : WEEKDAYS)) h += `<div class="cal-weekday">${wd}</div>`;
+  for (const wd of (_weekStartSun ? WEEKDAYS_SUN() : WEEKDAYS())) h += `<div class="cal-weekday">${wd}</div>`;
   h += '</div>';
 
   const first = new Date(y, m, 1);
@@ -1230,7 +1232,7 @@ async function _renderWeek() {
 
     const isSun = d.getDay() === 0;
     colsHtml += `<div class="cal-wk-col${isToday ? ' cal-wk-today' : ''}${isSun && !_weekStartSun ? ' cal-wk-sun' : ''}" data-date="${ds}">`;
-    colsHtml += `<div class="cal-wk-col-head"><span class="cal-wk-dn">${(_weekStartSun ? WEEKDAYS_SUN : WEEKDAYS)[idx]}</span><span class="cal-wk-dt">${d.getDate()}</span></div>`;
+    colsHtml += `<div class="cal-wk-col-head"><span class="cal-wk-dn">${(_weekStartSun ? WEEKDAYS_SUN() : WEEKDAYS())[idx]}</span><span class="cal-wk-dt">${d.getDate()}</span></div>`;
     // All-day strip
     colsHtml += `<div class="cal-wk-allday">`;
     for (const ev of allDayEvents) {
@@ -1629,10 +1631,10 @@ async function _renderAgenda() {
       const todayBadge = (date === today) ? ' <span class="cal-agenda-today-badge">Today</span>' : '';
       h += `<div class="cal-agenda-day${date === today ? ' is-today' : ''}"><div class="cal-agenda-date">${_fmtDate(date)}${todayBadge}</div>`;
       if (!evs.length) {
-        h += '<div class="cal-agenda-empty">No events</div>';
+        h += '<div class="cal-agenda-empty">' + _t('calendar.noEvents') + '</div>';
       }
       for (const ev of evs) {
-        const t = ev.all_day ? 'All day' : _fmtTime(ev.dtstart) + ' – ' + _fmtTime(ev.dtend);
+        const t = ev.all_day ? _t('calendar.allDay') : _fmtTime(ev.dtstart) + ' – ' + _fmtTime(ev.dtend);
         const _typeTag = ev.event_type
           ? `<span class="cal-event-tag" style="color:${_TYPE_PALETTE[ev.event_type] || _TYPE_PALETTE.other};border-color:${_TYPE_PALETTE[ev.event_type] || _TYPE_PALETTE.other}">#${_e(ev.event_type)}</span>`
           : '';
@@ -1699,11 +1701,11 @@ async function _renderSearch() {
   let h = _headerHTML() + _filtersRowHTML() + '<div class="cal-search-results">';
   h += `<div class="cal-search-count">${results.length} result${results.length !== 1 ? 's' : ''} for "${_e(_searchQuery)}"</div>`;
   if (!results.length) {
-    h += '<div class="cal-empty">No events match your search</div>';
+    h += '<div class="cal-empty">' + _t('calendar.noEventsMatch') + '</div>';
   } else {
     for (const ev of results) {
       const evDate = _localDateOf(ev.dtstart);
-      const t = ev.all_day ? 'All day' : _fmtTime(ev.dtstart) + ' – ' + _fmtTime(ev.dtend);
+      const t = ev.all_day ? _t('calendar.allDay') : _fmtTime(ev.dtstart) + ' – ' + _fmtTime(ev.dtend);
       h += `<div class="cal-agenda-event" data-uid="${_e(ev.uid)}">
         <div class="cal-event-dot" style="background:${_calColor(ev)}"></div>
         <div class="cal-event-info">
@@ -1809,8 +1811,8 @@ function _dayDetailHTML(dateStr) {
     <div class="cal-day-detail">
     ${searchInput}
     <div class="cal-detail-header">
-      <span>${_fmtDate(dateStr)}${isToday ? ' <span style="color:var(--accent, var(--red));font-weight:600;">(Today)</span>' : ''}</span>
-      <button class="cal-add-btn cal-add-btn-text cal-add-btn-sm" id="cal-add-day" title="New event"><span class="cal-add-plus">+</span><span class="cal-add-label">New</span></button>
+      <span>${_fmtDate(dateStr)}${isToday ? ' <span style="color:var(--accent, var(--red));font-weight:600;">(' + _t('calendar.today') + ')</span>' : ''}</span>
+      <button class="cal-add-btn cal-add-btn-text cal-add-btn-sm" id="cal-add-day" title="${_t('calendar.new')}"><span class="cal-add-plus">+</span><span class="cal-add-label">${_t('calendar.new')}</span></button>
     </div>`;
   if (_searchQuery) {
     const q = _searchQuery.toLowerCase();
@@ -1824,11 +1826,11 @@ function _dayDetailHTML(dateStr) {
       .sort((a, b) => (a.dtstart || '').localeCompare(b.dtstart || ''));
     h += `<div class="cal-day-search-meta">${results.length} result${results.length !== 1 ? 's' : ''}</div>`;
     if (!results.length) {
-      h += '<div class="cal-empty">No events match</div>';
+      h += '<div class="cal-empty">' + _t('calendar.noEventsMatch') + '</div>';
     } else {
       results.forEach(ev => {
         const date = ev.all_day ? ev.dtstart : _localDateOf(ev.dtstart);
-        const t = ev.all_day ? 'All day' : _fmtTime(ev.dtstart) + ' – ' + _fmtTime(ev.dtend);
+        const t = ev.all_day ? _t('calendar.allDay') : _fmtTime(ev.dtstart) + ' – ' + _fmtTime(ev.dtend);
         const bgStyle = _calItemBgStyle(ev);
         h += `<div class="cal-event-item${bgStyle ? ' cal-event-item-bg' : ''}" data-uid="${_e(ev.uid)}"${bgStyle ? ` style="${bgStyle}"` : ''}>
           <div class="cal-event-dot" style="background:${_calColor(ev)}"></div>
@@ -1844,9 +1846,9 @@ function _dayDetailHTML(dateStr) {
     return h + '</div>';
   }
   const evs = _eventsForDay(dateStr);
-  if (!evs.length) h += '<div class="cal-empty">No events</div>';
+  if (!evs.length) h += '<div class="cal-empty">' + _t('calendar.noEvents') + '</div>';
   else evs.forEach(ev => {
-    const t = ev.all_day ? 'All day' : _fmtTime(ev.dtstart) + ' – ' + _fmtTime(ev.dtend);
+    const t = ev.all_day ? _t('calendar.allDay') : _fmtTime(ev.dtstart) + ' – ' + _fmtTime(ev.dtend);
     const _bgStyle = _calItemBgStyle(ev);
     h += `<div class="cal-event-item${_bgStyle ? ' cal-event-item-bg' : ''}" data-uid="${_e(ev.uid)}"${_bgStyle ? ` style="${_bgStyle}"` : ''}><div class="cal-event-dot" style="background:${_calColor(ev)}"></div><div class="cal-event-info"><div class="cal-event-name">${_e(ev.summary)}</div><div class="cal-event-time">${t}</div>${ev.location ? `<div class="cal-event-loc">${_locHTML(ev.location)}</div>` : ''}</div><button class="cal-event-more" data-uid="${_e(ev.uid)}" title="More">${_moreIcon}</button></div>`;
   });
@@ -2167,7 +2169,7 @@ function _wireAll(body) {
         window._calSyncDone = false;
         if (_open) _render();
       }, 900);
-      if (uiModule?.showToast) uiModule.showToast('Calendar refreshed');
+      if (uiModule?.showToast) uiModule.showToast((window.__t || (k=>k))('calendar.refreshed'));
     }
   });
   // Brief spin on the "+" glyph before the new-event form opens. The
@@ -2456,7 +2458,7 @@ async function _showCalSettings() {
   overlay.innerHTML = `
     <div class="modal-content" style="width:420px;max-width:92vw;">
       <div class="modal-header">
-        <h4>Calendar Settings</h4>
+        <h4>${_t('calendar.settings')}</h4>
         <button class="close-btn" id="cal-settings-close">\u2716</button>
       </div>
       <div class="modal-body" style="padding:16px;display:flex;flex-direction:column;gap:16px;">
@@ -2613,7 +2615,7 @@ async function _showCalSettings() {
 
     delBtn.addEventListener('click', async () => {
       const name = nameInput.value;
-      if (!await window.styledConfirm(`Delete calendar "${name}" and all its events?`, { confirmText: 'Delete', danger: true })) return;
+      if (!await window.styledConfirm(`Delete calendar "${name}" and all its events?`, { confirmText: (window.__t || (k=>k))('common.delete'), danger: true })) return;
       await fetch(`${API_BASE}/api/calendar/calendars/${id}`, { method: 'DELETE' });
       row.remove();
       _allEvents = {}; _fetchedRanges = []; localStorage.removeItem(LS_KEY);
@@ -2627,7 +2629,7 @@ async function _showCalSettings() {
     const file = e.target.files[0];
     if (!file) return;
     const status = overlay.querySelector('#cal-import-status');
-    status.textContent = 'Importing...';
+    status.textContent = (window.__t || (k=>k))('misc.saving');
     try {
       const fd = new FormData();
       fd.append('file', file);
@@ -2638,18 +2640,18 @@ async function _showCalSettings() {
       let data = null, raw = '';
       try { data = await res.clone().json(); } catch (_) { raw = await res.text().catch(() => ''); }
       if (res.ok && data && data.ok) {
-        status.textContent = `${data.imported} events imported to "${data.calendar}"` + (data.skipped ? ` (${data.skipped} skipped)` : '');
+        status.textContent = (window.__t || (k=>k))('calendar.eventsImported', {n: data.imported, calendar: data.calendar}) + (data.skipped ? ` (${data.skipped} skipped)` : '');
         _allEvents = {}; _fetchedRanges = []; localStorage.removeItem(LS_KEY);
         await _fetchCalendars();
         _render();
       } else {
         // FastAPI HTTPException → {detail}; some routes use {error}.
         const reason = (data && (data.detail || data.error)) || raw.slice(0, 200) || `HTTP ${res.status}`;
-        status.textContent = `Import failed: ${reason}`;
+        status.textContent = (window.__t || (k=>k))('calendar.importFailed', {reason});
         console.error('Calendar import failed', res.status, data || raw);
       }
     } catch (err) {
-      status.textContent = `Import failed: ${err.message || err}`;
+      status.textContent = (window.__t || (k=>k))('calendar.importFailed', {reason: err.message || err});
       console.error('Calendar import threw', err);
     }
     e.target.value = '';
@@ -2668,10 +2670,10 @@ async function _showCalSettings() {
     const btn = e.currentTarget;
     const status = overlay.querySelector('#cal-settings-sync-status');
     btn.disabled = true;
-    status.textContent = 'Syncing…';
+    status.textContent = (window.__t || (k=>k))('misc.loading');
     const data = await _syncCaldav(true) || {};
     if (data.errors && data.errors.length) {
-      status.textContent = `Sync failed: ${data.errors[0]}`;
+        status.textContent = (window.__t || (k=>k))('calendar.syncFailed', {error: data.errors[0]});
     } else {
       const parts = [];
       if (data.events) parts.push(`${data.events} events`);
@@ -2782,7 +2784,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
         <span style="opacity:0.3">to</span>
         <input type="date" id="cal-f-date-end" value="${de}" class="cal-input" />
         <div class="cal-allday-ctrl">
-          <span class="cal-allday-label">All day</span>
+          <span class="cal-allday-label">${_t('calendar.allDay')}</span>
           <label class="admin-switch cal-allday-switch"><input type="checkbox" id="cal-f-allday" ${ad ? 'checked' : ''} /><span class="admin-slider"></span></label>
         </div>
       </div>
@@ -2798,14 +2800,14 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
         </a>
       </div>
       <select id="cal-f-rrule" class="cal-input">
-        <option value="" ${!existing?.rrule ? 'selected' : ''}>Does not repeat</option>
-        <option value="FREQ=DAILY" ${existing?.rrule === 'FREQ=DAILY' ? 'selected' : ''}>Daily</option>
-        <option value="FREQ=WEEKLY" ${existing?.rrule === 'FREQ=WEEKLY' ? 'selected' : ''}>Weekly</option>
-        <option value="FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR" ${existing?.rrule === 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR' ? 'selected' : ''}>Weekdays</option>
-        <option value="FREQ=MONTHLY" ${existing?.rrule === 'FREQ=MONTHLY' ? 'selected' : ''}>Monthly</option>
-        <option value="FREQ=YEARLY" ${existing?.rrule === 'FREQ=YEARLY' ? 'selected' : ''}>Yearly</option>
+        <option value="" ${!existing?.rrule ? 'selected' : ''}>${_t('calendar.doesNotRepeat')}</option>
+        <option value="FREQ=DAILY" ${existing?.rrule === 'FREQ=DAILY' ? 'selected' : ''}>${_t('calendar.daily')}</option>
+        <option value="FREQ=WEEKLY" ${existing?.rrule === 'FREQ=WEEKLY' ? 'selected' : ''}>${_t('calendar.weekly')}</option>
+        <option value="FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR" ${existing?.rrule === 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR' ? 'selected' : ''}>${_t('calendar.weekdays')}</option>
+        <option value="FREQ=MONTHLY" ${existing?.rrule === 'FREQ=MONTHLY' ? 'selected' : ''}>${_t('calendar.monthly')}</option>
+        <option value="FREQ=YEARLY" ${existing?.rrule === 'FREQ=YEARLY' ? 'selected' : ''}>${_t('calendar.yearly')}</option>
       </select>
-      <textarea id="cal-f-desc" placeholder="Description" class="cal-input" rows="2">${_e(existing?.description || '')}</textarea>
+      <textarea id="cal-f-desc" placeholder="${_t('calendar.description')}" class="cal-input" rows="2">${_e(existing?.description || '')}</textarea>
       ${(() => {
         // Cookbook-task back-link. When the description carries a
         // "cookbook_task_id: <id>" marker (set by cookbookSchedule.js
@@ -2829,18 +2831,18 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
         </div>`;
       })()}
       <div class="cal-form-row" style="align-items:center;gap:8px;">
-        <label style="font-size:11px;display:flex;align-items:center;gap:4px;"><svg class="cal-remind-bell" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--accent, var(--red))" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span style="opacity:0.5;">Reminder</span></label>
+        <label style="font-size:11px;display:flex;align-items:center;gap:4px;"><svg class="cal-remind-bell" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--accent, var(--red))" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span style="opacity:0.5;">${_t('calendar.reminder')}</span></label>
         <select id="cal-f-remind" class="cal-input" style="flex:1;">
-          <option value="" ${isEdit ? 'selected' : ''}>No reminder</option>
-          <option value="0">At event time</option>
-          <option value="5">5 minutes before</option>
-          <option value="10">10 minutes before</option>
-          <option value="15" ${!isEdit ? 'selected' : ''}>15 minutes before</option>
-          <option value="30">30 minutes before</option>
-          <option value="60">1 hour before</option>
-          <option value="120">2 hours before</option>
-          <option value="1440">1 day before</option>
-          <option value="custom">Exact time...</option>
+          <option value="" ${isEdit ? 'selected' : ''}>${_t('calendar.noReminder')}</option>
+          <option value="0">${_t('calendar.atEventTime')}</option>
+          <option value="5">${_t('calendar.minutesBefore', {n: 5})}</option>
+          <option value="10">${_t('calendar.minutesBefore', {n: 10})}</option>
+          <option value="15" ${!isEdit ? 'selected' : ''}>${_t('calendar.minutesBefore', {n: 15})}</option>
+          <option value="30">${_t('calendar.minutesBefore', {n: 30})}</option>
+          <option value="60">${_t('calendar.hourBefore')}</option>
+          <option value="120">${_t('calendar.hoursBefore', {n: 2})}</option>
+          <option value="1440">${_t('calendar.dayBefore')}</option>
+          <option value="custom">${_t('calendar.exactTime')}</option>
         </select>
         <input type="datetime-local" id="cal-f-remind-custom" class="cal-input" style="flex:1;display:none;" />
       </div>
@@ -3068,7 +3070,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
   document.getElementById('cal-form-mobile-cancel')?.addEventListener('click', _cancelEventForm);
   document.getElementById('cal-f-save')?.addEventListener('click', async () => {
     const summary = document.getElementById('cal-f-sum').value.trim();
-    if (!summary) { uiModule.showToast('Title required'); return; }
+    if (!summary) { uiModule.showToast((window.__t || (k=>k))('calendar.titleRequired')); return; }
     const dv = document.getElementById('cal-f-date').value;
     const dvEnd = document.getElementById('cal-f-date-end').value || dv;
     const isAD = document.getElementById('cal-f-allday').checked;
@@ -3104,7 +3106,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
       const endDt = new Date(`${dvEnd}T${endVal}:00`);
 
       if (endDt <= startDt) {
-        uiModule.showToast('End time must be after start time');
+        uiModule.showToast((window.__t || (k=>k))('calendar.endTimeError'));
         return;
       }
     }
@@ -3139,14 +3141,14 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
         }
       }
       _selectedDay = dv; _render();
-    } catch (e) { uiModule.showToast('Failed to save'); }
+    } catch (e) { uiModule.showToast((window.__t || (k=>k))('settings.failedToSave')); }
   });
   document.getElementById('cal-f-del')?.addEventListener('click', async () => {
     const name = existing && existing.summary ? `"${existing.summary}"` : 'this event';
-    const ok = await uiModule.styledConfirm(`Delete ${name}?`, { confirmText: 'Delete', danger: true });
+    const ok = await uiModule.styledConfirm(`Delete ${name}?`, { confirmText: (window.__t || (k=>k))('common.delete'), danger: true });
     if (!ok) return;
     try { await _deleteEvent(existing.uid); _render(); }
-    catch (e) { uiModule.showToast('Failed to delete'); }
+    catch (e) { uiModule.showToast((window.__t || (k=>k))('misc.failed')); }
   });
   // ── Bespoke-form behavior ──────────────────────────────────────────
   const formEl = body.querySelector('.cal-form');
@@ -3262,7 +3264,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
     const clockEl = document.getElementById('cal-hero-clock');
     const ampmEl = document.getElementById('cal-hero-ampm');
     const dateEl = document.getElementById('cal-hero-date');
-    if (clockEl) clockEl.innerHTML = allday ? '<span class="cal-hero-clock-allday">All day</span>' : _clockFace(startVal);
+    if (clockEl) clockEl.innerHTML = allday ? '<span class="cal-hero-clock-allday">' + _t('calendar.allDay') + '</span>' : _clockFace(startVal);
     if (ampmEl) ampmEl.textContent = allday ? '' : _clockAmpm(startVal);
     if (dateEl) dateEl.textContent = _clockDate(dateVal);
   };

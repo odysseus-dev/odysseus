@@ -14,7 +14,7 @@ const escapeHtml = uiModule.esc;
 // Match the Deep Research "Start" button (play icon + "Start", styled by
 // .research-start-btn) so the two primary actions look identical.
 const _CMP_PLAY_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>';
-const _CMP_START_LABEL = _CMP_PLAY_ICON + ' Start';
+const _getStartLabel = () => _CMP_PLAY_ICON + ' ' + (window.__t || (k=>k))('compare.start');
 
 /** Slot label: letters (A, B) in parallel, numbers (1, 2) in sequential */
 function _slotChar(i) { return state._parallel ? String.fromCharCode(65 + i) : String(i + 1); }
@@ -75,7 +75,7 @@ async function showModelSelector() {
     header.className = 'modal-header';
 
     const title = document.createElement('h4');
-    title.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg>Model Comparison';
+    title.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg>' + (window.__t || (k=>k))('compare.title');
     // Absorb the free space so the injected minimize (_) and close (✕) cluster
     // together on the right instead of being spread apart by space-between.
     title.style.marginRight = 'auto';
@@ -91,7 +91,7 @@ async function showModelSelector() {
     const headerMinBtn = document.createElement('button');
     headerMinBtn.type = 'button';
     headerMinBtn.className = 'modal-minimize-btn minimize-btn';
-    headerMinBtn.title = 'Minimize';
+    headerMinBtn.title = (window.__t || (k=>k))('common.minimize');
     headerMinBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="18" x2="19" y2="18"/></svg>';
     headerMinBtn.style.margin = '0';
 
@@ -116,24 +116,22 @@ async function showModelSelector() {
     const blindBtn = document.createElement('button');
     blindBtn.type = 'button';
     blindBtn.className = 'compare-blind-toggle active';
-    blindBtn.title = 'Blind Mode — hide model names until you vote';
-    blindBtn.innerHTML = EYE_CLOSED + _toggleLabel('Blind');
+    blindBtn.title = (window.__t || (k=>k))('compare.blindModeHint');
+    blindBtn.innerHTML = EYE_CLOSED + _toggleLabel((window.__t || (k=>k))('compare.blind'));
     blindBtn.addEventListener('click', () => {
       state._blindMode = !state._blindMode;
       blindBtn.classList.toggle('active', state._blindMode);
-      blindBtn.innerHTML = (state._blindMode ? EYE_CLOSED : EYE_OPEN) + _toggleLabel('Blind');
-      // Turning off blind mode reveals shuffled models
+      blindBtn.innerHTML = (state._blindMode ? EYE_CLOSED : EYE_OPEN) + _toggleLabel((window.__t || (k=>k))('compare.blind'));
       if (!state._blindMode && _shuffled) {
         _shuffled = false;
         diceBtn.classList.remove('active');
       }
       renderModelRows();
-      // Mobile hides the button labels — surface the new state as a toast.
-      uiModule.showToast('Mode: Blind ' + (state._blindMode ? 'on' : 'off'));
+      uiModule.showToast((window.__t || (k=>k))('compare.modeBlind') + ': ' + (state._blindMode ? (window.__t || (k=>k))('common.enabled') : (window.__t || (k=>k))('common.disabled')));
       _updateModeLabel();
       _setModeHint(state._blindMode
-        ? '<span style="color:var(--color-blind-orange)">Blind mode</span>: model names stay hidden until you vote.'
-        : '<span style="color:var(--color-blind-orange)">Blind mode off</span>: model names are shown.');
+        ? '<span style="color:var(--color-blind-orange)">' + (window.__t || (k=>k))('compare.blindMode') + '</span>: ' + (window.__t || (k=>k))('compare.blindModeHintOn')
+        : '<span style="color:var(--color-blind-orange)">' + (window.__t || (k=>k))('compare.blindModeOff') + '</span>: ' + (window.__t || (k=>k))('compare.modelNamesShown'));
     });
     toggleRow.appendChild(blindBtn);
 
@@ -142,19 +140,19 @@ async function showModelSelector() {
     const parallelBtn = document.createElement('button');
     parallelBtn.type = 'button';
     parallelBtn.className = 'compare-parallel-toggle active';
-    parallelBtn.title = 'Parallel — run all models at once vs one at a time';
-    parallelBtn.innerHTML = ICON_PARALLEL + _toggleLabel('Parallel');
+    parallelBtn.title = (window.__t || (k=>k))('compare.parallelHint');
+    parallelBtn.innerHTML = ICON_PARALLEL + _toggleLabel((window.__t || (k=>k))('compare.parallel'));
     parallelBtn.addEventListener('click', () => {
       state._parallel = !state._parallel;
       parallelBtn.classList.toggle('active', state._parallel);
-      parallelBtn.innerHTML = (state._parallel ? ICON_PARALLEL : ICON_SEQUENTIAL) + _toggleLabel(state._parallel ? 'Parallel' : 'Sequential');
-      parallelBtn.title = state._parallel ? 'Switch to one at a time' : 'Run side by side';
+      parallelBtn.innerHTML = (state._parallel ? ICON_PARALLEL : ICON_SEQUENTIAL) + _toggleLabel(state._parallel ? (window.__t || (k=>k))('compare.parallel') : (window.__t || (k=>k))('compare.sequential'));
+      parallelBtn.title = state._parallel ? (window.__t || (k=>k))('compare.switchToSequential') : (window.__t || (k=>k))('compare.runSideBySide');
       renderModelRows();
-      uiModule.showToast('Mode: ' + (state._parallel ? 'Parallel' : 'Sequential'));
+      uiModule.showToast((window.__t || (k=>k))('compare.mode') + ': ' + (state._parallel ? (window.__t || (k=>k))('compare.parallel') : (window.__t || (k=>k))('compare.sequential')));
       _updateModeLabel();
       _setModeHint(state._parallel
-        ? '<span style="color:#5b8def">Parallel</span>: all models answer at once, side by side.'
-        : '<span style="color:#e0a050">Sequential</span>: models answer one at a time.');
+        ? '<span style="color:#5b8def">' + (window.__t || (k=>k))('compare.parallel') + '</span>: ' + (window.__t || (k=>k))('compare.parallelHintDetail')
+        : '<span style="color:#e0a050">' + (window.__t || (k=>k))('compare.sequential') + '</span>: ' + (window.__t || (k=>k))('compare.sequentialHintDetail'));
     });
     toggleRow.appendChild(parallelBtn);
 
@@ -162,18 +160,17 @@ async function showModelSelector() {
     const diceBtn = document.createElement('button');
     diceBtn.type = 'button';
     diceBtn.className = 'compare-dice-toggle';
-    diceBtn.title = 'Shuffle — randomly pick models for each slot';
-    diceBtn.innerHTML = ICON_DICE + _toggleLabel('Shuffle');
+    diceBtn.title = (window.__t || (k=>k))('compare.shuffleHint');
+    diceBtn.innerHTML = ICON_DICE + _toggleLabel((window.__t || (k=>k))('compare.shuffle'));
     diceBtn.addEventListener('click', () => {
       if (!_modelsLoaded) return;
-      // Toggle off if already shuffled
       if (_shuffled) {
         _shuffled = false;
         diceBtn.classList.remove('active');
         renderModelRows();
-        uiModule.showToast('Mode: Shuffle off');
+        uiModule.showToast((window.__t || (k=>k))('compare.mode') + ': ' + (window.__t || (k=>k))('compare.shuffleOff'));
         _updateModeLabel();
-        _setModeHint('<span style="color:var(--red)">Shuffle off</span>: choose the models yourself.');
+        _setModeHint('<span style="color:var(--red)">' + (window.__t || (k=>k))('compare.shuffleOff') + '</span>: ' + (window.__t || (k=>k))('compare.chooseModelsYourself'));
         return;
       }
       // Randomly pick models from filtered list for each slot
@@ -193,12 +190,12 @@ async function showModelSelector() {
       if (!state._blindMode) {
         state._blindMode = true;
         blindBtn.classList.add('active');
-        blindBtn.innerHTML = EYE_CLOSED + _toggleLabel('Blind');
+        blindBtn.innerHTML = EYE_CLOSED + _toggleLabel((window.__t || (k=>k))('compare.blind'));
       }
       renderModelRows();
-      uiModule.showToast(state._blindMode ? 'Mode: Shuffle on · Blind on' : 'Mode: Shuffle on');
+      uiModule.showToast(state._blindMode ? (window.__t || (k=>k))('compare.mode') + ': ' + (window.__t || (k=>k))('compare.shuffleOn') + ' · ' + (window.__t || (k=>k))('compare.blindOn') : (window.__t || (k=>k))('compare.mode') + ': ' + (window.__t || (k=>k))('compare.shuffleOn'));
       _updateModeLabel();
-      _setModeHint('<span style="color:var(--red)">Shuffle</span>: random models picked for each slot (auto-hidden).');
+      _setModeHint('<span style="color:var(--red)">' + (window.__t || (k=>k))('compare.shuffle') + '</span>: ' + (window.__t || (k=>k))('compare.shuffleHintDetail'));
       // Show active state + spin only the dice icon
       diceBtn.classList.add('active');
       const diceSvg = diceBtn.querySelector('svg');
@@ -220,16 +217,16 @@ async function showModelSelector() {
     const saveBtn = document.createElement('button');
     saveBtn.type = 'button';
     saveBtn.className = 'compare-save-toggle';
-    saveBtn.title = 'Save — keep sessions after closing compare';
-    saveBtn.innerHTML = SAVE_ICON + _toggleLabel('Save');
+    saveBtn.title = (window.__t || (k=>k))('compare.saveHint');
+    saveBtn.innerHTML = SAVE_ICON + _toggleLabel((window.__t || (k=>k))('common.save'));
     saveBtn.addEventListener('click', () => {
       state._saveOnClose = !state._saveOnClose;
       saveBtn.classList.toggle('active', state._saveOnClose);
-      uiModule.showToast('Mode: Save ' + (state._saveOnClose ? 'on' : 'off'));
+      uiModule.showToast((window.__t || (k=>k))('compare.mode') + ': ' + (window.__t || (k=>k))('common.save') + ' ' + (state._saveOnClose ? (window.__t || (k=>k))('common.enabled') : (window.__t || (k=>k))('common.disabled')));
       _updateModeLabel();
       _setModeHint(state._saveOnClose
-        ? '<span style="color:var(--color-save-green)">Save</span>: keep these sessions after you close Compare.'
-        : '<span style="color:var(--color-save-green)">Save off</span>: sessions are discarded when you close Compare.');
+        ? '<span style="color:var(--color-save-green)">' + (window.__t || (k=>k))('common.save') + '</span>: ' + (window.__t || (k=>k))('compare.saveHintOn')
+        : '<span style="color:var(--color-save-green)">' + (window.__t || (k=>k))('compare.saveOff') + '</span>: ' + (window.__t || (k=>k))('compare.saveHintOff'));
     });
     toggleRow.appendChild(saveBtn);
 
@@ -237,12 +234,12 @@ async function showModelSelector() {
     const resetBtn = document.createElement('button');
     resetBtn.type = 'button';
     resetBtn.className = 'compare-reset-toggle';
-    resetBtn.title = 'Reset — restore all defaults';
-    resetBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>' + _toggleLabel('Reset');
+    resetBtn.title = (window.__t || (k=>k))('compare.resetHint');
+    resetBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>' + _toggleLabel((window.__t || (k=>k))('compare.reset'));
     resetBtn.addEventListener('click', () => {
       state._blindMode = true;
       blindBtn.classList.add('active');
-      blindBtn.innerHTML = EYE_CLOSED + _toggleLabel('Blind');
+      blindBtn.innerHTML = EYE_CLOSED + _toggleLabel((window.__t || (k=>k))('compare.blind'));
       _shuffled = false;
       diceBtn.classList.remove('active');
       state._continueChat = false;
@@ -250,7 +247,7 @@ async function showModelSelector() {
       saveBtn.classList.remove('active');
       state._parallel = true;
       parallelBtn.classList.add('active');
-      parallelBtn.innerHTML = ICON_PARALLEL + _toggleLabel('Parallel');
+      parallelBtn.innerHTML = ICON_PARALLEL + _toggleLabel((window.__t || (k=>k))('compare.parallel'));
       selections = [null, null];
       renderModelRows();
     });
@@ -267,7 +264,7 @@ async function showModelSelector() {
 
     const desc = document.createElement('p');
     desc.style.cssText = 'color:color-mix(in srgb, var(--fg) 55%, transparent);font-size:0.85em;margin:0 0 12px;';
-    desc.textContent = 'Select models to compare side-by-side. Send the same prompt to all.';
+    desc.textContent = (window.__t || (k=>k))('compare.description');
     body.appendChild(desc);
 
     // Options row
@@ -278,7 +275,7 @@ async function showModelSelector() {
     modeLabel.className = 'compare-section-label';
     // The active modes (+colors) are appended in a span shown only on mobile,
     // where the toggle text labels are hidden so the icons alone are ambiguous.
-    modeLabel.innerHTML = 'Mode: <span class="compare-mode-current"></span>';
+    modeLabel.innerHTML = (window.__t || (k=>k))('compare.mode') + ': <span class="compare-mode-current"></span>';
     modeWrap.appendChild(modeLabel);
     modeWrap.appendChild(toggleRow);
     // Contextual one-liner describing the mode you just toggled.
@@ -293,12 +290,12 @@ async function showModelSelector() {
       const cur = modeLabel.querySelector('.compare-mode-current');
       if (!cur) return;
       const parts = [];
-      if (state._blindMode) parts.push('<span style="color:var(--color-blind-orange)">Blind</span>');
+      if (state._blindMode) parts.push('<span style="color:var(--color-blind-orange)">' + (window.__t || (k=>k))('compare.blind') + '</span>');
       parts.push(state._parallel
-        ? '<span style="color:#5b8def">Parallel</span>'
-        : '<span style="color:#e0a050">Sequential</span>');
-      if (_shuffled) parts.push('<span style="color:var(--red)">Shuffle</span>');
-      if (state._saveOnClose) parts.push('<span style="color:var(--color-save-green)">Save</span>');
+        ? '<span style="color:#5b8def">' + (window.__t || (k=>k))('compare.parallel') + '</span>'
+        : '<span style="color:#e0a050">' + (window.__t || (k=>k))('compare.sequential') + '</span>');
+      if (_shuffled) parts.push('<span style="color:var(--red)">' + (window.__t || (k=>k))('compare.shuffle') + '</span>');
+      if (state._saveOnClose) parts.push('<span style="color:var(--color-save-green)">' + (window.__t || (k=>k))('common.save') + '</span>');
       cur.innerHTML = parts.join(', ');
     }
 
@@ -310,7 +307,7 @@ async function showModelSelector() {
     typeLabel.className = 'compare-section-label';
     // The active type name (+icon) is appended in a span shown only on mobile,
     // where the tab text labels are hidden so the icons alone are ambiguous.
-    typeLabel.innerHTML = 'Type: <span class="compare-type-current"></span>';
+    typeLabel.innerHTML = (window.__t || (k=>k))('compare.type') + ': <span class="compare-type-current"></span>';
     typeWrap.appendChild(typeLabel);
     const tabBar = document.createElement('div');
     tabBar.className = 'compare-mode-tabs compare-type-tabs';
@@ -320,10 +317,10 @@ async function showModelSelector() {
     // Research — magnifying glass with `+` (matches the sidebar Deep Research icon)
     const _ICON_RESEARCH = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>';
     const _modes = [
-      { id: 'chat', label: 'Chat', icon: CHAT_ICON },
-      { id: 'agent', label: 'Agent', icon: _ICON_AGENT },
-      { id: 'search', label: 'Search', icon: _ICON_SEARCH },
-      { id: 'research', label: 'Research', icon: _ICON_RESEARCH },
+      { id: 'chat', label: (window.__t || (k=>k))('chat.chat'), icon: CHAT_ICON },
+      { id: 'agent', label: (window.__t || (k=>k))('chat.agent'), icon: _ICON_AGENT },
+      { id: 'search', label: (window.__t || (k=>k))('common.search'), icon: _ICON_SEARCH },
+      { id: 'research', label: (window.__t || (k=>k))('compare.research'), icon: _ICON_RESEARCH },
     ];
     _modes.forEach(m => {
       const tab = document.createElement('button');
@@ -362,11 +359,11 @@ async function showModelSelector() {
       if (mode === 'search' || mode === 'research') {
         state._parallel = false;
         parallelBtn.classList.remove('active');
-        parallelBtn.innerHTML = ICON_SEQUENTIAL + _toggleLabel('Sequential');
+        parallelBtn.innerHTML = ICON_SEQUENTIAL + _toggleLabel((window.__t || (k=>k))('compare.sequential'));
       } else {
         state._parallel = true;
         parallelBtn.classList.add('active');
-        parallelBtn.innerHTML = ICON_PARALLEL + _toggleLabel('Parallel');
+        parallelBtn.innerHTML = ICON_PARALLEL + _toggleLabel((window.__t || (k=>k))('compare.parallel'));
       }
       // Restore saved selections for this tab, or default
       selections = _tabSelections[mode] ? _tabSelections[mode].slice() : [null, null];
@@ -384,11 +381,11 @@ async function showModelSelector() {
     const _loadingDiv = document.createElement('div');
     _loadingDiv.style.cssText = 'color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:0.85em;padding:12px 0;text-align:left;';
     if (spinnerModule) {
-      const _loadSpinner = spinnerModule.create('Loading models', 'right');
+      const _loadSpinner = spinnerModule.create((window.__t || (k=>k))('common.loading'), 'right');
       _loadingDiv.appendChild(_loadSpinner.createElement());
       _loadSpinner.start();
     } else {
-      _loadingDiv.textContent = 'Loading models\u2026';
+      _loadingDiv.textContent = (window.__t || (k=>k))('common.loading') + '\u2026';
     }
     listContainer.appendChild(_loadingDiv);
 
@@ -426,7 +423,7 @@ async function showModelSelector() {
 
       const input = document.createElement('input');
       input.type = 'text';
-      input.placeholder = 'Search models\u2026';
+      input.placeholder = (window.__t || (k=>k))('compare.searchModels') + '\u2026';
       input.className = 'cmp-form-control';
       input.style.cssText = 'width:100%;box-sizing:border-box;';
       // Mobile: suppress the on-screen keyboard so tapping the picker
@@ -465,7 +462,7 @@ async function showModelSelector() {
         if (matches.length === 0) {
           const empty = document.createElement('div');
           empty.style.cssText = 'padding:8px 12px;color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:0.82em;font-style:italic;';
-          empty.textContent = 'No matches';
+          empty.textContent = (window.__t || (k=>k))('compare.noMatches');
           dropdown.appendChild(empty);
           return;
         }
@@ -569,18 +566,18 @@ async function showModelSelector() {
       if (state._compareMode === 'search') {
         listContainer.innerHTML = '';
         if (!state._cachedProviders) {
-          listContainer.innerHTML = '<div style="color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:0.85em;padding:12px 0;text-align:left;">Loading search providers\u2026</div>';
-          fetch(`${state.API_BASE}/api/search/providers`).then(r => r.json()).then(providers => {
-            state._cachedProviders = providers;
-            renderModelRows();
-          }).catch(() => {
-            listContainer.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;padding:12px 0;">Failed to load search providers</div>';
-          });
-          return;
-        }
-        const available = state._cachedProviders.filter(p => p.available);
-        if (available.length === 0) {
-          listContainer.innerHTML = '<div style="color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:0.85em;padding:12px 0;text-align:center;font-style:italic;">No search providers configured</div>';
+        listContainer.innerHTML = '<div style="color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:0.85em;padding:12px 0;text-align:left;">' + (window.__t || (k=>k))('common.loading') + '\u2026</div>';
+        fetch(`${state.API_BASE}/api/search/providers`).then(r => r.json()).then(providers => {
+          state._cachedProviders = providers;
+          renderModelRows();
+        }).catch(() => {
+          listContainer.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;padding:12px 0;">' + (window.__t || (k=>k))('compare.failedToLoadProviders') + '</div>';
+        });
+        return;
+      }
+      const available = state._cachedProviders.filter(p => p.available);
+      if (available.length === 0) {
+        listContainer.innerHTML = '<div style="color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:0.85em;padding:12px 0;text-align:center;font-style:italic;">' + (window.__t || (k=>k))('compare.noProvidersConfigured') + '</div>';
           if (addBtn) addBtn.style.display = 'none';
           return;
         }
@@ -676,7 +673,7 @@ async function showModelSelector() {
       // Research mode needs search providers too — fetch if not cached
       const needsProviders = state._compareMode === 'research';
       if (needsProviders && !state._cachedProviders) {
-        listContainer.innerHTML = '<div style="color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:0.85em;padding:12px 0;">Loading search providers\u2026</div>';
+        listContainer.innerHTML = '<div style="color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:0.85em;padding:12px 0;">' + (window.__t || (k=>k))('common.loading') + '\u2026</div>';
         fetch(`${state.API_BASE}/api/search/providers`).then(r => r.json()).then(providers => {
           state._cachedProviders = providers;
           renderModelRows();
@@ -690,7 +687,7 @@ async function showModelSelector() {
       if (filtered.length === 0) {
         const empty = document.createElement('div');
         empty.style.cssText = 'color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:0.85em;padding:12px 0;text-align:center;font-style:italic;';
-        empty.textContent = 'No ' + state._compareMode + ' models available';
+        empty.textContent = (window.__t || (k=>k))('compare.noModelsAvailable', { type: state._compareMode });
         listContainer.appendChild(empty);
         if (addBtn) addBtn.style.display = 'none';
         return;
@@ -721,7 +718,7 @@ async function showModelSelector() {
           const mask = document.createElement('div');
           mask.className = 'cmp-form-control';
           mask.style.cssText = 'flex:1;opacity:0.4;font-style:italic;';
-          mask.textContent = 'Hidden';
+          mask.textContent = (window.__t || (k=>k))('compare.hidden');
           row.appendChild(mask);
         } else if (filtered.length >= 5) {
           const picker = _buildSearchablePicker(filtered, sel, idx, (chosen) => {
@@ -758,7 +755,7 @@ async function showModelSelector() {
         if (needsProviders && researchProviders.length > 0 && !_shuffled) {
           const provSelect = document.createElement('select');
           provSelect.className = 'cmp-form-control cmp-prov-select';
-          provSelect.title = 'Search provider';
+          provSelect.title = (window.__t || (k=>k))('compare.searchProvider');
           researchProviders.forEach((p, pi) => {
             const optEl = document.createElement('option');
             optEl.value = p.id;
@@ -795,7 +792,7 @@ async function showModelSelector() {
     addBtn = document.createElement('button');
     addBtn.type = 'button';
     addBtn.style.cssText = 'display:none;align-items:center;gap:6px;background:none;border:1px dashed var(--border);color:var(--fg);border-radius:6px;cursor:pointer;padding:6px 12px;font-size:0.82em;opacity:0.6;transition:all 0.15s;margin-bottom:16px;width:100%;justify-content:center;';
-    addBtn.textContent = '+ Add Model';
+    addBtn.textContent = '+ ' + (window.__t || (k=>k))('common.add') + ' ' + (window.__t || (k=>k))('compare.model');
     addBtn.addEventListener('mouseenter', () => { addBtn.style.opacity = '1'; });
     addBtn.addEventListener('mouseleave', () => { addBtn.style.opacity = '0.6'; });
     addBtn.addEventListener('click', () => {
@@ -823,7 +820,7 @@ async function showModelSelector() {
     timeoutRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;';
     const timeoutLabel = document.createElement('span');
     timeoutLabel.style.cssText = 'color:color-mix(in srgb, var(--fg) 55%, transparent);font-size:0.82em;';
-    timeoutLabel.textContent = 'Timeout:';
+    timeoutLabel.textContent = (window.__t || (k=>k))('compare.timeout') + ':';
     const timeoutInput = document.createElement('input');
     timeoutInput.type = 'number';
     timeoutInput.min = '5';
@@ -832,7 +829,7 @@ async function showModelSelector() {
     timeoutInput.style.cssText = 'width:60px;padding:4px 8px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;font-size:0.82em;text-align:center;-moz-appearance:textfield;';
     const timeoutSuffix = document.createElement('span');
     timeoutSuffix.style.cssText = 'color:color-mix(in srgb, var(--fg) 55%, transparent);font-size:0.82em;';
-    timeoutSuffix.textContent = 'seconds';
+    timeoutSuffix.textContent = (window.__t || (k=>k))('compare.seconds');
     timeoutRow.appendChild(timeoutLabel);
     timeoutRow.appendChild(timeoutInput);
     timeoutRow.appendChild(timeoutSuffix);
@@ -840,7 +837,7 @@ async function showModelSelector() {
     // Scoreboard button
     const scoreBtn = document.createElement('button');
     scoreBtn.type = 'button';
-    scoreBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Scoreboard';
+    scoreBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>' + (window.__t || (k=>k))('compare.score');
     scoreBtn.style.cssText = 'margin-left:auto;padding:4px 10px;background:transparent;color:var(--fg);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.82em;opacity:0.7;position:relative;top:-5px;';
     scoreBtn.addEventListener('mouseenter', () => { scoreBtn.style.opacity = '1'; });
     scoreBtn.addEventListener('mouseleave', () => { scoreBtn.style.opacity = '0.7'; });
@@ -858,7 +855,7 @@ async function showModelSelector() {
     // Cancel button removed — the overlay's X / outside-click / Esc all
     // dismiss the popup, so the footer Cancel was redundant.
     const startBtn = document.createElement('button');
-    startBtn.innerHTML = _CMP_START_LABEL;
+    startBtn.innerHTML = _getStartLabel();
     startBtn.className = 'research-start-btn';
     startBtn.disabled = true;
     // Pin to the same 30px box as Cancel so both buttons sit on the same line.
@@ -924,7 +921,7 @@ async function showModelSelector() {
       probeOverlay.className = 'compare-probe-overlay';
       const probeCard = document.createElement('div');
       probeCard.className = 'compare-probe-card';
-      probeCard.innerHTML = '<div class="compare-probe-title">Checking models...</div>';
+      probeCard.innerHTML = '<div class="compare-probe-title">' + (window.__t || (k=>k))('compare.checkingModels') + '...</div>';
       let _probeSkipped = false;
       const probeList = document.createElement('div');
       probeList.className = 'compare-probe-list';
@@ -935,7 +932,7 @@ async function showModelSelector() {
         row.dataset.idx = i;
         // In blind mode, hide name until failure — only show slot letter
         const name = m.name || m.model.split('/').pop();
-        const displayName = isBlind ? `Model ${_slotChar(i)}` : escapeHtml(name);
+        const displayName = isBlind ? (window.__t || (k=>k))('compare.model') + ' ' + _slotChar(i) : escapeHtml(name);
         row._realName = name;
         row.innerHTML = `<span class="compare-probe-spinner">▁▂▃</span><span class="compare-probe-name">${displayName}</span><span class="compare-probe-status"></span>`;
         const waveEl = row.querySelector('.compare-probe-spinner');
@@ -951,7 +948,7 @@ async function showModelSelector() {
       });
       probeCard.appendChild(probeList);
       const skipBtn = document.createElement('button');
-      skipBtn.textContent = 'Skip';
+      skipBtn.textContent = (window.__t || (k=>k))('common.cancel');
       skipBtn.className = 'cmp-btn-secondary';
       skipBtn.style.cssText = 'padding:4px 14px;font-size:11px;opacity:0.5;transition:opacity 0.15s;margin-top:8px;';
       skipBtn.addEventListener('mouseenter', () => { skipBtn.style.opacity = '1'; });
@@ -986,7 +983,7 @@ async function showModelSelector() {
           probeOverlay.remove();
           document.removeEventListener('keydown', _probeEsc, false);
           startBtn.disabled = false;
-          startBtn.innerHTML = _CMP_START_LABEL;
+          startBtn.innerHTML = _getStartLabel();
           startBtn.style.opacity = '1';
         }
       };
@@ -1000,11 +997,11 @@ async function showModelSelector() {
       }
       async function _probeOne(m) {
         if (_isImageModel(m.model)) {
-          return { status: 'ok', model: m.model, skipped: true, skipReason: 'Image' };
+          return { status: 'ok', model: m.model, skipped: true, skipReason: (window.__t || (k=>k))('compare.imageModel') };
         }
         // Search mode — probe the LLM model normally (don't skip)
         if (state._compareMode === 'search' && !m.model) {
-          return { status: 'ok', model: m.model, skipped: true, skipReason: 'No model' };
+          return { status: 'ok', model: m.model, skipped: true, skipReason: (window.__t || (k=>k))('compare.noModel') };
         }
         const res = await fetch(`${state.API_BASE}/api/probe-selected`, {
           method: 'POST', credentials: 'same-origin',
@@ -1012,7 +1009,7 @@ async function showModelSelector() {
           body: JSON.stringify({ models: [{ endpoint_id: m.endpointId || '', model: m.model, endpoint: m.endpoint || '', with_tools: state._compareMode === 'agent' }] }),
         });
         const data = await res.json();
-        return (data.results || [])[0] || { status: 'fail', error: 'No response' };
+        return (data.results || [])[0] || { status: 'fail', error: (window.__t || (k=>k))('compare.noResponse') };
       }
 
       // Helper: update a probe row's visual state
@@ -1027,7 +1024,7 @@ async function showModelSelector() {
           spinner.textContent = '\u2713';
           spinner.classList.remove('fail');
           spinner.classList.add('ok');
-          status.textContent = result.skipped ? (result.skipReason || 'Skipped') : (result.latency_ms ? `${result.latency_ms}ms` : 'OK');
+          status.textContent = result.skipped ? (result.skipReason || (window.__t || (k=>k))('compare.skipped')) : (result.latency_ms ? `${result.latency_ms}ms` : (window.__t || (k=>k))('common.success'));
           status.classList.remove('fail');
           status.classList.add('ok');
           row.classList.remove('fail');
@@ -1054,7 +1051,7 @@ async function showModelSelector() {
           detail.style.cssText = 'grid-column:1/-1;display:flex;align-items:flex-start;gap:6px;padding:4px 10px 6px;font-size:10px;opacity:0.6;background:color-mix(in srgb, var(--color-error, #f44) 5%, transparent);border-radius:4px;margin-top:-2px;';
           const errSpan = document.createElement('span');
           // Truncate long error messages
-          const errText = (result.error || 'Failed');
+          const errText = (result.error || (window.__t || (k=>k))('common.error'));
           errSpan.textContent = errText.length > 80 ? errText.slice(0, 80) + '...' : errText;
           errSpan.title = errText;
           errSpan.style.cssText = 'flex:1;line-height:1.4;';
@@ -1064,14 +1061,14 @@ async function showModelSelector() {
           if (result.error === 'Timeout') row._probeTimeout = Math.min(row._probeTimeout * 2, 120000);
           const retryBtn = document.createElement('button');
           retryBtn.className = 'compare-probe-action-btn';
-          const retryLabel = result.error === 'Timeout' ? `Retry ${Math.round(row._probeTimeout / 1000)}s` : 'Retry';
+          const retryLabel = result.error === 'Timeout' ? (window.__t || (k=>k))('common.retry') + ' ' + Math.round(row._probeTimeout / 1000) + 's' : (window.__t || (k=>k))('common.retry');
           retryBtn.textContent = retryLabel;
           retryBtn.addEventListener('click', async (e) => {
             e.stopPropagation();
             detail.remove();
             if (isBlind) {
               const nameEl = row.querySelector('.compare-probe-name');
-              if (nameEl) nameEl.textContent = `Model ${_slotChar(idx)}`;
+              if (nameEl) nameEl.textContent = (window.__t || (k=>k))('compare.model') + ' ' + _slotChar(idx);
             }
             const waveFrames2 = WAVE_FRAMES;
             let w2 = 0;
@@ -1084,14 +1081,14 @@ async function showModelSelector() {
           });
           const swapBtn = document.createElement('button');
           swapBtn.className = 'compare-probe-action-btn';
-          swapBtn.textContent = 'Swap';
+          swapBtn.textContent = (window.__t || (k=>k))('compare.swap');
           swapBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             _clearProbeWaves();
             probeOverlay.remove();
             _probeSkipped = true;
             startBtn.disabled = false;
-            startBtn.innerHTML = _CMP_START_LABEL;
+            startBtn.innerHTML = _getStartLabel();
             startBtn.style.opacity = '1';
           });
           detail.appendChild(retryBtn);
@@ -1141,7 +1138,7 @@ async function showModelSelector() {
                   let wIdx = 0;
                   row._waveInterval = setInterval(() => { wIdx = (wIdx + 1) % waveFrames.length; spinner.textContent = waveFrames[wIdx]; }, 100);
                 }
-                if (status) status.textContent = 'Swapping...';
+                if (status) status.textContent = (window.__t || (k=>k))('compare.swapping') + '...';
               }
 
               // Try up to 3 replacements with 10s timeout each
@@ -1149,7 +1146,7 @@ async function showModelSelector() {
               for (let attempt = 0; attempt < 3 && poolIdx < pool.length; attempt++) {
                 const replacement = pool[poolIdx++];
                 const probePromise = _probeOne({ model: replacement.id, endpoint: replacement.url, endpointId: replacement.endpointId });
-                const timeoutPromise = new Promise(r => setTimeout(() => r({ status: 'timeout', error: 'Swap timed out' }), 10000));
+                const timeoutPromise = new Promise(r => setTimeout(() => r({ status: 'timeout', error: (window.__t || (k=>k))('compare.swapTimedOut') }), 10000));
                 const probeResult = await Promise.race([probePromise, timeoutPromise]);
                 if (probeResult.status === 'ok') {
                   selections[i] = { model: replacement.id, endpoint: replacement.url, endpointId: replacement.endpointId, name: replacement.name };
@@ -1166,7 +1163,7 @@ async function showModelSelector() {
                   const spinner = row.querySelector('.compare-probe-spinner');
                   const status = row.querySelector('.compare-probe-status');
                   if (spinner) { spinner.textContent = '\u2717'; spinner.classList.add('fail'); spinner.style.color = ''; }
-                  if (status) { status.textContent = 'No replacement'; }
+                  if (status) { status.textContent = (window.__t || (k=>k))('compare.noReplacement'); }
                 }
               }
             }
@@ -1187,7 +1184,7 @@ async function showModelSelector() {
 
           if (providers.length > 0) {
             const titleEl = probeOverlay.querySelector('.compare-probe-title');
-            titleEl.textContent = 'Checking search providers...';
+            titleEl.textContent = (window.__t || (k=>k))('compare.checkingProviders') + '...';
 
             // Add provider rows
             const providerRows = [];
@@ -1230,10 +1227,10 @@ async function showModelSelector() {
               const status = row.querySelector('.compare-probe-status');
               if (result.status === 'ok') {
                 spinner.textContent = '\u2713'; spinner.classList.add('ok');
-                status.textContent = 'OK'; status.classList.add('ok');
+                status.textContent = (window.__t || (k=>k))('common.success'); status.classList.add('ok');
               } else {
                 spinner.textContent = '\u2717'; spinner.classList.add('fail');
-                status.textContent = result.error || 'Failed'; status.classList.add('fail');
+                status.textContent = result.error || (window.__t || (k=>k))('common.error'); status.classList.add('fail');
                 row.classList.add('fail');
                 searchAllOk = false;
               }
@@ -1250,7 +1247,7 @@ async function showModelSelector() {
           // Don't hide the Skip button here — collapsing its space made the
           // card shrink and the title + rows jump ("quick cut"). On success the
           // whole overlay fades out a moment later, so just leave it in place.
-          probeOverlay.querySelector('.compare-probe-title').textContent = 'All ready!';
+          probeOverlay.querySelector('.compare-probe-title').textContent = (window.__t || (k=>k))('compare.allReady');
           setTimeout(() => {
             probeOverlay.style.transition = 'opacity 0.3s ease';
             probeOverlay.style.opacity = '0';
@@ -1266,17 +1263,17 @@ async function showModelSelector() {
           });
           const titleEl = probeOverlay.querySelector('.compare-probe-title');
           titleEl.textContent = failedNames.length <= 2
-            ? failedNames.join(' & ') + ' failed'
-            : `${failCount} models failed`;
+            ? failedNames.join(' & ') + ' ' + (window.__t || (k=>k))('compare.failed')
+            : failCount + ' ' + (window.__t || (k=>k))('compare.modelsFailed');
           const btnRow = document.createElement('div');
           btnRow.style.cssText = 'display:flex;gap:8px;justify-content:center;margin-top:12px;';
           const goBackBtn = document.createElement('button');
-          goBackBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="15 18 9 12 15 6"/></svg>Go Back';
+          goBackBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="15 18 9 12 15 6"/></svg>' + (window.__t || (k=>k))('compare.goBack');
           goBackBtn.className = 'cmp-btn-secondary';
           goBackBtn.style.cssText = 'padding:5px 12px;font-size:12px;display:inline-flex;align-items:center;';
-          goBackBtn.addEventListener('click', () => { _clearProbeWaves(); probeOverlay.remove(); startBtn.disabled = false; startBtn.innerHTML = _CMP_START_LABEL; startBtn.style.opacity = '1'; });
+          goBackBtn.addEventListener('click', () => { _clearProbeWaves(); probeOverlay.remove(); startBtn.disabled = false; startBtn.innerHTML = _getStartLabel(); startBtn.style.opacity = '1'; });
           const startAnywayBtn = document.createElement('button');
-          startAnywayBtn.textContent = 'Start Anyway';
+          startAnywayBtn.textContent = (window.__t || (k=>k))('compare.startAnyway');
           startAnywayBtn.className = 'cmp-btn-primary';
           startAnywayBtn.style.cssText = 'padding:5px 12px;font-size:12px;';
           startAnywayBtn.addEventListener('click', () => { _clearProbeWaves(); probeOverlay.remove(); cleanup(true); });
@@ -1290,7 +1287,7 @@ async function showModelSelector() {
         _clearProbeWaves();
         probeOverlay.remove();
         startBtn.disabled = false;
-        startBtn.innerHTML = _CMP_START_LABEL;
+        startBtn.innerHTML = _getStartLabel();
         startBtn.style.opacity = '1';
         cleanup(true);
       }
@@ -1302,7 +1299,7 @@ async function showModelSelector() {
       state._cachedModels = fetched;
       _modelsLoaded = true;
       if (models.length < 1) {
-        listContainer.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;padding:12px 0;text-align:center;">No models available</div>';
+        listContainer.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;padding:12px 0;text-align:center;">' + (window.__t || (k=>k))('compare.noModelsAvailable', { type: '' }) + '</div>';
         return;
       }
       // Validate saved selections against available models
@@ -1327,7 +1324,7 @@ async function showModelSelector() {
       renderModelRows();
     }).catch(e => {
       console.error('Failed to fetch models for compare:', e);
-      listContainer.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;padding:12px 0;text-align:center;">Failed to load models</div>';
+      listContainer.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;padding:12px 0;text-align:center;">' + (window.__t || (k=>k))('compare.failedToLoadModels') + '</div>';
     });
   });
 }

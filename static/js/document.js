@@ -99,7 +99,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const accounts = await _getEmailAccountsCached();
     const activeAccount = accounts.find(a => String(a.id) === String(activeAccountId));
     if (!activeAccount || _accountCanSend(activeAccount)) return activeAccountId;
-    if (uiModule) uiModule.showToast('Selected email account is receive-only; using your SMTP account.');
+    if (uiModule) uiModule.showToast((window.__t || (k=>k))('doc.receiveOnlyAccount'));
     return null;
   }
 
@@ -166,7 +166,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           await newDocument();
         } catch (err) {
           console.error('Failed to create document from sidebar button:', err);
-          if (uiModule) uiModule.showError('Failed to create document');
+          if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.failedToCreateDocument'));
         }
       });
     }
@@ -280,7 +280,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const paneEl = document.querySelector('.doc-editor-pane');
     const isDocLeft = paneEl && paneEl.classList.contains('doc-left');
     let html = '';
-    html += '<button class="doc-tab-arrow doc-tab-arrow-left" id="doc-tab-left" title="Scroll left">&#x2039;</button>';
+    html += '<button class="doc-tab-arrow doc-tab-arrow-left" id="doc-tab-left" title="' + ((window.__t || (k=>k))('doc.scrollLeft')) + '">&#x2039;</button>';
     html += '<div class="doc-tab-scroll" id="doc-tab-scroll">';
     const curSession = sessionModule?.getCurrentSessionId() || '';
     let _anyTab = false;
@@ -291,9 +291,9 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       const isActive = id === activeDocId;
       const title = doc.title || 'Untitled';
       const shortTitle = title.length > 24 ? title.slice(0, 22) + '...' : title;
-      const menuBtn = `<button class="doc-tab-menu-btn" data-doc-id="${id}" title="Document actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2.5"/><circle cx="12" cy="12" r="2.5"/><circle cx="12" cy="19" r="2.5"/></svg></button>`;
+      const menuBtn = `<button class="doc-tab-menu-btn" data-doc-id="${id}" title="${((window.__t || (k=>k))('doc.documentActions'))}"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2.5"/><circle cx="12" cy="12" r="2.5"/><circle cx="12" cy="19" r="2.5"/></svg></button>`;
       const ver = doc.version || doc.version_count || 1;
-      const verChip = `<span class="doc-tab-version" data-doc-id="${id}" title="Version history">v${ver}</span>`;
+      const verChip = `<span class="doc-tab-version" data-doc-id="${id}" title="${(window.__t || (k=>k))('doc.versionHistory')}">v${ver}</span>`;
       // Language icon before the title — same family as the meta-line / picker
       // icons. Hidden via :empty CSS when the doc has no useful language.
       const lic = (doc.language && doc.language !== 'text')
@@ -302,17 +302,17 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       const langChip = `<span class="doc-tab-lang">${lic}</span>`;
       html += `<div class="doc-tab${isActive ? ' active' : ''}" draggable="true" data-doc-id="${id}" title="${_esc(title)}">
         ${verChip}${langChip}<span class="doc-tab-title">${_esc(shortTitle)}</span>
-        <button class="doc-tab-close" data-doc-id="${id}" title="Unlink from chat (kept in the Library)">&times;</button>
+        <button class="doc-tab-close" data-doc-id="${id}" title="${((window.__t || (k=>k))('doc.unlinkFromChat'))}">&times;</button>
       </div>`;
     }
     // Empty state (panel open, no doc yet): show a ghost "Untitled" tab so it's
     // obvious you're in a fresh document rather than staring at a blank pane.
     if (!_anyTab && isOpen && !activeDocId) {
-      html += `<div class="doc-tab active doc-tab-ghost" title="New document — start typing"><span class="doc-tab-title">Untitled</span></div>`;
+      html += `<div class="doc-tab active doc-tab-ghost" title="${((window.__t || (k=>k))('doc.newDocumentHint'))}"><span class="doc-tab-title">${(window.__t || (k=>k))('doc.untitled')}</span></div>`;
     }
     html += `<button class="doc-tab-new" id="doc-tab-new-btn" title="New document"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`;
     html += '</div>';
-    html += '<button class="doc-tab-arrow doc-tab-arrow-right" id="doc-tab-right" title="Scroll right">&#x203A;</button>';
+    html += '<button class="doc-tab-arrow doc-tab-arrow-right" id="doc-tab-right" title="' + ((window.__t || (k=>k))('doc.scrollRight')) + '">&#x203A;</button>';
     tabBar.innerHTML = html;
 
     // Wire scroll arrows
@@ -547,7 +547,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const badge = document.getElementById('doc-version-badge');
 
     if (textarea) textarea.value = '';
-    if (textarea) textarea.placeholder = 'Start typing or paste text to create a document...';
+    if (textarea) textarea.placeholder = (window.__t || (k=>k))('common.new');
     if (textarea) textarea.disabled = false;
     if (langSelect) langSelect.value = '';
     if (badge) badge.textContent = '';
@@ -626,8 +626,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (e) {
-      if (uiModule) uiModule.showError('Export failed: ' + e.message);
-      else alert('Export failed: ' + e.message);
+      if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.exportFailed') + ': ' + e.message);
+      else alert((window.__t || (k=>k))('doc.exportFailed') + ': ' + e.message);
     }
   }
 
@@ -669,17 +669,17 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     overlay.innerHTML = `
       <div class="modal-content" style="width:min(780px,94vw);">
         <div class="modal-header">
-          <h4>Export filled PDF</h4>
+          <h4>${(window.__t || (k=>k))('doc.pdfExport')}</h4>
           <button id="pdf-export-close" class="modal-close" title="Close">×</button>
         </div>
-        <div id="pdf-export-summary" style="font-size:0.78rem;opacity:0.7;margin:0 0 6px;">Loading field values…</div>
+        <div id="pdf-export-summary" style="font-size:0.78rem;opacity:0.7;margin:0 0 6px;">${(window.__t || (k=>k))('common.loading')}</div>
         <div id="pdf-export-body" class="modal-body" style="font-size:0.85rem;">
-          <div style="opacity:0.6;">Fetching mapping…</div>
+          <div style="opacity:0.6;">${(window.__t || (k=>k))('common.loading')}</div>
         </div>
         <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px;padding-top:8px;border-top:1px solid var(--border);margin-top:6px;align-items:center;">
           <span id="pdf-export-status" style="font-size:0.75rem;opacity:0.7;margin-right:auto;"></span>
-          <button id="pdf-export-cancel" class="confirm-btn confirm-btn-secondary">Cancel</button>
-          <button id="pdf-export-download" class="confirm-btn confirm-btn-primary" disabled>Download PDF</button>
+          <button id="pdf-export-cancel" class="confirm-btn confirm-btn-secondary">${(window.__t || (k=>k))('common.cancel')}</button>
+          <button id="pdf-export-download" class="confirm-btn confirm-btn-primary" disabled>${(window.__t || (k=>k))('common.download')} PDF</button>
         </div>
       </div>
     `;
@@ -703,7 +703,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       const filledNow = data.filled || 0;
       const total = data.total || fields.length;
       overlay.querySelector('#pdf-export-summary').textContent =
-        `${filledNow} of ${total} fields filled. Review and adjust below before downloading.`;
+        (window.__t || (k=>k))('doc.fieldsFilled').replace('{filled}', filledNow).replace('{total}', total);
 
       const body = overlay.querySelector('#pdf-export-body');
       body.innerHTML = '';
@@ -720,7 +720,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       // Jump bar: page links + scroll-to-top/bottom shortcuts
       const jumpBar = document.createElement('div');
       jumpBar.style.cssText = 'position:sticky;top:0;background:var(--panel);padding:6px 0;margin-bottom:8px;border-bottom:1px solid var(--border);display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:0.72rem;z-index:1;';
-      jumpBar.innerHTML = '<span style="opacity:0.6;margin-right:4px;">Jump to:</span>';
+      jumpBar.innerHTML = '<span style="opacity:0.6;margin-right:4px;">' + ((window.__t || (k=>k))('doc.jumpTo')) + '</span>';
       const pageAnchors = {};
       const _smallBtnClass = 'confirm-btn confirm-btn-secondary';
       const _smallBtnStyle = 'padding:2px 8px;font-size:0.72rem;';
@@ -738,14 +738,14 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       sep.textContent = '|';
       jumpBar.appendChild(sep);
       const topBtn = document.createElement('button');
-      topBtn.textContent = '↑ Top';
+      topBtn.textContent = (window.__t || (k=>k))('doc.top');
       topBtn.className = _smallBtnClass;
       topBtn.style.cssText = _smallBtnStyle;
       topBtn.addEventListener('click', () => body.scrollTo({ top: 0, behavior: 'smooth' }));
       jumpBar.appendChild(topBtn);
       const botBtn = document.createElement('button');
-      botBtn.textContent = '↓ Bottom';
-      botBtn.title = 'Jump to the last page (signature fields are usually here)';
+      botBtn.textContent = (window.__t || (k=>k))('doc.bottom');
+      botBtn.title = (window.__t || (k=>k))('doc.jumpTo');
       botBtn.className = _smallBtnClass;
       botBtn.style.cssText = _smallBtnStyle;
       botBtn.addEventListener('click', () => body.scrollTo({ top: body.scrollHeight, behavior: 'smooth' }));
@@ -757,7 +757,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         sec.className = 'pdf-export-section';
         sec.id = `pdf-export-page-${p}`;
         pageAnchors[p] = sec;
-        sec.innerHTML = `<div class="pdf-export-section-title">Page ${p}</div>`;
+        sec.innerHTML = `<div class="pdf-export-section-title">${(window.__t || (k=>k))('doc.page', {p})}</div>`;
         for (const f of byPage.get(p)) {
           const row = document.createElement('div');
           row.className = 'pdf-export-row';
@@ -779,7 +779,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
             thumb.style.cssText = 'max-height:32px;max-width:140px;object-fit:contain;border:1px solid var(--border);border-radius:3px;background:#fff;display:none;';
             const clearBtn = document.createElement('button');
             clearBtn.textContent = '×';
-            clearBtn.title = 'Remove signature from this field';
+            clearBtn.title = (window.__t || (k=>k))('doc.removeSignature');
             clearBtn.className = 'confirm-btn confirm-btn-secondary';
             clearBtn.style.cssText = 'padding:0 8px;font-size:0.85rem;line-height:1;display:none;';
             const apply = (sig) => {
@@ -787,16 +787,16 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
               thumb.src = sig.dataUrl;
               thumb.style.display = '';
               clearBtn.style.display = '';
-              btn.textContent = 'Change';
+              btn.textContent = (window.__t || (k=>k))('doc.change');
             };
             const clear = () => {
               delete wrap.dataset.signatureId;
               thumb.removeAttribute('src');
               thumb.style.display = 'none';
               clearBtn.style.display = 'none';
-              btn.textContent = 'Sign here';
+              btn.textContent = (window.__t || (k=>k))('doc.signHere');
             };
-            btn.textContent = 'Sign here';
+            btn.textContent = (window.__t || (k=>k))('doc.signHere');
             btn.addEventListener('click', async () => {
               const sig = await signatureModule.pick();
               if (sig) apply(sig);
@@ -821,8 +821,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
             ti.dataset.fieldName = f.name;
             ti.dataset.fieldType = f.type;
             const today = document.createElement('button');
-            today.textContent = 'Today';
-            today.title = "Set to today's date";
+            today.textContent = (window.__t || (k=>k))('common.today');
+            today.title = (window.__t || (k=>k))('common.today');
             today.className = 'confirm-btn confirm-btn-secondary';
             today.style.cssText = 'padding:3px 8px;font-size:0.72rem;';
             today.addEventListener('click', () => {
@@ -886,7 +886,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           }
         }
         downloadBtn.disabled = true;
-        overlay.querySelector('#pdf-export-status').textContent = 'Building PDF…';
+        overlay.querySelector('#pdf-export-status').textContent = (window.__t || (k=>k))('doc.buildingPdf');
         try {
           const r = await fetch(`${API_BASE}/api/document/${activeDocId}/export-pdf`, {
             method: 'POST',
@@ -911,13 +911,13 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           setTimeout(() => URL.revokeObjectURL(url), 1000);
           close();
         } catch (e) {
-          overlay.querySelector('#pdf-export-status').textContent = 'Error: ' + e.message;
+          overlay.querySelector('#pdf-export-status').textContent = (window.__t || (k=>k))('common.error') + ': ' + e.message;
           downloadBtn.disabled = false;
         }
       });
     } catch (e) {
       overlay.querySelector('#pdf-export-body').innerHTML =
-        `<div style="color:#c00;">Failed to load preview: ${(e && e.message) || e}</div>`;
+        `<div style="color:#c00;">${(window.__t || (k=>k))('common.error')}: ${(e && e.message) || e}</div>`;
     }
   }
 
@@ -1053,7 +1053,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       _renderPdfPane();
       return true;
     } catch (e) {
-      _setPdfSaveStatus('error', e.message || 'Undo failed');
+      _setPdfSaveStatus('error', (window.__t || (k=>k))('doc.undoFailed'));
       return true;
     }
   }
@@ -1143,7 +1143,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const docId = activeDocId;
     // Keep the save pill across re-renders by detaching/re-attaching it
     const savedPill = document.getElementById('doc-pdf-save-pill');
-    pane.innerHTML = '<div style="color:#bbb;font-size:13px;text-align:center;padding:40px;">Loading PDF…</div>';
+    pane.innerHTML = '<div style="color:#bbb;font-size:13px;text-align:center;padding:40px;">' + ((window.__t || (k=>k))('doc.loadingPdf')) + '</div>';
     if (savedPill) pane.appendChild(savedPill);
     let data;
     try {
@@ -1151,7 +1151,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       if (!res.ok) throw new Error(await _pdfResponseErrorMessage(res));
       data = await res.json();
     } catch (e) {
-      pane.innerHTML = `<div style="color:#fbb;padding:40px;text-align:center;">Failed to load PDF view: ${_escHtml(e.message || String(e))}</div>`;
+      pane.innerHTML = `<div style="color:#fbb;padding:40px;text-align:center;">${(window.__t || (k=>k))('doc.failedToLoadPdf')}: ${_escHtml(e.message || String(e))}</div>`;
       if (savedPill) pane.appendChild(savedPill);
       return;
     }
@@ -1241,7 +1241,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
               el.style.background = 'color-mix(in srgb, var(--accent, var(--red)) 10%, transparent)';
               const span = document.createElement('span');
               span.style.cssText = 'color:var(--accent, var(--red));font-size:11px;';
-              span.textContent = 'Sign here';
+              span.textContent = (window.__t || (k=>k))('doc.signHere');
               el.appendChild(span);
             }
           };
@@ -1299,8 +1299,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         if (isDate) {
           const today = document.createElement('button');
           today.type = 'button';
-          today.textContent = 'Today';
-          today.title = "Set to today's date";
+          today.textContent = (window.__t || (k=>k))('common.today');
+          today.title = (window.__t || (k=>k))('common.today');
           today.style.cssText = `position:absolute;left:calc(${lPct}% + ${wPct}%);top:${tPct}%;height:${hPct}%;margin-left:4px;padding:0 6px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);background:rgba(255,255,255,0.95);color:var(--accent, var(--red));border-radius:3px;cursor:pointer;font-size:10px;line-height:1;white-space:nowrap;`;
           today.addEventListener('click', () => {
             const d = new Date();
@@ -1395,7 +1395,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     } else if (kind === 'signature') {
       input = document.createElement('div');
       input.style.cssText = `width:100%;height:100%;box-sizing:border-box;border:1px dashed color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;font-size:10px;color:var(--accent, var(--red));`;
-      input.textContent = (ann.value && ann.value.startsWith('signature:')) ? '' : 'Sign here';
+      input.textContent = (ann.value && ann.value.startsWith('signature:')) ? '' : (window.__t || (k=>k))('doc.signHere');
       input.dataset.signatureId = (ann.value && ann.value.startsWith('signature:')) ? ann.value.slice(10) : '';
     } else {
       // Multi-line text input. Browser resize disabled — we use the custom
@@ -1406,7 +1406,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       // a fullscreen toggle.
       input = document.createElement('textarea');
       input.value = ann.value || '';
-      input.placeholder = 'Type…';
+      input.placeholder = (window.__t || (k=>k))('doc.typePlaceholder');
       input.rows = 1;
       input.spellcheck = false;
       const lh = ann.lineHeight || 1.3;
@@ -1427,18 +1427,18 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const del = document.createElement('button');
     del.type = 'button';
     del.textContent = '✖';
-    del.title = 'Delete annotation';
+    del.title = (window.__t || (k=>k))('doc.deleteAnnotation');
     del.style.cssText = `position:absolute;top:${OFF}px;right:${OFF}px;width:${HS}px;height:${HS}px;padding:0 0 0 1px;border:1px solid var(--accent, var(--red));background:#fff;color:var(--accent, var(--red));border-radius:50%;cursor:pointer;font-size:11px;line-height:1;display:${HIDE};font-weight:bold;touch-action:none;`;
 
     // ☰ drag handle — same size as the × button.
     const grip = document.createElement('div');
-    grip.title = 'Drag to move';
+    grip.title = (window.__t || (k=>k))('doc.dragToMove');
     grip.textContent = '☰';
     grip.style.cssText = `position:absolute;top:${OFF}px;left:${OFF}px;width:${HS}px;height:${HS}px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:#fff;color:var(--accent, var(--red));border-radius:3px;cursor:move;font-size:11px;line-height:${HS - 2}px;text-align:center;display:${HIDE};touch-action:none;`;
 
     // ↘ resize handle — same size as the × button.
     const resize = document.createElement('div');
-    resize.title = 'Drag to resize';
+    resize.title = (window.__t || (k=>k))('doc.dragToResize');
     resize.style.cssText = `position:absolute;bottom:${OFF}px;right:${OFF}px;width:${HS}px;height:${HS}px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:#fff;color:var(--accent, var(--red));border-radius:3px;cursor:nwse-resize;display:${HIDE};touch-action:none;`;
     resize.innerHTML = '<svg width="14" height="14" viewBox="0 0 10 10" style="display:block;margin:auto;height:100%;"><path d="M2 8 L8 2 M5 8 L8 5" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>';
 
@@ -1447,7 +1447,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       menuBtn = document.createElement('button');
       menuBtn.type = 'button';
       menuBtn.textContent = '…';
-      menuBtn.title = 'Text annotation options';
+      menuBtn.title = (window.__t || (k=>k))('doc.textAnnotationOptions');
       menuBtn.style.cssText = `position:absolute;bottom:${OFF}px;left:${OFF}px;width:${HS}px;height:${HS}px;padding:0;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:#fff;color:var(--accent, var(--red));border-radius:50%;cursor:pointer;font-size:15px;line-height:0.8;display:${HIDE};font-weight:bold;touch-action:none;`;
     }
 
@@ -1484,7 +1484,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           input.style.background = 'color-mix(in srgb, var(--accent, var(--red)) 10%, transparent)';
           input.style.border = '1px dashed color-mix(in srgb, var(--accent, var(--red)) 65%, transparent)';
           const span = document.createElement('span');
-          span.textContent = 'Sign here';
+          span.textContent = (window.__t || (k=>k))('doc.signHere');
           input.appendChild(span);
           return;
         }
@@ -1776,7 +1776,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
     _setPdfSaveStatus('saving');
     const btn = document.getElementById('doc-pdf-ai-fill-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Thinking…'; }
+    if (btn) { btn.disabled = true; btn.textContent = (window.__t || (k=>k))('doc.drafting'); }
     try {
       const res = await fetch(`${API_BASE}/api/document/${docId}/ai-fill-annotations`, {
         method: 'POST',
@@ -1791,7 +1791,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       const proposed = (data && data.annotations) || [];
       if (!proposed.length) {
         _setPdfSaveStatus('idle');
-        if (uiModule && uiModule.showToast) uiModule.showToast('AI found nothing to fill');
+        if (uiModule && uiModule.showToast) uiModule.showToast((window.__t || (k=>k))('doc.noSuggestions'));
         return;
       }
       // Merge into markdown via the same _writeAnnotations path: parse current,
@@ -1823,13 +1823,13 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         throw new Error(t || r2.statusText);
       }
       _setPdfSaveStatus('saved');
-      if (uiModule && uiModule.showToast) uiModule.showToast(`AI added ${proposed.length} annotations`);
+      if (uiModule && uiModule.showToast) uiModule.showToast((window.__t || (k=>k))('doc.aiFill') + `: +${proposed.length}`);
       _renderPdfPane();
     } catch (e) {
       console.error('AI fill failed:', e);
-      _setPdfSaveStatus('error', `AI fill failed: ${e.message || e}`);
+      _setPdfSaveStatus('error', (window.__t || (k=>k))('doc.aiFill') + ': ' + (e.message || e));
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = 'AI fill'; }
+      if (btn) { btn.disabled = false; btn.textContent = (window.__t || (k=>k))('doc.aiFill'); }
     }
   }
 
@@ -1844,10 +1844,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     if (!pill) return;
     const palette = {
       idle:   { txt: '',           bg: 'transparent',           fg: 'transparent' },
-      dirty:  { txt: 'Editing…',   bg: 'var(--panel)',          fg: 'var(--fg)' },
-      saving: { txt: 'Saving…',    bg: 'var(--panel)',          fg: 'var(--fg)' },
-      saved:  { txt: 'Saved',      bg: 'rgba(34,197,94,0.85)',  fg: '#fff' },
-      error:  { txt: msg || 'Save failed', bg: 'var(--red)',    fg: 'var(--bg)' },
+      dirty:  { txt: (window.__t || (k=>k))('doc.drafting'),   bg: 'var(--panel)',          fg: 'var(--fg)' },
+      saving: { txt: (window.__t || (k=>k))('common.loading'),    bg: 'var(--panel)',          fg: 'var(--fg)' },
+      saved:  { txt: (window.__t || (k=>k))('settings.saved'),      bg: 'rgba(34,197,94,0.85)',  fg: '#fff' },
+      error:  { txt: msg || (window.__t || (k=>k))('settings.failedToSave'), bg: 'var(--red)',    fg: 'var(--bg)' },
     };
     const p = palette[status] || palette.idle;
     pill.textContent = p.txt;
@@ -1940,14 +1940,14 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       });
       if (!res.ok) {
         const t = await res.text().catch(() => res.statusText);
-        _setPdfSaveStatus('error', `Save failed: ${res.status}`);
+        _setPdfSaveStatus('error', (window.__t || (k=>k))('settings.failedToSave') + ': ' + res.status);
         console.warn('PDF-pane save HTTP error:', res.status, t);
         return false;
       }
       _setPdfSaveStatus('saved');
       return true;
     } catch (e) {
-      _setPdfSaveStatus('error', e.message || 'Save failed');
+      _setPdfSaveStatus('error', e.message || (window.__t || (k=>k))('settings.failedToSave'));
       console.warn('PDF-pane save failed:', e);
       return false;
     }
@@ -2055,12 +2055,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       const _replyable = !!(_ad && _ad.sourceEmailUid && _ad.sourceEmailFolder);
       if (_replyable && _copyBtn.dataset.mode !== 'reply') {
         _copyBtn.dataset.mode = 'reply';
-        _copyBtn.title = 'Reply to the sender with this filled file attached';
-        _copyBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>Attach';
+        _copyBtn.title = (window.__t || (k=>k))('email.reply');
+        _copyBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>' + ((window.__t || (k=>k))('doc.attach'));
       } else if (!_replyable && _copyBtn.dataset.mode !== 'copy') {
         _copyBtn.dataset.mode = 'copy';
-        _copyBtn.title = 'Copy document';
-        _copyBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy';
+        _copyBtn.title = (window.__t || (k=>k))('doc.copy');
+        _copyBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>' + ((window.__t || (k=>k))('doc.copy'));
       }
     }
     // Standalone Export PDF / PDF-toggle icon buttons are retired — for a
@@ -2132,13 +2132,13 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         let icon, title;
         if (lang === 'csv') {
           icon = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>';
-          title = 'Table view';
+          title = (window.__t || (k=>k))('doc.tableView');
         } else if (_isRenderLang(lang)) {
           icon = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
-          title = 'Preview';
+          title = (window.__t || (k=>k))('doc.preview');
         } else {
           icon = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
-          title = 'Run';
+          title = (window.__t || (k=>k))('doc.run');
         }
         if (runBtn.dataset.lastIcon !== lang) {
           runBtn.innerHTML = icon;
@@ -2154,7 +2154,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         const codeIco = (lang === 'csv')
           ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>'
           : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
-        const codeTitle = (lang === 'csv') ? 'Edit' : 'Edit code';
+        const codeTitle = (lang === 'csv') ? (window.__t || (k=>k))('doc.edit') : (window.__t || (k=>k))('doc.editCode');
         if (codeBtn.dataset.lastIcon !== lang) {
           codeBtn.innerHTML = codeIco;
           codeBtn.title = codeTitle;
@@ -2185,7 +2185,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     } else if (lang === 'csv') {
       show = true;
       actionBtn.innerHTML = _csvActive ? _penIco : '<span style="font-size:12px;font-weight:600;">⊞</span>';
-      actionBtn.title = _csvActive ? 'Edit' : 'Table View';
+      actionBtn.title = _csvActive ? (window.__t || (k=>k))('doc.edit') : (window.__t || (k=>k))('doc.tableView');
       if (_csvActive) actionBtn.classList.add('active');
     } else if (_isRenderLang(lang)) {
       // SVG/HTML/XML use the segmented Code </> | Run ▶ light-switch toggle
@@ -2198,7 +2198,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     } else if (canRun) {
       show = true;
       actionBtn.innerHTML = _outputActive ? _codeIco : _playIco;
-      actionBtn.title = _outputActive ? 'Hide output' : 'Run';
+      actionBtn.title = _outputActive ? (window.__t || (k=>k))('doc.hideOutput') : (window.__t || (k=>k))('doc.run');
       if (_outputActive) actionBtn.classList.add('active');
     }
 
@@ -2437,8 +2437,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   }
 
   function _syncEmailHeaderSummary() {
-    const to = document.getElementById('doc-email-to')?.value?.trim() || 'No recipient';
-    const subject = document.getElementById('doc-email-subject')?.value?.trim() || 'No subject';
+    const to = document.getElementById('doc-email-to')?.value?.trim() || (window.__t || (k=>k))('doc.noRecipient');
+    const subject = document.getElementById('doc-email-subject')?.value?.trim() || (window.__t || (k=>k))('doc.noSubject');
     const cc = document.getElementById('doc-email-cc')?.value?.trim() || '';
     const bcc = document.getElementById('doc-email-bcc')?.value?.trim() || '';
     const summary = document.getElementById('doc-email-collapse-summary');
@@ -2458,7 +2458,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     header.classList.toggle('doc-email-header-collapsed', !!collapsed);
     if (btn) {
       btn.setAttribute('aria-expanded', String(!collapsed));
-      btn.title = collapsed ? 'Show email fields' : 'Hide email fields';
+      btn.title = collapsed ? (window.__t || (k=>k))('doc.showEmailFields') : (window.__t || (k=>k))('doc.hideEmailFields');
     }
     const doc = activeDocId && docs.get(activeDocId);
     if (doc && manual) doc._emailHeaderCollapsed = !!collapsed;
@@ -2578,12 +2578,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
                 if (data.doc_id) {
                   await loadDocument(data.doc_id);
                 } else if (uiModule) {
-                  uiModule.showError(data.error || 'Failed to open PDF');
+                  uiModule.showError(data.error || (window.__t || (k=>k))('doc.failedToOpenPdf'));
                   window.open(`${API_BASE}/api/email/attachment/${encodeURIComponent(fields.sourceUid)}/${att.index}?folder=${folderQs}`, '_blank');
                 }
               } catch (e) {
                 console.error('Open PDF attachment failed:', e);
-                if (uiModule) uiModule.showError('Failed to open PDF');
+                if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.failedToOpenPdf'));
               }
             }));
             attDiv.appendChild(chip);
@@ -2595,7 +2595,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
             chip.type = 'button';
             chip.className = 'email-attachment-chip';
             // Full filename on hover for the chip ellipsis-truncated label.
-            chip.title = `Download ${att.filename}`;
+            chip.title = (window.__t || (k=>k))('common.download') + ' ' + att.filename;
             chip.innerHTML = chipHtml;
             chip.addEventListener('click', () => _withSpinner(chip, async () => {
               try {
@@ -2612,7 +2612,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
                 setTimeout(() => URL.revokeObjectURL(url), 1000);
               } catch (e) {
                 console.error('Download attachment failed:', e);
-                if (uiModule) uiModule.showError('Download failed: ' + e.message);
+                if (uiModule) uiModule.showError(e.message);
               }
             }));
             attDiv.appendChild(chip);
@@ -2687,10 +2687,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
             size: data.size,
           });
         } else {
-          if (uiModule) uiModule.showError(`Failed to upload ${file.name}: ${data.error || ''}`);
+          if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.failedToUpload') + ' ' + file.name + ': ' + (data.error || ''));
         }
       } catch (err) {
-        if (uiModule) uiModule.showError(`Failed to upload ${file.name}`);
+        if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.failedToUpload') + ' ' + file.name);
       }
     }
     _renderComposeAttachments();
@@ -2765,11 +2765,11 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   async function _uploadMarkdownImages(files) {
     const images = Array.from(files || []).filter(_isMarkdownImageFile);
     if (!images.length) {
-      if (uiModule) uiModule.showError('Choose an image file');
+      if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.chooseImageFile'));
       return;
     }
     if (_activeDocLanguage() !== 'markdown') {
-      if (uiModule) uiModule.showError('Switch the document to markdown before inserting images');
+      if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.switchToMarkdown'));
       return;
     }
 
@@ -2787,10 +2787,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       const uploaded = Array.isArray(data?.files) ? data.files : [];
       if (!uploaded.length) throw new Error('No uploaded files returned');
       _insertMarkdownImages(uploaded);
-      if (uiModule) uiModule.showToast(images.length === 1 ? 'Image inserted' : 'Images inserted');
+      if (uiModule) uiModule.showToast(images.length === 1 ? (window.__t || (k=>k))('doc.imageInserted') : (window.__t || (k=>k))('doc.imagesInserted'));
     } catch (err) {
       console.error('Failed to insert markdown image:', err);
-      if (uiModule) uiModule.showError('Failed to insert image');
+      if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.failedToInsertImage'));
     }
   }
 
@@ -3024,13 +3024,13 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       overlay.style.display = 'flex';
       overlay.innerHTML = `
         <div class="modal-content" style="width:360px;max-width:90vw;">
-          <div class="modal-header"><h4>No attachments found</h4></div>
+          <div class="modal-header"><h4>${(window.__t || (k=>k))('doc.noAttachments')}</h4></div>
           <div class="modal-body" style="padding:16px;font-size:13px;opacity:0.8;">
-            Your message mentions an attachment, but nothing is attached. Send anyway?
+            ${(window.__t || (k=>k))('doc.attachmentWarning')}
           </div>
           <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;">
-            <button class="memory-toolbar-btn" id="att-warn-cancel">Go back</button>
-            <button class="memory-toolbar-btn" id="att-warn-send" style="background:var(--accent-primary,var(--red));color:#fff;border-color:var(--accent-primary,var(--red));">Send anyway</button>
+            <button class="memory-toolbar-btn" id="att-warn-cancel">${(window.__t || (k=>k))('doc.goBack')}</button>
+            <button class="memory-toolbar-btn" id="att-warn-send" style="background:var(--accent-primary,var(--red));color:#fff;border-color:var(--accent-primary,var(--red));">${(window.__t || (k=>k))('doc.sendAnyway')}</button>
           </div>
         </div>
       `;
@@ -3062,11 +3062,11 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const doc = docs.get(activeDocId);
     const attachments = (doc?._composeAtts || []).map(a => a.token);
     if (!to || !body) {
-      if (uiModule) uiModule.showError('To and body are required');
+      if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.toAndBodyRequired'));
       return;
     }
     if (inReplyTo && !_emailReplyOwnText(body)) {
-      if (uiModule) uiModule.showError('Reply body is empty');
+      if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.replyBodyEmpty'));
       return;
     }
     // Warn if body mentions attachments but none are actually attached
@@ -3086,12 +3086,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       sendSpinner.element.style.cssText = 'display:inline-block;vertical-align:-2px;margin-right:6px;width:14px;height:14px;';
       btn.innerHTML = '';
       btn.appendChild(sendSpinner.element);
-      btn.appendChild(document.createTextNode('Sending'));
+      btn.appendChild(document.createTextNode((window.__t || (k=>k))('doc.sending')));
     }
     try {
       let canceled = false;
       if (uiModule) {
-        uiModule.showToast('Sending', {
+        uiModule.showToast((window.__t || (k=>k))('doc.sending'), {
           duration: 3200,
           leadingIcon: 'spinner',
           action: 'Cancel',
@@ -3104,7 +3104,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       if (canceled) {
         _restoreDetachedEmailDoc(detachedEmailDoc);
         detachedEmailDoc = null;
-        if (uiModule) uiModule.showToast('Send canceled');
+        if (uiModule) uiModule.showToast((window.__t || (k=>k))('doc.sendCanceled'));
         return;
       }
 
@@ -3130,10 +3130,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       if (!res.ok && data && !data.error) data.error = `Send failed (${res.status})`;
       if (data.success) {
         if (uiModule) {
-          uiModule.showToast('Message sent', {
+          uiModule.showToast((window.__t || (k=>k))('doc.messageSent'), {
             duration: 7000,
             leadingIcon: 'check',
-            action: 'View Message',
+            action: (window.__t || (k=>k))('doc.viewMessage'),
             onAction: () => {
               import('./emailLibrary.js').then(mod => {
                 const open = mod.openEmailLibrary || (mod.default && mod.default.openEmailLibrary);
@@ -3191,12 +3191,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       } else {
         _restoreDetachedEmailDoc(detachedEmailDoc);
         detachedEmailDoc = null;
-        if (uiModule) uiModule.showError(data.error || 'Failed to send');
+        if (uiModule) uiModule.showError(data.error || (window.__t || (k=>k))('doc.failedToSend'));
       }
     } catch (e) {
       _restoreDetachedEmailDoc(detachedEmailDoc);
       detachedEmailDoc = null;
-      if (uiModule) uiModule.showError(e?.message ? `Failed to send email: ${e.message}` : 'Failed to send email');
+      if (uiModule) uiModule.showError(e?.message ? (window.__t || (k=>k))('doc.failedToSendEmail') + ': ' + e.message : (window.__t || (k=>k))('doc.failedToSendEmail'));
     } finally {
       if (sendSpinner) sendSpinner.destroy();
       if (btn) {
@@ -3219,7 +3219,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const body = (_rich ? (_rich.innerText || _rich.textContent || '') : (textarea?.value || '')).trim();
     const bodyHtml = _rich ? _rich.innerHTML : null;
     const btn = document.getElementById('doc-email-draft-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+    if (btn) { btn.disabled = true; btn.textContent = (window.__t || (k=>k))('common.loading'); }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 18000);
     try {
@@ -3241,16 +3241,16 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       });
       const data = await res.json();
       if (data.success) {
-        if (uiModule) uiModule.showToast('Draft saved to mailbox');
+      if (uiModule) uiModule.showToast((window.__t || (k=>k))('settings.saved'));
       } else {
-        if (uiModule) uiModule.showError(data.error || 'Failed to save draft');
+        if (uiModule) uiModule.showError((window.__t || (k=>k))('settings.failedToSave'));
       }
     } catch (e) {
       const timedOut = e && e.name === 'AbortError';
-      if (uiModule) uiModule.showError(timedOut ? 'Saving draft timed out' : 'Failed to save draft');
+      if (uiModule) uiModule.showError(timedOut ? (window.__t || (k=>k))('settings.failedToSave') : (window.__t || (k=>k))('settings.failedToSave'));
     } finally {
       clearTimeout(timeout);
-      if (btn) { btn.disabled = false; btn.textContent = 'Draft'; }
+      if (btn) { btn.disabled = false; btn.textContent = (window.__t || (k=>k))('doc.draft'); }
     }
   }
 
@@ -3449,7 +3449,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     } catch (_) {}
 
     const btn = document.getElementById('doc-email-ai-reply-btn');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:3px"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>Drafting...'; }
+    if (btn) { btn.disabled = true; btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:3px"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>' + ((window.__t || (k=>k))('doc.drafting')); }
 
     try {
       // Empty-compose path: if there's no original body, send a placeholder
@@ -3490,14 +3490,14 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         // own work and the original quote are untouched.
         const newBody = currentBody ? cleanReply + '\n\n' + currentBody : cleanReply;
         await _streamEmailBodyText(textarea, newBody);
-        if (uiModule) uiModule.showToast(`AI draft inserted (${data.model_used || 'AI'})`);
+        if (uiModule) uiModule.showToast((window.__t || (k=>k))('doc.aiDraftInserted') + ` (${data.model_used || 'AI'})`);
       } else {
-        if (uiModule) uiModule.showError(data.error || 'Failed to generate reply');
+        if (uiModule) uiModule.showError(data.error || (window.__t || (k=>k))('doc.failedToGenerateReply'));
       }
     } catch (e) {
-      if (uiModule) uiModule.showError('Failed to generate AI reply');
+      if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.failedToGenerateReply'));
     } finally {
-      if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="color:var(--accent, var(--red));flex-shrink:0;position:relative;top:-1px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg><span style="font-size:11px;margin-left:4px;">Reply</span>'; }
+      if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="color:var(--accent, var(--red));flex-shrink:0;position:relative;top:-1px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg><span style="font-size:11px;margin-left:4px;">' + ((window.__t || (k=>k))('doc.reply')) + '</span>'; }
     }
   }
 
@@ -3518,11 +3518,11 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const attachments = (doc?._composeAtts || []).map(a => a.token);
 
     if (!to || !body) {
-      if (uiModule) uiModule.showError('To and body are required');
+      if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.toAndBodyRequired'));
       return;
     }
     if (inReplyTo && !_emailReplyOwnText(body)) {
-      if (uiModule) uiModule.showError('Reply body is empty');
+      if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.replyBodyEmpty'));
       return;
     }
     if (attachments.length === 0 && _bodyMentionsAttachment(body)) {
@@ -3537,23 +3537,23 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     overlay.innerHTML = `
       <div class="modal-content schedule-send-modal" style="width:400px;max-width:92vw;">
         <div class="modal-header">
-          <h4>Schedule Send</h4>
+          <h4>${(window.__t || (k=>k))('doc.scheduleSend')}</h4>
           <button class="close-btn" id="sched-close" title="Close"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
         <div class="modal-body schedule-send-body">
-          <label class="schedule-send-label">Quick presets</label>
+          <label class="schedule-send-label">${(window.__t || (k=>k))('doc.scheduleSend')}</label>
           <div class="schedule-send-presets">
             <button class="memory-toolbar-btn" data-preset="1h">In 1 hour</button>
             <button class="memory-toolbar-btn" data-preset="3h">In 3 hours</button>
             <button class="memory-toolbar-btn" data-preset="tomorrow">Tomorrow 9am</button>
             <button class="memory-toolbar-btn" data-preset="monday">Monday 9am</button>
           </div>
-          <label class="schedule-send-label" for="sched-datetime">Or pick a specific time</label>
+          <label class="schedule-send-label" for="sched-datetime">${(window.__t || (k=>k))('doc.pleasePickTime')}</label>
           <input type="datetime-local" id="sched-datetime" class="schedule-send-datetime" />
         </div>
         <div class="modal-footer schedule-send-footer">
-          <button class="memory-toolbar-btn" id="sched-cancel">Cancel</button>
-          <button class="memory-toolbar-btn schedule-send-confirm" id="sched-confirm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Schedule</button>
+          <button class="memory-toolbar-btn" id="sched-cancel">${(window.__t || (k=>k))('common.cancel')}</button>
+          <button class="memory-toolbar-btn schedule-send-confirm" id="sched-confirm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>${(window.__t || (k=>k))('common.confirm')}</button>
         </div>
       </div>
     `;
@@ -3612,7 +3612,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
     overlay.querySelector('#sched-confirm').addEventListener('click', async () => {
       const localDt = dtInput.value;
-      if (!localDt) { if (uiModule) uiModule.showError('Please pick a time'); return; }
+      if (!localDt) { if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.pleasePickTime')); return; }
       // Convert local datetime to UTC ISO
       const utcIso = new Date(localDt).toISOString();
       try {
@@ -3631,15 +3631,15 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         });
         const data = await res.json();
         if (data.success) {
-          if (uiModule) uiModule.showToast(`Scheduled for ${new Date(localDt).toLocaleString()}`);
+          if (uiModule) uiModule.showToast((window.__t || (k=>k))('doc.scheduledFor') + ' ' + new Date(localDt).toLocaleString());
           cleanup();
           // Close the document
           _closeWithoutDeleting(true);
         } else {
-          if (uiModule) uiModule.showError(data.error || 'Failed to schedule');
+          if (uiModule) uiModule.showError(data.error || (window.__t || (k=>k))('doc.failedToSchedule'));
         }
       } catch (e) {
-        if (uiModule) uiModule.showError('Failed to schedule');
+        if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.failedToSchedule'));
       }
     });
   }
@@ -3807,7 +3807,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: '' }),
       }).then(() => {
-        if (toast && uiModule) uiModule.showToast('Document unlinked from session');
+        if (toast && uiModule) uiModule.showToast((window.__t || (k=>k))('doc.documentUnlinked'));
       }).catch(() => {});
     } else {
       fetch(`${API_BASE}/api/document/${docId}`, { method: 'DELETE' }).catch(() => {});
@@ -3874,7 +3874,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       // Update textarea (keep existing content the user typed)
       const textarea = document.getElementById('doc-editor-textarea');
       if (textarea) {
-        textarea.placeholder = 'Document content...';
+        textarea.placeholder = (window.__t || (k=>k))('common.new');
       }
       syncHighlighting();
       renderTabs();
@@ -3974,8 +3974,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     // The secondary X button below it is only shown in fullscreen mode and
     // hides the pane outright (so fullscreen has an escape that isn't just
     // "exit fullscreen").
-    divider.innerHTML = '<button type="button" class="doc-divider-collapse" title="Collapse panel" data-mode="collapse"><span>›</span></button>' +
-      '<button type="button" class="doc-divider-hide" title="Hide panel" aria-label="Hide panel"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
+    divider.innerHTML = '<button type="button" class="doc-divider-collapse" title="' + ((window.__t || (k=>k))('doc.collapsePanel')) + '" data-mode="collapse"><span>›</span></button>' +
+      '<button type="button" class="doc-divider-hide" title="' + ((window.__t || (k=>k))('doc.hidePanel')) + '" aria-label="' + ((window.__t || (k=>k))('doc.hidePanel')) + '"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
     const _divHide = divider.querySelector('.doc-divider-hide');
     if (_divHide) {
       _divHide.addEventListener('mousedown', (e) => e.stopPropagation());
@@ -4020,13 +4020,13 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       <input type="hidden" id="doc-title-input" value="" />
       <div class="doc-mobile-grabber" id="doc-mobile-grabber" aria-hidden="true"></div>
       <div class="doc-editor-header" id="doc-editor-actions">
-        <button id="doc-undo-btn" class="doc-action-icon-btn" title="Undo (Ctrl+Z)" style="gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg><span style="font-size:11px;">Undo</span></button>
+        <button id="doc-undo-btn" class="doc-action-icon-btn" title="${(window.__t || (k=>k))('doc.undo')} (Ctrl+Z)" style="gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg><span style="font-size:11px;">${(window.__t || (k=>k))('doc.undo')}</span></button>
         <button id="doc-header-preview-btn" class="doc-action-icon-btn" title="Run / Preview" style="display:none;opacity:0.85;gap:4px;"></button>
-        <span id="doc-stream-indicator" class="doc-stream-indicator" style="display:none"><span class="doc-stream-dot"></span> editing</span>
-        <span id="doc-version-badge" class="doc-version-badge" title="Version history" style="display:none">v1</span>
+        <span id="doc-stream-indicator" class="doc-stream-indicator" style="display:none"><span class="doc-stream-dot"></span> ${(window.__t || (k=>k))('doc.editing')}</span>
+        <span id="doc-version-badge" class="doc-version-badge" title="${(window.__t || (k=>k))('doc.versionHistory')}" style="display:none">v1</span>
         <span style="flex:1"></span>
-        <button id="doc-export-pdf-btn" class="doc-action-icon-btn" title="Export PDF" style="display:none;opacity:0.7;gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 18 15 15"/></svg> <span style="font-size:11px;">Export PDF</span></button>
-        <button id="doc-pdf-view-btn" class="doc-action-icon-btn" title="Toggle PDF view" style="display:none;opacity:0.7;gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> <span style="font-size:11px;">PDF</span></button>
+        <button id="doc-export-pdf-btn" class="doc-action-icon-btn" title="${(window.__t || (k=>k))('doc.pdfExport')}" style="display:none;opacity:0.7;gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 18 15 15"/></svg> <span style="font-size:11px;">${(window.__t || (k=>k))('doc.pdfExport')}</span></button>
+        <button id="doc-pdf-view-btn" class="doc-action-icon-btn" title="${(window.__t || (k=>k))('doc.pdfExport')}" style="display:none;opacity:0.7;gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> <span style="font-size:11px;">PDF</span></button>
         <select id="doc-language-select" class="doc-language-select">
           <option value="python">python</option>
           <option value="javascript">javascript</option>
@@ -4103,7 +4103,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
             <button type="button" class="md-view-opt" data-renderview="code" title="Edit code"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button>
             <button type="button" class="md-view-opt" data-renderview="run" title="Run / Preview"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>
           </span>
-          <button id="doc-email-ai-reply-btn" class="doc-action-icon-btn md-toolbar-email-only" type="button" title="Draft a reply with AI (Fast / Full + optional context)" style="display:none;align-items:center;gap:4px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="color:var(--accent, var(--red));flex-shrink:0;position:relative;top:-1px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg><span style="font-size:11px;">Reply</span></button>
+          <button id="doc-email-ai-reply-btn" class="doc-action-icon-btn md-toolbar-email-only" type="button" title="Draft a reply with AI (Fast / Full + optional context)" style="display:none;align-items:center;gap:4px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="color:var(--accent, var(--red));flex-shrink:0;position:relative;top:-1px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg><span style="font-size:11px;">${(window.__t || (k=>k))('doc.reply')}</span></button>
           <button id="doc-fontsize-btn" class="doc-action-icon-btn" title="Font size" style="position:relative;width:28px;height:26px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.7;"><path d="M4 7V4h16v3"/><path d="M12 4v16"/><path d="M8 20h8"/></svg><span class="doc-fontsize-levels"><i data-sz="s">S</i><i data-sz="m">M</i><i data-sz="l">L</i></span></button>
           <button id="doc-diff-toggle-btn" class="doc-action-icon-btn" title="Compare changes" style="opacity:0.7;display:none;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M5 12H2l5-5 5 5H9"/><path d="M19 12h3l-5 5-5-5h3"/></svg></button>
           <span class="md-toolbar-sep"></span>
@@ -4134,7 +4134,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         <button type="button" class="md-scroll-arrow md-scroll-right" id="md-scroll-right" title="Scroll right" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
       </div>
       <div id="doc-find-bar" class="doc-find-bar" style="display:none">
-        <input id="doc-find-input" class="doc-find-input" type="text" placeholder="Find..." />
+        <input id="doc-find-input" class="doc-find-input" type="text" placeholder="${(window.__t || (k=>k))('common.search')}" />
         <span id="doc-find-count" class="doc-find-count"></span>
         <button id="doc-find-prev" class="doc-find-nav" title="Previous">&uarr;</button>
         <button id="doc-find-next" class="doc-find-nav" title="Next">&darr;</button>
@@ -4151,15 +4151,15 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
            the existing send/draft/change-detection paths keep working. -->
       <div id="doc-email-richbody" class="doc-email-richbody" contenteditable="true" spellcheck="true" style="display:none" data-no-swipe-dismiss></div>
       <div id="doc-email-actions" class="doc-email-actions" style="display:none">
-        <button id="doc-email-discard-btn" class="email-discard-btn" title="Close email" style="display:inline-flex;align-items:center;gap:5px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span>Close</span></button>
+        <button id="doc-email-discard-btn" class="email-discard-btn" title="Close email" style="display:inline-flex;align-items:center;gap:5px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span>${(window.__t || (k=>k))('common.close')}</span></button>
         <span style="flex:1"></span>
         <div class="email-send-split">
           <button id="doc-email-send-btn" class="email-send-btn email-send-main" title="Send email (Ctrl+Enter)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Send</button>
           <button id="doc-email-send-caret" class="email-send-btn email-send-caret" title="More send options" aria-haspopup="true" aria-expanded="false"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></button>
           <div id="doc-email-more-menu" class="email-more-menu" style="display:none">
-            <div class="dropdown-item-compact" id="doc-email-draft-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span>Save Draft</div>
-            <div class="dropdown-item-compact" id="doc-email-schedule-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>Schedule Send...</div>
-            <div class="dropdown-item-compact" id="doc-email-unread-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg></span>Mark Unread</div>
+            <div class="dropdown-item-compact" id="doc-email-draft-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span>${(window.__t || (k=>k))('doc.draft')}</div>
+            <div class="dropdown-item-compact" id="doc-email-schedule-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>${(window.__t || (k=>k))('doc.scheduleSend')}</div>
+            <div class="dropdown-item-compact" id="doc-email-unread-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg></span>${(window.__t || (k=>k))('doc.markUnread')}</div>
           </div>
         </div>
       </div>
@@ -4174,21 +4174,21 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
            csv / html / pdf) is the one growing to fill. -->
       <div id="doc-actions-footer" class="doc-email-actions">
         <span class="email-send-split" id="doc-copy-export-split">
-          <button type="button" id="doc-footer-copy-btn" class="email-send-btn email-send-main" title="Copy document"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</button>
-          <button type="button" id="doc-footer-export-btn" class="email-send-btn email-send-caret" title="Export as…" aria-label="Export options"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 15 12 9 18 15"/></svg></button>
+          <button type="button" id="doc-footer-copy-btn" class="email-send-btn email-send-main" title="${(window.__t || (k=>k))('doc.copy')}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>${(window.__t || (k=>k))('doc.copy')}</button>
+          <button type="button" id="doc-footer-export-btn" class="email-send-btn email-send-caret" title="${(window.__t || (k=>k))('doc.exportAs')}" aria-label="${(window.__t || (k=>k))('doc.exportAs')}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 15 12 9 18 15"/></svg></button>
         </span>
       </div>
       <div id="doc-version-panel" class="doc-version-panel hidden">
         <div class="doc-version-header">
-          <span>Version History</span>
+          <span>${(window.__t || (k=>k))('doc.versionBadge')}</span>
           <button id="doc-version-close" class="doc-action-icon-btn" title="Close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
         <div id="doc-version-list" class="doc-version-list"></div>
       </div>
       <div id="doc-mobile-footer" class="doc-mobile-footer">
-        <button id="doc-mobile-close" class="doc-mobile-footer-btn" type="button">Unlink</button>
+        <button id="doc-mobile-close" class="doc-mobile-footer-btn" type="button">${(window.__t || (k=>k))('common.close')}</button>
         <span style="flex:1"></span>
-        <button id="doc-mobile-copy" class="doc-mobile-footer-btn" type="button">Copy</button>
+        <button id="doc-mobile-copy" class="doc-mobile-footer-btn" type="button">${(window.__t || (k=>k))('common.copy')}</button>
       </div>
     `;
 
@@ -4297,7 +4297,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         if (isFull) {
           if (_divCollapse.dataset.mode !== 'unfullscreen') {
             _divCollapse.dataset.mode = 'unfullscreen';
-            _divCollapse.title = 'Exit fullscreen';
+            _divCollapse.title = (window.__t || (k=>k))('doc.exitFullscreen');
           }
           return;
         }
@@ -4307,10 +4307,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         const cur = _divCollapse.dataset.mode;
         if (ev.clientX > midX + HYSTERESIS && cur !== 'collapse') {
           _divCollapse.dataset.mode = 'collapse';
-          _divCollapse.title = 'Collapse panel';
+          _divCollapse.title = (window.__t || (k=>k))('doc.collapsePanel');
         } else if (ev.clientX < midX - HYSTERESIS && cur !== 'fullscreen') {
           _divCollapse.dataset.mode = 'fullscreen';
-          _divCollapse.title = 'Fullscreen';
+          _divCollapse.title = (window.__t || (k=>k))('doc.fullscreen');
         }
       };
       const _onMove = (ev) => _applyMode(ev);
@@ -4885,18 +4885,18 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         if (!res.ok) throw new Error('Failed');
         const versions = await res.json();
         if (versions.length < 2) {
-          if (uiModule) uiModule.showToast('No previous version to compare');
+          if (uiModule) uiModule.showToast((window.__t || (k=>k))('doc.unchanged'));
           return;
         }
         // versions are sorted desc — [0] is latest, [1] is previous
         const prevContent = versions[1].content || '';
         if (prevContent === current) {
-          if (uiModule) uiModule.showToast('No changes from previous version');
+          if (uiModule) uiModule.showToast((window.__t || (k=>k))('doc.unchanged'));
           return;
         }
         enterDiffMode(prevContent, current);
       } catch {
-        if (uiModule) uiModule.showError('Failed to load version history');
+        if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.failedToLoadVersions'));
       }
     });
 
@@ -5085,7 +5085,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         }
         if (_findMatches.length === 0) {
           _findIdx = -1;
-          if (cnt) cnt.textContent = '0 results';
+          if (cnt) cnt.textContent = (window.__t || (k=>k))('doc.noSuggestions');
           if (codeEl) { codeEl.dataset.findQuery = q; delete codeEl.dataset.findCurrent; applyFindMarks(codeEl); }
           renderFindRects([], -1);
           return;
@@ -5221,14 +5221,14 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       overlay.className = 'modal';
       overlay.innerHTML =
         '<div class="modal-content styled-confirm-box styled-prompt-box">' +
-          '<div class="modal-header"><h4>Insert link</h4></div>' +
+          '<div class="modal-header"><h4>' + ((window.__t || (k=>k))('doc.insertLink')) + '</h4></div>' +
           '<div class="modal-body">' +
             '<input type="text" id="doc-link-text" class="styled-prompt-input" placeholder="Link text (optional)" maxlength="500" />' +
             '<input type="url" id="doc-link-url" class="styled-prompt-input" placeholder="https://example.com" maxlength="2048" style="margin-top:8px;" />' +
           '</div>' +
           '<div class="modal-footer">' +
-            '<button id="doc-link-cancel" class="confirm-btn confirm-btn-secondary">Cancel</button>' +
-            '<button id="doc-link-ok" class="confirm-btn confirm-btn-primary">Insert</button>' +
+          '<button id="doc-link-cancel" class="confirm-btn confirm-btn-secondary">' + ((window.__t || (k=>k))('common.cancel')) + '</button>' +
+          '<button id="doc-link-ok" class="confirm-btn confirm-btn-primary">' + ((window.__t || (k=>k))('common.add')) + '</button>' +
           '</div>' +
         '</div>';
       document.body.appendChild(overlay);
@@ -6130,7 +6130,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       let textarea = document.getElementById('doc-editor-textarea');
       if (textarea) {
         textarea.disabled = false;
-        textarea.placeholder = 'Document content...';
+        textarea.placeholder = (window.__t || (k=>k))('common.new');
       }
       // Capture text typed during the round-trip (only when starting from the
       // empty editor — don't steal another doc's content).
@@ -6149,7 +6149,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       if (textarea) textarea.focus();
     } catch (e) {
       console.error('Failed to create document:', e);
-      if (uiModule) uiModule.showError('Failed to create document');
+      if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.failedToCreateDocument'));
     } finally {
       _creatingDoc = false;
     }
@@ -6189,7 +6189,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const quote = quoteIdx >= 0 ? lines.slice(quoteIdx).join('\n') : '';
     const ownText = _emailReplyOwnText(fields.body || '');
     if (ownText && !/^(\[AI reply draft will appear here\]|Drafting AI reply)/i.test(ownText)) {
-      if (uiModule) uiModule.showToast('AI reply ready, but draft was edited');
+      if (uiModule) uiModule.showToast((window.__t || (k=>k))('doc.aiReplyReady'));
       return;
     }
     const body = String(replyText || '').trim() + (quote ? `\n\n${quote}` : '');
@@ -6241,8 +6241,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       console.error('Failed to load document:', e);
       if (uiModule) {
         const msg = e.message === 'Not found'
-          ? 'Document not found — try opening it from the Library.'
-          : 'Could not open document.';
+          ? (window.__t || (k=>k))('doc.documentNotFound')
+          : (window.__t || (k=>k))('doc.couldNotOpenDocument');
         uiModule.showError(msg);
       }
     }
@@ -6977,7 +6977,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       badge = document.createElement('span');
       badge.id = 'doc-selection-badge';
       badge.className = 'doc-selection-badge';
-      badge.title = 'Selected regions — type in chat to edit';
+      badge.title = (window.__t || (k=>k))('doc.selectionHint');
       // Sits directly under the formatting toolbar so it reads as part
       // of the toolbar row, not buried in the page header. Falls back
       // to the editor header if the toolbar isn't on screen.
@@ -6999,7 +6999,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const label = _selections.length === 1
       ? `${labels[0]} selected`
       : `${_selections.length} selections (${labels.join(', ')})`;
-    badge.innerHTML = `${label}<button class="doc-selection-clear" title="Clear all selections">&times;</button>`;
+    badge.innerHTML = `${label}<button class="doc-selection-clear" title="${(window.__t || (k=>k))('common.delete')}">&times;</button>`;
     badge.style.display = '';
     badge.querySelector('.doc-selection-clear').addEventListener('click', (e) => {
       e.stopPropagation();
@@ -7395,17 +7395,17 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     card.innerHTML = `
       <div class="doc-suggestion-header">
         <div class="doc-suggestion-nav">
-          <button class="doc-suggestion-nav-btn doc-suggestion-prev" title="Previous">&lsaquo;</button>
-          <span class="doc-suggestion-counter">${num} / ${_suggestionTotal}</span>
-          <button class="doc-suggestion-nav-btn doc-suggestion-next" title="Next">&rsaquo;</button>
+          <button class="doc-suggestion-nav-btn doc-suggestion-prev" title="${(window.__t || (k=>k))('common.search')}">&lsaquo;</button>
+          <span class="doc-suggestion-counter">${(window.__t || (k=>k))('doc.findCounter').replace('{current}', num).replace('{total}', _suggestionTotal)}</span>
+          <button class="doc-suggestion-nav-btn doc-suggestion-next" title="${(window.__t || (k=>k))('common.search')}">&rsaquo;</button>
         </div>
-        <button class="doc-suggestion-close" title="Close all suggestions">&times;</button>
+        <button class="doc-suggestion-close" title="${(window.__t || (k=>k))('doc.noSuggestions')}">&times;</button>
       </div>
       <div class="doc-suggestion-reason">${_esc(sugg.reason)}</div>
       <div class="doc-suggestion-actions">
-        <button class="doc-suggestion-accept">Accept</button>
-        <button class="doc-suggestion-dismiss">Skip</button>
-        ${remaining > 1 ? '<button class="doc-suggestion-accept-all">Accept All</button>' : ''}
+        <button class="doc-suggestion-accept">${(window.__t || (k=>k))('common.apply')}</button>
+        <button class="doc-suggestion-dismiss">${(window.__t || (k=>k))('common.cancel')}</button>
+        ${remaining > 1 ? '<button class="doc-suggestion-accept-all">' + ((window.__t || (k=>k))('doc.acceptAll')) + '</button>' : ''}
       </div>
     `;
 
@@ -7606,7 +7606,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
     if (_diffChunks.length === 0) {
       _diffModeActive = false;
-      if (uiModule) uiModule.showToast('No changes');
+      if (uiModule) uiModule.showToast((window.__t || (k=>k))('doc.unchanged'));
       return;
     }
 
@@ -7707,12 +7707,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
     const acceptAll = document.createElement('button');
     acceptAll.className = 'diff-toolbar-btn diff-toolbar-btn-accept';
-    acceptAll.textContent = 'Accept All';
+    acceptAll.textContent = (window.__t || (k=>k))('doc.acceptAll');
     acceptAll.addEventListener('click', () => _resolveAllChunks(true));
 
     const rejectAll = document.createElement('button');
     rejectAll.className = 'diff-toolbar-btn diff-toolbar-btn-reject';
-    rejectAll.textContent = 'Reject All';
+    rejectAll.textContent = (window.__t || (k=>k))('doc.rejectAll');
     rejectAll.addEventListener('click', () => _resolveAllChunks(false));
 
     toolbar.appendChild(status);
@@ -7749,13 +7749,13 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
         const acceptBtn = document.createElement('button');
         acceptBtn.className = 'diff-chunk-btn diff-chunk-btn-accept';
-        acceptBtn.title = 'Accept change';
+        acceptBtn.title = (window.__t || (k=>k))('doc.acceptAll');
         acceptBtn.innerHTML = '✓';
         acceptBtn.addEventListener('click', (e) => { e.stopPropagation(); _resolveChunk(chunk.id, true); });
 
         const rejectBtn = document.createElement('button');
         rejectBtn.className = 'diff-chunk-btn diff-chunk-btn-reject';
-        rejectBtn.title = 'Reject change';
+        rejectBtn.title = (window.__t || (k=>k))('doc.rejectAll');
         rejectBtn.innerHTML = '✗';
         rejectBtn.addEventListener('click', (e) => { e.stopPropagation(); _resolveChunk(chunk.id, false); });
 
@@ -7774,7 +7774,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const el = statusEl || document.getElementById('diff-toolbar-status');
     if (!el) return;
     const resolved = _diffChunks.length - _diffUnresolvedCount;
-    el.textContent = `${resolved} / ${_diffChunks.length} changes resolved`;
+    el.textContent = `${resolved} / ${_diffChunks.length} ${(window.__t || (k=>k))('doc.changesResolved')}`;
   }
 
   /** Resolve a single chunk */
@@ -8108,7 +8108,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     }
 
     if (!codeRunnerModule) {
-      outputPanel.innerHTML = '<pre class="doc-run-error">Code runner not loaded</pre>';
+      outputPanel.innerHTML = '<pre class="doc-run-error">' + ((window.__t || (k=>k))('doc.codeRunnerNotLoaded')) + '</pre>';
       setTimeout(() => { if (outputPanel) outputPanel.style.display = 'none'; }, 5000);
       return;
     }
@@ -8128,7 +8128,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       return;
     }
 
-    outputPanel.innerHTML = '<pre class="doc-run-error">Unsupported language. Supported: bash, python, javascript, html</pre>';
+    outputPanel.innerHTML = '<pre class="doc-run-error">' + ((window.__t || (k=>k))('doc.unsupportedLanguage')) + '</pre>';
     setTimeout(() => { if (outputPanel) outputPanel.style.display = 'none'; }, 5000);
   }
 
@@ -8143,7 +8143,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         await navigator.clipboard.writeText(textarea.value);
       } catch (e) { /* ignore */ }
     }
-    if (uiModule) uiModule.showToast('Copied to clipboard');
+    if (uiModule) uiModule.showToast((window.__t || (k=>k))('common.copied'));
   }
 
   /* ---- Per-tab context menu ---- */
@@ -8201,9 +8201,9 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const _mdActive = _mdPreview && _mdPreview.style.display !== 'none';
     const _csvActive = _csvPreview && _csvPreview.style.display !== 'none';
     const _htmlActive = _htmlPreview && _htmlPreview.style.display !== 'none';
-    if (lang === 'markdown') { previewIcon = 'MD'; previewLabel = _mdActive ? 'Edit' : 'Preview'; }
-    else if (lang === 'csv') { previewIcon = '⊞'; previewLabel = _csvActive ? 'Edit' : 'Table View'; }
-    else if (_isRenderLang(lang)) { previewIcon = '▶'; previewLabel = _htmlActive ? 'Edit' : 'Run / Preview'; }
+    if (lang === 'markdown') { previewIcon = 'MD'; previewLabel = _mdActive ? (window.__t || (k=>k))('doc.edit') : (window.__t || (k=>k))('doc.preview'); }
+    else if (lang === 'csv') { previewIcon = '⊞'; previewLabel = _csvActive ? (window.__t || (k=>k))('doc.edit') : (window.__t || (k=>k))('doc.tableView'); }
+    else if (_isRenderLang(lang)) { previewIcon = '▶'; previewLabel = _htmlActive ? (window.__t || (k=>k))('doc.edit') : (window.__t || (k=>k))('doc.runPreview'); }
 
     const _di = (svg) => `<span class="dropdown-icon">${svg}</span>`;
     const _saveIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>';
@@ -8213,25 +8213,25 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const _deleteIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
 
     let items = '';
-    items += `<div class="dropdown-item-compact doc-tab-action" data-action="save">${_di(_saveIco)}<span>Save</span></div>`;
-    items += `<div class="dropdown-item-compact doc-tab-action" data-action="copy">${_di(_copyIco)}<span>Copy</span></div>`;
+    items += `<div class="dropdown-item-compact doc-tab-action" data-action="save">${_di(_saveIco)}<span>${(window.__t || (k=>k))('common.save')}</span></div>`;
+    items += `<div class="dropdown-item-compact doc-tab-action" data-action="copy">${_di(_copyIco)}<span>${(window.__t || (k=>k))('common.copy')}</span></div>`;
     if (canRun) {
-      items += `<div class="dropdown-item-compact doc-tab-action" data-action="run">${_di(_runIco)}<span>Run</span></div>`;
+      items += `<div class="dropdown-item-compact doc-tab-action" data-action="run">${_di(_runIco)}<span>${(window.__t || (k=>k))('doc.run')}</span></div>`;
     }
     if (previewLabel) {
       items += `<div class="dropdown-item-compact doc-tab-action" data-action="preview"><span class="dropdown-icon">${previewIcon}</span><span>${previewLabel}</span></div>`;
     }
     const _downloadIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
-    items += `<div class="dropdown-item-compact doc-tab-action" data-action="download">${_di(_downloadIco)}<span>Download</span></div>`;
+    items += `<div class="dropdown-item-compact doc-tab-action" data-action="download">${_di(_downloadIco)}<span>${(window.__t || (k=>k))('common.download')}</span></div>`;
     // "Send signed reply" — only if this doc was opened from an email attachment
     if (doc.sourceEmailUid && doc.sourceEmailFolder) {
       const _sendBackIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>';
-      items += `<div class="dropdown-item-compact doc-tab-action" data-action="signed-reply">${_di(_sendBackIco)}<span>Send signed reply</span></div>`;
+      items += `<div class="dropdown-item-compact doc-tab-action" data-action="signed-reply">${_di(_sendBackIco)}<span>${(window.__t || (k=>k))('doc.sendSignedReply')}</span></div>`;
     }
     const _closeIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-    items += `<div class="dropdown-item-compact doc-tab-action" data-action="close">${_di(_closeIco)}<span>Close</span></div>`;
+    items += `<div class="dropdown-item-compact doc-tab-action" data-action="close">${_di(_closeIco)}<span>${(window.__t || (k=>k))('common.close')}</span></div>`;
     items += `<div class="dropdown-divider"></div>`;
-    items += `<div class="dropdown-item-compact doc-tab-action doc-tab-action-delete" data-action="delete">${_di(_deleteIco)}<span>Delete</span></div>`;
+    items += `<div class="dropdown-item-compact doc-tab-action doc-tab-action-delete" data-action="delete">${_di(_deleteIco)}<span>${(window.__t || (k=>k))('common.delete')}</span></div>`;
 
     _docTabMenu.innerHTML = items;
     _docTabMenu.style.display = 'block';
@@ -8301,7 +8301,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   async function _sendSignedReply(docId) {
     const doc = docs.get(docId);
     if (!doc || !doc.sourceEmailUid) return;
-    if (uiModule) uiModule.showToast('Preparing signed reply…');
+    if (uiModule) uiModule.showToast((window.__t || (k=>k))('doc.preparingSignedReply'));
     let result;
     try {
       const res = await fetch(`${API_BASE}/api/document/${encodeURIComponent(docId)}/prepare-signed-reply`, {
@@ -8311,12 +8311,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       result = await res.json().catch(() => ({}));
       if (!res.ok || !result.ok) {
         const msg = (result && result.error) || `HTTP ${res.status}`;
-        if (uiModule) uiModule.showError(`Couldn't prepare signed reply: ${msg}`);
+        if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.preparingSignedReply') + ': ' + msg);
         return;
       }
     } catch (e) {
       console.error('prepare-signed-reply failed:', e);
-      if (uiModule) uiModule.showError("Couldn't prepare signed reply");
+      if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.preparingSignedReply'));
       return;
     }
 
@@ -8330,7 +8330,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         d._composeAtts = (d._composeAtts || []).concat([att]);
         await loadDocument(d.id);
         _renderComposeAttachments();
-        if (uiModule) uiModule.showToast(`Added "${att.filename}" to the reply draft`);
+        if (uiModule) uiModule.showToast((window.__t || (k=>k))('doc.replyDraftAdded') + ' "' + att.filename + '"');
         return;
       }
     }
@@ -8371,7 +8371,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       if (!draftId) throw new Error('No draft id returned');
     } catch (e) {
       console.error('Failed to create draft doc:', e);
-      if (uiModule) uiModule.showError("Couldn't create reply draft");
+      if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.failedToCreateDocument'));
       return;
     }
 
@@ -8393,7 +8393,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
     await loadDocument(draftId);
     _renderComposeAttachments();
-    if (uiModule) uiModule.showToast(`Reply draft ready — "${att.filename}" attached`);
+    if (uiModule) uiModule.showToast((window.__t || (k=>k))('doc.replyDraftReady') + ' "' + att.filename + '"');
   }
 
   /** Save manual edits */
@@ -8419,12 +8419,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         docs.get(activeDocId).content = textarea.value;
       }
       _syncDocIndicator();
-      if (!silent && uiModule) uiModule.showToast('Document saved');
+      if (!silent && uiModule) uiModule.showToast((window.__t || (k=>k))('settings.saved'));
     } catch (e) {
       console.error('Failed to save document:', e);
       const now = Date.now();
       if (uiModule && (!silent || now - _lastAutoSaveErrorAt > 10000)) {
-        uiModule.showError(silent ? 'Autosave failed' : 'Failed to save document');
+        uiModule.showError(silent ? (window.__t || (k=>k))('settings.failedToSave') : (window.__t || (k=>k))('settings.failedToSave'));
         _lastAutoSaveErrorAt = now;
       }
     }
@@ -8574,7 +8574,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           }
         }
       } catch (err) {
-        if (uiModule && uiModule.showError) uiModule.showError('Import failed: ' + (err.message || err));
+        if (uiModule && uiModule.showError) uiModule.showError((window.__t || (k=>k))('doc.importFailed') + ': ' + (err.message || err));
       } finally {
         fi.value = '';
         fi.remove();
@@ -8683,7 +8683,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     a.download = _getExportBaseName() + '.html';
     a.click();
     URL.revokeObjectURL(a.href);
-    if (uiModule) uiModule.showToast('Exported as HTML');
+    if (uiModule) uiModule.showToast((window.__t || (k=>k))('doc.exportedHtml'));
   }
 
   async function exportAsPdf() {
@@ -8693,7 +8693,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     try {
       await ensureHtml2Pdf();
     } catch (e) {
-      if (uiModule) uiModule.showError('Failed to load PDF library');
+      if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.failedToLoadPdf'));
       return;
     }
     const lang = document.getElementById('doc-language-select')?.value || '';
@@ -8717,7 +8717,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       html2canvas: { scale: 2 },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
     }).from(container).save();
-    if (uiModule) uiModule.showToast('Exporting PDF...');
+    if (uiModule) uiModule.showToast((window.__t || (k=>k))('common.loading'));
   }
 
   async function exportAsDocx() {
@@ -8727,7 +8727,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     try {
       await ensureDocx();
     } catch (e) {
-      if (uiModule) uiModule.showError('Failed to load DOCX library');
+      if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.failedToLoadDocx'));
       return;
     }
     const text = textarea.value || '';
@@ -8765,7 +8765,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     a.download = baseName + '.docx';
     a.click();
     URL.revokeObjectURL(a.href);
-    if (uiModule) uiModule.showToast('Exported as DOCX');
+    if (uiModule) uiModule.showToast((window.__t || (k=>k))('doc.exportedDocx'));
   }
 
   /** Delete the active document */
@@ -8774,7 +8774,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const doc = docs.get(activeDocId);
     const name = doc ? doc.title : 'this document';
     const ok = uiModule && uiModule.styledConfirm
-      ? await uiModule.styledConfirm(`Delete "${name}"?`, { confirmText: 'Delete', danger: true })
+      ? await uiModule.styledConfirm(`Delete "${name}"?`, { confirmText: (window.__t || (k=>k))('common.delete'), danger: true })
       : confirm(`Delete "${name}"?`);
     if (!ok) return;
     try {
@@ -8792,10 +8792,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         activeDocId = null;
         closePanel();
       }
-      if (uiModule) uiModule.showToast('Document deleted');
+      if (uiModule) uiModule.showToast((window.__t || (k=>k))('common.delete'));
     } catch (e) {
       console.error('Failed to delete document:', e);
-      if (uiModule) uiModule.showError('Failed to delete document');
+      if (uiModule) uiModule.showError((window.__t || (k=>k))('settings.failedToSave'));
     }
   }
 
@@ -8951,7 +8951,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           if (editorWrap) editorWrap.after(outputPanel);
         }
         outputPanel.style.display = 'block';
-        outputPanel.innerHTML = '<pre class="doc-run-error">No data — CSV is empty or unparseable.</pre>';
+        outputPanel.innerHTML = '<pre class="doc-run-error">' + ((window.__t || (k=>k))('doc.noDataCsv')) + '</pre>';
         return;
       } else {
         const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -9347,7 +9347,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const textarea = document.getElementById('doc-editor-textarea');
     if (textarea) {
       textarea.disabled = false;
-      textarea.placeholder = 'Document content...';
+      textarea.placeholder = (window.__t || (k=>k))('common.new');
       textarea.value = '';
     }
     // Show streaming indicator
@@ -9626,7 +9626,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     // Re-enable editor if it was in empty state
     if (textarea) {
       textarea.disabled = false;
-      textarea.placeholder = 'Document content...';
+      textarea.placeholder = (window.__t || (k=>k))('common.new');
     }
     if (badge) badge.textContent = `v${data.version || 1}`;
     if (data.title && titleInput) titleInput.value = data.title;
@@ -9811,7 +9811,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       if (line) parts.push(`<span class="diff-add">${_escHtml(line.slice(0, 60))}</span>`);
     }
     const extra = (added.length + removed.length) - 4;
-    if (extra > 0) parts.push(`<span>+${extra} more changes</span>`);
+    if (extra > 0) parts.push(`<span>+${extra} more</span>`);
     return parts.join('<br>');
   }
   function _escHtml(s) {
@@ -9842,11 +9842,11 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         <div class="doc-version-item" data-version="${v.version_number}">
           <div class="doc-version-info">
             <span class="doc-version-num">v${v.version_number}</span>
-            ${i === 0 ? '<span class="doc-version-latest">latest</span>' : `<span class="doc-version-source">${v.source}</span><span class="doc-version-time">${v.created_at ? new Date(v.created_at).toLocaleString() : ''}</span>`}
+            ${i === 0 ? `<span class="doc-version-latest">${(window.__t || (k=>k))('doc.latest')}</span>` : `<span class="doc-version-source">${v.source}</span><span class="doc-version-time">${v.created_at ? new Date(v.created_at).toLocaleString() : ''}</span>`}
           </div>
           ${v.summary ? `<div class="doc-version-summary">${v.summary}</div>` : ''}
           ${diffs[i] ? `<div class="doc-version-diff">${diffs[i]}</div>` : ''}
-          ${i > 0 ? `<button class="doc-version-restore" data-version="${v.version_number}">Restore</button>` : ''}
+          ${i > 0 ? `<button class="doc-version-restore" data-version="${v.version_number}">${(window.__t || (k=>k))('doc.restore')}</button>` : ''}
         </div>
       `).join('');
 
@@ -9869,7 +9869,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         });
       });
     } catch (e) {
-      list.innerHTML = '<div style="padding:8px;opacity:0.5;">Failed to load versions</div>';
+      list.innerHTML = '<div style="padding:8px;opacity:0.5;">' + ((window.__t || (k=>k))('doc.failedToLoadVersions')) + '</div>';
     }
   }
 
@@ -9905,10 +9905,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         d.version = doc.version_count || 1;
       }
       await loadVersionHistory();
-      if (uiModule) uiModule.showToast(`Restored to v${num}`);
+      if (uiModule) uiModule.showToast((window.__t || (k=>k))('doc.restore') + ` v${num}`);
     } catch (e) {
       console.error('Failed to restore version:', e);
-      if (uiModule) uiModule.showError('Failed to restore version');
+      if (uiModule) uiModule.showError((window.__t || (k=>k))('doc.failedToRestore'));
     }
   }
 

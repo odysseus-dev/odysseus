@@ -198,7 +198,7 @@ export function initKeyboardShortcuts(modules) {
       const s = sessionModule.getSessions().find(x => x.id === sid);
       if (!s) return;
       if (s.is_important) { uiModule.showToast('Unstar before deleting'); return; }
-      uiModule.styledConfirm('Delete this session?', { confirmText: 'Delete', danger: true }).then(ok => {
+      uiModule.styledConfirm('Delete this session?', { confirmText: (window.__t || (k=>k))('common.delete'), danger: true }).then(ok => {
         if (!ok) return;
         const allSessions = sessionModule.getSessions();
         const idx = allSessions.findIndex(x => x.id === sid);

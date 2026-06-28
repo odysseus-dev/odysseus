@@ -986,7 +986,7 @@ async function _registerEndpointFromButton(btn) {
   if (!baseUrl || !_isModelEndpointUrl(baseUrl)) return;
   const original = btn.innerHTML;
   btn.disabled = true;
-  btn.innerHTML = '<span aria-hidden="true">...</span><span>Adding</span>';
+  btn.innerHTML = `<span aria-hidden="true">...</span><span>${(window.__t || (k=>k))('common.loading')}</span>`;
   try {
     const existingRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
     if (existingRes.ok) {

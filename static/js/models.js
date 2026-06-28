@@ -82,7 +82,7 @@ function _startChat(url, mid, endpointId) {
   if (sessionModule) {
     sessionModule.createDirectChat(url, mid, endpointId);
   } else if (uiModule) {
-    uiModule.showError('Session module not loaded');
+    uiModule.showError((window.__t || (k=>k))('models.sessionModuleNotLoaded'));
   }
 }
 
@@ -95,7 +95,7 @@ function _buildModelRow(mid, url, displayName, endpointId, offline, modelType) {
   const handle = document.createElement('span');
   handle.className = 'item-drag-handle';
   handle.textContent = '\u22EE\u22EE';
-  handle.title = 'Drag to reorder';
+  handle.title = (window.__t || (k=>k))('models.dragToReorder');
   row.appendChild(handle);
 
   // Favorite indicator — provider logo or colored dot
@@ -109,12 +109,12 @@ function _buildModelRow(mid, url, displayName, endpointId, offline, modelType) {
   } else {
     fav.className = 'model-fav-btn' + (_isFavorite(mid) ? ' active' : '');
   }
-  fav.title = 'Toggle favorite';
+  fav.title = (window.__t || (k=>k))('models.toggleFavorite');
   fav.addEventListener('click', (e) => {
     e.stopPropagation();
     const nowFav = _toggleFavorite(mid);
     fav.classList.toggle('active', nowFav);
-    uiModule.showToast(nowFav ? 'Favorited' : 'Unfavorited');
+    uiModule.showToast(nowFav ? (window.__t || (k=>k))('models.favorited') : (window.__t || (k=>k))('models.unfavorited'));
     refreshModels();
   });
   const span = document.createElement('span');
@@ -123,15 +123,15 @@ function _buildModelRow(mid, url, displayName, endpointId, offline, modelType) {
   if (modelType === 'image') {
     const badge = document.createElement('span');
     badge.className = 'model-type-badge';
-    badge.textContent = 'IMG';
-    badge.title = 'Image generation model';
+    badge.textContent = (window.__t || (k=>k))('models.imgBadge');
+    badge.title = (window.__t || (k=>k))('models.imageGenerationModel');
     badge.style.cssText = 'font-size:0.65em;padding:1px 4px;border-radius:3px;background:var(--accent,#7c3aed);color:#fff;margin-left:6px;vertical-align:middle;';
     span.appendChild(badge);
   }
 
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.textContent = offline ? 'Offline' : (modelType === 'image' ? '+ Image' : '+ Chat');
+  btn.textContent = offline ? (window.__t || (k=>k))('models.offline') : (modelType === 'image' ? (window.__t || (k=>k))('models.addImage') : (window.__t || (k=>k))('models.addChat'));
   btn.className = 'model-chat-btn';
   btn.style.transition = 'all 0.2s ease';
   if (offline) {
@@ -197,7 +197,7 @@ export async function refreshModels(force = false) {
       _cachedItems = data.items || [];
     } catch (e) {
       console.error(e);
-      box.textContent = '(scan failed)';
+      box.textContent = (window.__t || (k=>k))('models.scanFailed');
       return;
     } finally {
       box.innerHTML = '';
@@ -215,7 +215,7 @@ export async function refreshModels(force = false) {
     if (_cachedItems && _cachedItems.length > 0) {
       _cachedItems.forEach(item => {
         const cat = item.category === 'local' ? 'local' : 'api';
-        const epName = item.endpoint_name || 'Unknown';
+        const epName = item.endpoint_name || (window.__t || (k=>k))('models.unknown');
         const isOffline = !!item.offline;
         if (!groups[cat][epName]) groups[cat][epName] = [];
         if (!extraGroups[cat][epName]) extraGroups[cat][epName] = [];
@@ -281,7 +281,7 @@ export async function refreshModels(force = false) {
         favToggle.textContent = favCollapsed ? '\u25B6' : '\u25BC';
         favHeader.appendChild(favToggle);
         const favLabel = document.createElement('span');
-        favLabel.textContent = 'Favorites';
+        favLabel.textContent = (window.__t || (k=>k))('models.favorites');
         favHeader.appendChild(favLabel);
         const favCount = document.createElement('span');
         favCount.className = 'folder-count';
@@ -314,8 +314,8 @@ export async function refreshModels(force = false) {
       Object.keys(groups.local).length > 1 || Object.keys(groups.api).length > 1;
 
     const categoryOrder = [
-      { key: 'local', label: 'Local' },
-      { key: 'api', label: 'API' },
+      { key: 'local', label: (window.__t || (k=>k))('models.local') },
+      { key: 'api', label: (window.__t || (k=>k))('models.api') },
     ];
 
     categoryOrder.forEach(({ key, label }) => {
@@ -384,7 +384,7 @@ export async function refreshModels(force = false) {
           if (isOfflineEndpoint) {
             const badge = document.createElement('span');
             badge.className = 'endpoint-offline-badge';
-            badge.textContent = '(offline)';
+            badge.textContent = (window.__t || (k=>k))('models.endpointOffline');
             sub.appendChild(badge);
           }
 
@@ -442,7 +442,7 @@ export async function refreshModels(force = false) {
           const showMoreBtn = document.createElement('div');
           showMoreBtn.className = 'models-show-all-btn';
           showMoreBtn.style.cssText = 'text-align:center;padding:6px;opacity:0.5;cursor:pointer;font-size:0.82em;';
-          showMoreBtn.textContent = `Show ${allHidden.length} more model${allHidden.length === 1 ? '' : 's'}`;
+          showMoreBtn.textContent = (window.__t || (k=>k))('models.showMore', {n: allHidden.length});
           showMoreBtn._target = target;
           showMoreBtn.addEventListener('click', () => {
             showMoreBtn.remove();
@@ -505,7 +505,7 @@ export async function refreshModels(force = false) {
     if (totalModelCount >= 10) {
       const searchBox = document.createElement('input');
       searchBox.type = 'text';
-      searchBox.placeholder = 'Search models...';
+      searchBox.placeholder = (window.__t || (k=>k))('models.searchModels');
       searchBox.className = 'model-search-input';
       searchBox.addEventListener('click', (e) => e.stopPropagation());
       searchBox.addEventListener('touchstart', (e) => e.stopPropagation());
@@ -548,7 +548,7 @@ export async function refreshModels(force = false) {
         if (searchResults.children.length === 0) {
           const empty = document.createElement('div');
           empty.style.cssText = 'text-align:center;padding:12px;opacity:0.4;';
-          empty.textContent = 'No models match "' + searchBox.value.trim() + '"';
+          empty.textContent = (window.__t || (k=>k))('models.noModelsMatch', {query: searchBox.value.trim()});
           searchResults.appendChild(empty);
         }
       });
@@ -559,45 +559,45 @@ export async function refreshModels(force = false) {
       const noModels = document.createElement('div');
       noModels.className = 'models-empty-state';
       if (window._isAdmin) {
-        noModels.innerHTML = '<span class="muted">No models found</span><br>'
-          + '<a href="#" onclick="document.getElementById(\'user-bar-admin\')?.click();return false;" class="accent-link">Open Admin to add endpoints</a>'
-          + '<br><span class="muted-sm">Type /setup for Local models or API setup.</span>';
+        noModels.innerHTML = '<span class="muted">' + (window.__t || (k=>k))('models.noModelsFound') + '</span><br>'
+          + '<a href="#" onclick="document.getElementById(\'user-bar-admin\')?.click();return false;" class="accent-link">' + (window.__t || (k=>k))('models.openAdminToAddEndpoints') + '</a>'
+          + '<br><span class="muted-sm">' + (window.__t || (k=>k))('models.setupHint') + '</span>';
       } else {
-        noModels.innerHTML = '<span class="muted">No models available</span><br>'
-          + '<span class="muted-sm">Ask an admin to configure model endpoints</span>';
+        noModels.innerHTML = '<span class="muted">' + (window.__t || (k=>k))('models.noModelsAvailable') + '</span><br>'
+          + '<span class="muted-sm">' + (window.__t || (k=>k))('models.askAdminToConfigure') + '</span>';
       }
       box.appendChild(noModels);
       // No endpoints yet: keep the welcome screen focused on first setup.
       const welcomeSub = document.getElementById('welcome-sub');
-      if (welcomeSub) welcomeSub.innerHTML = 'Type <span class="setup-trigger-link" style="color:var(--accent,var(--red));font-weight:600;cursor:pointer;text-decoration:underline;" title="Click to launch setup">/setup</span> to get started.';
+      if (welcomeSub) welcomeSub.innerHTML = (window.__t || (k=>k))('models.welcomeSubSetup');
       const welcomeTip = document.getElementById('welcome-tip');
-      if (welcomeTip) welcomeTip.textContent = 'Type /setup, then choose Local models or API.';
+      if (welcomeTip) welcomeTip.textContent = (window.__t || (k=>k))('models.welcomeTipSetup');
     } else {
       // Configured installs should feel ready, not stuck in onboarding.
       const welcomeSub = document.getElementById('welcome-sub');
-      if (welcomeSub) welcomeSub.textContent = 'Yours for the voyage.';
+      if (welcomeSub) welcomeSub.textContent = (window.__t || (k=>k))('models.welcomeSubConfigured');
       const welcomeTip = document.getElementById('welcome-tip');
       if (welcomeTip) {
         const tips = window.innerWidth <= 768
           ? [
-              'Tip: Long-press a session for rename, delete, and memory options.',
-              'Tip: Tap the eye icon for Nobody mode - no history saved.',
-              'Tip: Switch to Agent mode when you want tools.',
-              'Tip: Attach images or files using the + button next to the input.',
+              (window.__t || (k=>k))('models.tipMobile1'),
+              (window.__t || (k=>k))('models.tipMobile2'),
+              (window.__t || (k=>k))('models.tipMobile3'),
+              (window.__t || (k=>k))('models.tipMobile4'),
             ]
           : [
-              'Tip: Press Ctrl+K to search across all your conversations.',
-              'Tip: Press Ctrl+B to quickly toggle the sidebar.',
-              'Tip: Shift-click the sidebar toggle to swap it to the other side.',
-              'Tip: Drag and drop files onto the chat to attach them.',
-              'Tip: Right-click a session for rename, delete, and memory options.',
+              (window.__t || (k=>k))('models.tipDesktop1'),
+              (window.__t || (k=>k))('models.tipDesktop2'),
+              (window.__t || (k=>k))('models.tipDesktop3'),
+              (window.__t || (k=>k))('models.tipDesktop4'),
+              (window.__t || (k=>k))('models.tipDesktop5'),
             ];
         welcomeTip.textContent = tips[Math.floor(Math.random() * tips.length)];
       }
     }
   } catch (e) {
     console.error(e);
-    box.textContent = '(render failed: ' + e.message + ')';
+    box.textContent = (window.__t || (k=>k))('models.renderFailed', {error: e.message});
   }
 }
 
@@ -608,7 +608,7 @@ export async function refreshProviders() {
   const sel = document.getElementById('openai-model');
   if (!sel) return; // Exit if element doesn't exist
 
-  sel.innerHTML = '<option disabled>Loading providers…</option>';
+  sel.innerHTML = '<option disabled>' + (window.__t || (k=>k))('models.loadingProviders') + '</option>';
 
   try {
     const res = await fetch(`${API_BASE}/api/providers`);
@@ -628,7 +628,7 @@ export async function refreshProviders() {
     } else {
       const opt = document.createElement('option');
       opt.value = '';
-      opt.textContent = '(OPENAI_API_KEY not set on server)';
+      opt.textContent = (window.__t || (k=>k))('models.openaiKeyNotSet');
       sel.appendChild(opt);
     }
   } catch (e) {

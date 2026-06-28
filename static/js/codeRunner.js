@@ -66,15 +66,15 @@ function showOutput(panel, text, isError) {
       } catch (_) {}
       if (!ok && navigator.clipboard && window.isSecureContext) {
         navigator.clipboard.writeText(text).then(() => {
-          if (uiModule.showToast) uiModule.showToast('Copied');
-          cbtn.textContent = 'Copied!';
+          if (uiModule.showToast) uiModule.showToast((window.__t || (k=>k))('markdown.copied'));
+          cbtn.textContent = (window.__t || (k=>k))('markdown.copied');
           setTimeout(() => { cbtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy'; }, 1500);
         }).catch(() => { if (uiModule.showToast) uiModule.showToast('Copy failed'); });
         return;
       }
-      if (uiModule.showToast) uiModule.showToast(ok ? 'Copied' : 'Copy failed');
+      if (uiModule.showToast) uiModule.showToast(            ok ? (window.__t || (k=>k))('markdown.copied') : 'Copy failed');
       const orig = cbtn.innerHTML;
-      cbtn.textContent = ok ? 'Copied!' : 'Copy failed';
+      cbtn.textContent = ok ? (window.__t || (k=>k))('markdown.copied') : 'Copy failed';
       setTimeout(() => { cbtn.innerHTML = orig; }, 1500);
     });
     // Button lives directly in the panel — no wrapping bar. The panel is
@@ -185,18 +185,18 @@ function loadPyodide() {
  * Run Python code via Pyodide
  */
 export async function runPython(code, panel) {
-  showLoading(panel, 'Loading Python runtime (first time ~10 MB)...');
+  showLoading(panel, (window.__t || (k=>k))('common.loading'));
 
   let py;
   try {
     py = await loadPyodide();
   } catch (e) {
-    showOutput(panel, 'Failed to load Python runtime: ' + e.message, true);
+    showOutput(panel, (window.__t || (k=>k))('doc.codeRunnerNotLoaded') + ': ' + e.message, true);
     addCloseBtn(panel);
     return;
   }
 
-  showLoading(panel, 'Running...');
+  showLoading(panel, (window.__t || (k=>k))('common.run'));
 
   const wrapper = `
 import sys, io
@@ -242,7 +242,7 @@ finally:
  * Run JavaScript code in a sandboxed iframe
  */
 export function runJavaScript(code, panel) {
-  showLoading(panel, 'Running...');
+  showLoading(panel, (window.__t || (k=>k))('common.run'));
 
   const iframe = document.createElement('iframe');
   iframe.style.display = 'none';
@@ -309,7 +309,7 @@ try {
  * Run code server-side via POST /api/shell/exec
  */
 export async function runServer(code, panel, lang) {
-  showLoading(panel, 'Running on server...');
+  showLoading(panel, (window.__t || (k=>k))('common.run'));
   // Base64-encode the script so newlines survive the shell quoting intact.
   // JSON.stringify turns \n into literal \\n which python3 -c sees as backslash-n;
   // base64 avoids every quoting/escaping pitfall.

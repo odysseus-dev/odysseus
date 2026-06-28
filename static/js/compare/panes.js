@@ -66,7 +66,7 @@ function stopPane(paneIdx) {
     if (lastAi && lastAi._spinner) { lastAi._spinner.destroy(); lastAi._spinner = null; }
     const body = lastAi && lastAi.querySelector('.body');
     if (body && !body.textContent.trim()) {
-      body.innerHTML = '<span style="opacity:0.4;font-style:italic;">Stopped</span>';
+      body.innerHTML = '<span style="opacity:0.4;font-style:italic;">' + (window.__t || (k=>k))('compare.cancelled') + '</span>';
     }
   }
 }
@@ -106,7 +106,7 @@ async function rerollPane(paneIdx, overrideTimeout) {
     aiMsg.innerHTML = '<div class="role">Search</div><div class="body"></div>';
     const aiBody = aiMsg.querySelector('.body');
     if (spinnerModule) {
-      const spinner = spinnerModule.create('Searching...', 'right');
+      const spinner = spinnerModule.create((window.__t || (k=>k))('common.loading'), 'right');
       aiBody.appendChild(spinner.createElement());
       spinner.start();
     }
@@ -127,7 +127,7 @@ async function rerollPane(paneIdx, overrideTimeout) {
       const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
       aiBody.innerHTML = '';
       if (data.error) {
-        aiBody.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;">Error: ' + escapeHtml(data.error) + '</div>';
+        aiBody.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;">' + (window.__t || (k=>k))('compare.error') + ' ' + escapeHtml(data.error) + '</div>';
       } else if (!data.results || data.results.length === 0) {
         aiBody.innerHTML = '<div style="color:color-mix(in srgb, var(--fg) 50%, transparent);font-size:0.85em;font-style:italic;">No results found</div>';
       } else {
@@ -144,7 +144,7 @@ async function rerollPane(paneIdx, overrideTimeout) {
       footer.appendChild(span);
       aiMsg.appendChild(footer);
     } catch (err) {
-      aiBody.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;">Error: ' + escapeHtml(err.message) + '</div>';
+      aiBody.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;">' + (window.__t || (k=>k))('compare.error') + ' ' + escapeHtml(err.message) + '</div>';
     }
     state._abortControllers[paneIdx] = null;
     hist.scrollTop = hist.scrollHeight;
@@ -154,10 +154,10 @@ async function rerollPane(paneIdx, overrideTimeout) {
   // Chat/agent mode: stream via session
   const aiMsg = document.createElement('div');
   aiMsg.className = 'msg msg-ai';
-  aiMsg.innerHTML = '<div class="role">AI</div><div class="body"></div>';
+  aiMsg.innerHTML = '<div class="role">' + (window.__t || (k=>k))('chat.agent') + '</div><div class="body"></div>';
   const aiBody = aiMsg.querySelector('.body');
   if (spinnerModule) {
-    const label = overrideTimeout ? 'Retrying (' + overrideTimeout + 's)...' : 'Re-rolling...';
+    const label = overrideTimeout ? (window.__t || (k=>k))('common.retry') + ' (' + overrideTimeout + 's)' : (window.__t || (k=>k))('common.loading');
     const spinner = spinnerModule.create(label, 'right');
     aiBody.appendChild(spinner.createElement());
     spinner.start();
@@ -210,7 +210,7 @@ function _autoPreviewHtml(paneIdx, accumulated) {
   // Show the play button
   previewBtn.style.display = '';
   previewBtn.innerHTML = ICON_PLAY;
-  previewBtn.title = 'Run preview';
+  previewBtn.title = (window.__t || (k=>k))('compare.reveal');
 }
 
 /** Toggle between iframe preview and code view for a pane. */
@@ -226,7 +226,7 @@ function togglePanePreview(paneIdx) {
     iframe.style.display = 'none';
     hist.style.display = '';
     btn.innerHTML = ICON_PLAY;
-    btn.title = 'Run preview';
+    btn.title = (window.__t || (k=>k))('compare.reveal');
     btn.classList.remove('active');
   } else {
     // Switch to preview — load on first click
@@ -269,7 +269,7 @@ async function copyPaneResponse(paneIdx) {
     ta.value = text; document.body.appendChild(ta); ta.select();
     document.execCommand('copy'); ta.remove();
   }
-  if (uiModule) uiModule.showToast(lastAi._imageData ? 'Prompt copied!' : 'Copied!');
+  if (uiModule) uiModule.showToast((window.__t || (k=>k))('common.copied'));
 }
 
 // ── Add / create / remove panes ──
@@ -293,7 +293,7 @@ async function _addPane(anchorBtn) {
   if (filtered.length >= 5) {
     const searchInput = document.createElement('input');
     searchInput.type = 'text';
-    searchInput.placeholder = 'Search models\u2026';
+    searchInput.placeholder = (window.__t || (k=>k))('common.search');
     searchInput.className = 'add-pane-search';
     searchInput.addEventListener('input', () => {
       const q = searchInput.value.toLowerCase().trim();
@@ -413,11 +413,11 @@ async function _createAndAppendPane(m) {
       '<span class="pane-timer" id="cmp-timer-' + i + '"></span>' +
         '<span class="pane-finish-badge" id="cmp-badge-' + i + '"></span>' +
       '<div class="pane-actions">' +
-        '<button class="pane-action-btn pane-preview-btn" data-action="preview" data-pane="' + i + '" id="cmp-preview-' + i + '" title="Run preview" style="display:none;">' + ICON_PLAY + '</button>' +
-        '<button class="pane-action-btn" data-action="reroll" data-pane="' + i + '" title="Re-roll">' + ICON_REROLL + '</button>' +
-        '<button class="pane-action-btn" data-action="copy" data-pane="' + i + '" title="Copy">' + ICON_COPY + '</button>' +
-        '<button class="pane-action-btn" data-action="expand" data-pane="' + i + '" title="Expand">' + ICON_EXPAND + '</button>' +
-        '<button class="pane-action-btn pane-close-btn" data-action="close" data-pane="' + i + '" title="Remove pane">' + ICON_CLOSE + '</button>' +
+        '<button class="pane-action-btn pane-preview-btn" data-action="preview" data-pane="' + i + '" id="cmp-preview-' + i + '" title="' + (window.__t || (k=>k))('compare.reveal') + '" style="display:none;">' + ICON_PLAY + '</button>' +
+        '<button class="pane-action-btn" data-action="reroll" data-pane="' + i + '" title="' + (window.__t || (k=>k))('compare.reset') + '">' + ICON_REROLL + '</button>' +
+        '<button class="pane-action-btn" data-action="copy" data-pane="' + i + '" title="' + (window.__t || (k=>k))('common.copy') + '">' + ICON_COPY + '</button>' +
+        '<button class="pane-action-btn" data-action="expand" data-pane="' + i + '" title="' + (window.__t || (k=>k))('compare.reveal') + '">' + ICON_EXPAND + '</button>' +
+        '<button class="pane-action-btn pane-close-btn" data-action="close" data-pane="' + i + '" title="' + (window.__t || (k=>k))('common.close') + '">' + ICON_CLOSE + '</button>' +
       '</div>' +
     '</div>' +
     '<div class="chat-history" id="cmp-history-' + i + '"></div>' +
@@ -441,7 +441,7 @@ async function _createAndAppendPane(m) {
   const headerSpan = document.querySelector('.compare-active > div:first-child span');
   if (headerSpan) {
     const modeLabel = ({ search: ' search providers', agent: ' agents', research: ' research models' }[state._compareMode] || ' models');
-    headerSpan.textContent = 'Comparing' + modeLabel +
+    headerSpan.textContent = (window.__t || (k=>k))('compare.loading') + modeLabel +
       (state._blindMode ? ' (blind)' : '') + ' \u00b7 ' + state._timeout + 's timeout';
   }
 
@@ -506,12 +506,12 @@ function _removePane(paneIdx) {
         '<span class="pane-timer" id="cmp-timer-' + i + '"></span>' +
         '<span class="pane-finish-badge" id="cmp-badge-' + i + '"></span>' +
         '<div class="pane-actions">' +
-          '<button class="pane-action-btn pane-stop-btn" data-action="stop" data-pane="' + i + '" title="Stop" style="display:none;"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>' +
-          '<button class="pane-action-btn pane-preview-btn" data-action="preview" data-pane="' + i + '" id="cmp-preview-' + i + '" title="Run preview" style="display:none;">' + ICON_PLAY + '</button>' +
-          '<button class="pane-action-btn pane-needs-response" data-action="reroll" data-pane="' + i + '" title="Re-roll" style="display:none;">' + ICON_REROLL + '</button>' +
-          '<button class="pane-action-btn pane-needs-response" data-action="copy" data-pane="' + i + '" title="Copy" style="display:none;">' + ICON_COPY + '</button>' +
-          '<button class="pane-action-btn" data-action="expand" data-pane="' + i + '" title="Expand">' + ICON_EXPAND + '</button>' +
-          '<button class="pane-action-btn pane-close-btn" data-action="close" data-pane="' + i + '" title="Remove pane">' + ICON_CLOSE + '</button>' +
+          '<button class="pane-action-btn pane-stop-btn" data-action="stop" data-pane="' + i + '" title="' + (window.__t || (k=>k))('chat.stop') + '" style="display:none;"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>' +
+          '<button class="pane-action-btn pane-preview-btn" data-action="preview" data-pane="' + i + '" id="cmp-preview-' + i + '" title="' + (window.__t || (k=>k))('compare.reveal') + '" style="display:none;">' + ICON_PLAY + '</button>' +
+          '<button class="pane-action-btn pane-needs-response" data-action="reroll" data-pane="' + i + '" title="' + (window.__t || (k=>k))('compare.reset') + '" style="display:none;">' + ICON_REROLL + '</button>' +
+          '<button class="pane-action-btn pane-needs-response" data-action="copy" data-pane="' + i + '" title="' + (window.__t || (k=>k))('common.copy') + '" style="display:none;">' + ICON_COPY + '</button>' +
+          '<button class="pane-action-btn" data-action="expand" data-pane="' + i + '" title="' + (window.__t || (k=>k))('compare.reveal') + '">' + ICON_EXPAND + '</button>' +
+          '<button class="pane-action-btn pane-close-btn" data-action="close" data-pane="' + i + '" title="' + (window.__t || (k=>k))('common.close') + '">' + ICON_CLOSE + '</button>' +
         '</div>' +
       '</div>' +
       '<div class="chat-history" id="cmp-history-' + i + '"></div>' +
@@ -532,7 +532,7 @@ function _removePane(paneIdx) {
   const headerSpan = document.querySelector('.compare-active > div:first-child span');
   if (headerSpan) {
     const modeLabel = ({ search: ' search providers', agent: ' agents', research: ' research models' }[state._compareMode] || ' models');
-    headerSpan.textContent = 'Comparing' + modeLabel +
+    headerSpan.textContent = (window.__t || (k=>k))('compare.loading') + modeLabel +
       (state._blindMode ? ' (blind)' : '') + ' \u00b7 ' + state._timeout + 's timeout';
   }
 

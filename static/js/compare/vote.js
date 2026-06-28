@@ -7,6 +7,8 @@ import uiModule from '../ui.js';
 import { VOTES_STORAGE_KEY, VOTES_MAX } from './icons.js';
 import { showScoreboard } from './scoreboard.js';
 
+const __t = (k, v) => (window.__t || (kk=>kk))(k, v);
+
 var escapeHtml = uiModule.esc;
 
 // ── Helpers imported lazily to avoid circular deps ──
@@ -65,7 +67,7 @@ function buildVoteBar(n) {
 
   const tieBtn = document.createElement('button');
   tieBtn.className = 'compare-vote-btn compare-vote-tie';
-  tieBtn.textContent = 'Tie';
+  tieBtn.textContent = __t('compare.tie');
   if (noPrompt) { tieBtn.disabled = true; tieBtn.style.opacity = '0.25'; }
   tieBtn.addEventListener('click', () => handleVote(-1));
   bar.appendChild(tieBtn);
@@ -74,8 +76,8 @@ function buildVoteBar(n) {
   // before a prompt) since viewing the scoreboard is always allowed.
   const scoreBtn = document.createElement('button');
   scoreBtn.className = 'compare-vote-btn compare-score-btn';
-  scoreBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Score';
-  scoreBtn.title = 'Scoreboard';
+  scoreBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>' + ((window.__t || (k=>k))('compare.score'));
+  scoreBtn.title = __t('compare.scoreboard');
   scoreBtn.addEventListener('click', () => showScoreboard());
   bar.insertBefore(scoreBtn, tieBtn); // furthest left, before Tie
 
@@ -83,7 +85,7 @@ function buildVoteBar(n) {
     const revealBtn = document.createElement('button');
     revealBtn.className = 'compare-vote-btn';
     revealBtn.style.opacity = noPrompt ? '0.25' : '0.5';
-    revealBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Reveal';
+    revealBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>' + ((window.__t || (k=>k))('compare.reveal'));
     if (noPrompt) revealBtn.disabled = true;
     revealBtn.addEventListener('click', () => handleVote(-2));
     bar.appendChild(revealBtn);
@@ -94,7 +96,7 @@ function buildVoteBar(n) {
   // Reset button (always)
   const resetBtn = document.createElement('button');
   resetBtn.className = 'compare-vote-btn compare-rematch-btn';
-  resetBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:3px;"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Reset';
+  resetBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:3px;"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>' + ((window.__t || (k=>k))('compare.reset'));
   resetBtn.addEventListener('click', () => { if (_resetCompare) _resetCompare(); });
   bar.appendChild(resetBtn);
 }

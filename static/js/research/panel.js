@@ -7,6 +7,8 @@ import createResearchSynapse from '../researchSynapse.js';
 import spinnerModule from '../spinner.js';
 import { sortModelIds } from '../modelSort.js';
 
+const __t = (k, v) => (window.__t || (kk=>kk))(k, v);
+
 // Rotating research textarea placeholders — pick one at random each
 // time the panel is rendered so the example keeps feeling fresh.
 const _RESEARCH_HINTS = [
@@ -369,44 +371,44 @@ function _buildPanelHTML() {
           <h2 style="margin:0;padding:0;line-height:1;display:inline-flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent, var(--red))" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M6 18h8"/><path d="M3 22h18"/><path d="M14 22a7 7 0 1 0 0-14h-1"/><path d="M9 14h2"/><path d="M9 12a2 2 0 0 1-2-2V6h4v4a2 2 0 0 1-2 2Z"/><path d="M12 6V3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3"/></svg>Research <span id="research-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
         </div>
         <p class="memory-desc doclib-desc" style="margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-          <span>Multi-step web research with an LLM-in-the-loop agent</span>
-          <span id="research-no-past-hint" style="display:none;font:inherit;opacity:1;position:static;">— past runs in <button type="button" class="research-library-link" style="background:none;border:none;padding:0;font:inherit;color:var(--accent, var(--red));cursor:pointer;text-decoration:underline;">Library, Research</button></span>
+          <span>${__t('research.description')}</span>
+          <span id="research-no-past-hint" style="display:none;font:inherit;opacity:1;position:static;">— ${__t('research.pastRunsIn')} <button type="button" class="research-library-link" style="background:none;border:none;padding:0;font:inherit;color:var(--accent, var(--red));cursor:pointer;text-decoration:underline;">${__t('research.libraryResearch')}</button></span>
         </p>
         <textarea id="research-query" class="research-query" placeholder="${_pickResearchHint()}" rows="4"></textarea>
         <button id="research-settings-toggle" class="research-settings-toggle${chevronCls}">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;opacity:0.85;flex-shrink:0;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings<span class="research-settings-chevron">${_chevronIcon}</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;opacity:0.85;flex-shrink:0;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>${__t('settings.settings')}<span class="research-settings-chevron">${_chevronIcon}</span>
         </button>
         <div id="research-settings-body" class="research-settings-row"${settingsHidden}>
           <label class="research-setting">
-            <span class="research-setting-label">Rounds <span class="hwfit-help-chip hwfit-help-chip-inline" title="How many search → read → reflect rounds the agent runs. More rounds = deeper coverage, longer wait, more tokens.">?</span></span>
+            <span class="research-setting-label">${__t('research.rounds')} <span class="hwfit-help-chip hwfit-help-chip-inline" title="${__t('research.roundsHint')}">?</span></span>
             <select id="research-rounds">${roundOpts}</select>
           </label>
           <label class="research-setting">
-            <span class="research-setting-label">Format <span class="hwfit-help-chip hwfit-help-chip-inline" title="Auto lets the LLM pick the output shape. Override when you specifically want a Compare table, How-to, Product, or Fact-check.">?</span></span>
+            <span class="research-setting-label">${__t('research.format')} <span class="hwfit-help-chip hwfit-help-chip-inline" title="${__t('research.formatHint')}">?</span></span>
             <select id="research-category">
-              <option value="" selected>Auto</option>
-              <option value="product">Product</option>
-              <option value="comparison">Compare</option>
-              <option value="howto">How-to</option>
-              <option value="factcheck">Fact-check</option>
+              <option value="" selected>${__t('research.auto')}</option>
+              <option value="product">${__t('research.product')}</option>
+              <option value="comparison">${__t('research.compare')}</option>
+              <option value="howto">${__t('research.howto')}</option>
+              <option value="factcheck">${__t('research.factcheck')}</option>
             </select>
           </label>
           <label class="research-setting">
-            <span class="research-setting-label">Search engine</span>
+            <span class="research-setting-label">${__t('research.searchEngine')}</span>
             <select id="research-search-provider">${providerOpts}</select>
           </label>
           <label class="research-setting">
-            <span class="research-setting-label">Endpoint</span>
-            <select id="research-endpoint"><option value="">Default</option></select>
+            <span class="research-setting-label">${__t('research.endpoint')}</span>
+            <select id="research-endpoint"><option value="">${__t('settings.default')}</option></select>
           </label>
           <label class="research-setting">
-            <span class="research-setting-label">Model</span>
-            <select id="research-model"><option value="">Default</option></select>
+            <span class="research-setting-label">${__t('research.model')}</span>
+            <select id="research-model"><option value="">${__t('settings.default')}</option></select>
           </label>
         </div>
         <div class="research-controls-row">
-          <button id="research-add-btn" class="research-add-btn"><span class="research-add-plus">+</span> Queue</button>
-          <button id="research-start-btn" class="research-start-btn">${_playIcon} Start</button>
+          <button id="research-add-btn" class="research-add-btn"><span class="research-add-plus">+</span> ${__t('research.queue')}</button>
+          <button id="research-start-btn" class="research-start-btn">${_playIcon} ${__t('research.start')}</button>
         </div>
       </div>
       <div id="research-jobs-list" class="research-jobs-list" data-no-swipe-dismiss></div>
@@ -566,7 +568,7 @@ async function _handleStart() {
         _wp.element.style.cssText += ';vertical-align:middle;margin-right:5px;position:relative;top:-1px;';
         startBtn.appendChild(_wp.element);
       } catch {}
-      startBtn.appendChild(document.createTextNode('Starting'));
+      startBtn.appendChild(document.createTextNode(__t('research.starting')));
       startBtn.classList.add('research-start-busy');
     } else {
       startBtn.disabled = false;
@@ -645,7 +647,7 @@ async function _loadEndpoints() {
 function _populateModels(endpointId) {
   const sel = document.getElementById('research-model');
   if (!sel) return;
-  sel.innerHTML = '<option value="">Default</option>';
+  sel.innerHTML = '<option value="">' + ((window.__t || (k=>k))('research.default')) + '</option>';
   if (!endpointId) return;
   const ep = _endpoints.find(e => e.id === endpointId);
   if (!ep || !ep.models) return;
@@ -712,8 +714,8 @@ function _renderJobs() {
   const startBtn = document.getElementById('research-start-btn');
   if (startBtn && !startBtn.classList.contains('research-start-busy')) {
     startBtn.innerHTML = queued.length > 1
-      ? `${_playIcon} Start All (${queued.length})`
-      : `${_playIcon} Start`;
+      ? `${_playIcon} ${__t('research.startAll')} (${queued.length})`
+      : `${_playIcon} ${__t('research.start')}`;
     startBtn.dataset._origHTML = startBtn.innerHTML;
   }
 
@@ -771,7 +773,7 @@ function _renderJobs() {
     }
     // Both sections carry a "Clear all" button in the header (cookbook-running
     // section style); it clears all research and must not toggle the fold.
-    const clearAllHtml = '<button class="research-section-clear" title="Clear all research">' + _cancelIcon + ' Clear all</button>';
+    const clearAllHtml = '<button class="research-section-clear" title="' + __t('research.clearAllResearch') + '">' + _cancelIcon + ' ' + __t('research.clearAll') + '</button>';
     header.innerHTML =
       '<span class="research-section-title">' + title + '</span>'
       + '<span class="research-section-count memory-count">' + arr.length + ' research</span>'
@@ -783,7 +785,7 @@ function _renderJobs() {
     if (key === 'past') {
       const hint = document.createElement('span');
       hint.className = 'research-library-hint';
-      hint.innerHTML = '<span>Multi-step web research with an LLM-in-the-loop agent</span> <button type="button" class="research-library-link">Library, Research</button>';
+      hint.innerHTML = '<span>' + __t('research.description') + '</span> <button type="button" class="research-library-link">' + __t('research.libraryResearch') + '</button>';
       hint.querySelector('.research-library-link').addEventListener('click', (e) => {
         e.stopPropagation();
         // Close the research panel first so the Library opens ABOVE it on mobile
@@ -820,7 +822,7 @@ function _renderJobs() {
   // ("Clear all" lives inside the Past research section header — see _addSection.)
 
   _addSection('active', 'Active', active);
-  _addSection('past', 'Past research', recentDone.concat(past));
+  _addSection('past', __t('research.pastResearch'), recentDone.concat(past));
 }
 
 /** Pick parallel vs sequential as a small popover anchored to the
@@ -991,7 +993,7 @@ function _buildJobCard(job) {
       ? `<span class="research-cat-badge research-cat-failed">${_cancelIcon} no results</span>`
       : (job.category ? `<span class="research-cat-badge">${_esc(job.category)}</span>` : `<span class="research-cat-badge research-cat-standard">standard</span>`);
     const failNote = failed
-      ? `<div class="research-job-failnote">Couldn't extract anything — try rephrasing the question, or switch the search engine in Settings.</div>`
+      ? `<div class="research-job-failnote">${__t('research.couldNotExtract')}</div>`
       : '';
     card.innerHTML = `
       <div class="research-job-header">
@@ -1001,8 +1003,8 @@ function _buildJobCard(job) {
       </div>
       ${failNote}
       <div class="research-job-actions">
-        <button class="research-job-action research-job-action-report" data-action="report" title="Visual report">${_externalIcon} Visual Report</button>
-        <button class="research-job-action" data-action="chat" title="Open follow-up chat with this research as context">${_chatIcon} Discuss</button>
+        <button class="research-job-action research-job-action-report" data-action="report" title="${__t('research.visualReport')}">${_externalIcon} ${__t('research.visualReport')}</button>
+        <button class="research-job-action" data-action="chat" title="${__t('research.openFollowUp')}">${_chatIcon} ${__t('research.discuss')}</button>
         <button class="research-job-action research-job-action-dim" data-action="copy" title="Copy report to clipboard">${_copyIcon}</button>
         <button class="research-job-action research-job-action-dim" data-action="dismiss" title="Clear from list">${_cancelIcon}</button>
         <button class="research-job-action research-job-action-dim" data-action="delete" title="Delete from disk">${_trashIcon} Delete</button>
@@ -1032,7 +1034,7 @@ function _buildJobCard(job) {
     card.querySelector('[data-action="delete"]').addEventListener('click', async (e) => {
       e.stopPropagation();
       if (window.styledConfirm) {
-        const ok = await window.styledConfirm('Delete this research? This permanently removes it from disk.', { confirmText: 'Delete', danger: true });
+        const ok = await window.styledConfirm('Delete this research? This permanently removes it from disk.', { confirmText: (window.__t || (k=>k))('common.delete'), danger: true });
         if (!ok) return;
       }
       try { await fetch(`${_apiBase}/api/research/${job.id}`, { method: 'DELETE', credentials: 'same-origin' }); } catch {}

@@ -4062,31 +4062,6 @@ body.bg-pattern-sparkles {
     @keyframes toastCheckDraw {
       to { stroke-dashoffset: 0; }
     }
-    .toast-close-btn {
-      margin-left: 8px;
-      padding: 0;
-      width: 22px;
-      height: 22px;
-      line-height: 1;
-      border: none;
-      background: none;
-      color: var(--fg);
-      opacity: 0.5;
-      cursor: pointer;
-      font-size: 16px;
-      border-radius: 50%;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      pointer-events: auto;
-      flex-shrink: 0;
-      transition: transform 0.22s ease, opacity 0.15s ease, background 0.15s ease;
-    }
-    .toast-close-btn:hover {
-      opacity: 1;
-      transform: rotate(90deg);
-      background: color-mix(in srgb, var(--fg) 8%, transparent);
-    }
     .toast.exiting {
       opacity: 0;
       transform: translateX(-120%);

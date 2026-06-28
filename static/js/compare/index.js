@@ -9,6 +9,8 @@
  * compare button, mode toggle, etc. are preserved.
  */
 
+const __t = (k, v) => (window.__t || (kk=>kk))(k, v);
+
 // ── Submodule imports ──
 import state from './state.js';
 import { EVAL_PROMPTS, WAVE_FRAMES,
@@ -107,7 +109,7 @@ function _syncCompareModeFromToolbar(mode) {
   _setToolbarMode(state._compareMode, false);
   const headerLabel = document.querySelector('.compare-header-label');
   if (headerLabel) {
-    headerLabel.textContent = 'Comparing' + _compareModeLabel() + (state._blindMode ? ' (blind)' : '') + ' · ' + state._timeout + 's timeout';
+    headerLabel.textContent = (window.__t || (k=>k))('compare.loading') + _compareModeLabel() + (state._blindMode ? ' (blind)' : '') + ' · ' + state._timeout + 's timeout';
   }
   const evalWrap = document.getElementById('cmp-eval-wrap');
   if (evalWrap && typeof evalWrap._renderItems === 'function') evalWrap._renderItems();
@@ -351,7 +353,7 @@ async function _buildCompareUI() {
   const headerLabel = document.createElement('span');
   headerLabel.className = 'compare-header-label';
   headerLabel.style.cssText = 'font-size:10px;font-weight:400;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;';
-  headerLabel.textContent = 'Comparing' + _compareModeLabel() + (state._blindMode ? ' (blind)' : '') + ' · ' + state._timeout + 's timeout';
+  headerLabel.textContent = (window.__t || (k=>k))('compare.loading') + _compareModeLabel() + (state._blindMode ? ' (blind)' : '') + ' · ' + state._timeout + 's timeout';
   // Left side: the Compare tool icon (two side-by-side panes, matching the
   // rail/sidebar icon) + the label. Other tool headers carry their icon; this
   // one was missing it.
@@ -412,7 +414,7 @@ async function _buildCompareUI() {
 
   const addBtn = document.createElement('button');
   addBtn.id = 'compare-add-btn';
-  addBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span style="font-size:11px;margin-left:3px;">Add</span>';
+  addBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span style="font-size:11px;margin-left:3px;">' + (window.__t || (k=>k))('common.add') + '</span>';
   addBtn.title = 'Add model pane';
   addBtn.style.cssText = _btnCSS;
   addBtn.addEventListener('click', () => _addPane(addBtn));
@@ -421,7 +423,7 @@ async function _buildCompareUI() {
   const closeBtn = document.createElement('button');
   closeBtn.className = 'compare-close-btn';
   closeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-  closeBtn.title = 'Close compare mode';
+  closeBtn.title = (window.__t || (k=>k))('common.close');
   // Match Export/Score/Shuffle/Model styling so the X sits flush with
   // the rest of the toolbar instead of being a 24×24 bordered square.
   closeBtn.style.cssText = _btnCSS;
@@ -453,9 +455,9 @@ async function _buildCompareUI() {
         '<span class="pane-timer" id="cmp-timer-' + i + '"></span>' +
         '<span class="pane-finish-badge" id="cmp-badge-' + i + '"></span>' +
         '<div class="pane-actions">' +
-          '<button class="pane-action-btn pane-stop-btn" data-action="stop" data-pane="' + i + '" title="Stop" style="display:none;"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>' +
+          '<button class="pane-action-btn pane-stop-btn" data-action="stop" data-pane="' + i + '" title="' + (window.__t || (k=>k))('chat.stop') + '" style="display:none;"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>' +
           '<button class="pane-action-btn pane-preview-btn" data-action="preview" data-pane="' + i + '" id="cmp-preview-' + i + '" title="Run preview" style="display:none;">' + ICON_PLAY + '</button>' +
-          '<button class="pane-action-btn" data-action="reroll" data-pane="' + i + '" title="Re-roll">' + ICON_REROLL + '</button>' +
+          '<button class="pane-action-btn" data-action="reroll" data-pane="' + i + '" title="' + (window.__t || (k=>k))('common.retry') + '">' + ICON_REROLL + '</button>' +
           '<button class="pane-action-btn" data-action="copy" data-pane="' + i + '" title="Copy">' + ICON_COPY + '</button>' +
           '<button class="pane-action-btn" data-action="expand" data-pane="' + i + '" title="Expand">' + ICON_EXPAND + '</button>' +
           '<button class="pane-action-btn pane-close-btn" data-action="close" data-pane="' + i + '" title="Remove pane">' + ICON_CLOSE + '</button>' +
@@ -554,14 +556,14 @@ function _setSendBtn(mode) {
   if (!btn) return;
   if (mode === 'stop') {
     btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
-    btn.title = 'Stop all models';
+    btn.title = (window.__t || (k=>k))('chat.stop');
     btn.dataset.mode = 'streaming';
     btn.classList.remove('mic-mode', 'newchat-mode');
   } else {
     btn.dataset.mode = '';
     btn.innerHTML = SEND_SVG;
     btn.style.color = '';
-    btn.title = 'Send to all models';
+    btn.title = (window.__t || (k=>k))('chat.send');
     btn.classList.remove('mic-mode', 'newchat-mode', 'newchat-expanded');
   }
 }
@@ -690,10 +692,10 @@ async function _executeCompare(message) {
 
         const aiMsg = document.createElement('div');
         aiMsg.className = 'msg msg-ai';
-        aiMsg.innerHTML = '<div class="role">Search</div><div class="body"></div>';
+        aiMsg.innerHTML = '<div class="role">' + (window.__t || (k=>k))('common.search') + '</div><div class="body"></div>';
         const aiBody = aiMsg.querySelector('.body');
         if (spinnerModule) {
-          const spinner = spinnerModule.create('Searching...', 'right');
+          const spinner = spinnerModule.create((window.__t || (k=>k))('common.loading'), 'right');
           aiBody.appendChild(spinner.createElement());
           spinner.start();
         }
@@ -770,7 +772,7 @@ async function _executeCompare(message) {
                 synthMsg.innerHTML = '<div class="role">Analysis</div><div class="body"></div>';
                 const synthBody = synthMsg.querySelector('.body');
                 let spinner = null;
-                if (spinnerModule) { spinner = spinnerModule.create('Analyzing...', 'right'); synthBody.appendChild(spinner.createElement()); spinner.start(); }
+                if (spinnerModule) { spinner = spinnerModule.create((window.__t || (k=>k))('common.loading'), 'right'); synthBody.appendChild(spinner.createElement()); spinner.start(); }
                 seqHist.appendChild(synthMsg);
                 seqHist.scrollTop = seqHist.scrollHeight;
                 const resultsText = data.results.map((r, ri) => `[${ri + 1}] ${r.title}\n${r.snippet || ''}\nURL: ${r.url}`).join('\n\n');
@@ -841,7 +843,7 @@ async function _executeCompare(message) {
           const synthBody = synthMsg.querySelector('.body');
           let spinner = null;
           if (spinnerModule) {
-            spinner = spinnerModule.create('Analyzing...', 'right');
+            spinner = spinnerModule.create((window.__t || (k=>k))('common.loading'), 'right');
             synthBody.appendChild(spinner.createElement());
             spinner.start();
           }
@@ -915,8 +917,8 @@ async function _executeCompare(message) {
       if (spinnerModule) {
         // In sequential mode, only first pane says "Processing", rest say "Waiting"
         const label = (!state._parallel && i > 0)
-          ? 'Waiting for Model ' + _slotChar(i - 1) + '...'
-          : 'Processing...';
+          ? (window.__t || (k=>k))('common.loading')
+          : (window.__t || (k=>k))('common.loading');
         const spinner = spinnerModule.create(label, 'right');
         aiBody.appendChild(spinner.createElement());
         spinner.start();
@@ -980,7 +982,7 @@ async function _executeCompare(message) {
       for (let i = 0; i < state._paneSessionIds.length; i++) {
         // Update spinner
         if (aiElements[i] && aiElements[i]._spinner) {
-          aiElements[i]._spinner.updateLabel('Processing...');
+          aiElements[i]._spinner.updateLabel((window.__t || (k=>k))('common.loading'));
         }
 
         await streamToPane(i, state._paneSessionIds[i], message, aiElements[i], { searchContext: sharedSearchContext, timeout: runTimeout });
@@ -1108,9 +1110,9 @@ async function _exportCopyMarkdown(_btn) {
       document.body.appendChild(ta);
       ta.select(); document.execCommand('copy'); ta.remove();
     }
-    try { window.uiModule?.showToast?.('Copied comparison to clipboard'); } catch {}
+    try { window.uiModule?.showToast?.((window.__t || (k=>k))('settings.saved')); } catch {}
   } catch (e) {
-    try { window.uiModule?.showToast?.('Copy failed'); } catch {}
+    try { window.uiModule?.showToast?.((window.__t || (k=>k))('settings.failedToSave')); } catch {}
   }
 }
 
@@ -1197,12 +1199,12 @@ async function _exportComparison(btn) {
       ta.select(); document.execCommand('copy'); ta.remove();
     }
     if (btn) {
-      btn.innerHTML = '<span style="font-size:11px;">Copied!</span>';
+      btn.innerHTML = '<span style="font-size:11px;">' + (window.__t || (k=>k))('settings.saved') + '</span>';
       setTimeout(() => { btn.innerHTML = origLabel; }, 1500);
     }
   } catch (e) {
     if (btn) {
-      btn.innerHTML = '<span style="font-size:11px;color:var(--color-error);">Failed</span>';
+      btn.innerHTML = '<span style="font-size:11px;color:var(--color-error);">' + (window.__t || (k=>k))('settings.failedToSave') + '</span>';
       setTimeout(() => { btn.innerHTML = origLabel; }, 2000);
     }
   }
@@ -1247,8 +1249,8 @@ function _setupEvalPicker() {
     const label = btn.querySelector('.cmp-eval-label');
     if (label) {
       label.textContent = ({
-        agent: 'Agent prompts',
-        chat: 'Chat prompts',
+        agent: (window.__t || (k=>k))('chat.agent'),
+        chat: (window.__t || (k=>k))('chat.chat'),
         search: 'Search prompts',
         research: 'Research prompts'
       }[mode] || 'Eval prompts');
@@ -1470,7 +1472,7 @@ async function showShufflePoolEditor() {
     if (items.length === 0) return;
     const heading = document.createElement('div');
     heading.style.cssText = 'font-size:0.78em;font-weight:600;color:color-mix(in srgb, var(--fg) 50%, transparent);text-transform:uppercase;letter-spacing:0.5px;padding:8px 4px 4px;';
-    heading.textContent = type === 'chat' ? 'Chat Models' : 'Image Models';
+    heading.textContent = type === 'chat' ? __t('compare.chatModels') : __t('compare.imageModels');
     list.appendChild(heading);
 
     items.forEach(m => {

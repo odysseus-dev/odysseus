@@ -180,20 +180,20 @@ function deriveSyntaxColors(colors) {
 
 // Advanced picker key → CSS variable mapping
 const ADV_KEYS = [
-  { key: 'userBubbleBg',       css: '--user-bubble-bg',    label: 'User Chat Bubble', group: 'Chat Bubbles' },
-  { key: 'aiBubbleBg',         css: '--ai-bubble-bg',      label: 'AI Chat Bubble',   group: 'Chat Bubbles' },
-  { key: 'bubbleBorder',       css: '--bubble-border',     label: 'Border Chat Bubble', group: 'Chat Bubbles' },
-  { key: 'sidebarBg',          css: '--sidebar-bg',        label: 'Sidebar Bg',       group: 'Sidebar' },
-  { key: 'brandColor',         css: '--brand-color',       label: 'Odysseus Logo',    group: 'Sidebar' },
-  { key: 'brandMixTo',         css: '--brand-mix-to',      label: 'Logo Gradient End', group: 'Sidebar' },
-  { key: 'hamburgerColor',     css: '--hamburger-color',   label: 'Hamburger Menu',   group: 'Sidebar' },
-  { key: 'inputBg',            css: '--input-bg',          label: 'Input Bg',         group: 'Chat Input / Prompt Area' },
-  { key: 'inputBorder',        css: '--input-border',      label: 'Input Border',     group: 'Chat Input / Prompt Area' },
-  { key: 'sendBtnBg',          css: '--send-btn-bg',       label: 'Send Btn',         group: 'Chat Input / Prompt Area' },
-  { key: 'sendBtnHover',       css: '--send-btn-hover',    label: 'Send Hover',       group: 'Chat Input / Prompt Area' },
-  { key: 'codeBg',             css: '--code-bg',           label: 'Code Bg',          group: 'Code Blocks' },
-  { key: 'codeFg',             css: '--code-fg',           label: 'Code Text',        group: 'Code Blocks' },
-  { key: 'toggleActive',       css: '--toggle-active',     label: 'Toggle On',        group: 'Controls' },
+  { key: 'userBubbleBg',       css: '--user-bubble-bg',    label: (window.__t || (k=>k))('theme.userChatBubble'), group: (window.__t || (k=>k))('theme.chatBubbles') },
+  { key: 'aiBubbleBg',         css: '--ai-bubble-bg',      label: (window.__t || (k=>k))('theme.aiChatBubble'),   group: (window.__t || (k=>k))('theme.chatBubbles') },
+  { key: 'bubbleBorder',       css: '--bubble-border',     label: (window.__t || (k=>k))('theme.borderChatBubble'), group: (window.__t || (k=>k))('theme.chatBubbles') },
+  { key: 'sidebarBg',          css: '--sidebar-bg',        label: (window.__t || (k=>k))('theme.sidebar'),       group: (window.__t || (k=>k))('theme.sidebar') },
+  { key: 'brandColor',         css: '--brand-color',       label: (window.__t || (k=>k))('theme.odysseusLogo'),  group: (window.__t || (k=>k))('theme.sidebar') },
+  { key: 'brandMixTo',         css: '--brand-mix-to',      label: (window.__t || (k=>k))('theme.odysseusLogo'),  group: (window.__t || (k=>k))('theme.sidebar') },
+  { key: 'hamburgerColor',     css: '--hamburger-color',   label: (window.__t || (k=>k))('theme.sidebar'),       group: (window.__t || (k=>k))('theme.sidebar') },
+  { key: 'inputBg',            css: '--input-bg',          label: (window.__t || (k=>k))('theme.inputBg'),       group: (window.__t || (k=>k))('theme.chatBubbles') },
+  { key: 'inputBorder',        css: '--input-border',      label: (window.__t || (k=>k))('theme.inputBorder'),   group: (window.__t || (k=>k))('theme.chatBubbles') },
+  { key: 'sendBtnBg',          css: '--send-btn-bg',       label: (window.__t || (k=>k))('theme.sendBtn'),       group: (window.__t || (k=>k))('theme.chatBubbles') },
+  { key: 'sendBtnHover',       css: '--send-btn-hover',    label: (window.__t || (k=>k))('theme.sendHover'),     group: (window.__t || (k=>k))('theme.chatBubbles') },
+  { key: 'codeBg',             css: '--code-bg',           label: (window.__t || (k=>k))('theme.codeBg'),        group: (window.__t || (k=>k))('theme.chatBubbles') },
+  { key: 'codeFg',             css: '--code-fg',           label: (window.__t || (k=>k))('theme.codeText'),      group: (window.__t || (k=>k))('theme.chatBubbles') },
+  { key: 'toggleActive',       css: '--toggle-active',     label: (window.__t || (k=>k))('theme.toggleOn'),      group: (window.__t || (k=>k))('theme.chatBubbles') },
 ];
 
 function computeAdvancedDefaults(colors) {
@@ -666,7 +666,7 @@ export function initThemeUI() {
           <span style="background:${c.red}"></span>
         </div>
         <span class="theme-swatch-name">${name}</span>
-        <button type="button" class="theme-delete-btn" data-delete="${name}" title="Delete theme"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        <button type="button" class="theme-delete-btn" data-delete="${name}" title="${(window.__t || (k=>k))('common.delete')}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
     `).join('');
   } else if (userCard) {
@@ -746,7 +746,7 @@ export function initThemeUI() {
         e.stopPropagation();
         const name = btn.dataset.delete;
         if (uiModule && uiModule.styledConfirm) {
-          if (!await uiModule.styledConfirm(`Delete theme "${name}"?`, { confirmText: 'Delete', danger: true })) return;
+          if (!await uiModule.styledConfirm(`${(window.__t || (k=>k))('common.delete')} "${name}"?`, { confirmText: (window.__t || (k=>k))('common.delete'), danger: true })) return;
         }
         deleteCustomTheme(name);
       });
@@ -894,10 +894,10 @@ export function initThemeUI() {
     const doSave = () => {
       saveError.style.display = 'none';
       const name = newNameInput.value.trim();
-      if (!name) { saveError.textContent = 'Enter a name.'; saveError.style.display = 'block'; return; }
+      if (!name) { saveError.textContent = (window.__t || (k=>k))('theme.enterName'); saveError.style.display = 'block'; return; }
       const slug = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-      if (!slug) { saveError.textContent = 'Invalid name.'; saveError.style.display = 'block'; return; }
-      if (THEMES[slug]) { saveError.textContent = 'Cannot overwrite a built-in theme.'; saveError.style.display = 'block'; return; }
+      if (!slug) { saveError.textContent = (window.__t || (k=>k))('theme.invalidName'); saveError.style.display = 'block'; return; }
+      if (THEMES[slug]) { saveError.textContent = (window.__t || (k=>k))('theme.cannotOverwrite'); saveError.style.display = 'block'; return; }
       const colors = {};
       const pickerIds2 = { bg: 'clr-bg', fg: 'clr-fg', panel: 'clr-panel', border: 'clr-border', red: 'clr-red' };
       Object.entries(pickerIds2).forEach(([k, pid]) => { colors[k] = document.getElementById(pid).value; });
@@ -911,14 +911,14 @@ export function initThemeUI() {
       if (hasAdv) colors.advanced = adv;
       const opts = _getOpts();
       const result = saveCustomTheme(slug, colors, opts);
-      if (result === 'limit') { saveError.textContent = 'Max ' + MAX_CUSTOM_THEMES + ' custom themes. Delete one first.'; saveError.style.display = 'block'; return; }
+      if (result === 'limit') { saveError.textContent = (window.__t || (k=>k))('theme.maxCustom'); saveError.style.display = 'block'; return; }
       save(slug, colors, opts);
       newNameInput.value = '';
-      _flashAutosaved('Theme saved');
-      uiModule.showToast?.('Theme saved');
+      _flashAutosaved((window.__t || (k=>k))('theme.saved'));
+      uiModule.showToast?.((window.__t || (k=>k))('theme.saved'));
       const prevHtml = newGoBtn.innerHTML;
       newGoBtn.disabled = true;
-      newGoBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Saved</span>';
+      newGoBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>${(window.__t || (k=>k))('theme.saved')}</span>`;
       setTimeout(() => {
         newGoBtn.disabled = false;
         newGoBtn.innerHTML = prevHtml;
@@ -1290,8 +1290,8 @@ export function initThemeUI() {
       a.download = 'odysseus_' + (obj.name || 'theme') + '.json';
       a.click();
       URL.revokeObjectURL(url);
-      newExp.innerHTML = '&#x2713; Downloaded!';
-      setTimeout(() => { newExp.innerHTML = '&#x2913; Export'; }, 1500);
+      newExp.innerHTML = `&#x2713; ${(window.__t || (k=>k))('theme.exported')}`;
+      setTimeout(() => { newExp.innerHTML = `&#x2913; ${(window.__t || (k=>k))('theme.exportTheme')}`; }, 1500);
     });
   }
 
@@ -1313,15 +1313,15 @@ export function initThemeUI() {
       saveError.style.display = 'none';
       let parsed;
       try { parsed = JSON.parse(importAreaEl.value.trim()); }
-      catch { saveError.textContent = 'Invalid JSON.'; saveError.style.display = 'block'; return; }
+      catch { saveError.textContent = (window.__t || (k=>k))('theme.invalidJson'); saveError.style.display = 'block'; return; }
       let colors = parsed.colors || parsed;
       const name = parsed.name || 'imported';
       const required = ['bg', 'fg', 'panel', 'border', 'red'];
       const missing = required.filter(k => !colors[k]);
-      if (missing.length) { saveError.textContent = 'Missing: ' + missing.join(', '); saveError.style.display = 'block'; return; }
+      if (missing.length) { saveError.textContent = (window.__t || (k=>k))('theme.missingFields') + ': ' + missing.join(', '); saveError.style.display = 'block'; return; }
       const hexRe = /^#[0-9a-fA-F]{6}$/;
       for (const k of required) {
-        if (!hexRe.test(colors[k])) { saveError.textContent = 'Bad hex for ' + k; saveError.style.display = 'block'; return; }
+        if (!hexRe.test(colors[k])) { saveError.textContent = (window.__t || (k=>k))('theme.badHex') + ': ' + k; saveError.style.display = 'block'; return; }
       }
       const colorData = { bg: colors.bg, fg: colors.fg, panel: colors.panel, border: colors.border, red: colors.red };
       if (colors.advanced && typeof colors.advanced === 'object') colorData.advanced = colors.advanced;
@@ -1332,7 +1332,7 @@ export function initThemeUI() {
       if (parsed.bgPattern) opts.bgPattern = parsed.bgPattern;
       if (parsed.bgEffectColor) opts.bgEffectColor = parsed.bgEffectColor;
       const result = saveCustomTheme(slug, colorData, opts);
-      if (result === 'limit') { saveError.textContent = 'Max ' + MAX_CUSTOM_THEMES + ' custom themes. Delete one first.'; saveError.style.display = 'block'; return; }
+      if (result === 'limit') { saveError.textContent = (window.__t || (k=>k))('theme.maxCustom'); saveError.style.display = 'block'; return; }
       save(slug, colorData, opts);
       applyColors(colorData);
       applyFontDensity(opts.font || DEFAULT_FONT, opts.density || DEFAULT_DENSITY);
@@ -1412,7 +1412,8 @@ function _clearThemeZoneHighlight() {
 }
 
 let _flashTimer = null;
-function _flashAutosaved(label = 'Auto-saved') {
+function _flashAutosaved(label) {
+  if (!label) label = (window.__t || (k=>k))('theme.saved');
   let pill = document.getElementById('theme-autosaved-pill');
   if (!pill) {
     pill = document.createElement('div');

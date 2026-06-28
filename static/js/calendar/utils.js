@@ -3,14 +3,15 @@
 // Pure constants + zero-state helpers for the calendar UI.
 // No DOM, no fetch, no global mutable state — safe to import anywhere.
 
-export const WEEKDAYS     = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-export const WEEKDAYS_SUN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const _t = (k, v) => (window.__t || (kk=>kk))(k, v);
 
+export const WEEKDAYS     = () => [_t('calendar.mon'), _t('calendar.tue'), _t('calendar.wed'), _t('calendar.thu'), _t('calendar.fri'), _t('calendar.sat'), _t('calendar.sun')];
+export const WEEKDAYS_SUN = () => [_t('calendar.sun'), _t('calendar.mon'), _t('calendar.tue'), _t('calendar.wed'), _t('calendar.thu'), _t('calendar.fri'), _t('calendar.sat')];
 
-export const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December'];
+export const MONTHS = () => [_t('calendar.january'), _t('calendar.february'), _t('calendar.march'), _t('calendar.april'), _t('calendar.may'), _t('calendar.june'),
+  _t('calendar.july'), _t('calendar.august'), _t('calendar.september'), _t('calendar.october'), _t('calendar.november'), _t('calendar.december')];
 
-export const MON_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+export const MON_SHORT = () => [_t('calendar.janShort'), _t('calendar.febShort'), _t('calendar.marShort'), _t('calendar.aprShort'), _t('calendar.mayShort'), _t('calendar.junShort'), _t('calendar.julShort'), _t('calendar.augShort'), _t('calendar.sepShort'), _t('calendar.octShort'), _t('calendar.novShort'), _t('calendar.decShort')];
 
 export const CAL_PALETTE = [
   'var(--accent)', '#5b8abf', '#bf6b5b', '#5bbf7a', '#bf9a5b',
