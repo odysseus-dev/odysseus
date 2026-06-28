@@ -1351,6 +1351,7 @@ async def _ai_draft_reply_to_email(uid, folder="INBOX", reply_all=False, account
     try:
         from routes.email_helpers import (
             _EMAIL_REPLY_SYS_PROMPT_BASE,
+            _get_email_reply_sys_prompt,
             _apply_email_style_mechanics,
             _extract_reply,
             _load_settings,
@@ -1366,7 +1367,7 @@ async def _ai_draft_reply_to_email(uid, folder="INBOX", reply_all=False, account
 
     settings = _load_settings()
     style = settings.get("email_writing_style", "")
-    system_prompt = _EMAIL_REPLY_SYS_PROMPT_BASE
+    system_prompt = _get_email_reply_sys_prompt()
     if style:
         system_prompt += f"\n\nWRITING STYLE TO MATCH:\n{style}"
 

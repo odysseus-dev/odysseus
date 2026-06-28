@@ -39,7 +39,7 @@ from routes.email_helpers import (
     _extract_attachment_text, _extract_text,
     _pre_retrieve_context,
     _attach_compose_uploads, _cleanup_compose_uploads, _q,
-    SCHEDULED_DB, _EMAIL_REPLY_SYS_PROMPT_BASE, _email_cache_owner_clause,
+    SCHEDULED_DB, _EMAIL_REPLY_SYS_PROMPT_BASE, _get_email_reply_sys_prompt, _email_cache_owner_clause,
 )
 
 logger = logging.getLogger(__name__)
@@ -460,7 +460,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                     # mining here; manual AI Reply can still do that (owner-scoped)
                     # when the user explicitly asks for a draft on one email.
                     context_snippets, _terms = [], []
-                    sys_prompt = _EMAIL_REPLY_SYS_PROMPT_BASE
+                    sys_prompt = _get_email_reply_sys_prompt()
                     if att_text:
                         sys_prompt += "\n\nThe email has attachments (PDFs / docs) — their contents follow the body marked '--- ATTACHMENTS ---'. Reference them in your reply when relevant (e.g. acknowledge the invoice/contract, address specific clauses or amounts)."
                     if writing_style:
