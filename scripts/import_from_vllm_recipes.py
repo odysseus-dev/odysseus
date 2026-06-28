@@ -89,7 +89,10 @@ def _parse_param_count(s) -> int:
     m = re.match(r"^([\d.]+)\s*([KMBT]?)$", s, re.I)
     if not m:
         return 0
-    num = float(m.group(1))
+    try:
+        num = float(m.group(1))
+    except ValueError:
+        return 0
     unit = (m.group(2) or "").upper()
     mult = {"K": 1e3, "M": 1e6, "B": 1e9, "T": 1e12, "": 1.0}[unit]
     return int(num * mult)
