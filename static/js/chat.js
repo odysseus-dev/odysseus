@@ -960,10 +960,14 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; }
         catch { return ''; }
       })();
+      const _userLang = (() => {
+        try { return localStorage.getItem('odysseus-lang') || ''; }
+        catch { return ''; }
+      })();
       const res = await fetch(`${API_BASE}/api/chat_stream`, {
         method: 'POST',
         body: fd,
-        headers: { 'X-Tz-Offset': String(_tzOffsetMin), 'X-Tz-Name': _tzName },
+        headers: { 'X-Tz-Offset': String(_tzOffsetMin), 'X-Tz-Name': _tzName, 'X-Language': _userLang },
         signal: abortCtrl.signal
       });
       

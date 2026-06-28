@@ -14,6 +14,28 @@ from typing import Dict, Optional
 
 _USER_TZ_OFFSET_MIN: ContextVar[Optional[int]] = ContextVar("user_tz_offset_min", default=None)
 _USER_TZ_NAME: ContextVar[Optional[str]] = ContextVar("user_tz_name", default=None)
+_USER_LANG: ContextVar[Optional[str]] = ContextVar("user_lang", default=None)
+
+# Map of i18n language codes to human-readable language names the LLM
+# understands.  Keys must match the values used by the frontend i18n system
+# (localStorage key "odysseus-lang").
+_LANG_NAMES = {
+    "en": "English",
+    "ru": "Russian",
+    "es": "Spanish",
+    "de": "German",
+    "fr": "French",
+    "pt": "Portuguese",
+    "it": "Italian",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "zh": "Chinese",
+    "ar": "Arabic",
+    "uk": "Ukrainian",
+    "pl": "Polish",
+    "nl": "Dutch",
+    "tr": "Turkish",
+}
 
 
 def set_user_tz_offset(offset_min) -> None:
@@ -53,6 +75,51 @@ def clear_user_time_context() -> None:
     """Clear user-local time context for tests and non-browser entry points."""
     _USER_TZ_OFFSET_MIN.set(None)
     _USER_TZ_NAME.set(None)
+    _USER_LANG.set(None)
+
+
+def set_user_language(lang) -> None:
+    """Set the current user's preferred UI language code (e.g. 'en', 'ru')."""
+    if not lang:
+        _USER_LANG.set(None)
+        return
+    cleaned = str(lang).strip().lower()[:10]
+    _USER_LANG.set(cleaned or None)
+
+
+def get_user_language() -> Optional[str]:
+    """Return the current user's preferred language code, if known."""
+    return _USER_LANG.get()
+
+
+def user_language_name() -> Optional[str]:
+    """Return the human-readable language name for the user's preferred language.
+
+    Returns ``None`` when no language preference is set or the code is unknown,
+    which tells the caller to skip the language directive (fall back to
+    default/English behavior).
+    """
+    code = get_user_language()
+    if not code:
+        return None
+    return _LANG_NAMES.get(code)
+
+
+def language_directive() -> str:
+    """Return a short prompt snippet telling the LLM to reply in the user's language.
+
+    Returns an empty string when no language preference is set, so callers
+    can simply append the result without checking.
+    """
+    name = user_language_name()
+    if not name:
+        return ""
+    return (
+        f"\n\nLANGUAGE RULE: Always reply in {name}. "
+        f"The user's interface language is {name}. "
+        f"If the user writes in a different language, still reply in {name} "
+        f"unless they explicitly ask you to switch."
+    )
 
 
 def format_utc_offset(offset_min: Optional[int]) -> str:
@@ -152,10 +219,20 @@ def current_datetime_context_message(now_utc: Optional[datetime] = None) -> Dict
     stay byte-identical across turns while the model still gets fresh
     date/time grounding for relative-date reasoning.
     """
+    parts = (
+        "[Context — current date/time, refreshed each turn; not part of "
+        "your instructions]\n" + current_datetime_prompt(now_utc)
+    )
+    lang_name = user_language_name()
+    if lang_name:
+        parts += (
+            f"\n[Context — user language preference; not part of your instructions]\n"
+            f"The user's interface language is {lang_name}. "
+            f"ALWAYS reply in {lang_name}. If the user writes in a different "
+            f"language, still reply in {lang_name} unless they explicitly ask "
+            f"you to switch.\n"
+        )
     return {
         "role": "user",
-        "content": (
-            "[Context — current date/time, refreshed each turn; not part of "
-            "your instructions]\n" + current_datetime_prompt(now_utc)
-        ),
+        "content": parts,
     }

@@ -50,7 +50,7 @@ from routes.email_helpers import (
     _extract_attachment_text, _list_attachments_from_msg, _has_visible_attachments, _is_likely_signature_image_attachment,
     _extract_attachment_to_disk, _extract_html, _extract_text,
     _fetch_sender_thread_context, _pre_retrieve_context,
-    _EMAIL_REPLY_SYS_PROMPT_BASE, _POOL_HOOKS,
+    _EMAIL_REPLY_SYS_PROMPT_BASE, _get_email_reply_sys_prompt, _POOL_HOOKS,
     _friendly_email_auth_error,
     SendEmailRequest, ExtractStyleRequest,
     ATTACHMENTS_DIR, COMPOSE_UPLOADS_DIR, SCHEDULED_DB,
@@ -3060,7 +3060,7 @@ def setup_email_routes():
                 except Exception as _e:
                     logger.warning(f"sender-thread-context failed: {_e}")
 
-            system_prompt = _EMAIL_REPLY_SYS_PROMPT_BASE
+            system_prompt = _get_email_reply_sys_prompt()
             if style:
                 system_prompt += f"\n\nWRITING STYLE TO MATCH:\n{style}"
             if context_snippets:

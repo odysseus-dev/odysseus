@@ -96,7 +96,7 @@ async function _runSynthForPane(modelToUse, synthPrompt, synthBody, spinner, his
     state._abortControllers.push(synthAc);
     const streamRes = await fetch(`${state.API_BASE}/api/chat_stream`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Language': localStorage.getItem('odysseus-lang') || '' },
       body: JSON.stringify({ session: createData.id, message: synthPrompt }),
       signal: synthAc.signal,
     });
@@ -256,7 +256,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
     }
 
     const response = await fetch(`${state.API_BASE}/api/chat_stream`, {
-      method: 'POST', body: fd, signal: ac.signal
+      method: 'POST', body: fd, headers: { 'X-Language': localStorage.getItem('odysseus-lang') || '' }, signal: ac.signal
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 

@@ -4443,7 +4443,7 @@ async function _agentSolveNote(id) {
     fd.append('session', sid);
     fd.append('mode', 'agent');
     fd.append('disabled_tools', JSON.stringify(['manage_notes']));
-    fetch(`${API_BASE}/api/chat_stream`, { method: 'POST', credentials: 'same-origin', body: fd })
+    fetch(`${API_BASE}/api/chat_stream`, { method: 'POST', credentials: 'same-origin', headers: { 'X-Language': localStorage.getItem('odysseus-lang') || '' }, body: fd })
       .then(async (res) => {
         if (!res.ok || !res.body) return;
         const reader = res.body.getReader();
@@ -4514,7 +4514,7 @@ async function _agentSolveTodoItem(noteId, idx) {
     fd.append('session', sid);
     fd.append('mode', 'agent');
     fd.append('disabled_tools', JSON.stringify(['manage_notes']));
-    fetch(`${API_BASE}/api/chat_stream`, { method: 'POST', credentials: 'same-origin', body: fd })
+    fetch(`${API_BASE}/api/chat_stream`, { method: 'POST', credentials: 'same-origin', headers: { 'X-Language': localStorage.getItem('odysseus-lang') || '' }, body: fd })
       .then(async (res) => {
         if (!res.ok || !res.body) return;
         const reader = res.body.getReader();
