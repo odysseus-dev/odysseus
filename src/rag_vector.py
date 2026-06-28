@@ -349,7 +349,6 @@ class VectorRAG:
             return []
 
         try:
-            where_filter = {"owner": owner} if owner else None
             query_words = set(query.lower().split())
             candidates = []
 
@@ -361,7 +360,7 @@ class VectorRAG:
                     max(k, 20),
                     lane.count(),
                 ),
-                where=where_filter,
+                where=None,
                 include=["documents", "metadatas", "distances"],
                 raise_if_all_failed=True,
             ):
@@ -370,6 +369,12 @@ class VectorRAG:
                     distance = results["distances"][0][idx]
                     doc_text = results["documents"][0][idx]
                     meta = results["metadatas"][0][idx]
+
+                    # Security filter: if owner is specified, exclude documents owned by others.
+                    # Documents with no owner are treated as global/backfilled and allowed.
+                    doc_owner = meta.get("owner")
+                    if owner and doc_owner and doc_owner != owner:
+                        continue
 
                     vector_sim = 1.0 - distance
                     doc_words = set(doc_text.lower().split())

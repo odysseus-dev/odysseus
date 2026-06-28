@@ -4,7 +4,7 @@ import os
 
 from src.runtime_paths import get_app_root, get_default_data_dir
 
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.0"
 
 # Base paths
 BASE_DIR = os.path.join(get_app_root(), "")
@@ -64,6 +64,7 @@ MAIL_ATTACHMENTS_DIR = os.getenv("ODYSSEUS_MAIL_ATTACHMENTS_DIR", os.path.join(D
 # os.makedirs("") raises [Errno 2] No such file or directory: '' → FastEmbed fails to
 # init and all vector features (RAG, semantic memory, tool index) silently degrade.
 FASTEMBED_CACHE_DIR = os.getenv("FASTEMBED_CACHE_PATH") or os.path.join(DATA_DIR, "fastembed_cache")
+
 
 # Agent tool output limits (single source of truth — imported by tool_execution.py,
 # tool_implementations.py, agent_tools.py, and any other module that needs them)

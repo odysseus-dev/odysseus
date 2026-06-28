@@ -272,6 +272,90 @@ def build_embedding_lanes(base_name: str) -> List[EmbeddingLane]:
     return lanes
 
 
+def backfill_lanes(lanes: Sequence[EmbeddingLane]) -> None:
+    """Backfill empty or partially-empty lanes from the most populated lane, if one exists."""
+    if len(lanes) < 2:
+        return
+
+    # Use the populated lane with the most documents as the source
+    source_lane = max(lanes, key=lambda l: l.count())
+    source_count = source_lane.count()
+    if source_count == 0:
+        return
+
+    # Target lanes are any lanes with fewer documents than the source lane
+    target_lanes = [l for l in lanes if l.count() < source_count]
+    if not target_lanes:
+        return
+
+    logger.info(
+        "Backfilling target lanes %s from populated lane %s (source_count=%d)",
+        [l.name for l in target_lanes],
+        source_lane.name,
+        source_count,
+    )
+
+    # We will page through the source lane in batches of 100
+    batch_size = 100
+    for offset in range(0, source_count, batch_size):
+        try:
+            # Load a batch from the source lane
+            data = source_lane.collection.get(
+                limit=batch_size,
+                offset=offset,
+                include=["documents", "metadatas"],
+            )
+            ids = data.get("ids") or []
+            docs = data.get("documents") or []
+            metas = data.get("metadatas") or []
+            
+            if not ids or not docs:
+                break
+                
+            # For each target lane, embed and add the missing rows
+            for target_lane in target_lanes:
+                try:
+                    # Double check if target lane already has these IDs
+                    existing = target_lane.collection.get(ids=ids)
+                    existing_ids = set(existing.get("ids") or [])
+                    
+                    missing_indices = [i for i, row_id in enumerate(ids) if row_id not in existing_ids]
+                    if not missing_indices:
+                        continue
+                        
+                    batch_ids = [ids[i] for i in missing_indices]
+                    batch_docs = [docs[i] for i in missing_indices]
+                    batch_metas = [metas[i] if i < len(metas) else {} for i in missing_indices]
+                    
+                    embeddings = target_lane.encode(batch_docs)
+                    target_lane.collection.add(
+                        ids=batch_ids,
+                        documents=batch_docs,
+                        metadatas=batch_metas,
+                        embeddings=embeddings,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to backfill batch of %d items to target lane %s: %s",
+                        len(ids),
+                        target_lane.name,
+                        e,
+                    )
+            
+            # Print progress periodically to keep logs clean
+            if (offset + len(ids)) % 1000 == 0 or offset + len(ids) == source_count or offset < 500:
+                logger.info("Backfilling progress: %d/%d documents...", offset + len(ids), source_count)
+        except Exception as e:
+            logger.error("Error retrieving batch at offset %d from source lane %s: %s", offset, source_lane.name, e)
+            break
+            
+    logger.info("Finished backfilling lanes")
+
+def _start_backfill(lanes: Sequence[EmbeddingLane]) -> None:
+    import threading
+    threading.Thread(target=backfill_lanes, args=(lanes,), daemon=True).start()
+
+
 def migrate_legacy_collection(base_name: str, lanes: Sequence[EmbeddingLane]) -> None:
     """Backfill empty lanes from a legacy unsuffixed collection, if present."""
     if not lanes:
@@ -284,12 +368,20 @@ def migrate_legacy_collection(base_name: str, lanes: Sequence[EmbeddingLane]) ->
         legacy = chroma_client.get_collection(base_name)
         data = legacy.get(include=["documents", "metadatas"])
     except Exception:
+        try:
+            _start_backfill(lanes)
+        except Exception as e:
+            logger.warning("Failed to start backfill: %s", e)
         return
 
     ids = data.get("ids") or []
     docs = data.get("documents") or []
     metas = data.get("metadatas") or []
     if not ids or not docs:
+        try:
+            _start_backfill(lanes)
+        except Exception as e:
+            logger.warning("Failed to start backfill: %s", e)
         return
 
     for lane in lanes:
@@ -334,6 +426,11 @@ def migrate_legacy_collection(base_name: str, lanes: Sequence[EmbeddingLane]) ->
                 break
         else:
             logger.info("Backfilled %s %s lane rows from legacy collection %s", len(missing), lane.name, base_name)
+
+    try:
+        _start_backfill(lanes)
+    except Exception as e:
+        logger.warning("Failed to start backfill: %s", e)
 
 
 def lane_count(lanes: Sequence[EmbeddingLane]) -> int:

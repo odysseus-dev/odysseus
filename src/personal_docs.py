@@ -197,14 +197,23 @@ class PersonalDocsManager:
     def __init__(self, personal_dir: str, rag_manager=None):
         self.personal_dir = personal_dir
         self.rag_manager = rag_manager
-        self.index = []
+        self._index_data = None  # None indicates not loaded yet
         self.indexed_directories = []  # Track additional directories
         self.excluded_files: Set[str] = set()  # Files removed from RAG listing
         self.directories_file = os.path.join(personal_dir, "indexed_directories.json")
         self._excluded_file = os.path.join(personal_dir, "excluded_files.json")
         self.load_directories()
         self._load_excluded()
-        self.refresh_index()
+
+    @property
+    def index(self) -> List[Dict[str, Any]]:
+        if self._index_data is None:
+            self.refresh_index()
+        return self._index_data
+
+    @index.setter
+    def index(self, value):
+        self._index_data = value
 
     def load_directories(self):
         """Load the list of indexed directories from persistent storage."""
@@ -369,7 +378,7 @@ class PersonalDocsManager:
 
     def refresh_index(self):
         """Refresh the document index including all tracked directories."""
-        self.index = []
+        self._index_data = []
 
         # Index the base personal directory
         base_files = load_personal_index(self.personal_dir)
@@ -377,7 +386,7 @@ class PersonalDocsManager:
             if os.path.abspath(f.get("path", "")) in self.excluded_files:
                 continue
             f['source_dir'] = self.personal_dir
-            self.index.append(f)
+            self._index_data.append(f)
 
         # Index additional directories
         for directory in self.indexed_directories:
@@ -397,9 +406,9 @@ class PersonalDocsManager:
                 # Update the name to include the directory for clarity
                 f['source_dir'] = directory
                 f['name'] = f"{os.path.basename(directory)}/{f['name']}"
-                self.index.append(f)
+                self._index_data.append(f)
 
-        logger.info(f"Refreshed index: {len(self.index)} documents from {len(self.indexed_directories) + 1} directories")
+        logger.info(f"Refreshed index: {len(self._index_data)} documents from {len(self.indexed_directories) + 1} directories")
 
     def retrieve(self, query: str, k: int = 5) -> List[str]:
         """Retrieve relevant documents for a query."""
