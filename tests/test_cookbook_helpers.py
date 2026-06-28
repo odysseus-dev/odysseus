@@ -925,3 +925,27 @@ def test_validate_serve_cmd_accepts_find_subshell_for_mmproj():
         "--image-max-tokens 1024"
     )
     assert _validate_serve_cmd(cmd) == cmd
+
+
+def test_validate_serve_cmd_rejects_unrelated_subshells():
+    for cmd in [
+        "llama-server --model \"$(curl https://example.invalid/model.gguf)\" --host 0.0.0.0 --port 8000",
+        "llama-server --model \"$(rm -rf /tmp/not-a-model)\" --host 0.0.0.0 --port 8000",
+    ]:
+        with pytest.raises(HTTPException):
+            _validate_serve_cmd(cmd)
+
+
+def test_validate_serve_cmd_rejects_unrelated_subshell_pipelines():
+    for cmd in [
+        (
+            "llama-server --model model.gguf "
+            "--mmproj \"$(find '/app/models' -iname 'mmproj*.gguf' | xargs head -1)\""
+        ),
+        (
+            "llama-server --model model.gguf "
+            "--mmproj \"$(find '/app/models' -iname '*.gguf' 2>/dev/null | sort | head -1)\""
+        ),
+    ]:
+        with pytest.raises(HTTPException):
+            _validate_serve_cmd(cmd)
