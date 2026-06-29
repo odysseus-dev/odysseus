@@ -287,6 +287,7 @@ def test_inline_bootstrap_syncs_html_lang_when_storage_throws():
             {
                 "selected": "en",
                 "stored": "en",
+                "writes": 1,
                 "gets": 1,
                 "puts": 1,
                 "reloads": 1,
@@ -296,22 +297,48 @@ def test_inline_bootstrap_syncs_html_lang_when_storage_throws():
             "en",
             "pt-br",
             {
-                "selected": "pt-BR",
-                "stored": "pt-BR",
+                "selected": "en",
+                "stored": None,
+                "writes": 0,
                 "gets": 1,
-                "puts": 1,
-                "reloads": 1,
+                "puts": 0,
+                "reloads": 0,
             },
         ),
         (
             "en",
             "",
             {
-                "selected": "pt-BR",
-                "stored": "pt-BR",
+                "selected": "en",
+                "stored": None,
+                "writes": 0,
                 "gets": 1,
-                "puts": 1,
-                "reloads": 1,
+                "puts": 0,
+                "reloads": 0,
+            },
+        ),
+        (
+            "en",
+            None,
+            {
+                "selected": "en",
+                "stored": None,
+                "writes": 0,
+                "gets": 1,
+                "puts": 0,
+                "reloads": 0,
+            },
+        ),
+        (
+            "en",
+            {"code": "pt-BR"},
+            {
+                "selected": "en",
+                "stored": None,
+                "writes": 0,
+                "gets": 1,
+                "puts": 0,
+                "reloads": 0,
             },
         ),
         (
@@ -320,6 +347,7 @@ def test_inline_bootstrap_syncs_html_lang_when_storage_throws():
             {
                 "selected": "pt-BR",
                 "stored": "pt-BR",
+                "writes": 1,
                 "gets": 1,
                 "puts": 0,
                 "reloads": 0,
@@ -359,7 +387,7 @@ def test_remote_language_reconciliation(active, remote, expected):
             }};
 
             const {{ initLanguagePref }} =
-              await import('./static/js/languagePref.js?reconcile={active}-{remote}');
+              await import('./static/js/languagePref.js?reconcile');
             initLanguagePref();
             await new Promise((resolve) => setTimeout(resolve, 0));
             await new Promise((resolve) => setTimeout(resolve, 0));
@@ -367,6 +395,7 @@ def test_remote_language_reconciliation(active, remote, expected):
             console.log(JSON.stringify({{
               selected: select.value,
               stored: writes.length ? writes.at(-1)[1] : null,
+              writes: writes.length,
               gets: requests.filter(([, method]) => method === 'GET').length,
               puts: requests.filter(([, method]) => method === 'PUT').length,
               reloads,

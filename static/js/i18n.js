@@ -22,11 +22,14 @@ const SUPPORTED_LANGS = new Set(['pt-BR', 'en']);
 // { 'pt-BR': { 'English': 'Português', ... }, ... }
 const dicts = Object.create(null);
 
+/** True only for exact language codes supported by the interface. */
+export function isSupportedLang(value) {
+  return typeof value === 'string' && SUPPORTED_LANGS.has(value);
+}
+
 /** Return a supported language code, defaulting invalid values to pt-BR. */
 export function normalizeLang(value) {
-  return typeof value === 'string' && SUPPORTED_LANGS.has(value)
-    ? value
-    : DEFAULT_LANG;
+  return isSupportedLang(value) ? value : DEFAULT_LANG;
 }
 
 function activeLang() {

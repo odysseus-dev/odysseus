@@ -11,11 +11,12 @@ exists, otherwise it returns the key (English) unchanged.
   (`odysseus-language`) and `/api/prefs/language`, and is applied early by an inline
   script in `index.html` (`window.__ODY_LANG`).
 - The runtime accepts only the exact codes `pt-BR` and `en`. `normalizeLang()`
-  maps every other value to `pt-BR`, including values read from storage or the
-  preferences endpoint.
-- On startup, a different server preference is applied through `setLang()` so
-  storage, the active runtime, and the server remain aligned. An already-active
-  preference only synchronizes the selector and local storage.
+  maps every other local/runtime value to `pt-BR`. Values received from the
+  preferences endpoint are validated first and ignored when unsupported, so a
+  malformed remote preference cannot replace the active choice.
+- On startup, a different supported server preference is applied through
+  `setLang()` so storage, the active runtime, and the server remain aligned. An
+  already-active preference only synchronizes the selector and local storage.
 
 ## Core API — `static/js/i18n.js`
 
