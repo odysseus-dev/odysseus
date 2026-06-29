@@ -607,27 +607,77 @@ def _load_caldav_accounts(owner: str) -> list:
     from routes.prefs_routes import _load_for_user
 
     prefs = _load_for_user(owner) or {}
+    accounts = None
     if "caldav_accounts" in prefs:
-        return list(prefs["caldav_accounts"] or [])
-    # Migrate legacy single-account config to the list format.
-    legacy = prefs.get("caldav", {}) or {}
-    if legacy.get("url"):
-        accounts = [{
-            "id": str(_uuid.uuid4()),
-            "label": "CalDAV",
-            "url": legacy["url"],
-            "username": legacy.get("username", ""),
-            "password": legacy.get("password", ""),
-        }]
-        prefs["caldav_accounts"] = accounts
-        prefs.pop("caldav", None)
+        accounts = list(prefs["caldav_accounts"] or [])
+    else:
+        # Migrate legacy single-account config to the list format.
+        legacy = prefs.get("caldav", {}) or {}
+        if legacy.get("url"):
+            accounts = [{
+                "id": str(_uuid.uuid4()),
+                "label": "CalDAV",
+                "url": legacy["url"],
+                "username": legacy.get("username", ""),
+                "password": legacy.get("password", ""),
+            }]
+            prefs["caldav_accounts"] = accounts
+            prefs.pop("caldav", None)
+            try:
+                from routes.prefs_routes import _save_for_user
+                _save_for_user(owner, prefs)
+            except (ImportError, AttributeError):
+                pass
+        else:
+            accounts = []
+
+    # Auto-discover Google Email accounts to create CalDAV accounts
+    try:
+        from core.database import SessionLocal, EmailAccount
+        db = SessionLocal()
         try:
-            from routes.prefs_routes import _save_for_user
-            _save_for_user(owner, prefs)
-        except (ImportError, AttributeError):
-            pass  # best-effort; next call re-migrates from the still-present legacy key
-        return accounts
-    return []
+            email_accs = db.query(EmailAccount).filter(
+                EmailAccount.owner == owner,
+                (EmailAccount.imap_host.like("%gmail.com%") | EmailAccount.imap_host.like("%googlemail.com%"))
+            ).all()
+            dirty = False
+            for ea in email_accs:
+                user = ea.imap_user or ea.from_address
+                if not user:
+                    continue
+                # See if we already have a CalDAV account for this user/URL
+                has_existing = any(
+                    (a.get("username") == user or user in a.get("url", ""))
+                    for a in accounts
+                )
+                if not has_existing:
+                    pw = ""
+                    if ea.oauth_provider == "google":
+                        pw = "oauth"
+                    else:
+                        pw = ea.imap_password
+                    
+                    new_cal_acc = {
+                        "id": str(_uuid.uuid4()),
+                        "label": f"Google Calendar ({user})",
+                        "url": f"https://apidata.googleusercontent.com/caldav/v2/{user}/user",
+                        "username": user,
+                        "password": pw,
+                    }
+                    accounts.append(new_cal_acc)
+                    dirty = True
+            
+            if dirty:
+                prefs["caldav_accounts"] = accounts
+                from routes.prefs_routes import _save_for_user
+                _save_for_user(owner, prefs)
+        finally:
+            db.close()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Google CalDAV auto-discovery failed: {e}")
+
+    return accounts
 
 
 def resolve_caldav_google_oauth(owner: str, url: str, username: str) -> str | None:
