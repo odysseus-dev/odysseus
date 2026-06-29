@@ -134,6 +134,7 @@ function _addHistoryMessageWithFullRenderer(role, content, modelName, meta) {
 
 function _renderHistoryMessage(msg, modelName) {
   const meta = msg.metadata ? { ...msg.metadata, _fromHistory: true } : null;
+  let _groupPeerName = null;
   let displayContent;
   if (typeof msg.content === 'string') {
     displayContent = _displayHistoryContent(msg.content);
@@ -158,6 +159,32 @@ function _renderHistoryMessage(msg, modelName) {
     if (docEditMatch) {
       displayContent = `[Doc edit: ${docEditMatch[1]}] ${docEditMatch[3]}`;
     }
+    // In a group chat, a peer agent's turn is persisted as a role:'user'
+    // message prefixed with "[name]: " (see group.js). On reload, render it as
+    // that agent (left, named) like the live group view, not the local user.
+    const _grpSession = sessions.find(s => s.id === currentSessionId);
+    if (_grpSession && _grpSession.name && _grpSession.name.startsWith('[GRP]')) {
+      const peerMatch = displayContent.match(/^\[([^\]\n]+)\]:\s+([\s\S]*)$/);
+      if (peerMatch) {
+        _groupPeerName = peerMatch[1];
+        displayContent = peerMatch[2];
+      }
+    }
+  }
+  if (_groupPeerName) {
+    // group_model labels the bubble with the peer's name verbatim, the way the
+    // live group view does, instead of running it through the model-name shortener.
+    const els = _addHistoryMessageWithFullRenderer(
+      'assistant',
+      displayContent,
+      modelName,
+      { ...(meta || {}), group_model: _groupPeerName }
+    );
+    // The renderer colors the label after the session's own model, which would
+    // paint every peer the same. Recolor per peer, as the live group view does.
+    const roleEl = els.map(n => n.querySelector?.('.role')).find(Boolean);
+    if (roleEl && chatRenderer.applyModelColor) chatRenderer.applyModelColor(roleEl, _groupPeerName);
+    return els;
   }
   return _addHistoryMessageWithFullRenderer(msg.role, displayContent, modelName, meta);
 }
