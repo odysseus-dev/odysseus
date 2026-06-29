@@ -86,7 +86,7 @@ async def list_sessions(content: str, session_id: Optional[str] = None, owner: O
     keyword = content.strip().lower() if content.strip() else None
 
     try:
-        from core.database import SessionLocal, Session as DbSession
+        from core.database import SessionLocal, Session as DbSession, utcnow_naive
         from datetime import datetime, timezone
 
         # Pull every session's last_accessed from the DB so we can sort
@@ -119,10 +119,9 @@ async def list_sessions(content: str, session_id: Optional[str] = None, owner: O
         def _rel(ts):
             if not ts:
                 return 'never'
-            now = datetime.utcnow()
+            # Naive DB timestamps use utcnow_naive(); aware values compare in UTC.
+            now = datetime.now(timezone.utc) if ts.tzinfo is not None else utcnow_naive()
             try:
-                if ts.tzinfo is not None:
-                    now = datetime.now(timezone.utc)
                 diff = (now - ts).total_seconds()
             except Exception:
                 return 'unknown'
