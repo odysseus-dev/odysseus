@@ -333,7 +333,10 @@ class GlobTool:
 
 class GrepTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
+        from src.tool_execution import (
+            _resolve_tool_path, _resolve_search_root, _truncate,
+            _is_sensitive_path, _SENSITIVE_BASENAMES, _SENSITIVE_FILE_PATTERNS,
+        )
         args: Dict[str, Any] = {}
         _s = (content or "").strip()
         if _s.startswith("{"):
@@ -371,6 +374,15 @@ class GrepTool:
                     cmd += ["--glob", glob_pat]
                 for _d in _CODENAV_SKIP_DIRS:
                     cmd += ["--glob", f"!**/{_d}/**"]
+                # Never search files the read-tool deny-list protects (.ssh,
+                # .env, id_rsa, ...). rg skips hidden files by default but still
+                # reads non-hidden key files (id_rsa, known_hosts), so exclude
+                # them explicitly — otherwise grep returns the contents of files
+                # read_file refuses to open.
+                for _b in _SENSITIVE_BASENAMES:
+                    cmd += ["--glob", f"!**/{_b}", "--glob", f"!**/{_b}/**"]
+                for _p in _SENSITIVE_FILE_PATTERNS:
+                    cmd += ["--glob", f"!**/{_p}"]
                 cmd += ["--regexp", pattern, root]
                 try:
                     import subprocess
@@ -391,11 +403,15 @@ class GrepTool:
             else:
                 file_iter = []
                 for dp, dns, fns in os.walk(root):
-                    dns[:] = [d for d in dns if d not in _CODENAV_SKIP_DIRS]
+                    dns[:] = [d for d in dns
+                              if d not in _CODENAV_SKIP_DIRS and d not in _SENSITIVE_BASENAMES]
                     for fn in fns:
                         if glob_pat and not fnmatch.fnmatch(fn, glob_pat):
                             continue
-                        file_iter.append(os.path.join(dp, fn))
+                        fp = os.path.join(dp, fn)
+                        if _is_sensitive_path(fp):
+                            continue
+                        file_iter.append(fp)
             for fp in file_iter:
                 if len(hits) >= max_hits:
                     break

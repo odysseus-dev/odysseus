@@ -141,6 +141,30 @@ async def test_grep_and_ls_confined_e2e(ws, admin):
 
 
 @pytest.mark.asyncio
+async def test_grep_skips_sensitive_files_in_workspace(ws, admin):
+    """grep must honor the same sensitive-file deny-list as read_file. A key or
+    env file living inside the workspace would otherwise have its CONTENTS
+    returned by grep even though read_file refuses to open it (prompt-injection
+    secret exfil). The token is searched, not matched against names, so this
+    catches both the ripgrep and pure-Python grep paths."""
+    token = "SENSITIVE_TOKEN_4F2A"
+    with open(os.path.join(ws, "id_rsa"), "w") as f:
+        f.write(f"-----BEGIN KEY-----\n{token}\n")
+    os.makedirs(os.path.join(ws, ".ssh"), exist_ok=True)
+    with open(os.path.join(ws, ".ssh", "authorized_keys"), "w") as f:
+        f.write(f"ssh-rsa {token}\n")
+    with open(os.path.join(ws, "notes.txt"), "w") as f:  # ordinary file with same token
+        f.write(f"see {token} here\n")
+
+    _, r = await execute_tool_block(_block("grep", json.dumps({"pattern": token})), owner="a", workspace=ws)
+    assert r["exit_code"] == 0
+    # the ordinary file is still searchable; the key / authorized_keys are not
+    assert "notes.txt" in r["output"]
+    assert "id_rsa" not in r["output"]
+    assert "authorized_keys" not in r["output"]
+
+
+@pytest.mark.asyncio
 async def test_subprocess_cwd_is_workspace_e2e(ws, admin):
     """python tool runs with cwd = workspace (OS-agnostic probe)."""
     _, r = await execute_tool_block(_block("python", "import os; print(os.getcwd())"), owner="a", workspace=ws)
