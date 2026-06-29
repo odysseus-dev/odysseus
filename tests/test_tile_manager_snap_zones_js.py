@@ -43,7 +43,7 @@ def _run_tile_case():
           disconnect() {{}}
         }};
 
-        const mod = await import('{_HELPER.as_posix()}');
+        const mod = await import('{_HELPER.resolve().as_uri()}');
         const pick = (zone) => zone ? {{
           name: zone.name,
           rect: {{

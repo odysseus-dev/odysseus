@@ -15,7 +15,7 @@ _HAS_NODE = shutil.which("node") is not None
 
 def _snap(other_layers):
     js = f"""
-    import {{ computeSnap }} from '{_HELPER.as_posix()}';
+    import {{ computeSnap }} from '{_HELPER.resolve().as_uri()}';
     const layer = {{ id: 'L1', canvas: {{ width: 100, height: 50 }} }};
     const ctx = {{ zoom: 1, canvasW: 800, canvasH: 600, otherLayers: {json.dumps(other_layers)} }};
     console.log(JSON.stringify(computeSnap(layer, 10, 10, ctx)));
