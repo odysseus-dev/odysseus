@@ -320,6 +320,12 @@ def test_registered_translations_are_not_source_identity() -> None:
 
 
 @pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_shared_most_used_label_is_context_neutral() -> None:
+    catalog = _messages_for(INDEX_CATALOG.name)
+    assert catalog["Most used"] == "Mais frequentes"
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
 def test_duplicate_keys_have_one_canonical_translation() -> None:
     occurrences: dict[str, list[tuple[str, str]]] = defaultdict(list)
     for registration in _captured_catalogs():

@@ -373,7 +373,7 @@ registerMessages('pt-BR', {
   "More Tools": "Mais ferramentas",
   "More options": "Mais opções",
   "More tools": "Mais ferramentas",
-  "Most used": "Mais usadas",
+  "Most used": "Mais frequentes",
   "Name": "Nome",
   "New chat": "Nova conversa",
   "New document": "Novo documento",
