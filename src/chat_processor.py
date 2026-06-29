@@ -209,6 +209,7 @@ class ChatProcessor:
         agent_mode: bool = False,
         incognito: bool = False,
         use_skills: bool = True,
+        mem_recall_count: int = 3,
     ) -> Tuple[List[Dict[str, str]], List[Dict[str, Any]], List[Dict[str, str]]]:
         """Build the context preface for LLM calls.
 
@@ -263,7 +264,7 @@ class ChatProcessor:
                         _used_ids.append(m["id"])
 
             if extended:
-                relevant = self._hybrid_retrieve(message, extended, k=3)
+                relevant = self._hybrid_retrieve(message, extended, k=mem_recall_count)
                 if relevant:
                     ext_text = "\n".join([f"- {m['text']}" for m in relevant])
                     preface.append(untrusted_context_message(

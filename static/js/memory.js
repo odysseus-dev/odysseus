@@ -194,6 +194,7 @@ async function syncToggles() {
   await syncPrefToggle('auto-approve-skills-toggle', 'auto_approve_skills', 'Auto-approve skills enabled', 'Auto-approve skills disabled', false);
   await syncPrefSlider('skill-confidence-slider', 'skill_min_confidence', 'skill-confidence-label', 0.85);
   await syncPrefNumber('skill-max-input', 'skill_max_injected', 3);
+  await syncPrefNumber('memory-recall-count-input', 'memory_recall_count', 3, (v) => `Max memories per response: ${v}`);
 
   // Reflect the header toggle into the sidebar dim + modal body opacity.
   const headerToggle = document.getElementById('memory-enabled-header-toggle');
@@ -285,8 +286,10 @@ async function syncPrefSlider(elementId, prefKey, labelId, defaultVal) {
   }
 }
 
-/** Load/save an integer-valued pref backed by a <input type="number">. */
-async function syncPrefNumber(elementId, prefKey, defaultVal) {
+/** Load/save an integer-valued pref backed by a <input type="number">.
+ * `toastFor(v)` optionally customizes the save confirmation (defaults to the
+ * skills-injection wording for backward compatibility). */
+async function syncPrefNumber(elementId, prefKey, defaultVal, toastFor) {
   const input = document.getElementById(elementId);
   if (!input) return;
   const clamp = (raw) => {
@@ -318,7 +321,7 @@ async function syncPrefNumber(elementId, prefKey, defaultVal) {
           body: JSON.stringify({ value: v })
         });
         if (!res.ok) { showError('Failed to save preference'); return; }
-        showToast(v === 0 ? 'No skills injected' : `Max injected skills: ${v}`);
+        showToast(toastFor ? toastFor(v) : (v === 0 ? 'No skills injected' : `Max injected skills: ${v}`));
       } catch (e) {
         console.error(`Failed to save ${prefKey} pref:`, e);
         showError('Failed to save preference');

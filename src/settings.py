@@ -165,6 +165,10 @@ DEFAULT_SETTINGS = {
     # Max relevant skills injected into the prompt for one request. The skills
     # library can grow beyond this; cleanup/retirement is an explicit review flow.
     "skill_max_injected": 3,
+    # Number of extended (non-pinned) memories recalled into context per response
+    # (issue #4948). Higher = more context but larger/slower/pricier prompts.
+    # Overridable per-user via the "memory_recall_count" preference.
+    "memory_recall_count": 3,
     # Reminders
     "reminder_channel": "browser",   # "browser" | "email" | "ntfy" | "webhook"
     "reminder_llm_synthesis": False,

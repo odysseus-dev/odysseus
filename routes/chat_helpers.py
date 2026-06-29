@@ -18,6 +18,7 @@ from src.model_context import estimate_tokens
 from src.auth_helpers import effective_user
 from src.prompt_security import untrusted_context_message
 from src.attachment_refs import attachment_ref
+from src.settings import get_setting
 from routes.prefs_routes import _load_for_user as load_prefs_for_user
 
 from fastapi import HTTPException
@@ -691,6 +692,14 @@ async def build_chat_context(
     # Skills injection respects its own enable toggle (mirrors memory_enabled).
     # When off, the "Available skills" index is not added to the prompt.
     skills_enabled = not incognito and uprefs.get("skills_enabled", True)
+    # Number of extended memories recalled per response (issue #4948): user pref,
+    # then global setting, then the historical default of 3. Clamped so a
+    # malformed pref can't silently disable recall (k<=0) or balloon the prompt.
+    try:
+        mem_recall_count = int(uprefs.get("memory_recall_count", get_setting("memory_recall_count", 3)))
+    except (TypeError, ValueError):
+        mem_recall_count = 3
+    mem_recall_count = max(1, min(50, mem_recall_count))
     if not allow_tool_preprocessing:
         mem_enabled = False
         skills_enabled = False
@@ -734,6 +743,7 @@ async def build_chat_context(
         agent_mode=agent_mode,
         incognito=incognito,
         use_skills=skills_enabled,
+        mem_recall_count=mem_recall_count,
     )
     if use_rag is not None or is_research_spinoff or casual_low_signal:
         _preface_kwargs["use_rag"] = use_rag_val
