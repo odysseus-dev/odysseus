@@ -2526,6 +2526,7 @@ export function _renderRunningTab() {
         }
 
         const closeHandler = (ev) => {
+          if (!dropdown.isConnected) { _cleanup(); return; }
           if (!dropdown.contains(ev.target) && ev.target !== menuBtn) {
             _cleanup();
           }
@@ -2535,7 +2536,10 @@ export function _renderRunningTab() {
         // it visually drifts. Matches the email kebab behaviour.
         const scrollClose = () => _cleanup();
         let _unreg = () => {};
+        let _done = false;
         const _cleanup = () => {
+          if (_done) return;
+          _done = true;
           _unreg(); _unreg = () => {};
           dropdown.remove();
           document.removeEventListener('click', closeHandler);
