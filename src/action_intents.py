@@ -77,6 +77,12 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         ("notes", "set reminder request", rf"{_PLEASE}set\s+(?:a\s+)?reminder\b"),
         ("notes", "assistant reminder request", rf"{_ACTION_QUESTION}set\s+(?:a\s+)?reminder\b"),
 
+        # Contacts / address-book lookup. A question like "what is Mario's
+        # number?" or "look up Anna in contacts" needs the contacts tool.
+        ("contacts", "phone/number lookup request", r"\b(?:what(?:'s| is)|tell\s+me|give\s+me|do\s+you\s+have|mi\s+dici|dime|decime|qual(?:'è|e| è)|cerca|busca)\b.{1,80}?\b(?:phone|telephone|number|numero|número|tel[eé]fono|email|address|indirizzo|direcci[oó]n|contact|contatto|contacto)\b"),
+        ("contacts", "contact lookup request", r"\b(?:look\s+up|find|search|get|pull\s+up|cerca|trova|busca)\b.{1,60}?\b(?:in|on|nel|nella|nell|nei|negli|en|su)\s+(?:my\s+)?(?:contacto?s?|contatt[io]s?|rubrica|address\s+book)\b"),
+        ("contacts", "contact search request", r"\b(?:search|find|look\s+up|cerca|trova|busca)\b.{0,40}\b(?:my\s+)?(?:contacto?s?|contatt[io]s?|rubrica|address\s+book)\b"),
+
         # Email actions.
         ("email", "assistant email action request", rf"{_ACTION_QUESTION}(?:send|write|reply|email|message|archive|delete|mark)\b.{{0,120}}\b(?:emails?|mail|messages?|inbox|unread|read)\b"),
         ("email", "send/write/reply email request", rf"{_PLEASE}(?:send|write|reply)\b.{{0,120}}\b(?:emails?|mail|messages?)\b"),
