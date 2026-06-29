@@ -477,7 +477,7 @@ registerMessages('pt-BR', {
   "Settings": "Configurações",
   "Share defaults with users": "Compartilhar padrões com usuários",
   "Shell": "Terminal",
-  "Shell Access": "Acesso ao shell",
+  "Shell Access": "Acesso ao terminal",
   "Shell access": "Acesso ao shell",
   "Shortcuts": "Atalhos",
   "Show / hide the API key field": "Mostrar / ocultar o campo da chave de API",

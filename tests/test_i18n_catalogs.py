@@ -548,18 +548,18 @@ def test_app_catalog_has_contextual_portuguese_for_dynamic_interface_copy() -> N
         ),
         "Web search on": "Pesquisa na web ativada",
         "Web search off": "Pesquisa na web desativada",
-        "Shell on": "Shell ativado",
-        "Shell off": "Shell desativado",
+        "Shell on": "Terminal ativado",
+        "Shell off": "Terminal desativado",
         "Web Search": "Busca na web",
         "Searches the web for relevant information to include in the response. "
         "Results are fetched and summarized before the AI answers.": (
             "Pesquisa informações relevantes na web para incluir na resposta. "
             "Os resultados são coletados e resumidos antes de a IA responder."
         ),
-        "Shell Access": "Acesso ao shell",
+        "Shell Access": "Acesso ao terminal",
         "Gives the AI access to a sandboxed shell for running commands, "
         "installing packages, and executing scripts. Use with caution.": (
-            "Dá à IA acesso a um shell isolado para executar comandos, instalar "
+            "Dá à IA acesso a um terminal isolado para executar comandos, instalar "
             "pacotes e rodar scripts. Use com cuidado."
         ),
         "Tool Builder": "Criador de ferramentas",
