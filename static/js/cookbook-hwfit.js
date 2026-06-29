@@ -31,7 +31,7 @@ import {
 } from './cookbook.js';
 import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
-import { _loadTasks, _tmuxGracefulKill } from './cookbookRunning.js';
+import { _loadTasks, _tmuxGracefulKill, _nextAvailablePort, _taskPort } from './cookbookRunning.js';
 import { openCookbookDependencies } from './cookbook-diagnosis.js';
 
 // Map a serve-backend code (vllm / sglang / llamacpp) → the package name
@@ -1493,36 +1493,34 @@ export function _expandModelRow(row, modelData) {
         }
         return;
       }
+      // Detect backend and port now — the pre-launch guard below needs them.
+      const _qrBackendDetect = _detectBackend(modelData);
+      const _qrRunBackend = _qrBackendDetect.backend || 'vllm';
+      const _qrPort = _nextAvailablePort();
 
-      // ─── Pre-launch: stop the model already serving on this host ───────
-      // Two servers can't share port 8000. Without this, the new launch
-      // silently collided and the user saw no feedback. We surface the
-      // conflict and offer to kill the running one first as the default
-      // action (it's almost always what the user wants).
+      // ─── Pre-launch: stop colliding serves on the same port ───────
+      // Different ports coexist fine (e.g. vLLM on 8000 + Qwen VL on
+      // 8001). Only block when the new model's port genuinely collides
+      // with a running serve. (Issue #4507)
       try {
         const _qrHostStr = _envState.remoteHost || '';
-        const _activeServes = _loadTasks().filter(t =>
+        const _allServes = _loadTasks().filter(t =>
           t && t.type === 'serve'
           && (t.remoteHost || '') === _qrHostStr
           && (t.status === 'running' || t.status === 'ready' || t._serveReady)
         );
-        if (_activeServes.length) {
-          const _names = _activeServes.map(t => t.payload?.repo_id || t.repo || t.name || '?').filter(Boolean);
+        const _clashing = _allServes.filter(t => _taskPort(t) === _qrPort);
+        if (_clashing.length) {
+          const _names = _clashing.map(t => t.payload?.repo_id || t.repo || t.name || '?').filter(Boolean);
           const _ok = await window.styledConfirm?.(
-            `${_names.length} model${_names.length === 1 ? '' : 's'} already serving on ${_qrHostStr || 'local'} (${_names.join(', ')}). Port 8000 will collide. Stop the running model and launch this one?`,
+            `${_clashing.length} model${_clashing.length === 1 ? '' : 's'} on port ${_qrPort} (${_names.join(', ')}). Stop it and launch this one?`,
             { confirmText: 'Stop & launch', cancelText: 'Cancel' }
           );
           if (!_ok) return;
-          // Mark + kill each running serve, then wait briefly for the
-          // tmux session to actually go down before we kick off the new
-          // launch. Otherwise vLLM still races against the dying socket.
           quickRunBtn.disabled = true;
           quickRunBtn.textContent = 'Stopping…';
-          for (const t of _activeServes) {
+          for (const t of _clashing) {
             try {
-              // Use that task's own Stop button if it's rendered (handles
-              // endpoint cleanup, Ollama unload, fade-out). Falls back to
-              // a direct tmux kill if the Active tab isn't in the DOM yet.
               const _taskEl = document.querySelector(`.cookbook-task[data-task-id="${t.sessionId}"]`);
               const _stopBtn = _taskEl?.querySelector('.cookbook-task-action-stop');
               if (_stopBtn) {
@@ -1537,10 +1535,11 @@ export function _expandModelRow(row, modelData) {
               }
             } catch (_killErr) { /* best-effort */ }
           }
-          // Give the OS a beat to release port 8000.
           await new Promise(r => setTimeout(r, 2500));
         }
       } catch (_e) { /* best-effort */ }
+
+      // -- Launch ───────────────────────────────────────────────────
 
       // ─── Pre-launch driver check ─────────────────────────────────────
       // vLLM/SGLang need a working CUDA/ROCm driver. nvidia-smi failures
@@ -1550,8 +1549,6 @@ export function _expandModelRow(row, modelData) {
       // user watches `pip install vllm` finish, then sees a cryptic CUDA
       // error 10 minutes later. (llama.cpp / Ollama have CPU fallbacks
       // so they skip this gate.)
-      const _qrBackendDetect = _detectBackend(modelData);
-      const _qrRunBackend = _qrBackendDetect.backend || 'vllm';
       if (_qrRunBackend === 'vllm' || _qrRunBackend === 'sglang') {
         const _sys = _hwfitCache?.system || {};
         if (_sys.gpu_error) {
@@ -1658,7 +1655,7 @@ export function _expandModelRow(row, modelData) {
 
       const host = _envState.remoteHost || '';
       const hostIp = host.includes('@') ? host.split('@').pop() : host;
-      const port = '8000';
+      const port = _qrPort;
       const detected = _detectBackend(modelData);
       const runBackend = detected.backend || 'vllm';
 
@@ -1673,7 +1670,7 @@ export function _expandModelRow(row, modelData) {
       } else if (runBackend === 'llamacpp') {
         const dir = `"$HOME/.cache/huggingface/hub/models--${modelData.name.replace(/\//g, '--')}/snapshots"`;
         const ggufPath = `$({ find ${dir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${dir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`;
-        cmd = `llama-server --model "${ggufPath}" --host 0.0.0.0 --port 8080 -ngl 99 -c ${maxCtx} --flash-attn auto`;
+        cmd = `llama-server --model "${ggufPath}" --host 0.0.0.0 --port ${port} -ngl 99 -c ${maxCtx} --flash-attn auto`;
       } else {
         cmd = `vllm serve ${modelData.name} --host 0.0.0.0 --port ${port}`;
         cmd += ` --tensor-parallel-size ${tp}`;

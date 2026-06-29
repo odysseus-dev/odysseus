@@ -1938,6 +1938,7 @@ async function _onSessionListKeydown(e) {
   }
 
   if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (item.querySelector('.session-rename-input')) return;
     e.preventDefault();
     const sid = item.dataset.sessionId;
     const s = sessions.find(x => x.id === sid);

@@ -1,4 +1,4 @@
-# src/exceptions.py
+# core/exceptions.py
 """Custom exceptions for the application."""
 
 class SessionNotFoundError(Exception):

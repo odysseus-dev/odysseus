@@ -1,8 +1,8 @@
 from typing import Any, Dict, List, Optional
 import logging
 import re
-import json
 from src.constants import MAX_READ_CHARS
+from src.tool_utils import _parse_tool_args
 
 logger = logging.getLogger(__name__)
 
@@ -153,38 +153,6 @@ def _coerce_email_document_content(existing: str, incoming: str) -> str:
     else:
         body = new
     return header.rstrip() + "\n---\n" + body
-
-def _parse_tool_args(content):
-    """Parse a tool-call argument blob.
-
-    Accepts either a JSON string or an already-decoded dict. Unwraps the
-    common `{"body": {...}}` envelope that smaller models emit when they
-    read tool descriptions like "Body is JSON: {...}" literally — they
-    pass `body` as a field name rather than treating it as a noun.
-
-    Returns a dict on success, raises ValueError on bad JSON.
-    """
-    if isinstance(content, str):
-        try:
-            args = json.loads(content) if content.strip() else {}
-        except (json.JSONDecodeError, TypeError) as e:
-            raise ValueError(str(e))
-    elif isinstance(content, dict):
-        args = content
-    else:
-        args = {}
-    # Unwrap {"body": {...}} envelope — but only if `body` is the sole key
-    # and points at a dict. We don't want to clobber a legitimate `body`
-    # field on tools where it's a real arg (e.g. send_email body text).
-    if (
-        isinstance(args, dict)
-        and len(args) == 1
-        and "body" in args
-        and isinstance(args["body"], dict)
-        and "action" in args["body"]  # extra safety: only unwrap if the inner dict looks like a tool call
-    ):
-        args = args["body"]
-    return args
 
 def parse_edit_blocks(content: str) -> list:
     """Parse <<<FIND>>>...<<<REPLACE>>>...<<<END>>> blocks."""
@@ -596,9 +564,20 @@ class ManageDocumentTool:
                 if not doc:
                     return {"error": f"Document '{doc_id}' not found", "exit_code": 1}
                 body = doc.current_content or ""
-                preview_limit = int(args.get("limit", MAX_READ_CHARS))
-                truncated = len(body) > preview_limit
-                preview = body[:preview_limit] + (f"\n... (truncated, {len(body)} chars total)" if truncated else "")
+                try:
+                    preview_limit = max(1, min(int(args.get("limit", MAX_READ_CHARS)), MAX_READ_CHARS))
+                except (TypeError, ValueError):
+                    preview_limit = MAX_READ_CHARS
+                try:
+                    offset = max(0, int(args.get("offset", 0) or 0))
+                except (TypeError, ValueError):
+                    offset = 0
+                offset = min(offset, len(body))
+                end = min(offset + preview_limit, len(body))
+                truncated = end < len(body)
+                preview = body[offset:end]
+                if truncated:
+                    preview += f"\n... (truncated, {len(body)} chars total; next_offset={end})"
                 anchor = f"[{doc.title}](#document-{doc.id})"
                 return {
                     "response": f"{anchor} — click to open in editor.\n\n```{doc.language or ''}\n{preview}\n```",
@@ -609,6 +588,8 @@ class ManageDocumentTool:
                         "size": len(body),
                         "content": preview,
                         "truncated": truncated,
+                        "offset": offset,
+                        "next_offset": end if truncated else None,
                     },
                     "exit_code": 0,
                 }

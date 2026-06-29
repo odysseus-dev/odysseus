@@ -755,6 +755,78 @@ def _extract_last_user_message(messages: List[Dict]) -> str:
     return ""
 
 
+def _insert_before_latest_user(messages: List[Dict], context_msg: Dict) -> List[Dict]:
+    """Insert a context message immediately before the latest user turn."""
+    out = list(messages or [])
+    for idx in range(len(out) - 1, -1, -1):
+        if out[idx].get("role") == "user":
+            out.insert(idx, context_msg)
+            return out
+    out.append(context_msg)
+    return out
+
+
+def _uploaded_files_context_message(uploaded_files: Optional[List[Dict]]) -> Optional[Dict]:
+    if not uploaded_files:
+        return None
+
+    lines = [
+        "Uploaded files attached to the latest user turn:",
+    ]
+    for item in uploaded_files[:20]:
+        name = str(item.get("name") or item.get("id") or "upload")
+        bits = [
+            f"id={item.get('id', '')}",
+            f"name={name}",
+        ]
+        if item.get("mime"):
+            bits.append(f"mime={item.get('mime')}")
+        if item.get("size") is not None:
+            bits.append(f"size={item.get('size')} bytes")
+        if item.get("path"):
+            bits.append(f"path={item.get('path')}")
+        lines.append("- " + "; ".join(bits))
+    if len(uploaded_files) > 20:
+        lines.append(f"- ... {len(uploaded_files) - 20} more upload(s) omitted from this manifest")
+    lines.extend([
+        "",
+        "The attachment contents may already be in the latest user message. If an attachment is marked truncated or omitted, read its listed path with `read_file` when that tool is available. Do not say uploaded files are undiscoverable when they are listed here.",
+    ])
+    return untrusted_context_message("current chat uploaded files", "\n".join(lines))
+
+
+def _strip_think_blocks(text: str) -> str:
+    """Linear-time equivalent of
+    ``re.sub(r'<think>.*?</think>', '', text, flags=DOTALL|IGNORECASE)``.
+
+    The lazy regex rescans to end-of-string from every ``<think>`` opener when
+    a closer is missing -> O(n^2) on untrusted model output (prompt injection
+    can echo thousands of openers). This forward-only scan pairs each opener
+    with the next closer in a single pass. Output is byte-for-byte identical to
+    the original narrow regex: only literal ``<think>``/``</think>`` (any case)
+    are matched, a dangling opener with no closer is left intact, and an orphan
+    ``</think>`` is never stripped.
+    """
+    if not text:
+        return text
+    lowered = text.lower()
+    parts = []
+    pos = 0
+    while True:
+        start = lowered.find("<think>", pos)
+        if start == -1:
+            parts.append(text[pos:])
+            break
+        end = lowered.find("</think>", start + 7)
+        if end == -1:
+            # No closer for this opener: lazy regex matches nothing here.
+            parts.append(text[pos:])
+            break
+        parts.append(text[pos:start])
+        pos = end + 8  # len("</think>")
+    return "".join(parts)
+
+
 _LOW_SIGNAL_RE = re.compile(r"^[\W_]*$", re.UNICODE)
 _CASUAL_OPENING_RE = re.compile(
     r"^\s*(?:h+i+|hey+|hello+|yo+|sup+|what'?s up|wass?up|hiya|howdy|"
@@ -773,7 +845,12 @@ _EXPLICIT_CONTINUATION_RE = re.compile(
     r"run it|launch it|start it|use that|that one|same|the same|"
     r"first|second|third|the first one|the second one|the third one|"
     r"[123]|[abc]"
-    r")\s*[.!?]*\s*$",
+    # `\s*[.!?]*\s*$` put two \s-matching quantifiers around `[.!?]*`, which
+    # backtracks O(n^2) on a terse reply + whitespace flood (py/polynomial-redos).
+    # `\s*(?:[.!?]+\s*)?$` accepts the same "trailing space/punctuation" tails
+    # (the inner \s* only engages after `[.!?]+`, so no two \s* are adjacent) and
+    # is linear.
+    r")\s*(?:[.!?]+\s*)?$",
     re.IGNORECASE,
 )
 _RETRY_CONTINUATION_RE = re.compile(
@@ -1576,6 +1653,7 @@ def _build_base_prompt(
 def _resolve_tool_blocks(round_response: str, native_tool_calls: list, round_num: int, is_api_model: bool = False):
     """Choose native function calls or fenced code block parsing. Returns (tool_blocks, used_native)."""
     used_native = False
+    converted_calls = []  # native calls that converted, ALIGNED with tool_blocks
     if native_tool_calls:
         tool_blocks = []
         for tc in native_tool_calls:
@@ -1584,6 +1662,7 @@ def _resolve_tool_blocks(round_response: str, native_tool_calls: list, round_num
             block = function_call_to_tool_block(tc_name, tc_args)
             if block:
                 tool_blocks.append(block)
+                converted_calls.append(tc)
                 logger.info(f"  -> converted: {tc_name} -> {block.tool_type}")
             else:
                 logger.warning(f"  -> FAILED to convert native call: {tc_name} args={tc_args[:200]}")
@@ -1613,7 +1692,7 @@ def _resolve_tool_blocks(round_response: str, native_tool_calls: list, round_num
                 f"{len(native_tool_calls)} native calls, "
                 f"{len(tool_blocks)} tool blocks. Preview: {resp_preview}")
 
-    return tool_blocks, used_native
+    return tool_blocks, used_native, converted_calls
 
 
 def _append_tool_results(
@@ -1837,7 +1916,7 @@ async def _run_verifier_subagent(
     except Exception as e:
         logger.warning(f"[agent] verifier subagent failed: {e}")
         return []
-    raw = re.sub(r"<think>.*?</think>", "", raw or "", flags=re.DOTALL | re.IGNORECASE)
+    raw = _strip_think_blocks(raw or "")
     last_v = None
     for line in raw.splitlines():
         if "VERIFICATION:" in line:
@@ -1954,6 +2033,7 @@ async def stream_agent_loop(
     tool_policy: Optional[ToolPolicy] = None,
     workspace: Optional[str] = None,
     forced_tools: Optional[Set[str]] = None,
+    uploaded_files: Optional[List[Dict]] = None,
     _is_teacher_run: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
@@ -1988,6 +2068,11 @@ async def stream_agent_loop(
         # the loop is safe regardless of caller. MCP stays available but is
         # filtered to read-only tools below (after the disabled map is loaded).
         disabled_tools.update(plan_mode_disabled_tools())
+
+    uploaded_files = uploaded_files or []
+    _upload_msg = _uploaded_files_context_message(uploaded_files)
+    if _upload_msg:
+        messages = _insert_before_latest_user(messages, _upload_msg)
 
     _t0 = time.time()
     _needs_admin = _detect_admin_intent(messages)
@@ -2199,6 +2284,15 @@ async def stream_agent_loop(
     # or what keywords were in the latest user message.
     if _relevant_tools is not None and active_document is not None:
         _relevant_tools.update({"edit_document", "update_document", "suggest_document"})
+
+    # Current-turn chat uploads are real files under the upload/data root. Make
+    # the read-side file/document tools visible immediately so the agent can
+    # inspect files whose inline text was truncated or omitted.
+    if not guide_only and uploaded_files:
+        if _relevant_tools is None:
+            from src.tool_index import ALWAYS_AVAILABLE
+            _relevant_tools = set(ALWAYS_AVAILABLE)
+        _relevant_tools.update({"read_file", "grep", "ls", "manage_documents"})
 
     # Per-request UI toggles are stronger than retrieval. If the user turns on
     # Search, the model must see the search tools even when the latest text is a
@@ -2459,7 +2553,6 @@ async def stream_agent_loop(
     # backstop. Counting identical repeats — not distinct same-tool calls —
     # lets a legit batch (e.g. 18 calendar events at once) through.
     _call_freq: collections.Counter = collections.Counter()
-    _THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
     _force_answer = False  # set by loop-breaker → next round runs with NO tools
     # Supervisor: how many times we've nudged the model after it announced
     # an action without emitting the tool call. Capped to prevent a model
@@ -2782,7 +2875,7 @@ async def stream_agent_loop(
             _round_first_event_logged,
             _round_first_token_logged,
         )
-        tool_blocks, used_native = _resolve_tool_blocks(
+        tool_blocks, used_native, converted_calls = _resolve_tool_blocks(
             round_response,
             native_tool_calls,
             round_num,
@@ -2797,7 +2890,7 @@ async def stream_agent_loop(
             if tool_blocks:
                 logger.info(f"[agent] force-answer round {round_num}: discarding {len(tool_blocks)} ignored tool call(s)")
             tool_blocks = []
-            if not _THINK_RE.sub("", strip_tool_blocks(round_response)).strip():
+            if not _strip_think_blocks(strip_tool_blocks(round_response)).strip():
                 # The model burned its budget gathering data but never wrote a
                 # final answer (common with weaker models on multi-source
                 # briefings). Salvage it: one blunt non-streaming synthesis call
@@ -2820,7 +2913,7 @@ async def stream_agent_loop(
                         url=endpoint_url, model=model, messages=_synth_messages,
                         headers=headers, temperature=0.3, max_tokens=max_tokens, timeout=60,
                     )
-                    _synth = _THINK_RE.sub("", strip_tool_blocks(_raw or "")).strip()
+                    _synth = _strip_think_blocks(strip_tool_blocks(_raw or "")).strip()
                 except Exception as _e:
                     logger.warning(f"[agent] grace synthesis failed: {_e}")
                 if _synth:
@@ -2882,7 +2975,7 @@ async def stream_agent_loop(
             # the model fix them (capped, and it must do new effectful work
             # to re-trigger). Skipped on force-answer rounds (no tools to
             # fix with), pure Q&A, and when the toggle is off.
-            _claimed_done = bool(_THINK_RE.sub("", cleaned_round).strip())
+            _claimed_done = bool(_strip_think_blocks(cleaned_round).strip())
             if (_effectful_used and not _force_answer
                     and _claimed_done
                     and _verifier_rounds < _VERIFIER_MAX_ROUNDS
@@ -2926,7 +3019,7 @@ async def stream_agent_loop(
             # actual tool now") and loop again. Capped at
             # _MAX_INTENT_NUDGES so a model that genuinely cannot use the
             # tool doesn't pin us in a forever loop.
-            _intent_text = _THINK_RE.sub("", cleaned_round).strip()
+            _intent_text = _strip_think_blocks(cleaned_round).strip()
             _intent_match = _INTENT_RE.search(_intent_text) if _intent_text else None
             # Only nudge when the round REALLY looks like an unfinished
             # promise: short response (<400 chars), no fenced code/answer,
@@ -2989,7 +3082,7 @@ async def stream_agent_loop(
         # "Real" answer text = round text minus <think> blocks. Empty-think
         # rounds (just "<think>\n\n</think>" + a tool call) must not read as
         # progress, so strip think before checking.
-        _real_text = _THINK_RE.sub("", cleaned_round).strip()
+        _real_text = _strip_think_blocks(cleaned_round).strip()
         # Circling = repeating a recent call with nothing written. Any
         # progress (a NEW distinct call, or actual answer text) resets it.
         if _is_repeat and not _real_text:
@@ -3215,9 +3308,12 @@ async def stream_agent_loop(
                     f'data: {json.dumps({"type": "ui_control", "data": result})}\n\n'
                 )
 
-            # ask_user: the agent posed a multiple-choice question. Emit it so the
-            # frontend renders clickable options, then end the turn (below) and
-            # wait — the user's pick becomes the next message.
+            # ask_user: remember the payload now, but emit the interactive event
+            # only *after* tool_output below.  Emitting it before tool_output let
+            # the subsequent tool-card rewrite/scroll push the choices out of
+            # view.  The payload is also copied into the persisted tool event so
+            # history reload can reconstruct an unanswered card.
+            _pending_ask_user_event = None
             if "ask_user" in result:
                 # The question lives in the tool args. ChatMessage.to_dict()
                 # replays only role+content to the model next turn — tool_event
@@ -3232,9 +3328,7 @@ async def stream_agent_loop(
                     _auq_delta = ("\n\n" if full_response.strip() else "") + _auq_q
                     full_response += _auq_delta
                     yield 'data: ' + json.dumps({"delta": _auq_delta}) + '\n\n'
-                yield (
-                    f'data: {json.dumps({"type": "ask_user", "data": result["ask_user"]})}\n\n'
-                )
+                _pending_ask_user_event = _auq
                 _awaiting_user = True
 
             # update_plan: agent wrote back to the plan (ticked a step / revised).
@@ -3289,6 +3383,10 @@ async def stream_agent_loop(
 
             # Emit tool_output (include ui_event data if present)
             tool_output_data = {"type": "tool_output", "tool": block.tool_type, "command": cmd_display, "output": output_text, "exit_code": result.get("exit_code")}
+            if _pending_ask_user_event:
+                # Keep enough state in the streamed tool result for alternate
+                # clients to render the prompt without depending on event order.
+                tool_output_data["ask_user"] = _pending_ask_user_event
             if "ui_event" in result:
                 tool_output_data["ui_event"] = result["ui_event"]
                 for k in (
@@ -3318,6 +3416,14 @@ async def stream_agent_loop(
             if "diff" in result:
                 tool_output_data["diff"] = result["diff"]
             yield f'data: {json.dumps(tool_output_data)}\n\n'
+
+            # This must be the final UI event for ask_user: the frontend appends
+            # the card below the now-settled tool node and cancels any between-
+            # round spinner.  The turn ends after the current tool batch.
+            if _pending_ask_user_event:
+                yield (
+                    f'data: {json.dumps({"type": "ask_user", "data": _pending_ask_user_event})}\n\n'
+                )
 
             # Native document tools open in the editor + carry the REAL doc id.
             # Emit a doc_update so the frontend opens/activates it and sends it
@@ -3376,6 +3482,11 @@ async def stream_agent_loop(
             # this the diff shows live but vanishes from saved history.
             if result.get("diff"):
                 tool_event["diff"] = result["diff"]
+            if _pending_ask_user_event:
+                # Persist the structured question with the tool event.  On a
+                # reload, chatRenderer can restore the card; a later user
+                # message removes it as answered.
+                tool_event["ask_user"] = _pending_ask_user_event
             tool_events.append(tool_event)
             if block.tool_type in _VERIFIER_EFFECTFUL_TOOLS:
                 _effectful_used = True
@@ -3396,7 +3507,12 @@ async def stream_agent_loop(
             break
 
         # Feed results back to LLM for next round
-        _append_tool_results(messages, round_response, native_tool_calls,
+        # Pass the CONVERTED calls (aligned 1:1 with tool_result_texts), not the
+        # raw native_tool_calls: a call that failed to convert is dropped from
+        # tool_blocks but stayed in native_tool_calls, so indexing results by
+        # native position mis-attached each result to the wrong tool_call_id
+        # (and left the real call answered empty).
+        _append_tool_results(messages, round_response, converted_calls,
                              tool_results, tool_result_texts, used_native, round_num,
                              round_reasoning=round_reasoning)
 

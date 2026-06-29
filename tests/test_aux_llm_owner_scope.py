@@ -54,7 +54,7 @@ def test_scheduler_fallbacks_and_research_headers_are_owner_scoped():
 
 
 def test_research_routes_fallbacks_are_owner_scoped():
-    src = _src("routes/research_routes.py")
+    src = _src("routes/research/research_routes.py")
 
     assert 'resolve_endpoint("research", owner=user)' in src
     assert 'resolve_endpoint("utility", owner=user)' in src
