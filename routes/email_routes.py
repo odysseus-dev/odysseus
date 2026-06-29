@@ -5122,7 +5122,7 @@ def setup_email_routes():
             "client_id": client_id,
             "redirect_uri": redirect_uri,
             "response_type": "code",
-            "scope": "https://mail.google.com/ email",
+            "scope": "https://mail.google.com/ https://www.googleapis.com/auth/calendar email",
             "access_type": "offline",
             "prompt": "consent",
             "state": state,

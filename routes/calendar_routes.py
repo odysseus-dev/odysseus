@@ -909,9 +909,15 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                             pw = decrypt(pw)
                         except Exception:
                             pass
-        if not (url and user and pw):
-            return {"ok": False, "error": "Missing URL, username, or password"}
-        from src.caldav_sync import validate_caldav_url
+        if not (url and user):
+            return {"ok": False, "error": "Missing URL or username"}
+        from src.caldav_sync import resolve_caldav_google_oauth, validate_caldav_url
+        oauth_token = resolve_caldav_google_oauth(owner, url, user)
+        if oauth_token:
+            pw = f"oauth:{oauth_token}"
+        elif not pw:
+            return {"ok": False, "error": "Missing password"}
+
         try:
             url = validate_caldav_url(url)
         except ValueError as e:
@@ -923,6 +929,14 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
             '</d:prop></d:propfind>'
         )
         try:
+            auth_header = {}
+            req_auth = None
+            if pw.startswith("oauth:"):
+                token = pw[len("oauth:"):]
+                auth_header = {"Authorization": f"Bearer {token}"}
+            else:
+                req_auth = (user, pw)
+
             # Build an SSL context that trusts the operator's custom CA bundle
             # (SSL_CERT_FILE / REQUESTS_CA_BUNDLE) so self-signed CalDAV servers
             # pass the pre-flight the same way they pass the real sync.
@@ -943,8 +957,8 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
             async with httpx.AsyncClient(timeout=8.0, follow_redirects=False, trust_env=False, verify=_ssl_ctx) as cx:
                 r = await cx.request(
                     "PROPFIND", url,
-                    auth=(user, pw),
-                    headers={"Depth": "0", "Content-Type": "application/xml"},
+                    auth=req_auth,
+                    headers={"Depth": "0", "Content-Type": "application/xml", **auth_header},
                     content=propfind_body,
                 )
                 # If the server demands Digest (Baïkal default, SabreDAV-based
@@ -952,7 +966,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                 # 401s. Retry once with httpx.DigestAuth so this test matches
                 # what the real sync does via caldav.DAVClient in
                 # src/caldav_sync.py (which negotiates the scheme).
-                if r.status_code == 401 and "digest" in r.headers.get("www-authenticate", "").lower():
+                if r.status_code == 401 and req_auth and "digest" in r.headers.get("www-authenticate", "").lower():
                     r = await cx.request(
                         "PROPFIND", url,
                         auth=httpx.DigestAuth(user, pw),
