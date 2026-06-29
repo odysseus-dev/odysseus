@@ -686,7 +686,7 @@ _API_HOSTS = frozenset([
     "ollama.com", "api.venice.ai", "api.kimi.com",
     "api.githubcopilot.com",
 ])
-_MCP_KEYWORDS = frozenset(["mcp", "browse", "browser", "website", "calendar", "event", "email",
+_MCP_KEYWORDS = frozenset(["mcp", "browse", "browser", "website", "calendar", "calender", "callender", "callendar", "event", "email",
                            "gmail", "screenshot", "navigate", "click", "miniflux", "rss", "feed"])
 _ADMIN_SCHEMA_NAMES = frozenset([
     "manage_session", "manage_skills", "manage_tasks",
@@ -885,7 +885,7 @@ _CASUAL_OPENING_RE = re.compile(
 )
 _CASUAL_BLOCKLIST_RE = re.compile(
     r"\b(?:cookbook|serve|serving|launch|start|vllm|sglang|llama\.?cpp|ollama|"
-    r"download|model|email|document|doc|note|calendar|task|search|web|research|"
+    r"download|model|email|document|doc|note|calendar|calender|callender|callendar|task|search|web|research|"
     r"file|folder|repo|git|settings?|endpoint|api|token|mcp)\b",
     re.IGNORECASE,
 )
@@ -1019,7 +1019,7 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("notes_calendar_tasks")
     if has(r"\b(every day|every morning|every evening|recurring|automatically|cron|scheduled task|background task)\b"):
         domains.add("notes_calendar_tasks")
-    if has(r"\b(calendar|event|meeting|appointment|schedule|booking|bookings|hotel|hotels|flight|flights|trip|trips|reservation|reservations|ticket|tickets)\b"):
+    if has(r"\b(calendar|calender|callender|callendar|calander|callander|event|meeting|appointment|schedule|booking|bookings|hotel|hotels|flight|flights|trip|trips|reservation|reservations|ticket|tickets)\b"):
         domains.add("notes_calendar_tasks")
     _code_write_intent = has(
         r"\b(?:python|javascript|typescript|java|c\+\+|cpp|c#|csharp|rust|go|golang|"
