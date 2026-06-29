@@ -38,6 +38,24 @@ _CASUAL_BLOCKLIST_RE = re.compile(
 )
 
 
+MEMORY_RECALL_COUNT_MIN = 1
+MEMORY_RECALL_COUNT_MAX = 50
+
+
+def resolve_memory_recall_count(uprefs: dict) -> int:
+    """Number of extended memories recalled into context per response (issue #4948).
+
+    Resolves user pref -> global setting -> the historical default of 3, coerces to
+    int, and clamps to [1, 50] so a malformed pref (NaN, negative, string, null)
+    can't silently disable recall (k<=0) or balloon the prompt.
+    """
+    try:
+        count = int(uprefs.get("memory_recall_count", get_setting("memory_recall_count", 3)))
+    except (TypeError, ValueError):
+        count = 3
+    return max(MEMORY_RECALL_COUNT_MIN, min(MEMORY_RECALL_COUNT_MAX, count))
+
+
 def _is_casual_low_signal(text: str) -> bool:
     """Short greetings/slang should not pull memory, skills, RAG, or docs."""
     s = str(text or "").strip()
@@ -692,14 +710,7 @@ async def build_chat_context(
     # Skills injection respects its own enable toggle (mirrors memory_enabled).
     # When off, the "Available skills" index is not added to the prompt.
     skills_enabled = not incognito and uprefs.get("skills_enabled", True)
-    # Number of extended memories recalled per response (issue #4948): user pref,
-    # then global setting, then the historical default of 3. Clamped so a
-    # malformed pref can't silently disable recall (k<=0) or balloon the prompt.
-    try:
-        mem_recall_count = int(uprefs.get("memory_recall_count", get_setting("memory_recall_count", 3)))
-    except (TypeError, ValueError):
-        mem_recall_count = 3
-    mem_recall_count = max(1, min(50, mem_recall_count))
+    mem_recall_count = resolve_memory_recall_count(uprefs)
     if not allow_tool_preprocessing:
         mem_enabled = False
         skills_enabled = False
