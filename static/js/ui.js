@@ -9,6 +9,11 @@ import * as Modals from './modalManager.js';
 import spinnerModule from './spinner.js';
 import { registerMenuDismiss, dismissTopMenu, dismissOrRemove } from './escMenuStack.js';
 import { nextToolWindowZ, topToolWindowZ } from './toolWindowZOrder.js';
+import {
+  MODAL_BACKDROP_GUARD_MS,
+  armModalBackdropGuard,
+  shouldSuppressBackdropClose,
+} from './modalBackdropGuard.js';
 
 let toastEl = null;
 let autoScrollEnabled = true;
@@ -793,6 +798,8 @@ export function isTouchInsideModal() {
   return _touchInsideModal;
 }
 
+export { MODAL_BACKDROP_GUARD_MS, armModalBackdropGuard, shouldSuppressBackdropClose };
+
 // Close floating dropdowns/popups on scroll to prevent them drifting
 function _initScrollDismiss() {
   const chatHistory = document.getElementById('chat-history');
@@ -852,6 +859,9 @@ const uiModule = {
   el,
   esc,
   isTouchInsideModal,
+  armModalBackdropGuard,
+  shouldSuppressBackdropClose,
+  MODAL_BACKDROP_GUARD_MS,
   emptyStateIcon,
   registerMenuDismiss
 };
@@ -1121,6 +1131,7 @@ if ('ontouchstart' in window) {
     if (!e.target.classList.contains('modal')) return;
     const modal = e.target;
     if (modal.classList.contains('hidden')) return;
+    if (shouldSuppressBackdropClose(modal)) return;
     const content = modal.querySelector('.modal-content');
     if (content) {
       content.classList.add('modal-closing');

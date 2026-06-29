@@ -2,6 +2,7 @@
 // User-facing preferences: AI models, search, appearance
 
 import uiModule from './ui.js';
+import { armModalBackdropGuard, shouldSuppressBackdropClose } from './modalBackdropGuard.js';
 import searchModule from './search.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { clearDockSide } from './modalSnap.js';
@@ -112,6 +113,7 @@ function initClose() {
   modalEl.querySelector('.close-btn').addEventListener('click', close);
   modalEl.addEventListener('mousedown', e => {
     if (uiModule.isTouchInsideModal()) return;
+    if (shouldSuppressBackdropClose(modalEl)) return;
     if (e.target === modalEl) close();
   });
   document.addEventListener('keydown', e => {
@@ -5716,6 +5718,7 @@ export function open(tab) {
   if (modalEl.classList.contains('hidden')) {
     resetWindowPlacement();
   }
+  armModalBackdropGuard(modalEl);
   modalEl.classList.remove('hidden');
   syncAdminVisibility();
   const content = modalEl.querySelector('.settings-modal-content');
