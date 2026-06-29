@@ -114,6 +114,13 @@ _TOOL_CODE_RE = re.compile(
 _TOOL_CODE_OPEN_RE = re.compile(r"<tool_code>\s*\{", re.IGNORECASE)
 _TOOL_CODE_CLOSE_RE = re.compile(r"\}\s*</tool_code>", re.IGNORECASE)
 
+# Pattern 4b: Gemma-style <|tool_call|> call:tool_name{args} <tool_call|>
+_GEMMA_TOOL_CALL_RE = re.compile(
+    r"<\|?tool_call\|?>\s*call:([\w\d_-]+)\s*(\{[\s\S]*?\})\s*<\|?tool_call\|?>",
+    re.IGNORECASE,
+)
+
+
 # Pattern 5: DeepSeek DSML markup leaking into content. When deepseek
 # models can't emit structured tool_calls (e.g. we sent no tool schemas
 # that round, or the API didn't parse them), they fall back to raw
@@ -780,6 +787,40 @@ def _parse_tool_code_block(raw: str) -> Optional[ToolBlock]:
         return ToolBlock(tool_name, content.strip())
     return None
 
+def _parse_gemma_tool_call(tool_name: str, body: str) -> Optional[ToolBlock]:
+    """Parse a Gemma-style call:tool_name{...} block into a ToolBlock."""
+    tool_name = tool_name.strip().lower().replace("-", "_")
+    body = body.strip()
+    if not body:
+        return None
+
+    # Replace custom Gemma string delimiters with standard quotes
+    body = body.replace('<|"|>', '"').replace('<|"', '"').replace('"|>', '"')
+
+    # Try standard JSON parsing
+    params = {}
+    try:
+        params = json.loads(body)
+        if not isinstance(params, dict):
+            params = {}
+    except json.JSONDecodeError:
+        # Try unquoted keys repair: e.g. {query: "..."} -> {"query": "..."}
+        try:
+            repaired = re.sub(r'([{,]\s*)(\w+)\s*:', r'\1"\2":', body)
+            params = json.loads(repaired)
+            if not isinstance(params, dict):
+                params = {}
+        except Exception:
+            # Simple regex key-value extraction fallback
+            params = {}
+            for m in re.finditer(r'(\w+)\s*:\s*["\']?(.*?)["\']?(?=\s*,\s*\w+\s*:|\s*\})', body):
+                k = m.group(1)
+                v = m.group(2).strip()
+                params[k] = v
+
+    from src.tool_schemas import function_call_to_tool_block
+    return function_call_to_tool_block(tool_name, json.dumps(params))
+
 
 def _iter_delimited(text, open_re, close_re):
     """Yield ``(match_start, inner_start, inner_end, match_end)`` for each
@@ -1012,6 +1053,15 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
             if block:
                 blocks.append(block)
 
+    # Pattern 4b: Gemma-style <|tool_call|> blocks
+    if not blocks:
+        for m in _GEMMA_TOOL_CALL_RE.finditer(text):
+            tool_name = m.group(1)
+            body = m.group(2)
+            block = _parse_gemma_tool_call(tool_name, body)
+            if block:
+                blocks.append(block)
+
     # Pattern 6: local text-model web_search call leaked as prose + bare JSON.
     if not blocks and not skip_fenced:
         raw_web_json = _parse_raw_web_json_lookup(text)
@@ -1046,6 +1096,7 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
     cleaned = _strip_delimited(cleaned, _XML_TOOL_CALL_OPEN_RE, _XML_TOOL_CALL_CLOSE_RE)
     cleaned = _XML_OPEN_TOOL_CALL_RE.sub('', cleaned)
     cleaned = _strip_delimited(cleaned, _TOOL_CODE_OPEN_RE, _TOOL_CODE_CLOSE_RE)
+    cleaned = _GEMMA_TOOL_CALL_RE.sub('', cleaned)
     if not skip_fenced:
         raw_web_json = _parse_raw_web_json_lookup(cleaned)
         if raw_web_json:
