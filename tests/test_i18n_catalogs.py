@@ -30,6 +30,7 @@ CODE_RUNNER_JS = ROOT / "static" / "js" / "codeRunner.js"
 SIGNATURE_JS = ROOT / "static" / "js" / "signature.js"
 EMOJI_PICKER_JS = ROOT / "static" / "js" / "emojiPicker.js"
 DOCUMENT_CATALOG = CATALOG_DIR / "document.pt-BR.js"
+DOCUMENT_JS = ROOT / "static" / "js" / "document.js"
 SHARED_UI_CATALOG = CATALOG_DIR / "shared-ui.pt-BR.js"
 WORKSPACE_CATALOG = CATALOG_DIR / "workspace-misc.pt-BR.js"
 CATALOGS = tuple(sorted(CATALOG_DIR.glob("*.pt-BR.js")))
@@ -716,6 +717,42 @@ def _translated_document_auxiliary_examples(lang: str) -> dict[str, str]:
           ),
           emojiGroup: t('Faces & Hearts'),
           emojiTitle: t('heart-outline'),
+        }}));
+        """
+    )
+    result = _run(["node", "--input-type=module"], input_text=script)
+    assert result.returncode == 0, result.stderr
+    return dict(json.loads(result.stdout))
+
+
+def _translated_document_editor_examples(lang: str) -> dict[str, str]:
+    """Exercise editor/PDF copy through the real runtime and central catalog."""
+
+    runtime = ROOT / "static" / "js" / "i18n.js"
+    script = textwrap.dedent(
+        f"""
+        globalThis.window = {{ __ODY_LANG: {json.dumps(lang)} }};
+        globalThis.localStorage = {{ getItem: () => null }};
+        const {{ t }} = await import({json.dumps(runtime.as_uri())});
+        await import({json.dumps(DOCUMENT_CATALOG.as_uri())});
+        console.log(JSON.stringify({{
+          pdfTitle: t('Export filled PDF'),
+          pdfSummary: t(
+            '{{filled}} of {{total}} fields filled. Review and adjust below before downloading.',
+            {{ filled: 2, total: 5 }},
+          ),
+          pdfError: t(
+            'Failed to load PDF view: {{message}}',
+            {{ message: 'backend <raw>' }},
+          ),
+          toolbar: t('More formatting'),
+          findOne: t('1 result'),
+          findMany: t('{{count}} results', {{ count: 4 }}),
+          annotationOne: t('AI added 1 annotation'),
+          annotationMany: t(
+            'AI added {{count}} annotations',
+            {{ count: 3 }},
+          ),
         }}));
         """
     )
@@ -1657,6 +1694,238 @@ def test_registered_modal_label_is_translated_lazily_when_dock_renders() -> None
         "label": "Email",
         "title": "Restore Email",
         "internalLabel": "Email",
+    }
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_document_catalog_covers_editor_pdf_toolbar_and_import_copy() -> None:
+    catalog = _messages_for(DOCUMENT_CATALOG.name)
+    expected = {
+        "Scroll left": "Rolar para a esquerda",
+        "Scroll right": "Rolar para a direita",
+        "Untitled": "Sem título",
+        "Document actions": "Ações do documento",
+        "Version history": "Histórico de versões",
+        "Unlink from chat (kept in the Library)": (
+            "Desvincular da conversa (mantido na Biblioteca)"
+        ),
+        "New document — start typing": "Novo documento — comece a digitar",
+        "New document": "Novo documento",
+        "Export filled PDF": "Exportar PDF preenchido",
+        "Loading field values…": "Carregando valores dos campos…",
+        "Fetching mapping…": "Carregando mapeamento…",
+        "Download PDF": "Baixar PDF",
+        "{filled} of {total} fields filled. Review and adjust below before downloading.": (
+            "{filled} de {total} campos preenchidos. Revise e ajuste abaixo antes "
+            "de baixar."
+        ),
+        "Jump to:": "Ir para:",
+        "Jump to page {page}": "Ir para a página {page}",
+        "↑ Top": "↑ Início",
+        "↓ Bottom": "↓ Fim",
+        "Jump to the last page (signature fields are usually here)": (
+            "Ir para a última página (os campos de assinatura geralmente ficam aqui)"
+        ),
+        "Page {page}": "Página {page}",
+        "Remove signature from this field": "Remover assinatura deste campo",
+        "Change": "Alterar",
+        "Sign here": "Assine aqui",
+        "Today": "Hoje",
+        "Set to today's date": "Definir como a data de hoje",
+        "— (none) —": "— (nenhum) —",
+        "Building PDF…": "Gerando PDF…",
+        "Error: {message}": "Erro: {message}",
+        "Failed to load preview: {message}": (
+            "Falha ao carregar a pré-visualização: {message}"
+        ),
+        "Undo failed": "Falha ao desfazer",
+        "Loading PDF…": "Carregando PDF…",
+        "Failed to load PDF view: {message}": (
+            "Falha ao carregar a visualização do PDF: {message}"
+        ),
+        "Type…": "Digite…",
+        "Delete annotation": "Excluir anotação",
+        "Drag to move": "Arraste para mover",
+        "Drag to resize": "Arraste para redimensionar",
+        "Text annotation options": "Opções da anotação de texto",
+        "Line spacing": "Espaçamento entre linhas",
+        "What should the AI fill in?\n"
+        '(e.g. "My name is Jane Doe, address 123 Main St, dob 1990-01-15")': (
+            "O que a IA deve preencher?\n"
+            '(por exemplo, "Meu nome é Jane Doe, endereço 123 Main St, '
+            'data de nascimento 1990-01-15")'
+        ),
+        "Thinking…": "Pensando…",
+        "AI found nothing to fill": "A IA não encontrou nada para preencher",
+        "AI added 1 annotation": "A IA adicionou 1 anotação",
+        "AI added {count} annotations": "A IA adicionou {count} anotações",
+        "AI fill failed: {message}": "Falha no preenchimento por IA: {message}",
+        "AI fill": "Preencher com IA",
+        "Editing…": "Editando…",
+        "Saving…": "Salvando…",
+        "Saved": "Salvo",
+        "Collapse panel": "Recolher painel",
+        "Hide panel": "Ocultar painel",
+        "Undo (Ctrl+Z)": "Desfazer (Ctrl+Z)",
+        "Run / Preview": "Executar / Pré-visualizar",
+        "editing": "editando",
+        "Export PDF": "Exportar PDF",
+        "Toggle PDF view": "Alternar visualização do PDF",
+        "Hide email fields": "Ocultar campos do e-mail",
+        "Show email fields": "Mostrar campos do e-mail",
+        "No recipient · No subject": "Sem destinatário · Sem assunto",
+        "No recipient": "Sem destinatário",
+        "No subject": "Sem assunto",
+        "To": "Para",
+        "Show Cc/Bcc": "Mostrar Cc/Cco",
+        "Bcc": "Cco",
+        "Hide Cc/Bcc": "Ocultar Cc/Cco",
+        "Subject": "Assunto",
+        "Edit or preview": "Editar ou pré-visualizar",
+        "Edit source (Ctrl+Alt+M to toggle)": (
+            "Editar fonte (Ctrl+Alt+M para alternar)"
+        ),
+        "Preview (Ctrl+Alt+M to toggle)": (
+            "Pré-visualizar (Ctrl+Alt+M para alternar)"
+        ),
+        "Code or run": "Código ou execução",
+        "Edit code": "Editar código",
+        "Draft a reply with AI (Fast / Full + optional context)": (
+            "Criar rascunho de resposta com IA (Rápido / Completo + contexto opcional)"
+        ),
+        "Reply": "Responder",
+        "Font size": "Tamanho da fonte",
+        "Compare changes": "Comparar alterações",
+        "Bold (Ctrl+B)": "Negrito (Ctrl+B)",
+        "Italic (Ctrl+I)": "Itálico (Ctrl+I)",
+        "Strikethrough": "Tachado",
+        "Heading": "Título",
+        "List": "Lista",
+        "Link": "Hiperlink",
+        "Insert image": "Inserir imagem",
+        "Code": "Código",
+        "Horizontal rule": "Linha horizontal",
+        "Add text box (then click on PDF)": (
+            "Adicionar caixa de texto (depois clique no PDF)"
+        ),
+        "Add checkmark (then click on PDF)": (
+            "Adicionar marca de seleção (depois clique no PDF)"
+        ),
+        "Add signature (then click on PDF)": (
+            "Adicionar assinatura (depois clique no PDF)"
+        ),
+        "sign": "assinar",
+        "Reload PDF view": "Recarregar visualização do PDF",
+        "More formatting": "Mais opções de formatação",
+        "Find...": "Localizar...",
+        "Previous": "Anterior",
+        "Next": "Próximo",
+        "Document content...": "Conteúdo do documento...",
+        "Close email": "Fechar e-mail",
+        "Send email (Ctrl+Enter)": "Enviar e-mail (Ctrl+Enter)",
+        "Send": "Enviar",
+        "More send options": "Mais opções de envio",
+        "Save Draft": "Salvar rascunho",
+        "Schedule Send...": "Agendar envio...",
+        "Mark Unread": "Marcar como não lido",
+        "Copy document": "Copiar documento",
+        "Export as…": "Exportar como…",
+        "Export options": "Opções de exportação",
+        "Version History": "Histórico de versões",
+        "Unlink": "Desvincular",
+        "Edit": "Editar",
+        "Table View": "Visualização em tabela",
+        "Run": "Executar",
+        "Download": "Baixar",
+        "Send signed reply": "Enviar resposta assinada",
+        "Import from library": "Importar da biblioteca",
+        "Import from device": "Importar do dispositivo",
+        "Filled PDF (.pdf)": "PDF preenchido (.pdf)",
+        "Export Markdown": "Exportar Markdown",
+        "Print as PDF": "Imprimir como PDF",
+        "Export as Word": "Exportar como Word",
+        "1 result": "1 resultado",
+        "{count} results": "{count} resultados",
+    }
+    reused = {
+        "Cancel",
+        "Close",
+        "Delete",
+        "Loading…",
+        "Preview",
+        "Save",
+        "Save failed",
+    }
+
+    assert {key: catalog.get(key) for key in expected} == expected
+    assert reused.isdisjoint(catalog)
+
+
+def test_document_editor_uses_contextual_i18n_without_translating_runtime_data() -> None:
+    source = DOCUMENT_JS.read_text(encoding="utf-8")
+    required_call_sites = {
+        "central import": "import { t } from './i18n.js';",
+        "escaped PDF heading": "${_esc(t('Export filled PDF'))}",
+        "PDF summary placeholders": (
+            "t('{filled} of {total} fields filled. Review and adjust below before "
+            "downloading.', { filled: filledNow, total })"
+        ),
+        "escaped raw PDF error": (
+            "_escHtml(t('Failed to load PDF view: {message}', "
+            "{ message: e.message || String(e) }))"
+        ),
+        "annotation singular": "t('AI added 1 annotation')",
+        "annotation plural": (
+            "t('AI added {count} annotations', { count: proposed.length })"
+        ),
+        "toolbar": "${_esc(t('More formatting'))}",
+        "find placeholder": "${_esc(t('Find...'))}",
+        "find singular": "t('1 result')",
+        "find plural": "t('{count} results', { count: _findMatches.length })",
+        "stable PDF field label": "label.textContent = f.label || f.name",
+        "stable annotation value": "input.value = ann.value || ''",
+        "stable user instruction": (
+            "body: JSON.stringify({ instruction: instruction.trim() })"
+        ),
+    }
+    missing = [
+        f"{context}: {snippet}"
+        for context, snippet in required_call_sites.items()
+        if snippet not in source
+    ]
+    assert not missing, "Call sites do editor sem i18n seguro:\n" + "\n".join(missing)
+
+    side_effect_catalog_import = re.compile(
+        r"""import\s+['"][^'"]*i18n/[^'"]+\.pt-BR\.js['"]"""
+    )
+    assert not side_effect_catalog_import.search(source)
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_document_editor_templates_translate_pdf_toolbar_and_plurals() -> None:
+    assert _translated_document_editor_examples("pt-BR") == {
+        "pdfTitle": "Exportar PDF preenchido",
+        "pdfSummary": (
+            "2 de 5 campos preenchidos. Revise e ajuste abaixo antes de baixar."
+        ),
+        "pdfError": "Falha ao carregar a visualização do PDF: backend <raw>",
+        "toolbar": "Mais opções de formatação",
+        "findOne": "1 resultado",
+        "findMany": "4 resultados",
+        "annotationOne": "A IA adicionou 1 anotação",
+        "annotationMany": "A IA adicionou 3 anotações",
+    }
+    assert _translated_document_editor_examples("en") == {
+        "pdfTitle": "Export filled PDF",
+        "pdfSummary": (
+            "2 of 5 fields filled. Review and adjust below before downloading."
+        ),
+        "pdfError": "Failed to load PDF view: backend <raw>",
+        "toolbar": "More formatting",
+        "findOne": "1 result",
+        "findMany": "4 results",
+        "annotationOne": "AI added 1 annotation",
+        "annotationMany": "AI added 3 annotations",
     }
 
 
