@@ -6,5 +6,15 @@
 import { registerMessages } from '../i18n.js';
 
 registerMessages('pt-BR', {
-  // entries added by the work unit
+  'Copied': 'Copiado',
+  'Dismiss': 'Fechar',
+  'Confirm': 'Confirmar',
+  'Document': 'Documento',
+  'Restore {label}': 'Restaurar {label}',
+  'AI is processing': 'A IA está processando',
+  'Loading…': 'Carregando…',
+  'Drag to resize docked window':
+    'Arraste para redimensionar a janela encaixada',
+  'Drag to resize email and draft':
+    'Arraste para redimensionar o e-mail e o rascunho',
 });

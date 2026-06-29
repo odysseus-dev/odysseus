@@ -4,8 +4,10 @@
  * ASCII Spinner Module for AI thinking/processing status
  */
 
+import { t } from './i18n.js';
+
 class Spinner {
-  constructor(message = "AI is processing", style = "right", animation = "spinner") {
+  constructor(message, style = "right", animation = "spinner") {
     // Different animation frames
     this.animations = {
       spinner: ['|', '/', '-', '\\'],
@@ -14,7 +16,7 @@ class Spinner {
 
     this.animation = animation;
     this.frames = this.animations[animation] || this.animations.spinner;
-    this.message = message;
+    this.message = message === undefined ? t('AI is processing') : message;
     this.style = style; // "left", "right", or "clean"
     this.isRunning = false;
     this.currentFrame = 0;
@@ -386,14 +388,15 @@ export function createWhirlpool(size = 24) {
  * once the element leaves the DOM (see _drawWhirlpool), so callers can just
  * replace it with results — no manual cleanup needed.
  */
-export function createLoadingRow(text = 'Loading…', size = 16) {
+export function createLoadingRow(text, size = 16) {
+  const resolvedText = text === undefined ? t('Loading…') : text;
   const sp = new Spinner('', 'clean', 'whirlpool');
   sp._wpSize = size;
   const canvas = sp.createElement();
   const row = document.createElement('div');
   row.className = 'lib-loading-row';
   const label = document.createElement('span');
-  label.textContent = text;
+  label.textContent = resolvedText;
   row.appendChild(label);
   row.appendChild(canvas);
   sp.start();

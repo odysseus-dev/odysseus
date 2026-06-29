@@ -21,6 +21,13 @@ INDEX_HTML = ROOT / "static" / "index.html"
 INDEX_CATALOG = CATALOG_DIR / "index-html.pt-BR.js"
 APP_JS = ROOT / "static" / "app.js"
 APP_CATALOG = CATALOG_DIR / "app.pt-BR.js"
+UI_JS = ROOT / "static" / "js" / "ui.js"
+MODAL_MANAGER_JS = ROOT / "static" / "js" / "modalManager.js"
+SPINNER_JS = ROOT / "static" / "js" / "spinner.js"
+WORKSPACE_JS = ROOT / "static" / "js" / "workspace.js"
+MODAL_SNAP_JS = ROOT / "static" / "js" / "modalSnap.js"
+SHARED_UI_CATALOG = CATALOG_DIR / "shared-ui.pt-BR.js"
+WORKSPACE_CATALOG = CATALOG_DIR / "workspace-misc.pt-BR.js"
 CATALOGS = tuple(sorted(CATALOG_DIR.glob("*.pt-BR.js")))
 HAS_NODE = shutil.which("node") is not None
 
@@ -365,6 +372,49 @@ def _translated_app_examples(lang: str) -> dict[str, str]:
     return dict(json.loads(result.stdout))
 
 
+def _translated_shared_workspace_examples(lang: str) -> dict[str, str]:
+    """Run shared/workspace catalogs with the reused canonical dictionaries."""
+
+    runtime = ROOT / "static" / "js" / "i18n.js"
+    catalogs = (
+        INDEX_CATALOG,
+        APP_CATALOG,
+        SHARED_UI_CATALOG,
+        WORKSPACE_CATALOG,
+    )
+    imports = "\n".join(
+        f"await import({json.dumps(catalog.as_uri())});" for catalog in catalogs
+    )
+    script = textwrap.dedent(
+        f"""
+        globalThis.window = {{ __ODY_LANG: {json.dumps(lang)} }};
+        globalThis.localStorage = {{ getItem: () => null }};
+        const {{ t }} = await import({json.dumps(runtime.as_uri())});
+        {imports}
+        console.log(JSON.stringify({{
+          confirm: t('Confirm'),
+          cancel: t('Cancel'),
+          cookbook: t('Cookbook'),
+          prompt: t('Prompt'),
+          restore: t('Restore {{label}}', {{ label: 'Calendário' }}),
+          processing: t('AI is processing'),
+          loading: t('Loading…'),
+          workspaceTitle: t(
+            'Workspace: {{path}}\\nFile tools are confined here; shell commands start here but are not sandboxed and can reach outside it.\\nClick to clear.',
+            {{ path: 'D:/Projetos/Atena' }},
+          ),
+          workspaceSet: t(
+            'Workspace set: {{name}}',
+            {{ name: 'Atena' }},
+          ),
+        }}));
+        """
+    )
+    result = _run(["node", "--input-type=module"], input_text=script)
+    assert result.returncode == 0, result.stderr
+    return dict(json.loads(result.stdout))
+
+
 @pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
 @pytest.mark.parametrize("catalog", CATALOGS, ids=lambda path: path.name)
 def test_catalog_is_valid_javascript(catalog: Path) -> None:
@@ -693,6 +743,201 @@ def test_app_catalog_templates_render_in_portuguese_and_english() -> None:
             "Adicione um endpoint de IA em Configurações na barra lateral ou "
             "cole um endpoint ou uma chave de API na conversa."
         ),
+    }
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_shared_ui_catalog_contains_only_new_contextual_copy() -> None:
+    catalog = _messages_for(SHARED_UI_CATALOG.name)
+    expected = {
+        "Copied": "Copiado",
+        "Dismiss": "Fechar",
+        "Confirm": "Confirmar",
+        "Document": "Documento",
+        "Restore {label}": "Restaurar {label}",
+        "AI is processing": "A IA está processando",
+        "Loading…": "Carregando…",
+        "Drag to resize docked window": (
+            "Arraste para redimensionar a janela encaixada"
+        ),
+        "Drag to resize email and draft": (
+            "Arraste para redimensionar o e-mail e o rascunho"
+        ),
+    }
+    reused = {
+        "Cancel",
+        "Name",
+        "Save",
+        "Cookbook",
+        "Calendar",
+        "Gallery",
+        "Tasks",
+        "Library",
+        "Brain",
+        "Notes",
+        "Email",
+        "Research",
+        "Theme",
+        "Compare",
+        "Settings",
+        "Shortcuts",
+        "Close",
+        "Minimize",
+    }
+
+    assert catalog == expected
+    assert reused.isdisjoint(catalog)
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_workspace_catalog_has_complete_contextual_portuguese_copy() -> None:
+    catalog = _messages_for(WORKSPACE_CATALOG.name)
+    expected = {
+        "Workspace: {path}\nFile tools are confined here; shell commands start "
+        "here but are not sandboxed and can reach outside it.\nClick to clear.": (
+            "Área de trabalho: {path}\nAs ferramentas de arquivo ficam restritas "
+            "a esta pasta; os comandos do Terminal começam aqui, mas não ficam "
+            "isolados e podem acessar locais fora dela.\nClique para limpar."
+        ),
+        "Workspace cleared": "Área de trabalho limpa",
+        "Too many folders to list. Type or paste a path above to jump in.": (
+            "Há pastas demais para listar. Digite ou cole um caminho acima para "
+            "acessá-lo."
+        ),
+        "No subfolders": "Nenhuma subpasta",
+        "This folder cannot be used as a workspace": (
+            "Esta pasta não pode ser usada como área de trabalho"
+        ),
+        "Could not open folder": "Não foi possível abrir a pasta",
+        "Select workspace": "Selecionar área de trabalho",
+        "Type or paste a folder path, then press Enter": (
+            "Digite ou cole o caminho de uma pasta e pressione Enter"
+        ),
+        "File tools are <strong>confined</strong> to this folder. Shell commands "
+        "start here but are <strong>not sandboxed</strong> and can reach outside "
+        "it. A workspace scopes the tools; it is not a security boundary.": (
+            "As ferramentas de arquivo ficam <strong>restritas</strong> a esta "
+            "pasta. Os comandos do Terminal começam aqui, mas <strong>não ficam "
+            "isolados</strong> e podem acessar locais fora dela. Uma área de "
+            "trabalho delimita as ferramentas; ela não é uma barreira de segurança."
+        ),
+        "Use this folder": "Usar esta pasta",
+        "Workspace set: {name}": "Área de trabalho definida: {name}",
+        "Could not browse folders": "Não foi possível navegar pelas pastas",
+    }
+
+    assert catalog == expected
+    assert {"Cancel", "Close"}.isdisjoint(catalog)
+
+
+def test_shared_ui_modules_translate_only_defaults_and_builtin_copy() -> None:
+    sources = {
+        "ui": UI_JS.read_text(encoding="utf-8"),
+        "modal": MODAL_MANAGER_JS.read_text(encoding="utf-8"),
+        "spinner": SPINNER_JS.read_text(encoding="utf-8"),
+        "workspace": WORKSPACE_JS.read_text(encoding="utf-8"),
+        "snap": MODAL_SNAP_JS.read_text(encoding="utf-8"),
+    }
+    required = {
+        "ui": (
+            "showToast(t('Copied'))",
+            "closeBtn.setAttribute('aria-label', t('Dismiss'))",
+            "confirmText === undefined ? t('Confirm') : confirmText",
+            "cancelText === undefined ? t('Cancel') : cancelText",
+            "title === undefined ? t('Name') : title",
+            "confirmText === undefined ? t('Save') : confirmText",
+        ),
+        "modal": (
+            "label: () => t('Cookbook')",
+            "label: () => t('Calendar')",
+            "label: () => t('Gallery')",
+            "label: () => t('Tasks')",
+            "label: () => t('Library')",
+            "label: () => t('Brain')",
+            "label: () => t('Notes')",
+            "label: () => t('Email')",
+            "label: 'Prompt'",
+            "label: () => t('Research')",
+            "label: () => t('Theme')",
+            "label: () => t('Compare')",
+            "label: () => t('Settings')",
+            "label: () => t('Shortcuts')",
+            "label: () => t('Document')",
+            "t('Restore {label}', { label })",
+            "title=\"${t('Close')}\"",
+            "btn.title = t('Minimize')",
+        ),
+        "spinner": (
+            "message === undefined ? t('AI is processing') : message",
+            "text === undefined ? t('Loading…') : text",
+        ),
+        "workspace": (
+            "t('Workspace: {path}\\nFile tools are confined here; shell commands "
+            "start here but are not sandboxed and can reach outside it.\\nClick "
+            "to clear.', { path })",
+            "uiModule.showToast(t('Workspace cleared'))",
+            "t('Too many folders to list. Type or paste a path above to jump in.')",
+            "t('No subfolders')",
+            "t('This folder cannot be used as a workspace')",
+            "uiModule.showError(t('Could not open folder'))",
+            "t('Select workspace')",
+            "t('Type or paste a folder path, then press Enter')",
+            "t('Use this folder')",
+            "t('Workspace set: {name}', { name: _basename(_curPath) })",
+            "uiModule.showError(t('Could not browse folders'))",
+        ),
+        "snap": (
+            "import './i18n/shared-ui.pt-BR.js'",
+            "handle.title = t('Drag to resize docked window')",
+            "stripe.title = t('Drag to resize email and draft')",
+        ),
+    }
+    missing = [
+        f"{module}: {snippet}"
+        for module, snippets in required.items()
+        for snippet in snippets
+        if snippet not in sources[module]
+    ]
+    assert not missing, "Call sites compartilhados sem i18n:\n" + "\n".join(missing)
+
+    ui_source = sources["ui"]
+    assert "textSpan.textContent = msg" in ui_source
+    assert "btn.textContent = actionLabel" in ui_source
+    assert "msgEl.textContent = message" in ui_source
+    assert "input.placeholder = placeholder || ''" in ui_source
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_shared_workspace_templates_render_in_portuguese_and_english() -> None:
+    assert _translated_shared_workspace_examples("pt-BR") == {
+        "confirm": "Confirmar",
+        "cancel": "Cancelar",
+        "cookbook": "Catálogo",
+        "prompt": "Prompt",
+        "restore": "Restaurar Calendário",
+        "processing": "A IA está processando",
+        "loading": "Carregando…",
+        "workspaceTitle": (
+            "Área de trabalho: D:/Projetos/Atena\nAs ferramentas de arquivo ficam "
+            "restritas a esta pasta; os comandos do Terminal começam aqui, mas "
+            "não ficam isolados e podem acessar locais fora dela.\nClique para limpar."
+        ),
+        "workspaceSet": "Área de trabalho definida: Atena",
+    }
+    assert _translated_shared_workspace_examples("en") == {
+        "confirm": "Confirm",
+        "cancel": "Cancel",
+        "cookbook": "Cookbook",
+        "prompt": "Prompt",
+        "restore": "Restore Calendário",
+        "processing": "AI is processing",
+        "loading": "Loading…",
+        "workspaceTitle": (
+            "Workspace: D:/Projetos/Atena\nFile tools are confined here; shell "
+            "commands start here but are not sandboxed and can reach outside it."
+            "\nClick to clear."
+        ),
+        "workspaceSet": "Workspace set: Atena",
     }
     assert _translated_app_examples("en") == {
         "messages": "· 4 messages",
