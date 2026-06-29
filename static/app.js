@@ -2,6 +2,34 @@
 // Odysseus UI — Main Application Orchestrator
 // ES6 module — entry point, no exports (wires all modules together)
 // ============================================
+// i18n runtime, preference wiring, and every central catalog must evaluate
+// before modules whose import-time setup calls t().
+import { t, translateDOM } from './js/i18n.js';
+import { initLanguagePref } from './js/languagePref.js';
+import './js/i18n/index-html.pt-BR.js';
+import './js/i18n/app.pt-BR.js';
+import './js/i18n/chat.pt-BR.js';
+import './js/i18n/document.pt-BR.js';
+import './js/i18n/document-library.pt-BR.js';
+import './js/i18n/settings.pt-BR.js';
+import './js/i18n/theme-pickers.pt-BR.js';
+import './js/i18n/email-library.pt-BR.js';
+import './js/i18n/email-inbox.pt-BR.js';
+import './js/i18n/calendar.pt-BR.js';
+import './js/i18n/tasks.pt-BR.js';
+import './js/i18n/notes.pt-BR.js';
+import './js/i18n/cookbook-build.pt-BR.js';
+import './js/i18n/cookbook-running.pt-BR.js';
+import './js/i18n/slash-commands.pt-BR.js';
+import './js/i18n/gallery-editor.pt-BR.js';
+import './js/i18n/image-editor-tools.pt-BR.js';
+import './js/i18n/compare.pt-BR.js';
+import './js/i18n/research-sessions.pt-BR.js';
+import './js/i18n/memory-skills.pt-BR.js';
+import './js/i18n/admin.pt-BR.js';
+import './js/i18n/shared-ui.pt-BR.js';
+import './js/i18n/workspace-misc.pt-BR.js';
+
 import Storage from './js/storage.js';
 import uiModule from './js/ui.js';
 import workspaceModule from './js/workspace.js';
@@ -45,34 +73,6 @@ import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
-import { t, translateDOM } from './js/i18n.js';
-import { initLanguagePref } from './js/languagePref.js';
-// pt-BR dictionaries — auto-loaded so every module's translations are available
-// regardless of its own import graph. Each is filled by its translation unit;
-// empty stubs are valid no-ops, so the app works between incremental merges.
-import './js/i18n/index-html.pt-BR.js';
-import './js/i18n/app.pt-BR.js';
-import './js/i18n/chat.pt-BR.js';
-import './js/i18n/document.pt-BR.js';
-import './js/i18n/document-library.pt-BR.js';
-import './js/i18n/settings.pt-BR.js';
-import './js/i18n/theme-pickers.pt-BR.js';
-import './js/i18n/email-library.pt-BR.js';
-import './js/i18n/email-inbox.pt-BR.js';
-import './js/i18n/calendar.pt-BR.js';
-import './js/i18n/tasks.pt-BR.js';
-import './js/i18n/notes.pt-BR.js';
-import './js/i18n/cookbook-build.pt-BR.js';
-import './js/i18n/cookbook-running.pt-BR.js';
-import './js/i18n/slash-commands.pt-BR.js';
-import './js/i18n/gallery-editor.pt-BR.js';
-import './js/i18n/image-editor-tools.pt-BR.js';
-import './js/i18n/compare.pt-BR.js';
-import './js/i18n/research-sessions.pt-BR.js';
-import './js/i18n/memory-skills.pt-BR.js';
-import './js/i18n/admin.pt-BR.js';
-import './js/i18n/shared-ui.pt-BR.js';
-import './js/i18n/workspace-misc.pt-BR.js';
 
 const API_BASE = window.location.origin;
 window.themeModule = themeModule;

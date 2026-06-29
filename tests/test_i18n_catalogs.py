@@ -30,6 +30,10 @@ SHARED_UI_CATALOG = CATALOG_DIR / "shared-ui.pt-BR.js"
 WORKSPACE_CATALOG = CATALOG_DIR / "workspace-misc.pt-BR.js"
 CATALOGS = tuple(sorted(CATALOG_DIR.glob("*.pt-BR.js")))
 HAS_NODE = shutil.which("node") is not None
+APP_IMPORT_RE = re.compile(
+    r"""^import\s+(?:[^'"]+\s+from\s+)?['"]([^'"]+)['"];\s*$""",
+    re.MULTILINE,
+)
 
 TRANSLATABLE_ATTRIBUTES = frozenset(
     {"placeholder", "title", "aria-label", "aria-placeholder"}
@@ -415,61 +419,240 @@ def _translated_shared_workspace_examples(lang: str) -> dict[str, str]:
     return dict(json.loads(result.stdout))
 
 
-def _rendered_modal_snap_titles(lang: str) -> list[str]:
-    """Load the central catalog first, then import the real modalSnap module."""
+def _app_import_specifiers() -> list[str]:
+    return APP_IMPORT_RE.findall(APP_JS.read_text(encoding="utf-8"))
 
-    script = textwrap.dedent(
+
+def _browser_dom_prelude(lang: str, *, dock_capable: bool = False) -> str:
+    if not dock_capable:
+        return textwrap.dedent(
+            f"""
+            globalThis.window = {{
+              __ODY_LANG: {json.dumps(lang)},
+              innerWidth: 1200,
+              innerHeight: 800,
+              addEventListener() {{}},
+              getComputedStyle() {{ return {{ zIndex: '250' }}; }},
+            }};
+            globalThis.localStorage = {{
+              getItem: () => null,
+              setItem() {{}},
+              removeItem() {{}},
+            }};
+            const classList = {{
+              add() {{}}, remove() {{}}, contains() {{ return false; }},
+            }};
+            const appended = [];
+            const makeElement = () => ({{
+              style: {{}},
+              classList,
+              addEventListener() {{}},
+              setPointerCapture() {{}},
+              releasePointerCapture() {{}},
+              isConnected: true,
+            }});
+            globalThis.document = {{
+              readyState: 'complete',
+              body: {{
+                style: {{}},
+                classList,
+                appendChild(el) {{ appended.push(el); }},
+              }},
+              documentElement: {{
+                style: {{
+                  getPropertyValue() {{ return ''; }},
+                  setProperty() {{}},
+                  removeProperty() {{}},
+                }},
+              }},
+              createElement() {{ return makeElement(); }},
+              addEventListener() {{}},
+              removeEventListener() {{}},
+              getElementById() {{ return null; }},
+              querySelector() {{ return null; }},
+              querySelectorAll() {{ return []; }},
+            }};
+            globalThis.MutationObserver = class {{ observe() {{}} disconnect() {{}} }};
+            globalThis.requestAnimationFrame = () => 0;
+            globalThis.getComputedStyle = () => ({{
+              zIndex: '250',
+              getPropertyValue() {{ return ''; }},
+            }});
+            """
+        )
+
+    return textwrap.dedent(
         f"""
+        class FakeClassList {{
+          constructor(owner) {{
+            this.owner = owner;
+            this.values = new Set();
+          }}
+          set(value) {{
+            this.values = new Set(String(value || '').split(/\\s+/).filter(Boolean));
+          }}
+          add(...values) {{ values.forEach((value) => this.values.add(value)); }}
+          remove(...values) {{ values.forEach((value) => this.values.delete(value)); }}
+          contains(value) {{ return this.values.has(value); }}
+          toggle(value, force) {{
+            const enabled = force === undefined ? !this.contains(value) : Boolean(force);
+            if (enabled) this.add(value); else this.remove(value);
+            return enabled;
+          }}
+          toString() {{ return [...this.values].join(' '); }}
+        }}
+        class FakeStyle {{
+          constructor() {{ this.cssText = ''; }}
+          setProperty(name, value) {{ this[name] = String(value); }}
+          removeProperty(name) {{ delete this[name]; }}
+          getPropertyValue(name) {{ return this[name] || ''; }}
+        }}
+        const elementsById = new Map();
+        class FakeElement {{
+          constructor(tagName) {{
+            this.tagName = String(tagName).toUpperCase();
+            this.children = [];
+            this.parentNode = null;
+            this.style = new FakeStyle();
+            this.classList = new FakeClassList(this);
+            this.dataset = {{}};
+            this._attributes = new Map();
+            this._id = '';
+            this._innerHTML = '';
+            this.textContent = '';
+            this.isConnected = true;
+          }}
+          set id(value) {{
+            if (this._id) elementsById.delete(this._id);
+            this._id = String(value || '');
+            if (this._id) elementsById.set(this._id, this);
+          }}
+          get id() {{ return this._id; }}
+          set className(value) {{ this.classList.set(value); }}
+          get className() {{ return this.classList.toString(); }}
+          set innerHTML(value) {{
+            this._innerHTML = String(value);
+            this.children = [];
+            const spanPattern = /<span class="([^"]+)"(?: title="([^"]*)")?>([^<]*)<\\/span>/g;
+            for (const match of this._innerHTML.matchAll(spanPattern)) {{
+              const span = new FakeElement('span');
+              span.className = match[1];
+              span.title = match[2] || '';
+              span.textContent = match[3];
+              this.appendChild(span);
+            }}
+          }}
+          get innerHTML() {{ return this._innerHTML; }}
+          get attributes() {{
+            return [...this._attributes].map(([name, value]) => ({{ name, value }}));
+          }}
+          appendChild(child) {{
+            child.parentNode = this;
+            this.children.push(child);
+            return child;
+          }}
+          remove() {{
+            if (!this.parentNode) return;
+            this.parentNode.children = this.parentNode.children.filter((child) => child !== this);
+            this.parentNode = null;
+          }}
+          setAttribute(name, value) {{
+            const stringValue = String(value);
+            this._attributes.set(name, stringValue);
+            if (name.startsWith('data-')) {{
+              const key = name.slice(5).replace(/-([a-z])/g, (_, char) => char.toUpperCase());
+              this.dataset[key] = stringValue;
+            }}
+          }}
+          addEventListener() {{}}
+          removeEventListener() {{}}
+          setPointerCapture() {{}}
+          releasePointerCapture() {{}}
+          contains(candidate) {{
+            return candidate === this || this.children.some((child) => child.contains(candidate));
+          }}
+          querySelector(selector) {{ return this.querySelectorAll(selector)[0] || null; }}
+          querySelectorAll(selector) {{
+            const className = selector.match(/\\.([a-zA-Z0-9_-]+)/)?.[1];
+            const matches = [];
+            const visit = (node) => {{
+              for (const child of node.children) {{
+                if (className && child.classList.contains(className)) matches.push(child);
+                visit(child);
+              }}
+            }};
+            visit(this);
+            return matches;
+          }}
+          closest() {{ return null; }}
+          getBoundingClientRect() {{
+            return {{ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }};
+          }}
+        }}
+        const body = new FakeElement('body');
+        const documentElement = new FakeElement('html');
         globalThis.window = {{
           __ODY_LANG: {json.dumps(lang)},
           innerWidth: 1200,
           innerHeight: 800,
           addEventListener() {{}},
-          getComputedStyle() {{ return {{ zIndex: '250' }}; }},
+          dispatchEvent() {{}},
         }};
-        globalThis.localStorage = {{ getItem: () => null }};
-        const classList = {{
-          add() {{}}, remove() {{}}, contains() {{ return false; }},
+        globalThis.localStorage = {{
+          getItem: () => null,
+          setItem() {{}},
+          removeItem() {{}},
         }};
-        const appended = [];
-        const makeElement = () => ({{
-          style: {{}},
-          classList,
-          addEventListener() {{}},
-          setPointerCapture() {{}},
-          releasePointerCapture() {{}},
-          isConnected: true,
-        }});
         globalThis.document = {{
           readyState: 'complete',
-          body: {{
-            style: {{}},
-            classList,
-            appendChild(el) {{ appended.push(el); }},
-          }},
-          documentElement: {{
-            style: {{
-              getPropertyValue() {{ return ''; }},
-              setProperty() {{}},
-              removeProperty() {{}},
-            }},
-          }},
-          createElement() {{ return makeElement(); }},
+          body,
+          documentElement,
+          createElement(tagName) {{ return new FakeElement(tagName); }},
           addEventListener() {{}},
           removeEventListener() {{}},
-          getElementById() {{ return null; }},
-          querySelector() {{ return null; }},
-          querySelectorAll() {{ return []; }},
+          getElementById(id) {{ return elementsById.get(id) || null; }},
+          querySelector(selector) {{ return body.querySelector(selector); }},
+          querySelectorAll(selector) {{ return body.querySelectorAll(selector); }},
         }};
         globalThis.MutationObserver = class {{ observe() {{}} disconnect() {{}} }};
+        globalThis.CustomEvent = class {{
+          constructor(type, options = {{}}) {{
+            this.type = type;
+            this.detail = options.detail;
+          }}
+        }};
+        globalThis.setInterval = () => 0;
         globalThis.requestAnimationFrame = () => 0;
-        globalThis.getComputedStyle = () => ({{
-          zIndex: '250',
-          getPropertyValue() {{ return ''; }},
+        globalThis.getComputedStyle = (element) => ({{
+          display: element?.style?.display || 'block',
+          zIndex: element?.style?.zIndex || '250',
+          getPropertyValue(name) {{ return element?.style?.getPropertyValue(name) || ''; }},
         }});
+        """
+    )
 
-        await import({json.dumps(SHARED_UI_CATALOG.as_uri())});
-        await import({json.dumps(MODAL_SNAP_JS.as_uri())});
+
+def _app_ordered_imports(target_specifier: str, target_path: Path) -> str:
+    statements: list[str] = []
+    for specifier in _app_import_specifiers():
+        if specifier == target_specifier:
+            statements.append(f"const targetModule = await import({json.dumps(target_path.as_uri())});")
+        elif specifier in {"./js/i18n.js", "./js/languagePref.js"} or (
+            specifier.startswith("./js/i18n/") and specifier.endswith(".pt-BR.js")
+        ):
+            statements.append(
+                f"await import({json.dumps((ROOT / 'static' / specifier[2:]).as_uri())});"
+            )
+    return "\n".join(statements)
+
+
+def _rendered_modal_snap_titles(lang: str) -> list[str]:
+    """Evaluate modalSnap and central catalogs in their real app import order."""
+
+    script = textwrap.dedent(
+        f"""
+        {_browser_dom_prelude(lang)}
+        {_app_ordered_imports("./js/modalManager.js", MODAL_SNAP_JS)}
         console.log(JSON.stringify(
           [...new Set(appended.map((el) => el.title).filter(Boolean))],
         ));
@@ -478,6 +661,35 @@ def _rendered_modal_snap_titles(lang: str) -> list[str]:
     result = _run(["node", "--input-type=module"], input_text=script)
     assert result.returncode == 0, result.stderr
     return list(json.loads(result.stdout))
+
+
+def _rendered_registered_modal_label(lang: str) -> dict[str, str]:
+    script = textwrap.dedent(
+        f"""
+        {_browser_dom_prelude(lang, dock_capable=True)}
+        {_app_ordered_imports("./js/modalManager.js", MODAL_MANAGER_JS)}
+        targetModule.register('email-lib-modal', {{
+          label: 'Email',
+          icon: 'M2 4h20v16H2z',
+        }});
+        targetModule.minimize('email-lib-modal');
+        targetModule.register('Email', {{ icon: 'M2 4h20v16H2z' }});
+        targetModule.minimize('Email');
+        const chips = document
+          .getElementById('minimized-dock')
+          .querySelectorAll('.minimized-dock-chip');
+        const chip = chips.find((candidate) => candidate.dataset.modalId === 'email-lib-modal');
+        const internalChip = chips.find((candidate) => candidate.dataset.modalId === 'Email');
+        console.log(JSON.stringify({{
+          label: chip.querySelector('.minimized-dock-label').textContent,
+          title: chip.title,
+          internalLabel: internalChip.querySelector('.minimized-dock-label').textContent,
+        }}));
+        """
+    )
+    result = _run(["node", "--input-type=module"], input_text=script)
+    assert result.returncode == 0, result.stderr
+    return dict(json.loads(result.stdout))
 
 
 @pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
@@ -1032,7 +1244,7 @@ def test_shared_workspace_templates_render_in_portuguese_and_english() -> None:
 
 
 @pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
-def test_modal_snap_uses_catalog_loaded_by_central_harness() -> None:
+def test_modal_snap_uses_catalog_loaded_in_real_app_import_order() -> None:
     assert _rendered_modal_snap_titles("pt-BR") == [
         "Arraste para redimensionar a janela encaixada",
         "Arraste para redimensionar o e-mail e o rascunho",
@@ -1041,3 +1253,27 @@ def test_modal_snap_uses_catalog_loaded_by_central_harness() -> None:
         "Drag to resize docked window",
         "Drag to resize email and draft",
     ]
+
+    imports = _app_import_specifiers()
+    central_imports = {
+        "./js/i18n.js",
+        "./js/languagePref.js",
+        *(f"./js/i18n/{catalog.name}" for catalog in CATALOGS),
+    }
+    assert central_imports.issubset(imports)
+    assert imports[:2] == ["./js/i18n.js", "./js/languagePref.js"]
+    assert set(imports[2 : len(central_imports)]) == central_imports - set(imports[:2])
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_registered_modal_label_is_translated_lazily_when_dock_renders() -> None:
+    assert _rendered_registered_modal_label("pt-BR") == {
+        "label": "E-mail",
+        "title": "Restaurar E-mail",
+        "internalLabel": "Email",
+    }
+    assert _rendered_registered_modal_label("en") == {
+        "label": "Email",
+        "title": "Restore Email",
+        "internalLabel": "Email",
+    }

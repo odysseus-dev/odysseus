@@ -1192,7 +1192,10 @@ export function register(id, { restoreFn, closeFn, railBtnId, sidebarBtnId, labe
   // _LABELS table. Track the id so `unregister` can drop the entry
   // and avoid an unbounded-growth leak (v2 review HIGH-3).
   if (label || icon) {
-    _LABELS[id] = { label: label || id, icon: icon || '' };
+    _LABELS[id] = {
+      label: typeof label === 'function' ? label : label ? () => t(label) : () => id,
+      icon: icon || '',
+    };
     _customLabelIds.add(id);
   }
   // If a docked window was minimized and its chip was closed, reopen the
