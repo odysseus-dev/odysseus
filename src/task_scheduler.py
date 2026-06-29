@@ -1450,19 +1450,18 @@ class TaskScheduler:
                     system_prompt = f"{char_prompt}\n\n{system_prompt}"
             except Exception:
                 pass
-        # Inject current time so the model knows what's past vs upcoming
+        # Provide current date/time as a user-role message so the system prompt
+        # stays byte-identical across runs and doesn't bust the Anthropic prompt
+        # cache on every scheduled tick (see issue #2927 and the identical fix on
+        # the interactive-chat path in src/agent_loop.py).  The message is built
+        # once here and shared by both execution paths below (agent loop and the
+        # direct fallback) so time grounding is never lost on either path.
         tz_name = _resolve_task_timezone(db, task)
         try:
-            if tz_name:
-                from zoneinfo import ZoneInfo
-                from datetime import timezone
-                now_local = _utcnow().replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz_name))
-                time_str = now_local.strftime("%A, %B %d %Y, %H:%M %Z")
-            else:
-                time_str = _utcnow().strftime("%A, %B %d %Y, %H:%M UTC")
+            from src.user_time import current_datetime_context_message_for_tz
+            _dt_msg: dict | None = current_datetime_context_message_for_tz(tz_name)
         except Exception:
-            time_str = _utcnow().strftime("%A, %B %d %Y, %H:%M UTC")
-        system_prompt = f"Current time: {time_str}\n\n{system_prompt}"
+            _dt_msg = None
 
         # Compute the disabled-tools set: the crew's enabled_tools allowlist
         # (inverted) plus the operator's global disabled_tools setting. The
@@ -1510,14 +1509,15 @@ class TaskScheduler:
                 endpoint_url, model, task, session_id,
                 system_prompt=system_prompt, disabled_tools=disabled_tools or None,
                 relevant_tools=relevant_tools,
+                datetime_context_msg=_dt_msg,
             )
         except Exception as e:
             logger.warning(f"Agent loop failed for task '{task.name}', falling back to simple call: {e}")
             from src.task_endpoint import task_llm_call_async
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": task.prompt},
-            ]
+            messages: list = [{"role": "system", "content": system_prompt}]
+            if _dt_msg:
+                messages.append(_dt_msg)
+            messages.append({"role": "user", "content": task.prompt})
             result = await task_llm_call_async(
                 messages,
                 fallback_url=endpoint_url,
@@ -1715,16 +1715,20 @@ class TaskScheduler:
                               system_prompt: str | None = None,
                               disabled_tools: set | None = None,
                               relevant_tools: set | None = None,
-                              override_user_message: str | None = None) -> str:
+                              override_user_message: str | None = None,
+                              datetime_context_msg: dict | None = None) -> str:
         """Run the full agent loop with tool access, collecting the final text."""
         from src.agent_loop import stream_agent_loop
 
         system_content = system_prompt or "You are a helpful assistant executing a scheduled task. Use available tools to complete the task thoroughly."
         user_content = override_user_message or task.prompt
-        messages = [
-            {"role": "system", "content": system_content},
-            {"role": "user", "content": user_content},
-        ]
+        # Build the message list. The datetime context message (user-role) is
+        # inserted immediately before the task prompt so the system prefix stays
+        # byte-identical and cacheable across runs (see issue #2927).
+        messages: list = [{"role": "system", "content": system_content}]
+        if datetime_context_msg:
+            messages.append(datetime_context_msg)
+        messages.append({"role": "user", "content": user_content})
 
         # Resolve headers from the endpoint's API key
         headers = {}

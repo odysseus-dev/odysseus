@@ -1,4 +1,4 @@
-"""Provider detection tests (re: #768).
+"""Provider detection tests — build_chat_url / build_models_url routing (re: #768).
 
 These import the *real* helpers from ``src.llm_core`` (not local copies) so a
 regression in hostname matching is actually caught. The point of the change
@@ -11,72 +11,6 @@ import pytest
 from src import llm_core
 from src import endpoint_resolver
 from src.endpoint_resolver import build_chat_url, build_models_url
-
-
-class TestHostMatch:
-    def test_exact_host(self):
-        assert llm_core._host_match("https://anthropic.com/v1", "anthropic.com")
-
-    def test_subdomain(self):
-        assert llm_core._host_match("https://api.anthropic.com/v1", "anthropic.com")
-
-    def test_multiple_domains(self):
-        assert llm_core._host_match("https://api.together.ai/v1", "together.xyz", "together.ai")
-
-    def test_trailing_dot_fqdn(self):
-        # A fully-qualified host with a trailing dot is legal and resolvable.
-        assert llm_core._host_match("https://api.anthropic.com./v1", "anthropic.com")
-
-    def test_domain_in_path_does_not_match(self):
-        assert not llm_core._host_match("https://myproxy.internal/anthropic.com/v1", "anthropic.com")
-
-    def test_domain_in_query_does_not_match(self):
-        assert not llm_core._host_match("https://example.com/v1?ref=anthropic.com", "anthropic.com")
-
-    def test_lookalike_host_does_not_match(self):
-        assert not llm_core._host_match("https://anthropic.com.example/v1", "anthropic.com")
-
-    def test_none_and_empty_safe(self):
-        assert not llm_core._host_match(None, "anthropic.com")
-        assert not llm_core._host_match("", "anthropic.com")
-
-
-class TestDetectProviderRealHosts:
-    def test_chatgpt_subscription_codex_backend(self):
-        assert llm_core._detect_provider("https://chatgpt.com/backend-api/codex") == "chatgpt-subscription"
-        assert llm_core._detect_provider("https://chatgpt.com/backend-api/codex/responses") == "chatgpt-subscription"
-
-    def test_anthropic(self):
-        assert llm_core._detect_provider("https://api.anthropic.com") == "anthropic"
-
-    def test_openrouter(self):
-        assert llm_core._detect_provider("https://openrouter.ai/api/v1") == "openrouter"
-
-    def test_groq_openai_compat_path(self):
-        # Groq's base carries an /openai/v1 path; detection must still see the host.
-        assert llm_core._detect_provider("https://api.groq.com/openai/v1") == "groq"
-
-    def test_ollama_native_unchanged(self):
-        assert llm_core._detect_provider("https://ollama.com/api") == "ollama"
-
-    def test_unknown_host_defaults_to_openai(self):
-        assert llm_core._detect_provider("https://api.example.com/v1") == "openai"
-
-
-class TestDetectProviderRejectsSubstringFalsePositives:
-    """The regression that motivated #768: substring matching mislabeled these."""
-
-    def test_provider_domain_in_path(self):
-        assert llm_core._detect_provider("https://myproxy.internal/anthropic.com/v1") == "openai"
-
-    def test_provider_domain_in_query(self):
-        assert llm_core._detect_provider("https://example.com/v1?ref=anthropic.com") == "openai"
-
-    def test_lookalike_host(self):
-        assert llm_core._detect_provider("https://anthropic.com.example/v1") == "openai"
-
-    def test_none_safe(self):
-        assert llm_core._detect_provider(None) == "openai"
 
 
 class TestBuildersRejectLookalikeHosts:

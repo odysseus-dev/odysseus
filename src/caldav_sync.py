@@ -274,6 +274,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
     # the integrations form still works, sync just no-ops with an error.
     from caldav.lib.error import AuthorizationError, NotFoundError
     from core.database import CalendarCal, CalendarEvent, SessionLocal
+    from routes.calendar_routes import _ensure_positive_duration
 
     result = {"calendars": 0, "events": 0, "deleted": 0, "errors": []}
 
@@ -390,6 +391,11 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
                             end_dt = start_dt + timedelta(days=1)
                         else:
                             end_dt = start_dt + timedelta(hours=1)
+                        # A synced event with DTEND <= DTSTART (e.g. a single-day
+                        # all-day event whose source wrote DTEND equal to DTSTART)
+                        # would be stored zero-duration and silently dropped by the
+                        # list_events overlap filter. Clamp to a positive span.
+                        end_dt = _ensure_positive_duration(start_dt, end_dt, all_day)
 
                         # is_utc reflects whether the source carried a TZ
                         # we converted from. All-day = no TZ semantics.

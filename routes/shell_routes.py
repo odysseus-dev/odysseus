@@ -1063,8 +1063,19 @@ def setup_shell_routes() -> APIRouter:
         importlib.invalidate_caches()
         try:
             user_site = site.getusersitepackages()
-            if user_site and os.path.isdir(user_site) and user_site not in sys.path:
-                sys.path.append(user_site)
+            if user_site and os.path.isdir(user_site):
+                # Use addsitedir(), NOT a bare sys.path.append(). When a package
+                # is `pip install --user`'d at runtime (Cookbook → Install) the
+                # long-lived server process started before the user-site existed,
+                # so site never processed it — including its `.pth` hooks. On
+                # Python 3.12+ `distutils` is gone from stdlib and is only
+                # restored by setuptools' `distutils-precedence.pth`, which ships
+                # in user-site. basicsr (a realesrgan dep) does `import distutils`
+                # at import time, so a plain append left the package importable
+                # but `import distutils` failing → realesrgan probed as
+                # not-installed until a full process restart. addsitedir() replays
+                # the `.pth` files so the shim is active.
+                site.addsitedir(user_site)
         except Exception:
             pass
         if ssh_port and str(ssh_port).strip() not in ("", "22"):

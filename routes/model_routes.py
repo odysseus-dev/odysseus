@@ -731,12 +731,19 @@ def _is_loading_model_response(resp: Any) -> bool:
 
 
 def _openai_model_ids(data: Any) -> List[str]:
-    """Extract OpenAI-style model IDs (``{"data": [{"id": ...}]}``).
+    """Extract OpenAI-style model IDs.
 
-    Tolerates a non-dict body and non-string IDs from non-compliant upstreams,
-    returning only non-empty string IDs.
+    Accepts both standard ``{"data": [{"id": ...}]}`` responses and bare
+    ``[{"id": ...}]`` lists returned by some OpenAI-compatible providers.
+    Tolerates non-dict/non-list bodies and non-string IDs, returning only
+    non-empty string IDs.
     """
-    items = data.get("data") if isinstance(data, dict) else None
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        items = data.get("data")
+    else:
+        items = None
     return [m["id"] for m in (items or [])
             if isinstance(m, dict) and isinstance(m.get("id"), str) and m["id"]]
 

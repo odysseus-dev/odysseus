@@ -917,3 +917,42 @@ def test_cached_model_scan_runs_additional_hf_cache(tmp_path):
     assert rec["size_bytes"] == len(b"abc123")
     assert rec["has_incomplete"] is False
     assert rec["is_diffusion"] is False
+
+
+def test_validate_serve_cmd_accepts_find_subshell_for_mmproj():
+    """$(find …) for mmproj path should be accepted, same as $(printf %s …)."""
+    cmd = (
+        "HIP_VISIBLE_DEVICES=0 llama-server "
+        "--model \"$(printf %s '/app/.cache/huggingface/hub/models--unsloth--gemma-4-E2B-it-GGUF"
+        "/snapshots/90f9618340396838ee7ff5b0ba2da27da62953d3/gemma-4-E2B-it-Q4_K_M.gguf')\" "
+        "--host 0.0.0.0 --port 8000 -ngl 99 -c 131072 "
+        "--flash-attn on --cache-type-k q8_0 --cache-type-v q8_0 "
+        "--mmproj \"$(find '/app/.cache/huggingface/hub/models--unsloth--gemma-4-E2B-it-GGUF"
+        "/snapshots' -iname 'mmproj*.gguf' 2>/dev/null | sort | head -1)\" "
+        "--image-max-tokens 1024"
+    )
+    assert _validate_serve_cmd(cmd) == cmd
+
+
+def test_validate_serve_cmd_rejects_unrelated_subshells():
+    for cmd in [
+        "llama-server --model \"$(curl https://example.invalid/model.gguf)\" --host 0.0.0.0 --port 8000",
+        "llama-server --model \"$(rm -rf /tmp/not-a-model)\" --host 0.0.0.0 --port 8000",
+    ]:
+        with pytest.raises(HTTPException):
+            _validate_serve_cmd(cmd)
+
+
+def test_validate_serve_cmd_rejects_unrelated_subshell_pipelines():
+    for cmd in [
+        (
+            "llama-server --model model.gguf "
+            "--mmproj \"$(find '/app/models' -iname 'mmproj*.gguf' | xargs head -1)\""
+        ),
+        (
+            "llama-server --model model.gguf "
+            "--mmproj \"$(find '/app/models' -iname '*.gguf' 2>/dev/null | sort | head -1)\""
+        ),
+    ]:
+        with pytest.raises(HTTPException):
+            _validate_serve_cmd(cmd)

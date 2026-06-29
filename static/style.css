@@ -34117,7 +34117,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   word-break: break-all;
 }
 .note-link:hover { opacity: 0.8; }
-.note-checkbox-rm {
+.note-checkbox-edit, .note-checkbox-rm {
   flex: 0 0 auto;
   background: transparent;
   border: none;
@@ -34129,13 +34129,25 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-left: auto;
-  margin-right: 0;
+  margin-left: 2px;
   transition: opacity 0.12s, background 0.12s, color 0.12s;
 }
+.note-checkbox-rm { margin-left: auto; }
+.note-checkbox-edit { margin-left: auto; }
+.note-checkbox:hover .note-checkbox-edit,
 .note-checkbox:hover .note-checkbox-rm { opacity: 0.55; }
 .note-checkbox-rm:hover { opacity: 1 !important; color: var(--red); background: color-mix(in srgb, var(--red) 12%, transparent); }
+.note-checkbox-edit:hover { opacity: 1 !important; color: var(--accent, var(--blue)); background: color-mix(in srgb, var(--accent, var(--blue)) 12%, transparent); }
+.note-card-selectmode .note-checkbox-edit,
 .note-card-selectmode .note-checkbox-rm { display: none; }
+.note-check-text[contenteditable="true"] {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  outline: 1px solid var(--accent, var(--blue));
+  border-radius: 2px;
+  cursor: text;
+  padding: 0 2px;
+  margin: 0 -2px;
+}
 .note-check-dot {
   width: 16px;
   height: 16px;

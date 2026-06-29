@@ -38,23 +38,27 @@ def _preview_text(value, limit: int = 200) -> str:
     return text[:limit]
 
 
+def _text_field(value) -> str:
+    return value if isinstance(value, str) else ""
+
+
 def _serialize_image(i: "GalleryImage") -> dict:
     return {
         "id": i.id,
-        "filename": i.filename,
+        "filename": _text_field(i.filename),
         "prompt": _preview_text(i.prompt),
-        "model": i.model or "",
-        "size": i.size or "",
-        "tags": i.tags or "",
+        "model": _text_field(i.model),
+        "size": _text_field(i.size),
+        "tags": _text_field(i.tags),
         "favorite": bool(i.favorite),
-        "album_id": i.album_id or "",
-        "session_id": i.session_id or "",
+        "album_id": _text_field(i.album_id),
+        "session_id": _text_field(i.session_id),
         "width": i.width,
         "height": i.height,
         "file_size": i.file_size,
         "taken_at": i.taken_at.isoformat() if i.taken_at else "",
-        "camera_make": i.camera_make or "",
-        "camera_model": i.camera_model or "",
+        "camera_make": _text_field(i.camera_make),
+        "camera_model": _text_field(i.camera_model),
         "created_at": i.created_at.isoformat() if i.created_at else "",
     }
 
@@ -93,11 +97,11 @@ def cmd_show(args):
         if not i:
             fail(f"no image with id {args.id!r}")
         out = _serialize_image(i)
-        out["prompt_full"] = i.prompt or ""
-        out["ai_tags"] = i.ai_tags or ""
+        out["prompt_full"] = _text_field(i.prompt)
+        out["ai_tags"] = _text_field(i.ai_tags)
         out["gps_lat"] = i.gps_lat or ""
         out["gps_lng"] = i.gps_lng or ""
-        out["file_hash"] = i.file_hash or ""
+        out["file_hash"] = _text_field(i.file_hash)
         emit(out, args)
     finally:
         db.close()

@@ -80,7 +80,7 @@ def test_non_positive_env_rejected(monkeypatch, env):
 def test_routes_import_from_upload_limits_not_local_defs():
     """Routes must import the constant, not redefine it via raw getenv / literal."""
     forbidden = {
-        "routes/gallery_routes.py": [
+        "routes/gallery/gallery_routes.py": [
             'int(os.getenv("ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES"',
             'int(os.getenv("ODYSSEUS_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES"',
         ],
@@ -97,7 +97,7 @@ def test_routes_import_from_upload_limits_not_local_defs():
 
     # And each imports from upload_limits.
     imports = {
-        "routes/gallery_routes.py": "GALLERY_UPLOAD_MAX_BYTES",
+        "routes/gallery/gallery_routes.py": "GALLERY_UPLOAD_MAX_BYTES",
         "routes/memory_routes.py": "MEMORY_IMPORT_MAX_BYTES",
         "routes/personal_routes.py": "PERSONAL_UPLOAD_MAX_BYTES",
         "routes/email_routes.py": "EMAIL_COMPOSE_UPLOAD_MAX_BYTES",

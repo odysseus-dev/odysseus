@@ -46,6 +46,7 @@ from routes.email_helpers import (
     _send_smtp_message, _smtp_security_mode,
     _IMAP_TIMEOUT_SECONDS, _open_imap_connection,
     make_oauth_state, verify_oauth_state,
+    EmailNotConfiguredError,
     _imap_connect, _imap, _decode_header, _detect_sent_folder, _detect_drafts_folder,
     _extract_attachment_text, _list_attachments_from_msg, _has_visible_attachments, _is_likely_signature_image_attachment,
     _extract_attachment_to_disk, _extract_html, _extract_text,
@@ -1029,6 +1030,11 @@ def setup_email_routes():
                 logger.debug(f"Bulk summary attach skipped: {_summary_err}")
 
             return {"emails": emails, "total": total, "folder": folder, "offset": offset}
+        except EmailNotConfiguredError:
+            # Send-only (SMTP-only) account: there is no inbox to read, so the
+            # poll returns an empty list instead of a per-minute error. SMTP
+            # send is unaffected.
+            return {"emails": [], "total": 0, "folder": folder, "offset": offset}
         except Exception as e:
             logger.error(f"Failed to list emails: {e}")
             detail = str(e).strip()

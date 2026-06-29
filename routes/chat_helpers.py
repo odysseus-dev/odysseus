@@ -104,6 +104,9 @@ class ChatContext:
     # The chat route emits a doc_update SSE event for each before streaming
     # begins, so the editor pane switches to the new doc immediately.
     auto_opened_docs: list = field(default_factory=list)
+    # Uploads attached to this user turn, resolved and owner-checked for the
+    # agent's private context. This is not emitted to the browser.
+    uploaded_files: list = field(default_factory=list)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────── #
@@ -366,6 +369,59 @@ async def preprocess(
     )
 
 
+def build_uploaded_file_manifest(att_ids: list, upload_handler, owner: Optional[str]) -> list[dict]:
+    """Resolve current-turn upload IDs into a small tool-facing manifest.
+
+    The chat UI already sends attachment ids, and preprocessing inlines as much
+    text as fits. Agent mode still needs a discoverable bridge for files whose
+    content was truncated/omitted or when the model chooses file tools. Only
+    owner-authorized uploads are included, and paths must remain inside the
+    configured upload directory.
+    """
+    if not att_ids or not upload_handler or not hasattr(upload_handler, "resolve_upload"):
+        return []
+
+    def _read_file_can_open(path: str) -> bool:
+        try:
+            from src.tool_execution import _resolve_tool_path
+
+            return _resolve_tool_path(path) == os.path.realpath(path)
+        except Exception:
+            return False
+
+    manifest: list[dict] = []
+    for att_id in att_ids:
+        try:
+            info = upload_handler.resolve_upload(str(att_id), owner=owner)
+        except Exception:
+            logger.debug("Failed to resolve upload %r for agent manifest", att_id, exc_info=True)
+            continue
+        if not isinstance(info, dict):
+            continue
+
+        path = info.get("path")
+        if path:
+            try:
+                inside = True
+                if hasattr(upload_handler, "_inside_upload_dir"):
+                    inside = bool(upload_handler._inside_upload_dir(path))
+                elif hasattr(upload_handler, "inside_base_dir"):
+                    inside = bool(upload_handler.inside_base_dir(path))
+                if not inside or not os.path.exists(path) or not _read_file_can_open(path):
+                    path = None
+            except Exception:
+                path = None
+
+        manifest.append({
+            "id": info.get("id") or str(att_id),
+            "name": info.get("name") or info.get("original_name") or str(att_id),
+            "mime": info.get("mime", ""),
+            "size": info.get("size", 0),
+            "path": path,
+        })
+    return manifest
+
+
 def add_user_message(sess, chat_handler, preprocessed: PreprocessedMessage, incognito: bool = False):
     """Add user message to session history and update session name.
     In incognito mode, still add to in-memory history (for conversation context)
@@ -613,6 +669,11 @@ async def build_chat_context(
     # bearer-token chat requests use the token owner instead of the "api" sentinel.
     user = effective_user(request)
     uprefs = load_prefs_for_user(user)
+    uploaded_files = build_uploaded_file_manifest(
+        att_ids or [],
+        getattr(chat_handler, "upload_handler", None),
+        getattr(sess, "owner", None),
+    )
     casual_low_signal = _is_casual_low_signal(message)
 
     # Memory enabled?
@@ -731,6 +792,7 @@ async def build_chat_context(
         preset=preset,
         preprocessed=preprocessed,
         auto_opened_docs=auto_opened_docs,
+        uploaded_files=uploaded_files,
     )
 
 

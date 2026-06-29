@@ -577,6 +577,16 @@ _SERVE_CMD_ALLOWLIST = {
 _GGUF_PRELUDE_RE = re.compile(
     r'^MODEL_FILE=\$\([^\n]*?\)\s*&&\s*\{[^{}]*\}\s*\|\|\s*\{[^{}]*\}\s*&&\s*'
 )
+_SAFE_SUBSHELL_TEXT = r"[^'\n;&|`$()<>]+"
+_SAFE_SUBSHELL_DQ_HOME_PATH = r'"\$HOME/[^"\n;&|`()<>]*"'
+_SAFE_PRINTF_SUBSHELL_RE = re.compile(
+    rf"^\$\(printf[ \t]+%s[ \t]+(?:'{_SAFE_SUBSHELL_TEXT}'|\$\{{HOME\}}'/{_SAFE_SUBSHELL_TEXT}')\)$"
+)
+_SAFE_FIND_MMPROJ_SUBSHELL_RE = re.compile(
+    rf"^\$\(find[ \t]+(?:'{_SAFE_SUBSHELL_TEXT}'|{_SAFE_SUBSHELL_DQ_HOME_PATH}|{_SAFE_SUBSHELL_TEXT})"
+    r"[ \t]+-iname[ \t]+'mmproj\*\.gguf'"
+    r"(?:[ \t]+2>/dev/null)?[ \t]*\|[ \t]*sort[ \t]*\|[ \t]*head[ \t]+-1\)$"
+)
 _OLLAMA_HOST_ASSIGNMENT_RE = re.compile(r"(?:^|\s)OLLAMA_HOST=([^\s]+)")
 _OLLAMA_BIND_RE = re.compile(r"^\[([^\]]+)\]:(\d+)$|^([^:]+):(\d+)$")
 _OLLAMA_BIND_HOST_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
@@ -677,6 +687,13 @@ def _check_serve_binary(seg: str) -> None:
         )
 
 
+def _is_safe_serve_subshell(subshell: str) -> bool:
+    return bool(
+        _SAFE_PRINTF_SUBSHELL_RE.fullmatch(subshell)
+        or _SAFE_FIND_MMPROJ_SUBSHELL_RE.fullmatch(subshell)
+    )
+
+
 def _validate_serve_cmd(v: str | None) -> str | None:
     """Reject serve commands that aren't in the allowlist or contain shell metachars.
 
@@ -708,15 +725,15 @@ def _validate_serve_cmd(v: str | None) -> str | None:
             _check_serve_binary(part.strip())
         return v
 
-    # Otherwise: a single invocation — no shell metacharacters allowed.
-    # Temporarily replace safe $(printf %s ...) expressions with a placeholder
-    # to avoid triggering the metacharacter/command-injection checks.
-    cleaned_v = v
-    printf_matches = list(re.finditer(r"\$\(\s*printf\s+%s\s+([^\n()]*?)\)", v))
-    for match in printf_matches:
-        inner = match.group(1)
-        if not any(c in inner for c in (";", "&&", "||", "$(", "`")):
-            cleaned_v = cleaned_v.replace(match.group(0), "/placeholder/safe/path.gguf")
+    # Otherwise: a single invocation — no shell metacharacters allowed. Replace
+    # only the exact command substitutions emitted by the Cookbook UI:
+    # $(printf %s 'safe-path') and the mmproj lookup
+    # $(find <path> -iname 'mmproj*.gguf' 2>/dev/null | sort | head -1).
+    def _replace_safe_subshell(match: re.Match[str]) -> str:
+        subshell = match.group(0)
+        return "/placeholder/safe/path" if _is_safe_serve_subshell(subshell) else subshell
+
+    cleaned_v = re.sub(r"\$\([^()]*\)", _replace_safe_subshell, v)
 
     # (`$(` was the original intent; bare `$` is fine for shell-safe paths.)
     if any(c in cleaned_v for c in (";", "&&", "||", "$(")):
