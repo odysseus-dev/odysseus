@@ -1,0 +1,137 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: odysseus
+  labels:
+    app.kubernetes.io/name: odysseus
+    app.kubernetes.io/part-of: odysseus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: odysseus
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: odysseus
+        app.kubernetes.io/part-of: odysseus
+    spec:
+      serviceAccountName: odysseus
+      containers:
+        - name: odysseus
+          image: image-registry.openshift-image-registry.svc:5000/odysseus/odysseus:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 7000
+              name: http
+          env:
+            - name: AUTH_ENABLED
+              value: "true"
+            - name: LOCALHOST_BYPASS
+              value: "false"
+            - name: SECURE_COOKIES
+              value: "true"
+            - name: APP_PORT
+              value: "7000"
+            - name: ODYSSEUS_ADMIN_USER
+              value: admin
+            - name: ODYSSEUS_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: odysseus-admin
+                  key: ODYSSEUS_ADMIN_PASSWORD
+            - name: ODYSSEUS_DATA_DIR
+              value: /app/data
+            - name: DATABASE_URL
+              value: sqlite:////app/data/app.db
+            - name: CHROMADB_HOST
+              value: odysseus-chromadb
+            - name: CHROMADB_PORT
+              value: "8000"
+            - name: SEARXNG_INSTANCE
+              value: http://searxng:8080
+            - name: FASTEMBED_CACHE_PATH
+              value: /app/data/fastembed_cache
+            - name: ODYSSEUS_INPROCESS_POLLERS
+              value: "0"
+            - name: ODYSSEUS_INPROCESS_TASKS
+              value: "0"
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: logs
+              mountPath: /app/logs
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: 7000
+            failureThreshold: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /api/ready
+              port: 7000
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 7000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: "1"
+              memory: 4Gi
+            limits:
+              cpu: "4"
+              memory: 12Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: odysseus-data
+        - name: logs
+          persistentVolumeClaim:
+            claimName: odysseus-logs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: odysseus
+  labels:
+    app.kubernetes.io/name: odysseus
+    app.kubernetes.io/part-of: odysseus
+spec:
+  selector:
+    app.kubernetes.io/name: odysseus
+  ports:
+    - name: http
+      port: 7000
+      targetPort: 7000
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: odysseus
+  labels:
+    app.kubernetes.io/name: odysseus
+    app.kubernetes.io/part-of: odysseus
+spec:
+  to:
+    kind: Service
+    name: odysseus
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

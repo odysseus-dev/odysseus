@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: odysseus
+spec:
+  template:
+    spec:
+      containers:
+        - name: odysseus
+          env:
+            - name: LLM_CA_BUNDLE
+              value: /etc/odysseus/ca/router-ca.crt
+            - name: ALLOWED_ORIGINS
+              value: https://odysseus.apps.example.com
+          volumeMounts:
+            - name: router-ca
+              mountPath: /etc/odysseus/ca
+              readOnly: true
+      volumes:
+        - name: router-ca
+          configMap:
+            name: router-ca
+            items:
+              - key: router-ca.crt
+                path: router-ca.crt

@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: odysseus-data
+spec:
+  storageClassName: replace-me-rwo-storage-class
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: odysseus-logs
+spec:
+  storageClassName: replace-me-rwo-storage-class
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: odysseus-chromadb-data
+spec:
+  storageClassName: replace-me-rwo-storage-class

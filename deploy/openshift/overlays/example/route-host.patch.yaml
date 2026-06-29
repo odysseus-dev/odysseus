@@ -1,0 +1,6 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: odysseus
+spec:
+  host: odysseus.apps.example.com

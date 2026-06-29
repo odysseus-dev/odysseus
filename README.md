@@ -37,6 +37,7 @@ docker compose up -d --build
 Open `http://localhost:7000` when the containers are healthy. The first admin password is printed in `docker compose logs odysseus`.
 
 Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration live in the [setup guide](docs/setup.md).
+OpenShift deployment resources are available under [`deploy/openshift`](deploy/openshift/README.md).
 
 ## Features
 

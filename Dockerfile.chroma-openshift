@@ -1,0 +1,19 @@
+# Minimal ChromaDB server image that runs under OpenShift restricted SCC.
+
+FROM python:3.14-slim
+
+ENV HOME=/tmp/chromahome \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    IS_PERSISTENT=TRUE \
+    PERSIST_DIRECTORY=/chroma/data
+
+RUN pip install --no-cache-dir chromadb \
+    && mkdir -p /chroma/data /tmp/chromahome \
+    && chgrp -R 0 /chroma /tmp/chromahome \
+    && chmod -R g+rwX /chroma /tmp/chromahome
+
+WORKDIR /tmp/chromahome
+EXPOSE 8000
+
+CMD ["chroma", "run", "--host", "0.0.0.0", "--port", "8000", "--path", "/chroma/data"]

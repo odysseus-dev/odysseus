@@ -1,0 +1,141 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: searxng-settings-template
+  labels:
+    app.kubernetes.io/name: searxng
+    app.kubernetes.io/part-of: odysseus
+data:
+  settings.yml: |
+    use_default_settings: true
+
+    server:
+      secret_key: "__SEARXNG_SECRET__"
+
+    search:
+      formats:
+        - html
+        - json
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: searxng
+  labels:
+    app.kubernetes.io/name: searxng
+    app.kubernetes.io/part-of: odysseus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: searxng
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: searxng
+        app.kubernetes.io/part-of: odysseus
+    spec:
+      enableServiceLinks: false
+      serviceAccountName: odysseus
+      initContainers:
+        - name: render-settings
+          image: docker.io/searxng/searxng:2026.5.31-7159b8aed
+          imagePullPolicy: IfNotPresent
+          command:
+            - /usr/bin/sh
+            - -c
+            - |
+              set -eu
+              secret="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+              sed "s|__SEARXNG_SECRET__|${secret}|g" /template/settings.yml > /generated/settings.yml
+              chmod 0444 /generated/settings.yml
+          volumeMounts:
+            - name: settings-template
+              mountPath: /template
+              readOnly: true
+            - name: settings-generated
+              mountPath: /generated
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+      containers:
+        - name: searxng
+          image: docker.io/searxng/searxng:2026.5.31-7159b8aed
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: SEARXNG_BASE_URL
+              value: http://searxng:8080/
+            - name: SEARXNG_PORT
+              value: "8080"
+            - name: FORCE_OWNERSHIP
+              value: "false"
+            - name: GRANIAN_WORKERS
+              value: "1"
+          volumeMounts:
+            - name: settings-generated
+              mountPath: /etc/searxng
+            - name: cache
+              mountPath: /var/cache/searxng
+          startupProbe:
+            tcpSocket:
+              port: 8080
+            failureThreshold: 30
+            periodSeconds: 5
+            timeoutSeconds: 5
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: settings-template
+          configMap:
+            name: searxng-settings-template
+        - name: settings-generated
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: searxng
+  labels:
+    app.kubernetes.io/name: searxng
+    app.kubernetes.io/part-of: odysseus
+spec:
+  selector:
+    app.kubernetes.io/name: searxng
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

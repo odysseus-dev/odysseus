@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: odysseus-example
+resources:
+  - namespace.yaml
+  - ../../base
+images:
+  - name: image-registry.openshift-image-registry.svc:5000/odysseus/odysseus
+    newName: image-registry.openshift-image-registry.svc:5000/odysseus-example/odysseus
+  - name: image-registry.openshift-image-registry.svc:5000/odysseus/odysseus-chromadb
+    newName: image-registry.openshift-image-registry.svc:5000/odysseus-example/odysseus-chromadb
+patches:
+  - path: odysseus-example-env.patch.yaml
+  - path: route-host.patch.yaml
+  - path: storageclass.patch.yaml

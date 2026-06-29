@@ -1,0 +1,53 @@
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: odysseus
+  labels:
+    app.kubernetes.io/name: odysseus
+    app.kubernetes.io/part-of: odysseus
+---
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: odysseus-chromadb
+  labels:
+    app.kubernetes.io/name: odysseus-chromadb
+    app.kubernetes.io/part-of: odysseus
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: odysseus
+  labels:
+    app.kubernetes.io/name: odysseus
+    app.kubernetes.io/part-of: odysseus
+spec:
+  source:
+    type: Binary
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile.openshift
+  output:
+    to:
+      kind: ImageStreamTag
+      name: odysseus:latest
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: odysseus-chromadb
+  labels:
+    app.kubernetes.io/name: odysseus-chromadb
+    app.kubernetes.io/part-of: odysseus
+spec:
+  source:
+    type: Binary
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile.chroma-openshift
+  output:
+    to:
+      kind: ImageStreamTag
+      name: odysseus-chromadb:latest
