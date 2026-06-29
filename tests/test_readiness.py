@@ -1,5 +1,8 @@
 """Tests for the readiness / integrity self-check (src/readiness.py)."""
 
+from datetime import datetime
+
+from core.database import utcnow_naive
 from src.readiness import check_readiness
 
 
@@ -25,3 +28,12 @@ def test_local_first_check_is_informational_never_fatal():
     # readiness — a remote database is a valid deployment.
     assert lf["ok"] is True
     assert "local" in lf
+
+
+def test_readiness_timestamp_is_naive_utc():
+    """Regression for #1116 — readiness must not call datetime.utcnow()."""
+    result = check_readiness()
+    ts = datetime.fromisoformat(result["timestamp"])
+    assert ts.tzinfo is None
+    ref = utcnow_naive()
+    assert abs((ref - ts).total_seconds()) < 5
