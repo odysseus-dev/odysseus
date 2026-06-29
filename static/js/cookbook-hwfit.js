@@ -2037,6 +2037,8 @@ export function _hwfitInit() {
     const selectors = [
       document.getElementById('hwfit-server-select'),
       document.getElementById('hwfit-dl-server'),
+      document.getElementById('hwfit-cache-server'),
+      document.getElementById('hwfit-deps-server'),
     ];
     for (const sel of selectors) {
       if (!sel) continue;

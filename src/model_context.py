@@ -460,10 +460,10 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
     except Exception as e:
         logger.debug(f"Failed to query context length for {model}: {e}")
 
+    _is_local = is_local_endpoint(endpoint_url)
     # For local/self-hosted endpoints, trust the API value (user set --max-model-len)
     # For cloud APIs, use the larger value (API can report low defaults)
     if api_ctx and known:
-        _is_local = is_local_endpoint(endpoint_url)
         if _is_local and api_ctx < known:
             logger.info(f"Local endpoint reports {api_ctx} for {model} (known max: {known}) — using API value")
             return api_ctx, True
@@ -474,9 +474,21 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
     if api_ctx:
         return api_ctx, True
     if known:
+        if _is_local:
+            import os as _os
+            env_val = _os.environ.get("ODYSSEUS_LOCAL_CONTEXT")
+            try:
+                limit = int(env_val) if env_val else 4096
+            except (ValueError, TypeError):
+                limit = 4096
+            val = min(known, limit)
+            logger.info(f"Using capped known context window for local endpoint {model}: {val} (known max: {known}, cap: {limit})")
+            return val, True
         logger.info(f"Using known context window for {model}: {known}")
         return known, True
 
+    if _is_local:
+        return 4096, False
     return DEFAULT_CONTEXT, False
 
 

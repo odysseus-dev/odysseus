@@ -1751,7 +1751,7 @@ def setup_cookbook_routes() -> APIRouter:
                 # else a plain CPU build. nproc is Linux-only — fall back to
                 # `sysctl hw.ncpu` on macOS. (Tip: `brew install llama.cpp` ships
                 # a prebuilt llama-server and skips this whole source build.)
-                runner_lines.append('  NPROC="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"')
+                runner_lines.append('  _n="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"; NPROC="$(( _n > 2 ? _n - 2 : 1 ))"')
                 runner_lines.append('  if [ "$(uname -s)" = "Darwin" ]; then')
                 runner_lines.append('    command -v cmake >/dev/null 2>&1 || echo "WARNING: cmake not found — install it with: brew install cmake (or: brew install llama.cpp for a prebuilt llama-server)."')
                 # Start from a clean cache: a prior failed configure (e.g. a CUDA
