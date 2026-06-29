@@ -652,15 +652,18 @@ def _load_caldav_accounts(owner: str) -> list:
                 )
                 if not has_existing:
                     pw = ""
+                    url = ""
                     if ea.oauth_provider == "google":
                         pw = "oauth"
+                        url = f"https://apidata.googleusercontent.com/caldav/v2/{user}/user"
                     else:
                         pw = ea.imap_password
+                        url = f"https://www.google.com/calendar/dav/{user}/user"
                     
                     new_cal_acc = {
                         "id": str(_uuid.uuid4()),
                         "label": f"Google Calendar ({user})",
-                        "url": f"https://apidata.googleusercontent.com/caldav/v2/{user}/user",
+                        "url": url,
                         "username": user,
                         "password": pw,
                     }
