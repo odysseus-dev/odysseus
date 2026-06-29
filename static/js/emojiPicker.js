@@ -9,6 +9,7 @@
  */
 
 import { topPortalZ } from './toolWindowZOrder.js';
+import { t } from './i18n.js';
 
 // Each entry: [char, label, svgPath OR svg]
 // SVG icons matching Lucide style (24x24 viewBox, 2 stroke)
@@ -119,7 +120,7 @@ export function createEmojiButton(target) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'emoji-picker-btn';
-  btn.title = 'Insert icon';
+  btn.title = t('Insert icon');
   btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>';
   // Don't steal focus from the editor on press — keeps the caret/selection so
   // the emoji lands where the user was typing.
@@ -216,7 +217,7 @@ function _buildPicker() {
 
   const search = document.createElement('input');
   search.type = 'text';
-  search.placeholder = 'Search…';
+  search.placeholder = t('Search…');
   search.className = 'emoji-picker-search';
   el.appendChild(search);
 
@@ -229,7 +230,11 @@ function _buildPicker() {
     const f = filter.toLowerCase();
     for (const group of EMOJI_GROUPS) {
       const filtered = f
-        ? group.items.filter(item => item[1].toLowerCase().includes(f) || item[0].includes(filter))
+        ? group.items.filter(item => (
+          item[1].toLowerCase().includes(f)
+          || t(item[1]).toLowerCase().includes(f)
+          || item[0].includes(filter)
+        ))
         : group.items;
       if (filtered.length === 0) continue;
 
@@ -237,7 +242,7 @@ function _buildPicker() {
       groupDiv.className = 'emoji-picker-group';
       const header = document.createElement('div');
       header.className = 'emoji-picker-group-name';
-      header.textContent = group.name;
+      header.textContent = t(group.name);
       groupDiv.appendChild(header);
 
       const grid = document.createElement('div');
@@ -247,7 +252,7 @@ function _buildPicker() {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'emoji-picker-item';
-        btn.title = label;
+        btn.title = t(label);
         btn.innerHTML = svg;
         btn.addEventListener('click', (e) => {
           e.preventDefault();

@@ -26,6 +26,10 @@ MODAL_MANAGER_JS = ROOT / "static" / "js" / "modalManager.js"
 SPINNER_JS = ROOT / "static" / "js" / "spinner.js"
 WORKSPACE_JS = ROOT / "static" / "js" / "workspace.js"
 MODAL_SNAP_JS = ROOT / "static" / "js" / "modalSnap.js"
+CODE_RUNNER_JS = ROOT / "static" / "js" / "codeRunner.js"
+SIGNATURE_JS = ROOT / "static" / "js" / "signature.js"
+EMOJI_PICKER_JS = ROOT / "static" / "js" / "emojiPicker.js"
+DOCUMENT_CATALOG = CATALOG_DIR / "document.pt-BR.js"
 SHARED_UI_CATALOG = CATALOG_DIR / "shared-ui.pt-BR.js"
 WORKSPACE_CATALOG = CATALOG_DIR / "workspace-misc.pt-BR.js"
 CATALOGS = tuple(sorted(CATALOG_DIR.glob("*.pt-BR.js")))
@@ -692,6 +696,295 @@ def _rendered_registered_modal_label(lang: str) -> dict[str, str]:
     return dict(json.loads(result.stdout))
 
 
+def _translated_document_auxiliary_examples(lang: str) -> dict[str, str]:
+    runtime = ROOT / "static" / "js" / "i18n.js"
+    script = textwrap.dedent(
+        f"""
+        globalThis.window = {{ __ODY_LANG: {json.dumps(lang)} }};
+        globalThis.localStorage = {{ getItem: () => null }};
+        const {{ t }} = await import({json.dumps(runtime.as_uri())});
+        await import({json.dumps(DOCUMENT_CATALOG.as_uri())});
+        console.log(JSON.stringify({{
+          runtimeError: t(
+            'Failed to load Python runtime: {{message}}',
+            {{ message: 'Network 502' }},
+          ),
+          exit: t('(no output) — exit code {{code}}', {{ code: 7 }}),
+          saveError: t(
+            'Failed to save signature: {{message}}',
+            {{ message: 'quota exceeded' }},
+          ),
+          emojiGroup: t('Faces & Hearts'),
+          emojiTitle: t('heart-outline'),
+        }}));
+        """
+    )
+    result = _run(["node", "--input-type=module"], input_text=script)
+    assert result.returncode == 0, result.stderr
+    return dict(json.loads(result.stdout))
+
+
+def _run_code_runner_probe(lang: str) -> dict[str, object]:
+    script = textwrap.dedent(
+        f"""
+        import fs from 'node:fs';
+        globalThis.window = {{
+          __ODY_LANG: {json.dumps(lang)},
+          location: {{ origin: 'http://localhost' }},
+          addEventListener() {{}},
+          removeEventListener() {{}},
+          isSecureContext: false,
+        }};
+        globalThis.localStorage = {{ getItem: () => null }};
+        const makeElement = (tagName) => ({{
+          tagName: String(tagName).toUpperCase(),
+          style: {{}},
+          className: '',
+          textContent: '',
+          children: [],
+          addEventListener() {{}},
+          appendChild(child) {{ this.children.push(child); return child; }},
+          prepend(child) {{ this.children.unshift(child); return child; }},
+          remove() {{}},
+        }});
+        globalThis.document = {{
+          body: {{ appendChild() {{}} }},
+          head: {{ appendChild() {{}} }},
+          createElement: makeElement,
+          execCommand: () => false,
+          getElementById: () => null,
+          querySelector: () => null,
+          querySelectorAll: () => [],
+          addEventListener() {{}},
+        }};
+        globalThis.fetch = async () => ({{
+          async json() {{
+            return {{ stdout: 'resultado externo <raw>', stderr: '', exit_code: 0 }};
+          }},
+        }});
+        const history = [];
+        const panel = {{
+          style: {{}},
+          children: [],
+          _innerHTML: '',
+          set innerHTML(value) {{
+            this._innerHTML = String(value);
+            history.push(this._innerHTML);
+            if (value === '') this.children = [];
+          }},
+          get innerHTML() {{ return this._innerHTML; }},
+          appendChild(child) {{ this.children.push(child); return child; }},
+        }};
+        await import({json.dumps(DOCUMENT_CATALOG.as_uri())});
+        const uiStub = 'data:text/javascript,export function showToast(){{}}';
+        let runnerSource = fs.readFileSync({json.dumps(str(CODE_RUNNER_JS))}, 'utf8');
+        runnerSource = runnerSource
+          .replace("'./ui.js'", JSON.stringify(uiStub))
+          .replace("'./i18n.js'", {json.dumps(repr((ROOT / "static" / "js" / "i18n.js").as_uri()))});
+        const runnerUrl = 'data:text/javascript;base64,'
+          + Buffer.from(runnerSource).toString('base64');
+        const runner = await import(runnerUrl);
+        await runner.runServer('printf raw', panel, 'bash');
+        console.log(JSON.stringify({{
+          loading: history.find((value) => value.includes('code-runner-loading')),
+          output: panel.children.find((child) => child.tagName === 'PRE')?.textContent,
+          outputClass: panel.children.find((child) => child.tagName === 'PRE')?.className,
+        }}));
+        """
+    )
+    result = _run(["node", "--input-type=module"], input_text=script)
+    assert result.returncode == 0, result.stderr
+    return dict(json.loads(result.stdout))
+
+
+def _rendered_signature_picker(lang: str) -> dict[str, str]:
+    script = textwrap.dedent(
+        f"""
+        globalThis.window = {{
+          __ODY_LANG: {json.dumps(lang)},
+          location: {{ origin: 'http://localhost' }},
+          styledConfirm: async () => false,
+        }};
+        globalThis.localStorage = {{ getItem: () => null, setItem() {{}} }};
+        const appended = [];
+        const control = () => ({{
+          onclick: null,
+          addEventListener() {{}},
+        }});
+        globalThis.document = {{
+          body: {{ appendChild(el) {{ appended.push(el); }} }},
+          createElement() {{
+            return {{
+              className: '',
+              style: {{}},
+              innerHTML: '',
+              remove() {{}},
+              addEventListener() {{}},
+              querySelector() {{ return control(); }},
+              querySelectorAll() {{ return []; }},
+            }};
+          }},
+        }};
+        globalThis.fetch = async () => ({{
+          ok: true,
+          async json() {{
+            return {{
+              signatures: [{{
+                id: 'sig-1',
+                data_url: 'data:image/png;base64,AAAA',
+                width: 20,
+                height: 10,
+                name: 'Rubrica <A>',
+              }}],
+            }};
+          }},
+        }});
+        await import({json.dumps(INDEX_CATALOG.as_uri())});
+        await import({json.dumps(APP_CATALOG.as_uri())});
+        await import({json.dumps(DOCUMENT_CATALOG.as_uri())});
+        const signatures = await import({json.dumps(SIGNATURE_JS.as_uri())});
+        void signatures.pick();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const html = appended[0].innerHTML;
+        console.log(JSON.stringify({{
+          heading: html.match(/<h4>([^<]+)<\\/h4>/)?.[1],
+          closeTitle: html.match(/sig-close[^>]+title="([^"]+)"/)?.[1],
+          newButton: html.match(/sig-new-tile[^>]*>([^<]+)<\\/button>/)?.[1],
+          dynamicName: html.match(/white-space:nowrap;">([^<]+)<\\/div>/)?.[1],
+        }}));
+        """
+    )
+    result = _run(["node", "--input-type=module"], input_text=script)
+    assert result.returncode == 0, result.stderr
+    return dict(json.loads(result.stdout))
+
+
+def _rendered_emoji_picker(lang: str) -> dict[str, object]:
+    script = textwrap.dedent(
+        f"""
+        class FakeClassList {{
+          constructor(owner) {{ this.owner = owner; }}
+          contains(name) {{
+            return String(this.owner.className || '').split(/\\s+/).includes(name);
+          }}
+        }}
+        class FakeElement {{
+          constructor(tagName) {{
+            this.tagName = String(tagName).toUpperCase();
+            this.className = '';
+            this.classList = new FakeClassList(this);
+            this.children = [];
+            this.parentNode = null;
+            this.style = {{}};
+            this.listeners = {{}};
+            this.value = '';
+            this.selectionStart = 0;
+            this.selectionEnd = 0;
+            this.isContentEditable = false;
+          }}
+          set innerHTML(value) {{
+            this._innerHTML = String(value);
+            if (value === '') this.children = [];
+          }}
+          get innerHTML() {{ return this._innerHTML || ''; }}
+          appendChild(child) {{
+            child.parentNode = this;
+            this.children.push(child);
+            return child;
+          }}
+          addEventListener(type, listener) {{ this.listeners[type] = listener; }}
+          removeEventListener() {{}}
+          dispatch(type) {{
+            this.listeners[type]?.({{
+              type,
+              target: this,
+              preventDefault() {{}},
+              stopPropagation() {{}},
+              stopImmediatePropagation() {{}},
+            }});
+          }}
+          dispatchEvent() {{}}
+          focus() {{}}
+          remove() {{
+            if (this.parentNode) {{
+              this.parentNode.children = this.parentNode.children.filter((child) => child !== this);
+            }}
+          }}
+          contains(candidate) {{
+            return candidate === this || this.children.some((child) => child.contains(candidate));
+          }}
+          getBoundingClientRect() {{
+            return {{ left: 10, right: 30, top: 10, bottom: 30, width: 20, height: 20 }};
+          }}
+          querySelector(selector) {{ return this.querySelectorAll(selector)[0] || null; }}
+          querySelectorAll(selector) {{
+            const className = selector.startsWith('.') ? selector.slice(1) : null;
+            const found = [];
+            const visit = (node) => {{
+              for (const child of node.children) {{
+                if (className && child.classList.contains(className)) found.push(child);
+                visit(child);
+              }}
+            }};
+            visit(this);
+            return found;
+          }}
+        }}
+        const body = new FakeElement('body');
+        globalThis.window = {{
+          __ODY_LANG: {json.dumps(lang)},
+          innerWidth: 1200,
+          innerHeight: 800,
+          getSelection: () => null,
+        }};
+        globalThis.localStorage = {{ getItem: () => null }};
+        globalThis.document = {{
+          body,
+          createElement: (tagName) => new FakeElement(tagName),
+          getElementById: () => null,
+          querySelectorAll: () => [],
+          addEventListener() {{}},
+          removeEventListener() {{}},
+        }};
+        globalThis.getComputedStyle = () => ({{
+          display: 'block',
+          visibility: 'visible',
+          zIndex: '250',
+        }});
+        globalThis.requestAnimationFrame = (callback) => callback();
+        globalThis.setTimeout = (callback) => {{ callback(); return 0; }};
+        const target = new FakeElement('textarea');
+        target.value = 'A';
+        target.selectionStart = target.selectionEnd = 1;
+
+        await import({json.dumps(DOCUMENT_CATALOG.as_uri())});
+        const emoji = await import({json.dumps(EMOJI_PICKER_JS.as_uri())});
+        const trigger = emoji.createEmojiButton(() => target);
+        trigger.dispatch('click');
+        const picker = body.querySelector('.emoji-picker');
+        const search = picker.querySelector('.emoji-picker-search');
+        const initialGroup = picker.querySelector('.emoji-picker-group-name').textContent;
+        const initialTitle = picker.querySelector('.emoji-picker-item').title;
+        search.value = {json.dumps("sorriso" if lang == "pt-BR" else "grin")};
+        search.dispatch('input');
+        const filteredItem = picker.querySelector('.emoji-picker-item');
+        const filteredTitle = filteredItem?.title || null;
+        filteredItem?.dispatch('click');
+        console.log(JSON.stringify({{
+          triggerTitle: trigger.title,
+          searchPlaceholder: search.placeholder,
+          initialGroup,
+          initialTitle,
+          filteredTitle,
+          inserted: target.value,
+        }}));
+        """
+    )
+    result = _run(["node", "--input-type=module"], input_text=script)
+    assert result.returncode == 0, result.stderr
+    return dict(json.loads(result.stdout))
+
+
 @pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
 @pytest.mark.parametrize("catalog", CATALOGS, ids=lambda path: path.name)
 def test_catalog_is_valid_javascript(catalog: Path) -> None:
@@ -1276,4 +1569,247 @@ def test_registered_modal_label_is_translated_lazily_when_dock_renders() -> None
         "label": "Email",
         "title": "Restore Email",
         "internalLabel": "Email",
+    }
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_document_catalog_covers_runner_signature_and_emoji_picker_copy() -> None:
+    catalog = _messages_for(DOCUMENT_CATALOG.name)
+    expected = {
+        "Copy": "Copiar",
+        "Copied!": "Copiado!",
+        "Copy failed": "Falha ao copiar",
+        "Copy output": "Copiar saída",
+        "Failed to load Pyodide": "Falha ao carregar o Pyodide",
+        "Loading Python runtime (first time ~10 MB)...": (
+            "Carregando o ambiente Python (primeira vez: ~10 MB)..."
+        ),
+        "Failed to load Python runtime: {message}": (
+            "Falha ao carregar o ambiente Python: {message}"
+        ),
+        "Running...": "Executando...",
+        "Execution timed out (10 s)": "A execução excedeu o tempo limite (10 s)",
+        "(no output)": "(sem saída)",
+        "Running on server...": "Executando no servidor...",
+        "(no output) — exit code {code}": (
+            "(sem saída) — código de saída {code}"
+        ),
+        "Exit code: {code}": "Código de saída: {code}",
+        "Execution failed: {message}": "Falha na execução: {message}",
+        "Popup blocked — please allow popups for this site.": (
+            "O pop-up foi bloqueado — permita pop-ups para este site."
+        ),
+        "Opened in new window": "Aberto em uma nova janela",
+        "Draw your signature": "Desenhe sua assinatura",
+        "Smoothness": "Suavização",
+        "Name (optional, e.g. 'Full' or 'Initials')": (
+            "Nome (opcional, por exemplo, 'Completa' ou 'Iniciais')"
+        ),
+        "Clear": "Limpar",
+        "Undo": "Desfazer",
+        "Signature": "Assinatura",
+        "Failed to save signature: {message}": (
+            "Falha ao salvar a assinatura: {message}"
+        ),
+        "Choose a signature": "Escolha uma assinatura",
+        "Draw new signature": "Desenhar nova assinatura",
+        "No saved signatures yet — draw one above.": (
+            "Ainda não há assinaturas salvas — desenhe uma acima."
+        ),
+        "Delete this signature?": "Excluir esta assinatura?",
+        "Insert icon": "Inserir ícone",
+        "Search…": "Pesquisar…",
+        "Faces & Hearts": "Rostos e corações",
+        "Checks & Marks": "Confirmações e marcas",
+        "Arrows": "Setas",
+        "Math & Punctuation": "Matemática e pontuação",
+        "Currency & Misc": "Moedas e diversos",
+        "grin": "sorriso",
+        "heart-outline": "contorno de coração",
+        "star": "estrela",
+        "star-outline": "contorno de estrela",
+        "sparkle": "brilho",
+        "moon": "lua",
+        "check": "marca de seleção",
+        "cross": "xis",
+        "cross-heavy": "xis grosso",
+        "star-filled": "estrela preenchida",
+        "star-empty": "estrela vazia",
+        "dot": "ponto",
+        "circle": "círculo",
+        "square-filled": "quadrado preenchido",
+        "square-empty": "quadrado vazio",
+        "diamond": "losango",
+        "diamond-empty": "losango vazio",
+        "dagger": "cruz",
+        "arrow-right": "seta para a direita",
+        "arrow-left": "seta para a esquerda",
+        "arrow-up": "seta para cima",
+        "arrow-down": "seta para baixo",
+        "arrow-r-dbl": "seta dupla para a direita",
+        "arrow-l-dbl": "seta dupla para a esquerda",
+        "plus-minus": "mais ou menos",
+        "multiply": "multiplicação",
+        "divide": "divisão",
+        "approx": "aproximadamente",
+        "not-equal": "diferente",
+        "lte": "menor ou igual",
+        "gte": "maior ou igual",
+        "infinity": "infinito",
+        "pi": "número pi",
+        "sum": "somatório",
+        "delta": "símbolo delta",
+        "root": "raiz quadrada",
+        "degree": "grau",
+        "section": "seção",
+        "pilcrow": "parágrafo",
+        "bullet": "marcador",
+        "ellipsis": "reticências",
+        "em-dash": "travessão",
+        "quote-l": "aspas angulares à esquerda",
+        "quote-r": "aspas angulares à direita",
+        "quote-dbl": "aspas duplas",
+        "euro": "símbolo do euro",
+        "pound": "libra",
+        "yen": "iene",
+        "dollar": "dólar",
+        "cent": "centavo",
+        "percent": "porcentagem",
+        "per-mille": "por mil",
+        "number": "número",
+    }
+    reused = {"Copied", "Close", "Cancel", "Save", "Delete"}
+    emoji_source = EMOJI_PICKER_JS.read_text(encoding="utf-8")
+    visible_emoji_keys = set(
+        re.findall(r"""name:\s*'([^']+)'""", emoji_source)
+    ) | set(
+        re.findall(r"""\['[^']+',\s*'([^']+)',\s*I\(""", emoji_source)
+    )
+
+    assert {key: catalog.get(key) for key in expected} == expected
+    assert visible_emoji_keys <= expected.keys()
+    assert reused.isdisjoint(catalog)
+
+
+def test_document_auxiliary_modules_translate_copy_without_touching_runtime_data() -> None:
+    sources = {
+        "runner": CODE_RUNNER_JS.read_text(encoding="utf-8"),
+        "signature": SIGNATURE_JS.read_text(encoding="utf-8"),
+        "emoji": EMOJI_PICKER_JS.read_text(encoding="utf-8"),
+    }
+    required = {
+        "runner": (
+            "import { t } from './i18n.js'",
+            "uiModule.showToast(t('Copied'))",
+            "t('Failed to load Python runtime: {message}', { message: e.message })",
+            "t('(no output) — exit code {code}', { code: data.exit_code })",
+            "t('Exit code: {code}', { code: data.exit_code })",
+            "t('Execution failed: {message}', { message: e.message })",
+            "showOutput(panel, data.stderr, true)",
+            "stdoutEl.textContent = data.stdout",
+            "showOutput(panel, data.error, true)",
+            "showOutput(panel, e.message, true)",
+        ),
+        "signature": (
+            "import { t } from './i18n.js'",
+            "${t('Draw your signature')}",
+            "${t(\"Name (optional, e.g. 'Full' or 'Initials')\")}",
+            "t('Failed to save signature: {message}', { message: e.message })",
+            "${_esc(s.name || '')}",
+            "window.styledConfirm(t('Delete this signature?'),",
+            "confirmText: t('Delete')",
+        ),
+        "emoji": (
+            "import { t } from './i18n.js'",
+            "btn.title = t('Insert icon')",
+            "search.placeholder = t('Search…')",
+            "header.textContent = t(group.name)",
+            "btn.title = t(label)",
+            "t(item[1]).toLowerCase().includes(f)",
+            "_insertEmoji(char)",
+        ),
+    }
+    missing = [
+        f"{module}: {snippet}"
+        for module, snippets in required.items()
+        for snippet in snippets
+        if snippet not in sources[module]
+    ]
+    assert not missing, "Call sites auxiliares sem i18n seguro:\n" + "\n".join(missing)
+
+    side_effect_catalog_import = re.compile(
+        r"""import\s+['"][^'"]*i18n/[^'"]+\.pt-BR\.js['"]"""
+    )
+    assert not [
+        module
+        for module, source in sources.items()
+        if side_effect_catalog_import.search(source)
+    ]
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_document_auxiliary_templates_preserve_placeholders_in_both_languages() -> None:
+    assert _translated_document_auxiliary_examples("pt-BR") == {
+        "runtimeError": "Falha ao carregar o ambiente Python: Network 502",
+        "exit": "(sem saída) — código de saída 7",
+        "saveError": "Falha ao salvar a assinatura: quota exceeded",
+        "emojiGroup": "Rostos e corações",
+        "emojiTitle": "contorno de coração",
+    }
+    assert _translated_document_auxiliary_examples("en") == {
+        "runtimeError": "Failed to load Python runtime: Network 502",
+        "exit": "(no output) — exit code 7",
+        "saveError": "Failed to save signature: quota exceeded",
+        "emojiGroup": "Faces & Hearts",
+        "emojiTitle": "heart-outline",
+    }
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_code_runner_executes_with_translated_status_and_verbatim_stdout() -> None:
+    assert _run_code_runner_probe("pt-BR") == {
+        "loading": '<div class="code-runner-loading">Executando no servidor...</div>',
+        "output": "resultado externo <raw>",
+        "outputClass": "code-runner-pre",
+    }
+    assert _run_code_runner_probe("en") == {
+        "loading": '<div class="code-runner-loading">Running on server...</div>',
+        "output": "resultado externo <raw>",
+        "outputClass": "code-runner-pre",
+    }
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_signature_picker_renders_translated_copy_and_escaped_dynamic_name() -> None:
+    assert _rendered_signature_picker("pt-BR") == {
+        "heading": "Escolha uma assinatura",
+        "closeTitle": "Fechar",
+        "newButton": "+ Desenhar nova assinatura",
+        "dynamicName": "Rubrica &lt;A&gt;",
+    }
+    assert _rendered_signature_picker("en") == {
+        "heading": "Choose a signature",
+        "closeTitle": "Close",
+        "newButton": "+ Draw new signature",
+        "dynamicName": "Rubrica &lt;A&gt;",
+    }
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_emoji_picker_translates_search_and_titles_without_changing_character() -> None:
+    assert _rendered_emoji_picker("pt-BR") == {
+        "triggerTitle": "Inserir ícone",
+        "searchPlaceholder": "Pesquisar…",
+        "initialGroup": "Rostos e corações",
+        "initialTitle": "sorriso",
+        "filteredTitle": "sorriso",
+        "inserted": "A☻︎",
+    }
+    assert _rendered_emoji_picker("en") == {
+        "triggerTitle": "Insert icon",
+        "searchPlaceholder": "Search…",
+        "initialGroup": "Faces & Hearts",
+        "initialTitle": "grin",
+        "filteredTitle": "grin",
+        "inserted": "A☻︎",
     }

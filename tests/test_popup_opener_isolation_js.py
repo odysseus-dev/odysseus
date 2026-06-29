@@ -12,7 +12,8 @@ def _source(path):
 def test_html_code_runner_detaches_opener_before_document_write():
     src = _source("static/js/codeRunner.js")
     match = re.search(
-        r"export function runHTML\(code, panel\) \{(?P<body>.*?)showOutput\(panel, 'Opened in new window'",
+        r"export function runHTML\(code, panel\) \{(?P<body>.*?)"
+        r"showOutput\(panel, t\('Opened in new window'\), false\)",
         src,
         re.S,
     )
