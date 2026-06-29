@@ -359,8 +359,19 @@ def _user_shell_path_bootstrap() -> list[str]:
     return [
         'ODYSSEUS_USER_SHELL="${SHELL:-}"',
         'if [ -n "$ODYSSEUS_USER_SHELL" ] && [ -x "$ODYSSEUS_USER_SHELL" ]; then',
-        '  ODYSSEUS_USER_PATH="$("$ODYSSEUS_USER_SHELL" -ic \'printf "__ODYSSEUS_PATH__%s\\n" "$PATH"\' 2>/dev/null | sed -n \'s/^__ODYSSEUS_PATH__//p\' | tail -n 1 || true)"',
+        '  case "$ODYSSEUS_USER_SHELL" in',
+        '    *fish*) ODYSSEUS_USER_PATH="$("$ODYSSEUS_USER_SHELL" -c \'printf "__ODYSSEUS_PATH__%s\\n" "$PATH"\' 2>/dev/null | sed -n \'s/^__ODYSSEUS_PATH__//p\' | tail -n 1 || true)" ;;',
+        '    *) ODYSSEUS_USER_PATH="$("$ODYSSEUS_USER_SHELL" -lc \'printf "__ODYSSEUS_PATH__%s\\n" "$PATH"\' 2>/dev/null | sed -n \'s/^__ODYSSEUS_PATH__//p\' | tail -n 1 || true)" ;;',
+        '  esac',
         '  if [ -n "$ODYSSEUS_USER_PATH" ]; then export PATH="$ODYSSEUS_USER_PATH:$PATH"; fi',
+        'fi',
+        'if command -v nproc >/dev/null 2>&1; then',
+        '  _n="$(nproc)"',
+        '  export CMAKE_BUILD_PARALLEL_LEVEL="$(( _n > 2 ? _n - 2 : 1 ))"',
+        '  export NPROC="$(( _n > 2 ? _n - 2 : 1 ))"',
+        'else',
+        '  export CMAKE_BUILD_PARALLEL_LEVEL=2',
+        '  export NPROC=2',
         'fi',
         # Windows can expose python3 as a Microsoft Store App Execution Alias
         # under WindowsApps. Git Bash sees that stub as present, but it exits
@@ -378,6 +389,7 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
     """
     lines = [
         "import json, os, re, shutil, subprocess, urllib.request",
+        f"model_dirs = {model_dirs or []!r}",
         "models = []",
         "seen = set()",
         "BLOCKED_ROOTS = ('/sys', '/proc', '/dev', '/run', '/var/run')",
@@ -484,6 +496,12 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "    # Docker images mount ./data/huggingface at /app/.cache/huggingface.",
         "    # When HOME is /root, expanduser() misses that persisted cache.",
         "    add('/app/.cache/huggingface/hub')",
+        "    for p in model_dirs:",
+        "        try:",
+        "            ep = os.path.expanduser(p)",
+        "            if os.path.isdir(ep) and any(d.startswith('models--') for d in os.listdir(ep)):",
+        "                add(p)",
+        "        except Exception: pass",
         f"    add({add_hf_cache!r})" if add_hf_cache else "",
         "    return candidates",
         "def normalize_model_dir(p):",
@@ -563,12 +581,11 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "            models.append({'repo_id':name,'size_bytes':size_bytes,'nb_files':1,'has_incomplete':False,'path':'ollama','backend':'ollama','is_ollama':True})",
         "        return",
         "for _hf_cache in hf_cache_paths(): scan_hf(_hf_cache)",
+        "for _md in model_dirs: scan_dir(os.path.expanduser(_md))",
         "scan_ollama_api()",
         "scan_ollama()",
+        "print(json.dumps(models))",
     ]
-    for model_dir in model_dirs or []:
-        lines.append(f"scan_dir({model_dir!r})")
-    lines.append("print(json.dumps(models))")
     return "\n".join(lines) + "\n"
 
 
