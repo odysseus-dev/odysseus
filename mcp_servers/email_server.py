@@ -886,7 +886,7 @@ def _read_email_across_accounts(uid=None, message_id=None, folder="INBOX"):
 
 
 def _smtp_ready(cfg: dict) -> bool:
-    return bool(cfg.get("smtp_host") and cfg.get("smtp_user") and cfg.get("smtp_password"))
+    return bool(cfg.get("smtp_host") and cfg.get("smtp_user") and (cfg.get("smtp_password") or cfg.get("oauth_provider") == "google"))
 
 
 def _resolve_send_config(account=None):
