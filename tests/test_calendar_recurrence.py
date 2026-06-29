@@ -1,8 +1,8 @@
 """Regression tests for calendar recurrence expansion.
 
 Tests _expand_rrule and _resolve_base_uid — imported directly from
-routes/calendar_routes using the same stub-friendly import pattern
-as test_null_owner_gates.py. No live DB or FastAPI test client needed.
+routes/calendar_routes using the shared stub-friendly test helper.
+No live DB or FastAPI test client needed.
 """
 
 from datetime import datetime, timedelta
@@ -10,34 +10,34 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.test_null_owner_gates import _import_calendar_helpers
+from tests.helpers.calendar_routes import import_calendar_routes
 
 
 # ── _resolve_base_uid ──────────────────────────────────────────────────
 
 def test_resolve_base_uid_plain_passthrough():
-    cal = _import_calendar_helpers()
+    cal = import_calendar_routes()
     assert cal._resolve_base_uid("evt-123") == "evt-123"
 
 
 def test_resolve_base_uid_compound_strips_suffix_date():
-    cal = _import_calendar_helpers()
+    cal = import_calendar_routes()
     assert cal._resolve_base_uid("evt-123::2026-06-15") == "evt-123"
 
 
 def test_resolve_base_uid_compound_strips_suffix_datetime():
-    cal = _import_calendar_helpers()
+    cal = import_calendar_routes()
     assert cal._resolve_base_uid("evt-123::2026-06-15T09:00") == "evt-123"
 
 
 def test_resolve_base_uid_rejects_empty():
-    cal = _import_calendar_helpers()
+    cal = import_calendar_routes()
     with pytest.raises(ValueError, match="empty uid"):
         cal._resolve_base_uid("")
 
 
 def test_resolve_base_uid_rejects_missing_base():
-    cal = _import_calendar_helpers()
+    cal = import_calendar_routes()
     with pytest.raises(ValueError, match="malformed compound UID"):
         cal._resolve_base_uid("::2026-06-15")
 
@@ -73,7 +73,7 @@ def _make_event(**overrides):
 
 def test_expand_non_recurring_returns_single():
     """Non-recurring events pass through unchanged with series_uid=uid."""
-    cal = _import_calendar_helpers()
+    cal = import_calendar_routes()
     ev = _make_event(rrule="")
     results = cal._expand_rrule(ev, datetime(2026, 5, 1), datetime(2026, 7, 1))
 
@@ -90,7 +90,7 @@ def test_expand_yearly_old_dtstart_later_year_single_occurrence():
 
     This is the explicit regression case from PR review feedback.
     """
-    cal = _import_calendar_helpers()
+    cal = import_calendar_routes()
     ev = _make_event(
         uid="evt-bday-001",
         summary="Annual Review",
@@ -118,7 +118,7 @@ def test_expand_yearly_narrow_window_after_dtstart_returns_one():
     """DTSTART=2020, query just two months in 2029 — should return
     exactly one occurrence (the one that falls in that window).
     """
-    cal = _import_calendar_helpers()
+    cal = import_calendar_routes()
     ev = _make_event(
         uid="evt-ann",
         dtstart=datetime(2020, 3, 1),
@@ -137,7 +137,7 @@ def test_expand_yearly_strict_before_window_returns_empty():
     """DTSTART=2020, query a window that ends before the yearly
     occurrence in that year. Should return zero.
     """
-    cal = _import_calendar_helpers()
+    cal = import_calendar_routes()
     ev = _make_event(
         uid="evt-late",
         dtstart=datetime(2020, 12, 25),
@@ -154,7 +154,7 @@ def test_expand_yearly_strict_after_window_returns_empty():
     """DTSTART=2020. Query a window that starts after the occurrence in
     that year. Should return zero.
     """
-    cal = _import_calendar_helpers()
+    cal = import_calendar_routes()
     ev = _make_event(
         uid="evt-early",
         dtstart=datetime(2020, 1, 15),
@@ -171,7 +171,7 @@ def test_expand_weekly_unique_no_overwrites():
     """Multiple occurrences from the same series must have unique UIDs
     so _allEvents[uid] = ev doesn't overwrite earlier ones.
     """
-    cal = _import_calendar_helpers()
+    cal = import_calendar_routes()
     ev = _make_event(
         uid="evt-wk",
         dtstart=datetime(2026, 6, 1, 9, 0),
@@ -192,7 +192,7 @@ def test_expand_weekly_unique_no_overwrites():
 
 
 def test_expand_monthly_all_day():
-    cal = _import_calendar_helpers()
+    cal = import_calendar_routes()
     ev = _make_event(
         uid="evt-rent",
         dtstart=datetime(2026, 1, 1),
@@ -210,7 +210,7 @@ def test_expand_monthly_all_day():
 def test_expand_bad_rrule_graceful():
     """Malformed rrule should fall back to returning the base event,
     but only when the base event overlaps the requested window."""
-    cal = _import_calendar_helpers()
+    cal = import_calendar_routes()
     ev = _make_event(
         uid="evt-broken",
         rrule="FREQ=GARBAGE",
@@ -225,7 +225,7 @@ def test_expand_bad_rrule_graceful():
 def test_expand_bad_rrule_fallback_rejects_non_overlapping():
     """Malformed rrule with a base event outside the requested window
     must return zero results, not leak the event into an unrelated range."""
-    cal = _import_calendar_helpers()
+    cal = import_calendar_routes()
     ev = _make_event(
         uid="evt-old-broken",
         dtstart=datetime(2020, 1, 1, 9, 0),
@@ -243,7 +243,7 @@ def test_expand_bad_rrule_fallback_rejects_non_overlapping():
 def test_expand_exclusive_end_boundary():
     """An occurrence whose start equals the window end must be excluded.
     The contract is [start, end), same as the non-recurring SQL filter."""
-    cal = _import_calendar_helpers()
+    cal = import_calendar_routes()
     ev = _make_event(
         uid="evt-daily",
         dtstart=datetime(2026, 6, 1, 9, 0),
@@ -260,7 +260,7 @@ def test_expand_exclusive_end_boundary():
 def test_expand_multi_day_crossing_range_start():
     """A multi-day occurrence that starts before the window but ends inside
     it must be included (matching non-recurring overlap: dtend > start)."""
-    cal = _import_calendar_helpers()
+    cal = import_calendar_routes()
     ev = _make_event(
         uid="evt-weekly-multi",
         summary="Weekend Trip",
@@ -285,7 +285,7 @@ def test_expand_multi_day_crossing_range_start():
 def test_expand_multi_day_fully_before_window():
     """A multi-day occurrence that ends exactly at the window start
     must be excluded (occ_end <= start)."""
-    cal = _import_calendar_helpers()
+    cal = import_calendar_routes()
     ev = _make_event(
         uid="evt-multi",
         dtstart=datetime(2026, 5, 29, 18, 0),
@@ -301,7 +301,7 @@ def test_expand_multi_day_fully_before_window():
 def test_expand_metadata_inheritance():
     """Occurrence dicts must carry the base event's metadata
     (summary, importance, event_type, color, location)."""
-    cal = _import_calendar_helpers()
+    cal = import_calendar_routes()
     ev = _make_event(
         uid="evt-meta",
         summary="Board Meeting",
@@ -323,7 +323,7 @@ def test_expand_metadata_inheritance():
 
 def test_expand_daily_rrule_large_window_is_capped_and_marked_truncated():
     """Wide recurring windows must not materialize unbounded occurrence lists."""
-    cal = _import_calendar_helpers()
+    cal = import_calendar_routes()
     ev = _make_event(
         uid="evt-daily-cap",
         dtstart=datetime(2020, 1, 1, 9, 0),
