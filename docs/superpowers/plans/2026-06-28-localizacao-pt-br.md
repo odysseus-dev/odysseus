@@ -89,17 +89,17 @@
 - Modificar conforme as chamadas dinâmicas encontradas: `static/index.html`, `static/app.js`, `static/js/ui.js`, `static/js/modalManager.js`, `static/js/spinner.js`, `static/js/escMenuStack.js`, `static/js/workspace.js`, `static/js/sidebar-layout.js`, `static/js/section-management.js`, `static/js/tileManager.js`, `static/js/modalSnap.js`, `static/js/windowDrag.js`, `static/js/windowResize.js`, `static/js/toolWindowZOrder.js`, `static/js/dragSort.js`
 - Criar/Modificar: `tests/test_i18n_catalogs.py`
 
-- [ ] **Passo 1: criar teste falho de catálogos**
+- [x] **Passo 1: criar teste falho de catálogos**
 
   O teste deve importar todos os `*.pt-BR.js`, verificar sintaxe, impedir valores vazios, detectar chaves com traduções divergentes e exigir as strings visíveis do HTML estático.
 
-- [ ] **Passo 2: executar RED**
+- [x] **Passo 2: executar RED**
 
   ```powershell
   rtk pytest -q tests/test_i18n_catalogs.py
   ```
 
-- [ ] **Passo 3: preencher os quatro dicionários e envolver strings dinâmicas**
+- [x] **Passo 3: preencher os quatro dicionários e envolver strings dinâmicas**
 
   Usar chaves inglesas exatas. Templates dinâmicos devem virar, por exemplo:
 
@@ -110,14 +110,14 @@
 
   Não adicionar imports de dicionário aos módulos: `static/app.js` já faz o carregamento central.
 
-- [ ] **Passo 4: executar GREEN e sintaxe dos arquivos tocados**
+- [x] **Passo 4: executar GREEN e sintaxe dos arquivos tocados**
 
   ```powershell
   rtk pytest -q tests/test_i18n_catalogs.py tests/test_i18n_js.py tests/test_app_static_mime.py
   rtk proxy node --check static/app.js
   ```
 
-- [ ] **Passo 5: revisar conformidade e qualidade; corrigir findings importantes**
+- [x] **Passo 5: revisar conformidade e qualidade; corrigir findings importantes**
 
 ### Tarefa 3: localizar documentos, editor e biblioteca
 
