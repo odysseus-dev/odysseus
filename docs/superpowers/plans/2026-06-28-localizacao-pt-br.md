@@ -31,7 +31,7 @@
 - Modificar: `static/index.html`
 - Modificar: `static/js/i18n/README.md`
 
-- [ ] **Passo 1: escrever testes falhos para normalização, fallback, interpolação, opt-out e reconciliação**
+- [x] **Passo 1: escrever testes falhos para normalização, fallback, interpolação, opt-out e reconciliação**
 
   O teste Python deve executar módulos ES reais com `node --input-type=module -e`, como `tests/test_model_sort_js.py`. Cobrir:
 
@@ -45,7 +45,7 @@
   resposta remota igual não recarrega
   ```
 
-- [ ] **Passo 2: executar RED**
+- [x] **Passo 2: executar RED**
 
   Executar:
 
@@ -55,7 +55,7 @@
 
   Esperado: falhas por ausência de `normalizeLang`, opt-out incompleto e reconciliação sem `setLang`.
 
-- [ ] **Passo 3: implementar a correção mínima**
+- [x] **Passo 3: implementar a correção mínima**
 
   Em `i18n.js`, exportar e reutilizar:
 
@@ -68,7 +68,7 @@
 
   Aplicar a normalização em `activeLang()` e `setLang()`. No laço de atributos de `translateDOM()`, usar `isSkipped(el)`. Em `languagePref.js`, quando o valor remoto normalizado diferir do ativo, chamar `setLang(remoteLang)`; quando for igual, apenas sincronizar o seletor. O bootstrap inline deve aplicar a mesma allowlist e sempre sincronizar `document.documentElement.lang`.
 
-- [ ] **Passo 4: executar GREEN e regressões de preferências**
+- [x] **Passo 4: executar GREEN e regressões de preferências**
 
   ```powershell
   rtk pytest -q tests/test_i18n_js.py tests/test_prefs_routes.py tests/test_prefs_atomic_write.py tests/test_prefs_single_user_no_clobber.py
@@ -76,7 +76,7 @@
   rtk proxy node --check static/js/languagePref.js
   ```
 
-- [ ] **Passo 5: revisar conformidade e qualidade; corrigir findings importantes**
+- [x] **Passo 5: revisar conformidade e qualidade; corrigir findings importantes**
 
 ### Tarefa 2: localizar HTML, orquestrador e UI compartilhada
 
