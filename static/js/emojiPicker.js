@@ -113,6 +113,20 @@ let _closeOnEscape = null;
 // opens, since focusing the picker's search box collapses the live selection.
 let _savedRange = null;
 
+function _normalizeSearchText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function _isExactSearchMatch(item, normalizedFilter) {
+  return (
+    _normalizeSearchText(item[1]) === normalizedFilter
+    || _normalizeSearchText(t(item[1])) === normalizedFilter
+  );
+}
+
 // `target` may be a textarea element id (string) or a resolver function that
 // returns the live target element — the latter lets a caller switch between a
 // textarea and a contenteditable (e.g. plain markdown vs. WYSIWYG email).
@@ -227,17 +241,33 @@ function _buildPicker() {
 
   function render(filter = '') {
     groupsContainer.innerHTML = '';
-    const f = filter.toLowerCase();
-    for (const group of EMOJI_GROUPS) {
+    const f = _normalizeSearchText(filter);
+    const visibleGroups = EMOJI_GROUPS.map((group) => {
       const filtered = f
-        ? group.items.filter(item => (
-          item[1].toLowerCase().includes(f)
-          || t(item[1]).toLowerCase().includes(f)
-          || item[0].includes(filter)
-        ))
+        ? group.items
+          .filter(item => (
+            _normalizeSearchText(item[1]).includes(f)
+            || _normalizeSearchText(t(item[1])).includes(f)
+            || item[0].includes(filter)
+          ))
+          .sort((a, b) => (
+            Number(_isExactSearchMatch(b, f))
+            - Number(_isExactSearchMatch(a, f))
+          ))
         : group.items;
-      if (filtered.length === 0) continue;
+      return {
+        group,
+        filtered,
+        hasExactMatch: f && filtered.some(item => _isExactSearchMatch(item, f)),
+      };
+    }).filter(({ filtered }) => filtered.length > 0);
+    if (f) {
+      visibleGroups.sort((a, b) => (
+        Number(b.hasExactMatch) - Number(a.hasExactMatch)
+      ));
+    }
 
+    for (const { group, filtered } of visibleGroups) {
       const groupDiv = document.createElement('div');
       groupDiv.className = 'emoji-picker-group';
       const header = document.createElement('div');

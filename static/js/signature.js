@@ -439,7 +439,7 @@ export function capture(opts = {}) {
           dataUrl: trimmed.dataUrl,
           width: trimmed.width,
           height: trimmed.height,
-          name: (nameInput.value || '').trim() || t('Signature'),
+          name: (nameInput.value || '').trim() || 'Signature',
         });
         const out = {
           id: sig.id,
@@ -465,10 +465,11 @@ export function pick(opts = {}) {
     const tiles = sigs.map((s) => {
       const dataUrl = _safeSignatureDataUrl(s.data_url);
       if (!dataUrl) return '';
+      const displayName = s.name === 'Signature' ? t('Signature') : (s.name || '');
       return `
       <div class="sig-tile" data-id="${_esc(s.id)}">
         <img src="${_esc(dataUrl)}"/>
-        <div style="margin-top:4px;font-size:0.72rem;color:var(--fg);opacity:0.85;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(s.name || '')}</div>
+        <div style="margin-top:4px;font-size:0.72rem;color:var(--fg);opacity:0.85;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(displayName)}</div>
         <button class="sig-tile-del" data-id="${_esc(s.id)}" title="${t('Delete')}">×</button>
       </div>
     `;

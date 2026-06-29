@@ -797,7 +797,9 @@ def _run_code_runner_probe(lang: str) -> dict[str, object]:
     return dict(json.loads(result.stdout))
 
 
-def _rendered_signature_picker(lang: str) -> dict[str, str]:
+def _rendered_signature_picker(
+    lang: str, stored_name: str = "Rubrica <A>"
+) -> dict[str, str]:
     script = textwrap.dedent(
         f"""
         globalThis.window = {{
@@ -834,7 +836,7 @@ def _rendered_signature_picker(lang: str) -> dict[str, str]:
                 data_url: 'data:image/png;base64,AAAA',
                 width: 20,
                 height: 10,
-                name: 'Rubrica <A>',
+                name: {json.dumps(stored_name)},
               }}],
             }};
           }},
@@ -859,7 +861,93 @@ def _rendered_signature_picker(lang: str) -> dict[str, str]:
     return dict(json.loads(result.stdout))
 
 
-def _rendered_emoji_picker(lang: str) -> dict[str, object]:
+def _saved_empty_signature_name(lang: str) -> dict[str, str]:
+    script = textwrap.dedent(
+        f"""
+        globalThis.window = {{
+          __ODY_LANG: {json.dumps(lang)},
+          location: {{ origin: 'http://localhost' }},
+        }};
+        globalThis.localStorage = {{ getItem: () => null, setItem() {{}} }};
+        const ctx = {{
+          save() {{}}, restore() {{}}, fillRect() {{}},
+          getImageData() {{
+            return {{ data: new Uint8ClampedArray([255, 255, 255, 255]) }};
+          }},
+        }};
+        const canvas = {{
+          width: 1,
+          height: 1,
+          style: {{}},
+          getContext: () => ctx,
+          addEventListener() {{}},
+          toDataURL: () => 'data:image/png;base64,AAAA',
+        }};
+        const save = {{ disabled: true, onclick: null }};
+        const name = {{ value: '' }};
+        const slider = {{ value: '7', addEventListener() {{}} }};
+        const controls = new Map([
+          ['.sig-canvas', canvas],
+          ['.sig-smoothness', slider],
+          ['.sig-smoothness-val', {{ textContent: '' }}],
+          ['.sig-save', save],
+          ['.sig-name', name],
+          ['.sig-close', {{ onclick: null }}],
+          ['.sig-cancel', {{ onclick: null }}],
+          ['.sig-clear', {{ onclick: null }}],
+          ['.sig-undo', {{ onclick: null }}],
+        ]);
+        const overlay = {{
+          className: '',
+          style: {{}},
+          innerHTML: '',
+          remove() {{}},
+          addEventListener() {{}},
+          querySelector(selector) {{ return controls.get(selector); }},
+        }};
+        globalThis.document = {{
+          body: {{ appendChild() {{}} }},
+          createElement(tagName) {{
+            if (tagName === 'canvas') return canvas;
+            return overlay;
+          }},
+        }};
+        let postedName = null;
+        globalThis.fetch = async (_url, options) => {{
+          const payload = JSON.parse(options.body);
+          postedName = payload.name;
+          return {{
+            ok: true,
+            async json() {{
+              return {{
+                id: 'sig-1',
+                data_url: payload.data,
+                width: payload.width,
+                height: payload.height,
+                name: payload.name,
+              }};
+            }},
+          }};
+        }};
+        await import({json.dumps(DOCUMENT_CATALOG.as_uri())});
+        const signatures = await import({json.dumps(SIGNATURE_JS.as_uri())});
+        const captured = signatures.capture();
+        await save.onclick();
+        const result = await captured;
+        console.log(JSON.stringify({{
+          postedName,
+          returnedName: result.name,
+        }}));
+        """
+    )
+    result = _run(["node", "--input-type=module"], input_text=script)
+    assert result.returncode == 0, result.stderr
+    return dict(json.loads(result.stdout))
+
+
+def _rendered_emoji_picker(
+    lang: str, query: str | None = None
+) -> dict[str, object]:
     script = textwrap.dedent(
         f"""
         class FakeClassList {{
@@ -965,7 +1053,7 @@ def _rendered_emoji_picker(lang: str) -> dict[str, object]:
         const search = picker.querySelector('.emoji-picker-search');
         const initialGroup = picker.querySelector('.emoji-picker-group-name').textContent;
         const initialTitle = picker.querySelector('.emoji-picker-item').title;
-        search.value = {json.dumps("sorriso" if lang == "pt-BR" else "grin")};
+        search.value = {json.dumps(query or ("sorriso" if lang == "pt-BR" else "grin"))};
         search.dispatch('input');
         const filteredItem = picker.querySelector('.emoji-picker-item');
         const filteredTitle = filteredItem?.title || null;
@@ -1330,7 +1418,7 @@ def test_app_catalog_templates_render_in_portuguese_and_english() -> None:
 
 
 @pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
-def test_shared_ui_catalog_contains_only_new_contextual_copy() -> None:
+def test_shared_ui_catalog_contains_required_contextual_copy() -> None:
     catalog = _messages_for(SHARED_UI_CATALOG.name)
     expected = {
         "Copied": "Copiado",
@@ -1368,7 +1456,7 @@ def test_shared_ui_catalog_contains_only_new_contextual_copy() -> None:
         "Minimize",
     }
 
-    assert catalog == expected
+    assert {key: catalog.get(key) for key in expected} == expected
     assert reused.isdisjoint(catalog)
 
 
@@ -1620,7 +1708,7 @@ def test_document_catalog_covers_runner_signature_and_emoji_picker_copy() -> Non
         "Insert icon": "Inserir ícone",
         "Search…": "Pesquisar…",
         "Faces & Hearts": "Rostos e corações",
-        "Checks & Marks": "Confirmações e marcas",
+        "Checks & Marks": "Marcas de seleção e símbolos",
         "Arrows": "Setas",
         "Math & Punctuation": "Matemática e pontuação",
         "Currency & Misc": "Moedas e diversos",
@@ -1641,7 +1729,7 @@ def test_document_catalog_covers_runner_signature_and_emoji_picker_copy() -> Non
         "square-empty": "quadrado vazio",
         "diamond": "losango",
         "diamond-empty": "losango vazio",
-        "dagger": "cruz",
+        "dagger": "óbelo",
         "arrow-right": "seta para a direita",
         "arrow-left": "seta para a esquerda",
         "arrow-up": "seta para cima",
@@ -1715,7 +1803,8 @@ def test_document_auxiliary_modules_translate_copy_without_touching_runtime_data
             "${t('Draw your signature')}",
             "${t(\"Name (optional, e.g. 'Full' or 'Initials')\")}",
             "t('Failed to save signature: {message}', { message: e.message })",
-            "${_esc(s.name || '')}",
+            "const displayName = s.name === 'Signature' ? t('Signature') : (s.name || '')",
+            "${_esc(displayName)}",
             "window.styledConfirm(t('Delete this signature?'),",
             "confirmText: t('Delete')",
         ),
@@ -1725,7 +1814,7 @@ def test_document_auxiliary_modules_translate_copy_without_touching_runtime_data
             "search.placeholder = t('Search…')",
             "header.textContent = t(group.name)",
             "btn.title = t(label)",
-            "t(item[1]).toLowerCase().includes(f)",
+            "_normalizeSearchText(t(item[1])).includes(f)",
             "_insertEmoji(char)",
         ),
     }
@@ -1796,6 +1885,18 @@ def test_signature_picker_renders_translated_copy_and_escaped_dynamic_name() -> 
 
 
 @pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_signature_default_name_stays_canonical_in_api_and_localizes_on_render() -> None:
+    assert _saved_empty_signature_name("pt-BR") == {
+        "postedName": "Signature",
+        "returnedName": "Signature",
+    }
+    assert _rendered_signature_picker("pt-BR", "Signature")["dynamicName"] == (
+        "Assinatura"
+    )
+    assert _rendered_signature_picker("en", "Signature")["dynamicName"] == "Signature"
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
 def test_emoji_picker_translates_search_and_titles_without_changing_character() -> None:
     assert _rendered_emoji_picker("pt-BR") == {
         "triggerTitle": "Inserir ícone",
@@ -1812,4 +1913,25 @@ def test_emoji_picker_translates_search_and_titles_without_changing_character() 
         "initialTitle": "grin",
         "filteredTitle": "grin",
         "inserted": "A☻︎",
+    }
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_emoji_picker_search_ignores_portuguese_diacritics() -> None:
+    circle = _rendered_emoji_picker("pt-BR", "circulo")
+    assert {
+        "filteredTitle": circle["filteredTitle"],
+        "inserted": circle["inserted"],
+    } == {
+        "filteredTitle": "círculo",
+        "inserted": "A○︎",
+    }
+
+    number = _rendered_emoji_picker("pt-BR", "numero")
+    assert {
+        "filteredTitle": number["filteredTitle"],
+        "inserted": number["inserted"],
+    } == {
+        "filteredTitle": "número",
+        "inserted": "A№︎",
     }

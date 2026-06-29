@@ -28,7 +28,6 @@ registerMessages('pt-BR', {
   'Check-in running…': 'Check-in em execução…',
   'Could not run check-in': 'Não foi possível executar o check-in',
   'Assistant settings': 'Configurações do assistente',
-  'Name': 'Nome',
   'Assistant': 'Assistente',
   'Personality': 'Personalidade',
   '-- pick from persona --': '-- escolher persona --',
@@ -45,8 +44,6 @@ registerMessages('pt-BR', {
   'none': 'nenhum',
   'Daily check-ins': 'Check-ins diários',
   'No check-ins configured.': 'Nenhum check-in configurado.',
-  'Cancel': 'Cancelar',
-  'Save': 'Salvar',
   'Run now': 'Executar agora',
   'Prompt for this check-in': 'Prompt para este check-in',
   '(use session default)': '(usar padrão da sessão)',
@@ -59,8 +56,6 @@ registerMessages('pt-BR', {
   'Could not load assistant settings.':
     'Não foi possível carregar as configurações do assistente.',
   'Presets': 'Predefinições',
-  'Personas': 'Personas',
-
   // ── tts-ai.js ──
   'Read aloud': 'Ler em voz alta',
   'Stop': 'Parar',
