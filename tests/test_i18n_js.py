@@ -404,3 +404,69 @@ def test_remote_language_reconciliation(active, remote, expected):
         )
     )
     assert result == expected
+
+
+def test_stale_remote_response_does_not_override_user_language_change():
+    result = _run_node(
+        textwrap.dedent(
+            """
+            const listeners = {};
+            const writes = [];
+            const requests = [];
+            let reloads = 0;
+            let resolveGet;
+            const pendingGet = new Promise((resolve) => { resolveGet = resolve; });
+            const select = {
+              value: '',
+              dataset: {},
+              addEventListener(type, handler) { listeners[type] = handler; },
+            };
+
+            globalThis.window = { __ODY_LANG: 'pt-BR' };
+            globalThis.document = {
+              getElementById: (id) => id === 'set-language' ? select : null,
+            };
+            globalThis.localStorage = {
+              getItem: () => window.__ODY_LANG,
+              setItem: (key, value) => writes.push([key, value]),
+            };
+            globalThis.location = { reload: () => reloads++ };
+            globalThis.fetch = (url, options = {}) => {
+              const method = options.method || 'GET';
+              requests.push([url, method]);
+              if (method === 'GET') return pendingGet;
+              return Promise.resolve({ ok: true });
+            };
+
+            const { initLanguagePref } =
+              await import('./static/js/languagePref.js?stale-response');
+            initLanguagePref();
+
+            select.value = 'en';
+            listeners.change();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+
+            resolveGet({
+              ok: true,
+              json: async () => ({ value: 'pt-BR' }),
+            });
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            await new Promise((resolve) => setTimeout(resolve, 0));
+
+            console.log(JSON.stringify({
+              active: window.__ODY_LANG,
+              selected: select.value,
+              stored: writes.at(-1)[1],
+              puts: requests.filter(([, method]) => method === 'PUT').length,
+              reloads,
+            }));
+            """
+        )
+    )
+    assert result == {
+        "active": "en",
+        "selected": "en",
+        "stored": "en",
+        "puts": 1,
+        "reloads": 1,
+    }

@@ -15,9 +15,12 @@ export function initLanguagePref() {
   sel.value = getLang();
 
   // Server is the source of truth across devices; reconcile the <select>.
+  const activeAtRequest = getLang();
   fetch('/api/prefs/language', { credentials: 'same-origin' })
     .then((r) => (r.ok ? r.json() : null))
     .then((d) => {
+      // A user choice made while this GET was pending takes precedence.
+      if (getLang() !== activeAtRequest) return;
       if (d && Object.prototype.hasOwnProperty.call(d, 'value')) {
         if (!isSupportedLang(d.value)) return;
         const remoteLang = normalizeLang(d.value);
