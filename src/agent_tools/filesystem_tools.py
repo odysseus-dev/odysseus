@@ -333,7 +333,13 @@ class GlobTool:
 
 class GrepTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
+        from src.tool_execution import (
+            _SENSITIVE_FILE_PATTERNS,
+            _is_sensitive_path,
+            _resolve_tool_path,
+            _resolve_search_root,
+            _truncate,
+        )
         args: Dict[str, Any] = {}
         _s = (content or "").strip()
         if _s.startswith("{"):
@@ -369,6 +375,8 @@ class GrepTool:
                     cmd.append("--ignore-case")
                 if glob_pat:
                     cmd += ["--glob", glob_pat]
+                for _pat in _SENSITIVE_FILE_PATTERNS:
+                    cmd += ["--glob", f"!*{_pat}*"]
                 for _d in _CODENAV_SKIP_DIRS:
                     cmd += ["--glob", f"!**/{_d}/**"]
                 cmd += ["--regexp", pattern, root]
@@ -399,6 +407,8 @@ class GrepTool:
             for fp in file_iter:
                 if len(hits) >= max_hits:
                     break
+                if _is_sensitive_path(os.path.realpath(fp)):
+                    continue
                 try:
                     with open(fp, "r", encoding="utf-8", errors="strict") as f:
                         for i, line in enumerate(f, 1):
