@@ -252,15 +252,261 @@ def _folder_name_from_list_line(line) -> str | None:
     return match.group(1) or match.group(2)
 
 
+def _imap_status_ok(status) -> bool:
+    if isinstance(status, bytes):
+        status = status.decode(errors="replace")
+    return str(status).strip().upper() == "OK"
+
+
 def _list_imap_folders(conn) -> tuple[list, list[str]]:
     try:
         status, folders = conn.list()
-        if status != "OK" or not folders:
+        if not _imap_status_ok(status) or not folders:
             return [], []
         names = [name for name in (_folder_name_from_list_line(f) for f in folders) if name]
         return folders, names
     except Exception:
         return [], []
+
+
+_INVALID_NEW_FOLDER_RE = re.compile(r"[\x00\r\n]")
+
+
+def _validate_new_mail_folder_name(value) -> tuple[str | None, str | None]:
+    folder = str(value or "").strip()
+    if not folder:
+        return None, "Folder name is required"
+    if folder.casefold() == "__scheduled__":
+        return None, "Folder name is reserved"
+    if len(folder) > 255:
+        return None, "Folder name is too long"
+    if _INVALID_NEW_FOLDER_RE.search(folder):
+        return None, "Folder name contains invalid characters"
+    return folder, None
+
+
+def _imap_response_text(data) -> str:
+    parts = []
+    for item in data or []:
+        if isinstance(item, bytes):
+            parts.append(item.decode(errors="replace"))
+        elif item is not None:
+            parts.append(str(item))
+    return " ".join(parts).strip()
+
+
+def _email_folder_role_from_name(name: str) -> str:
+    lower = (name or "").strip().lower()
+    if not lower:
+        return ""
+    if lower == "__scheduled__":
+        return "scheduled"
+    tokens = [token for token in re.split(r"[^a-z0-9]+", lower) if token]
+    text = " ".join(tokens)
+    token_set = set(tokens)
+    if text == "inbox":
+        return "inbox"
+    if "sent" in token_set:
+        return "sent"
+    if "starred" in token_set or "flagged" in token_set:
+        return "starred"
+    if "draft" in token_set or "drafts" in token_set:
+        return "drafts"
+    if text == "all mail" or "archive" in token_set or "archives" in token_set:
+        return "archive"
+    if "spam" in token_set or "junk" in token_set:
+        return "junk"
+    if "trash" in token_set or "bin" in token_set or "deleted" in token_set:
+        return "trash"
+    return ""
+
+
+def _email_folder_role_from_list_line(line) -> str:
+    decoded = line.decode(errors="replace") if isinstance(line, bytes) else str(line)
+    lower = decoded.lower()
+    if "\\noselect" in lower:
+        return "system"
+    if "\\sent" in lower:
+        return "sent"
+    if "\\draft" in lower:
+        return "drafts"
+    if "\\trash" in lower:
+        return "trash"
+    if "\\junk" in lower:
+        return "junk"
+    if "\\archive" in lower or "\\all" in lower:
+        return "archive"
+    if "\\flagged" in lower:
+        return "starred"
+    return ""
+
+
+def _protected_email_folder_error(role: str, action: str = "managed") -> str:
+    if role == "scheduled":
+        return "Scheduled is a virtual folder"
+    if role == "inbox":
+        return f"INBOX cannot be {action}"
+    return f"Only custom folders can be {action}"
+
+
+def _resolve_manageable_imap_folder(conn, folder_name: str, action: str = "managed") -> tuple[str | None, str | None]:
+    folder, err = _validate_new_mail_folder_name(folder_name)
+    if err:
+        return None, err
+
+    requested = folder.casefold()
+    folders, names = _list_imap_folders(conn)
+    matched = None
+    matched_line = None
+    for raw in folders:
+        name = _folder_name_from_list_line(raw)
+        if name and name.casefold() == requested:
+            matched = name
+            matched_line = raw
+            break
+    if matched is None:
+        for name in names:
+            if name.casefold() == requested:
+                matched = name
+                break
+    if matched is None:
+        return None, "Folder not found"
+
+    role = _email_folder_role_from_name(matched)
+    if not role and matched_line is not None:
+        role = _email_folder_role_from_list_line(matched_line)
+    if role:
+        return None, _protected_email_folder_error(role, action)
+    return matched, None
+
+
+def _parse_imap_message_count(data) -> int | None:
+    for item in data or []:
+        if isinstance(item, bytes):
+            text = item.decode(errors="replace")
+        elif item is None:
+            continue
+        else:
+            text = str(item)
+        match = re.search(r"\bMESSAGES\s+(\d+)\b", text, re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+        stripped = text.strip()
+        if stripped.isdigit():
+            return int(stripped)
+    return None
+
+
+def _mail_folder_message_count(conn, folder_name: str) -> int | None:
+    try:
+        status, data = conn.status(_q(folder_name), "(MESSAGES)")
+        if _imap_status_ok(status):
+            count = _parse_imap_message_count(data)
+            if count is not None:
+                return count
+    except Exception:
+        logger.debug("Failed to STATUS email folder %r before delete", folder_name, exc_info=True)
+
+    selected = False
+    try:
+        status, data = conn.select(_q(folder_name), readonly=True)
+        if _imap_status_ok(status):
+            selected = True
+            return _parse_imap_message_count(data)
+    except Exception:
+        logger.debug("Failed to SELECT email folder %r before delete", folder_name, exc_info=True)
+    finally:
+        if selected:
+            try:
+                conn.close()
+            except Exception:
+                logger.debug("Failed to close email folder %r after delete count", folder_name, exc_info=True)
+    return None
+
+
+def _create_imap_folder(conn, folder_name: str) -> tuple[bool, str]:
+    folder, err = _validate_new_mail_folder_name(folder_name)
+    if err:
+        return False, err
+    if _email_folder_role_from_name(folder):
+        return False, "Folder name is reserved"
+
+    _, names = _list_imap_folders(conn)
+    existing = {name.casefold() for name in names}
+    if folder.casefold() in existing:
+        return False, "Folder already exists"
+
+    status, data = conn.create(_q(folder))
+    if not _imap_status_ok(status):
+        msg = _imap_response_text(data)
+        if "exist" in msg.lower():
+            return False, "Folder already exists"
+        return False, msg or "Failed to create folder"
+
+    try:
+        conn.subscribe(_q(folder))
+    except Exception:
+        logger.debug("Failed to subscribe newly created email folder %r", folder, exc_info=True)
+
+    return True, folder
+
+
+def _rename_imap_folder(conn, folder_name: str, new_folder_name: str) -> tuple[bool, dict]:
+    folder, err = _resolve_manageable_imap_folder(conn, folder_name, action="renamed")
+    if err:
+        return False, {"error": err}
+
+    new_folder, err = _validate_new_mail_folder_name(new_folder_name)
+    if err:
+        return False, {"error": err}
+    if _email_folder_role_from_name(new_folder):
+        return False, {"error": "Folder name is reserved"}
+    if new_folder == folder:
+        return False, {"error": "Folder name is unchanged"}
+
+    _, names = _list_imap_folders(conn)
+    existing = {name.casefold() for name in names if name.casefold() != folder.casefold()}
+    if new_folder.casefold() in existing:
+        return False, {"error": "Folder already exists"}
+
+    status, data = conn.rename(_q(folder), _q(new_folder))
+    if not _imap_status_ok(status):
+        msg = _imap_response_text(data)
+        if "exist" in msg.lower():
+            return False, {"error": "Folder already exists"}
+        return False, {"error": msg or "Failed to rename folder"}
+
+    try:
+        conn.subscribe(_q(new_folder))
+    except Exception:
+        logger.debug("Failed to subscribe renamed email folder %r", new_folder, exc_info=True)
+
+    return True, {"old_folder": folder, "folder": new_folder}
+
+
+def _delete_imap_folder(conn, folder_name: str, confirm_nonempty: bool = False) -> tuple[bool, dict]:
+    folder, err = _resolve_manageable_imap_folder(conn, folder_name, action="deleted")
+    if err:
+        return False, {"error": err}
+
+    count = _mail_folder_message_count(conn, folder)
+    if (count is None or count > 0) and not confirm_nonempty:
+        return False, {
+            "error": "Folder is not empty",
+            "folder": folder,
+            "message_count": count,
+            "needs_confirmation": True,
+        }
+
+    status, data = conn.delete(_q(folder))
+    if not _imap_status_ok(status):
+        return False, {
+            "error": _imap_response_text(data) or "Failed to delete folder",
+            "folder": folder,
+            "message_count": count,
+        }
+
+    return True, {"folder": folder, "message_count": count}
 
 
 def _resolve_mail_folder(conn, preferred: str, role: str = "") -> str:
@@ -1153,6 +1399,17 @@ def setup_email_routes():
         _FOLDER_CACHE[(account_id or "", owner or "")] = (_time.monotonic() + _FOLDER_TTL, value)
         if len(_FOLDER_CACHE) > 32:
             for k in list(_FOLDER_CACHE.keys())[:-16]:
+                _FOLDER_CACHE.pop(k, None)
+
+    def _invalidate_folder_cache(account_id=None, owner=None):
+        if account_id is None and owner is None:
+            _FOLDER_CACHE.clear()
+            return
+        for k in list(_FOLDER_CACHE.keys()):
+            k_acct = k[0] if len(k) > 0 else ""
+            k_owner = k[1] if len(k) > 1 else ""
+            if (account_id is None or k_acct == (account_id or "")) and \
+               (owner is None or k_owner == (owner or "")):
                 _FOLDER_CACHE.pop(k, None)
 
     def _invalidate_list_cache(account_id=None, folder=None):
@@ -3067,6 +3324,20 @@ def setup_email_routes():
             logger.error(f"Failed to move email {uid} to {dest}: {e}")
             return {"success": False, "error": "Mail operation failed"}
 
+    @router.get("/folders/status")
+    async def folder_status(folder: str = Query(...), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
+        """Return deletion metadata for a user-managed IMAP folder."""
+        try:
+            with _imap(account_id, owner=owner) as conn:
+                resolved, err = _resolve_manageable_imap_folder(conn, folder)
+                if err:
+                    return {"success": False, "error": err}
+                count = _mail_folder_message_count(conn, resolved)
+            return {"success": True, "folder": resolved, "message_count": count}
+        except Exception as e:
+            logger.error(f"folder_status failed for {folder!r}: {e}")
+            return {"success": False, "error": "Mail operation failed"}
+
     @router.get("/folders")
     async def list_folders(account_id: str | None = Query(None), owner: str = Depends(require_owner)):
         """List IMAP folders."""
@@ -3081,20 +3352,75 @@ def setup_email_routes():
             return payload
         try:
             with _imap(account_id, owner=owner) as conn:
-                status, folders = conn.list()
-            result = []
-            for f in folders:
-                decoded = f.decode() if isinstance(f, bytes) else f
-                match = re.search(r'"([^"]*)"$|(\S+)$', decoded)
-                if match:
-                    name = match.group(1) or match.group(2)
-                    result.append(name)
+                _, result = _list_imap_folders(conn)
             payload = {"folders": result, "sync": {"source": "imap", "updated_at": datetime.utcnow().isoformat() + "Z"}}
             _folder_cache_put(account_id, owner, payload)
             return payload
         except Exception as e:
             logger.error(f"list_folders failed: {e}")
             return {"folders": [], "error": "Mail operation failed"}
+
+    @router.post("/folders")
+    async def create_folder(payload: dict, account_id: str | None = Query(None), owner: str = Depends(require_owner)):
+        """Create a user-requested IMAP folder."""
+        folder, err = _validate_new_mail_folder_name((payload or {}).get("folder") or (payload or {}).get("name"))
+        if err:
+            return {"success": False, "error": err}
+        try:
+            with _imap(account_id, owner=owner) as conn:
+                ok, result = _create_imap_folder(conn, folder)
+                if not ok:
+                    return {"success": False, "error": result}
+                _, names = _list_imap_folders(conn)
+            if result not in names:
+                names.append(result)
+            _invalidate_list_cache(account_id)
+            _invalidate_folder_cache(account_id, owner)
+            return {"success": True, "folder": result, "folders": names}
+        except Exception as e:
+            logger.error(f"create_folder failed for {folder!r}: {e}")
+            return {"success": False, "error": "Mail operation failed"}
+
+    @router.patch("/folders")
+    async def rename_folder(payload: dict, account_id: str | None = Query(None), owner: str = Depends(require_owner)):
+        """Rename a user-managed IMAP folder."""
+        folder = (payload or {}).get("folder") or (payload or {}).get("old_name")
+        new_folder = (payload or {}).get("new_folder") or (payload or {}).get("new_name") or (payload or {}).get("name")
+        try:
+            with _imap(account_id, owner=owner) as conn:
+                ok, result = _rename_imap_folder(conn, folder, new_folder)
+                if not ok:
+                    return {"success": False, **result}
+                _, names = _list_imap_folders(conn)
+            if result["folder"] not in names:
+                names.append(result["folder"])
+            _invalidate_list_cache(account_id)
+            _invalidate_folder_cache(account_id, owner)
+            return {"success": True, **result, "folders": names}
+        except Exception as e:
+            logger.error(f"rename_folder failed for {folder!r} -> {new_folder!r}: {e}")
+            return {"success": False, "error": "Mail operation failed"}
+
+    @router.delete("/folders")
+    async def delete_folder(
+        folder: str = Query(...),
+        confirm_nonempty: bool = Query(False),
+        account_id: str | None = Query(None),
+        owner: str = Depends(require_owner),
+    ):
+        """Delete a user-managed IMAP folder."""
+        try:
+            with _imap(account_id, owner=owner) as conn:
+                ok, result = _delete_imap_folder(conn, folder, confirm_nonempty=confirm_nonempty)
+                if not ok:
+                    return {"success": False, **result}
+                _, names = _list_imap_folders(conn)
+            _invalidate_list_cache(account_id)
+            _invalidate_folder_cache(account_id, owner)
+            return {"success": True, **result, "folders": names}
+        except Exception as e:
+            logger.error(f"delete_folder failed for {folder!r}: {e}")
+            return {"success": False, "error": "Mail operation failed"}
 
     @router.post("/mark-answered/{uid}")
     async def mark_answered(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
