@@ -83,6 +83,24 @@ PRODUCT_TERMS = frozenset(
         "Z.AI Coding Plan",
     }
 )
+VOICE_NAMES = frozenset(
+    {"Alloy", "Ash", "Coral", "Echo", "Fable", "Nova", "Onyx", "Sage", "Shimmer"}
+)
+PRESERVED_TECHNICAL_TERMS = frozenset(
+    {
+        "(Endpoint)",
+        "(Endpoints)",
+        "Endpoint",
+        "Persona",
+        "Personas",
+        "Prompt",
+        "Proxy",
+        "Webhook",
+        "ntfy",
+        "proxy",
+    }
+)
+LANGUAGE_SELF_NAMES = frozenset({"Português (Brasil)"})
 
 
 def _run(
@@ -224,6 +242,12 @@ def _exclusion_category(value: str) -> str | None:
 
     if value in PRODUCT_TERMS:
         return "termo de produto/provedor preservado"
+    if value in VOICE_NAMES:
+        return "nome de voz preservado"
+    if value in PRESERVED_TECHNICAL_TERMS:
+        return "termo técnico preservado"
+    if value in LANGUAGE_SELF_NAMES:
+        return "nome autóctone de idioma preservado"
     if "{{" in value or "{%" in value or "%}" in value:
         return "conteúdo técnico de template"
     if not any(character.isalpha() for character in value):
@@ -232,7 +256,7 @@ def _exclusion_category(value: str) -> str | None:
         return "valor hexadecimal"
     if re.fullmatch(r"(?:API|LLM|PDF|RAG|URL|DEBUG|INFO|WARNING|ERROR)", value):
         return "sigla técnica"
-    if re.fullmatch(r"(?:A-Z|A\|C|Aa|\d+(?:\.\d+)?x)", value):
+    if re.fullmatch(r"(?:A-Z|A\|C|Aa|\d+(?:\.\d+)?x(?: \(normal\))?)", value):
         return "controle técnico ou escala numérica"
     if re.fullmatch(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", value):
         return "endereço técnico de exemplo"
@@ -244,7 +268,7 @@ def _exclusion_category(value: str) -> str | None:
         return "caminho técnico"
     if re.fullmatch(r"[\w.-]+/[\w./-]+", value):
         return "identificador técnico"
-    if re.fullmatch(r"[\w.-]+\.(?:json|js|css|html|md|py|txt)", value):
+    if re.fullmatch(r"[\w.-]+\.(?:json|js|css|html|md|py|sh|txt)", value):
         return "nome de arquivo técnico"
     return None
 
@@ -280,6 +304,19 @@ def test_registered_translations_are_non_empty() -> None:
             if not isinstance(value, str) or not value.strip():
                 empty.append(f"{registration['file']}: {key!r}")
     assert not empty, "Traduções vazias registradas:\n" + "\n".join(empty)
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_registered_translations_are_not_source_identity() -> None:
+    identities: list[str] = []
+    for registration in _captured_catalogs():
+        for key, value in dict(registration["messages"]).items():
+            if key == value:
+                identities.append(f"{registration['file']}: {key!r}")
+    assert not identities, (
+        "Entradas idênticas não traduzem e devem ser excluídas semanticamente "
+        "ou receber pt-BR real:\n" + "\n".join(identities)
+    )
 
 
 @pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
