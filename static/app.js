@@ -3186,8 +3186,11 @@ function initializeEventListeners() {
       if (!currentId) return;
       const sessions = sessionModule.getSessions();
       const current = sessions.find(s => s.id === currentId);
-      const name = current ? current.name : 'this session';
-      if (!await uiModule.styledConfirm(`Delete "${name}"?`, { confirmText: 'Delete', danger: true })) return;
+      const name = current?.name || t('Untitled');
+      if (!await uiModule.styledConfirm(
+        t('Delete "{name}"?', { name }),
+        { confirmText: t('Delete'), danger: true },
+      )) return;
       try {
         // Find the next session below the current one before deleting
         const idx = sessions.findIndex(s => s.id === currentId);

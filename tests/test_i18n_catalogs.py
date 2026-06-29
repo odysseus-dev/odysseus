@@ -352,6 +352,8 @@ def _translated_app_examples(lang: str) -> dict[str, str]:
           rename: t('AI renamed to {{name}}', {{ name: 'Atena' }}),
           restore: t('Restore {{title}}', {{ title: 'Agenda' }}),
           files: t('Added {{count}} files to chat', {{ count: 3 }}),
+          deletePrompt: t('Delete "{{name}}"?', {{ name: 'Atena' }}),
+          deleteAction: t('Delete'),
           endpoint: t(
             'Add an AI endpoint from Settings in the sidebar, or paste an endpoint/API key into the chat.',
           ),
@@ -598,6 +600,8 @@ def test_app_catalog_has_contextual_portuguese_for_dynamic_interface_copy() -> N
         "Failed to delete session: {message}": (
             "Falha ao excluir a sessão: {message}"
         ),
+        'Delete "{name}"?': 'Excluir "{name}"?',
+        "Delete": "Excluir",
         "Message Odysseus...": "Mensagem para o Odysseus...",
         "Record voice": "Gravar voz",
         "Send to group": "Enviar ao grupo",
@@ -647,6 +651,10 @@ def test_app_uses_i18n_formatters_without_translating_runtime_data() -> None:
         "file count": (
             "t('Added {count} files to chat', { count: files.length })"
         ),
+        "delete confirmation name": (
+            "t('Delete \"{name}\"?', { name })"
+        ),
+        "delete confirmation action": "confirmText: t('Delete')",
         "responsive placeholder": "t('Message Odysseus...')",
         "missing endpoint": (
             "t('Add an AI endpoint from Settings in the sidebar, or paste an "
@@ -666,6 +674,7 @@ def test_app_uses_i18n_formatters_without_translating_runtime_data() -> None:
         "`Session renamed to ${newName}`",
         "`${label} ${active ? 'on' : 'off'}`",
         "`Added ${files.length} file${files.length > 1 ? 's' : ''} to chat`",
+        'styledConfirm(`Delete "${name}"?`, { confirmText: \'Delete\'',
     )
     assert not [item for item in obsolete_direct_formatters if item in source]
 
@@ -678,6 +687,8 @@ def test_app_catalog_templates_render_in_portuguese_and_english() -> None:
         "rename": "IA renomeada para Atena",
         "restore": "Restaurar Agenda",
         "files": "3 arquivos adicionados à conversa",
+        "deletePrompt": 'Excluir "Atena"?',
+        "deleteAction": "Excluir",
         "endpoint": (
             "Adicione um endpoint de IA em Configurações na barra lateral ou "
             "cole um endpoint ou uma chave de API na conversa."
@@ -689,6 +700,8 @@ def test_app_catalog_templates_render_in_portuguese_and_english() -> None:
         "rename": "AI renamed to Atena",
         "restore": "Restore Agenda",
         "files": "Added 3 files to chat",
+        "deletePrompt": 'Delete "Atena"?',
+        "deleteAction": "Delete",
         "endpoint": (
             "Add an AI endpoint from Settings in the sidebar, or paste an "
             "endpoint/API key into the chat."

@@ -93,6 +93,8 @@ registerMessages('pt-BR', {
   'Session deleted': 'Sessão excluída',
   'Failed to delete session': 'Falha ao excluir a sessão',
   'Failed to delete session: {message}': 'Falha ao excluir a sessão: {message}',
+  'Delete "{name}"?': 'Excluir "{name}"?',
+  'Delete': 'Excluir',
   'Message Odysseus...': 'Mensagem para o Odysseus...',
   'Record voice': 'Gravar voz',
   'Send to group': 'Enviar ao grupo',
