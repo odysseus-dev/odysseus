@@ -1,15 +1,36 @@
-"""Regression guard for #4766: the nightly skill audit defaults to opt-in."""
+"""Regression guard for #4766 / PR #4828: the nightly skill audit is opt-in.
+
+It must default to off (no unattended token spend) AND be a real, registered
+setting so the normal settings path can turn it back on. The second half is the
+fix for the PR #4828 review: the admin settings writers (manage_settings, the
+admin settings route) only persist keys present in DEFAULT_SETTINGS, so an
+unregistered key would be default-off with no supported way to re-enable it.
+"""
 import pathlib
 
 import src.settings as settings
 
 
-def test_skill_audit_nightly_not_default_on_via_settings():
-    """The nightly skill audit must not be silently enabled through the settings
-    defaults — it is unattended LLM work that can cost tokens on a paid endpoint.
-    Absent an explicit user setting it must read falsy.
+def test_skill_audit_nightly_registered_off_by_default():
+    """Registered in DEFAULT_SETTINGS with a False default: opt-in (won't run
+    unattended) and still settable through the normal settings machinery."""
+    assert settings.DEFAULT_SETTINGS.get("skill_audit_nightly") is False
+
+
+def test_skill_audit_nightly_can_be_enabled_through_settings_writer(tmp_path, monkeypatch):
+    """A user must be able to turn the audit back on through the normal settings
+    path. manage_settings and the admin settings route only persist keys present
+    in DEFAULT_SETTINGS, so registering the key is what makes the opt-in real.
+    Round-trips save/get_setting against an isolated settings file.
     """
-    assert "skill_audit_nightly" not in getattr(settings, "DEFAULT_SETTINGS", {})
+    monkeypatch.setattr(settings, "SETTINGS_FILE", str(tmp_path / "settings.json"))
+    settings._invalidate_caches()
+    try:
+        assert settings.get_setting("skill_audit_nightly") is False  # default off
+        settings.save_settings({**settings.load_settings(), "skill_audit_nightly": True})
+        assert settings.get_setting("skill_audit_nightly") is True   # opt-in works
+    finally:
+        settings._invalidate_caches()
 
 
 def test_nightly_skill_audit_gate_defaults_off():

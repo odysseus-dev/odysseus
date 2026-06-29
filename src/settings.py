@@ -37,6 +37,12 @@ DEFAULT_SETTINGS = {
     # have been observed inventing signatures and sending to real
     # recipients without confirmation.
     "agent_email_confirm": True,
+    # Nightly skill audit (~02:00): LLM-judges a batch of skills and auto-fixes/
+    # escalates weak ones. Default OFF — it is unattended LLM work that can cost
+    # tokens on a paid endpoint, so it stays opt-in. Registered here (not only as
+    # a call-site fallback) so the normal settings path can turn it back on.
+    # See app.py:_skill_audit_nightly_loop and issue #4766.
+    "skill_audit_nightly": False,
     "image_gen_enabled": False,
     "image_model": "",
     "image_quality": "medium",
