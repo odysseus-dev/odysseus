@@ -193,7 +193,11 @@ function initializeEventListeners() {
     const _updateMsgCount = () => {
       _countScheduled = false;
       const n = _chatHistEl.querySelectorAll(':scope > .msg').length;
-      _metaCountEl.textContent = n ? `· ${n} msg${n === 1 ? '' : 's'}` : '';
+      _metaCountEl.textContent = n
+        ? (n === 1
+          ? t('· {count} message', { count: n })
+          : t('· {count} messages', { count: n }))
+        : '';
     };
     const _scheduleCount = () => {
       if (_countScheduled) return;
@@ -324,13 +328,13 @@ function initializeEventListeners() {
         const isUser = child.classList.contains('msg-user');
         let label;
         if (isUser) {
-          label = 'User';
+          label = t('User');
         } else {
           const roleEl = child.querySelector('.role');
           const ts = roleEl?.querySelector('.role-timestamp');
           let raw = roleEl ? roleEl.textContent : '';
           if (ts) raw = raw.replace(ts.textContent, '');
-          label = (raw || '').trim() || 'Assistant';
+          label = (raw || '').trim() || t('Assistant');
         }
         const body = child.querySelector('.body');
         // Prefer dataset.raw (original markdown) over innerText (rendered HTML as text)
@@ -338,17 +342,17 @@ function initializeEventListeners() {
         const text = body ? (body.dataset.raw || body.innerText || body.textContent || '').trim() : '';
         if (text) parts.push(`${label}: ${text}`);
       } else if (child.classList?.contains('agent-thread')) {
-        const lines = ['[Tool calls]'];
+        const lines = [t('[Tool calls]')];
         for (const n of child.querySelectorAll('.agent-thread-node')) {
-          const tool = n.querySelector('.agent-thread-tool')?.textContent?.trim() || 'tool';
+          const tool = n.querySelector('.agent-thread-tool')?.textContent?.trim() || t('tool');
           const cmd = n.querySelector('.agent-thread-cmd')?.textContent?.trim() || '';
           const output = n.querySelector('.agent-tool-output pre')?.textContent?.trim() || '';
-          const status = n.classList.contains('error') ? 'failed' : 'done';
+          const status = n.classList.contains('error') ? t('failed') : t('done');
           let line = `- ${tool} [${status}]`;
-          if (cmd) line += `\n  cmd: ${cmd}`;
+          if (cmd) line += `\n  ${t('cmd')}: ${cmd}`;
           if (output) {
             const truncated = output.length > 2000 ? output.slice(0, 2000) + '…' : output;
-            line += `\n  out: ${truncated}`;
+            line += `\n  ${t('out')}: ${truncated}`;
           }
           lines.push(line);
         }
@@ -379,7 +383,7 @@ function initializeEventListeners() {
       e.stopPropagation();
       exportMenu.classList.remove('open');
       const meta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
-      const sessionName = meta ? meta.name : 'Odysseus Chat';
+      const sessionName = meta ? meta.name : t('Odysseus Chat');
       const originalTitle = document.title;
       document.title = sessionName;
       const chatHistory = document.getElementById('chat-history');
@@ -407,7 +411,7 @@ function initializeEventListeners() {
         const sessionId = sessionModule.getCurrentSessionId();
         const texts = _serializeChatTranscript();
         const meta = sessionModule.getSessions().find(s => s.id === sessionId);
-        const title = meta?.name || 'Untitled';
+        const title = meta?.name || t('Untitled');
         const res = await fetch(`${API_BASE}/api/document`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1273,7 +1277,7 @@ function initializeEventListeners() {
         const url = `${API_BASE}/api/sessions/auto-sort${skipLlm ? '?skip_llm=true' : ''}`;
         const res = await fetch(url, { method: 'POST' });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Auto-sort failed');
+        if (!res.ok) throw new Error(data.detail || t('Auto-sort failed'));
         if (data.status === 'ok') {
           sessionModule.setSortMode(null); // clear sort — tidy creates manual folder order
           _syncSortChecks();
@@ -1281,7 +1285,11 @@ function initializeEventListeners() {
             // No-AI path: just report what got cleaned. No "unfiled
             // remaining" prompt because we never tried to file anything.
             const cleaned = (data.deleted_empty || 0) + (data.deleted_throwaway || 0);
-            uiModule.showToast(cleaned ? `Cleaned ${cleaned} empty/throwaway chat${cleaned === 1 ? '' : 's'}` : 'Already clean');
+            uiModule.showToast(cleaned
+              ? (cleaned === 1
+                ? t('Cleaned 1 empty/throwaway chat')
+                : t('Cleaned {count} empty/throwaway chats', { count: cleaned }))
+              : t('Already clean'));
           } else {
             // Tidy now works in batches (15 most-recent unfiled per click)
             // so the user gets fast feedback and a manageable LLM call
@@ -1289,21 +1297,40 @@ function initializeEventListeners() {
             const remaining = data.unfiled_remaining || 0;
             let msg;
             if (data.updated > 0) {
-              msg = `Sorted ${data.updated} into ${data.folders.length} folder${data.folders.length === 1 ? '' : 's'}`;
-              if (remaining > 0) msg += ` — ${remaining} unfiled left, hit Group again`;
+              if (data.updated === 1) {
+                msg = data.folders.length === 1
+                  ? t('Sorted 1 chat into 1 folder')
+                  : t('Sorted 1 chat into {folders} folders', { folders: data.folders.length });
+              } else {
+                msg = data.folders.length === 1
+                  ? t('Sorted {count} chats into 1 folder', { count: data.updated })
+                  : t('Sorted {count} chats into {folders} folders', {
+                    count: data.updated,
+                    folders: data.folders.length,
+                  });
+              }
+              if (remaining === 1) {
+                msg += t(' — 1 unfiled chat left; select Group again');
+              } else if (remaining > 1) {
+                msg += t(' — {count} unfiled chats left; select Group again', {
+                  count: remaining,
+                });
+              }
             } else if (remaining > 0) {
-              msg = `${remaining} unfiled chats — hit Group again`;
+              msg = remaining === 1
+                ? t('1 unfiled chat — select Group again')
+                : t('{count} unfiled chats — select Group again', { count: remaining });
             } else {
-              msg = 'All sorted';
+              msg = t('All chats sorted');
             }
             uiModule.showToast(msg);
           }
           if (sessionModule) await sessionModule.loadSessions();
         } else {
-          uiModule.showToast(data.reason || 'Nothing to sort');
+          uiModule.showToast(data.reason || t('Nothing to sort'));
         }
       } catch (e) {
-        uiModule.showError('Auto-sort: ' + e.message);
+        uiModule.showError(t('Auto-sort: {message}', { message: e.message }));
       } finally {
         wp.destroy();
         if (wpEl.parentNode) wpEl.parentNode.removeChild(wpEl);
@@ -1331,7 +1358,9 @@ function initializeEventListeners() {
         Storage.set('odysseus-model-sort', mode);
         if (modelsModule) modelsModule.refreshModels();
         modelSortDropdown.style.display = 'none';
-        uiModule.showToast('Models sorted: ' + opt.textContent.trim().toLowerCase());
+        uiModule.showToast(t('Models sorted: {label}', {
+          label: opt.textContent.trim().toLowerCase(),
+        }));
       });
     });
   }
@@ -1421,7 +1450,7 @@ function initializeEventListeners() {
       const newName = aiNameInput.value.trim();
       
       if (!newName) {
-        uiModule.showError('Please enter a name for the AI');
+        uiModule.showError(t('Please enter a name for the AI'));
         return;
       }
       
@@ -1434,12 +1463,12 @@ function initializeEventListeners() {
         
         const result = await response.json();
         if (result.success) {
-          uiModule.showToast(`AI renamed to ${newName}`);
+          uiModule.showToast(t('AI renamed to {name}', { name: newName }));
           renameAiModal.classList.add('hidden');
           aiNameInput.value = '';
         }
       } catch (e) {
-        uiModule.showError('Failed to rename AI: ' + e.message);
+        uiModule.showError(t('Failed to rename AI: {message}', { message: e.message }));
       }
     });
   }
@@ -1481,7 +1510,7 @@ function initializeEventListeners() {
       const newName = sessionNameInput.value.trim();
       
       if (!newName) {
-        uiModule.showError('Please enter a name for the session');
+        uiModule.showError(t('Please enter a name for the session'));
         return;
       }
       
@@ -1494,7 +1523,7 @@ function initializeEventListeners() {
         
         const result = await response.json();
         if (response.ok) {
-          uiModule.showToast(`Session renamed to ${newName}`);
+          uiModule.showToast(t('Session renamed to {name}', { name: newName }));
           renameSessionModal.classList.add('hidden');
           sessionNameInput.value = '';
           // Update the current session name in the UI
@@ -1502,15 +1531,23 @@ function initializeEventListeners() {
           if (meta) {
             meta.name = newName;
             const ver = window._appVersion ? ` v${window._appVersion}` : '';
-            el('current-meta').textContent = `Session: ${meta.name}${meta.model ? ' ' + meta.model.split('/').pop() : ''}${meta.rag ? ' [RAG]' : ''}${ver}`;
+            el('current-meta').textContent = t(
+              'Session: {name}{model}{rag}{version}',
+              {
+                name: meta.name,
+                model: meta.model ? ` ${meta.model.split('/').pop()}` : '',
+                rag: meta.rag ? ' [RAG]' : '',
+                version: ver,
+              },
+            );
           }
           // Refresh the sessions list
         await sessionModule.loadSessions();
         } else {
-          throw new Error(result.detail || 'Failed to rename session');
+          throw new Error(result.detail || t('Failed to rename session'));
         }
       } catch (e) {
-        uiModule.showError('Failed to rename session: ' + e.message);
+        uiModule.showError(t('Failed to rename session: {message}', { message: e.message }));
       }
     });
   }
@@ -1586,14 +1623,14 @@ function initializeEventListeners() {
   }
 
   const TOOL_TOGGLE_TOAST_LABELS = {
-    web: 'Web search',
-    bash: 'Shell',
+    web: { on: t('Web search on'), off: t('Web search off') },
+    bash: { on: t('Shell on'), off: t('Shell off') },
   };
 
   function showToolToggleToast(stateKey, active) {
-    const label = TOOL_TOGGLE_TOAST_LABELS[stateKey];
-    if (!label || !uiModule?.showToast) return;
-    uiModule.showToast(`${label} ${active ? 'on' : 'off'}`, 1800);
+    const labels = TOOL_TOGGLE_TOAST_LABELS[stateKey];
+    if (!labels || !uiModule?.showToast) return;
+    uiModule.showToast(active ? labels.on : labels.off, 1800);
   }
 
   function applyModeToToggles(mode) {
@@ -1659,10 +1696,22 @@ function initializeEventListeners() {
   const SPLASH_COUNT_KEY = 'odysseus-tool-splash-counts';
   const SPLASH_MAX = 2;
   const _toolSplashes = {
-    web: { role: 'Web Search', text: 'Searches the web for relevant information to include in the response. Results are fetched and summarized before the AI answers.' },
-    bash: { role: 'Shell Access', text: 'Gives the AI access to a sandboxed shell for running commands, installing packages, and executing scripts. Use with caution.' },
-    builder: { role: 'Tool Builder', text: 'Create custom mini-apps and tools the AI can use. Describe what you need and the AI will build a tool you can reuse across conversations.' },
-    research: { role: 'Deep Research', text: 'Multi-round web search with source analysis. Takes longer but produces comprehensive, well-sourced answers. Your next message will trigger a deep research cycle.' },
+    web: {
+      role: t('Web Search'),
+      text: t('Searches the web for relevant information to include in the response. Results are fetched and summarized before the AI answers.'),
+    },
+    bash: {
+      role: t('Shell Access'),
+      text: t('Gives the AI access to a sandboxed shell for running commands, installing packages, and executing scripts. Use with caution.'),
+    },
+    builder: {
+      role: t('Tool Builder'),
+      text: t('Create custom mini-apps and tools the AI can use. Describe what you need and the AI will build a tool you can reuse across conversations.'),
+    },
+    research: {
+      role: t('Deep Research'),
+      text: t('Multi-round web search with source analysis. Takes longer but produces comprehensive, well-sourced answers. Your next message will trigger a deep research cycle.'),
+    },
   };
   function _showToolSplash(key) {
     const splash = _toolSplashes[key];
@@ -2144,7 +2193,10 @@ function initializeEventListeners() {
       pickerWrap.classList.toggle('picker-auto-hidden', w < PICKER_HIDE_WIDTH);
       // Hide placeholder text
       if (textarea) {
-        textarea.setAttribute('placeholder', w < PLACEHOLDER_HIDE_WIDTH ? '' : 'Message Odysseus...');
+        textarea.setAttribute(
+          'placeholder',
+          w < PLACEHOLDER_HIDE_WIDTH ? '' : t('Message Odysseus...'),
+        );
       }
       // Hide entire bottom toolbar (tools, mode toggle) — only send button remains
       if (inputBottom) {
@@ -2263,7 +2315,9 @@ function initializeEventListeners() {
         // Re-hide picker after everything settles
         const _mpw = el('model-picker-wrap');
         if (_mpw) _mpw.style.display = 'none';
-        uiModule.showToast(`Group chat ready — ${picked.length} models`);
+        uiModule.showToast(picked.length === 1
+          ? t('Group chat ready — 1 model')
+          : t('Group chat ready — {count} models', { count: picked.length }));
       } else {
         _syncGroupIndicator(false);
         groupModule.stopGroup();
@@ -2308,13 +2362,17 @@ function initializeEventListeners() {
       chk.checked = !chk.checked;
       incognitoBtn.classList.toggle('active', chk.checked);
       const tipEl = el('welcome-tip');
-      incognitoBtn.title = chk.checked ? 'Disable Nobody mode' : 'Enable Nobody mode — no memory, no history saved';
+      incognitoBtn.title = chk.checked
+        ? t('Disable Nobody mode')
+        : t('Enable Nobody mode — no memory and no history saved');
       const welcomeName = document.querySelector('.welcome-name');
       if (chk.checked) {
-        incognitoBtn.innerHTML = INCOGNITO_EYE_CLOSED + '<span class="incognito-label">Nobody</span>';
+        incognitoBtn.innerHTML = INCOGNITO_EYE_CLOSED
+          + `<span class="incognito-label">${t('Nobody')}</span>`;
         if (welcomeName) {
           welcomeName.dataset.originalHtml = welcomeName.innerHTML;
-          welcomeName.innerHTML = '<svg class="welcome-boat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>Nobody';
+          welcomeName.innerHTML = '<svg class="welcome-boat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>'
+            + t('Nobody');
           // Restart the L→R clip-wipe reveal on the new label
           welcomeName.style.animation = 'none';
           welcomeName.offsetHeight;
@@ -2324,10 +2382,15 @@ function initializeEventListeners() {
         const welcomeSub = el('welcome-sub');
         if (welcomeSub) {
           if (!welcomeSub.dataset.originalText) welcomeSub.dataset.originalText = welcomeSub.textContent;
-          welcomeSub.textContent = "Who am I? I'm nobody.";
+          welcomeSub.textContent = t("Who am I? I'm nobody.");
           welcomeSub.style.display = '';
         }
-        if (tipEl) { tipEl.dataset.originalTip = tipEl.textContent; tipEl.textContent = 'Temporary session \u2014 won\u2019t be saved and no memory activation.'; tipEl.style.opacity = '0.5'; tipEl.style.marginTop = '8px'; }
+        if (tipEl) {
+          tipEl.dataset.originalTip = tipEl.textContent;
+          tipEl.textContent = t("Temporary session — it won't be saved or activate memory.");
+          tipEl.style.opacity = '0.5';
+          tipEl.style.marginTop = '8px';
+        }
         // Default to plain chat: disable tools visually, switch to chat mode.
         // IMPORTANT: don't overwrite the user's persisted per-mode tool prefs
         // (`web_agent`, `bash_agent`, `web_chat`, `bash_chat`). Nobody mode is
@@ -2342,7 +2405,8 @@ function initializeEventListeners() {
         ts.research = false; ts.mode = 'chat';
         Storage.setJSON(Storage.KEYS.TOGGLES, ts);
       } else {
-        incognitoBtn.innerHTML = INCOGNITO_EYE_OPEN + '<span class="incognito-label">Nobody</span>';
+        incognitoBtn.innerHTML = INCOGNITO_EYE_OPEN
+          + `<span class="incognito-label">${t('Nobody')}</span>`;
         if (welcomeName && welcomeName.dataset.originalHtml) {
           welcomeName.innerHTML = welcomeName.dataset.originalHtml;
           // Restart the L→R clip-wipe reveal on the restored label
@@ -2498,7 +2562,9 @@ function initializeEventListeners() {
       saveUIVis(state);
       applyUIVis(state);
       syncRearrangeChecks();
-      uiModule.showToast(!wasOn ? 'Rearrange enabled' : 'Rearrange disabled');
+      uiModule.showToast(!wasOn
+        ? t('Rearrange enabled')
+        : t('Rearrange disabled'));
       // Close the dropdown the toggle lives in — the sort dropdown's own
       // click-stopPropagation means it won't close on its own.
       const dd = toggle.closest('[id$="-sort-dropdown"]');
@@ -2519,7 +2585,7 @@ function initializeEventListeners() {
     saveUIVis(state);
     applyUIVis(state);
     syncRearrangeChecks();
-    uiModule.showToast('Rearrange disabled');
+    uiModule.showToast(t('Rearrange disabled'));
   }, true);
   // Sync checkmarks when dropdowns open
   const _sessionSortBtn = el('session-sort-btn');
@@ -2815,7 +2881,7 @@ function initializeEventListeners() {
       const h = modal.querySelector('.modal-header h4, .modal-header h3, .modal-header h2');
       if (h && h.textContent.trim()) return h.textContent.trim();
       if (modal.id) return modal.id.replace(/-modal$|-overlay$|-popup$/, '').replace(/-/g, ' ');
-      return 'Window';
+      return t('Window');
     }
 
     function removeDockEntry(modal) {
@@ -2841,7 +2907,7 @@ function initializeEventListeners() {
 
       const entry = document.createElement('div');
       entry.className = 'modal-dock-item';
-      entry.title = `Restore ${modalTitle(modal)}`;
+      entry.title = t('Restore {title}', { title: modalTitle(modal) });
 
       const label = document.createElement('span');
       label.className = 'modal-dock-label';
@@ -2850,7 +2916,7 @@ function initializeEventListeners() {
       const closeX = document.createElement('button');
       closeX.className = 'modal-dock-close';
       closeX.textContent = '×';
-      closeX.title = 'Close';
+      closeX.title = t('Close');
       closeX.addEventListener('click', (e) => {
         e.stopPropagation();
         modal.classList.remove('minimized');
@@ -2883,7 +2949,7 @@ function initializeEventListeners() {
       const minBtn = document.createElement('button');
       minBtn.className = 'minimize-btn';
       minBtn.type = 'button';
-      minBtn.title = 'Minimize';
+      minBtn.title = t('Minimize');
       minBtn.textContent = '_';
       minBtn.addEventListener('mousedown', (e) => e.stopPropagation()); // don't start drag
       minBtn.addEventListener('click', (e) => {
@@ -3133,12 +3199,12 @@ function initializeEventListeners() {
           if (nextSession) {
             await sessionModule.selectSession(nextSession.id);
           }
-          uiModule.showToast('Session deleted');
+          uiModule.showToast(t('Session deleted'));
         } else {
-          uiModule.showError('Failed to delete session');
+          uiModule.showError(t('Failed to delete session'));
         }
       } catch (e) {
-        uiModule.showError('Failed to delete session: ' + e);
+        uiModule.showError(t('Failed to delete session: {message}', { message: e }));
       }
     });
   }
@@ -3608,7 +3674,7 @@ function startOdysseusApp() {
     if (!hasText && !hasFiles && _isSttEnabled()) {
       clearTimeout(sendBtn._collapseTimer);
       sendBtn.innerHTML = _micIcon;
-      sendBtn.title = 'Record voice';
+      sendBtn.title = t('Record voice');
       newMode = 'mic';
       sendBtn.classList.add('mic-mode');
       sendBtn.classList.remove('newchat-mode', 'newchat-expanded');
@@ -3617,7 +3683,7 @@ function startOdysseusApp() {
       // Group chat: always show send button, never newchat mode
       if (groupModule && groupModule.isActive()) {
         sendBtn.innerHTML = _sendIcon;
-        sendBtn.title = 'Send to group';
+        sendBtn.title = t('Send to group');
         newMode = 'idle';
         sendBtn.classList.remove('mic-mode', 'newchat-mode', 'newchat-expanded');
       } else {
@@ -3626,14 +3692,15 @@ function startOdysseusApp() {
       if (isEmptySession) {
         // Already on new chat — show arrow in muted style (ready to type)
         sendBtn.innerHTML = _sendIcon;
-        sendBtn.title = 'Send message';
+        sendBtn.title = t('Send message');
         newMode = 'idle';
         sendBtn.classList.add('newchat-mode'); // muted gray style
         sendBtn.classList.remove('mic-mode', 'newchat-expanded');
         clearTimeout(sendBtn._expandTimer);
       } else {
-        sendBtn.innerHTML = _newChatIcon + '<span class="send-btn-label">+ New</span>';
-        sendBtn.title = 'New chat';
+        sendBtn.innerHTML = _newChatIcon
+          + `<span class="send-btn-label">+ ${t('New')}</span>`;
+        sendBtn.title = t('New chat');
         newMode = 'newchat';
         sendBtn.classList.add('newchat-mode');
         sendBtn.classList.remove('mic-mode');
@@ -3656,14 +3723,14 @@ function startOdysseusApp() {
         setTimeout(() => {
           if (sendBtn.dataset.mode !== 'send') return;
           sendBtn.innerHTML = _sendIcon;
-          sendBtn.title = 'Send message';
+          sendBtn.title = t('Send message');
           sendBtn.classList.remove('mic-mode', 'newchat-mode', 'anim-spin-swap');
           sendBtn.classList.add('anim-spin');
           sendBtn.addEventListener('animationend', () => sendBtn.classList.remove('anim-spin'), { once: true });
         }, delay);
       } else {
         sendBtn.innerHTML = _sendIcon;
-        sendBtn.title = 'Send message';
+        sendBtn.title = t('Send message');
         sendBtn.classList.remove('mic-mode', 'newchat-mode', 'newchat-expanded', 'anim-spin', 'anim-launch', 'anim-land');
       }
     }
@@ -3716,7 +3783,7 @@ function startOdysseusApp() {
       // If input is empty and STT is enabled, start recording
       if (!hasText && !hasFiles && _isSttEnabled()) {
         sendBtn.innerHTML = _stopIcon;
-        sendBtn.title = 'Stop recording';
+        sendBtn.title = t('Stop recording');
         sendBtn.dataset.mode = 'recording';
         sendBtn.classList.add('recording');
         voiceRecorderModule.startRecording(
@@ -3830,7 +3897,9 @@ function startOdysseusApp() {
     if (files.length === 0) return;
     fileHandlerModule.addFiles(files);
     fileHandlerModule.renderAttachStrip();
-    uiModule.showToast(`Added ${files.length} file${files.length > 1 ? 's' : ''} to chat`);
+    uiModule.showToast(files.length === 1
+      ? t('Added 1 file to chat')
+      : t('Added {count} files to chat', { count: files.length }));
   });
 
   chatContainer.addEventListener('dragleave', (e) => {
@@ -3853,7 +3922,9 @@ function startOdysseusApp() {
     const files = Array.from(e.dataTransfer.files);
     if (files.length === 0) return;
 
-    uiModule.showToast(`Added ${files.length} file${files.length > 1 ? 's' : ''} to chat`);
+    uiModule.showToast(files.length === 1
+      ? t('Added 1 file to chat')
+      : t('Added {count} files to chat', { count: files.length }));
 
   });
   
@@ -3897,7 +3968,7 @@ function startOdysseusApp() {
       _box.style.cssText = 'pointer-events:none;border:2px dashed rgba(255,255,255,0.9);' +
         'border-radius:14px;padding:20px 28px;background:rgba(0,0,0,0.4);' +
         'font:600 16px/1.4 system-ui,sans-serif;color:#fff;';
-      _box.textContent = 'Drop files to attach';
+      _box.textContent = t('Drop files to attach');
       _cmpDropShield.appendChild(_box);
       document.body.appendChild(_cmpDropShield);
     }
@@ -3927,7 +3998,9 @@ function startOdysseusApp() {
     if (!files.length) return;
     fileHandlerModule.addFiles(files);
     fileHandlerModule.renderAttachStrip();
-    uiModule.showToast(`Added ${files.length} file${files.length > 1 ? 's' : ''} to attach`);
+    uiModule.showToast(files.length === 1
+      ? t('Added 1 file to attach')
+      : t('Added {count} files to attach', { count: files.length }));
   }, true);
 
   // Load initial data
@@ -3967,7 +4040,9 @@ function startOdysseusApp() {
     const hasModels = modelsBox && modelsBox.querySelector('.models-row');
     if (!hasModels) {
       const tip = document.getElementById('welcome-tip');
-      if (tip) tip.textContent = 'Add an AI endpoint from Settings in the sidebar, or paste an endpoint/API key into the chat.';
+      if (tip) {
+        tip.textContent = t('Add an AI endpoint from Settings in the sidebar, or paste an endpoint/API key into the chat.');
+      }
     }
   }).catch(() => {});
   modelsModule.refreshProviders();

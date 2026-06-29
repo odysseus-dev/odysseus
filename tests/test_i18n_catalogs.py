@@ -19,6 +19,8 @@ ROOT = Path(__file__).resolve().parents[1]
 CATALOG_DIR = ROOT / "static" / "js" / "i18n"
 INDEX_HTML = ROOT / "static" / "index.html"
 INDEX_CATALOG = CATALOG_DIR / "index-html.pt-BR.js"
+APP_JS = ROOT / "static" / "app.js"
+APP_CATALOG = CATALOG_DIR / "app.pt-BR.js"
 CATALOGS = tuple(sorted(CATALOG_DIR.glob("*.pt-BR.js")))
 HAS_NODE = shutil.which("node") is not None
 
@@ -332,6 +334,35 @@ def _translated_index_texts_for_class(class_name: str) -> list[str]:
     return parser.texts
 
 
+def _translated_app_examples(lang: str) -> dict[str, str]:
+    """Run the real i18n runtime and app catalog for representative templates."""
+
+    script = textwrap.dedent(
+        f"""
+        globalThis.window = {{ __ODY_LANG: {json.dumps(lang)} }};
+        globalThis.localStorage = {{ getItem: () => null }};
+        const {{ t }} = await import({json.dumps((ROOT / "static" / "js" / "i18n.js").as_uri())});
+        await import({json.dumps(APP_CATALOG.as_uri())});
+        console.log(JSON.stringify({{
+          messages: t('· {{count}} messages', {{ count: 4 }}),
+          tidy: t(
+            'Sorted {{count}} chats into {{folders}} folders',
+            {{ count: 3, folders: 2 }},
+          ),
+          rename: t('AI renamed to {{name}}', {{ name: 'Atena' }}),
+          restore: t('Restore {{title}}', {{ title: 'Agenda' }}),
+          files: t('Added {{count}} files to chat', {{ count: 3 }}),
+          endpoint: t(
+            'Add an AI endpoint from Settings in the sidebar, or paste an endpoint/API key into the chat.',
+          ),
+        }}));
+        """
+    )
+    result = _run(["node", "--input-type=module"], input_text=script)
+    assert result.returncode == 0, result.stderr
+    return dict(json.loads(result.stdout))
+
+
 @pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
 @pytest.mark.parametrize("catalog", CATALOGS, ids=lambda path: path.name)
 def test_catalog_is_valid_javascript(catalog: Path) -> None:
@@ -451,3 +482,215 @@ def test_index_catalog_covers_all_visible_static_strings() -> None:
         f"{INDEX_CATALOG}: {len(missing)} chave(s) estática(s) ausente(s):\n"
         f"{details}"
     )
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_app_catalog_has_contextual_portuguese_for_dynamic_interface_copy() -> None:
+    catalog = _messages_for(APP_CATALOG.name)
+    expected = {
+        "· {count} message": "· {count} mensagem",
+        "· {count} messages": "· {count} mensagens",
+        "User": "Usuário",
+        "Assistant": "Assistente",
+        "[Tool calls]": "[Chamadas de ferramentas]",
+        "tool": "ferramenta",
+        "failed": "falhou",
+        "done": "concluído",
+        "cmd": "comando",
+        "out": "saída",
+        "Odysseus Chat": "Conversa do Odysseus",
+        "Untitled": "Sem título",
+        "Auto-sort failed": "Falha ao organizar automaticamente",
+        "Cleaned 1 empty/throwaway chat": "1 conversa vazia ou descartável removida",
+        "Cleaned {count} empty/throwaway chats": (
+            "{count} conversas vazias ou descartáveis removidas"
+        ),
+        "Already clean": "Já está tudo organizado",
+        "Sorted 1 chat into 1 folder": "1 conversa organizada em 1 pasta",
+        "Sorted 1 chat into {folders} folders": (
+            "1 conversa organizada em {folders} pastas"
+        ),
+        "Sorted {count} chats into 1 folder": (
+            "{count} conversas organizadas em 1 pasta"
+        ),
+        "Sorted {count} chats into {folders} folders": (
+            "{count} conversas organizadas em {folders} pastas"
+        ),
+        " — 1 unfiled chat left; select Group again": (
+            " — resta 1 conversa sem pasta; selecione Agrupar novamente"
+        ),
+        " — {count} unfiled chats left; select Group again": (
+            " — restam {count} conversas sem pasta; selecione Agrupar novamente"
+        ),
+        "1 unfiled chat — select Group again": (
+            "1 conversa sem pasta — selecione Agrupar novamente"
+        ),
+        "{count} unfiled chats — select Group again": (
+            "{count} conversas sem pasta — selecione Agrupar novamente"
+        ),
+        "All chats sorted": "Todas as conversas foram organizadas",
+        "Nothing to sort": "Nada para organizar",
+        "Auto-sort: {message}": "Organização automática: {message}",
+        "Models sorted: {label}": "Modelos ordenados: {label}",
+        "Please enter a name for the AI": "Digite um nome para a IA",
+        "AI renamed to {name}": "IA renomeada para {name}",
+        "Failed to rename AI: {message}": "Falha ao renomear a IA: {message}",
+        "Please enter a name for the session": "Digite um nome para a sessão",
+        "Session renamed to {name}": "Sessão renomeada para {name}",
+        "Session: {name}{model}{rag}{version}": (
+            "Sessão: {name}{model}{rag}{version}"
+        ),
+        "Failed to rename session": "Falha ao renomear a sessão",
+        "Failed to rename session: {message}": (
+            "Falha ao renomear a sessão: {message}"
+        ),
+        "Web search on": "Pesquisa na web ativada",
+        "Web search off": "Pesquisa na web desativada",
+        "Shell on": "Shell ativado",
+        "Shell off": "Shell desativado",
+        "Web Search": "Busca na web",
+        "Searches the web for relevant information to include in the response. "
+        "Results are fetched and summarized before the AI answers.": (
+            "Pesquisa informações relevantes na web para incluir na resposta. "
+            "Os resultados são coletados e resumidos antes de a IA responder."
+        ),
+        "Shell Access": "Acesso ao shell",
+        "Gives the AI access to a sandboxed shell for running commands, "
+        "installing packages, and executing scripts. Use with caution.": (
+            "Dá à IA acesso a um shell isolado para executar comandos, instalar "
+            "pacotes e rodar scripts. Use com cuidado."
+        ),
+        "Tool Builder": "Criador de ferramentas",
+        "Create custom mini-apps and tools the AI can use. Describe what you "
+        "need and the AI will build a tool you can reuse across conversations.": (
+            "Crie miniaplicativos e ferramentas personalizadas que a IA possa "
+            "usar. Descreva o que você precisa, e a IA criará uma ferramenta "
+            "reutilizável em outras conversas."
+        ),
+        "Multi-round web search with source analysis. Takes longer but produces "
+        "comprehensive, well-sourced answers. Your next message will trigger a "
+        "deep research cycle.": (
+            "Pesquisa na web em várias rodadas, com análise de fontes. Leva mais "
+            "tempo, mas produz respostas abrangentes e bem fundamentadas. Sua "
+            "próxima mensagem iniciará um ciclo de pesquisa profunda."
+        ),
+        "Group chat ready — 1 model": "Conversa em grupo pronta — 1 modelo",
+        "Group chat ready — {count} models": (
+            "Conversa em grupo pronta — {count} modelos"
+        ),
+        "Disable Nobody mode": "Desativar modo Ninguém",
+        "Enable Nobody mode — no memory and no history saved": (
+            "Ativar modo Ninguém — sem salvar memória nem histórico"
+        ),
+        "Nobody": "Ninguém",
+        "Who am I? I'm nobody.": "Quem sou eu? Não sou ninguém.",
+        "Temporary session — it won't be saved or activate memory.": (
+            "Sessão temporária — não será salva nem ativará a memória."
+        ),
+        "Rearrange enabled": "Reorganização ativada",
+        "Rearrange disabled": "Reorganização desativada",
+        "Window": "Janela",
+        "Restore {title}": "Restaurar {title}",
+        "Close": "Fechar",
+        "Minimize": "Minimizar",
+        "Session deleted": "Sessão excluída",
+        "Failed to delete session": "Falha ao excluir a sessão",
+        "Failed to delete session: {message}": (
+            "Falha ao excluir a sessão: {message}"
+        ),
+        "Message Odysseus...": "Mensagem para o Odysseus...",
+        "Record voice": "Gravar voz",
+        "Send to group": "Enviar ao grupo",
+        "Send message": "Enviar mensagem",
+        "New": "Nova",
+        "New chat": "Nova conversa",
+        "Stop recording": "Parar gravação",
+        "Added 1 file to chat": "1 arquivo adicionado à conversa",
+        "Added {count} files to chat": (
+            "{count} arquivos adicionados à conversa"
+        ),
+        "Added 1 file to attach": "1 arquivo adicionado aos anexos",
+        "Added {count} files to attach": (
+            "{count} arquivos adicionados aos anexos"
+        ),
+        "Drop files to attach": "Solte os arquivos para anexar",
+        "Add an AI endpoint from Settings in the sidebar, or paste an "
+        "endpoint/API key into the chat.": (
+            "Adicione um endpoint de IA em Configurações na barra lateral ou "
+            "cole um endpoint ou uma chave de API na conversa."
+        ),
+    }
+
+    assert {key: catalog.get(key) for key in expected} == expected
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_app_uses_i18n_formatters_without_translating_runtime_data() -> None:
+    source = APP_JS.read_text(encoding="utf-8")
+    required_call_sites = {
+        "message singular": "t('· {count} message', { count: n })",
+        "message plural": "t('· {count} messages', { count: n })",
+        "untitled fallback": "meta?.name || t('Untitled')",
+        "tool fallback": "|| t('tool')",
+        "raw server reason": "data.reason || t('Nothing to sort')",
+        "AI name placeholder": "t('AI renamed to {name}', { name: newName })",
+        "session name placeholder": (
+            "t('Session renamed to {name}', { name: newName })"
+        ),
+        "raw rename error": (
+            "t('Failed to rename session: {message}', { message: e.message })"
+        ),
+        "model count": (
+            "t('Group chat ready — {count} models', { count: picked.length })"
+        ),
+        "restore title": "t('Restore {title}', { title: modalTitle(modal) })",
+        "file count": (
+            "t('Added {count} files to chat', { count: files.length })"
+        ),
+        "responsive placeholder": "t('Message Odysseus...')",
+        "missing endpoint": (
+            "t('Add an AI endpoint from Settings in the sidebar, or paste an "
+            "endpoint/API key into the chat.')"
+        ),
+    }
+    missing = [
+        f"{context}: {snippet}"
+        for context, snippet in required_call_sites.items()
+        if snippet not in source
+    ]
+    assert not missing, "Call sites sem i18n contextual:\n" + "\n".join(missing)
+
+    obsolete_direct_formatters = (
+        "`· ${n} msg${n === 1 ? '' : 's'}`",
+        "`AI renamed to ${newName}`",
+        "`Session renamed to ${newName}`",
+        "`${label} ${active ? 'on' : 'off'}`",
+        "`Added ${files.length} file${files.length > 1 ? 's' : ''} to chat`",
+    )
+    assert not [item for item in obsolete_direct_formatters if item in source]
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_app_catalog_templates_render_in_portuguese_and_english() -> None:
+    assert _translated_app_examples("pt-BR") == {
+        "messages": "· 4 mensagens",
+        "tidy": "3 conversas organizadas em 2 pastas",
+        "rename": "IA renomeada para Atena",
+        "restore": "Restaurar Agenda",
+        "files": "3 arquivos adicionados à conversa",
+        "endpoint": (
+            "Adicione um endpoint de IA em Configurações na barra lateral ou "
+            "cole um endpoint ou uma chave de API na conversa."
+        ),
+    }
+    assert _translated_app_examples("en") == {
+        "messages": "· 4 messages",
+        "tidy": "Sorted 3 chats into 2 folders",
+        "rename": "AI renamed to Atena",
+        "restore": "Restore Agenda",
+        "files": "Added 3 files to chat",
+        "endpoint": (
+            "Add an AI endpoint from Settings in the sidebar, or paste an "
+            "endpoint/API key into the chat."
+        ),
+    }
