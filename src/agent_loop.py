@@ -654,7 +654,7 @@ _API_HOSTS = frozenset([
     "api.githubcopilot.com",
 ])
 _MCP_KEYWORDS = frozenset(["mcp", "browse", "browser", "website", "calendar", "event", "email",
-                           "gmail", "screenshot", "navigate", "click", "miniflux", "rss", "feed"])
+                           "gmail", "screenshot", "navigate", "click", "miniflux", "rss", "feed", "research"])
 _ADMIN_SCHEMA_NAMES = frozenset([
     "manage_session", "manage_skills", "manage_tasks",
     "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens",
