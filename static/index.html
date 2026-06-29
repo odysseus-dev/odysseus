@@ -104,11 +104,13 @@
        Mirrors the theme early-load pattern above. Default is pt-BR. -->
   <script nonce="{{CSP_NONCE}}">
   (function(){
+    var lang = 'pt-BR';
     try {
-      var lang = localStorage.getItem('odysseus-language') || 'pt-BR';
-      window.__ODY_LANG = lang;
-      document.documentElement.lang = (lang === 'pt-BR') ? 'pt-br' : lang;
-    } catch(e) { window.__ODY_LANG = 'pt-BR'; }
+      var storedLang = localStorage.getItem('odysseus-language');
+      if (storedLang === 'pt-BR' || storedLang === 'en') lang = storedLang;
+    } catch(e) {}
+    window.__ODY_LANG = lang;
+    document.documentElement.lang = (lang === 'pt-BR') ? 'pt-br' : 'en';
   })();
   </script>
   <!-- Per-route favicon. Bookmarking /calendar shows a calendar icon,

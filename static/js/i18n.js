@@ -17,15 +17,28 @@
 
 const DEFAULT_LANG = 'pt-BR';
 const LS_KEY = 'odysseus-language';
+const SUPPORTED_LANGS = new Set(['pt-BR', 'en']);
 
 // { 'pt-BR': { 'English': 'Português', ... }, ... }
 const dicts = Object.create(null);
 
+/** Return a supported language code, defaulting invalid values to pt-BR. */
+export function normalizeLang(value) {
+  return typeof value === 'string' && SUPPORTED_LANGS.has(value)
+    ? value
+    : DEFAULT_LANG;
+}
+
 function activeLang() {
-  if (typeof window !== 'undefined' && window.__ODY_LANG) return window.__ODY_LANG;
+  if (
+    typeof window !== 'undefined'
+    && Object.prototype.hasOwnProperty.call(window, '__ODY_LANG')
+  ) {
+    return normalizeLang(window.__ODY_LANG);
+  }
   try {
     const v = localStorage.getItem(LS_KEY);
-    if (v) return v;
+    if (v) return normalizeLang(v);
   } catch (_) {}
   return DEFAULT_LANG;
 }
@@ -73,7 +86,7 @@ export function getLang() {
  * DOM and every module's t() calls pick up the new language on next render.
  */
 export async function setLang(lang) {
-  if (!lang) return;
+  lang = normalizeLang(lang);
   try { localStorage.setItem(LS_KEY, lang); } catch (_) {}
   try { window.__ODY_LANG = lang; } catch (_) {}
   try {
@@ -151,7 +164,7 @@ export function translateDOM(root) {
     : [...root.querySelectorAll('*')];
   for (const el of els) {
     if (SKIP_TAGS.has(el.nodeName)) continue;
-    if (el.hasAttribute && el.hasAttribute('data-i18n-skip')) continue;
+    if (isSkipped(el)) continue;
     for (const attr of ATTRS) {
       const v = el.getAttribute && el.getAttribute(attr);
       if (!v) continue;
@@ -169,8 +182,8 @@ export function translateDOM(root) {
 // { t } from the correct relative path to this file — both work.
 try {
   window.t = t;
-  window.i18n = { t, registerMessages, getLang, setLang, translateDOM };
+  window.i18n = { t, registerMessages, getLang, setLang, translateDOM, normalizeLang };
   if (!window.__ODY_LANG) window.__ODY_LANG = activeLang();
 } catch (_) {}
 
-export default { t, registerMessages, getLang, setLang, translateDOM };
+export default { t, registerMessages, getLang, setLang, translateDOM, normalizeLang };

@@ -5,7 +5,7 @@
 // against the server-stored value, and persists changes via setLang() (which
 // writes localStorage + /api/prefs/language and reloads to re-render the UI).
 
-import { getLang, setLang } from './i18n.js';
+import { getLang, normalizeLang, setLang } from './i18n.js';
 
 export function initLanguagePref() {
   const sel = document.getElementById('set-language');
@@ -18,9 +18,14 @@ export function initLanguagePref() {
   fetch('/api/prefs/language', { credentials: 'same-origin' })
     .then((r) => (r.ok ? r.json() : null))
     .then((d) => {
-      if (d && d.value) {
-        sel.value = d.value;
-        try { localStorage.setItem('odysseus-language', d.value); } catch (_) {}
+      if (d && Object.prototype.hasOwnProperty.call(d, 'value')) {
+        const remoteLang = normalizeLang(d.value);
+        sel.value = remoteLang;
+        if (remoteLang !== getLang()) {
+          setLang(remoteLang);
+          return;
+        }
+        try { localStorage.setItem('odysseus-language', remoteLang); } catch (_) {}
       }
     })
     .catch(() => {});
