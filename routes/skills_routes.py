@@ -1409,7 +1409,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
 
         # Prefer the configured DEFAULT (→ Utility) model — not the current chat
         # session's model. Fall back to the caller's session model only if unset.
-        url, model, headers = resolve_endpoint("default", owner=user)
+        url, model, headers = resolve_endpoint("utility", owner=user)
         if not url or not model:
             url = url or ((body.get("endpoint_url") or "").strip() or None)
             model = model or ((body.get("model") or "").strip() or None)
