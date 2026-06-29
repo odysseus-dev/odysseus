@@ -14,7 +14,6 @@
 // the same restore values the snap-to-top exit path uses.
 
 import { t } from './i18n.js';
-import './i18n/shared-ui.pt-BR.js';
 
 // Wider snap zone than the top-snap fullscreen (6px) — the right edge
 // is harder to hit precisely since most users drag broadly toward the

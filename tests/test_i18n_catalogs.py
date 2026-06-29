@@ -415,6 +415,71 @@ def _translated_shared_workspace_examples(lang: str) -> dict[str, str]:
     return dict(json.loads(result.stdout))
 
 
+def _rendered_modal_snap_titles(lang: str) -> list[str]:
+    """Load the central catalog first, then import the real modalSnap module."""
+
+    script = textwrap.dedent(
+        f"""
+        globalThis.window = {{
+          __ODY_LANG: {json.dumps(lang)},
+          innerWidth: 1200,
+          innerHeight: 800,
+          addEventListener() {{}},
+          getComputedStyle() {{ return {{ zIndex: '250' }}; }},
+        }};
+        globalThis.localStorage = {{ getItem: () => null }};
+        const classList = {{
+          add() {{}}, remove() {{}}, contains() {{ return false; }},
+        }};
+        const appended = [];
+        const makeElement = () => ({{
+          style: {{}},
+          classList,
+          addEventListener() {{}},
+          setPointerCapture() {{}},
+          releasePointerCapture() {{}},
+          isConnected: true,
+        }});
+        globalThis.document = {{
+          readyState: 'complete',
+          body: {{
+            style: {{}},
+            classList,
+            appendChild(el) {{ appended.push(el); }},
+          }},
+          documentElement: {{
+            style: {{
+              getPropertyValue() {{ return ''; }},
+              setProperty() {{}},
+              removeProperty() {{}},
+            }},
+          }},
+          createElement() {{ return makeElement(); }},
+          addEventListener() {{}},
+          removeEventListener() {{}},
+          getElementById() {{ return null; }},
+          querySelector() {{ return null; }},
+          querySelectorAll() {{ return []; }},
+        }};
+        globalThis.MutationObserver = class {{ observe() {{}} disconnect() {{}} }};
+        globalThis.requestAnimationFrame = () => 0;
+        globalThis.getComputedStyle = () => ({{
+          zIndex: '250',
+          getPropertyValue() {{ return ''; }},
+        }});
+
+        await import({json.dumps(SHARED_UI_CATALOG.as_uri())});
+        await import({json.dumps(MODAL_SNAP_JS.as_uri())});
+        console.log(JSON.stringify(
+          [...new Set(appended.map((el) => el.title).filter(Boolean))],
+        ));
+        """
+    )
+    result = _run(["node", "--input-type=module"], input_text=script)
+    assert result.returncode == 0, result.stderr
+    return list(json.loads(result.stdout))
+
+
 @pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
 @pytest.mark.parametrize("catalog", CATALOGS, ids=lambda path: path.name)
 def test_catalog_is_valid_javascript(catalog: Path) -> None:
@@ -744,6 +809,19 @@ def test_app_catalog_templates_render_in_portuguese_and_english() -> None:
             "cole um endpoint ou uma chave de API na conversa."
         ),
     }
+    assert _translated_app_examples("en") == {
+        "messages": "· 4 messages",
+        "tidy": "Sorted 3 chats into 2 folders",
+        "rename": "AI renamed to Atena",
+        "restore": "Restore Agenda",
+        "files": "Added 3 files to chat",
+        "deletePrompt": 'Delete "Atena"?',
+        "deleteAction": "Delete",
+        "endpoint": (
+            "Add an AI endpoint from Settings in the sidebar, or paste an "
+            "endpoint/API key into the chat."
+        ),
+    }
 
 
 @pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
@@ -887,7 +965,6 @@ def test_shared_ui_modules_translate_only_defaults_and_builtin_copy() -> None:
             "uiModule.showError(t('Could not browse folders'))",
         ),
         "snap": (
-            "import './i18n/shared-ui.pt-BR.js'",
             "handle.title = t('Drag to resize docked window')",
             "stripe.title = t('Drag to resize email and draft')",
         ),
@@ -905,6 +982,19 @@ def test_shared_ui_modules_translate_only_defaults_and_builtin_copy() -> None:
     assert "btn.textContent = actionLabel" in ui_source
     assert "msgEl.textContent = message" in ui_source
     assert "input.placeholder = placeholder || ''" in ui_source
+
+    side_effect_catalog_import = re.compile(
+        r"""import\s+['"][^'"]*i18n/[^'"]+\.pt-BR\.js['"]"""
+    )
+    offenders = [
+        module
+        for module, source in sources.items()
+        if side_effect_catalog_import.search(source)
+    ]
+    assert not offenders, (
+        "Catálogos devem ser carregados centralmente, não pelos módulos: "
+        + ", ".join(offenders)
+    )
 
 
 @pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
@@ -939,16 +1029,15 @@ def test_shared_workspace_templates_render_in_portuguese_and_english() -> None:
         ),
         "workspaceSet": "Workspace set: Atena",
     }
-    assert _translated_app_examples("en") == {
-        "messages": "· 4 messages",
-        "tidy": "Sorted 3 chats into 2 folders",
-        "rename": "AI renamed to Atena",
-        "restore": "Restore Agenda",
-        "files": "Added 3 files to chat",
-        "deletePrompt": 'Delete "Atena"?',
-        "deleteAction": "Delete",
-        "endpoint": (
-            "Add an AI endpoint from Settings in the sidebar, or paste an "
-            "endpoint/API key into the chat."
-        ),
-    }
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_modal_snap_uses_catalog_loaded_by_central_harness() -> None:
+    assert _rendered_modal_snap_titles("pt-BR") == [
+        "Arraste para redimensionar a janela encaixada",
+        "Arraste para redimensionar o e-mail e o rascunho",
+    ]
+    assert _rendered_modal_snap_titles("en") == [
+        "Drag to resize docked window",
+        "Drag to resize email and draft",
+    ]
