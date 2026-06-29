@@ -288,11 +288,26 @@ class GlobTool:
             base = os.path.abspath(root)
             if not os.path.isdir(base):
                 return None, f"glob: {root}: not a directory"
+            rbase = os.path.realpath(base)
             norm_pat = pattern.replace("\\", "/")
             # Fast path: literal pattern (no wildcards) → direct path lookup.
             if not any(c in norm_pat for c in "*?["):
-                cand = os.path.normpath(os.path.join(base, norm_pat))
-                if os.path.exists(cand):
+                cand = os.path.realpath(os.path.join(base, norm_pat))
+                # Keep the literal lookup inside the search root. os.path.join
+                # lets an absolute pattern (or one containing ../) escape `base`,
+                # which would turn glob into an existence/path oracle for
+                # arbitrary host files — bypassing the workspace/allowlist
+                # confinement that _resolve_search_root applies to the root.
+                # An escaping literal falls through to the walk, which only ever
+                # yields paths under base.
+                nbase = os.path.normcase(rbase)
+                try:
+                    inside = cand == rbase or os.path.commonpath(
+                        [os.path.normcase(cand), nbase]
+                    ) == nbase
+                except ValueError:
+                    inside = False
+                if inside and os.path.exists(cand):
                     return [cand], None
                 # Literal not at exact path — fall through to walk so
                 # e.g. "foo.py" still matches at any depth (like rglob).

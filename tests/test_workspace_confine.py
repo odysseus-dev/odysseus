@@ -141,6 +141,33 @@ async def test_grep_and_ls_confined_e2e(ws, admin):
 
 
 @pytest.mark.asyncio
+async def test_glob_confined_e2e(ws, admin):
+    """glob's literal fast-path must stay inside the workspace. A pattern with
+    ../ or an absolute path outside the root would otherwise leak the existence
+    and full path of arbitrary host files (an oracle), even though read_file
+    blocks reading them."""
+    with open(os.path.join(ws, "found.py"), "w") as f:
+        f.write("x")
+    _, r = await execute_tool_block(_block("glob", json.dumps({"pattern": "found.py"})), owner="a", workspace=ws)
+    assert r["exit_code"] == 0 and "found.py" in r["output"]
+
+    # a secret outside the workspace must not be discoverable via glob
+    outside = tempfile.mkdtemp()
+    secret = os.path.join(outside, "secret.txt")
+    with open(secret, "w") as f:
+        f.write("nope")
+    # An escaping pattern must come back as "No files" (the not-found message),
+    # not as a match that returns the file's path. The not-found message echoes
+    # the pattern the model supplied, so the signal is the absence of a match,
+    # not the absence of the path string.
+    rel = os.path.relpath(secret, os.path.realpath(ws))
+    _, r = await execute_tool_block(_block("glob", json.dumps({"pattern": rel})), owner="a", workspace=ws)
+    assert r["exit_code"] == 0 and "No files" in r["output"] and secret not in r["output"]
+    _, r = await execute_tool_block(_block("glob", json.dumps({"pattern": secret})), owner="a", workspace=ws)
+    assert r["exit_code"] == 0 and "No files" in r["output"]
+
+
+@pytest.mark.asyncio
 async def test_subprocess_cwd_is_workspace_e2e(ws, admin):
     """python tool runs with cwd = workspace (OS-agnostic probe)."""
     _, r = await execute_tool_block(_block("python", "import os; print(os.getcwd())"), owner="a", workspace=ws)
