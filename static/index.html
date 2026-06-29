@@ -327,8 +327,8 @@
               <button id="memory-export-btn" class="theme-io-btn" title="Export all memories as JSON" style="height:26px;font-size:12px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Export</button>
               <input type="file" id="memory-import-file" accept=".txt,.md,.pdf,.csv,.log,.json,.py,.js,.html" hidden />
             </div>
-            <p class="memory-desc doclib-desc" style="margin:4px 0 6px;">
-              Import a <code>.txt</code>, <code>.md</code>, <code>.pdf</code>, <code>.csv</code>, <code>.log</code>, <code>.json</code>, <code>.py</code>, <code>.js</code>, or <code>.html</code> file &mdash; the AI reads it and suggests candidate memories you can approve.
+            <p class="memory-desc doclib-desc memory-import-description" style="margin:4px 0 6px;">
+              Import a file (<code>.txt</code>, <code>.md</code>, <code>.pdf</code>, <code>.csv</code>, <code>.log</code>, <code>.json</code>, <code>.py</code>, <code>.js</code>, or <code>.html</code>) &mdash; the AI reads the file and suggests candidate memories you can approve.
             </p>
             <div class="memory-add-row" style="margin-top:8px;">
               <div class="skill-ph-wrap" style="flex:1;min-width:0;">
@@ -553,7 +553,7 @@
         </div>
         <div class="theme-adv-group">
           <div class="theme-adv-group-label">Custom Fonts</div>
-          <div class="theme-fd-label" style="opacity:0.4;">Drop <code>.woff2</code>, <code>.ttf</code>, or <code>.otf</code> files into <code>static/fonts/custom/</code> and reload — they'll appear in the Font dropdown above.</div>
+          <div class="theme-fd-label theme-custom-font-description" style="opacity:0.4;">Drop font files (<code>.woff2</code>, <code>.ttf</code>, or <code>.otf</code>) into <code>static/fonts/custom/</code> and reload — they'll appear in the Font dropdown above.</div>
         </div>
         <button class="theme-adv-clear-btn" id="theme-adv-clear">Clear Advanced Overrides</button>
       </div>

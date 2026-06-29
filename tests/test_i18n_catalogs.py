@@ -26,7 +26,7 @@ TRANSLATABLE_ATTRIBUTES = frozenset(
     {"placeholder", "title", "aria-label", "aria-placeholder"}
 )
 OMITTED_SUBTREES = frozenset(
-    {"script", "style", "code", "pre", "textarea", "template"}
+    {"script", "style", "code", "pre", "textarea", "template", "noscript"}
 )
 VOID_ELEMENTS = frozenset(
     {
@@ -230,6 +230,42 @@ class _VisibleIndexStrings(HTMLParser):
             self._record(data, "texto")
 
 
+class _TranslatedTextByClass(HTMLParser):
+    """Compose rendered text for elements after applying catalog translations."""
+
+    def __init__(self, class_name: str, catalog: dict[str, str]) -> None:
+        super().__init__(convert_charrefs=True)
+        self.class_name = class_name
+        self.catalog = catalog
+        self._target_depth = 0
+        self._parts: list[str] = []
+        self.texts: list[str] = []
+
+    def handle_starttag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        classes = set(dict(attrs).get("class", "").split())
+        if self._target_depth:
+            self._target_depth += 1
+        elif self.class_name in classes:
+            self._target_depth = 1
+            self._parts = []
+
+    def handle_endtag(self, tag: str) -> None:
+        if not self._target_depth:
+            return
+        self._target_depth -= 1
+        if self._target_depth == 0:
+            self.texts.append(re.sub(r"\s+", " ", "".join(self._parts)).strip())
+
+    def handle_data(self, data: str) -> None:
+        if not self._target_depth:
+            return
+        key = data.strip()
+        translated = self.catalog.get(key)
+        self._parts.append(data.replace(key, translated) if key and translated else data)
+
+
 def _visible_index_strings() -> dict[str, list[str]]:
     parser = _VisibleIndexStrings()
     parser.feed(INDEX_HTML.read_text(encoding="utf-8"))
@@ -262,7 +298,7 @@ def _exclusion_category(value: str) -> str | None:
         return "endereço técnico de exemplo"
     if re.fullmatch(r"[a-z][a-z0-9]*(?:[_-][a-z0-9]+)+", value):
         return "identificador técnico"
-    if re.match(r"^(?:https?|wss?)://", value, flags=re.IGNORECASE):
+    if re.fullmatch(r"(?:https?|wss?)://\S+", value, flags=re.IGNORECASE):
         return "URL técnica"
     if value.startswith(("/api/", "./", "../")):
         return "caminho técnico"
@@ -285,6 +321,15 @@ def _messages_for(catalog_name: str) -> dict[str, str]:
     )
     assert registrations[0]["lang"] == "pt-BR"
     return dict(registrations[0]["messages"])
+
+
+def _translated_index_texts_for_class(class_name: str) -> list[str]:
+    parser = _TranslatedTextByClass(
+        class_name, _messages_for(INDEX_CATALOG.name)
+    )
+    parser.feed(INDEX_HTML.read_text(encoding="utf-8"))
+    parser.close()
+    return parser.texts
 
 
 @pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
@@ -323,6 +368,51 @@ def test_registered_translations_are_not_source_identity() -> None:
 def test_shared_most_used_label_is_context_neutral() -> None:
     catalog = _messages_for(INDEX_CATALOG.name)
     assert catalog["Most used"] == "Mais frequentes"
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_url_exclusion_requires_the_entire_visible_value_to_be_a_url() -> None:
+    catalog = _messages_for(INDEX_CATALOG.name)
+
+    assert _exclusion_category("https://example.com/path") == "URL técnica"
+    assert _exclusion_category("http://localhost:8080 (optional)") is None
+    assert (
+        catalog["http://localhost:8080 (optional)"]
+        == "http://localhost:8080 (opcional)"
+    )
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_memory_import_description_composes_natural_portuguese() -> None:
+    descriptions = _translated_index_texts_for_class("memory-import-description")
+
+    assert descriptions == [
+        "Importe um arquivo (.txt, .md, .pdf, .csv, .log, .json, .py, .js "
+        "ou .html) — a IA lê o arquivo e sugere memórias que você pode aprovar."
+    ]
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_custom_font_description_composes_natural_portuguese() -> None:
+    descriptions = _translated_index_texts_for_class(
+        "theme-custom-font-description"
+    )
+
+    assert descriptions == [
+        "Solte arquivos de fonte (.woff2, .ttf ou .otf) em "
+        "static/fonts/custom/ e recarregue — eles aparecerão na lista de fontes acima."
+    ]
+
+
+def test_visible_parser_omits_noscript_like_the_runtime() -> None:
+    parser = _VisibleIndexStrings()
+    parser.feed(
+        '<noscript title="Hidden title">Hidden fallback</noscript>'
+        '<div title="Visible title">Visible text</div>'
+    )
+    parser.close()
+
+    assert set(parser.found) == {"Visible title", "Visible text"}
 
 
 @pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
