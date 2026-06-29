@@ -70,6 +70,13 @@ TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
 # impersonated. (Keep this in sync with that synthetic-owner set.)
 RESERVED_USERNAMES = frozenset({INTERNAL_TOOL_USER, "api", "demo", "system"})
 
+# Intra-process mutex that serialises all auth.json mutations within the same
+# Python process.  fcntl.flock (used by _interprocess_auth_lock) only blocks
+# *other* processes — two threads in the same process calling flock(LOCK_EX)
+# on the same file both succeed immediately.  This lock closes that gap so the
+# critical section is serialised across both threads and workers.
+_auth_intraprocess_lock = threading.Lock()
+
 
 def normalize_known_username(users: Dict[str, Any], username: str | None) -> Optional[str]:
     """Return a normalized username only when it exists in the auth user map."""
@@ -267,19 +274,23 @@ class AuthManager:
 
     @contextmanager
     def _interprocess_auth_lock(self):
-        """Acquire an exclusive inter-process file lock on auth.json.
+        """Acquire an exclusive lock on auth.json — serialised across both
+        threads (intra-process) and workers/processes (inter-process).
 
-        Uses fcntl.flock so the kernel releases the lock automatically
-        when the process exits — a crash cannot leave a stale lock.
+        The module-level threading.Lock serialises threads within the same
+        Python process.  fcntl.flock serialises across different processes
+        (uvicorn workers).  The kernel releases flock automatically when
+        the process exits, so a crash cannot leave a stale lock.
         """
-        # Open in read-write mode; create the lock file if it doesn't exist.
-        fd = os.open(self._ipc_lock_path, os.O_CREAT | os.O_RDWR, 0o600)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            yield
-        finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            os.close(fd)
+        with _auth_intraprocess_lock:
+            # Open in read-write mode; create the lock file if it doesn't exist.
+            fd = os.open(self._ipc_lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                yield
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+                os.close(fd)
 
     def setup(self, username: str, password: str) -> bool:
         """First-run admin setup. Only works if no users exist."""
