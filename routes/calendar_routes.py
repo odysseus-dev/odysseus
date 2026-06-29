@@ -925,8 +925,11 @@ def setup_calendar_routes() -> APIRouter:
             # requests/urllib3 behavior used by the CalDAV sync path.
             _ssl_ctx.verify_flags &= ~_ssl.VERIFY_X509_STRICT
             _ca_bundle = _os.environ.get("SSL_CERT_FILE") or _os.environ.get("REQUESTS_CA_BUNDLE")
-            if _ca_bundle and _os.path.isfile(_ca_bundle):
-                _ssl_ctx.load_verify_locations(_ca_bundle)
+            if _ca_bundle:
+                if _os.path.isfile(_ca_bundle):
+                    _ssl_ctx.load_verify_locations(_ca_bundle)
+                else:
+                    logger.warning("CalDAV test: CA bundle %s not found, using system CAs", _ca_bundle)
             async with httpx.AsyncClient(timeout=8.0, follow_redirects=False, trust_env=False, verify=_ssl_ctx) as cx:
                 r = await cx.request(
                     "PROPFIND", url,
