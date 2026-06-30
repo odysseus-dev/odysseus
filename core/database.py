@@ -149,6 +149,11 @@ class Session(TimestampMixin, Base):
     total_output_tokens = Column(Integer, default=0)
     mode = Column(String, nullable=True)  # 'agent', 'chat', or 'research'
     crew_member_id = Column(String, nullable=True)  # links to crew_members.id
+    # Per-session persona binding. Stored as a self-contained SNAPSHOT (not a
+    # bare FK) so editing or deleting a library persona never silently mutates
+    # or breaks an existing chat — the persona "travels with" the session.
+    # Shape: {id, name, avatar, description, system_prompt, temperature, max_tokens}
+    persona = Column(JSON, nullable=True, default=None)
 
     # Relationship to chat messages
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
@@ -177,6 +182,7 @@ class Session(TimestampMixin, Base):
             'total_input_tokens': self.total_input_tokens or 0,
             'total_output_tokens': self.total_output_tokens or 0,
             'crew_member_id': self.crew_member_id,
+            'persona': self.persona or None,
         }
 
 class ChatMessage(Base):
@@ -767,6 +773,34 @@ def _migrate_add_document_archived_column():
             logging.getLogger(__name__).info("Migrated: added 'archived' to documents")
     except Exception as e:
         logging.getLogger(__name__).warning(f"documents.archived migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _migrate_add_persona_column():
+    """Add `persona` (JSON snapshot) to sessions. Guarded + idempotent.
+
+    Holds the per-session persona snapshot so every chat remembers and keeps
+    its persona. Stored as TEXT (JSON) for SQLite compatibility; SQLAlchemy's
+    JSON type serializes/deserializes transparently."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(sessions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "persona" not in columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN persona TEXT")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'persona' column to sessions")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"sessions.persona migration failed: {e}")
     finally:
         try:
             conn.close()
@@ -1805,6 +1839,7 @@ def init_db():
     _migrate_add_supports_tools_column()
     _migrate_add_task_run_model_column()
     _migrate_add_owner_column()
+    _migrate_add_persona_column()
     _migrate_add_document_archived_column()
     _migrate_add_last_message_at_column()
     _migrate_add_folder_column()

@@ -345,6 +345,40 @@ def extract_preset(chat_handler, preset_id) -> PresetInfo:
     )
 
 
+def preset_from_persona(persona) -> Optional[PresetInfo]:
+    """Convert a per-session persona snapshot into a PresetInfo, or None.
+
+    The persona is bound to the session (see Session.persona) and drives every
+    message in that chat — no per-message preset needed. Mirrors the
+    `character_name` → "Your name is X." convention used by
+    validate_and_extract_preset so persona and legacy presets behave the same."""
+    if not isinstance(persona, dict):
+        return None
+    name = (persona.get("name") or "").strip()
+    system_prompt = (persona.get("system_prompt") or "").strip() or None
+    if not name and not system_prompt:
+        return None
+    if name:
+        name_line = f"Your name is {name}."
+        system_prompt = f"{name_line} {system_prompt}" if system_prompt else name_line
+    try:
+        from src.constants import DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
+    except Exception:
+        DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS = 1.0, 0
+    temperature = persona.get("temperature")
+    if not isinstance(temperature, (int, float)):
+        temperature = DEFAULT_TEMPERATURE
+    max_tokens = persona.get("max_tokens")
+    if not isinstance(max_tokens, int) or max_tokens <= 0:
+        max_tokens = DEFAULT_MAX_TOKENS
+    return PresetInfo(
+        temperature=float(temperature),
+        max_tokens=max_tokens,
+        system_prompt=system_prompt,
+        character_name=name,
+    )
+
+
 async def preprocess(
     chat_handler, message, att_ids, sess,
     auto_opened_docs: Optional[list] = None,
@@ -644,8 +678,12 @@ async def build_chat_context(
     This is the shared logic between /chat and /chat_stream — preset extraction,
     message preprocessing, memory/RAG/web injection, compaction, normalization.
     """
-    # Preset
-    preset = extract_preset(chat_handler, preset_id)
+    # Preset / persona. A persona bound to the session (Session.persona) is
+    # authoritative — every message in that chat uses it, so the frontend no
+    # longer has to re-send a preset per message. The legacy preset_id path is
+    # kept as a fallback for sessions without a bound persona (back-compat).
+    persona_preset = preset_from_persona(getattr(sess, "persona", None))
+    preset = persona_preset or extract_preset(chat_handler, preset_id)
 
     # Preprocess message (CoT, YouTube, VL images, build content). The
     # auto_opened_docs collector captures any docs created server-side

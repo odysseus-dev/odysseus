@@ -74,6 +74,9 @@ class Session:
     owner: Optional[str] = None
     is_important: bool = False
     message_count: int = 0
+    # Per-session persona snapshot ({name, avatar, description, system_prompt,
+    # temperature, max_tokens, id}) or None. Drives every message in this chat.
+    persona: Optional[Dict[str, Any]] = None
 
     def __post_init__(self):
         if self.headers is None:

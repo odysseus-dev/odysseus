@@ -32,6 +32,24 @@ def _message_timestamp_iso(value: Optional[datetime]) -> Optional[str]:
     return value.isoformat().replace("+00:00", "Z")
 
 
+def _parse_persona(raw):
+    """Normalise a session's persona column into a dict (or None).
+
+    SQLAlchemy's JSON type usually hands back a dict already, but rows written
+    before the column existed — or via the raw ALTER migration — may surface as
+    a JSON string. Returns None when there's no usable persona."""
+    if not raw:
+        return None
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return None
+    if isinstance(raw, dict) and (raw.get("name") or raw.get("system_prompt")):
+        return raw
+    return None
+
+
 def _parse_msg_content(raw):
     """Parse message content from DB — deserialises JSON arrays back to lists
     (multimodal content with image/audio attachments)."""
@@ -131,6 +149,7 @@ class SessionManager:
             history=[],
             owner=getattr(db_session, "owner", None),
             is_important=getattr(db_session, "is_important", False) or False,
+            persona=_parse_persona(getattr(db_session, "persona", None)),
         )
         session.message_count = getattr(db_session, "message_count", 0) or 0
         return session
@@ -189,6 +208,7 @@ class SessionManager:
             history=history,
             owner=getattr(db_session, 'owner', None),
             is_important=getattr(db_session, 'is_important', False) or False,
+            persona=_parse_persona(getattr(db_session, 'persona', None)),
         )
 
         session.message_count = getattr(db_session, 'message_count', len(history))

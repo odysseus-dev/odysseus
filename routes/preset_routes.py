@@ -21,6 +21,9 @@ class UserTemplateRequest(BaseModel):
     system_prompt: str = Field("", max_length=10000)
     temperature: float = Field(1.0, ge=0.0, le=2.0)
     max_tokens: int = Field(0, ge=0, le=65536)
+    # LobeHub-style persona card fields. Optional so legacy clients still work.
+    avatar: str = Field("", max_length=16)
+    description: str = Field("", max_length=240)
 
 
 def setup_preset_routes(preset_manager) -> APIRouter:
@@ -108,6 +111,68 @@ def setup_preset_routes(preset_manager) -> APIRouter:
             return {"success": True, "prompt": result.strip()}
         except Exception as e:
             logger.error(f"Expand prompt failed: {e}")
+            return {"success": False, "message": str(e)}
+
+    @router.post("/api/presets/generate-persona")
+    async def generate_persona(request: Request) -> Dict[str, Any]:
+        """Generate a complete persona card from a short idea.
+
+        Given a one-line idea (and optional name), the model returns a JSON
+        persona: {name, avatar (single emoji), description (one line), and a
+        full system_prompt}. Powers the "✨ Generate" button in the gallery."""
+        from src.ai_interaction import _resolve_model
+        from src.llm_core import llm_call_async
+        import json as _json
+
+        data = await request.json()
+        idea = (data.get("idea") or data.get("prompt") or "").strip()
+        name = (data.get("name") or "").strip()
+        if not idea and not name:
+            return {"success": False, "message": "Describe the persona you want"}
+
+        user_input = ""
+        if name:
+            user_input += f"Desired name: {name}\n"
+        if idea:
+            user_input += f"Idea: {idea}\n"
+
+        messages = [
+            {"role": "system", "content": (
+                "You design personas for an AI chat assistant. Given a short idea, "
+                "invent a complete persona and return it as STRICT JSON with exactly "
+                "these keys: \"name\" (short, 1-3 words), \"avatar\" (a single emoji "
+                "that fits the persona), \"description\" (one vivid line, max 12 words), "
+                "and \"system_prompt\" (3-6 sentences capturing personality, voice, "
+                "expertise, and behavioral guidelines, written in the second person). "
+                "Output ONLY the JSON object — no markdown fences, no commentary."
+            )},
+            {"role": "user", "content": user_input},
+        ]
+
+        try:
+            model_spec = data.get("model") or ""
+            user = effective_user(request)
+            url, model, headers = await asyncio.to_thread(_resolve_model, model_spec, owner=user)
+            result = await llm_call_async(url, model, messages, temperature=0.9, max_tokens=700, headers=headers)
+            raw = (result or "").strip()
+            # Be forgiving: strip accidental code fences before parsing.
+            if raw.startswith("```"):
+                raw = raw.strip("`")
+                if raw.lower().startswith("json"):
+                    raw = raw[4:]
+            start, end = raw.find("{"), raw.rfind("}")
+            persona = _json.loads(raw[start:end + 1]) if start != -1 and end != -1 else {}
+            return {
+                "success": True,
+                "persona": {
+                    "name": str(persona.get("name", name or "Assistant"))[:80],
+                    "avatar": str(persona.get("avatar", "🤖"))[:16],
+                    "description": str(persona.get("description", ""))[:240],
+                    "system_prompt": str(persona.get("system_prompt", ""))[:10000],
+                },
+            }
+        except Exception as e:
+            logger.error(f"Generate persona failed: {e}")
             return {"success": False, "message": str(e)}
 
     # ── Group presets ──

@@ -22,6 +22,42 @@ def _sanitize_export_filename(name: str) -> str:
     return name[:128]
 
 
+def _sanitize_persona(raw) -> dict | None:
+    """Coerce an arbitrary persona payload into a clean snapshot, or None.
+
+    Returns None when there's effectively no persona (clearing). A valid
+    persona needs at least a name or a system prompt — otherwise it's noise.
+    Bounds string lengths so a session row can't be bloated by a huge body."""
+    if not isinstance(raw, dict):
+        return None
+    def _s(key, limit):
+        v = raw.get(key)
+        return v.strip()[:limit] if isinstance(v, str) and v.strip() else ""
+    name = _s("name", 80)
+    system_prompt = _s("system_prompt", 20000)
+    if not name and not system_prompt:
+        return None
+    try:
+        temperature = float(raw.get("temperature", 1.0))
+    except (TypeError, ValueError):
+        temperature = 1.0
+    temperature = max(0.0, min(2.0, temperature))
+    try:
+        max_tokens = int(raw.get("max_tokens", 0) or 0)
+    except (TypeError, ValueError):
+        max_tokens = 0
+    max_tokens = max(0, min(200000, max_tokens))
+    return {
+        "id": _s("id", 64),
+        "name": name,
+        "avatar": _s("avatar", 16),
+        "description": _s("description", 240),
+        "system_prompt": system_prompt,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+
+
 # Blind-compare helper sessions are created with this name prefix. Their real
 # model must never surface in the session list / sidebar — otherwise a blind
 # comparison can be de-anonymized before the user votes (issue #1285).
@@ -258,7 +294,8 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             last_msg_map = {}
             mode_map = {}
             msg_count_map = {}
-            q = db.query(DbSession.id, DbSession.folder, DbSession.total_input_tokens, DbSession.total_output_tokens, DbSession.is_important, DbSession.created_at, DbSession.updated_at, DbSession.last_message_at, DbSession.mode, DbSession.message_count).filter(DbSession.archived == False)
+            persona_map = {}
+            q = db.query(DbSession.id, DbSession.folder, DbSession.total_input_tokens, DbSession.total_output_tokens, DbSession.is_important, DbSession.created_at, DbSession.updated_at, DbSession.last_message_at, DbSession.mode, DbSession.message_count, DbSession.persona).filter(DbSession.archived == False)
             q = owner_filter(q, DbSession, user)
             rows = q.all()
             for row in rows:
@@ -276,6 +313,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 )
                 mode_map[row.id] = row.mode
                 msg_count_map[row.id] = row.message_count or 0
+                persona_map[row.id] = row.persona or None
             # Sessions with active documents that have content
             from sqlalchemy import func
             doc_session_ids = set(
@@ -308,7 +346,8 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                      "has_documents": s.id in doc_session_ids,
                      "has_images": s.id in img_session_ids,
                      "mode": mode_map.get(s.id),
-                     "message_count": msg_count_map.get(s.id, 0)}
+                     "message_count": msg_count_map.get(s.id, 0),
+                     "persona": persona_map.get(s.id)}
                     for s in user_sessions.values()
                     if not s.archived
                     and (s.name or "").strip() not in ("Nobody", "Incognito")
@@ -524,6 +563,40 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             result["model"] = model
             result["endpoint_url"] = endpoint_url
         return result
+
+    @router.post("/session/{sid}/persona")
+    async def set_session_persona(request: Request, sid: str):
+        """Bind (or clear) the persona for a chat session.
+
+        Body is the persona snapshot to attach, or {} / {"persona": null} to
+        clear it. We store a self-contained snapshot so the chat keeps its
+        persona even if the library entry is later edited or deleted."""
+        _verify_session_owner(request, sid)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        # Allow either a bare persona object or {"persona": {...}}
+        raw = body.get("persona", body) if isinstance(body, dict) else None
+        persona = _sanitize_persona(raw)
+        db = SessionLocal()
+        try:
+            db_session = db.query(DbSession).filter(DbSession.id == sid).first()
+            if not db_session:
+                raise HTTPException(404, f"Session {sid} not found")
+            db_session.persona = persona
+            db_session.updated_at = datetime.utcnow()
+            db.commit()
+        finally:
+            db.close()
+        # Mirror onto the in-memory session object so the active chat picks it
+        # up immediately without a reload.
+        try:
+            session = session_manager.get_session(sid)
+            setattr(session, "persona", persona)
+        except Exception:
+            pass
+        return {"id": sid, "persona": persona}
     
     @router.post("/session/{sid}/inject_messages")
     async def inject_messages(request: Request, sid: str):
