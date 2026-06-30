@@ -16,7 +16,11 @@ import spinnerModule from './spinner.js';
 import { openLibrary, closeLibrary, isLibraryOpen, initLibrary } from './documentLibrary.js';
 import signatureModule from './signature.js';
 import * as Modals from './modalManager.js';
-import { activateInteractivePreview, deactivateInteractivePreview } from './htmlPreview.js';
+import {
+  activateInteractivePreview,
+  deactivateInteractivePreview,
+  injectPreviewBridge,
+} from './htmlPreview.js';
 
   let API_BASE = '';
   let isOpen = false;
@@ -8746,7 +8750,7 @@ import { activateInteractivePreview, deactivateInteractivePreview } from './html
       const mdPreview = document.getElementById('doc-md-preview');
       if (mdPreview) mdPreview.style.display = 'none';
       const code = textarea.value || '';
-      iframe.srcdoc = code;
+      iframe.srcdoc = injectPreviewBridge(code);
       iframe.style.display = '';
       wrap.style.display = 'none';
       activateInteractivePreview(iframe, {

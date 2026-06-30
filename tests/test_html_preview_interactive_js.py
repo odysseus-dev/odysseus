@@ -32,13 +32,24 @@ def test_html_preview_module_exports_focus_helpers():
     assert "export function activateInteractivePreview" in text
     assert "export function deactivateInteractivePreview" in text
     assert "export function isInteractiveHtmlPreviewActive" in text
+    assert "export function injectPreviewBridge" in text
+    assert "odysseus-html-preview-bridge" in text
+    assert "postMessage" in text
     assert "doc-html-preview-active" in text
+    assert "doc-html-preview-capture" in text
     assert "data-no-swipe-dismiss" in text
 
 
-def test_toggle_html_preview_activates_interactive_preview():
+def test_inject_preview_bridge_inserts_before_body_close():
+    text = PREVIEW_JS.read_text(encoding="utf-8")
+    assert "function injectPreviewBridge" in text
+    assert "lastIndexOf('</body>')" in text
+
+
+def test_toggle_html_preview_injects_bridge():
     text = DOC_JS.read_text(encoding="utf-8")
     body = _function_body(text, "toggleHtmlPreview")
+    assert "injectPreviewBridge(code)" in body
     assert "activateInteractivePreview(iframe" in body
 
 
@@ -62,7 +73,10 @@ def test_ui_space_handler_skips_interactive_html_preview():
 
 def test_compare_pane_preview_wires_interactive_helpers():
     text = PANES_JS.read_text(encoding="utf-8")
-    assert "import { activateInteractivePreview, deactivateInteractivePreview } from '../htmlPreview.js';" in text
+    assert "injectPreviewBridge" in text
+    assert "activateInteractivePreview" in text
+    assert "deactivateInteractivePreview" in text
     body = _function_body(text, "togglePanePreview")
+    assert "injectPreviewBridge(iframe._htmlCode)" in body
     assert "activateInteractivePreview(iframe)" in body
     assert "deactivateInteractivePreview(iframe)" in body

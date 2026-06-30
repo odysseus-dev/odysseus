@@ -11,7 +11,11 @@ import Storage from '../storage.js';
 import uiModule from '../ui.js';
 import spinnerModule from '../spinner.js';
 import { bindMenuDismiss } from '../escMenuStack.js';
-import { activateInteractivePreview, deactivateInteractivePreview } from '../htmlPreview.js';
+import {
+  activateInteractivePreview,
+  deactivateInteractivePreview,
+  injectPreviewBridge,
+} from '../htmlPreview.js';
 
 var escapeHtml = uiModule.esc;
 
@@ -232,7 +236,7 @@ function togglePanePreview(paneIdx) {
     btn.classList.remove('active');
   } else {
     // Switch to preview — load on first click
-    if (iframe._htmlCode) iframe.srcdoc = iframe._htmlCode;
+    if (iframe._htmlCode) iframe.srcdoc = injectPreviewBridge(iframe._htmlCode);
     iframe.style.display = '';
     hist.style.display = 'none';
     activateInteractivePreview(iframe);

@@ -11604,6 +11604,32 @@ textarea.memory-add-input {
   background: #fff;
 }
 
+.doc-html-preview-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.doc-html-preview-capture {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  cursor: default;
+  background: transparent;
+  touch-action: manipulation;
+}
+
+body.doc-html-preview-active .doc-html-preview-wrap,
+body.doc-html-preview-active .doc-html-preview,
+body.doc-html-preview-active .compare-pane-iframe:not([style*="display: none"]) {
+  position: relative;
+  z-index: 2;
+  pointer-events: auto;
+}
+
 /* ---- Editor header ---- */
 .doc-editor-header {
   display: flex;
