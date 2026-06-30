@@ -989,7 +989,7 @@ async function _cmdSessionNew(args, ctx) {
     } catch (e) { /* ignore */ }
   }
   if (!endpointUrl || !model) {
-    slashReply('No model available — open the model picker and use the <code>+</code> button to add a model endpoint.');
+    slashReply(window.t('No model available — open the model picker and use the {plus} button to add a model endpoint.').replace('{plus}', '<code>+</code>'));
     return true;
   }
 
@@ -1007,7 +1007,7 @@ async function _cmdSessionNew(args, ctx) {
     _hideWelcomeScreen();
     const shortModel = (model || '').split('/').pop();
     await typewriterReply(`New session — ${shortModel || 'ready'}.`);
-  } else { const err = await res.json().catch(() => null); slashReply('Failed to create session' + (err?.detail ? ': ' + ctx.esc(err.detail) : '')); }
+  } else { const err = await res.json().catch(() => null); slashReply(window.t('Failed to create session') + (err?.detail ? ': ' + ctx.esc(err.detail) : '')); }
   return true;
 }
 
@@ -1021,7 +1021,7 @@ async function _cmdSessionDelete(args, ctx) {
     const sessions = sessionModule.getSessions().filter(s => !s.archived);
     const targets = force ? sessions : sessions.filter(s => !s.important);
     const skipped = sessions.length - targets.length;
-    if (!targets.length) { slashReply('Nothing to delete' + (skipped ? ` (${skipped} starred)` : '')); return true; }
+    if (!targets.length) { slashReply(window.t('Nothing to delete') + (skipped ? ` (${skipped} starred)` : '')); return true; }
     let deleted = 0, failed = 0;
     for (const s of targets) {
       const res = await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE', credentials: 'same-origin' });
@@ -1037,7 +1037,7 @@ async function _cmdSessionDelete(args, ctx) {
 
   // Single session delete
   const target = _resolveSession(cleanArg) || ctx.sid;
-  if (!target) { slashReply('No session to delete'); return true; }
+  if (!target) { slashReply(window.t('No session to delete')); return true; }
   const sessions = sessionModule.getSessions();
   const sess = sessions.find(s => s.id === target);
   const label = sess ? `"${ctx.esc(sess.name || target.slice(0,8))}"` : target.slice(0,8);
@@ -1046,50 +1046,50 @@ async function _cmdSessionDelete(args, ctx) {
     await typewriterReply(`Deleted ${label}`);
     await sessionModule.loadSessions();
   } else if (res.status === 403) {
-    slashReply('Cannot delete a starred session — unstar it first, or use <code>/s rm -rf</code>');
-  } else { const err = await res.json().catch(() => null); slashReply('Delete failed' + (err?.detail ? ': ' + ctx.esc(err.detail) : '')); }
+    slashReply(window.t('Cannot delete a starred session — unstar it first, or use {cmd}').replace('{cmd}', '<code>/s rm -rf</code>'));
+  } else { const err = await res.json().catch(() => null); slashReply(window.t('Delete failed') + (err?.detail ? ': ' + ctx.esc(err.detail) : '')); }
   return true;
 }
 
 async function _cmdSessionArchive(args, ctx) {
   const target = _resolveSession(args[0]) || ctx.sid;
-  if (!target) { slashReply('No session to archive'); return true; }
+  if (!target) { slashReply(window.t('No session to archive')); return true; }
   const sessions = sessionModule.getSessions();
   const sess = sessions.find(s => s.id === target);
   const label = sess ? `"${ctx.esc(sess.name || target.slice(0,8))}"` : target.slice(0,8);
   if (sess && sess.archived) { await typewriterReply(`${label} is already archived`); return true; }
   const res = await fetch(`${API_BASE}/api/session/${target}/archive`, { method: 'POST', credentials: 'same-origin' });
   if (res.ok) { await typewriterReply(`Archived ${label}`); await sessionModule.loadSessions(); }
-  else { slashReply('Archive failed'); }
+  else { slashReply(window.t('Archive failed')); }
   return true;
 }
 
 async function _cmdSessionRename(args, ctx) {
   const newName = args.join(' ');
-  if (!newName) { slashReply('Usage: /rename New Name'); return true; }
+  if (!newName) { slashReply(window.t('Usage: /rename New Name')); return true; }
   const fd = new FormData(); fd.append('name', newName);
   const res = await fetch(`${API_BASE}/api/session/${ctx.sid}`, { method: 'PATCH', body: fd, credentials: 'same-origin' });
   if (res.ok) { await typewriterReply(`Renamed to "${ctx.esc(newName)}"`); await sessionModule.loadSessions(); }
-  else { slashReply('Rename failed'); }
+  else { slashReply(window.t('Rename failed')); }
   return true;
 }
 
 async function _cmdSessionImportant(args, ctx) {
   const fd = new FormData(); fd.append('important', 'true');
   await fetch(`${API_BASE}/api/session/${ctx.sid}/important`, { method: 'POST', body: fd, credentials: 'same-origin' });
-  await typewriterReply('Session marked as important');
+  await typewriterReply(window.t('Session marked as important'));
   return true;
 }
 
 async function _cmdSessionUnimportant(args, ctx) {
   const fd = new FormData(); fd.append('important', 'false');
   await fetch(`${API_BASE}/api/session/${ctx.sid}/important`, { method: 'POST', body: fd, credentials: 'same-origin' });
-  await typewriterReply('Session unmarked');
+  await typewriterReply(window.t('Session unmarked'));
   return true;
 }
 
 async function _cmdSessionFork(args, ctx) {
-  if (!ctx.sid) { slashReply('No active session'); return true; }
+  if (!ctx.sid) { slashReply(window.t('No active session')); return true; }
   const keepCount = parseInt(args[0]) || 0;
   const res = await fetch(`${API_BASE}/api/session/${ctx.sid}/fork`, {
     method: 'POST', credentials: 'same-origin',
@@ -1101,28 +1101,28 @@ async function _cmdSessionFork(args, ctx) {
     await sessionModule.loadSessions();
     await sessionModule.selectSession(data.id);
     await typewriterReply(`Forked session (${data.kept || 0} messages)`);
-  } else { slashReply('Fork failed'); }
+  } else { slashReply(window.t('Fork failed')); }
   return true;
 }
 
 async function _cmdSessionTruncate(args, ctx) {
-  if (!ctx.sid) { slashReply('No active session'); return true; }
+  if (!ctx.sid) { slashReply(window.t('No active session')); return true; }
   const keep = parseInt(args[0]);
-  if (!keep || keep < 1) { slashReply('Usage: /truncate N — deletes older messages, keeps the last N'); return true; }
+  if (!keep || keep < 1) { slashReply(window.t('Usage: /truncate N — deletes older messages, keeps the last N')); return true; }
   const res = await fetch(`${API_BASE}/api/session/${ctx.sid}/truncate`, {
     method: 'POST', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keep_count: keep })
   });
   if (res.ok) { await typewriterReply(`Truncated to ${keep} messages`); }
-  else { slashReply('Truncate failed'); }
+  else { slashReply(window.t('Truncate failed')); }
   return true;
 }
 
 async function _cmdSessionList(args, ctx) {
   const sessions = sessionModule.getSessions();
   const active = sessions.filter(s => !s.archived);
-  if (!active.length) { slashReply('No active sessions'); return true; }
+  if (!active.length) { slashReply(window.t('No active sessions')); return true; }
   const lines = active.slice(0, 40).map(s => {
     const current = s.id === ctx.sid ? ' <b>(current)</b>' : '';
     return `${ctx.esc(s.name || 'Untitled')} <span style="opacity:0.5">${s.id.slice(0,8)}</span>${current}`;
@@ -1134,7 +1134,7 @@ async function _cmdSessionList(args, ctx) {
 
 async function _cmdSessionSwitch(args, ctx) {
   const query = args.join(' ').toLowerCase();
-  if (!query) { slashReply('Usage: /switch &lt;name or id&gt;'); return true; }
+  if (!query) { slashReply(window.t('Usage: /switch <name or id>')); return true; }
   const sessions = sessionModule.getSessions();
   const match = sessions.find(s => !s.archived && (
     s.id.startsWith(query) || (s.name || '').toLowerCase().includes(query)
@@ -1147,7 +1147,7 @@ async function _cmdSessionSwitch(args, ctx) {
 }
 
 async function _cmdSessionSort(args, ctx) {
-  slashReply('Auto-sorting sessions...');
+  slashReply(window.t('Auto-sorting sessions...'));
   const res = await fetch(`${API_BASE}/api/sessions/auto-sort`, { method: 'POST', credentials: 'same-origin' });
   if (res.ok) {
     const data = await res.json();
@@ -1159,15 +1159,15 @@ async function _cmdSessionSort(args, ctx) {
       const del_msg = data.deleted_empty ? ` (${data.deleted_empty} empty deleted)` : '';
       await typewriterReply(`Sorted ${data.updated || 0} sessions into ${data.folders?.length || 0} folders${del_msg}`);
     }
-  } else { slashReply('Auto-sort failed'); }
+  } else { slashReply(window.t('Auto-sort failed')); }
   return true;
 }
 
 async function _cmdSessionInfo(args, ctx) {
-  if (!ctx.sid) { slashReply('No active session'); return true; }
+  if (!ctx.sid) { slashReply(window.t('No active session')); return true; }
   const sessions = sessionModule.getSessions();
   const s = sessions.find(ss => ss.id === ctx.sid);
-  if (!s) { slashReply('Session not found'); return true; }
+  if (!s) { slashReply(window.t('Session not found')); return true; }
   slashReply(`<pre>Session: ${ctx.esc(s.name || 'Untitled')}
 ID:      ${s.id}
 Model:   ${ctx.esc(s.model || '?')}
@@ -1179,12 +1179,12 @@ Created: ${s.created_at || '?'}</pre>`);
 
 async function _cmdSessionClear(args, ctx) {
   document.getElementById('chat-history').innerHTML = '';
-  slashReply('Chat display cleared');
+  slashReply(window.t('Chat display cleared'));
   return true;
 }
 
 async function _cmdSessionExport(args, ctx) {
-  if (!ctx.sid) { slashReply('No active session'); return true; }
+  if (!ctx.sid) { slashReply(window.t('No active session')); return true; }
   // Parse linux-style: cat > file.json, cat > notes.txt, cat > chat.html
   let filename = '';
   let fmt = 'md';
