@@ -907,6 +907,14 @@ async def _execute_tool_block_impl(
             if _args_error is not None:
                 result = {"error": _args_error, "exit_code": 1}
             else:
+                # Mirror the qualified mcp__email__ path below: the email MCP
+                # server uses the hidden owner to scope visible accounts and to
+                # fail closed when multiple owners are configured. Without it a
+                # bare alias runs ownerless and can hit the default/global
+                # mailbox or be rejected on multi-owner installs.
+                if owner:
+                    args = dict(args)
+                    args[_EMAIL_MCP_OWNER_ARG] = owner
                 result = await mcp.call_tool(qualified, args)
         else:
             result = {"error": "MCP manager not available", "exit_code": 1}

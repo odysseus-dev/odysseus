@@ -918,7 +918,9 @@ async def test_plan_mode_blocks_mutating_email_aliases_without_mcp_inventory(mon
         disabled_tools=denied,
     )
     assert result["exit_code"] == 0
-    assert mcp.calls == [("mcp__email__search_emails", {"query": "x"})]
+    assert mcp.calls == [
+        ("mcp__email__search_emails", {"query": "x", "_odysseus_owner": "admin-user"}),
+    ]
 
 
 @pytest.mark.asyncio
@@ -937,7 +939,33 @@ async def test_bare_email_dispatch_empty_content_calls_with_empty_args(monkeypat
         owner="admin-user",
     )
     assert result["exit_code"] == 0
-    assert mcp.calls == [("mcp__email__list_email_accounts", {})]
+    # Empty-args call still carries the hidden owner (mirrors the qualified path).
+    assert mcp.calls == [
+        ("mcp__email__list_email_accounts", {"_odysseus_owner": "admin-user"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_bare_email_dispatch_includes_hidden_owner(monkeypatch):
+    """A bare email alias (e.g. ```list_emails {...}``` from a fenced model)
+    must reach the MCP server with the hidden _odysseus_owner, exactly like the
+    qualified mcp__email__ path. Without it the email server can't scope visible
+    accounts to the request owner and fails closed on multi-owner installs."""
+    _install_admin_auth_stub(monkeypatch)
+    import src.tool_execution as tool_execution
+    from src.tool_execution import execute_tool_block
+
+    mcp = _FakeMcpManager()
+    monkeypatch.setattr(tool_execution, "get_mcp_manager", lambda: mcp)
+
+    desc, result = await execute_tool_block(
+        SimpleNamespace(tool_type="list_emails", content='{"folder": "INBOX"}'),
+        owner="alice",
+    )
+    assert result["exit_code"] == 0
+    assert mcp.calls == [
+        ("mcp__email__list_emails", {"folder": "INBOX", "_odysseus_owner": "alice"}),
+    ]
 
 
 @pytest.mark.asyncio
