@@ -215,14 +215,14 @@ function _wireRecipientChips(root) {
         const copied = await _copyTextToClipboard(email);
         if (!copied) throw new Error('copy failed');
         copyBtn.classList.add('copied');
-        copyBtn.title = 'Copied';
-        showToast?.('Email copied');
+        copyBtn.title = window.t('Copied');
+        showToast?.(window.t('Email copied'));
         setTimeout(() => {
           copyBtn.classList.remove('copied');
-          copyBtn.title = 'Copy email';
+          copyBtn.title = window.t('Copy email');
         }, 900);
       } catch (_) {
-        showToast?.('Copy failed');
+        showToast?.(window.t('Copy failed'));
       }
       return;
     }
@@ -340,10 +340,10 @@ function _syncUnreadTabBadge(count) {
   document.querySelectorAll('.minimized-dock-chip[data-modal-id="email-lib-modal"]').forEach(chip => {
     if (count > 0) {
       chip.dataset.emailUnreadLabel = label;
-      chip.title = `Open ${label}`;
+      chip.title = window.t('Open {label}').replace('{label}', label);
     } else {
       delete chip.dataset.emailUnreadLabel;
-      chip.title = 'Restore Email';
+      chip.title = window.t('Restore Email');
     }
   });
 }
@@ -569,7 +569,7 @@ async function _deleteEmailAndAdvance(em, card, opts = {}) {
   if (!em || em.uid == null) return;
   if (opts.confirm !== false) {
     const subject = em.subject || '(no subject)';
-    const ok = await styledConfirm(`Delete "${subject}"?`, { confirmText: 'Delete', cancelText: 'Cancel', danger: true });
+    const ok = await styledConfirm(window.t('Delete "{subject}"?').replace('{subject}', subject), { confirmText: window.t('Delete'), cancelText: window.t('Cancel'), danger: true });
     if (!ok) return;
   }
   const wasExpanded = !!card?.classList?.contains('doclib-card-expanded');
@@ -581,7 +581,7 @@ async function _deleteEmailAndAdvance(em, card, opts = {}) {
     await fetch(`${API_BASE}/api/email/delete/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'DELETE' });
   } catch (err) {
     console.error('Failed to delete email:', err);
-    showToast('Failed to delete email');
+    showToast(window.t('Failed to delete email'));
     return;
   }
   await _animateEmailCardRemoval([em.uid]);
@@ -590,7 +590,7 @@ async function _deleteEmailAndAdvance(em, card, opts = {}) {
   _updateBulkBar();
   _renderGrid();
   _libCacheWriteBack();
-  showToast('Moved to Trash');
+  showToast(window.t('Moved to Trash'));
   if (!wasExpanded || !nextUid) return;
   const grid = document.getElementById('email-lib-grid');
   const nextCard = grid?.querySelector(`.doclib-card[data-uid="${CSS.escape(String(nextUid))}"]`);
@@ -718,7 +718,7 @@ function _resetEmailListForFreshLoad() {
   const grid = document.getElementById('email-lib-grid');
   if (grid) _renderEmailLoading(grid);
   const stats = document.getElementById('email-lib-stats');
-  if (stats) stats.textContent = 'Loading...';
+  if (stats) stats.textContent = window.t('Loading...');
 }
 
 function _loadEmailsFresh() {
@@ -1087,9 +1087,9 @@ export function openEmailLibrary(opts = {}) {
     _loadEmailsFresh();
   });
   document.getElementById('email-reminders-clear-btn')?.addEventListener('click', async () => {
-    const ok = await styledConfirm('Permanently delete all Odysseus reminder emails?', {
-      confirmText: 'Delete',
-      cancelText: 'Cancel',
+    const ok = await styledConfirm(window.t('Permanently delete all Odysseus reminder emails?'), {
+      confirmText: window.t('Delete'),
+      cancelText: window.t('Cancel'),
       danger: true,
     });
     if (!ok) return;
@@ -1099,7 +1099,7 @@ export function openEmailLibrary(opts = {}) {
         credentials: 'same-origin',
       });
       const data = await res.json().catch(() => ({}));
-      showToast(`Deleted ${data.deleted || 0} reminder email${(data.deleted || 0) === 1 ? '' : 's'}`);
+      showToast(window.t('Deleted {n} reminder email{s}').replace('{n}', data.deleted || 0).replace('{s}', (data.deleted || 0) === 1 ? '' : 's'));
       if ((data.deleted || 0) > 0) {
         const visibleUids = Array.from(document.querySelectorAll('#email-lib-grid .doclib-card[data-uid]'))
           .map(card => card.dataset.uid)
@@ -1114,7 +1114,7 @@ export function openEmailLibrary(opts = {}) {
       _loadEmailsFresh();
     } catch (err) {
       console.error(err);
-      showToast('Failed to clear reminder emails');
+      showToast(window.t('Failed to clear reminder emails'));
     }
   });
   document.getElementById('email-undone-btn')?.addEventListener('click', () => {
@@ -1293,8 +1293,8 @@ export function openEmailLibrary(opts = {}) {
   const _setSelectBtnState = (on) => {
     const btn = document.getElementById('email-lib-select-btn');
     if (!btn) return;
-    if (on) { btn.classList.add('active'); btn.innerHTML = _SELECT_BTN_X_SVG + 'Cancel'; }
-    else { btn.classList.remove('active'); btn.innerHTML = _SELECT_BTN_DOT_SVG + 'Select'; }
+    if (on) { btn.classList.add('active'); btn.innerHTML = _SELECT_BTN_X_SVG + window.t('Cancel'); }
+    else { btn.classList.remove('active'); btn.innerHTML = _SELECT_BTN_DOT_SVG + window.t('Select'); }
   };
   document.getElementById('email-lib-select-btn').addEventListener('click', () => {
     state._selectMode = !state._selectMode;
@@ -1328,7 +1328,7 @@ export function openEmailLibrary(opts = {}) {
   document.getElementById('email-lib-bulk-actions').addEventListener('click', (e) => {
     e.stopPropagation();
     if (state._selectedUids.size === 0) {
-      showToast('Select emails first');
+      showToast(window.t('Select emails first'));
       return;
     }
     _showBulkActionsMenu(e.currentTarget);
@@ -1336,7 +1336,7 @@ export function openEmailLibrary(opts = {}) {
   document.getElementById('email-lib-bulk-delete')?.addEventListener('click', (e) => {
     e.stopPropagation();
     if (state._selectedUids.size === 0) {
-      showToast('Select emails first');
+      showToast(window.t('Select emails first'));
       return;
     }
     _bulkAction('delete');
@@ -2365,7 +2365,7 @@ async function _doSearch() {
   // the server search is still grinding.
   const stats = document.getElementById('email-lib-stats');
   const originalStatsText = stats?.textContent || '';
-  if (stats) stats.textContent = 'Searching…';
+  if (stats) stats.textContent = window.t('Searching...');
   _libSearchInFlight = true;
   // Force a re-render so the "Searching…" empty-state shows (and any
   // existing "No emails" gets replaced) while the fetch is in flight.
@@ -2415,10 +2415,10 @@ async function _doSearch() {
     _renderGrid();
 
     const count = data.total || results.length;
-    if (stats) stats.textContent = `${count} match${count === 1 ? '' : 'es'} on server`;
+    if (stats) stats.textContent = window.t('{count} match{s} on server').replace('{count}', count).replace('{s}', count === 1 ? '' : 'es');
     try { console.log('[email-search]', JSON.stringify({ q, folder: folderAtStart, count, returned: results.length })); } catch {}
   } catch (e) {
-    if (stats) stats.textContent = originalStatsText || 'Search failed';
+    if (stats) stats.textContent = originalStatsText || window.t('Search failed');
     try { console.error('[email-search] fetch failed:', e); } catch {}
   } finally {
     _libSearchInFlight = false;
@@ -2537,7 +2537,7 @@ function _renderEmailLoading(grid) {
   } catch (_) {}
   const label = document.createElement('div');
   label.className = 'email-loading-label';
-  label.textContent = 'Loading emails';
+  label.textContent = window.t('Loading emails');
   wrap.appendChild(label);
   grid.appendChild(wrap);
   return sp;
@@ -2565,17 +2565,17 @@ async function _refreshUnreadBadge() {
         const allRes = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(folder)}${_acct()}&limit=1&filter=all`);
         const allData = await allRes.json();
         const t = allData.total || 0;
-        badge.textContent = `${t} all`;
-        badge.title = 'Show all emails';
+        badge.textContent = window.t('{t} all').replace('{t}', t);
+        badge.title = window.t('Show all emails');
         badge.style.display = '';
       } catch (_) {
-        badge.textContent = 'Show all';
-        badge.title = 'Show all emails';
+        badge.textContent = window.t('Show all');
+        badge.title = window.t('Show all emails');
         badge.style.display = '';
       }
     } else if (n > 0) {
-      badge.textContent = n > 999 ? '999+ unread' : `${n} unread`;
-      badge.title = 'Show unread emails';
+      badge.textContent = n > 999 ? window.t('999+ unread') : window.t('{n} unread').replace('{n}', n);
+      badge.title = window.t('Show unread emails');
       badge.style.display = '';
     } else {
       badge.style.display = 'none';
@@ -2625,7 +2625,7 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
     if (grid2) grid2.classList.remove('email-lib-just-opened');
     _renderGrid();
     const stats = document.getElementById('email-lib-stats');
-    if (stats) stats.textContent = `${state._libTotal} emails`;
+    if (stats) stats.textContent = window.t('{n} emails').replace('{n}', state._libTotal);
   } else {
     sp = _renderEmailLoading(grid);
   }
@@ -2661,7 +2661,7 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
         _renderGrid();
       }
       const stats = document.getElementById('email-lib-stats');
-      if (stats) stats.textContent = `${state._libTotal} emails`;
+      if (stats) stats.textContent = window.t('{n} emails').replace('{n}', state._libTotal);
       _refreshUnreadBadge();
       if (cacheable) _libCachePut(ck, { emails: state._libEmails.slice(), total: state._libTotal });
     }
@@ -2671,7 +2671,7 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
     // If we already painted the cached list, leave it on screen — beats
     // wiping it for "Failed to load" when there's still readable content.
     if (!cached) {
-      const msg = e && e.message ? `Failed to load: ${e.message}` : 'Failed to load';
+      const msg = e && e.message ? window.t('Failed to load: {msg}').replace('{msg}', e.message) : window.t('Failed to load');
       grid.innerHTML = `<div class="email-loading">${_esc(msg)}${_emailSetupHintHtml()}</div>`;
       _wireEmailSetupHint(grid);
     }
@@ -2687,10 +2687,10 @@ async function _loadScheduled(grid, sp) {
   const items = data.scheduled || [];
   grid.innerHTML = '';
   const stats = document.getElementById('email-lib-stats');
-  if (stats) stats.textContent = `${items.length} scheduled`;
+  if (stats) stats.textContent = window.t('{n} scheduled').replace('{n}', items.length);
 
   if (items.length === 0) {
-    grid.innerHTML = '<div class="email-loading">No scheduled emails</div>';
+    grid.innerHTML = '<div class="email-loading">' + window.t('No scheduled emails') + '</div>';
     return;
   }
 
@@ -2705,16 +2705,16 @@ async function _loadScheduled(grid, sp) {
 
     const content = document.createElement('div');
     content.style.cssText = 'flex:1;min-width:0;';
-    const subject = it.subject || '(no subject)';
-    const toDisplay = it.to || '(no recipient)';
+    const subject = it.subject || window.t('(no subject)');
+    const toDisplay = it.to || window.t('(no recipient)');
 
     content.innerHTML = `
       <div style="display:flex;align-items:center;gap:6px;">
         <span class="memory-item-title">${_esc(subject)}</span>
-        ${it.status === 'failed' ? '<span style="font-size:9px;color:var(--red);border:1px solid var(--red);padding:1px 4px;border-radius:4px;">FAILED</span>' : '<span style="font-size:9px;opacity:0.6;border:1px solid var(--border);padding:1px 4px;border-radius:4px;">PENDING</span>'}
+        ${it.status === 'failed' ? '<span style="font-size:9px;color:var(--red);border:1px solid var(--red);padding:1px 4px;border-radius:4px;">' + window.t('FAILED') + '</span>' : '<span style="font-size:9px;opacity:0.6;border:1px solid var(--border);padding:1px 4px;border-radius:4px;">' + window.t('PENDING') + '</span>'}
       </div>
       <div style="font-size:10px;opacity:0.7;margin-top:2px;">
-        To: ${_esc(toDisplay)} · Sends ${_esc(dateStr)}
+        ${window.t('To:')} ${_esc(toDisplay)} &middot; ${window.t('Sends')} ${_esc(dateStr)}
       </div>
       ${it.error ? `<div style="font-size:10px;color:var(--red);margin-top:2px;">${_esc(it.error)}</div>` : ''}
     `;
@@ -2723,12 +2723,12 @@ async function _loadScheduled(grid, sp) {
     // Cancel button
     const cancelBtn = document.createElement('button');
     cancelBtn.className = 'memory-item-btn';
-    cancelBtn.title = 'Cancel scheduled send';
+    cancelBtn.title = window.t('Cancel scheduled send');
     cancelBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
     cancelBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const { styledConfirm } = await import('./ui.js');
-      const ok = await styledConfirm(`Cancel scheduled email "${subject}"?`, { confirmText: 'Cancel Send', cancelText: 'Keep', danger: true });
+      const ok = await styledConfirm(window.t('Cancel scheduled email "{subject}"?').replace('{subject}', subject), { confirmText: window.t('Cancel Send'), cancelText: window.t('Keep'), danger: true });
       if (!ok) return;
       try {
         await fetch(`${API_BASE}/api/email/scheduled/${it.id}`, { method: 'DELETE' });
@@ -2785,10 +2785,10 @@ function _renderGrid() {
         w.element.style.cssText = 'margin:0;display:block;';
         wrap.appendChild(w.element);
         const lbl = document.createElement('span');
-        lbl.textContent = 'Searching…';
+        lbl.textContent = window.t('Searching...');
         wrap.appendChild(lbl);
       }).catch(() => {
-        wrap.textContent = 'Searching…';
+        wrap.textContent = window.t('Searching...');
       });
       return;
     }
