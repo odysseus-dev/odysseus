@@ -89,8 +89,8 @@ function _showNotesFirstOpenHint(pane) {
   hint.id = 'notes-first-open-hint';
   hint.className = 'tour-hint';
   hint.innerHTML = `
-    <div class="tour-hint-text"><b>Notes</b> is your basic todo list, and also where reminders are managed.</div>
-    <button type="button" class="tour-hint-dismiss">OK</button>
+    <div class="tour-hint-text"><b>${window.t('Notes')}</b> ${window.t('is your basic todo list, and also where reminders are managed.')}</div>
+    <button type="button" class="tour-hint-dismiss">${window.t('OK')}</button>
   `;
   document.body.appendChild(hint);
 
@@ -574,10 +574,10 @@ function _formatDueDate(dateStr) {
   const due = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   const diffDays = Math.round((due - today) / 86400000);
   const timeStr = hasTime ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
-  if (hasTime && d < now) return 'overdue';
-  if (!hasTime && diffDays < 0) return 'overdue';
-  if (diffDays === 0) return hasTime ? timeStr : 'today';
-  if (diffDays === 1) return hasTime ? `tmrw ${timeStr}` : 'tomorrow';
+  if (hasTime && d < now) return window.t('overdue');
+  if (!hasTime && diffDays < 0) return window.t('overdue');
+  if (diffDays === 0) return hasTime ? timeStr : window.t('today');
+  if (diffDays === 1) return hasTime ? `${window.t('tmrw')} ${timeStr}` : window.t('tomorrow');
   const dateLabel = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
   return hasTime ? `${dateLabel} ${timeStr}` : dateLabel;
 }
@@ -665,8 +665,8 @@ function _formatReminderTag(dateStr) {
   const tomorrow = new Date(now); tomorrow.setDate(tomorrow.getDate() + 1);
   const isTomorrow = d.toDateString() === tomorrow.toDateString();
   const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  if (sameDay) return `Today, ${time}`;
-  if (isTomorrow) return `Tomorrow, ${time}`;
+  if (sameDay) return `${window.t('Today')}, ${time}`;
+  if (isTomorrow) return `${window.t('Tomorrow')}, ${time}`;
   const dateLabel = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
   return `${dateLabel}, ${time}`;
 }
@@ -760,24 +760,24 @@ function _snapToRepeat(currentDate, normRepeat) {
 function _formatRepeatLabel(repeat, originalDate) {
   if (!repeat || repeat === 'none') return '';
   const norm = _normalizeRepeat(repeat, originalDate);
-  if (norm === 'daily') return 'Daily';
-  if (norm === 'yearly') return 'Yearly';
+  if (norm === 'daily') return window.t('Daily');
+  if (norm === 'yearly') return window.t('Yearly');
   const parts = norm.split(':');
   if (parts[0] === 'weekly') {
     const wd = parseInt(parts[1], 10);
-    if (isNaN(wd)) return 'Weekly';
-    return `Weekly on ${_DAYS[wd]}s`;
+    if (isNaN(wd)) return window.t('Weekly');
+    return window.t('Weekly on {day}s', { day: _DAYS[wd] });
   }
   if (parts[0] === 'monthly') {
-    if (parts[1] === 'day') return `Monthly on day ${parts[2]}`;
+    if (parts[1] === 'day') return window.t('Monthly on day {n}', { n: parts[2] });
     if (parts[1] === 'nth') {
       const n = parseInt(parts[2], 10);
       const wd = parseInt(parts[3], 10);
-      return `Monthly on ${_ORDINALS[n - 1] || `${n}th`} ${_DAYS[wd]}`;
+      return window.t('Monthly on {ord} {day}', { ord: _ORDINALS[n - 1] || `${n}th`, day: _DAYS[wd] });
     }
     if (parts[1] === 'last') {
       const wd = parseInt(parts[2], 10);
-      return `Monthly on last ${_DAYS[wd]}`;
+      return window.t('Monthly on last {day}', { day: _DAYS[wd] });
     }
   }
   return norm;
@@ -939,7 +939,7 @@ function _checkReminders() {
 }
 
 function _fireReminder(note) {
-  const title = note.title || 'Note reminder';
+  const title = note.title || window.t('Note reminder');
   // Include the verbatim note content so the email/notification actually
   // shows what to do, not just a count. Cap the per-item lines (8 max) and
   // total length so the body stays inbox-friendly.
@@ -1155,31 +1155,31 @@ export function openPanel() {
   pane.innerHTML = `
     <div class="notes-mobile-grabber" id="notes-mobile-grabber" aria-hidden="true"></div>
     <div class="notes-pane-header">
-      <h4 class="notes-pane-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2.5px;margin-right:6px"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/><path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/></svg>Notes</h4>
+      <h4 class="notes-pane-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2.5px;margin-right:6px"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/><path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/></svg>${window.t('Notes')}</h4>
       <span style="flex:1"></span>
-      <button id="notes-archive-toggle" class="doc-action-icon-btn notes-header-text-btn" title="View archive" style="opacity:0.8;gap:5px;">
+      <button id="notes-archive-toggle" class="doc-action-icon-btn notes-header-text-btn" title="${window.t('View archive')}" style="opacity:0.8;gap:5px;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 002 2h12a2 2 0 002-2V8"/><path d="M10 12h4"/></svg>
-        <span class="notes-header-btn-label">Archive</span>
+        <span class="notes-header-btn-label">${window.t('Archive')}</span>
       </button>
-      <button id="notes-view-toggle" class="doc-action-icon-btn notes-header-text-btn" title="Toggle view" style="opacity:0.8;gap:5px;">
+      <button id="notes-view-toggle" class="doc-action-icon-btn notes-header-text-btn" title="${window.t('Toggle view')}" style="opacity:0.8;gap:5px;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-        <span class="notes-header-btn-label">Toggle</span>
+        <span class="notes-header-btn-label">${window.t('Toggle')}</span>
       </button>
-      <button id="notes-minimize-btn" class="modal-minimize-btn" title="Minimize" aria-label="Minimize notes" style="position:relative;left:2px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="18" x2="18" y2="18"/></svg></button>
+      <button id="notes-minimize-btn" class="modal-minimize-btn" title="${window.t('Minimize')}" aria-label="${window.t('Minimize notes')}" style="position:relative;left:2px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="18" x2="18" y2="18"/></svg></button>
     </div>
     <div class="notes-search-bar">
-      <input type="text" id="notes-search" class="memory-search-input" placeholder="Search notes…" autocomplete="off" />
-      <button id="notes-select-btn" class="notes-select-trigger" type="button">Select</button>
+      <input type="text" id="notes-search" class="memory-search-input" placeholder="${window.t('Search notes...')}" autocomplete="off" />
+      <button id="notes-select-btn" class="notes-select-trigger" type="button">${window.t('Select')}</button>
     </div>
     <div id="notes-bulk-bar" class="memory-bulk-bar hidden">
-      <label class="memory-bulk-check-all"><input type="checkbox" id="notes-select-all" /> All</label>
-      <span id="notes-selected-count">0 Selected</span>
+      <label class="memory-bulk-check-all"><input type="checkbox" id="notes-select-all" /> ${window.t('All')}</label>
+      <span id="notes-selected-count">0 ${window.t('Selected')}</span>
       <span style="flex:1"></span>
       <button id="notes-bulk-archive" class="memory-toolbar-btn" disabled>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 002 2h12a2 2 0 002-2V8"/><path d="M10 12h4"/></svg>Archive
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 002 2h12a2 2 0 002-2V8"/><path d="M10 12h4"/></svg>${window.t('Archive')}
       </button>
       <button id="notes-bulk-delete" class="memory-toolbar-btn danger" disabled>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>Delete
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>${window.t('Delete')}
       </button>
     </div>
     <div class="notes-pane-body"></div>
@@ -1244,11 +1244,11 @@ export function openPanel() {
   // View toggle
   const archiveBtn = document.getElementById('notes-archive-toggle');
   if (archiveBtn) {
-    const ARCHIVE_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 002 2h12a2 2 0 002-2V8"/><path d="M10 12h4"/></svg><span class="notes-header-btn-label">Archive</span>';
-    const CLOSE_ICON   = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg><span class="notes-header-btn-label">Archive</span>';
+    const ARCHIVE_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 002 2h12a2 2 0 002-2V8"/><path d="M10 12h4"/></svg><span class="notes-header-btn-label">' + window.t('Archive') + '</span>';
+    const CLOSE_ICON   = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg><span class="notes-header-btn-label">' + window.t('Archive') + '</span>';
     const syncArchiveBtn = () => {
       archiveBtn.classList.toggle('active', _showingArchived);
-      archiveBtn.title = _showingArchived ? 'Exit archive' : 'View archive';
+      archiveBtn.title = _showingArchived ? window.t('Exit archive') : window.t('View archive');
       archiveBtn.style.opacity = _showingArchived ? '1' : '0.8';
       // Swap to an X while in archive view so it doubles as a close-back-
       // to-active-notes toggle.
@@ -1284,7 +1284,7 @@ export function openPanel() {
     // Label shows what you'll switch TO — "Grid" while in list, "List" while in grid.
     const _setViewLabel = () => {
       const lbl = viewBtn.querySelector('.notes-header-btn-label');
-      if (lbl) lbl.textContent = _viewMode === 'grid' ? 'List' : 'Grid';
+      if (lbl) lbl.textContent = _viewMode === 'grid' ? window.t('List') : window.t('Grid');
     };
     _setViewLabel();
     requestAnimationFrame(() => _applyMasonry(document.querySelector('#notes-pane .notes-pane-body')));
@@ -1328,20 +1328,20 @@ export function openPanel() {
     _exitSelectMode();
     await _fetchNotes();
     _renderNotes();
-    uiModule.showToast(`Archived ${ids.length}`);
+    uiModule.showToast(window.t('Archived {n}', { n: ids.length }));
   });
   document.getElementById('notes-bulk-delete').addEventListener('click', async () => {
     const ids = [..._selectedIds];
     if (!ids.length) return;
     if (uiModule && uiModule.styledConfirm) {
-      const ok = await uiModule.styledConfirm(`Delete ${ids.length} note${ids.length === 1 ? '' : 's'}?`, { confirmText: 'Delete', danger: true });
+      const ok = await uiModule.styledConfirm(window.t('Delete {n} note{s}?', { n: ids.length, s: ids.length === 1 ? '' : 's' }), { confirmText: window.t('Delete'), danger: true });
       if (!ok) return;
     }
     await Promise.all(ids.map(id => _deleteNoteApi(id).catch(() => {})));
     _exitSelectMode();
     await _fetchNotes();
     _renderNotes();
-    uiModule.showToast(`Deleted ${ids.length}`);
+    uiModule.showToast(window.t('Deleted {n}', { n: ids.length }));
   });
   // Escape: exit select mode first (if active), otherwise close the panel.
   // Skip when the user is editing a form field — those have their own
@@ -1431,7 +1431,7 @@ function _enterSelectMode() {
   const bar = document.getElementById('notes-bulk-bar');
   const btn = document.getElementById('notes-select-btn');
   if (bar) bar.classList.remove('hidden');
-  if (btn) { btn.classList.add('active'); btn.textContent = 'Cancel'; }
+  if (btn) { btn.classList.add('active'); btn.textContent = window.t('Cancel'); }
   _renderNotes();
   _updateBulkBar();
 }
@@ -1443,7 +1443,7 @@ function _exitSelectMode() {
   const btn = document.getElementById('notes-select-btn');
   const all = document.getElementById('notes-select-all');
   if (bar) bar.classList.add('hidden');
-  if (btn) { btn.classList.remove('active'); btn.textContent = 'Select'; }
+  if (btn) { btn.classList.remove('active'); btn.textContent = window.t('Select'); }
   if (all) all.checked = false;
   _renderNotes();
 }
@@ -1454,7 +1454,7 @@ function _updateBulkBar() {
   const archiveBtn = document.getElementById('notes-bulk-archive');
   const deleteBtn = document.getElementById('notes-bulk-delete');
   const allEl = document.getElementById('notes-select-all');
-  if (countEl) countEl.textContent = `${count} Selected`;
+  if (countEl) countEl.textContent = `${count} ${window.t('Selected')}`;
   if (archiveBtn) archiveBtn.disabled = count === 0;
   if (deleteBtn) deleteBtn.disabled = count === 0;
   if (allEl) allEl.checked = _notes.length > 0 && _notes.every(n => _selectedIds.has(n.id));
