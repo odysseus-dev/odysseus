@@ -124,7 +124,7 @@ async def test_remote_docker_still_uses_ssh_probe(monkeypatch):
 @pytest.mark.parametrize(
     "cmd",
     [
-        "docker exec ollama-test ollama show llama3",
+        "docker exec ollama-test ollama-import example/model model 8192 model.gguf",
         "docker exec ollama-rocm ollama show llama3",
     ],
 )
@@ -224,7 +224,7 @@ async def test_local_container_serve_allows_generated_docker_exec_when_enabled(
         _admin_request(),
         ServeRequest(
             repo_id="llama3",
-            cmd="docker exec ollama-test ollama show llama3",
+            cmd="docker exec ollama-rocm ollama show llama3",
         ),
     )
 
@@ -232,7 +232,7 @@ async def test_local_container_serve_allows_generated_docker_exec_when_enabled(
     assert launched_commands
     assert response["error"] == "mock launch stopped"
     runner = next(tmp_path.glob("serve-*_run.sh")).read_text(encoding="utf-8")
-    assert "docker exec ollama-test ollama show llama3" in runner
+    assert "docker exec ollama-rocm ollama show llama3" in runner
 
 
 @pytest.mark.parametrize(
@@ -241,8 +241,16 @@ async def test_local_container_serve_allows_generated_docker_exec_when_enabled(
         "docker run --rm alpine",
         "docker exec random-container ollama show llama3",
         "docker compose up",
+        "docker exec ollama-rocm ollama rm llama3",
+        "docker exec ollama-test ollama rm llama3",
+        "docker exec ollama-rocm ollama pull llama3",
+        "docker exec ollama-test ollama show llama3",
         "docker exec ollama-test sh -c 'ollama show llama3'",
         "docker exec ollama-test ollama show llama3; id",
+        "docker exec ollama-rocm ollama show llama3 extra",
+        "docker exec ollama-rocm ollama show llama3?",
+        "docker exec ollama-test ollama-import org/model model many model.gguf",
+        "docker exec ollama-test ollama-import org/model model 8192 path/model.gguf",
         "docker exec ollama-rocm ollama show $(id)",
         "docker exec ollama-rocm ollama show llama3 | cat",
     ],
@@ -260,8 +268,17 @@ def test_generated_ollama_import_shape_is_narrowly_allowed():
     assert cookbook_routes._is_generated_ollama_docker_exec_cmd(
         "docker exec ollama-test ollama-import org/model model 8192 model.gguf"
     )
+    assert cookbook_routes._is_generated_ollama_docker_exec_cmd(
+        "docker exec ollama-test ollama-import org/model model 8192"
+    )
     assert not cookbook_routes._is_generated_ollama_docker_exec_cmd(
         "docker exec ollama-rocm ollama-import org/model model 8192 model.gguf"
+    )
+
+
+def test_generated_ollama_show_shape_is_narrowly_allowed():
+    assert cookbook_routes._is_generated_ollama_docker_exec_cmd(
+        "docker exec ollama-rocm ollama show llama3:latest"
     )
 
 

@@ -71,6 +71,8 @@ _HF_TOKEN_STATUS_SNIPPET = (
 
 _OLLAMA_SIDECAR_CONTAINERS = {"ollama-test", "ollama-rocm"}
 _UNSAFE_DOCKER_EXEC_CHARS = frozenset(";&|<>$`\r\n")
+_SAFE_OLLAMA_MODEL_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
+_SAFE_OLLAMA_FILE_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def _is_generated_ollama_docker_exec_cmd(cmd: str | None) -> bool:
@@ -86,9 +88,26 @@ def _is_generated_ollama_docker_exec_cmd(cmd: str | None) -> bool:
     container, executable = parts[2:4]
     if container not in _OLLAMA_SIDECAR_CONTAINERS:
         return False
-    if executable == "ollama":
-        return True
-    return container == "ollama-test" and executable == "ollama-import"
+    if container == "ollama-rocm" and executable == "ollama":
+        return (
+            len(parts) == 6
+            and parts[4] == "show"
+            and _SAFE_OLLAMA_MODEL_TOKEN_RE.fullmatch(parts[5]) is not None
+        )
+    if container != "ollama-test" or executable != "ollama-import":
+        return False
+    if len(parts) not in {7, 8}:
+        return False
+    model, name, context_size = parts[4:7]
+    return (
+        _SAFE_OLLAMA_MODEL_TOKEN_RE.fullmatch(model) is not None
+        and _SAFE_OLLAMA_FILE_TOKEN_RE.fullmatch(name) is not None
+        and re.fullmatch(r"[0-9]+", context_size) is not None
+        and (
+            len(parts) == 7
+            or _SAFE_OLLAMA_FILE_TOKEN_RE.fullmatch(parts[7]) is not None
+        )
+    )
 
 
 def _missing_binary_message(
