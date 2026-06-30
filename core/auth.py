@@ -85,7 +85,11 @@ RESERVED_USERNAMES = frozenset({INTERNAL_TOOL_USER, "api", "demo", "system"})
 # *other* processes — two threads in the same process calling flock(LOCK_EX)
 # on the same file both succeed immediately.  This lock closes that gap so the
 # critical section is serialised across both threads and workers.
-_auth_intraprocess_lock = threading.Lock()
+#
+# RLock (reentrant) so a mutation method that acquires the inter-process lock
+# can safely call another mutation method that also acquires it (e.g. setup()
+# calling create_user()).
+_auth_intraprocess_lock = threading.RLock()
 
 
 def normalize_known_username(users: Dict[str, Any], username: str | None) -> Optional[str]:
@@ -318,28 +322,41 @@ class AuthManager:
             self._load()
             if self.is_configured:
                 return False
-            return self.create_user(username, password, is_admin=True)
+            # _create_user_locked assumes both locks are already held,
+            # avoiding a nested fcntl.flock deadlock (flock is not
+            # reentrant across different file descriptors).
+            return self._create_user_locked(username, password, is_admin=True)
 
     def create_user(self, username: str, password: str, is_admin: bool = False) -> bool:
-        """Create a new user account."""
+        """Create a new user account.
+
+        Serialised across workers via the shared inter-process lock so a
+        concurrent OIDC admin sync cannot lose a newly-created user.
+        """
         username = username.strip().lower()
         if not username:
             return False
         if username in RESERVED_USERNAMES:
             logger.warning("Refused to create reserved username '%s'", username)
             return False
-        with self._config_lock:
-            if username in self.users:
-                return False
-            if "users" not in self._config:
-                self._config["users"] = {}
-            self._config["users"][username] = {
-                "password_hash": _hash_password(password),
-                "created": time.time(),
-                "is_admin": is_admin,
-                "privileges": dict(ADMIN_PRIVILEGES if is_admin else DEFAULT_PRIVILEGES),
-            }
-            self._save()
+        with self._interprocess_auth_lock(), self._config_lock:
+            self._load()
+            return self._create_user_locked(username, password, is_admin)
+
+    def _create_user_locked(self, username: str, password: str, is_admin: bool) -> bool:
+        """Internal helper — caller must hold _interprocess_auth_lock
+        and _config_lock.  Does not reload (caller did that)."""
+        if username in self._config.get("users", {}):
+            return False
+        if "users" not in self._config:
+            self._config["users"] = {}
+        self._config["users"][username] = {
+            "password_hash": _hash_password(password),
+            "created": time.time(),
+            "is_admin": is_admin,
+            "privileges": dict(ADMIN_PRIVILEGES if is_admin else DEFAULT_PRIVILEGES),
+        }
+        self._save()
         logger.info(f"Created user '{username}' (admin={is_admin})")
         return True
 
