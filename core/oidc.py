@@ -443,15 +443,18 @@ class OidcManager:
             )
 
         # Validate audience: aud may be a string or a JSON array.
+        # Normalize to a list first so a single-element array (e.g.
+        # ["client_id"]) is treated identically to a string aud.
         # OIDC Core 1.0 § 2: azp is REQUIRED when aud contains multiple
         # values, and MUST equal client_id.  We reject multi-audience tokens
         # without azp — there is no trusted-additional-audience model.
         aud = claims.get("aud")
-        if isinstance(aud, list):
-            if self.client_id not in aud:
-                raise OidcError(
-                    f"id_token aud mismatch: client_id {self.client_id!r} not in aud {aud!r}"
-                )
+        aud_list = aud if isinstance(aud, list) else [aud]
+        if self.client_id not in aud_list:
+            raise OidcError(
+                f"id_token aud mismatch: client_id {self.client_id!r} not in aud {aud!r}"
+            )
+        if len(aud_list) > 1:
             azp = claims.get("azp")
             if not azp:
                 raise OidcError(
@@ -462,10 +465,6 @@ class OidcManager:
                 raise OidcError(
                     f"id_token azp mismatch: expected {self.client_id!r}, got {azp!r}"
                 )
-        elif aud != self.client_id:
-            raise OidcError(
-                f"id_token aud mismatch: expected {self.client_id!r}, got {aud!r}"
-            )
 
         exp = claims.get("exp", 0)
         if time.time() > exp:

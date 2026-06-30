@@ -590,6 +590,38 @@ class TestExchangeCode:
             with pytest.raises(mod.OidcError, match="aud"):
                 mgr.exchange_code("code", state, "https://app.example.com/callback")
 
+    def test_id_token_single_aud_array_no_azp(self):
+        """A single-element aud array (e.g. [client_id]) without azp MUST
+        be accepted.  OIDC Core §2 only requires azp for multi-audience
+        tokens; a one-element array is a valid representation of the
+        audience and must not be rejected."""
+        jwt_jwks, jwk = _make_test_jwks_and_key()
+        nonce = "s1" * 32
+        id_token = _make_id_token("user123", nonce, aud=[FAKE_CLIENT_ID])
+        import core.oidc as mod
+
+        with patch.object(mod.httpx, "get") as mock_get, \
+             patch.object(mod.httpx, "post") as mock_post:
+            mock_get.side_effect = [
+                _mock_discovery_response(),
+                _mock_jwks_response(jwt_jwks),
+            ]
+            mgr = mod.OidcManager(
+                issuer=FAKE_ISSUER,
+                client_id=FAKE_CLIENT_ID,
+                client_secret=FAKE_CLIENT_SECRET,
+            )
+
+            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            mock_post.return_value = _mock_token_response(id_token)
+            mock_get.reset_mock()
+            mock_get.side_effect = [
+                _mock_jwks_response(jwt_jwks),
+            ]
+
+            claims = mgr.exchange_code("code", state, "https://app.example.com/callback")
+            assert claims["sub"] == "user123"
+
     def test_id_token_expired(self):
         jwt_jwks, jwk = _make_test_jwks_and_key()
         nonce = "h" * 64

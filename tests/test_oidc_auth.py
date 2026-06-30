@@ -589,3 +589,115 @@ class TestInterprocessFirstAdminSerialisation:
         # Manager B: setup must now be denied — the store is configured
         ok = mgr_b.setup("admin", "password123")
         assert ok is False, "setup must not succeed when OIDC already bootstrapped"
+
+    def test_set_oidc_user_admin_preserves_concurrent_user(self, tmp_path):
+        """set_oidc_user_admin() must not overwrite users created by another
+        manager.  Manager A creates 'alice' and 'bob', but Manager B has a
+        stale in-memory snapshot.  When B calls set_oidc_user_admin for
+        'alice', the inter-process lock + reload must preserve 'bob'."""
+        from core.auth import AuthManager
+
+        auth_path = str(tmp_path / "auth.json")
+
+        # Manager A: create two OIDC users
+        mgr_a = AuthManager(auth_path)
+        alice = mgr_a.create_user_oidc("alice", "sub-a", "https://idp.example.com")
+        assert alice == "alice"
+        bob = mgr_a.create_user_oidc("bob", "sub-b", "https://idp.example.com")
+        assert bob == "bob"
+        # Make alice an admin so the no-op short-circuit doesn't trigger
+        mgr_a._config["users"]["alice"]["is_admin"] = True
+        mgr_a._save()
+
+        # Manager B: loaded from disk but now we make its in-memory state
+        # stale by directly removing 'bob' from its _config (simulating a
+        # worker that loaded before Manager A created 'bob').
+        mgr_b = AuthManager(auth_path)
+        assert "bob" in mgr_b._config["users"]
+        del mgr_b._config["users"]["bob"]
+
+        # B calls set_oidc_user_admin for alice (demote).  The inter-process
+        # lock must force a reload, re-discovering 'bob', so the save does
+        # not clobber bob.
+        result = mgr_b.set_oidc_user_admin("alice", False)
+        assert result is True
+
+        # Reload both managers — bob must still exist.
+        mgr_a._load()
+        mgr_b._load()
+        assert "bob" in mgr_a._config["users"], "bob must survive stale set_oidc_user_admin"
+        assert "bob" in mgr_b._config["users"], "bob must survive stale set_oidc_user_admin"
+        assert not mgr_a._config["users"]["alice"].get("is_admin"), "alice must be demoted"
+
+    def test_fcntl_import_guarded(self, monkeypatch):
+        """On a platform without fcntl (simulated), AuthManager must still
+        import and _interprocess_auth_lock must degrade to intra-process-only."""
+        import sys
+        import builtins
+
+        # Simulate missing fcntl by hiding it from the import system
+        real_import = builtins.__import__
+
+        def blocking_import(name, *args, **kwargs):
+            if name == "fcntl":
+                raise ImportError("No module named 'fcntl'")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", blocking_import)
+
+        # Force a fresh import of core.auth
+        import importlib
+        if "core.auth" in sys.modules:
+            del sys.modules["core.auth"]
+
+        import core.auth as auth_mod
+        assert auth_mod.HAS_FCNTL is False
+        assert auth_mod.fcntl is None
+
+        # Construct an AuthManager — it must not crash.
+        from pathlib import Path
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            mgr = auth_mod.AuthManager(str(Path(tmp) / "auth.json"))
+            # The lock context manager must yield without error.
+            with mgr._interprocess_auth_lock():
+                pass
+
+    def test_secret_storage_key_creation_thread_safe(self, tmp_path, monkeypatch):
+        """Two threads racing into _get_fernet() on a fresh data dir must
+        both receive the same valid Fernet key without exceptions."""
+        import src.secret_storage as ss
+        import threading
+
+        tmp_key = tmp_path / ".app_key"
+        monkeypatch.setattr(ss, "_KEY_PATH", tmp_key)
+        monkeypatch.setattr(ss, "_fernet", None)
+
+        results = {}
+        errors = []
+        barrier = threading.Barrier(2, timeout=5)
+
+        def get_key(idx):
+            try:
+                barrier.wait()
+                f = ss._get_fernet()
+                results[idx] = f
+            except Exception as e:
+                errors.append((idx, e))
+
+        t0 = threading.Thread(target=get_key, args=(0,))
+        t1 = threading.Thread(target=get_key, args=(1,))
+        t0.start()
+        t1.start()
+        t0.join()
+        t1.join()
+
+        assert not errors, f"Unexpected errors in thread race: {errors}"
+        assert len(results) == 2, f"Expected 2 results, got {len(results)}"
+
+        f0, f1 = results[0], results[1]
+        # Both must be usable Fernet instances that encrypt/decrypt compatibly.
+        token = f0.encrypt(b"hello")
+        assert f1.decrypt(token) == b"hello"
+        token = f1.encrypt(b"world")
+        assert f0.decrypt(token) == b"world"
