@@ -23,6 +23,18 @@ registerMessages('pt-BR', {
   'Using chat defaults': 'Usando padroes do chat',
   // ── Agent settings ──
   'Unlimited tool calls': 'Chamadas de ferramentas ilimitadas',
+  'Limit: {n} tool calls': 'Limite: {n} chamadas de ferramentas',
+  // ── Preview failed (TTS) ──
+  'Preview failed: ': 'Falha na previa: ',
+  // ── Shortcuts rebind UI ──
+  'Press keys...': 'Pressione as teclas...',
+  'press a key': 'pressione uma tecla',
+  '↵ Enter to save': '↵ Enter para salvar',
+  // ── Shortcut categories ──
+  'Navigation': 'Navegacao',
+  'Sessions': 'Sessoes',
+  'Tools': 'Ferramentas',
+  'Open Tools': 'Abrir Ferramentas',
   // ── Appearance tab ──
   'Only admins can hide Settings.': 'Apenas administradores podem ocultar Configuracoes.',
   'Hide the Settings cog?\n\nYou can re-open this panel any time by typing /settings in the chat input.': 'Ocultar o icone de Configuracoes?\n\nVoce pode reabrir este painel a qualquer momento digitando /settings no chat.',
