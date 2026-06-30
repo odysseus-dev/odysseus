@@ -52,4 +52,39 @@ registerMessages('pt-BR', {
 
   // Toasts
   'Note reminder': 'Lembrete de nota',
+
+  // Label chips / filters
+  'Show notes without tags': 'Mostrar notas sem etiquetas',
+  'Default': 'Padrao',
+  'Next step from every goal': 'Proximo passo de cada meta',
+  'Goals': 'Metas',
+  'Showing only reminders — click to show all': 'Exibindo apenas lembretes — clique para mostrar todos',
+  'Hiding reminders — click to show only reminders': 'Ocultando lembretes — clique para mostrar apenas lembretes',
+  'Click to filter reminders': 'Clique para filtrar lembretes',
+  'Reminders': 'Lembretes',
+  'Delete reminders whose time has passed': 'Excluir lembretes cujo tempo ja passou',
+  'Clear past': 'Limpar passados',
+
+  // Today view
+  'All caught up — no pending goal steps right now.': 'Tudo em dia — nenhuma etapa de meta pendente no momento.',
+  'one step per goal': 'um passo por meta',
+  '(untitled goal)': '(meta sem titulo)',
+
+  // Card action titles
+  'Pin': 'Fixar',
+  'Unpin': 'Desafixar',
+  'Delete forever': 'Excluir permanentemente',
+  'Unarchive': 'Desarquivar',
+  'Unarchive note': 'Desarquivar nota',
+  'Mark done': 'Marcar como concluido',
+  'Copy all items': 'Copiar todos os itens',
+  'Delete permanently': 'Excluir permanentemente',
+  'Save (archive)': 'Salvar (arquivar)',
+  'More': 'Mais',
+  'More actions': 'Mais acoes',
+  '+ Add item': '+ Adicionar item',
+
+  // Empty states
+  'No notes': 'Nenhuma nota',
+  'No notes yet': 'Nenhuma nota ainda',
 });
