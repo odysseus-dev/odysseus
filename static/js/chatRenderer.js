@@ -433,8 +433,14 @@ async function loadExecFenceRegex() {
       .map((t) => t.id)
       .filter((id) => id && !EXEC_FENCE_NON_TOOL.has(id));
     if (tags.length) {
+      // Mirror the backend's _TOOL_BLOCK_RE shape: after the tag, optional
+      // same-line inline JSON args ({…}/[…]) may precede the newline — the
+      // backend now executes that inline-args form (```list_email_accounts {}),
+      // so the live stripper must remove it too, not just the classic
+      // tag-then-newline form, or the raw fence lingers until reload (#3993).
       EXEC_FENCE_RE = new RegExp(
-        '```(?:' + tags.join('|') + ')\\s*\\n[\\s\\S]*?```', 'gi'
+        '```(?:' + tags.join('|') + ')(?![\\w-])[ \\t]*(?:[{\\[][^\\n]*?)?[ \\t]*(?=\\r?\\n|```)\\r?\\n?[\\s\\S]*?```',
+        'gi'
       );
     }
   } catch (err) {

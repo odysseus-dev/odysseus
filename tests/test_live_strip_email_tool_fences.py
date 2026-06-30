@@ -43,10 +43,19 @@ def _tool_tags() -> set[str]:
 
 def _exec_fence_regex() -> re.Pattern:
     """Rebuild EXEC_FENCE_RE's behavior from the same source the live regex now
-    derives from: the backend TOOL_TAGS (served via /api/tools) minus bash/python."""
+    derives from: the backend TOOL_TAGS (served via /api/tools) minus bash/python.
+
+    Mirrors chatRenderer.js's EXEC_FENCE_RE, which itself mirrors the backend
+    _TOOL_BLOCK_RE: the tag may be followed by same-line inline JSON args
+    ({…}/[…]) before the newline (the executable inline-args form), not only the
+    classic tag-then-newline shape."""
     tags = _tool_tags() - _NON_STRIPPED
     assert tags, "TOOL_TAGS is empty"
-    return re.compile(r"```(?:" + "|".join(sorted(tags)) + r")\s*\n[\s\S]*?```", re.IGNORECASE)
+    return re.compile(
+        r"```(?:" + "|".join(sorted(tags)) + r")(?![\w-])"
+        r"[ \t]*(?:[{\[][^\n]*?)?[ \t]*(?=\r?\n|```)\r?\n?[\s\S]*?```",
+        re.IGNORECASE,
+    )
 
 
 def test_strips_executed_email_tool_fences():
@@ -66,6 +75,45 @@ def test_strips_every_named_email_tool_fence():
     for tool in email_tools:
         fence = f"```{tool}\n{{}}\n```"
         assert rx.sub("", fence).strip() == "", f"{tool} fence not stripped"
+
+
+def test_strips_executed_inline_args_email_fence():
+    """The backend now executes same-line JSON fences (```list_email_accounts {}
+    / ```list_emails {"max_results":10}), so the live stripper must remove that
+    inline-args form too — otherwise the raw executed fence lingers in the live
+    bubble until reload (#3993 class)."""
+    rx = _exec_fence_regex()
+    for text in (
+        'Done.\n\n```list_email_accounts {}\n```',
+        'Done.\n\n```list_emails {"max_results":10}\n```',
+        'Done.\n\n```search_emails {"query": "alice"}\n```',
+    ):
+        assert rx.sub("", text).strip() == "Done.", text
+
+
+def test_inline_args_does_not_strip_bash_python_examples():
+    """The inline-args allowance must not start stripping ```bash {title="x"} /
+    ```python {…} — those are fence attributes on real languages, carved out of
+    the live regex exactly like the backend keeps them display-only."""
+    rx = _exec_fence_regex()
+    for lang in sorted(_NON_STRIPPED):
+        example = f'```{lang} {{"title": "x"}}\nls -la\n```'
+        assert rx.sub("", example) == example, f"{lang} inline example wrongly stripped"
+
+
+def test_frontend_exec_fence_allows_inline_args():
+    """Root-cause guard tying this test to the JS: chatRenderer.js's
+    EXEC_FENCE_RE must accept optional same-line {…}/[…] args after the tag (the
+    backend's executable inline-args shape), not just tag-then-newline."""
+    source = _SRC.read_text(encoding="utf-8")
+    m = re.search(r"EXEC_FENCE_RE = new RegExp\((?P<body>.*?)\);", source, re.DOTALL)
+    assert m, "EXEC_FENCE_RE construction not found in chatRenderer.js"
+    body = m.group("body")
+    assert "[{" in body, (
+        "EXEC_FENCE_RE must allow optional same-line {…}/[…] inline args after "
+        "the tag so executed inline-args fences strip live (#3993); got a "
+        "pattern that still requires tag-then-newline only."
+    )
 
 
 def test_preserves_existing_web_search_stripping():
