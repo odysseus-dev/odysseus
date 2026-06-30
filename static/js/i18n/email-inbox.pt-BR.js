@@ -66,4 +66,16 @@ registerMessages('pt-BR', {
   'Trash': 'Lixeira',
   'Sent': 'Enviados',
   'Drafts': 'Rascunhos',
+
+  // voiceRecorder.js — errors and toasts
+  'Microphone requires HTTPS. Use a reverse proxy with SSL or access via localhost.': 'Microfone requer HTTPS. Use um proxy reverso com SSL ou acesse via localhost.',
+  'Microphone not supported in this browser.': 'Microfone nao suportado neste navegador.',
+  'No speech detected': 'Nenhuma fala detectada',
+  'Transcribing...': 'Transcrevendo...',
+  'Transcribed': 'Transcrito',
+  'Recording...': 'Gravando...',
+  'Microphone access denied. Check browser permissions.': 'Acesso ao microfone negado. Verifique as permissoes do navegador.',
+  'No microphone found.': 'Nenhum microfone encontrado.',
+  'Microphone error: ': 'Erro no microfone: ',
+  'Transcription failed: ': 'Falha na transcricao: ',
 });
