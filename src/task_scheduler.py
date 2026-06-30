@@ -1841,9 +1841,17 @@ class TaskScheduler:
         except Exception:
             pass
 
-        max_tokens = int(get_setting("research_max_tokens", 8192))
-        extraction_timeout = int(get_setting("research_extraction_timeout_seconds", 90) or 90)
-        extraction_concurrency = int(get_setting("research_extraction_concurrency", 3) or 3)
+        # Guard against a hand-edited/agent-written settings.json holding a
+        # non-numeric value: int() would raise ValueError and crash the
+        # scheduled research task (this code path has no surrounding handler).
+        # Fall back to the documented defaults, matching research_handler.py.
+        try:
+            max_tokens = int(get_setting("research_max_tokens", 8192))
+            extraction_timeout = int(get_setting("research_extraction_timeout_seconds", 90) or 90)
+            extraction_concurrency = int(get_setting("research_extraction_concurrency", 3) or 3)
+        except (TypeError, ValueError):
+            logger.warning("Non-numeric research_* setting in settings.json; using defaults")
+            max_tokens, extraction_timeout, extraction_concurrency = 8192, 90, 3
 
         researcher = DeepResearcher(
             llm_endpoint=endpoint_url,
