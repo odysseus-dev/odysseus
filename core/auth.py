@@ -4,7 +4,6 @@ Config stored in data/auth.json. Uses bcrypt directly.
 """
 
 import enum
-import fcntl
 import json
 import os
 import secrets
@@ -14,6 +13,17 @@ import logging
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional, Dict, Any, List
+
+# POSIX-only: fcntl provides inter-process file locking used by
+# _interprocess_auth_lock.  On native Windows it doesn't exist, so
+# we fall back to intra-process-only serialisation (single-worker
+# deployments are the norm there, and OIDC defaults to off).
+try:
+    import fcntl
+    HAS_FCNTL = True
+except ImportError:
+    HAS_FCNTL = False
+    fcntl = None  # type: ignore[assignment]
 
 import bcrypt
 import pyotp
@@ -281,8 +291,16 @@ class AuthManager:
         Python process.  fcntl.flock serialises across different processes
         (uvicorn workers).  The kernel releases flock automatically when
         the process exits, so a crash cannot leave a stale lock.
+
+        On platforms without fcntl (native Windows), this degrades to
+        intra-process-only serialisation.  OIDC defaults to off and
+        single-worker deployments are the norm there, so the degraded
+        mode is safe for most Windows use cases.
         """
         with _auth_intraprocess_lock:
+            if not HAS_FCNTL:
+                yield
+                return
             # Open in read-write mode; create the lock file if it doesn't exist.
             fd = os.open(self._ipc_lock_path, os.O_CREAT | os.O_RDWR, 0o600)
             try:
@@ -432,14 +450,22 @@ class AuthManager:
         Called on every OIDC login so admin follows the IdP's group
         membership.  Returns ``False`` if the user doesn't exist or is
         not an OIDC user (password-account admins must be managed manually).
+
+        Serialised across workers via the shared inter-process lock so a
+        stale in-memory snapshot cannot overwrite users concurrently
+        created by another worker.
         """
         username = username.strip().lower()
-        user = self.users.get(username, {})
-        if not user.get("oidc_sub"):
-            return False  # not an OIDC user — don't touch
-        if user.get("is_admin") == is_admin:
-            return True   # no change needed
-        with self._config_lock:
+        with self._interprocess_auth_lock(), self._config_lock:
+            # Reload from disk so we see what another process may have
+            # written since our last _load() — e.g. a concurrent
+            # create_user_oidc() on a different worker.
+            self._load()
+            user = self._config.get("users", {}).get(username, {})
+            if not user.get("oidc_sub"):
+                return False  # not an OIDC user (or removed) — don't touch
+            if user.get("is_admin") == is_admin:
+                return True   # no change needed
             self._config["users"][username]["is_admin"] = is_admin
             if is_admin:
                 self._config["users"][username]["privileges"] = dict(ADMIN_PRIVILEGES)
