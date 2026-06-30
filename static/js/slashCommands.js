@@ -181,7 +181,7 @@ function _showSetupUserBubble(input, isUrl) {
     if (lastBubble) {
       lastBubble.style.filter = 'blur(4px)';
       lastBubble.style.userSelect = 'none';
-      lastBubble.title = 'API key (hidden)';
+      lastBubble.title = window.t('API key (hidden)');
       lastBubble.style.cursor = 'pointer';
       lastBubble.addEventListener('click', () => {
         lastBubble.style.filter = lastBubble.style.filter ? '' : 'blur(4px)';
@@ -200,23 +200,23 @@ function _showSetupEndpointChoices() {
   return slashReply(
     '<div class="setup-guide-no-censor" style="display:grid;gap:10px;">' +
       '<div>' +
-        '<div>Quick start: add your first AI endpoint by pasting it in chat.</div>' +
+        '<div>' + window.t('Quick start: add your first AI endpoint by pasting it in chat.') + '</div>' +
       '</div>' +
       '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:color-mix(in srgb,var(--bg) 88%,var(--fg) 12%);">' +
-        '<div style="font-weight:700;margin-bottom:6px;">' + SETUP_LOCAL_ICON + 'Local setup</div>' +
-        '<div>Paste endpoint URL in chat (example):</div>' +
+        '<div style="font-weight:700;margin-bottom:6px;">' + SETUP_LOCAL_ICON + window.t('Local setup') + '</div>' +
+        '<div>' + window.t('Paste endpoint URL in chat (example):') + '</div>' +
         '<pre style="margin:4px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">http://localhost:11434/v1</code></pre>' +
-        '<div style="margin-top:4px;">or</div>' +
+        '<div style="margin-top:4px;">' + window.t('or') + '</div>' +
         '<pre style="margin:2px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">http://llm-host.local:8000/v1</code></pre>' +
-        '<div style="margin-top:4px;">or llama.cpp (llama-server):</div>' +
+        '<div style="margin-top:4px;">' + window.t('or llama.cpp (llama-server):') + '</div>' +
         '<pre style="margin:2px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">http://localhost:8080/v1</code></pre>' +
       '</div>' +
       '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:color-mix(in srgb,var(--bg) 88%,var(--fg) 12%);">' +
-        '<div style="font-weight:700;margin-bottom:6px;">' + SETUP_API_ICON + 'API setup</div>' +
-        '<div>Paste provider name then API key (example):</div>' +
+        '<div style="font-weight:700;margin-bottom:6px;">' + SETUP_API_ICON + window.t('API setup') + '</div>' +
+        '<div>' + window.t('Paste provider name then API key (example):') + '</div>' +
         '<pre style="margin:4px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">deepseek sk-...</code></pre>' +
-        '<div style="margin-top:8px;font-size:1em;"><span>Supported providers:</span><br>' + providers + '</div>' +
-        '<div style="margin-top:8px;font-size:1em;"><span>Account sign-in:</span><br>' + deviceAuthProviders + '</div>' +
+        '<div style="margin-top:8px;font-size:1em;"><span>' + window.t('Supported providers:') + '</span><br>' + providers + '</div>' +
+        '<div style="margin-top:8px;font-size:1em;"><span>' + window.t('Account sign-in:') + '</span><br>' + deviceAuthProviders + '</div>' +
       '</div>' +
     '</div>'
   );
@@ -225,36 +225,36 @@ function _showSetupEndpointChoices() {
 function _showSetupEndpointChoicesStreamed(options = {}) {
   const blocks = [
     options.simple
-      ? { kind: 'p', text: 'Paste in chat below either' }
-      : { kind: 'p', html: '<strong>Quick start:</strong> add your first AI endpoint by pasting it in chat.' },
-    { kind: 'heading', html: SETUP_LOCAL_ICON + 'Local setup' },
-    { kind: 'p', text: 'Paste endpoint URL in chat (example):' },
+      ? { kind: 'p', text: window.t('Paste in chat below either') }
+      : { kind: 'p', html: '<strong>' + window.t('Quick start:') + '</strong> ' + window.t('add your first AI endpoint by pasting it in chat.') },
+    { kind: 'heading', html: SETUP_LOCAL_ICON + window.t('Local setup') },
+    { kind: 'p', text: window.t('Paste endpoint URL in chat (example):') },
     {
       kind: 'code',
       text: 'http://localhost:11434/v1',
       copyText: 'http://localhost:11434/v1',
     },
-    { kind: 'p', text: 'or' },
+    { kind: 'p', text: window.t('or') },
     {
       kind: 'code',
       text: 'http://llm-host.local:8000/v1',
       copyText: 'http://llm-host.local:8000/v1',
     },
-    { kind: 'p', text: 'or llama.cpp (llama-server):' },
+    { kind: 'p', text: window.t('or llama.cpp (llama-server):') },
     {
       kind: 'code',
       text: 'http://localhost:8080/v1',
       copyText: 'http://localhost:8080/v1',
     },
-    { kind: 'heading', html: SETUP_API_ICON + 'API setup' },
-    { kind: 'p', text: 'Paste provider name then API key (example):' },
+    { kind: 'heading', html: SETUP_API_ICON + window.t('API setup') },
+    { kind: 'p', text: window.t('Paste provider name then API key (example):') },
     {
       kind: 'code',
       text: 'deepseek sk-...',
       copyText: 'deepseek sk-...',
     },
-    { kind: 'p', html: '<strong>Supported providers:</strong><br>' + _setupApiProviderChips() },
-    { kind: 'p', html: '<strong>Account sign-in:</strong><br>' + _setupDeviceAuthProviderChips() },
+    { kind: 'p', html: '<strong>' + window.t('Supported providers:') + '</strong><br>' + _setupApiProviderChips() },
+    { kind: 'p', html: '<strong>' + window.t('Account sign-in:') + '</strong><br>' + _setupDeviceAuthProviderChips() },
   ];
   return typewriterBlocksReply(blocks, { gap: '4px', bodyClass: 'setup-guide-no-censor', interval: 3 });
 }
@@ -278,7 +278,7 @@ function _setupProviderPrompt() {
   const chips = SETUP_PROVIDER_HINT_NAMES.map(name =>
     '<span style="font-weight:650;">' + name + '</span>'
   ).join('  ');
-  slashReply('<b>Supported providers:</b><br>' + chips);
+  slashReply('<b>' + window.t('Supported providers:') + '</b><br>' + chips);
   return Promise.resolve();
 }
 
@@ -661,7 +661,7 @@ async function connectDetectedSetupEndpoint(detected) {
   spinnerBody.className = 'body';
   spinnerDiv.appendChild(spinnerBody);
   chatBox.appendChild(spinnerDiv);
-  const setupSpinner = spinnerModule.create(`Detected ${providerLabel}. Connecting`, 'right', 'wave');
+  const setupSpinner = spinnerModule.create(window.t('Detected {provider}. Connecting').replace('{provider}', providerLabel), 'right', 'wave');
   spinnerBody.appendChild(setupSpinner.createElement());
   setupSpinner.start(150);
   uiModule.scrollHistory();
@@ -685,7 +685,7 @@ async function connectDetectedSetupEndpoint(detected) {
       setupSpinner.destroy();
       spinnerDiv.remove();
       setupMode = 'endpoint-provider-first';
-      await typewriterReply(`Endpoint was not saved: ${data.detail || 'connection failed'}`);
+      await typewriterReply(window.t('Endpoint was not saved: {detail}').replace('{detail}', data.detail || window.t('connection failed')));
       return;
     }
 
@@ -700,7 +700,7 @@ async function connectDetectedSetupEndpoint(detected) {
       if (sessionModule) {
         await sessionModule.createDirectChat(chatUrl, firstModel, data.id);
       }
-      await typewriterReply("You're all set. Type /tour for a walkthrough, or /setup endpoint to add another endpoint or key.");
+      await typewriterReply(window.t("You're all set. Type /tour for a walkthrough, or /setup endpoint to add another endpoint or key."));
       _clearSetupGuideMessages();
       return;
     }
@@ -708,13 +708,13 @@ async function connectDetectedSetupEndpoint(detected) {
     setupSpinner.destroy();
     spinnerDiv.remove();
     setupMode = 'endpoint-provider-first';
-    await typewriterReply("Endpoint saved, but no models were found. Check the provider, key, or service status, then try /setup endpoint again.");
+    await typewriterReply(window.t("Endpoint saved, but no models were found. Check the provider, key, or service status, then try /setup endpoint again."));
     if (modelsModule) modelsModule.refreshModels(true);
   } catch {
     setupSpinner.destroy();
     spinnerDiv.remove();
     setupMode = 'endpoint-provider-first';
-    await typewriterReply("Endpoint setup failed before it could finish. Check the provider, key, or service status, then try /setup endpoint again.");
+    await typewriterReply(window.t("Endpoint setup failed before it could finish. Check the provider, key, or service status, then try /setup endpoint again."));
   }
 }
 
@@ -737,7 +737,7 @@ async function handleSetupInput(input) {
     } else {
       pendingSetupProvider = paired.provider;
       setupMode = 'endpoint-key-for-provider';
-      await _setupReply(`Paste your ${paired.provider.name} API key now.`);
+      await _setupReply(window.t('Paste your {provider} API key now.').replace('{provider}', paired.provider.name));
     }
     return;
   }
@@ -745,7 +745,7 @@ async function handleSetupInput(input) {
   const detected = detectProvider(input);
   if (!detected) {
     setupMode = false;
-    await typewriterReply("Unrecognised format. Type /setup endpoint to try again.");
+    await typewriterReply(window.t("Unrecognised format. Type /setup endpoint to try again."));
     return;
   }
   if (detected.ambiguous) {
@@ -787,7 +787,7 @@ async function handleSetupWizard(mode, input) {
     if (!provider) {
       _addMessage('user', input);
       setupMode = false;
-      await _setupReply('Provider not recognised. Try ' + SETUP_PROVIDER_HINT + '. Type /setup endpoint to try again.');
+      await _setupReply(window.t('Provider not recognised. Try {hint}. Type /setup endpoint to try again.').replace('{hint}', SETUP_PROVIDER_HINT));
       return;
     }
     if (paired?.credential) {
@@ -798,7 +798,7 @@ async function handleSetupWizard(mode, input) {
     _addMessage('user', provider.name);
     pendingSetupProvider = provider;
     setupMode = 'endpoint-key-for-provider';
-    await _setupReply(`Paste your ${provider.name} API key.`);
+    await _setupReply(window.t('Paste your {provider} API key.').replace('{provider}', provider.name));
     return;
   }
 
@@ -806,7 +806,7 @@ async function handleSetupWizard(mode, input) {
     const provider = pendingSetupProvider;
     pendingSetupProvider = null;
     if (!provider) {
-      await _setupReply('No provider selected. Type /setup endpoint and choose a provider again.');
+      await _setupReply(window.t('No provider selected. Type /setup endpoint and choose a provider again.'));
       return;
     }
     _showSetupUserBubble(input, /^https?:\/\//i.test(input));
@@ -830,7 +830,7 @@ async function handleSetupWizard(mode, input) {
     if (paired?.provider) {
       const credential = paired.credential || key;
       if (!credential) {
-        await typewriterReply('No API key found. Type /setup endpoint and paste the key again.');
+        await typewriterReply(window.t('No API key found. Type /setup endpoint and paste the key again.'));
         return;
       }
       await connectDetectedSetupEndpoint({ base_url: paired.provider.url, api_key: credential, name: paired.provider.name });
@@ -838,7 +838,7 @@ async function handleSetupWizard(mode, input) {
     }
 
     if (!key) {
-      await typewriterReply('No pending API key. Type /setup endpoint and paste the key again.');
+      await typewriterReply(window.t('No pending API key. Type /setup endpoint and paste the key again.'));
       return;
     }
     let provider = _setupProviderFromInput(raw);
@@ -848,7 +848,7 @@ async function handleSetupWizard(mode, input) {
     if (!provider) {
       pendingSetupApiKey = '';
       setupMode = false;
-      await typewriterReply('Provider not recognised. Try ' + SETUP_PROVIDER_HINT + '. Type /setup endpoint to try again.');
+      await typewriterReply(window.t('Provider not recognised. Try {hint}. Type /setup endpoint to try again.').replace('{hint}', SETUP_PROVIDER_HINT));
       return;
     }
     await connectDetectedSetupEndpoint({ base_url: provider.url, api_key: key, name: provider.name });
@@ -895,7 +895,7 @@ async function handleSetupWizard(mode, input) {
     return;
   }
 
-  await typewriterReply("I didn't understand that. Try /setup to see options.");
+  await typewriterReply(window.t("I didn't understand that. Try /setup to see options."));
 }
 
 function _syncToggleUI(name, state) {
