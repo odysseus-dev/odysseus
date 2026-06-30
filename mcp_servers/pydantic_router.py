@@ -47,7 +47,7 @@ async def routeMCP(prompt, Agent_Hashmap:dict,AgentSystemPrompt, model, args:dic
     IdentifyingTool = Agent_Hashmap["Tool"][AgentType].get(ToolType)
     if not IdentifyingAgent:
         return
-    filepath = (Path(__file__).parent / IdentifyingAgent).resolve().as_posis()
+    filepath = (Path(__file__).parent / IdentifyingAgent).resolve().as_posix()
 
     transport = StdioTransport(sys.executable, args=["-u", filepath])
     async with MCPToolset(transport) as calling_agent:

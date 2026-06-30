@@ -74,6 +74,7 @@ _BUILTIN_SERVERS = {
     "memory":     ("mcp_servers/memory_server.py",     "Built-in: Memory"),
     "rag":        ("mcp_servers/rag_server.py",        "Built-in: RAG"),
     "email":      ("mcp_servers/email_server.py",      "Built-in: Email"),
+    "router":('mcp_servers/pydantic_router.py', "Built-in: Router")
 }
 
 # NPX-based built-in servers (run via npx, not Python)
@@ -235,7 +236,7 @@ async def _is_npx_package_cached(npx_path, package_spec, timeout_s=5):
     return proc.returncode == 0 and bool(stdout.strip())
 
 
-def RouterInitialisation(prompt, Agent_Hashmap:dict, system_prompt, model, args:dict):
+async def RouterCaller(prompt, Agent_Hashmap:dict, AgentSystemPrompt, model, args:dict, ToolSystemPrompt):
    '''The tool names are provided to the agent by default.'''
    try:
     TARGET_DIR = (Path(__file__).parent / ".." / "mcp_servers"/'pydantic_router.py').resolve().as_posix()
@@ -244,8 +245,19 @@ def RouterInitialisation(prompt, Agent_Hashmap:dict, system_prompt, model, args:
     spec = importlib.util.spec_from_file_location("pydantic_router", TARGET_DIR)
     pydantic_router = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(pydantic_router)
-    asyncio.run(pydantic_router.routeMCP(prompt, Agent_Hashmap, system_prompt, model, args))
-   except ImportError:
-       return 'packages for router have not been installed'
-   except Exception:
-       return 'Please ensure that the json for the Agent Hashmap is correct and all the arguments are passed in.'
+    result = await pydantic_router.routeMCP(
+        prompt=prompt,
+        Agent_Hashmap=Agent_Hashmap,
+        AgentSystemPrompt = AgentSystemPrompt,
+        ToolSystemPrompt = ToolSystemPrompt,  # Maps the required prompt parameter
+        model=model,
+        args=args
+    )
+    return result
+
+   except ModuleNotFoundError as e:
+       logger.error(f"Router dependency missing")
+       return f'packages for router have not been installed:{e}'
+   except Exception as e:
+       logger.exception("Critical error from router")
+       return f'The router crashed with an error:{e}.'
