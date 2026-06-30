@@ -627,8 +627,9 @@ import { t } from './i18n.js';
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (e) {
-      if (uiModule) uiModule.showError('Export failed: ' + e.message);
-      else alert('Export failed: ' + e.message);
+      const message = t('Export failed: {message}', { message: e.message });
+      if (uiModule) uiModule.showError(message);
+      else alert(message);
     }
   }
 
@@ -1948,14 +1949,14 @@ import { t } from './i18n.js';
       });
       if (!res.ok) {
         const t = await res.text().catch(() => res.statusText);
-        _setPdfSaveStatus('error', `Save failed: ${res.status}`);
+        _setPdfSaveStatus('error', t('Save failed: {status}', { status: res.status }));
         console.warn('PDF-pane save HTTP error:', res.status, t);
         return false;
       }
       _setPdfSaveStatus('saved');
       return true;
     } catch (e) {
-      _setPdfSaveStatus('error', e.message || 'Save failed');
+      _setPdfSaveStatus('error', e.message || t('Save failed'));
       console.warn('PDF-pane save failed:', e);
       return false;
     }
@@ -2063,12 +2064,12 @@ import { t } from './i18n.js';
       const _replyable = !!(_ad && _ad.sourceEmailUid && _ad.sourceEmailFolder);
       if (_replyable && _copyBtn.dataset.mode !== 'reply') {
         _copyBtn.dataset.mode = 'reply';
-        _copyBtn.title = 'Reply to the sender with this filled file attached';
-        _copyBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>Attach';
+        _copyBtn.title = t('Reply to the sender with this filled file attached');
+        _copyBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>${_esc(t('Attach'))}`;
       } else if (!_replyable && _copyBtn.dataset.mode !== 'copy') {
         _copyBtn.dataset.mode = 'copy';
-        _copyBtn.title = 'Copy document';
-        _copyBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy';
+        _copyBtn.title = t('Copy document');
+        _copyBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>${_esc(t('Copy'))}`;
       }
     }
     // Standalone Export PDF / PDF-toggle icon buttons are retired — for a
@@ -3032,13 +3033,13 @@ import { t } from './i18n.js';
       overlay.style.display = 'flex';
       overlay.innerHTML = `
         <div class="modal-content" style="width:360px;max-width:90vw;">
-          <div class="modal-header"><h4>No attachments found</h4></div>
+          <div class="modal-header"><h4>${_esc(t('No attachments found'))}</h4></div>
           <div class="modal-body" style="padding:16px;font-size:13px;opacity:0.8;">
-            Your message mentions an attachment, but nothing is attached. Send anyway?
+            ${_esc(t('Your message mentions an attachment, but nothing is attached. Send anyway?'))}
           </div>
           <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;">
-            <button class="memory-toolbar-btn" id="att-warn-cancel">Go back</button>
-            <button class="memory-toolbar-btn" id="att-warn-send" style="background:var(--accent-primary,var(--red));color:#fff;border-color:var(--accent-primary,var(--red));">Send anyway</button>
+            <button class="memory-toolbar-btn" id="att-warn-cancel">${_esc(t('Go back'))}</button>
+            <button class="memory-toolbar-btn" id="att-warn-send" style="background:var(--accent-primary,var(--red));color:#fff;border-color:var(--accent-primary,var(--red));">${_esc(t('Send anyway'))}</button>
           </div>
         </div>
       `;
@@ -3070,11 +3071,11 @@ import { t } from './i18n.js';
     const doc = docs.get(activeDocId);
     const attachments = (doc?._composeAtts || []).map(a => a.token);
     if (!to || !body) {
-      if (uiModule) uiModule.showError('To and body are required');
+      if (uiModule) uiModule.showError(t('To and body are required'));
       return;
     }
     if (inReplyTo && !_emailReplyOwnText(body)) {
-      if (uiModule) uiModule.showError('Reply body is empty');
+      if (uiModule) uiModule.showError(t('Reply body is empty'));
       return;
     }
     // Warn if body mentions attachments but none are actually attached
@@ -3094,15 +3095,15 @@ import { t } from './i18n.js';
       sendSpinner.element.style.cssText = 'display:inline-block;vertical-align:-2px;margin-right:6px;width:14px;height:14px;';
       btn.innerHTML = '';
       btn.appendChild(sendSpinner.element);
-      btn.appendChild(document.createTextNode('Sending'));
+      btn.appendChild(document.createTextNode(t('Sending')));
     }
     try {
       let canceled = false;
       if (uiModule) {
-        uiModule.showToast('Sending', {
+        uiModule.showToast(t('Sending'), {
           duration: 3200,
           leadingIcon: 'spinner',
-          action: 'Cancel',
+          action: t('Cancel'),
           onAction: () => { canceled = true; },
         });
       }
@@ -3112,7 +3113,7 @@ import { t } from './i18n.js';
       if (canceled) {
         _restoreDetachedEmailDoc(detachedEmailDoc);
         detachedEmailDoc = null;
-        if (uiModule) uiModule.showToast('Send canceled');
+        if (uiModule) uiModule.showToast(t('Send canceled'));
         return;
       }
 
@@ -3133,15 +3134,20 @@ import { t } from './i18n.js';
       try {
         data = await res.json();
       } catch (_) {
-        data = { success: false, error: `Send failed (${res.status})` };
+        data = {
+          success: false,
+          error: t('Send failed ({status})', { status: res.status }),
+        };
       }
-      if (!res.ok && data && !data.error) data.error = `Send failed (${res.status})`;
+      if (!res.ok && data && !data.error) {
+        data.error = t('Send failed ({status})', { status: res.status });
+      }
       if (data.success) {
         if (uiModule) {
-          uiModule.showToast('Message sent', {
+          uiModule.showToast(t('Message sent'), {
             duration: 7000,
             leadingIcon: 'check',
-            action: 'View Message',
+            action: t('View Message'),
             onAction: () => {
               import('./emailLibrary.js').then(mod => {
                 const open = mod.openEmailLibrary || (mod.default && mod.default.openEmailLibrary);
@@ -3199,12 +3205,18 @@ import { t } from './i18n.js';
       } else {
         _restoreDetachedEmailDoc(detachedEmailDoc);
         detachedEmailDoc = null;
-        if (uiModule) uiModule.showError(data.error || 'Failed to send');
+        if (uiModule) uiModule.showError(data.error || t('Failed to send'));
       }
     } catch (e) {
       _restoreDetachedEmailDoc(detachedEmailDoc);
       detachedEmailDoc = null;
-      if (uiModule) uiModule.showError(e?.message ? `Failed to send email: ${e.message}` : 'Failed to send email');
+      if (uiModule) {
+        uiModule.showError(
+          e?.message
+            ? t('Failed to send email: {message}', { message: e.message })
+            : t('Failed to send email')
+        );
+      }
     } finally {
       if (sendSpinner) sendSpinner.destroy();
       if (btn) {
@@ -3227,7 +3239,7 @@ import { t } from './i18n.js';
     const body = (_rich ? (_rich.innerText || _rich.textContent || '') : (textarea?.value || '')).trim();
     const bodyHtml = _rich ? _rich.innerHTML : null;
     const btn = document.getElementById('doc-email-draft-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+    if (btn) { btn.disabled = true; btn.textContent = t('Saving...'); }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 18000);
     try {
@@ -3249,16 +3261,20 @@ import { t } from './i18n.js';
       });
       const data = await res.json();
       if (data.success) {
-        if (uiModule) uiModule.showToast('Draft saved to mailbox');
+        if (uiModule) uiModule.showToast(t('Draft saved to mailbox'));
       } else {
-        if (uiModule) uiModule.showError(data.error || 'Failed to save draft');
+        if (uiModule) uiModule.showError(data.error || t('Failed to save draft'));
       }
     } catch (e) {
       const timedOut = e && e.name === 'AbortError';
-      if (uiModule) uiModule.showError(timedOut ? 'Saving draft timed out' : 'Failed to save draft');
+      if (uiModule) {
+        uiModule.showError(
+          timedOut ? t('Saving draft timed out') : t('Failed to save draft')
+        );
+      }
     } finally {
       clearTimeout(timeout);
-      if (btn) { btn.disabled = false; btn.textContent = 'Draft'; }
+      if (btn) { btn.disabled = false; btn.textContent = t('Draft'); }
     }
   }
 
@@ -3378,15 +3394,15 @@ import { t } from './i18n.js';
     ].join(';');
     menu.innerHTML = `
       <div style="display:flex;flex-direction:column;gap:6px;min-width:200px;">
-        <textarea data-note-input rows="2" placeholder="Add context (optional)" style="width:100%;box-sizing:border-box;resize:vertical;min-height:42px;font-family:inherit;font-size:11px;padding:5px 6px;border-radius:5px;border:1px solid var(--border,#333);background:var(--bg-elev,#1a1a1a);color:var(--fg);"></textarea>
+        <textarea data-note-input rows="2" placeholder="${_esc(t('Add context (optional)'))}" style="width:100%;box-sizing:border-box;resize:vertical;min-height:42px;font-family:inherit;font-size:11px;padding:5px 6px;border-radius:5px;border:1px solid var(--border,#333);background:var(--bg-elev,#1a1a1a);color:var(--fg);"></textarea>
         <div style="display:flex;align-items:center;gap:4px;">
-          <button class="memory-toolbar-btn" data-mode="ai-reply-fast" title="Shorter, faster draft" style="display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:1;">
+          <button class="memory-toolbar-btn" data-mode="ai-reply-fast" title="${_esc(t('Shorter, faster draft'))}" style="display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:1;">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="var(--accent, var(--red))" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-            Fast
+            ${_esc(t('Fast'))}
           </button>
-          <button class="memory-toolbar-btn" data-mode="ai-reply-full" title="Fuller reply with more context" style="display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:1;">
+          <button class="memory-toolbar-btn" data-mode="ai-reply-full" title="${_esc(t('Fuller reply with more context'))}" style="display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:1;">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="color:var(--accent, var(--red));"><circle cx="12" cy="12" r="6"/></svg>
-            Full
+            ${_esc(t('Full'))}
           </button>
         </div>
       </div>
@@ -3457,7 +3473,10 @@ import { t } from './i18n.js';
     } catch (_) {}
 
     const btn = document.getElementById('doc-email-ai-reply-btn');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:3px"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>Drafting...'; }
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:3px"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>${_esc(t('Drafting...'))}`;
+    }
 
     try {
       // Empty-compose path: if there's no original body, send a placeholder
@@ -3498,14 +3517,21 @@ import { t } from './i18n.js';
         // own work and the original quote are untouched.
         const newBody = currentBody ? cleanReply + '\n\n' + currentBody : cleanReply;
         await _streamEmailBodyText(textarea, newBody);
-        if (uiModule) uiModule.showToast(`AI draft inserted (${data.model_used || 'AI'})`);
+        if (uiModule) {
+          uiModule.showToast(
+            t('AI draft inserted ({model})', { model: data.model_used || 'AI' })
+          );
+        }
       } else {
-        if (uiModule) uiModule.showError(data.error || 'Failed to generate reply');
+        if (uiModule) uiModule.showError(data.error || t('Failed to generate reply'));
       }
     } catch (e) {
-      if (uiModule) uiModule.showError('Failed to generate AI reply');
+      if (uiModule) uiModule.showError(t('Failed to generate AI reply'));
     } finally {
-      if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="color:var(--accent, var(--red));flex-shrink:0;position:relative;top:-1px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg><span style="font-size:11px;margin-left:4px;">Reply</span>'; }
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="color:var(--accent, var(--red));flex-shrink:0;position:relative;top:-1px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg><span style="font-size:11px;margin-left:4px;">${_esc(t('Reply'))}</span>`;
+      }
     }
   }
 
@@ -3526,11 +3552,11 @@ import { t } from './i18n.js';
     const attachments = (doc?._composeAtts || []).map(a => a.token);
 
     if (!to || !body) {
-      if (uiModule) uiModule.showError('To and body are required');
+      if (uiModule) uiModule.showError(t('To and body are required'));
       return;
     }
     if (inReplyTo && !_emailReplyOwnText(body)) {
-      if (uiModule) uiModule.showError('Reply body is empty');
+      if (uiModule) uiModule.showError(t('Reply body is empty'));
       return;
     }
     if (attachments.length === 0 && _bodyMentionsAttachment(body)) {
@@ -3545,23 +3571,23 @@ import { t } from './i18n.js';
     overlay.innerHTML = `
       <div class="modal-content schedule-send-modal" style="width:400px;max-width:92vw;">
         <div class="modal-header">
-          <h4>Schedule Send</h4>
-          <button class="close-btn" id="sched-close" title="Close"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          <h4>${_esc(t('Schedule Send'))}</h4>
+          <button class="close-btn" id="sched-close" title="${_esc(t('Close'))}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
         <div class="modal-body schedule-send-body">
-          <label class="schedule-send-label">Quick presets</label>
+          <label class="schedule-send-label">${_esc(t('Quick presets'))}</label>
           <div class="schedule-send-presets">
-            <button class="memory-toolbar-btn" data-preset="1h">In 1 hour</button>
-            <button class="memory-toolbar-btn" data-preset="3h">In 3 hours</button>
-            <button class="memory-toolbar-btn" data-preset="tomorrow">Tomorrow 9am</button>
-            <button class="memory-toolbar-btn" data-preset="monday">Monday 9am</button>
+            <button class="memory-toolbar-btn" data-preset="1h">${_esc(t('In 1 hour'))}</button>
+            <button class="memory-toolbar-btn" data-preset="3h">${_esc(t('In 3 hours'))}</button>
+            <button class="memory-toolbar-btn" data-preset="tomorrow">${_esc(t('Tomorrow 9am'))}</button>
+            <button class="memory-toolbar-btn" data-preset="monday">${_esc(t('Monday 9am'))}</button>
           </div>
-          <label class="schedule-send-label" for="sched-datetime">Or pick a specific time</label>
+          <label class="schedule-send-label" for="sched-datetime">${_esc(t('Or pick a specific time'))}</label>
           <input type="datetime-local" id="sched-datetime" class="schedule-send-datetime" />
         </div>
         <div class="modal-footer schedule-send-footer">
-          <button class="memory-toolbar-btn" id="sched-cancel">Cancel</button>
-          <button class="memory-toolbar-btn schedule-send-confirm" id="sched-confirm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Schedule</button>
+          <button class="memory-toolbar-btn" id="sched-cancel">${_esc(t('Cancel'))}</button>
+          <button class="memory-toolbar-btn schedule-send-confirm" id="sched-confirm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>${_esc(t('Schedule'))}</button>
         </div>
       </div>
     `;
@@ -3620,7 +3646,7 @@ import { t } from './i18n.js';
 
     overlay.querySelector('#sched-confirm').addEventListener('click', async () => {
       const localDt = dtInput.value;
-      if (!localDt) { if (uiModule) uiModule.showError('Please pick a time'); return; }
+      if (!localDt) { if (uiModule) uiModule.showError(t('Please pick a time')); return; }
       // Convert local datetime to UTC ISO
       const utcIso = new Date(localDt).toISOString();
       try {
@@ -3639,15 +3665,19 @@ import { t } from './i18n.js';
         });
         const data = await res.json();
         if (data.success) {
-          if (uiModule) uiModule.showToast(`Scheduled for ${new Date(localDt).toLocaleString()}`);
+          if (uiModule) {
+            uiModule.showToast(
+              t('Scheduled for {time}', { time: new Date(localDt).toLocaleString() })
+            );
+          }
           cleanup();
           // Close the document
           _closeWithoutDeleting(true);
         } else {
-          if (uiModule) uiModule.showError(data.error || 'Failed to schedule');
+          if (uiModule) uiModule.showError(data.error || t('Failed to schedule'));
         }
       } catch (e) {
-        if (uiModule) uiModule.showError('Failed to schedule');
+        if (uiModule) uiModule.showError(t('Failed to schedule'));
       }
     });
   }
@@ -5231,18 +5261,19 @@ import { t } from './i18n.js';
       const overlay = document.createElement('div');
       overlay.id = 'doc-link-prompt-overlay';
       overlay.className = 'modal';
-      overlay.innerHTML =
-        '<div class="modal-content styled-confirm-box styled-prompt-box">' +
-          '<div class="modal-header"><h4>Insert link</h4></div>' +
-          '<div class="modal-body">' +
-            '<input type="text" id="doc-link-text" class="styled-prompt-input" placeholder="Link text (optional)" maxlength="500" />' +
-            '<input type="url" id="doc-link-url" class="styled-prompt-input" placeholder="https://example.com" maxlength="2048" style="margin-top:8px;" />' +
-          '</div>' +
-          '<div class="modal-footer">' +
-            '<button id="doc-link-cancel" class="confirm-btn confirm-btn-secondary">Cancel</button>' +
-            '<button id="doc-link-ok" class="confirm-btn confirm-btn-primary">Insert</button>' +
-          '</div>' +
-        '</div>';
+      overlay.innerHTML = `
+        <div class="modal-content styled-confirm-box styled-prompt-box">
+          <div class="modal-header"><h4>${_esc(t('Insert link'))}</h4></div>
+          <div class="modal-body">
+            <input type="text" id="doc-link-text" class="styled-prompt-input" placeholder="${_esc(t('Link text (optional)'))}" maxlength="500" />
+            <input type="url" id="doc-link-url" class="styled-prompt-input" placeholder="https://example.com" maxlength="2048" style="margin-top:8px;" />
+          </div>
+          <div class="modal-footer">
+            <button id="doc-link-cancel" class="confirm-btn confirm-btn-secondary">${_esc(t('Cancel'))}</button>
+            <button id="doc-link-ok" class="confirm-btn confirm-btn-primary">${_esc(t('Insert'))}</button>
+          </div>
+        </div>
+      `;
       document.body.appendChild(overlay);
       const textEl = overlay.querySelector('#doc-link-text');
       const urlEl = overlay.querySelector('#doc-link-url');

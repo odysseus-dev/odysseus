@@ -734,6 +734,7 @@ def _translated_document_editor_examples(lang: str) -> dict[str, str]:
         globalThis.window = {{ __ODY_LANG: {json.dumps(lang)} }};
         globalThis.localStorage = {{ getItem: () => null }};
         const {{ t }} = await import({json.dumps(runtime.as_uri())});
+        await import({json.dumps(APP_CATALOG.as_uri())});
         await import({json.dumps(DOCUMENT_CATALOG.as_uri())});
         console.log(JSON.stringify({{
           pdfTitle: t('Export filled PDF'),
@@ -759,6 +760,98 @@ def _translated_document_editor_examples(lang: str) -> dict[str, str]:
     result = _run(["node", "--input-type=module"], input_text=script)
     assert result.returncode == 0, result.stderr
     return dict(json.loads(result.stdout))
+
+
+def _translated_document_action_examples(lang: str) -> dict[str, str]:
+    """Exercise remaining document actions through the real i18n runtime."""
+
+    runtime = ROOT / "static" / "js" / "i18n.js"
+    script = textwrap.dedent(
+        f"""
+        globalThis.window = {{ __ODY_LANG: {json.dumps(lang)} }};
+        globalThis.localStorage = {{ getItem: () => null }};
+        const {{ t }} = await import({json.dumps(runtime.as_uri())});
+        await import({json.dumps(APP_CATALOG.as_uri())});
+        await import({json.dumps(DOCUMENT_CATALOG.as_uri())});
+        console.log(JSON.stringify({{
+          attachment: t('No attachments found'),
+          sendError: t(
+            'Failed to send email: {{message}}',
+            {{ message: 'SMTP <raw>' }},
+          ),
+          aiDraft: t(
+            'AI draft inserted ({{model}})',
+            {{ model: 'Modelo <raw>' }},
+          ),
+          scheduled: t(
+            'Scheduled for {{time}}',
+            {{ time: '30/06/2026 09:00' }},
+          ),
+          exportError: t(
+            'Export failed: {{message}}',
+            {{ message: 'backend <raw>' }},
+          ),
+          selectionOne: t(
+            '{{line}} selected',
+            {{ line: 'L2-L4' }},
+          ),
+          selectionMany: t(
+            '{{count}} selections ({{lines}})',
+            {{ count: 3, lines: 'L1, L4, L9' }},
+          ),
+          diffOne: t(
+            '{{resolved}} / 1 change resolved',
+            {{ resolved: 1 }},
+          ),
+          diffMany: t(
+            '{{resolved}} / {{total}} changes resolved',
+            {{ resolved: 2, total: 4 }},
+          ),
+          importError: t(
+            'Import failed: {{message}}',
+            {{ message: 'arquivo <raw>' }},
+          ),
+          deletePrompt: t(
+            'Delete "{{name}}"?',
+            {{ name: 'Contrato <raw>' }},
+          ),
+          restored: t(
+            'Restored to v{{version}}',
+            {{ version: 7 }},
+          ),
+        }}));
+        """
+    )
+    result = _run(["node", "--input-type=module"], input_text=script)
+    assert result.returncode == 0, result.stderr
+    return dict(json.loads(result.stdout))
+
+
+def _escaped_document_version_source(value: str) -> str:
+    """Run document.js' real HTML escape helper against an API value."""
+
+    script = textwrap.dedent(
+        f"""
+        import fs from 'node:fs';
+        const source = fs.readFileSync(
+          {json.dumps(str(DOCUMENT_JS))},
+          'utf8',
+        );
+        const match = source.match(
+          /function _esc\\(s\\)\\s*\\{{[\\s\\S]*?\\n  \\}}/,
+        );
+        if (!match) throw new Error('document _esc helper not found');
+        const fnSource = match[0].replace(
+          'function _esc',
+          'function',
+        );
+        const escapeHtml = eval(`(${{fnSource}})`);
+        console.log(escapeHtml({json.dumps(value)}));
+        """
+    )
+    result = _run(["node", "--input-type=module"], input_text=script)
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
 
 
 def _run_code_runner_probe(lang: str) -> dict[str, object]:
@@ -1861,6 +1954,104 @@ def test_document_catalog_covers_editor_pdf_toolbar_and_import_copy() -> None:
     assert reused.isdisjoint(catalog)
 
 
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_document_catalog_covers_remaining_actions_and_states() -> None:
+    catalog = _messages_for(DOCUMENT_CATALOG.name)
+    expected = {
+        "No attachments found": "Nenhum anexo encontrado",
+        "Your message mentions an attachment, but nothing is attached. Send anyway?": (
+            "Sua mensagem menciona um anexo, mas nada foi anexado. Enviar mesmo assim?"
+        ),
+        "Go back": "Voltar",
+        "Send anyway": "Enviar mesmo assim",
+        "To and body are required": "Destinatário e corpo são obrigatórios",
+        "Reply body is empty": "O corpo da resposta está vazio",
+        "Sending": "Enviando",
+        "Send canceled": "Envio cancelado",
+        "Send failed ({status})": "Falha no envio ({status})",
+        "Message sent": "Mensagem enviada",
+        "View Message": "Ver mensagem",
+        "Failed to send": "Falha ao enviar",
+        "Failed to send email: {message}": "Falha ao enviar e-mail: {message}",
+        "Failed to send email": "Falha ao enviar e-mail",
+        "Saving...": "Salvando...",
+        "Draft saved to mailbox": "Rascunho salvo na caixa de e-mail",
+        "Failed to save draft": "Falha ao salvar o rascunho",
+        "Saving draft timed out": "O salvamento do rascunho excedeu o tempo limite",
+        "Draft": "Rascunho",
+        "Add context (optional)": "Adicionar contexto (opcional)",
+        "Shorter, faster draft": "Rascunho mais curto e rápido",
+        "Fast": "Rápido",
+        "Fuller reply with more context": "Resposta mais completa, com mais contexto",
+        "Full": "Completo",
+        "Drafting...": "Criando rascunho...",
+        "AI draft inserted ({model})": "Rascunho de IA inserido ({model})",
+        "Failed to generate reply": "Falha ao gerar a resposta",
+        "Failed to generate AI reply": "Falha ao gerar a resposta com IA",
+        "Schedule Send": "Agendar envio",
+        "Quick presets": "Opções rápidas",
+        "In 1 hour": "Em 1 hora",
+        "In 3 hours": "Em 3 horas",
+        "Tomorrow 9am": "Amanhã às 9h",
+        "Monday 9am": "Segunda-feira às 9h",
+        "Or pick a specific time": "Ou escolha um horário específico",
+        "Schedule": "Agendar",
+        "Please pick a time": "Escolha um horário",
+        "Scheduled for {time}": "Agendado para {time}",
+        "Failed to schedule": "Falha ao agendar",
+        "Export failed: {message}": "Falha na exportação: {message}",
+        "Save failed: {status}": "Falha ao salvar: {status}",
+        "Reply to the sender with this filled file attached": (
+            "Responder ao remetente com este arquivo preenchido em anexo"
+        ),
+        "Attach": "Anexar",
+        "Insert link": "Inserir link",
+        "Link text (optional)": "Texto do link (opcional)",
+        "Insert": "Inserir",
+        "Selected regions — type in chat to edit": (
+            "Trechos selecionados — digite na conversa para editar"
+        ),
+        "{line} selected": "{line} selecionada",
+        "{count} selections ({lines})": "{count} seleções ({lines})",
+        "Clear all selections": "Limpar todas as seleções",
+        "Close all suggestions": "Fechar todas as sugestões",
+        "Accept": "Aceitar",
+        "Skip": "Ignorar",
+        "Accept All": "Aceitar tudo",
+        "Reject All": "Rejeitar tudo",
+        "Accept change": "Aceitar alteração",
+        "Reject change": "Rejeitar alteração",
+        "{resolved} / 1 change resolved": "{resolved} / 1 alteração resolvida",
+        "{resolved} / {total} changes resolved": (
+            "{resolved} / {total} alterações resolvidas"
+        ),
+        "+1 more change": "+1 alteração adicional",
+        "+{count} more changes": "+{count} alterações adicionais",
+        'Reply draft ready — "{filename}" attached': (
+            'Rascunho de resposta pronto — "{filename}" anexado'
+        ),
+        "Document saved": "Documento salvo",
+        "Autosave failed": "Falha no salvamento automático",
+        "Failed to save document": "Falha ao salvar o documento",
+        "Import failed: {message}": "Falha na importação: {message}",
+        "Exported as HTML": "Exportado como HTML",
+        "Failed to load PDF library": "Falha ao carregar a biblioteca de PDF",
+        "Exporting PDF...": "Exportando PDF...",
+        "Failed to load DOCX library": "Falha ao carregar a biblioteca DOCX",
+        "Exported as DOCX": "Exportado como DOCX",
+        "this document": "este documento",
+        "Document deleted": "Documento excluído",
+        "Failed to delete document": "Falha ao excluir o documento",
+        "latest": "mais recente",
+        "Restore": "Restaurar",
+        "Failed to load versions": "Falha ao carregar as versões",
+        "Restored to v{version}": "Restaurado para a v{version}",
+        "Failed to restore version": "Falha ao restaurar a versão",
+    }
+
+    assert {key: catalog.get(key) for key in expected} == expected
+
+
 def test_document_editor_uses_contextual_i18n_without_translating_runtime_data() -> None:
     source = DOCUMENT_JS.read_text(encoding="utf-8")
     required_call_sites = {
@@ -1899,6 +2090,105 @@ def test_document_editor_uses_contextual_i18n_without_translating_runtime_data()
         r"""import\s+['"][^'"]*i18n/[^'"]+\.pt-BR\.js['"]"""
     )
     assert not side_effect_catalog_import.search(source)
+
+
+def test_document_remaining_actions_use_contextual_i18n_and_preserve_data() -> None:
+    source = DOCUMENT_JS.read_text(encoding="utf-8")
+    required_call_sites = {
+        "attachment warning": "${_esc(t('No attachments found'))}",
+        "send status": "document.createTextNode(t('Sending'))",
+        "raw send error": "data.error || t('Failed to send')",
+        "send error placeholder": (
+            "t('Failed to send email: {message}', { message: e.message })"
+        ),
+        "draft state": "btn.textContent = t('Saving...')",
+        "AI context": "${_esc(t('Add context (optional)'))}",
+        "raw AI model": (
+            "t('AI draft inserted ({model})', { model: data.model_used || 'AI' })"
+        ),
+        "schedule time": (
+            "t('Scheduled for {time}', "
+            "{ time: new Date(localDt).toLocaleString() })"
+        ),
+        "export error": (
+            "t('Export failed: {message}', { message: e.message })"
+        ),
+        "PDF status": "t('Save failed: {status}', { status: res.status })",
+        "attach label": "${_esc(t('Attach'))}",
+        "link modal": "${_esc(t('Insert link'))}",
+        "selection singular": "t('{line} selected', { line: labels[0] })",
+        "selection plural": (
+            "t('{count} selections ({lines})', "
+            "{ count: _selections.length, lines: labels.join(', ') })"
+        ),
+        "raw suggestion reason": "${_esc(sugg.reason)}",
+        "diff plural": (
+            "t('{resolved} / {total} changes resolved', "
+            "{ resolved, total: _diffChunks.length })"
+        ),
+        "raw filename": (
+            "t('Reply draft ready — \"{filename}\" attached', "
+            "{ filename: att.filename })"
+        ),
+        "raw import error": (
+            "t('Import failed: {message}', { message: err.message || err })"
+        ),
+        "raw delete title": (
+            "t('Delete \"{name}\"?', { name })"
+        ),
+        "restore version": (
+            "t('Restored to v{version}', { version: num })"
+        ),
+    }
+    missing = [
+        f"{context}: {snippet}"
+        for context, snippet in required_call_sites.items()
+        for _ in [None]
+        if snippet not in source
+    ]
+    assert not missing, "Ações restantes sem i18n seguro:\n" + "\n".join(missing)
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_document_remaining_action_templates_translate_and_preserve_values() -> None:
+    assert _translated_document_action_examples("pt-BR") == {
+        "attachment": "Nenhum anexo encontrado",
+        "sendError": "Falha ao enviar e-mail: SMTP <raw>",
+        "aiDraft": "Rascunho de IA inserido (Modelo <raw>)",
+        "scheduled": "Agendado para 30/06/2026 09:00",
+        "exportError": "Falha na exportação: backend <raw>",
+        "selectionOne": "L2-L4 selecionada",
+        "selectionMany": "3 seleções (L1, L4, L9)",
+        "diffOne": "1 / 1 alteração resolvida",
+        "diffMany": "2 / 4 alterações resolvidas",
+        "importError": "Falha na importação: arquivo <raw>",
+        "deletePrompt": 'Excluir "Contrato <raw>"?',
+        "restored": "Restaurado para a v7",
+    }
+    assert _translated_document_action_examples("en") == {
+        "attachment": "No attachments found",
+        "sendError": "Failed to send email: SMTP <raw>",
+        "aiDraft": "AI draft inserted (Modelo <raw>)",
+        "scheduled": "Scheduled for 30/06/2026 09:00",
+        "exportError": "Export failed: backend <raw>",
+        "selectionOne": "L2-L4 selected",
+        "selectionMany": "3 selections (L1, L4, L9)",
+        "diffOne": "1 / 1 change resolved",
+        "diffMany": "2 / 4 changes resolved",
+        "importError": "Import failed: arquivo <raw>",
+        "deletePrompt": 'Delete "Contrato <raw>"?',
+        "restored": "Restored to v7",
+    }
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
+def test_document_version_history_escapes_malicious_api_source() -> None:
+    source = DOCUMENT_JS.read_text(encoding="utf-8")
+    assert "${_esc(v.source || '')}" in source
+    assert "${_esc(v.summary)}" in source
+    assert _escaped_document_version_source(
+        '<img src=x onerror="alert(1)">'
+    ) == '&lt;img src=x onerror=&quot;alert(1)&quot;&gt;'
 
 
 @pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
