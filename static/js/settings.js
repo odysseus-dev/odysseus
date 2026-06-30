@@ -2155,7 +2155,7 @@ function initAccount() {
       const roleEl = el('settings-account-role');
       const avatarEl = el('settings-account-avatar');
       if (nameEl) nameEl.textContent = d.username || 'Unknown';
-      if (roleEl) roleEl.textContent = d.is_admin ? 'Admin' : 'User';
+      if (roleEl) roleEl.textContent = d.is_admin ? window.t('Admin') : window.t('User');
       if (avatarEl) {
         const initial = (d.username || '?')[0].toUpperCase();
         avatarEl.textContent = initial;
@@ -2169,7 +2169,7 @@ function initAccount() {
       if (!policy) return;
       _authPolicy = policy;
       const pwNew = el('settings-pw-new');
-      if (pwNew) pwNew.placeholder = `New password (min ${policy.password_min_length})`;
+      if (pwNew) pwNew.placeholder = window.t('New password (min {n})').replace('{n}', policy.password_min_length);
     }).catch(() => {});
 
   // Change password
@@ -2181,9 +2181,9 @@ function initAccount() {
       const nw = el('settings-pw-new').value;
       const conf = el('settings-pw-confirm').value;
       msgEl.style.color = '';
-      if (!cur || !nw) { msgEl.textContent = 'Fill in all fields'; msgEl.style.color = 'var(--red)'; return; }
-      if (nw.length < _authPolicy.password_min_length) { msgEl.textContent = `Min ${_authPolicy.password_min_length} characters`; msgEl.style.color = 'var(--red)'; return; }
-      if (nw !== conf) { msgEl.textContent = 'Passwords don\'t match'; msgEl.style.color = 'var(--red)'; return; }
+      if (!cur || !nw) { msgEl.textContent = window.t('Fill in all fields'); msgEl.style.color = 'var(--red)'; return; }
+      if (nw.length < _authPolicy.password_min_length) { msgEl.textContent = window.t('Min {n} characters').replace('{n}', _authPolicy.password_min_length); msgEl.style.color = 'var(--red)'; return; }
+      if (nw !== conf) { msgEl.textContent = window.t("Passwords don't match"); msgEl.style.color = 'var(--red)'; return; }
       saveBtn.disabled = true;
       try {
         const res = await fetch('/api/auth/change-password', {
@@ -2193,7 +2193,7 @@ function initAccount() {
         });
         if (!res.ok) { const d = await res.json(); throw new Error(d.detail || 'Failed'); }
         msgEl.style.color = 'var(--green)';
-        msgEl.textContent = 'Password updated';
+        msgEl.textContent = window.t('Password updated');
         el('settings-pw-current').value = '';
         el('settings-pw-new').value = '';
         el('settings-pw-confirm').value = '';
@@ -2223,12 +2223,12 @@ function initAccount() {
             <input id="tfa-disable-pw" type="password" placeholder="Enter password to disable" autocomplete="current-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;width:100%;box-sizing:border-box;margin-bottom:6px;">
             <div class="settings-row" style="justify-content:flex-end;">
               <span id="tfa-msg" style="font-size:11px;margin-right:auto;"></span>
-              <button class="admin-btn-add" id="tfa-disable-btn" style="opacity:0.7;">Disable 2FA</button>
+              <button class="admin-btn-add" id="tfa-disable-btn" style="opacity:0.7;">${window.t('Disable 2FA')}</button>
             </div>`;
           el('tfa-disable-btn').addEventListener('click', async () => {
             const pw = el('tfa-disable-pw').value;
             const msg = el('tfa-msg');
-            if (!pw) { msg.textContent = 'Enter your password'; msg.style.color = 'var(--red)'; return; }
+            if (!pw) { msg.textContent = window.t('Enter your password'); msg.style.color = 'var(--red)'; return; }
             try {
               const r = await fetch('/api/auth/2fa/disable', {
                 method: 'POST', credentials: 'same-origin',
@@ -2245,7 +2245,7 @@ function initAccount() {
             <div style="font-size:12px;opacity:0.6;margin-bottom:8px;">Add an extra layer of security with an authenticator app (Aegis, Google Authenticator, etc.)</div>
             <div class="settings-row" style="justify-content:flex-end;">
               <span id="tfa-msg" style="font-size:11px;margin-right:auto;"></span>
-              <button class="admin-btn-add" id="tfa-setup-btn">Set Up 2FA</button>
+              <button class="admin-btn-add" id="tfa-setup-btn">${window.t('Set Up 2FA')}</button>
             </div>`;
           el('tfa-setup-btn').addEventListener('click', async () => {
             const msg = el('tfa-msg');
@@ -2266,15 +2266,15 @@ function initAccount() {
                 <input id="tfa-verify-code" type="text" placeholder="Enter 6-digit code to verify" autocomplete="one-time-code" inputmode="numeric" maxlength="8" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:13px;box-sizing:border-box;text-align:center;letter-spacing:3px;margin-bottom:6px;">
                 <div class="settings-row" style="justify-content:flex-end;">
                   <span id="tfa-msg" style="font-size:11px;margin-right:auto;"></span>
-                  <button class="admin-btn-add" id="tfa-cancel-btn" style="opacity:0.5;">Cancel</button>
-                  <button class="admin-btn-add" id="tfa-verify-btn">Verify & Enable</button>
+                  <button class="admin-btn-add" id="tfa-cancel-btn" style="opacity:0.5;">${window.t('Cancel')}</button>
+                  <button class="admin-btn-add" id="tfa-verify-btn">${window.t('Verify & Enable')}</button>
                 </div>`;
               el('tfa-verify-code').focus();
               el('tfa-cancel-btn').addEventListener('click', () => render2FA());
               el('tfa-verify-btn').addEventListener('click', async () => {
                 const code = el('tfa-verify-code').value.trim();
                 const vmsg = el('tfa-msg');
-                if (!code) { vmsg.textContent = 'Enter the code'; vmsg.style.color = 'var(--red)'; return; }
+                if (!code) { vmsg.textContent = window.t('Enter the code'); vmsg.style.color = 'var(--red)'; return; }
                 try {
                   const vr = await fetch('/api/auth/2fa/confirm', {
                     method: 'POST', credentials: 'same-origin',
@@ -2289,7 +2289,7 @@ function initAccount() {
                     <div style="color:var(--color-save-green, #4caf50);font-size:13px;font-weight:600;margin-bottom:8px;">&#x2713; 2FA Enabled!</div>
                     <div style="font-size:12px;opacity:0.7;margin-bottom:8px;">Save these backup codes somewhere safe. Each can be used once if you lose your authenticator:</div>
                     <div style="font-family:monospace;font-size:12px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;columns:2;column-gap:16px;margin-bottom:8px;">${codes.map(c => '<div style="margin-bottom:2px;">' + c + '</div>').join('')}</div>
-                    <button class="admin-btn-add" id="tfa-done-btn">Done</button>`;
+                    <button class="admin-btn-add" id="tfa-done-btn">${window.t('Done')}</button>`;
                   el('tfa-done-btn').addEventListener('click', () => render2FA());
                 } catch (e) { vmsg.textContent = e.message; vmsg.style.color = 'var(--red)'; }
               });
@@ -2392,12 +2392,12 @@ async function initReminderSettings() {
             body: JSON.stringify({ app_public_url: val }),
           });
           if (pubUrlMsg) {
-            pubUrlMsg.textContent = val ? 'Saved' : 'Cleared (deep-links disabled)';
+            pubUrlMsg.textContent = val ? window.t('Saved') : window.t('Cleared (deep-links disabled)');
             pubUrlMsg.style.color = 'var(--green,#50fa7b)';
             setTimeout(() => { pubUrlMsg.textContent = ''; }, 2000);
           }
         } catch (_) {
-          if (pubUrlMsg) { pubUrlMsg.textContent = 'Save failed'; pubUrlMsg.style.color = 'var(--red)'; }
+          if (pubUrlMsg) { pubUrlMsg.textContent = window.t('Save failed'); pubUrlMsg.style.color = 'var(--red)'; }
         }
       }, 600);
     });
@@ -2440,7 +2440,7 @@ async function initReminderSettings() {
 
   if (!smtpConfigured && emailOpt) {
     emailOpt.disabled = true;
-    emailOpt.textContent = 'Email (add an account in Integrations)';
+    emailOpt.textContent = window.t('Email (add an account in Integrations)');
   }
 
   // Detect whether ntfy integration exists — try admin endpoint, fall back to
@@ -2466,7 +2466,7 @@ async function initReminderSettings() {
 
   if (!ntfyConfigured && ntfyOpt) {
     ntfyOpt.disabled = true;
-    ntfyOpt.textContent = 'ntfy (add in Integrations first)';
+    ntfyOpt.textContent = window.t('ntfy (add in Integrations first)');
   }
 
   // Webhook: available whenever at least one integration with a base_url exists.
@@ -2483,7 +2483,7 @@ async function initReminderSettings() {
   } catch (_) {}
   if (!webhookConfigured && webhookOpt) {
     webhookOpt.disabled = true;
-    webhookOpt.textContent = 'Webhook (add an Integration first)';
+    webhookOpt.textContent = window.t('Webhook (add an Integration first)');
   }
 
   const emailFromRow = el('set-reminder-email-from-row');
@@ -2517,15 +2517,15 @@ async function initReminderSettings() {
   function applyReminderChannelAvailability() {
     if (emailOpt) {
       emailOpt.disabled = !smtpConfigured;
-      emailOpt.textContent = smtpConfigured ? 'Email' : 'Email (add an account in Integrations)';
+      emailOpt.textContent = smtpConfigured ? 'Email' : window.t('Email (add an account in Integrations)');
     }
     if (ntfyOpt) {
       ntfyOpt.disabled = !ntfyConfigured;
-      ntfyOpt.textContent = ntfyConfigured ? 'ntfy' : 'ntfy (add in Integrations first)';
+      ntfyOpt.textContent = ntfyConfigured ? 'ntfy' : window.t('ntfy (add in Integrations first)');
     }
     if (webhookOpt) {
       webhookOpt.disabled = !webhookConfigured;
-      webhookOpt.textContent = webhookConfigured ? 'Webhook' : 'Webhook (add an Integration first)';
+      webhookOpt.textContent = webhookConfigured ? 'Webhook' : window.t('Webhook (add an Integration first)');
     }
   }
 
@@ -2569,7 +2569,7 @@ async function initReminderSettings() {
     else if (currentChannel === 'ntfy' && !ntfyConfigured) channelSel.value = 'browser';
     else if (currentChannel === 'webhook' && !webhookConfigured) channelSel.value = 'browser';
     else channelSel.value = currentChannel;
-    if (hint) hint.textContent = CHANNEL_HINTS[channelSel.value] || '';
+    if (hint) hint.textContent = window.t(CHANNEL_HINTS[channelSel.value] || '');
     syncChannelRows();
   }
 
@@ -2677,7 +2677,7 @@ async function initReminderSettings() {
         save({ reminder_email_account_id: emailAcctSel.value || null });
       }
     }
-    if (hint) hint.textContent = CHANNEL_HINTS[channelSel.value] || '';
+    if (hint) hint.textContent = window.t(CHANNEL_HINTS[channelSel.value] || '');
     syncChannelRows();
   } catch (e) { console.warn('Failed to load reminder settings', e); }
 
@@ -2693,7 +2693,7 @@ async function initReminderSettings() {
   }
 
   channelSel.addEventListener('change', () => {
-    if (hint) hint.textContent = CHANNEL_HINTS[channelSel.value] || '';
+    if (hint) hint.textContent = window.t(CHANNEL_HINTS[channelSel.value] || '');
     syncChannelRows();
     save({ reminder_channel: channelSel.value });
     // Email reminder bell visibility tracks this — broadcast so the
