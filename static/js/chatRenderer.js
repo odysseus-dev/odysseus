@@ -1739,7 +1739,13 @@ export function displayMetrics(messageElement, metrics) {
   const isReal = metrics.usage_source === 'real';
   const ctxPct = metrics.context_percent;
   const model = metrics.model || 'Unknown';
-  const cost = _billableCost(model, inputTokens, outputTokens);
+  // Prefer provider-reported cost (e.g. LiteLLM's x-litellm-response-cost header)
+  // over the hardcoded MODEL_INFO table. The table misses models not listed and
+  // mis-prices substring matches (e.g. gpt-5.5 matching gpt-5). Provider cost is
+  // authoritative when present; fall back to the table for local/subscription
+  // endpoints that don't report a cost.
+  const _providerCost = (typeof metrics.cost === 'number' && metrics.cost > 0) ? metrics.cost : null;
+  const cost = _providerCost !== null ? _providerCost : _billableCost(model, inputTokens, outputTokens);
 
   // Nothing useful to show — bail out (only if ALL metrics are missing)
   if (!responseTime && !outputTokens && tps == null && !ctxPct) return;

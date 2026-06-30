@@ -109,6 +109,11 @@ PASSWORD_MIN_LENGTH = 8
 DEFAULT_TEMPERATURE = 1.0
 DEFAULT_MAX_TOKENS = 0
 
+# Per-request cost reported by LiteLLM (and compatible proxies) in the
+# response headers. Odysseus prefers this value over its local MODEL_INFO
+# table whenever it is present.
+LITELLM_RESPONSE_COST_HEADER = "x-litellm-response-cost"
+
 
 def internal_api_base() -> str:
     """Base URL for in-process loopback calls to Odysseus's own API.

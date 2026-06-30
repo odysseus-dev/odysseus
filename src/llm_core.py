@@ -11,6 +11,7 @@ import os
 from fastapi import HTTPException
 from typing import Optional, Dict, List, Tuple
 from src.model_context import get_context_length, DEFAULT_CONTEXT
+from src.constants import LITELLM_RESPONSE_COST_HEADER
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -1960,6 +1961,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                     friendly = _format_chatgpt_subscription_error(r.status_code, raw)
                     yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
                     return
+                _provider_cost_hdr = r.headers.get(LITELLM_RESPONSE_COST_HEADER)
                 async for line in r.aiter_lines():
                     if not line:
                         continue
@@ -2153,7 +2155,13 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                     })
                                 yield f'data: {json.dumps({"type": "tool_calls", "calls": calls})}\n\n'
                             if _anth_input_tokens or _anth_output_tokens:
-                                yield f'data: {json.dumps({"type": "usage", "data": {"input_tokens": _anth_input_tokens, "output_tokens": _anth_output_tokens}})}\n\n'
+                                _anth_usage = {"input_tokens": _anth_input_tokens, "output_tokens": _anth_output_tokens}
+                                if _provider_cost_hdr:
+                                    try:
+                                        _anth_usage["cost"] = float(_provider_cost_hdr)
+                                    except (ValueError, TypeError):
+                                        pass
+                                yield f'data: {json.dumps({"type": "usage", "data": _anth_usage})}\n\n'
                             yield "data: [DONE]\n\n"
                             return
                         elif evt == "error":
@@ -2226,6 +2234,12 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                 yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
                 return
 
+            # Provider-reported cost (e.g. LiteLLM's x-litellm-response-cost
+            # header). Forwarded to the frontend so it can display the real
+            # cost instead of the hardcoded MODEL_INFO table lookup, which
+            # misses models not in the table and mis-prices substring matches.
+            _provider_cost_hdr = r.headers.get(LITELLM_RESPONSE_COST_HEADER)
+
             async for line in r.aiter_lines():
                 if not line:
                     continue
@@ -2276,6 +2290,11 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                 if "usage" in j and not _delta_has_output:
                                     u = j["usage"] or {}
                                     _usage_data = {"input_tokens": u.get("prompt_tokens", 0), "output_tokens": u.get("completion_tokens", 0)}
+                                    if _provider_cost_hdr:
+                                        try:
+                                            _usage_data["cost"] = float(_provider_cost_hdr)
+                                        except (ValueError, TypeError):
+                                            pass
                                     # llama.cpp puts a `timings` block alongside `usage` with the
                                     # TRUE generation speed (predicted_per_second) — pure decode,
                                     # excluding prefill/network. Pass it through so the UI shows the

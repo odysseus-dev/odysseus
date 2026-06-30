@@ -13,9 +13,10 @@ from src import llm_core
 
 
 class _FakeResp:
-    def __init__(self, lines):
+    def __init__(self, lines, headers=None):
         self._lines = lines
         self.status_code = 200
+        self.headers = headers if headers is not None else {}
 
     async def aiter_lines(self):
         for ln in self._lines:
@@ -26,26 +27,28 @@ class _FakeResp:
 
 
 class _FakeStreamCtx:
-    def __init__(self, lines):
+    def __init__(self, lines, headers=None):
         self._lines = lines
+        self._headers = headers
 
     async def __aenter__(self):
-        return _FakeResp(self._lines)
+        return _FakeResp(self._lines, self._headers)
 
     async def __aexit__(self, *a):
         return False
 
 
 class _FakeClient:
-    def __init__(self, lines):
+    def __init__(self, lines, headers=None):
         self._lines = lines
+        self._headers = headers
 
     def stream(self, method, url, **kw):
-        return _FakeStreamCtx(self._lines)
+        return _FakeStreamCtx(self._lines, self._headers)
 
 
-def _drive(monkeypatch, lines, model="gpt-4o-test"):
-    monkeypatch.setattr(llm_core, "_get_http_client", lambda: _FakeClient(lines))
+def _drive(monkeypatch, lines, model="gpt-4o-test", headers=None):
+    monkeypatch.setattr(llm_core, "_get_http_client", lambda: _FakeClient(lines, headers))
     monkeypatch.setattr(llm_core, "_is_host_dead", lambda u: False)
     monkeypatch.setattr(llm_core, "note_model_activity", lambda *a, **k: None)
     monkeypatch.setattr(llm_core, "_clear_host_dead", lambda *a, **k: None)
@@ -154,3 +157,37 @@ def test_null_tool_call_in_delta_is_skipped(monkeypatch):
     result = _drive(monkeypatch, lines)
     # The stream completes without error; the valid tool call was accumulated.
     assert result is not None
+
+
+def test_provider_cost_header_is_forwarded_in_usage(monkeypatch):
+    # LiteLLM (and compatible proxies) report per-request cost via the
+    # x-litellm-response-cost response header. stream_llm must forward it
+    # as a `cost` field on the usage SSE event so the frontend can display
+    # the real provider-reported cost instead of falling back to the local
+    # MODEL_INFO table.
+    from src.constants import LITELLM_RESPONSE_COST_HEADER
+
+    lines = [
+        'data: ' + json.dumps({"choices": [{"delta": {"content": "Hi"}}]}),
+        'data: ' + json.dumps({"choices": [], "usage": {"prompt_tokens": 4, "completion_tokens": 2}}),
+        'data: [DONE]',
+    ]
+    headers = {LITELLM_RESPONSE_COST_HEADER: "0.000123"}
+    usage = _usage_events(_drive(monkeypatch, lines, headers=headers))
+    assert usage, "usage event was dropped"
+    assert usage[-1] == {"input_tokens": 4, "output_tokens": 2, "cost": 0.000123}
+
+
+def test_missing_cost_header_omits_cost_field(monkeypatch):
+    # When the provider returns no cost header, the usage event must still
+    # be emitted with input/output tokens and no `cost` field — the frontend
+    # then falls back to its MODEL_INFO table lookup.
+    lines = [
+        'data: ' + json.dumps({"choices": [{"delta": {"content": "Hi"}}]}),
+        'data: ' + json.dumps({"choices": [], "usage": {"prompt_tokens": 4, "completion_tokens": 2}}),
+        'data: [DONE]',
+    ]
+    usage = _usage_events(_drive(monkeypatch, lines))
+    assert usage, "usage event was dropped"
+    assert "cost" not in usage[-1]
+    assert usage[-1] == {"input_tokens": 4, "output_tokens": 2}

@@ -1793,6 +1793,7 @@ def _compute_final_metrics(
     prep_timings: Optional[Dict[str, float]] = None,
     backend_gen_tps: float = 0,
     backend_prefill_tps: float = 0,
+    provider_cost: Optional[float] = None,
 ) -> dict:
     """Compute token counts, TPS, and build the final metrics dict."""
     if has_real_usage:
@@ -1833,6 +1834,12 @@ def _compute_final_metrics(
         "usage_source": "real" if has_real_usage else "estimated",
         "model": model,
     }
+    # Provider-reported per-request cost (e.g. LiteLLM's
+    # x-litellm-response-cost header). When present, the frontend prefers this
+    # over the hardcoded MODEL_INFO table lookup so models missing from the
+    # table still show a cost and substring-matched models aren't mis-priced.
+    if provider_cost is not None:
+        metrics["cost"] = round(provider_cost, 6)
     if backend_prefill_tps and backend_prefill_tps > 0:
         metrics["prefill_tps"] = round(backend_prefill_tps, 2)
     if prep_timings:
@@ -2112,6 +2119,7 @@ async def stream_agent_loop(
         direct_actual_model = model
         real_input_tokens = 0
         real_output_tokens = 0
+        provider_cost = 0.0
         try:
             async for chunk in stream_llm_with_fallback(
                 [(endpoint_url, model, headers)] + list(fallbacks or []),
@@ -2134,6 +2142,11 @@ async def stream_agent_loop(
                         direct_actual_model = usage.get("model") or direct_actual_model
                         real_input_tokens += usage.get("input_tokens", 0) or 0
                         real_output_tokens += usage.get("output_tokens", 0) or 0
+                        if usage.get("cost") is not None:
+                            try:
+                                provider_cost += float(usage["cost"])
+                            except (ValueError, TypeError):
+                                pass
                         continue
                     if data.get("type") == "model_actual":
                         direct_actual_model = data.get("model") or direct_actual_model
@@ -2175,6 +2188,8 @@ async def stream_agent_loop(
             "tool_calls": 0,
             "direct_low_signal": True,
         }
+        if provider_cost:
+            metrics["cost"] = round(provider_cost, 6)
         yield f"data: {json.dumps({'type': 'metrics', 'data': metrics})}\n\n"
         yield "data: [DONE]\n\n"
         return
@@ -2539,6 +2554,7 @@ async def stream_agent_loop(
     has_real_usage = False
     backend_gen_tps = 0      # backend-reported true gen speed (llama.cpp timings)
     backend_prefill_tps = 0  # backend-reported prefill speed
+    provider_cost = 0.0      # Accumulated provider-reported cost (x-litellm-response-cost)
     requested_model = model
     actual_model = model
     total_tool_calls = 0  # for budget enforcement
@@ -2765,6 +2781,13 @@ async def stream_agent_loop(
                         real_output_tokens += u.get("output_tokens", 0)
                         last_round_input_tokens = round_input
                         has_real_usage = True
+                        # Provider-reported cost (x-litellm-response-cost header,
+                        # forwarded by stream_llm). Accumulate across rounds.
+                        if u.get("cost") is not None:
+                            try:
+                                provider_cost += float(u["cost"])
+                            except (ValueError, TypeError):
+                                pass
                         # Backend-reported TRUE generation speed (llama.cpp
                         # timings.predicted_per_second) — pure decode, excludes
                         # prefill/network. Preferred over tokens/wall-clock, which
@@ -3556,6 +3579,7 @@ async def stream_agent_loop(
         prep_timings=prep_timings,
         backend_gen_tps=backend_gen_tps,
         backend_prefill_tps=backend_prefill_tps,
+        provider_cost=provider_cost if provider_cost else None,
     )
     metrics["requested_model"] = requested_model
     yield f"data: {json.dumps({'type': 'metrics', 'data': metrics})}\n\n"
