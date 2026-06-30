@@ -346,6 +346,9 @@ class AuthManager:
     def _create_user_locked(self, username: str, password: str, is_admin: bool) -> bool:
         """Internal helper — caller must hold _interprocess_auth_lock
         and _config_lock.  Does not reload (caller did that)."""
+        if username in RESERVED_USERNAMES:
+            logger.warning("Refused to create reserved username '%s'", username)
+            return False
         if username in self._config.get("users", {}):
             return False
         if "users" not in self._config:
