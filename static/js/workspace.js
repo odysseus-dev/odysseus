@@ -8,6 +8,7 @@
 import Storage, { KEYS } from './storage.js';
 import uiModule from './ui.js';
 import { makeWindowDraggable } from './windowDrag.js';
+import { t } from './i18n.js';
 
 const API_BASE = window.location.origin;
 // Same folder glyph as the overflow menu item + pill (not an emoji).
@@ -41,7 +42,9 @@ export function syncWorkspaceIndicator(path) {
   if (pill) {
     pill.style.display = (path && !chat) ? '' : 'none';
     pill.classList.toggle('active', !!path);
-    if (path) pill.title = `Workspace: ${path}\nFile tools are confined here; shell commands start here but are not sandboxed and can reach outside it.\nClick to clear.`;
+    if (path) {
+      pill.title = t('Workspace: {path}\nFile tools are confined here; shell commands start here but are not sandboxed and can reach outside it.\nClick to clear.', { path });
+    }
   }
   if (name) name.textContent = path ? _basename(path) : '';
   if (overflow) {
@@ -86,7 +89,7 @@ export async function vetAndSetWorkspace(path) {
 
 export function clearWorkspace() {
   setWorkspace('');
-  if (uiModule && uiModule.showToast) uiModule.showToast('Workspace cleared');
+  if (uiModule && uiModule.showToast) uiModule.showToast(t('Workspace cleared'));
 }
 
 async function _load(path) {
@@ -114,10 +117,12 @@ function _render(data) {
     rows += `<div class="workspace-row" data-path="${encodeURIComponent(d.path)}">${_FOLDER_SVG}<span>${uiModule.esc(d.name)}</span></div>`;
   }
   if (data.truncated) {
-    rows += '<div class="workspace-empty">Too many folders to list. Type or paste a path above to jump in.</div>';
+    rows += `<div class="workspace-empty">${t('Too many folders to list. Type or paste a path above to jump in.')}</div>`;
   }
-  if (!data.dirs.length && !data.parent) rows = '<div class="workspace-empty">No subfolders</div>';
-  body.innerHTML = rows || '<div class="workspace-empty">No subfolders</div>';
+  if (!data.dirs.length && !data.parent) {
+    rows = `<div class="workspace-empty">${t('No subfolders')}</div>`;
+  }
+  body.innerHTML = rows || `<div class="workspace-empty">${t('No subfolders')}</div>`;
   body.querySelectorAll('.workspace-row').forEach((row) => {
     row.addEventListener('click', () => _navigate(decodeURIComponent(row.dataset.path)));
   });
@@ -126,7 +131,9 @@ function _render(data) {
   const useBtn = _modal.querySelector('#workspace-use');
   if (useBtn) {
     useBtn.disabled = data.selectable === false;
-    useBtn.title = data.selectable === false ? 'This folder cannot be used as a workspace' : '';
+    useBtn.title = data.selectable === false
+      ? t('This folder cannot be used as a workspace')
+      : '';
   }
 }
 
@@ -134,7 +141,7 @@ async function _navigate(path) {
   try {
     _render(await _load(path));
   } catch (e) {
-    if (uiModule && uiModule.showError) uiModule.showError('Could not open folder');
+    if (uiModule && uiModule.showError) uiModule.showError(t('Could not open folder'));
   }
 }
 
@@ -147,17 +154,17 @@ function _getModal() {
   _modal.innerHTML = `
     <div class="modal-content">
       <div class="modal-header">
-        <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Select workspace</h4>
-        <button class="close-btn" id="workspace-close" aria-label="Close">✖</button>
+        <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>${t('Select workspace')}</h4>
+        <button class="close-btn" id="workspace-close" aria-label="${t('Close')}">✖</button>
       </div>
       <input type="text" class="styled-prompt-input workspace-cur" id="workspace-cur-path"
              spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off"
-             placeholder="Type or paste a folder path, then press Enter" />
-      <p class="muted workspace-note">File tools are <strong>confined</strong> to this folder. Shell commands start here but are <strong>not sandboxed</strong> and can reach outside it. A workspace scopes the tools; it is not a security boundary.</p>
+             placeholder="${t('Type or paste a folder path, then press Enter')}" />
+      <p class="muted workspace-note">${t('File tools are <strong>confined</strong> to this folder. Shell commands start here but are <strong>not sandboxed</strong> and can reach outside it. A workspace scopes the tools; it is not a security boundary.')}</p>
       <div class="modal-body workspace-body" id="workspace-body"></div>
       <div class="modal-footer workspace-footer">
-        <button type="button" class="confirm-btn confirm-btn-secondary" id="workspace-cancel">Cancel</button>
-        <button type="button" class="confirm-btn confirm-btn-primary" id="workspace-use">Use this folder</button>
+        <button type="button" class="confirm-btn confirm-btn-secondary" id="workspace-cancel">${t('Cancel')}</button>
+        <button type="button" class="confirm-btn confirm-btn-primary" id="workspace-use">${t('Use this folder')}</button>
       </div>
     </div>`;
   document.body.appendChild(_modal);
@@ -173,7 +180,9 @@ function _getModal() {
   });
   _modal.querySelector('#workspace-use').addEventListener('click', () => {
     setWorkspace(_curPath);
-    if (uiModule && uiModule.showToast) uiModule.showToast(`Workspace set: ${_basename(_curPath)}`);
+    if (uiModule && uiModule.showToast) {
+      uiModule.showToast(t('Workspace set: {name}', { name: _basename(_curPath) }));
+    }
     closeWorkspaceBrowser();
   });
   const content = _modal.querySelector('.modal-content');
@@ -188,7 +197,7 @@ export async function openWorkspaceBrowser() {
   try {
     _render(await _load(getWorkspace() || ''));
   } catch (e) {
-    if (uiModule && uiModule.showError) uiModule.showError('Could not browse folders');
+    if (uiModule && uiModule.showError) uiModule.showError(t('Could not browse folders'));
   }
 }
 

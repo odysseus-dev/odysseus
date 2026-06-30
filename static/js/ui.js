@@ -9,6 +9,7 @@ import * as Modals from './modalManager.js';
 import spinnerModule from './spinner.js';
 import { registerMenuDismiss, dismissTopMenu, dismissOrRemove } from './escMenuStack.js';
 import { nextToolWindowZ, topToolWindowZ } from './toolWindowZOrder.js';
+import { t } from './i18n.js';
 
 let toastEl = null;
 let autoScrollEnabled = true;
@@ -220,7 +221,7 @@ _initHoverCardSpaceToggle();
 export async function copyToClipboard(text) {
   try {
     await navigator.clipboard.writeText(text);
-    showToast('Copied');
+    showToast(t('Copied'));
   }
   catch {
     const ta = document.createElement('textarea');
@@ -230,7 +231,7 @@ export async function copyToClipboard(text) {
     ta.select();
     document.execCommand('copy');
     document.body.removeChild(ta);
-    showToast('Copied');
+    showToast(t('Copied'));
   }
 }
 
@@ -372,8 +373,8 @@ export function showToast(msg, durationOrOpts) {
   const closeBtn = document.createElement('button');
   closeBtn.type = 'button';
   closeBtn.className = 'toast-close-btn';
-  closeBtn.setAttribute('aria-label', 'Dismiss');
-  closeBtn.title = 'Dismiss';
+  closeBtn.setAttribute('aria-label', t('Dismiss'));
+  closeBtn.title = t('Dismiss');
   closeBtn.textContent = '×';
   closeBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -430,8 +431,8 @@ export function showError(msg) {
   const closeBtn = document.createElement('button');
   closeBtn.type = 'button';
   closeBtn.className = 'toast-close-btn';
-  closeBtn.setAttribute('aria-label', 'Dismiss');
-  closeBtn.title = 'Dismiss';
+  closeBtn.setAttribute('aria-label', t('Dismiss'));
+  closeBtn.title = t('Dismiss');
   closeBtn.textContent = '×';
   closeBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -579,7 +580,9 @@ export function el(id) {
  * Styled confirm dialog — replaces native browser confirm().
  * Returns a Promise<boolean>.
  */
-export function styledConfirm(message, { confirmText = 'Confirm', cancelText = 'Cancel', danger = false } = {}) {
+export function styledConfirm(message, { confirmText, cancelText, danger = false } = {}) {
+  const resolvedConfirmText = confirmText === undefined ? t('Confirm') : confirmText;
+  const resolvedCancelText = cancelText === undefined ? t('Cancel') : cancelText;
   return new Promise(resolve => {
     // Reuse or create the modal
     let overlay = document.getElementById('styled-confirm-overlay');
@@ -600,12 +603,14 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
     }
 
     const msgEl = document.getElementById('styled-confirm-msg');
+    const titleEl = document.getElementById('styled-confirm-title');
     const okBtn = document.getElementById('styled-confirm-ok');
     const cancelBtn = document.getElementById('styled-confirm-cancel');
 
+    titleEl.textContent = t('Confirm');
     msgEl.textContent = message;
-    okBtn.textContent = confirmText;
-    cancelBtn.textContent = cancelText;
+    okBtn.textContent = resolvedConfirmText;
+    cancelBtn.textContent = resolvedCancelText;
     okBtn.className = danger ? 'confirm-btn confirm-btn-danger' : 'confirm-btn confirm-btn-primary';
     cancelBtn.className = 'confirm-btn confirm-btn-secondary';
 
@@ -661,13 +666,16 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
  * Resolves to the trimmed string the user typed, or null on Cancel / Escape / backdrop.
  */
 export function styledPrompt(message, {
-  title = 'Name',
+  title,
   defaultValue = '',
   placeholder = '',
-  confirmText = 'Save',
-  cancelText = 'Cancel',
+  confirmText,
+  cancelText,
   maxLength = 80,
 } = {}) {
+  const resolvedTitle = title === undefined ? t('Name') : title;
+  const resolvedConfirmText = confirmText === undefined ? t('Save') : confirmText;
+  const resolvedCancelText = cancelText === undefined ? t('Cancel') : cancelText;
   return new Promise(resolve => {
     let overlay = document.getElementById('styled-prompt-overlay');
     if (!overlay) {
@@ -695,14 +703,14 @@ export function styledPrompt(message, {
     const okBtn = document.getElementById('styled-prompt-ok');
     const cancelBtn = document.getElementById('styled-prompt-cancel');
 
-    titleEl.textContent = title;
+    titleEl.textContent = resolvedTitle;
     msgEl.textContent = message || '';
     msgEl.style.display = message ? '' : 'none';
     input.value = defaultValue || '';
     input.placeholder = placeholder || '';
     input.maxLength = maxLength;
-    okBtn.textContent = confirmText;
-    cancelBtn.textContent = cancelText;
+    okBtn.textContent = resolvedConfirmText;
+    cancelBtn.textContent = resolvedCancelText;
 
     // Remember what had focus so we can restore it when the dialog closes.
     const _prevFocus = document.activeElement;
