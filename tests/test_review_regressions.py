@@ -918,7 +918,9 @@ async def test_plan_mode_blocks_mutating_email_aliases_without_mcp_inventory(mon
         disabled_tools=denied,
     )
     assert result["exit_code"] == 0
-    assert mcp.calls == [("mcp__email__search_emails", {"query": "x"})]
+    assert mcp.calls == [
+        ("mcp__email__search_emails", {"query": "x", "_odysseus_owner": "admin-user"}),
+    ]
 
 
 @pytest.mark.asyncio
@@ -937,7 +939,9 @@ async def test_bare_email_dispatch_empty_content_calls_with_empty_args(monkeypat
         owner="admin-user",
     )
     assert result["exit_code"] == 0
-    assert mcp.calls == [("mcp__email__list_email_accounts", {})]
+    assert mcp.calls == [
+        ("mcp__email__list_email_accounts", {"_odysseus_owner": "admin-user"}),
+    ]
 
 
 @pytest.mark.asyncio
@@ -991,6 +995,27 @@ async def test_email_mcp_dispatch_includes_hidden_owner(monkeypatch):
     )
 
     assert desc == "mcp: mcp__email__list_emails"
+    assert result["exit_code"] == 0
+    assert fake.calls == [
+        ("mcp__email__list_emails", {"folder": "INBOX", "_odysseus_owner": "alice"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_bare_email_mcp_dispatch_includes_hidden_owner(monkeypatch):
+    import src.tool_execution as tool_execution
+    from src.tool_execution import execute_tool_block
+
+    fake = _FakeMcpManager()
+    monkeypatch.setattr(tool_execution, "_owner_is_admin", lambda owner: True)
+    monkeypatch.setattr(tool_execution, "get_mcp_manager", lambda: fake)
+
+    desc, result = await execute_tool_block(
+        SimpleNamespace(tool_type="list_emails", content='{"folder":"INBOX"}'),
+        owner="alice",
+    )
+
+    assert desc == "email: list_emails"
     assert result["exit_code"] == 0
     assert fake.calls == [
         ("mcp__email__list_emails", {"folder": "INBOX", "_odysseus_owner": "alice"}),

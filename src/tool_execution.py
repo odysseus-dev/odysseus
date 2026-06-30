@@ -907,6 +907,9 @@ async def _execute_tool_block_impl(
             if _args_error is not None:
                 result = {"error": _args_error, "exit_code": 1}
             else:
+                if owner:
+                    args = dict(args)
+                    args[_EMAIL_MCP_OWNER_ARG] = owner
                 result = await mcp.call_tool(qualified, args)
         else:
             result = {"error": "MCP manager not available", "exit_code": 1}
