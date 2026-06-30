@@ -36,7 +36,9 @@ def _load_items(raw) -> list:
         items = json.loads(raw)
     except (TypeError, json.JSONDecodeError):
         return []
-    return items if isinstance(items, list) else []
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict)]
 
 
 def _serialize(n: "Note") -> dict:

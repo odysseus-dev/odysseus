@@ -16,6 +16,11 @@ from pathlib import Path
 from typing import Dict, Any
 from core.platform_compat import IS_APPLE_SILICON, which_tool
 from core.middleware import INTERNAL_TOOL_USER
+from src.host_docker_access import (
+    HOST_DOCKER_ACCESS_HINT,
+    host_docker_access_enabled as _host_docker_access_enabled,
+    running_in_container as _running_in_container,
+)
 from src.optional_deps import prepare_optional_dependency_import
 
 # POSIX-only: `pty`/`fcntl` transitively import `termios`, which does NOT exist
@@ -103,32 +108,17 @@ logger = logging.getLogger(__name__)
 PTY_SUPPORTED = pty is not None and fcntl is not None and hasattr(os, "setsid")
 
 
-DOCKER_IN_CONTAINER_HINT = (
-    "Not available inside the Odysseus container by design. The image ships no "
-    "docker CLI and no host socket is mounted. Run Docker-backed launches on a "
-    "remote server, where docker is checked over SSH. Mounting /var/run/docker.sock "
-    "into the container would grant it host-root access, so only do that if you "
-    "accept that risk."
-)
-
-
-def _running_in_container(dockerenv_path="/.dockerenv", cgroup_path="/proc/1/cgroup"):
-    if os.path.exists(dockerenv_path):
-        return True
-    try:
-        with open(cgroup_path, "r", encoding="utf-8") as fh:
-            contents = fh.read()
-    except OSError:
-        return False
-    return any(token in contents for token in ("docker", "containerd", "kubepods"))
+DOCKER_IN_CONTAINER_HINT = HOST_DOCKER_ACCESS_HINT
 
 
 DockerRowStatus = namedtuple("DockerRowStatus", ["applicable", "install_hint"])
 PackageUpdateStatus = namedtuple("PackageUpdateStatus", ["available", "note"])
 
 
-def _docker_row_status(*, on_remote, in_container, installed, default_hint):
-    local_docker_unavailable = not on_remote and in_container and not installed
+def _docker_row_status(
+    *, on_remote, in_container, installed, default_hint, host_docker_access=False
+):
+    local_docker_unavailable = not on_remote and in_container and not host_docker_access
     if local_docker_unavailable:
         return DockerRowStatus(applicable=False, install_hint=DOCKER_IN_CONTAINER_HINT)
     return DockerRowStatus(applicable=True, install_hint=default_hint)
@@ -1510,6 +1500,9 @@ def setup_shell_routes() -> APIRouter:
                     in_container=_running_in_container() if not on_remote else False,
                     installed=pkg["installed"],
                     default_hint=pkg.get("install_hint"),
+                    host_docker_access=(
+                        _host_docker_access_enabled() if not on_remote else False
+                    ),
                 )
                 pkg["applicable"] = status.applicable
                 pkg["install_hint"] = status.install_hint

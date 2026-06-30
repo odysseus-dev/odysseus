@@ -17,7 +17,7 @@ for mod in [
         sys.modules[mod] = MagicMock()
 
 import src.agent_tools  # noqa: E402, F401
-from src.tool_parsing import parse_tool_blocks  # noqa: E402
+from src.tool_parsing import parse_tool_blocks, strip_tool_blocks  # noqa: E402
 
 
 def test_unconvertible_invoke_in_fence_is_not_executed_as_code():
@@ -41,6 +41,11 @@ def test_empty_get_workspace_fence_parses_zero_arg_call():
     assert len(blocks) == 1
     assert blocks[0].tool_type == "get_workspace"
     assert blocks[0].content == ""
+
+
+def test_empty_get_workspace_fence_is_stripped_from_display():
+    text = "Checking workspace.\n```get_workspace\n```\nDone."
+    assert strip_tool_blocks(text) == "Checking workspace.\n\nDone."
 
 
 def test_whitespace_get_workspace_fence_parses_zero_arg_call():
