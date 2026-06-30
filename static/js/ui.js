@@ -616,6 +616,7 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
     function cleanup(result) {
       overlay.classList.add('hidden');
       overlay.style.display = 'none';
+      cancelBtn.style.display = '';
       okBtn.removeEventListener('click', onOk);
       cancelBtn.removeEventListener('click', onCancel);
       overlay.removeEventListener('click', onBackdrop);
