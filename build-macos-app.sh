@@ -62,6 +62,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key>  <string>11.0</string>
     <key>NSHighResolutionCapable</key> <true/>
     <key>LSUIElement</key>             <false/>
+    <key>LSArchitecturePriority</key>
+    <array><string>arm64</string></array>
 </dict>
 </plist>
 PLIST
@@ -147,9 +149,42 @@ wait "$SERVER_PID"
 LAUNCHER
 
 sed -e "s|__INSTALL_DIR__|$INSTALL_DIR|g" -e "s|__PORT__|$PORT|g" \
-    "$APP/Contents/MacOS/$APP_NAME.tmpl" > "$APP/Contents/MacOS/$APP_NAME"
+    "$APP/Contents/MacOS/$APP_NAME.tmpl" > "$APP/Contents/MacOS/run.sh"
 rm -f "$APP/Contents/MacOS/$APP_NAME.tmpl"
-chmod +x "$APP/Contents/MacOS/$APP_NAME"
+chmod +x "$APP/Contents/MacOS/run.sh"
+
+# ── arm64 Mach-O stub launcher ──
+# A plain shell script as the main executable has no architecture info, which
+# causes macOS to prompt for Rosetta on Apple Silicon. Compiling a thin arm64
+# stub binary avoids this — macOS reads the Mach-O header and knows it's native.
+STUB_C="$(mktemp /tmp/odysseus_stub_XXXX.c)"
+cat > "$STUB_C" <<'CSTUB'
+#include <unistd.h>
+#include <mach-o/dyld.h>
+#include <libgen.h>
+#include <string.h>
+#include <stdio.h>
+
+int main(void) {
+    char exe[4096];
+    uint32_t size = sizeof(exe);
+    if (_NSGetExecutablePath(exe, &size) != 0) return 1;
+    char *dir = dirname(exe);
+    char script[4096];
+    snprintf(script, sizeof(script), "%s/run.sh", dir);
+    execl("/bin/bash", "/bin/bash", script, (char *)NULL);
+    return 1;
+}
+CSTUB
+
+if xcrun clang -arch arm64 -O2 -o "$APP/Contents/MacOS/$APP_NAME" "$STUB_C" 2>/dev/null; then
+  echo "  launcher:    arm64 Mach-O stub (no Rosetta prompt)"
+else
+  # Fallback: plain shell script (works but may prompt Rosetta on first run)
+  cp "$APP/Contents/MacOS/run.sh" "$APP/Contents/MacOS/$APP_NAME"
+  echo "  launcher:    shell script fallback (clang not available)"
+fi
+rm -f "$STUB_C"
 
 # Refresh Finder's icon cache for the new bundle.
 touch "$APP"
