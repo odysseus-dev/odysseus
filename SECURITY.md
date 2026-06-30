@@ -1,31 +1,31 @@
-# Security Policy
+# Политика безопасности
 
-Odysseus is a self-hosted AI workspace with privileged local capabilities. Please do not run it as a public, unauthenticated service.
+Odysseus — самостоятельная ИИ-среда с привилегированными локальными возможностями. Пожалуйста, не запускайте её как публичный, неаутентифицированный сервис.
 
-## Supported Versions
+## Поддерживаемые версии
 
-Security fixes are handled on the default branch until formal releases are cut.
+Исправления безопасности применяются к ветке по умолчанию до формальных релизов.
 
-## Deployment Guidance
+## Рекомендации по развёртыванию
 
-- Keep `AUTH_ENABLED=true` for any network-accessible deployment.
-- Keep `LOCALHOST_BYPASS=false` outside local development.
-- Set `SECURE_COOKIES=true` when Odysseus is served through HTTPS by a trusted reverse proxy or private access gateway.
-- Use HTTPS when exposing the app beyond localhost.
-- Put the authenticated Odysseus web/API entrypoint behind a trusted reverse proxy or private access layer such as Cloudflare Access, Tailscale, or a VPN.
-- Keep ChromaDB, SearXNG, ntfy, Ollama, vLLM, llama.cpp, databases, and raw model/provider APIs internal-only.
-- Protect `.env`, `data/`, `logs/`, uploads, generated media, backups, auth/session files, database files, API keys, and model/provider tokens.
-- Disable open signup unless you intentionally want new accounts.
-- Keep demo/test users non-admin, and remove them entirely on serious deployments.
-- Give admin accounts strong passwords and enable 2FA where possible.
-- Leave high-risk agent tools restricted to admins: shell, Python, file read/write, email send/read, MCP, app API, task/skill/memory management, settings, tokens, and model serving.
-- Rotate API keys, webhook secrets, and Odysseus API tokens if they appear in logs, screenshots, demos, or shared chats.
-- Treat shell, model-serving, MCP, email, calendar, and vault features as privileged admin functionality.
-- Common internal-only ports are Odysseus `7000`, SearXNG `8080`, ntfy `8091`, ChromaDB `8100`, Ollama `11434`, and local model/provider APIs such as `8000-8020`.
+- Сохраняйте `AUTH_ENABLED=true` для любого сетевого развёртывания.
+- Сохраняйте `LOCALHOST_BYPASS=false` за пределами локальной разработки.
+- Установите `SECURE_COOKIES=true`, когда Odysseus обслуживается через HTTPS с помощью доверенного обратного прокси или шлюза приватного доступа.
+- Используйте HTTPS при публикации приложения за пределами localhost.
+- Размещайте аутентифицированную точку входа Odysseus web/API за доверенным обратным прокси или слоем приватного доступа, таким как Cloudflare Access, Tailscale или VPN.
+- Сохраняйте ChromaDB, SearXNG, ntfy, Ollama, vLLM, llama.cpp, базы данных и API моделей/провайдеров доступными только изнутри.
+- Защищайте `.env`, `data/`, `logs/`, загрузки, сгенерированные медиа, резервные копии, файлы аутентификации/сессий, файлы баз данных, API-ключи и токены моделей/провайдеров.
+- Отключайте открытую регистрацию, если вы не хотите новых аккаунтов.
+- Сохраняйте демо/тестовые учётные записи без прав администратора и полностью удаляйте их на серьёзных развёртываниях.
+- Используйте сложные пароли для аккаунтов администратора и включайте 2FA, где это возможно.
+- Ограничивайте доступ к инструментам агента с высоким риском только для администраторов: командная оболочка, Python, чтение/запись файлов, отправка/чтение почты, MCP, API приложения, управление задачами/навыками/памятью, настройки, токены и обслуживание моделей.
+- Ротируйте API-ключи, секреты webhook'ов и токены API Odysseus, если они появились в логах, скриншотах, демо или общих чатах.
+- Обрабатывайте функции командной оболочки, обслуживания моделей, MCP, почты, календаря и хранилища как привилегированные функции администратора.
+- Типичные внутренние порты: Odysseus `7000`, SearXNG `8080`, ntfy `8091`, ChromaDB `8100`, Ollama `11434` и локальные API моделей/провайдеров, такие как `8000-8020`.
 
-## Publishing A Fork
+## Публикация форка
 
-Before pushing a public fork, run:
+Перед пушем публичного форка выполните:
 
 ```bash
 git status --short
@@ -33,8 +33,8 @@ git check-ignore -v .env data/auth.json data/app.db logs/compound.log odysseus.d
 git grep -n -I -E "(sk-[A-Za-z0-9_-]{20,}|xox[baprs]-|AIza[0-9A-Za-z_-]{20,}|Bearer [A-Za-z0-9._~+/-]{20,})" -- . ':!static/lib/**' ':!package-lock.json'
 ```
 
-Only `.env.example`, docs, source, tests, and static assets should be committed. Never commit live `.env` values, `data/` contents, local databases, uploaded files, generated media, logs, backups, auth/session files, API keys, model/provider tokens, password hashes, or personal documents.
+Коммитить стоит только `.env.example`, документацию, исходный код, тесты и статические ресурсы. Никогда не коммитьте актуальные значения `.env`, содержимое `data/`, локальные базы данных, загруженные файлы, сгенерированные медиа, логи, резервные копии, файлы аутентификации/сессий, API-ключи, токены моделей/провайдеров, хеши паролей или личные документы.
 
-## Reporting
+## Сообщения о уязвимостях
 
-Please report vulnerabilities privately via GitHub security advisories if available, or by opening a minimal issue that does not disclose exploit details.
+Пожалуйста, сообщайте об уязвимостях приватно через GitHub security advisories, если они доступны, или открывая минимальный issue без раскрытия деталей эксплойта.

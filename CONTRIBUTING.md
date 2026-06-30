@@ -1,28 +1,28 @@
-# Contributing to Odysseus
+# Участие в проекте Odysseus
 
-Thanks for helping. The project is moving quickly, so the best contributions are focused, easy to review, and easy to test.
+Спасибо за помощь! Проект развивается быстро, поэтому лучшие вклады — это сфокусированные, простые для проверки и тестирования изменения.
 
-## Branch model
+## Модель веток
 
-Odysseus has two branches:
+У Odysseus две ветки:
 
-- **`dev`** — where all PRs land. Things can be in flux here; the merge button gets used freely.
-- **`main`** — what users run. Curated and tested by the maintainer. Fast-forwarded to a stable `dev` commit at each release.
+- **`dev`** — сюда попадают все PR. Здесь всё может меняться; кнопка слияния используется активно.
+- **`main`** — то, что используют пользователи. Отсортировано и протестировано mantenerем. При каждом релизе делается fast-forward к стабильному коммиту из `dev`.
 
-**Open your PR against `dev`, not `main`.** The GitHub "base" dropdown defaults to `dev`. If you opened a PR against `main` by accident, click "Edit" on the PR and change the base — no rebase needed.
+**Открывайте PR в `dev`, а не в `main`.** Выпадающий список «base» в GitHub по умолчанию установлен на `dev`. Если вы случайно открыли PR в `main`, нажмите «Edit» на PR и измените base — rebase не требуется.
 
-End-users cloning the repo will land on `dev` by default. To run the curated/stable version: `git checkout main` after clone.
+Клонирующие репозиторий end-user'ы попадают на `dev` по умолчанию. Чтобы запустить отсортированную/стабильную версию: `git checkout main` после клонирования.
 
-## Before You Start
+## Перед началом
 
-- Search existing issues and pull requests before opening a new one.
-- Prefer one bug fix or feature per pull request.
-- Avoid broad rewrites, formatting-only changes, or moving many files unless the issue is specifically about structure.
-- If you want to work on a large feature, open an issue first and describe the approach.
+- Просмотрите существующие issues и pull requests, прежде чем создавать новые.
+- Предпочитайте один исправление ошибки или одну новую функцию на pull request.
+- Избегайте широких переписываний, изменений только форматирования или перемещения большого количества файлов, если issue специально не касается структуры.
+- Если вы хотите работать над крупной функцией, сначала откройте issue и опишите подход.
 
-## Setup
+## Настройка
 
-Docker is the recommended path for normal testing:
+Docker — рекомендуемый способ для обычного тестирования:
 
 ```bash
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
@@ -31,7 +31,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Manual development uses Python 3.11+:
+Ручная разработка использует Python 3.11+:
 
 ```bash
 python3 -m venv venv
@@ -40,11 +40,11 @@ pip install -r requirements.txt
 python -m uvicorn app:app --host 127.0.0.1 --port 7000
 ```
 
-Windows is not actively tested. Docker on Linux or a Linux/macOS manual install is the safer path for now.
+Windows не тестируется активно. Docker на Linux или ручная установка на Linux/macOS — пока более безопасный путь.
 
-## Running Checks
+## Запуск проверок
 
-Run the smallest relevant checks for your change:
+Запускайте минимально необходимые проверки для вашего изменения:
 
 ```bash
 python -m pytest
@@ -52,7 +52,7 @@ python -m py_compile app.py routes/*.py src/*.py
 node --check static/js/<file-you-changed>.js
 ```
 
-For Docker-related changes:
+Для изменений, связанных с Docker:
 
 ```bash
 docker compose config
@@ -60,74 +60,73 @@ docker compose up -d --build
 docker compose logs --tail=120 odysseus
 ```
 
-Mention what you ran in the pull request description. If you could not run a check, say so.
+Укажите в описании pull request, что вы запускали. Если вы не смогли запустить проверку, укажите это.
 
 ## Pull Requests
 
-Good pull requests usually include:
+Хорошие pull request обычно включают:
 
-- A short explanation of the bug or feature.
-- The files or areas changed.
-- Manual test steps or automated test results from running the actual app, not just the test suite.
-- Screenshots or short recordings for UI changes.
-- Links to related issues, for example `Fixes #123`.
+- Краткое описание ошибки или функции.
+- Изменённые файлы или области.
+- Шаги ручного тестирования или результаты автоматических тестов от запуска приложения, а не только набора тестов.
+- Скриншоты или короткие записи для изменений интерфейса.
+- Ссылки на связанные issues, например `Fixes #123`.
 
-Please keep PRs small. Large PRs that mix unrelated cleanup, formatting, refactors, and behavior changes are much harder to review.
+Пожалуйста, делайте PR небольшими. Крупные PR, смешивающие несвязанные правки форматирования, рефакторинг и изменение поведения, значительно сложнее проверять.
 
-> **Auto-generated PRs.** If you are running an LLM agent (Devin, Cursor, OpenHands, Claude Code, etc.) against this repo: please open an issue describing the problem first instead of opening a PR directly. Bulk agent-generated PRs that don't match the project's visual style or contribution format will be closed without review, even when the underlying fix is correct.
+> **Автоматически сгенерированные PR.** Если вы запускаете LLM-агента (Devin, Cursor, OpenHands, Claude Code и т.д.) на этом репозитории: пожалуйста, сначала откройте issue с описанием проблемы, а не PR напрямую. Массовые PR, сгенерированные агентами, не соответствующие визуальному стилю проекта или формату участия, будут закрыты без проверки, даже если исправление в корне верно.
 
-## Style and visual changes
+## Стиль и визуальные изменения
 
-Odysseus has an intentional visual style. PRs that ignore it will be closed without merge, no matter how correct the underlying code is.
+Odysseus имеет осознанный визуальный стиль. PR, игнорирующие его, будут закрыты без слияния, каким бы правильным ни был код.
 
-Before submitting any change that affects what the app looks like — buttons, icons, fonts, colors, spacing, layout, CSS, HTML, SVG, or any `static/js/` module that draws to the DOM — please:
+Перед отправкой любого изменения, затрагивающего внешний вид приложения — кнопки, иконки, шрифты, цвета, отступы, макет, CSS, HTML, SVG или любой модуль `static/js/`, рисующий в DOM — пожалуйста:
 
-1. **Run the app locally** and view the change in a browser. Type-checks and unit tests are not enough.
-2. **Attach a screenshot or short clip** of the change in the running app. Add a mobile screenshot too if the change affects mobile.
-3. **Match the existing visual language.** Specifically:
-   - Reuse existing CSS variables (`--red`, `--fg`, `--bg`, `--card`, `--border`, …). Do not introduce new color values, font sizes, or spacing units.
-   - Reuse existing button, input, card, and border classes. Don't invent parallel styling for similar widgets.
-   - **No Unicode emoji in UI or code.** Use inline SVG (matching the monochrome icon style already in `static/index.html`) or plain text.
-   - Monospaced font (`Fira Code`) for primary UI text. Don't override.
-   - Dark theme is the default; any light-mode work goes through the existing theme system, not hard-coded.
-4. **Don't add parallel components.** If a similar widget already exists in the app, extend it instead of writing a new one.
+1. **Запустите приложение локально** и просмотрите изменение в браузере. Проверки типов и unit-тесты недостаточны.
+2. **Прикрепите скриншот или короткий клип** изменения в работающем приложении. Добавьте скриншот для мобильной версии, если изменение затрагивает мобильный интерфейс.
+3. **Следуйте существующему визуальному языку.** В частности:
+   - Переиспользуйте существующие CSS-переменные (`--red`, `--fg`, `--bg`, `--card`, `--border` …). Не вводите новые значения цветов, размеров шрифтов или единицы отступов.
+   - Переиспользуйте существующие классы кнопок, полей ввода, карточек и рамок. Не изобретайте параллельные стили для похожих виджетов.
+   - **Без Unicode-эмодзи в интерфейсе или коде.** Используйте inline SVG (в стиле монохромных иконок в `static/index.html`) или простой текст.
+   - Моноширинный шрифт (`Fira Code`) для основного текста интерфейса. Не переопределяйте.
+   - Тёмная тема по умолчанию; любая светлая тема проходит через существующую систему тем, а не через жёстко заданные значения.
+4. **Не добавляйте параллельные компоненты.** Если похожий виджет уже существует в приложении, расширьте его вместо написания нового.
 
-If you are unsure whether a change is "visual," it is. Default to attaching a screenshot.
+Если вы не уверены, является ли изменение «визуальным» — оно является. По умолчанию прикрепляйте скриншот.
 
-## Code conventions
+## Соглашения по коду
 
-Don't hardcode values that the project already exposes through a constant or a helper. Hardcoded literals drift out of sync, break on non-default deployments, and reintroduce bugs we've already fixed.
+Не хардкодьте значения, которые проект уже предоставляет через константу или хелпер. Захардкоженные литералы рассинхронизируются, ломаются на нестандартных развёртываниях и повторно вносят уже исправлённые ошибки.
 
-- **Filesystem paths:** never build writable paths from `Path(__file__)...` into the source tree, hardcode `/app/...`, or use a relative `"data/..."` string. Every persisted file and directory has a named constant in `src/constants.py` (for example `AUTH_FILE`, `USER_PREFS_FILE`, `SETTINGS_FILE`, `TTS_CACHE_DIR`, `CHROMA_DIR`). Import and use that named constant; do not re-derive the path locally with `os.path.join(DATA_DIR, "x.json")` or `DATA_DIR / "x.json"`. `DATA_DIR` is the single place that reads `ODYSSEUS_DATA_DIR`, so use it directly only for dynamic paths that have no fixed name (for example per-owner files). If a data file or directory has no constant yet, add one to `src/constants.py`. The source tree is read-only in Docker and `/app/...` does not exist on native runs; guard directory creation so an unwritable path degrades gracefully instead of crashing at import.
-- **Internal API / loopback URLs:** don't hardcode `http://localhost:7000`. Use `internal_api_base()` from `src.constants` (it honors `ODYSSEUS_INTERNAL_BASE` / `APP_PORT`).
-- **Ports, limits, model lists, and similar:** reuse the existing constant if one exists; if it doesn't and the value is used in more than one place, add a constant rather than copying the literal.
+- **Файловые пути:** никогда не стройте записываемые пути из `Path(__file__)...` в дерево исходников, не хардкодьте `/app/...` или относительную строку `"data/..."`. Каждый сохраняемый файл и каталог имеет именованную константу в `src/constants.py` (например, `AUTH_FILE`, `USER_PREFS_FILE`, `SETTINGS_FILE`, `TTS_CACHE_DIR`, `CHROMA_DIR`). Импортируйте и используйте эту именованную константу; не вычисляйте путь локально через `os.path.join(DATA_DIR, "x.json")` или `DATA_DIR / "x.json"`. `DATA_DIR` — единственное место, читающее `ODYSSEUS_DATA_DIR`, поэтому используйте его напрямую только для динамических путей без фиксированного имени (например, файлы для каждого владельца). Если у файла данных или каталога ещё нет константы, добавьте её в `src/constants.py`. Дерево исходников доступно только для чтения в Docker, а `/app/...` не существует при нативных запусках; защищайте создание каталогов, чтобы незаписываемый путь деградировал корректно вместо падения при импорте.
+- **Внутренний API / loopback URL:** не хардкодьте `http://localhost:7000`. Используйте `internal_api_base()` из `src.constants` (учитывает `ODYSSEUS_INTERNAL_BASE` / `APP_PORT`).
+- **Порты, лимиты, списки моделей и подобное:** переиспользуйте существующую константу, если она есть; если нет и значение используется в нескольких местах, добавьте константу вместо копирования литерала.
 
-If you need a value that has no constant or helper yet, add it to `src/constants.py` (the single source of truth for paths and config; `core/constants.py` only re-exports it for backward compatibility) and import it, rather than repeating a literal across files.
+Если вам нужно значение, у которого ещё нет константы или хелпера, добавьте его в `src/constants.py` (единственный источник правды для путей и конфигурации; `core/constants.py` только реэкспортирует его для обратной совместимости) и импортируйте, а не повторяйте литерал в нескольких файлах.
 
-**Commits:** use [Conventional Commits](https://www.conventionalcommits.org), `type(scope): summary` (e.g. `fix(search): ...`, `feat(notes): ...`, `docs(contributing): ...`). Common types: `fix`, `feat`, `refactor`, `docs`, `test`, `chore`, `ci`. Keep the subject short and imperative; put the "why" in the body when it isn't obvious.
+**Коммиты:** используйте [Conventional Commits](https://www.conventionalcommits.org), `type(scope): summary` (например, `fix(search): ...`, `feat(notes): ...`, `docs(contributing): ...`). Типы: `fix`, `feat`, `refactor`, `docs`, `test`, `chore`, `ci`. Заголовок должен быть коротким и в повелительном наклонении; «почему» пишите в теле, если это не очевидно.
 
-## Issue Reports
+## Отчёты об ошибках
 
-For bugs, include:
+Для багов укажите:
 
-- Install method: Docker, manual Python, WSL, etc.
-- OS, browser, and device if relevant.
-- Exact steps to reproduce.
-- Expected behavior and actual behavior.
-- Logs, screenshots, or terminal output.
+- Способ установки: Docker, ручной Python, WSL и т.д.
+- ОС, браузер и устройство, если применимо.
+- Точные шаги воспроизведения.
+- Ожидаемое и фактическое поведение.
+- Логи, скриншоты или вывод терминала.
 
-For model-serving issues, include:
+Для проблем с обслуживанием моделей укажите:
 
-- Backend: Ollama, vLLM, SGLang, llama.cpp, LM Studio, etc.
-- Model name.
-- GPU/CPU and operating system.
-- Cookbook task logs or server logs.
+- Бэкенд: Ollama, vLLM, SGLang, llama.cpp, LM Studio и т.д.
+- Название модели.
+- GPU/CPU и операционная система.
+- Логи задач Cookbook или серверные логи.
 
-Issues with only "help", "does not work", or a screenshot without context may be closed as not actionable.
+Issues с одним лишь «help», «does not work» или скриншотом без контекста могут быть закрыты как не подлежащие обработке.
 
-## Security
+## Безопасность
 
-Do not post secrets, API keys, private logs, personal documents, or public IPs in issues or pull requests.
+Не публикуйте секреты, API-ключи, приватные логи, личные документы или публичные IP в issues или pull requests.
 
-For security reports, follow [SECURITY.md](SECURITY.md).
-
+Для отчётов о безопасности следуйте [SECURITY.md](SECURITY.md).

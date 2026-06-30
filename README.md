@@ -3,14 +3,14 @@
 </p>
 
 <p align="center">
-  A self-hosted AI workspace for chat, agents, research, documents, email, notes, calendar, and local model workflows.
+  Самостоятельно размещаемая ИИ-среда для чата, агентов, исследований, документов, почты, заметок, календаря и работы с локальными моделями.
 </p>
 
 <p align="center">
-  <a href="#quick-start">Quick Start</a> ·
-  <a href="docs/setup.md">Setup Guide</a> ·
-  <a href="CONTRIBUTING.md">Contributing</a> ·
-  <a href="ROADMAP.md">Roadmap</a>
+  <a href="#быстрое-начало">Быстрое начало</a> ·
+  <a href="docs/ru/setup.md">Руководство по настройке</a> ·
+  <a href="CONTRIBUTING.md">Участие в проекте</a> ·
+  <a href="ROADMAP.md">Дорожная карта</a>
 </p>
 
 <p align="center">
@@ -18,14 +18,14 @@
 </p>
 
 <p align="center">
-  <img src="docs/odysseus-browser.jpg" alt="Odysseus interface">
+  <img src="docs/odysseus-browser.jpg" alt="Интерфейс Odysseus">
 </p>
 
 ---
 
-## Quick Start
+## Быстрое начало
 
-> `dev` is the default branch and gets the newest changes first. Use [`main`](https://github.com/pewdiepie-archdaemon/odysseus/tree/main) if you want the more curated branch.
+> `dev` — ветка по умолчанию, в первую очередь получает новые изменения. Используйте [`main`](https://github.com/pewdiepie-archdaemon/odysseus/tree/main), если хотите более отсортированную ветку.
 
 ```bash
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
@@ -34,34 +34,34 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Open `http://localhost:7000` when the containers are healthy. The first admin password is printed in `docker compose logs odysseus`.
+Откройте `http://localhost:7000`, когда контейнеры будут работать. Первый пароль администратора выводится в `docker compose logs odysseus`.
 
-Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration live in the [setup guide](docs/setup.md).
+Нативная установка, примечания по GPU, инструкции для Windows/macOS, HTTPS и конфигурация описаны в [руководстве по настройке](docs/ru/setup.md).
 
-## Features
+## Возможности
 
-- **Chat + Agents** — local/API models, tools, MCP, files, shell, skills, and memory.
-- **Cookbook** — hardware-aware model recommendations, downloads, and serving.
-- **Deep Research** — multi-step web research with source reading and report generation.
-- **Compare** — blind side-by-side model testing and synthesis.
-- **Documents** — writing-first editor with AI edits, suggestions, Markdown, HTML, CSV, and syntax highlighting.
-- **Email** — IMAP/SMTP inbox with triage, tags, summaries, reminders, and reply drafts.
-- **Notes, Tasks + Calendar** — reminders, todos, scheduled agent tasks, and CalDAV sync.
-- **Extras** — gallery/image editor, themes, uploads, web search, presets, sessions, and 2FA.
+- **Чат + Агенты** — локальные/API модели, инструменты, MCP, файлы, командная оболочка, навыки и память.
+- **Книга рецептов** — аппаратно-зависимые рекомендации моделей, загрузка и обслуживание.
+- **Глубокое исследование** — многошаговое веб-исследование с чтением источников и генерацией отчётов.
+- **Сравнение** — слепое поэлементное тестирование и синтез моделей.
+- **Документы** — редактор с приоритетом на письмо, с ИИ-редактированием, подсказками, Markdown, HTML, CSV и подсветкой синтаксиса.
+- **Почта** — почтовый ящик IMAP/SMTP с сортировкой, тегами, саммари, напоминаниями и черновиками ответов.
+- **Заметки, задачи + календарь** — напоминания, списки дел, запланированные задачи агентов и синхронизация CalDAV.
+- **Дополнительно** — галерея/редактор изображений, темы, загрузки, веб-поиск, пресеты, сессии и 2FA.
 
-## Demo
+## Демо
 
-A full hover-to-play tour lives on the landing page: [`docs/index.html`](docs/index.html).
+Полный интерактивный тур по интерфейсу с наведением для воспроизведения находится на главной странице: [`docs/index.html`](docs/index.html).
 
-## Contributing
+## Участие в проекте
 
-Help is welcome. The best entry points are fresh-install testing, provider setup bugs, mobile/editor polish, docs, and small focused refactors. See [CONTRIBUTING.md](CONTRIBUTING.md) and [ROADMAP.md](ROADMAP.md).
+Мы приветствует лучшие точки входа — тестирование свежей установки, ошибки настройки провайдеров, доработка мобильной версии/редактора, документация и небольшие целевые рефакторы. См. [CONTRIBUTING.md](CONTRIBUTING.md) и [ROADMAP.md](ROADMAP.md).
 
-## Security
+## Безопасность
 
-Odysseus is a self-hosted workspace with powerful local tools. Keep auth enabled, keep private data out of Git, and do not expose raw model/service ports publicly. Deployment details are in the [setup guide](docs/setup.md#security-notes).
+Odysseus — самостоятельная среда с мощными лостными инструментами. Сохраняйте включённую аутентификацию, не храните конфиденциальные данные в Git и не публикуйте порты моделей/сервисов в открытом доступе. Подробности развёртывания в [руководстве по настройке](docs/ru/setup.md#security-notes).
 
-## Star History
+## История звёзд
 
 <a href="https://www.star-history.com/?repos=pewdiepie-archdaemon%2Fodysseus&type=date&legend=top-left">
  <picture>
@@ -71,6 +71,6 @@ Odysseus is a self-hosted workspace with powerful local tools. Keep auth enabled
  </picture>
 </a>
 
-## License
+## Лицензия
 
-AGPL-3.0-or-later -- see [LICENSE](LICENSE) and [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md).
+AGPL-3.0-or-later — см. [LICENSE](LICENSE) и [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md).

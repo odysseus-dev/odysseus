@@ -1,81 +1,81 @@
-# Threat Model
+# Модель угроз
 
-Odysseus is a **self-hosted AI workspace with privileged local access**. This document states the trust boundary so contributors can reason about security decisions without reading through the full auth and middleware stack.
+Odysseus — **самостоятельно размещаемая ИИ-среда с привилегированным локальным доступом**. Этот документ описывает границу доверия, чтобы участники могли понимать решения по безопасности без изучения полного стека аутентификации и промежуточного ПО.
 
-## Trust Boundary
+## Граница доверия
 
-Odysseus is designed for **trusted users on a private network**, not public exposure. The README describes it as "treat it like an admin console" — that framing is accurate. A logged-in admin can execute shell commands, read and write files, send email, and control model serving. This is intentional. The threat model does not try to prevent admins from doing these things. It does try to prevent:
+Odysseus разработан для **доверенных пользователей в частной сети**, а не для публичной доступности. README описывает его как «относитесь к нему как к консоли администратора» — это точная формулировка. Авторизованный администратор может выполнять команды оболочки, читать и записывать файлы, отправлять почту и управлять обслуживанием моделей. Это осознанно. Модель угроз не пытается помешать администраторам делать эти вещи. Она пытается предотвратить:
 
-- Unauthenticated access
-- Non-admins reaching admin-only capabilities
-- The AI agent acting on instructions injected through untrusted content (web results, emails, fetched pages, memories)
-- Internal services (ChromaDB, Ollama, SearXNG, etc.) being reachable from outside the host
+- Неаутентифицированный доступ
+- Доступ не-администраторов к функциям, доступным только администраторам
+- Действия ИИ-агента по инструкциям, внедрённым через недоверенный контент (результаты веб-поиска, письма, загруженные страницы, воспоминания)
+- Доступность внутренних сервисов (ChromaDB, Ollama, SearXNG и т.д.) извне хоста
 
-## Roles and Capabilities
+## Роли и возможности
 
-| Capability | Admin | Non-admin (default) |
+| Возможность | Администратор | Не-администратор (по умолчанию) |
 |---|---|---|
-| Chat with agent | ✓ | ✓ |
-| Browser tool | ✓ | ✓ |
-| Documents | ✓ | ✓ |
-| Research mode | ✓ | ✓ |
-| Image generation | ✓ | ✓ |
-| Memory management | ✓ | ✓ |
-| Shell / Python execution | ✓ | ✗ |
-| File read / write | ✓ | ✗ |
-| Email send / read | ✓ | ✗ |
-| MCP tools | ✓ | ✗ |
-| Calendar management | ✓ | ✗ |
-| Token / webhook management | ✓ | ✗ |
-| Model serving | ✓ | ✗ |
-| Vault | ✓ | ✗ |
-| Settings | ✓ | ✗ |
+| Чат с агентом | ✓ | ✓ |
+| Инструмент браузера | ✓ | ✓ |
+| Документы | ✓ | ✓ |
+| Режим исследований | ✓ | ✓ |
+| Генерация изображений | ✓ | ✓ |
+| Управление памятью | ✓ | ✓ |
+| Оболочка / выполнение Python | ✓ | ✗ |
+| Чтение / запись файлов | ✓ | ✗ |
+| Отправка / чтение почты | ✓ | ✗ |
+| Инструменты MCP | ✓ | ✗ |
+| Управление календарём | ✓ | ✗ |
+| Управление токенами / webhook'ами | ✓ | ✗ |
+| Обслуживание моделей | ✓ | ✗ |
+| Хранилище | ✓ | ✗ |
+| Настройки | ✓ | ✗ |
 
-Non-admin defaults are in `core/auth.py:DEFAULT_PRIVILEGES`. Tool enforcement is in `src/tool_security.py:NON_ADMIN_BLOCKED_TOOLS`. Any tool whose name starts with `mcp__` is also blocked for non-admins. Admins always get full access regardless of stored privilege values.
+Настройки по умолчанию для не-администраторов находятся в `core/auth.py:DEFAULT_PRIVILEGES`. Применение ограничений инструментов — в `src/tool_security.py:NON_ADMIN_BLOCKED_TOOLS`. Любой инструмент, имя которого начинается с `mcp__`, также заблокирован для не-администраторов. Администраторы всегда получают полный доступ независимо от сохранённых значений привилегий.
 
-## Authentication
+## Аутентификация
 
-- **Sessions:** bcrypt passwords, 7-day session tokens stored atomically in `data/sessions.json` via `core/atomic_io.py`.
-- **2FA:** TOTP with 8 single-use backup codes. Verified after password check, before session issuance.
-- **Reserved usernames:** `internal-tool`, `api`, `demo`, `system` cannot be registered or renamed into. Defined in `core/auth.py:RESERVED_USERNAMES`.
-  - `internal-tool` is security-critical: `core/middleware.py:require_admin` treats any request where `request.state.current_user == "internal-tool"` as the in-process tool loopback and grants admin unconditionally. A real account with that name would silently pass every `require_admin` check.
-- **Orphan sessions:** `validate_token` re-checks that the user record still exists on every call. A deleted user's cookie is dropped on next request rather than continuing to authenticate.
+- **Сессии:** пароли bcrypt, токены сессий на 7 дней, атомарно сохраняемые в `data/sessions.json` через `core/atomic_io.py`.
+- **2FA:** TOTP с 8 одноразовыми резервными кодами. Проверяется после проверки пароля, до выдачи сессии.
+- **Зарезервированные имена пользователей:** `internal-tool`, `api`, `demo`, `system` нельзя зарегистрировать или переименовать. Определены в `core/auth.py:RESERVED_USERNAMES`.
+  - `internal-tool` критичен для безопасности: `core/middleware.py:require_admin` обрабатывает любой запрос, где `request.state.current_user == "internal-tool"`, как in-process loopback инструмента и безусловно предоставляет права администратора. Реальный аккаунт с таким именем молча пройдёт каждую проверку `require_admin`.
+- **Сиротские сессии:** `validate_token` при каждом вызове повторно проверяет, существует ли запись пользователя. Cookie удалённого пользователя отбрасывается при следующем запросе вместо продолжения аутентификации.
 
-## Internal Tool Loopback
+## In-process loopback инструментов
 
-Agent tool calls reach admin-gated HTTP routes over an in-process HTTP loopback. The mechanism:
+Вызовы инструментов агента достигают HTTP-маршрутов с контролем доступа администратора через in-process HTTP loopback. Механизм:
 
-1. At app startup, `core/middleware.py` generates a random `INTERNAL_TOOL_TOKEN` via `secrets.token_hex(32)`. It is never persisted and never sent to clients.
-2. Loopback requests carry `X-Odysseus-Internal-Token: <token>` or have `request.state.current_user` already set to `"internal-tool"` by the auth middleware.
-3. `require_admin` recognises either signal and grants access without checking the session user.
+1. При запуске приложения `core/middleware.py` генерирует случайный `INTERNAL_TOOL_TOKEN` через `secrets.token_hex(32)`. Он никогда не сохраняется на диск и не отправляется клиентам.
+2. Loopback-запросы несут заголовок `X-Odysseus-Internal-Token: <token>` или уже имеют `request.state.current_user`, установленный промежуточным ПО аутентификации в `"internal-tool"`.
+3. `require_admin` распознаёт любой из этих сигналов и предоставляет доступ без проверки пользователя сессии.
 
-The agent may be running in a non-admin user's session, but tool dispatch first calls `src/tool_security.py:owner_is_admin_or_single_user` to verify the session owner is an admin before issuing any loopback call. Non-admin users cannot invoke admin tools even via the agent.
+Агент может работать в сессии не-администратора, но перед отправкой любого loopback-вызова диспетчер инструментов вызывает `src/tool_security.py:owner_is_admin_or_single_user` для проверки, является ли владелец сессии администратором. Пользователи без прав администратора не могут вызывать инструменты администратора даже через агента.
 
-## Prompt-Injection Hardening
+## Защита от инъекций промптов
 
-External content that reaches the LLM is treated as untrusted via `src/prompt_security.py`:
+Внешний контент, достигающий LLM, обрабатывается как недоверенный через `src/prompt_security.py`:
 
-- `untrusted_context_message(label, content)` wraps the content in a `user`-role message with a header block instructing the model not to follow instructions inside it. Content goes in as data, not as a system instruction.
-- `UNTRUSTED_CONTEXT_POLICY` is a system-prompt preamble that states the same policy at the top of every session where untrusted data may appear.
+- `untrusted_context_message(label, content)` оборачивает контент в сообщение с ролью `user` с заголовком, instructing модель не следовать инструкциям внутри него. Контент передаётся как данные, а не как системная инструкция.
+- `UNTRUSTED_CONTEXT_POLICY` — преамбула системного промпта, устанавливающая ту же политику в начале каждой сессии, где могут появиться недоверенные данные.
 
-**Untrusted surfaces that must go through this wrapper:** web search results, fetched URLs, emails (read), saved memories, skill text, notes, and any tool output sourced from outside the server. Injecting untrusted content directly into the system role is a security bug.
+**Недоверенные поверхности, которые должны проходить через эту обёртку:** результаты веб-поиска, загруженные URL, письма (чтение), сохранённые воспоминания, текст навыков, заметки и любой вывод инструментов, полученный извне сервера. Прямое внедрение недоверенного контента в системную роль — это ошибка безопасности.
 
-## Security Headers
+## Заголовки безопасности
 
-`core/middleware.py:SecurityHeadersMiddleware` sets headers on every response:
+`core/middleware.py:SecurityHeadersMiddleware` устанавливает заголовки на каждом ответе:
 
-- `X-Frame-Options: DENY` + `frame-ancestors 'none'` on all routes except tool-render iframes (which are sandboxed at the HTML level).
-- `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` everywhere.
-- **CSP:** nonce-based `script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net`. `style-src 'unsafe-inline'` is intentionally kept — `static/index.html` ships inline `<style>` blocks and JS modules set `style=""` attributes at runtime. Inline styles do not execute script so the risk is visual-only. Removing this requires templating the HTML files and auditing all JS-set style attributes.
+- `X-Frame-Options: DENY` + `frame-ancestors 'none'` на всех маршрутах, кроме tool-render iframe (которые изолированы на уровне HTML).
+- `X-Content-Type-Options: nosniff` и `Referrer-Policy: no-referrer` везде.
+- **CSP:** nonce-based `script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net`. `style-src 'unsafe-inline'` намеренно сохранён — `static/index.html` поставляет inline-блоки `<style>`, а JS-модули устанавливают атрибуты `style=""` во время выполнения. Inline-стили не выполняют скрипты, поэтому риск только визуальный. Удаление этого потребует шаблонизации HTML-файлов и аудита всех атрибутов стилей, устанавливаемых JS.
 
-## Known Gaps
+## Известные пробелы
 
-These are open, acknowledged, and contributor help is welcome:
+Это открытые, признанные проблемы, и помощь участников приветствуется:
 
-1. **No shell/filesystem sandbox.** The agent `bash` and `read_file`/`write_file` tools run as the app process user with no network egress filtering or filesystem confinement. A successful prompt-injection reaching a shell-enabled admin session can make outbound requests to internal services. See #1058 for the sandbox proposal.
+1. **Отсутствие песочницы для оболочки/файловой системы.** Инструменты `bash` и `read_file`/`write_file` агента работают от имени процесса приложения без фильтрации сетевого исходящего трафика или ограничения файловой системы. Успешная инъекция промпта, достигающая сессии администратора с включённой оболочкой, может отправлять запросы к внутренним сервисам. Предложение по песочнице см. в #1058.
 
-2. **SSRF via `/api/v1/chat` `base_url` parameter.** A chat-scoped API token can supply an arbitrary `base_url`; the server forwards the LLM request to that host without validating the scheme or address. PR #1039 fixes this.
+2. **SSRF через параметр `base_url` в `/api/v1/chat`.** Токен API для сессии чата может указывать произвольный `base_url`; сервер пересылает LLM-запрос на этот хост без проверки схемы или адреса. PR #1039 исправляет это.
 
-3. **`src/search/` partial consolidation.** `src.search.core` and `src.search.providers` correctly alias `services.search` via `sys.modules` replacement. `analytics`, `cache`, `content`, `query`, and `ranking` are still independent copies that can drift. The SSRF regression tests in `tests/test_webhook_ssrf_resilience.py` test `src.webhook_manager` directly (separate from search), so the safety net there is intact. See #1058.
+3. **Частичная консолидация `src/search/`.** `src.search.core` и `src.search.providers` корректно алиасят `services.search` через замену `sys.modules`. `analytics`, `cache`, `content`, `query` и `ranking` всё ещё являются независимыми копиями, которые могут рассинхронизироваться. Тесты на SSRF-регрессию в `tests/test_webhook_ssrf_resilience.py` тестируют `src.webhook_manager` напрямую (отдельно от поиска), поэтому защитная сеть там цела. См. #1058.
 
-4. **Token scopes are coarse.** There is no way to grant a session a subset of the owning user's privileges. Companion/mobile tokens carry either `chat` or `admin` scope with no per-capability granularity.
+4. **Области токенов слишком грубые.** Нет способа предоставить сессии подмножество привилегий владельца. Токены спутников/мобильных устройств несут либо область `chat`, либо `admin` без гранулярности по возможностям.
