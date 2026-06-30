@@ -203,8 +203,8 @@ export function notifyStreamComplete(sessionId, query) {
   var isOtherSession = sessionModule && sessionModule.getCurrentSessionId() !== sessionId;
   if (!isHidden && !isOtherSession) return;
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  var body = query ? 'Response to "' + query.substring(0, 60) + '" is ready' : 'Your chat response has completed';
-  var notification = new Notification('Response Complete', {
+  var body = query ? window.t('Response to "{q}" is ready', { q: query.substring(0, 60) }) : window.t('Your chat response has completed');
+  var notification = new Notification(window.t('Response Complete'), {
     body: body,
     tag: 'stream-' + sessionId,
   });
@@ -226,13 +226,13 @@ export function insertStreamDoneToast(sessionId, query) {
   if (!box) return;
   var sessions = sessionModule ? sessionModule.getSessions() : [];
   var sess = sessions.find(function(s) { return s.id === sessionId; });
-  var name = sess ? sess.name : 'another session';
+  var name = sess ? sess.name : window.t('another session');
   var preview = query ? '"' + query.substring(0, 50) + (query.length > 50 ? '...' : '') + '"' : '';
   var div = document.createElement('div');
   div.className = 'msg msg-system stream-done-toast';
   div.innerHTML = '<div class="body">'
     + '<span class="stream-done-indicator">●</span>'
-    + '<span>Response ready in <strong>' + (name || 'session').replace(/</g, '&lt;') + '</strong>'
+    + '<span>' + window.t('Response ready in {name}', { name: '<strong>' + (name || window.t('session')).replace(/</g, '&lt;') + '</strong>' })
     + (preview ? ' &mdash; ' + preview.replace(/</g, '&lt;') : '')
     + '</span>'
     + '</div>';
@@ -251,8 +251,8 @@ export function notifyResearchComplete(sessionId, query) {
   var isOtherSession = sessionModule && sessionModule.getCurrentSessionId() !== sessionId;
   if (!isHidden && !isOtherSession) return;
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  var body = query ? 'Research on "' + query.substring(0, 60) + '" is ready' : 'Your deep research has completed';
-  var notification = new Notification('Research Complete', {
+  var body = query ? window.t('Research on "{q}" is ready', { q: query.substring(0, 60) }) : window.t('Your deep research has completed');
+  var notification = new Notification(window.t('Research Complete'), {
     body: body,
     tag: 'research-' + sessionId,
   });
