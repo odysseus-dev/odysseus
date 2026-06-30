@@ -436,18 +436,29 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                 bullets = [ln.strip() for ln in rc.split("\n") if re.match(r"^[-•*]\s+|^\d+[.)]\s+", ln.strip())]
                                 summary = "\n".join(bullets) if bullets else ""
                             if summary:
-                                _c = _sql3.connect(SCHEDULED_DB)
-                                _c.execute("""
-                                    INSERT OR REPLACE INTO email_summaries
-                                    (message_id, owner, uid, folder, subject, sender, summary, model_used, created_at)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                """, (message_id, account_owner or "", uid.decode() if isinstance(uid, bytes) else str(uid), _folder, subject, sender, summary, model, datetime.utcnow().isoformat()))
-                                _c.commit()
-                                _c.close()
-                                _sum_existing.add(message_id)
-                                _summaries_created += 1
-                                _uid_text = uid.decode() if isinstance(uid, bytes) else str(uid)
-                                _detail_lines.append(f"summary · {_folder}#{_uid_text} · {subject or '(no subject)'} — {sender or '(unknown sender)'}")
+                                # Persist in its own try so an execute()/commit()
+                                # failure can't leak the SQLite connection (the
+                                # outer except below would not close _c). Matches
+                                # the urgency/calendar cache writes' pattern.
+                                _c = None
+                                try:
+                                    _c = _sql3.connect(SCHEDULED_DB)
+                                    _c.execute("""
+                                        INSERT OR REPLACE INTO email_summaries
+                                        (message_id, owner, uid, folder, subject, sender, summary, model_used, created_at)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    """, (message_id, account_owner or "", uid.decode() if isinstance(uid, bytes) else str(uid), _folder, subject, sender, summary, model, datetime.utcnow().isoformat()))
+                                    _c.commit()
+                                    _sum_existing.add(message_id)
+                                    _summaries_created += 1
+                                    _uid_text = uid.decode() if isinstance(uid, bytes) else str(uid)
+                                    _detail_lines.append(f"summary · {_folder}#{_uid_text} · {subject or '(no subject)'} — {sender or '(unknown sender)'}")
+                                finally:
+                                    if _c is not None:
+                                        try:
+                                            _c.close()
+                                        except Exception:
+                                            pass
                     except Exception as e:
                         _uid_text = uid.decode() if isinstance(uid, bytes) else str(uid)
                         _detail_lines.append(f"summary failed · {_folder}#{_uid_text} · {subject or '(no subject)'} — {sender or '(unknown sender)'}")
