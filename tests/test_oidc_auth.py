@@ -701,3 +701,58 @@ class TestInterprocessFirstAdminSerialisation:
         assert f1.decrypt(token) == b"hello"
         token = f1.encrypt(b"world")
         assert f0.decrypt(token) == b"world"
+
+    def test_create_user_survives_concurrent_set_oidc_user_admin(self, tmp_path):
+        """create_user() (password user) must not be lost when a concurrent
+        set_oidc_user_admin() executes on another manager.  Both operations
+        now take the inter-process lock, so the second operation must reload
+        and see the first operation's result."""
+        from core.auth import AuthManager
+        import threading
+
+        auth_path = str(tmp_path / "auth.json")
+
+        # Manager A: create an OIDC user (alice) then make her admin so the
+        # no-op short-circuit in set_oidc_user_admin doesn't trigger.
+        mgr_a = AuthManager(auth_path)
+        alice = mgr_a.create_user_oidc("alice", "sub-a", "https://idp.example.com")
+        assert alice == "alice"
+        mgr_a._config["users"]["alice"]["is_admin"] = True
+        mgr_a._save()
+
+        # Manager B: a separate instance with the same auth file.
+        mgr_b = AuthManager(auth_path)
+
+        results = {}
+        barrier = threading.Barrier(2, timeout=5)
+
+        def do_create_user():
+            barrier.wait()
+            ok = mgr_a.create_user("bob", "password123")
+            results["create"] = ok
+
+        def do_sync_admin():
+            barrier.wait()
+            ok = mgr_b.set_oidc_user_admin("alice", False)
+            results["sync"] = ok
+
+        t_create = threading.Thread(target=do_create_user)
+        t_sync = threading.Thread(target=do_sync_admin)
+        t_create.start()
+        t_sync.start()
+        t_create.join()
+        t_sync.join()
+
+        assert results.get("create") is True, "create_user must succeed"
+        assert results.get("sync") is True, "set_oidc_user_admin must succeed"
+
+        # Reload both — bob and alice must both exist.
+        mgr_a._load()
+        mgr_b._load()
+        users_a = mgr_a._config.get("users", {})
+        users_b = mgr_b._config.get("users", {})
+        assert "bob" in users_a, f"bob must survive concurrent admin sync; users: {list(users_a)}"
+        assert "bob" in users_b, f"bob must survive concurrent admin sync; users: {list(users_b)}"
+        assert "alice" in users_a
+        assert "alice" in users_b
+        assert not users_a["alice"].get("is_admin"), "alice must be demoted"
