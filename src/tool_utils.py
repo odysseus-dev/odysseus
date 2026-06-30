@@ -60,6 +60,12 @@ def _parse_tool_args(content):
         args = content
     else:
         args = {}
+    # Guard: json.loads can return a list, int, or other non-dict JSON value.
+    # Every caller does args.get("action") / args["key"], which crashes with
+    # AttributeError on a list or TypeError on an int. Coerce to empty dict
+    # so the caller falls through to its "missing action" error path cleanly.
+    if not isinstance(args, dict):
+        args = {}
     # Unwrap {"body": {...}} envelope, but only if `body` is the sole key
     # and points at a dict. We don't want to clobber a legitimate `body`
     # field on tools where it's a real arg (e.g. send_email body text).
