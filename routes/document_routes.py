@@ -54,6 +54,46 @@ def _library_language_for_document(doc: Document) -> str:
     return doc.language or "text"
 
 
+def _pdf_extract_head(content: str, title: Optional[str]) -> str:
+    """Compute the markdown 'head' (front-matter marker + H1) preserved when
+    re-extracting PDF text. When the content has the expected
+    ``<!--...-->\\n#...`` header it is kept verbatim; otherwise a heading is
+    synthesized from the first line (if any) plus the doc title.
+
+    Guards against empty/headerless content: indexing ``splitlines()[0]``
+    directly raised IndexError when content was empty.
+    """
+    import re
+
+    head_re = re.compile(r'^(<!--[^>]+-->\s*\n+#[^\n]*\n+)', re.MULTILINE)
+    head_match = head_re.match(content or "")
+    if head_match:
+        return head_match.group(1)
+    lines = (content or "").splitlines()
+    first = (lines[0] + "\n\n") if lines else ""
+    return first + "# " + (title or "PDF") + "\n\n"
+
+
+def _parse_tidy_verdicts(response: str) -> list:
+    """Extract the JSON verdict array from an AI-tidy LLM response.
+
+    The model is asked for a bare JSON array, but it sometimes wraps the array
+    in prose containing other brackets. Parse the matched array defensively so a
+    malformed/prose response yields a clean error instead of an unhandled
+    ``json.JSONDecodeError`` surfaced as ``"AI tidy failed: Expecting value..."``.
+    """
+    import json as _json
+    import re
+
+    match = re.search(r'\[.*?\]', response or "", re.DOTALL)
+    if not match:
+        raise HTTPException(500, "AI returned invalid response")
+    try:
+        return _json.loads(match.group())
+    except _json.JSONDecodeError:
+        raise HTTPException(500, "AI returned an unparseable verdict list")
+
+
 from routes.document_helpers import (
     DocumentCreate, DocumentUpdate, DocumentPatch,
     _doc_to_dict, _version_to_dict,
@@ -445,7 +485,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         Lets the AI see PDF contents for old docs that were imported before
         text extraction was wired, plus for scanned/image-only PDFs where the
         VL model picks up text the basic pypdf path missed."""
-        import re
         from src.document_processor import _process_pdf, strip_pdf_content_marker
         from src.pdf_form_doc import find_source_upload_id
 
@@ -477,9 +516,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
             # Preserve everything up through the title (front-matter marker +
             # first H1) and replace the rest with the freshly extracted text.
-            head_re = re.compile(r'^(<!--[^>]+-->\s*\n+#[^\n]*\n+)', re.MULTILINE)
-            head_match = head_re.match(content)
-            head = head_match.group(1) if head_match else (content.splitlines()[0] + "\n\n# " + (doc.title or "PDF") + "\n\n")
+            head = _pdf_extract_head(content, doc.title)
             doc.current_content = head + body_text.strip() + "\n"
             doc.version_count = (doc.version_count or 1) + 1
             db.add(DocumentVersion(
@@ -936,14 +973,9 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 timeout=30,
             )
 
-            # Parse verdicts
-            import re
-            match = re.search(r'\[.*?\]', response, re.DOTALL)
-            if not match:
-                raise HTTPException(500, "AI returned invalid response")
-
-            import json as _json
-            verdicts = _json.loads(match.group())
+            # Parse verdicts defensively: a prose/malformed response must yield a
+            # clean error, not an unhandled JSONDecodeError surfaced as a 500.
+            verdicts = _parse_tidy_verdicts(response)
 
             deleted = 0
             reviewed = 0
