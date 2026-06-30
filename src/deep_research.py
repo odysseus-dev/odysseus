@@ -870,7 +870,9 @@ class DeepResearcher:
         """Extract a JSON object from LLM output."""
         text = self._strip_code_block(text)
         try:
-            return json.loads(text)
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed
         except json.JSONDecodeError:
             pass
 
@@ -878,7 +880,9 @@ class DeepResearcher:
         match = re.search(r'\{[\s\S]*\}', text)
         if match:
             try:
-                return json.loads(match.group())
+                parsed = json.loads(match.group())
+                if isinstance(parsed, dict):
+                    return parsed
             except json.JSONDecodeError:
                 pass
 
