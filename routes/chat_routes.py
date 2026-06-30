@@ -1205,6 +1205,18 @@ def setup_chat_routes(
                                     "usage_source": "estimated",
                                 }
                                 yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
+                            elif last_metrics and not last_metrics.get("tokens_per_second") and full_response:
+                                # Ollama (and some other local providers) send token counts in the
+                                # usage event but omit speed data. The branch above only runs when
+                                # usage is entirely absent, so these responses always show "n/a".
+                                # Patch in a wall-clock tps using output_tokens if available,
+                                # falling back to a character-count estimate (÷4) like above.
+                                _elapsed = time.time() - _chat_start
+                                _out = last_metrics.get("output_tokens") or (len(full_response) // 4)
+                                last_metrics["tokens_per_second"] = round(_out / _elapsed, 2) if _elapsed > 0 else 0
+                                last_metrics.setdefault("response_time", round(_elapsed, 2))
+                                last_metrics["tps_source"] = "wallclock"
+                                yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
                             if full_response:
                                 _saved_id = save_assistant_response(
                                     sess, session_manager, session, full_response, last_metrics,
