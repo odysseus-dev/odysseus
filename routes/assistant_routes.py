@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from core.database import SessionLocal, CrewMember, ScheduledTask
 from src.auth_helpers import get_current_user
+from core.auth import RESERVED_USERNAMES
 from src.task_scheduler import compute_next_run
 
 
@@ -89,11 +90,11 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
     # check-in tasks seeded. Hitting any /assistant route under one of these
     # used to seed a full CrewMember + Morning/Midday/Evening tasks under that
     # owner, which then double-fired alongside the real user's check-ins.
-    _SYNTHETIC_OWNERS = frozenset({"internal-tool", "api", "demo", "system", ""})
+    # RESERVED_USERNAMES covers the same set; the `not owner` guard handles "".
 
     async def _get_or_create(owner: str) -> CrewMember:
         """Return the per-owner assistant CrewMember, creating it on demand."""
-        if not owner or owner in _SYNTHETIC_OWNERS:
+        if not owner or owner in RESERVED_USERNAMES:
             raise HTTPException(status_code=400, detail=f"Cannot seed assistant for {owner!r}")
         db = SessionLocal()
         try:

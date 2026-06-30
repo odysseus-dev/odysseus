@@ -1,0 +1,125 @@
+# Container image vulnerability scan (advisory)
+#
+# Trivy builds the application image and scans it for known-vulnerable OS and
+# Python packages. Advisory only -- it reports findings to the repo's Security
+# tab without blocking a merge, because the image inevitably contains
+# already-known CVEs in upstream packages that are not this project's bug.
+#
+# Split from the Dockerfile lint (container-scan.yml) for two reasons:
+#
+#   - Least privilege. The image build runs Dockerfile instructions, which on a
+#     pull request are attacker-influenceable. That path (the `scan` job) is
+#     held to a read-only token and never publishes results. Only `publish`,
+#     which runs on push to main (curated, fast-forwarded from reviewed dev),
+#     gets security-events:write to upload SARIF.
+#   - Cost. Docs-only changes do not rebuild the image (paths-ignore below),
+#     matching docker-publish.yml. hadolint stays on the broad trigger in
+#     container-scan.yml so the blocking gate always reports.
+
+name: Container scan (Trivy)
+
+on:
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: container-trivy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Pull requests and manual runs: build and scan under a read-only token.
+  # The build executes PR-supplied Dockerfile instructions, so this job must
+  # not hold any write scope, and it does not upload to the Security tab.
+  scan:
+    name: Trivy (image scan, advisory)
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    # Advisory: a CVE in an upstream package must not block a PR.
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
+
+      # Build without pushing so a broken Dockerfile is caught here, and the
+      # exact image we ship is what gets scanned.
+      - name: Build image
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7.2.0
+        with:
+          context: .
+          push: false
+          load: true
+          tags: odysseus:ci
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: odysseus:ci
+          format: table
+          ignore-unfixed: true
+        env:
+          # Pin the vuln DB source to GHCR to avoid rate-limited Docker Hub
+          # mirrors that flake on shared runners.
+          TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2
+
+  # Push to main only: build, scan, and publish SARIF to the Security tab.
+  # This is the only path that runs trusted code, so it is the only one granted
+  # security-events:write.
+  publish:
+    name: Trivy (image scan + SARIF upload)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+      security-events: write  # upload SARIF to the Security tab
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
+
+      - name: Build image
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7.2.0
+        with:
+          context: .
+          push: false
+          load: true
+          tags: odysseus:ci
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: odysseus:ci
+          format: sarif
+          output: trivy-results.sarif
+          ignore-unfixed: true
+        env:
+          TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2
+
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4.36.2
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-image

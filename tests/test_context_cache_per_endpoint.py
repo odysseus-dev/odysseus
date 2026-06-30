@@ -11,9 +11,9 @@ import src.model_context as mc
 
 def _setup(monkeypatch, windows):
     """windows: {endpoint_url: context_length}. Force the remote path."""
-    monkeypatch.setattr(mc, "_is_local_endpoint", lambda url: False)
+    monkeypatch.setattr(mc, "is_local_endpoint", lambda url: False)
     monkeypatch.setattr(mc, "_configured_endpoint_kind", lambda url: "api")
-    monkeypatch.setattr(mc, "_query_context_length", lambda url, model: windows[url])
+    monkeypatch.setattr(mc, "_query_context_length", lambda url, model: (windows[url], True))
     mc._context_cache.clear()
 
 
@@ -34,6 +34,6 @@ def test_cache_hit_still_works_per_endpoint(monkeypatch):
 
     # Both endpoints are now cached under their own key; flip the underlying
     # query to prove subsequent reads come from the per-endpoint cache, not a re-query.
-    monkeypatch.setattr(mc, "_query_context_length", lambda url, model: 999)
+    monkeypatch.setattr(mc, "_query_context_length", lambda url, model: (999, True))
     assert mc.get_context_length(a, "shared-model") == 8000
     assert mc.get_context_length(b, "shared-model") == 200000

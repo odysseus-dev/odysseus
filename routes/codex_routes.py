@@ -15,9 +15,11 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from core.middleware import require_admin
 from src.auth_helpers import require_authenticated_request, require_user
 from src.tool_implementations import do_manage_notes
 from src.constants import COOKBOOK_STATE_FILE
+from routes._validators import validate_remote_host, validate_ssh_port
 
 
 COOKBOOK_READ_SCOPES = {"cookbook:read", "cookbook:launch"}
@@ -34,6 +36,25 @@ CALENDAR_WRITE_SCOPES = {"calendar:write"}
 DOCS_READ_SCOPES = {"documents:read", "documents:write"}
 DOCS_WRITE_SCOPES = {"documents:write"}
 WRITE_ACTIONS = {"add", "create", "new", "save", "remind", "update", "delete", "toggle_item", "remove", "remove_item"}
+
+
+def _ssh_prefix_for_task(task: dict) -> tuple[str, str]:
+    """Resolve a cookbook task's stored SSH target into ``(host, port_flag)``.
+
+    ``host`` is ``""`` for a local task. ``remoteHost`` / ``sshPort`` come from
+    cookbook_state.json and get interpolated into an ``ssh`` command string, so
+    validate them the same way the cookbook routes do. A tampered entry with
+    shell metacharacters in ``remoteHost`` is rejected with 400 rather than
+    injected.
+    """
+    raw_host = task.get("remoteHost")
+    raw_port = task.get("sshPort")
+    host_value = str(raw_host).strip() if raw_host is not None else None
+    port_value = str(raw_port).strip() if raw_port is not None else None
+    host = validate_remote_host(host_value or None) or ""
+    ssh_port = validate_ssh_port(port_value or None) or ""
+    port_flag = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
+    return host, port_flag
 
 
 async def _as_owner(request: Request, owner: str, fn, *args, **kwargs):
@@ -75,6 +96,34 @@ def _scope_owner(request: Request, allowed: set[str]) -> str:
     return require_user(request)
 
 
+def _scope_owner_all(request: Request, required: set[str]) -> str:
+    """Return owner only when an API token has every required scope."""
+    if getattr(request.state, "api_token", False):
+        scopes = set(getattr(request.state, "api_token_scopes", []) or [])
+        missing = required - scopes
+        if missing:
+            raise HTTPException(403, f"API token missing required scope: {' and '.join(sorted(missing))}")
+        owner = getattr(request.state, "api_token_owner", None)
+        if not owner:
+            raise HTTPException(403, "API token has no owner")
+        return owner
+    return require_user(request)
+
+
+def _require_cookbook_scope(request: Request, allowed: set[str]) -> str:
+    """Authorize a Codex cookbook route.
+
+    For API-token callers, enforce the given scope set.
+    For cookie-session callers, additionally require admin privileges
+    because cookbook surfaces expose host topology, task logs, tmux
+    commands, and model-serving controls.
+    """
+    owner = _scope_owner(request, allowed)
+    if not getattr(request.state, "api_token", False):
+        require_admin(request)
+    return owner
+
+
 def _find_endpoint(router: APIRouter | None, method: str, path: str):
     if router is None:
         return None
@@ -82,6 +131,18 @@ def _find_endpoint(router: APIRouter | None, method: str, path: str):
         if getattr(route, "path", "") == path and method in getattr(route, "methods", set()):
             return route.endpoint
     return None
+
+
+def _clamp_pagination(offset: Any, limit: Any, *, default_limit: int = 50, max_limit: int = 50) -> tuple[int, int]:
+    try:
+        parsed_offset = int(0 if offset in (None, "") else offset)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Invalid offset")
+    try:
+        parsed_limit = int(default_limit if limit in (None, "") else limit)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Invalid limit")
+    return max(0, parsed_offset), max(1, min(parsed_limit, max_limit))
 
 
 def setup_codex_routes(
@@ -122,7 +183,7 @@ def setup_codex_routes(
                     "read": scoped(EMAIL_READ_SCOPES),
                     "draft": scoped(EMAIL_DRAFT_SCOPES),
                     "send": scoped(EMAIL_SEND_SCOPES),
-                    "actions": ["list", "read", "draft", "send"],
+                    "actions": ["list", "read", "draft_document", "draft", "send"],
                 },
                 "memory": {
                     "read": scoped(MEMORY_READ_SCOPES),
@@ -246,6 +307,59 @@ def setup_codex_routes(
     # Both handlers in routes/email_routes.py already accept `owner=` via
     # FastAPI Depends, so we call them directly without patching state.
 
+    def _email_draft_document_content(body: dict[str, Any]) -> str:
+        def clean(v: Any) -> str:
+            if isinstance(v, list):
+                return ", ".join(str(x).strip() for x in v if str(x).strip())
+            return str(v or "").strip()
+
+        to = clean(body.get("to"))
+        cc = clean(body.get("cc"))
+        bcc = clean(body.get("bcc"))
+        subject = clean(body.get("subject"))
+        in_reply_to = clean(body.get("in_reply_to"))
+        references = clean(body.get("references"))
+        body_text = str(body.get("body") or body.get("body_html") or "").strip()
+        lines = [
+            f"To: {to}",
+        ]
+        if cc:
+            lines.append(f"Cc: {cc}")
+        if bcc:
+            lines.append(f"Bcc: {bcc}")
+        lines.append(f"Subject: {subject}")
+        if in_reply_to:
+            lines.append(f"In-Reply-To: {in_reply_to}")
+        if references:
+            lines.append(f"References: {references}")
+        lines.extend(["---", body_text])
+        return "\n".join(lines).rstrip() + "\n"
+
+    @router.post("/emails/draft-document")
+    async def codex_email_draft_document(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
+        owner = _scope_owner(request, EMAIL_DRAFT_SCOPES)
+        docs_owner = _scope_owner_all(request, DOCS_WRITE_SCOPES)
+        if docs_owner != owner:
+            raise HTTPException(403, "API token owner mismatch")
+        if documents_create_endpoint is None:
+            raise HTTPException(503, "Documents integration is not available")
+        from routes.document_routes import DocumentCreate
+
+        subject = str(body.get("subject") or "Email draft").strip() or "Email draft"
+        title = str(body.get("title") or subject).strip() or "Email draft"
+        req = DocumentCreate(
+            session_id=body.get("session_id"),
+            title=title,
+            language="email",
+            content=_email_draft_document_content(body),
+        )
+        result = await _as_owner(request, owner, documents_create_endpoint, request, req)
+        if isinstance(result, dict):
+            result = dict(result)
+            result["draft_type"] = "document"
+            result["send_required_confirmation"] = True
+        return result
+
     @router.post("/emails/draft")
     async def codex_email_draft(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
         owner = _scope_owner(request, EMAIL_DRAFT_SCOPES)
@@ -338,10 +452,18 @@ def setup_codex_routes(
         owner = _scope_owner(request, DOCS_READ_SCOPES)
         if documents_library_endpoint is None:
             raise HTTPException(503, "Documents integration is not available")
-        return await _as_owner(
+        offset, limit = _clamp_pagination(offset, limit)
+        result = await _as_owner(
             request, owner, documents_library_endpoint,
             request, search, language, sort, offset, limit, archived,
         )
+        if isinstance(result, dict):
+            docs = result.get("documents")
+            total = result.get("total")
+            if isinstance(docs, list) and isinstance(total, int):
+                next_offset = offset + len(docs)
+                result["next_offset"] = next_offset if next_offset < total else None
+        return result
 
     @router.get("/documents/{doc_id}")
     async def codex_documents_get(request: Request, doc_id: str):
@@ -445,14 +567,14 @@ def setup_codex_routes(
 
     @router.get("/cookbook/tasks")
     async def codex_cookbook_tasks(request: Request):
-        _scope_owner(request, COOKBOOK_READ_SCOPES)
+        _require_cookbook_scope(request, COOKBOOK_READ_SCOPES)
         state = _read_cookbook_state()
         tasks = state.get("tasks") or []
         return {"tasks": [_redact_task(t) for t in tasks]}
 
     @router.get("/cookbook/servers")
     async def codex_cookbook_servers(request: Request):
-        _scope_owner(request, COOKBOOK_READ_SCOPES)
+        _require_cookbook_scope(request, COOKBOOK_READ_SCOPES)
         state = _read_cookbook_state()
         servers = state.get("env", {}).get("servers") or []
         # Strip ssh creds / passwords; keep only what's needed to pick a host.
@@ -471,7 +593,7 @@ def setup_codex_routes(
 
     @router.get("/cookbook/output/{session_id}")
     async def codex_cookbook_output(request: Request, session_id: str, tail: int = 400):
-        _scope_owner(request, COOKBOOK_READ_SCOPES)
+        _require_cookbook_scope(request, COOKBOOK_READ_SCOPES)
         # Defensive: session_id must be the tmux-style id we issue
         # (`serve-XXXX` / `cookbook-XXXX` / `queue-XXXX`); anything else
         # would let the agent run arbitrary `tmux capture-pane` targets.
@@ -486,8 +608,7 @@ def setup_codex_routes(
         task = next((t for t in tasks if t.get("sessionId") == session_id), None)
         if task is None:
             raise HTTPException(404, "task not found")
-        host = (task.get("remoteHost") or "").strip()
-        ssh_port = (task.get("sshPort") or "").strip()
+        host, port_flag = _ssh_prefix_for_task(task)
         # Prefer the persisted log file over the tmux pane. The pane gets
         # overwritten by the post-crash neofetch banner + bash prompt the
         # moment vllm exits; the log file is the raw stdout/stderr and
@@ -499,7 +620,6 @@ def setup_codex_routes(
             f"else tmux capture-pane -t {session_id} -p -S -{tail}; fi"
         )
         if host:
-            port_flag = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
             import shlex
             cmd = f"ssh {port_flag}{host} {shlex.quote(inner)}"
         else:
@@ -515,7 +635,7 @@ def setup_codex_routes(
 
     @router.post("/cookbook/serve")
     async def codex_cookbook_serve(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
-        _scope_owner(request, COOKBOOK_LAUNCH_SCOPES)
+        _require_cookbook_scope(request, COOKBOOK_LAUNCH_SCOPES)
         # Wraps /api/model/serve with the SAME validation the UI uses.
         # _validate_serve_cmd (called inside model_serve) rejects shell
         # metachars and requires the leading binary to be in the
@@ -554,17 +674,15 @@ def setup_codex_routes(
 
     @router.post("/cookbook/stop/{session_id}")
     async def codex_cookbook_stop(request: Request, session_id: str):
-        _scope_owner(request, COOKBOOK_LAUNCH_SCOPES)
+        _require_cookbook_scope(request, COOKBOOK_LAUNCH_SCOPES)
         import re as _re
         if not _re.fullmatch(r"[a-zA-Z0-9_-]+", session_id):
             raise HTTPException(400, "Invalid session id")
         state = _read_cookbook_state()
         tasks = state.get("tasks") or []
         task = next((t for t in tasks if t.get("sessionId") == session_id), None)
-        host = ((task or {}).get("remoteHost") or "").strip()
-        ssh_port = ((task or {}).get("sshPort") or "").strip()
+        host, port_flag = _ssh_prefix_for_task(task or {})
         if host:
-            port_flag = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
             cmd = f"ssh {port_flag}{host} \"tmux kill-session -t {session_id}\""
         else:
             cmd = f"tmux kill-session -t {session_id}"
@@ -576,7 +694,7 @@ def setup_codex_routes(
         """List cached models on a configured server (or local if host is omitted).
         Mirrors `list_cached_models` from the chat agent so external agents have
         the same inventory view before deciding what to serve/download."""
-        _scope_owner(request, COOKBOOK_READ_SCOPES)
+        _require_cookbook_scope(request, COOKBOOK_READ_SCOPES)
         # Hit /api/model/cached internally, with the same modelDirs the chat
         # agent's list_cached_models would resolve from cookbook state.
         state = _read_cookbook_state()
@@ -638,7 +756,7 @@ def setup_codex_routes(
         """List saved serve presets (model + host + port + launch cmd).
         Counterpart to `list_serve_presets`. Use BEFORE composing a `serve`
         body — the user's saved preset usually has the working cmd already."""
-        _scope_owner(request, COOKBOOK_READ_SCOPES)
+        _require_cookbook_scope(request, COOKBOOK_READ_SCOPES)
         state = _read_cookbook_state()
         presets = state.get("presets") or []
         out = []
@@ -658,7 +776,7 @@ def setup_codex_routes(
     async def codex_cookbook_serve_preset(request: Request, name: str):
         """Launch a saved preset by name. Reuses the working cmd + host the
         user already saved, avoiding the cmd-allowlist trial-and-error loop."""
-        _scope_owner(request, COOKBOOK_LAUNCH_SCOPES)
+        _require_cookbook_scope(request, COOKBOOK_LAUNCH_SCOPES)
         import re as _re
         if not _re.fullmatch(r"[A-Za-z0-9 _.:@\-]+", name):
             raise HTTPException(400, "Invalid preset name")
@@ -710,11 +828,11 @@ def setup_codex_routes(
         cookbook tracking. Needed when serve_model rejects a cmd and the
         agent falls back to direct ssh — without adoption the session is
         invisible to the UI. Body: {tmux_session, model, host?, port?}."""
-        _scope_owner(request, COOKBOOK_LAUNCH_SCOPES)
+        _require_cookbook_scope(request, COOKBOOK_LAUNCH_SCOPES)
         norm = dict(body or {})
         sess = (norm.get("tmux_session") or norm.get("session_id") or "").strip()
         model = (norm.get("model") or norm.get("repo_id") or "").strip()
-        host = (norm.get("host") or norm.get("remote_host") or "").strip()
+        host = validate_remote_host((norm.get("host") or norm.get("remote_host") or "").strip() or None) or ""
         port = norm.get("port") or 8000
         import re as _re
         if not sess or not _re.fullmatch(r"[a-zA-Z0-9_-]+", sess):

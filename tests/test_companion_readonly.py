@@ -13,6 +13,9 @@ import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+from fastapi import HTTPException
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # core.database instantiates SQLAlchemy declarative classes at import time, which
@@ -225,10 +228,32 @@ def test_models_route_scopes_api_token_to_token_owner(monkeypatch):
     endpoints = _call_models_route(
         monkeypatch,
         rows,
-        _request(api_token=True, api_token_owner="alice", current_user="api"),
+        _request(
+            api_token=True,
+            api_token_owner="alice",
+            api_token_scopes=["chat"],
+            current_user="api",
+        ),
     )
 
     assert _endpoint_names(endpoints) == ["alice-endpoint", "shared-endpoint"]
+
+
+def test_models_route_rejects_api_token_without_chat_scope(monkeypatch):
+    monkeypatch.setattr(companion_routes, "get_current_user", lambda request: "api")
+
+    with pytest.raises(HTTPException) as exc:
+        _models_route()(
+            _request(
+                api_token=True,
+                api_token_owner="alice",
+                api_token_scopes=["todos:read"],
+                current_user="api",
+            )
+        )
+
+    assert exc.value.status_code == 403
+    assert "chat scope" in exc.value.detail
 
 
 def test_models_route_unresolved_owner_returns_only_shared_rows(monkeypatch):
@@ -242,7 +267,12 @@ def test_models_route_unresolved_owner_returns_only_shared_rows(monkeypatch):
     endpoints = _call_models_route(
         monkeypatch,
         rows,
-        _request(api_token=True, api_token_owner=None, current_user="api"),
+        _request(
+            api_token=True,
+            api_token_owner=None,
+            api_token_scopes=["chat"],
+            current_user="api",
+        ),
     )
 
     assert _endpoint_names(endpoints) == ["shared-endpoint"]

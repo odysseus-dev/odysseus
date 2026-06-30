@@ -300,7 +300,7 @@ def is_wsl() -> bool:
     import sys
     if sys.platform.startswith("linux") or os.name == "posix":
         try:
-            with open("/proc/version", "r") as f:
+            with open("/proc/version", "r", encoding="utf-8", errors="ignore") as f:
                 if "microsoft" in f.read().lower():
                     return True
         except Exception:

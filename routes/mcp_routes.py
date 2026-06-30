@@ -108,6 +108,12 @@ def _load_disabled_map():
         db.close()
 
 
+def _mcp_oauth_redirect_uri() -> str:
+    """Shared callback URL for legacy Google and generic MCP OAuth flows."""
+    from src.mcp_oauth import REDIRECT_URI
+    return REDIRECT_URI
+
+
 def setup_mcp_routes(mcp_manager: McpManager):
     """Setup MCP routes with the provided manager."""
 
@@ -445,9 +451,9 @@ def setup_mcp_routes(mcp_manager: McpManager):
             client_id = keys["client_id"]
             scopes = oauth_cfg.get("scopes", [])
 
-            # For Desktop App creds, redirect to localhost — the user will
+            # For Desktop App creds, default to localhost — the user will
             # paste the resulting URL back if they're on a different device.
-            redirect_uri = "http://localhost:7000/api/mcp/oauth/callback"
+            redirect_uri = _mcp_oauth_redirect_uri()
 
             params = {
                 "client_id": client_id,
@@ -469,7 +475,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 return RedirectResponse(auth_url)
             else:
                 # Remote device — show paste-back page
-                return HTMLResponse(_oauth_authorize_page(auth_url, server_id, host))
+                return HTMLResponse(_oauth_authorize_page(auth_url, server_id, host, redirect_uri))
         finally:
             db.close()
 
@@ -536,7 +542,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
             client_id = keys["client_id"]
             client_secret = keys["client_secret"]
 
-            redirect_uri = "http://localhost:7000/api/mcp/oauth/callback"
+            redirect_uri = _mcp_oauth_redirect_uri()
 
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
@@ -603,13 +609,19 @@ def setup_mcp_routes(mcp_manager: McpManager):
     return router
 
 
-def _oauth_authorize_page(auth_url: str, server_id: str, host: str) -> str:
+def _oauth_authorize_page(
+    auth_url: str,
+    server_id: str,
+    host: str,
+    redirect_uri: str = "http://localhost:7000/api/mcp/oauth/callback",
+) -> str:
     """Page with Google sign-in link and URL paste-back form for remote access."""
     # Escape values interpolated into the page: `host` comes from the request
     # Host header and `server_id` from the OAuth state — neither is trusted.
     auth_url = html.escape(auth_url, quote=True)
     server_id = html.escape(server_id, quote=True)
     host = html.escape(host, quote=True)
+    redirect_uri = html.escape(redirect_uri, quote=True)
     return f"""<!DOCTYPE html>
 <html><head>
 <meta charset="UTF-8"><title>Authorize — Odysseus</title>
@@ -654,7 +666,7 @@ def _oauth_authorize_page(auth_url: str, server_id: str, host: str) -> str:
   <div class="divider"></div>
   <form method="POST" action="http://{host}/api/mcp/oauth/exchange/{server_id}">
     <p>Paste the URL from your browser after signing in:</p>
-    <input type="text" name="callback_url" placeholder="http://localhost:7000/api/mcp/oauth/callback?code=..." required>
+    <input type="text" name="callback_url" placeholder="{redirect_uri}?code=..." required>
     <br><button type="submit">Connect</button>
   </form>
 </div></body></html>"""

@@ -5,6 +5,8 @@ Auto-registration of built-in MCP servers on startup.
 Each server runs as a stdio subprocess managed by McpManager.
 """
 
+import asyncio
+import json
 import logging
 import os
 import shutil
@@ -15,6 +17,7 @@ from pathlib import Path
 import importlib
 
 from core.platform_compat import IS_WINDOWS, which_tool
+from src.runtime_paths import get_app_root
 
 logger = logging.getLogger(__name__)
 
@@ -83,11 +86,26 @@ _BUILTIN_NPX_SERVERS = {
         "name": "Built-in: Browser",
         "command": "npx",
         "args": ["-y", "@playwright/mcp@latest", "--headless", "--caps", "vision"],
-    },
+    }
 }
 
 # Global flag to disable MCP if there are compatibility issues
 MCP_DISABLED = os.environ.get("ODYSSEUS_DISABLE_MCP", "").lower() in ("1", "true", "yes")
+
+
+# Strong references to the fire-and-forget startup tasks scheduled below.
+# asyncio only keeps weak references to tasks created via create_task, so
+# without this the GC can collect a task mid-execution and the server
+# registration silently never runs. Mirrors _spawn_bg in routes/chat_helpers.py.
+_BG_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn_bg(coro) -> asyncio.Task:
+    """Schedule a background task and hold a strong reference until it finishes."""
+    task = asyncio.create_task(coro)
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+    return task
 
 
 async def register_builtin_servers(mcp_manager):
@@ -96,7 +114,7 @@ async def register_builtin_servers(mcp_manager):
         logger.info("Built-in MCP servers disabled via ODYSSEUS_DISABLE_MCP")
         return
 
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    base_dir = get_app_root()
     python = sys.executable
 
     async def _connect_python_server(server_id: str, script_path: str, name: str):
@@ -124,7 +142,7 @@ async def register_builtin_servers(mcp_manager):
         if not os.path.exists(script_path):
             logger.warning(f"Built-in MCP server script not found: {script_path}")
             continue
-        asyncio.create_task(_connect_python_server(server_id, script_path, name))
+        _spawn_bg(_connect_python_server(server_id, script_path, name))
 
     # Register NPX-based servers in the background (they take longer to start)
     npx_path = _find_npx()
@@ -176,7 +194,7 @@ async def register_builtin_servers(mcp_manager):
             except BaseException as e:
                 logger.warning(f"Built-in NPX server {cfg['name']} error: {type(e).__name__}: {e}")
 
-    asyncio.create_task(_start_npx_servers())
+    _spawn_bg(_start_npx_servers())
 
 
 def _npx_package_from_args(args):
@@ -200,12 +218,13 @@ def _npx_package_from_args(args):
 async def _is_npx_package_cached(npx_path, package_spec, timeout_s=5):
     """Probe whether an npx package is already in the local cache.
 
-    Runs `npx --no-install <pkg> --version`. --no-install tells npx to
-    fail instead of downloading, so a cache miss returns fast. We treat
-    "exited 0 with non-empty stdout" as proof of a working cached copy.
-    Anything else (non-zero exit, empty stdout, timeout, missing npx,
-    network error) means we should skip the server.
+    First checks the local `_npx` cache for an installed package. If the
+    package is not found there, falls back to `npx --no-install <pkg>
+    --version` so older npm layouts still work without downloading.
     """
+    if _is_package_in_npx_cache(package_spec):
+        return True
+
     try:
         proc = await asyncio.create_subprocess_exec(
             npx_path, "--no-install", package_spec, "--version",
@@ -233,6 +252,15 @@ async def _is_npx_package_cached(npx_path, package_spec, timeout_s=5):
         except Exception:
             pass
         return False
+    except asyncio.CancelledError:
+        # The probe was cancelled (e.g. app shutdown). Reap the child so it
+        # isn't orphaned, then propagate the cancellation.
+        try:
+            proc.kill()
+            await proc.wait()
+        except Exception:
+            pass
+        raise
     return proc.returncode == 0 and bool(stdout.strip())
 
 
@@ -261,3 +289,66 @@ async def RouterCaller(prompt, Agent_Hashmap:dict, AgentSystemPrompt, model, arg
    except Exception as e:
        logger.exception("Critical error from router")
        return f'The router crashed with an error:{e}.'
+def _is_package_in_npx_cache(package_spec):
+    """Return True when npm's `_npx` cache already contains package_spec."""
+    package_name = _npx_package_name(package_spec)
+    if not package_name:
+        return False
+
+    for cache_root in _npm_cache_roots():
+        npx_root = os.path.join(cache_root, "_npx")
+        if _npx_cache_contains_package(npx_root, package_name):
+            return True
+    return False
+
+
+def _npx_package_name(package_spec):
+    """Strip a version/range suffix from an npm package spec."""
+    if not package_spec:
+        return ""
+    if package_spec.startswith("@"):
+        parts = package_spec.split("@", 2)
+        if len(parts) >= 3:
+            return f"@{parts[1]}"
+        return package_spec
+    return package_spec.split("@", 1)[0]
+
+
+def _npm_cache_roots():
+    roots = []
+    configured = os.environ.get("npm_config_cache")
+    if configured:
+        roots.append(os.path.expanduser(configured))
+    roots.append(os.path.join(os.path.expanduser("~"), ".npm"))
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        roots.append(os.path.join(local_app_data, "npm-cache"))
+    return list(dict.fromkeys(roots))
+
+
+def _npx_cache_contains_package(npx_root, package_name):
+    if not os.path.isdir(npx_root):
+        return False
+    package_path = os.path.join("node_modules", *package_name.split("/"), "package.json")
+    try:
+        entries = list(os.scandir(npx_root))
+    except OSError:
+        return False
+    for entry in entries:
+        try:
+            is_dir = entry.is_dir()
+        except OSError:
+            continue
+        cached_name = _cached_package_name(os.path.join(entry.path, package_path))
+        if is_dir and cached_name == package_name:
+            return True
+    return False
+
+
+def _cached_package_name(package_json_path):
+    try:
+        with open(package_json_path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return ""
+    return str(data.get("name", "")).strip()

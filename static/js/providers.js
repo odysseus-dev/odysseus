@@ -133,11 +133,20 @@ export function providerLabel(endpointUrl) {
   try {
     host = new URL(endpointUrl).hostname;
   } catch (_) {
-    // Not a full URL (e.g. bare host[:port]) — strip scheme/path/port best-effort.
-    host = endpointUrl.replace(/^[a-z]+:\/\//i, "").split("/")[0].split(":")[0];
+    // Not a full URL (e.g. bare host[:port]) — strip scheme/path best-effort.
+    const stripped = endpointUrl.replace(/^[a-z]+:\/\//i, "").split("/")[0];
+    const colonIdx = stripped.lastIndexOf(":");
+    host = colonIdx >= 0 ? stripped.slice(0, colonIdx) : stripped;
   }
   if (!host) return null;
-  if (/^(localhost|127\.|0\.0\.0\.0|::1|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(host)) {
+  const isLoopback = /^(localhost|127\.|0\.0\.0\.0|::1)/.test(host);
+  if (isLoopback) {
+    // Don't name the serving tool from the port — it isn't authoritative
+    // (vLLM/SGLang/llama.cpp share 8000/8080). Discovery identifies the tool by
+    // probing /props and stores the result as the endpoint's name instead.
+    return "Local";
+  }
+  if (/^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(host)) {
     return "Local";
   }
   for (const [re, label] of _ENDPOINT_LABELS) {
@@ -147,4 +156,31 @@ export function providerLabel(endpointUrl) {
   return host.replace(/^api\./i, "");
 }
 
-export default { providerLogo, providerLabel };
+// Map endpoint URL → logo SVG using the same model-id regex catalog.
+// Tests host + port + path so loopback servers (e.g. Ollama on
+// localhost:11434) still match by port. Falls back to null when nothing
+// recognises the URL, so callers can render a neutral placeholder.
+export function providerLogoFromUrl(url) {
+  if (!url) return null;
+  let host = '', port = '', path = '';
+  try {
+    const u = new URL(url);
+    host = u.hostname; port = u.port; path = u.pathname || '';
+  } catch (_) {
+    const raw = String(url).replace(/^[a-z]+:\/\//i, '');
+    const slashIdx = raw.indexOf('/');
+    const hostport = slashIdx >= 0 ? raw.slice(0, slashIdx) : raw;
+    path = slashIdx >= 0 ? raw.slice(slashIdx) : '';
+    const colon = hostport.lastIndexOf(':');
+    host = colon >= 0 ? hostport.slice(0, colon) : hostport;
+    port = colon >= 0 ? hostport.slice(colon + 1) : '';
+  }
+  // Build candidate strings to test against the provider catalog.
+  const candidates = [host, port ? `${host}:${port}` : '', port ? `:${port}` : '', path].filter(Boolean);
+  for (const [re, svg] of _PROVIDERS) {
+    if (candidates.some(c => re.test(c))) return svg;
+  }
+  return null;
+}
+
+export default { providerLogo, providerLabel, providerLogoFromUrl };

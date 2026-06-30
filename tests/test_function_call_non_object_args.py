@@ -53,6 +53,13 @@ def test_non_object_arguments_do_not_crash(arguments):
     assert block.content == ""
 
 
+@pytest.mark.parametrize("tool_name", ["list_emails", "mcp__email__list_emails"])
+def test_email_mcp_non_object_arguments_are_rejected(tool_name):
+    block = function_call_to_tool_block(tool_name, '["INBOX"]')
+
+    assert block is None
+
+
 def test_edit_document_skips_non_object_edit_items():
     block = function_call_to_tool_block(
         "edit_document",

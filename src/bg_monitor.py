@@ -55,6 +55,8 @@ async def _drain_agent(sess, messages):
         if "delta" in d:
             delta = d.get("delta")
             if isinstance(delta, str):
+                if d.get("thinking"):
+                    continue
                 full += delta
         elif d.get("type") == "agent_step":
             round_num = d.get("round", round_num)

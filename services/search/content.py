@@ -15,6 +15,8 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
+from src.constants import WEB_FETCH_SOFT_MAX_BYTES, WEB_FETCH_HARD_MAX_BYTES, WEB_FETCH_USER_AGENT
+
 from .analytics import RateLimitError, error_logger
 from .cache import (
     CONTENT_CACHE_DIR,
@@ -89,18 +91,128 @@ def _public_http_url(url: str) -> bool:
         return False
 
 
-def _get_public_url(url: str, headers: dict, timeout: int, max_redirects: int = 5) -> httpx.Response:
+class BodyTooLargeError(Exception):
+    """The server declared a body larger than the hard fetch ceiling."""
+
+    def __init__(self, url: str, declared_bytes: int):
+        self.url = url
+        self.declared_bytes = declared_bytes
+        super().__init__(
+            f"response body is {declared_bytes:,} bytes, over the "
+            f"{WEB_FETCH_HARD_MAX_BYTES:,}-byte hard cap"
+        )
+
+
+class _CappedFetch:
+    """Result of a size-capped streaming GET.
+
+    Carries just what fetch_webpage_content needs from an httpx.Response,
+    plus the cap bookkeeping: the (possibly truncated) body, whether the
+    cap cut it short, and the size the server declared via Content-Length
+    (wire bytes; None when absent).
+    """
+
+    __slots__ = ("status_code", "headers", "content", "truncated",
+                 "declared_bytes", "encoding", "url")
+
+    def __init__(self, status_code, headers, content, truncated,
+                 declared_bytes, encoding, url):
+        self.status_code = status_code
+        self.headers = headers
+        self.content = content
+        self.truncated = truncated
+        self.declared_bytes = declared_bytes
+        self.encoding = encoding
+        self.url = url
+
+    @property
+    def text(self) -> str:
+        return self.content.decode(self.encoding or "utf-8", errors="replace")
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            request = httpx.Request("GET", self.url)
+            raise httpx.HTTPStatusError(
+                f"HTTP {self.status_code} for {self.url}",
+                request=request,
+                response=httpx.Response(self.status_code, request=request),
+            )
+
+
+def _get_public_url(url: str, headers: dict, timeout: int, max_redirects: int = 5,
+                    max_bytes: int = None) -> "_CappedFetch":
+    """Capped streaming GET with SSRF-guarded manual redirects.
+
+    The body is streamed and buffering stops at ``max_bytes`` (default: the
+    soft cap), so an oversized resource cannot be pulled into memory or the
+    content cache in full. When Content-Length already declares a body over
+    the hard ceiling, the fetch is refused before any body bytes are read.
+    """
+    cap = min(max_bytes or WEB_FETCH_SOFT_MAX_BYTES, WEB_FETCH_HARD_MAX_BYTES)
     current = url
     for _ in range(max_redirects + 1):
         if not _public_http_url(current):
             raise httpx.RequestError("Blocked private/internal URL", request=httpx.Request("GET", current))
-        response = httpx.get(current, headers=headers, timeout=timeout, follow_redirects=False)
-        if response.status_code not in (301, 302, 303, 307, 308):
-            return response
-        location = response.headers.get("location")
-        if not location:
-            return response
-        current = urljoin(str(response.url), location)
+        # Force identity transfer-encoding. With gzip/deflate the wire bytes
+        # (and Content-Length) can be a small fraction of the decoded body, so
+        # a tiny compressed response could pass the hard-cap preflight and then
+        # expand past the ceiling in a single decoded chunk before the streamed
+        # cap below can slice it. Identity makes Content-Length the true body
+        # size and keeps each streamed chunk bounded by the network read.
+        req_headers = dict(headers or {})
+        req_headers["Accept-Encoding"] = "identity"
+        with httpx.stream("GET", current, headers=req_headers, timeout=timeout,
+                          follow_redirects=False) as response:
+            if response.status_code in (301, 302, 303, 307, 308):
+                location = response.headers.get("location")
+                if not location:
+                    return _CappedFetch(response.status_code, response.headers, b"",
+                                        False, None, response.encoding, str(response.url))
+                current = urljoin(str(response.url), location)
+                continue
+
+            # A server can ignore the identity request and still return a
+            # compressed body; httpx.iter_bytes would then decode it, and a tiny
+            # gzip can balloon into one decoded chunk far past the cap before we
+            # slice. Refuse a compressed Content-Encoding so the streamed cap
+            # stays a real memory bound (Content-Length is the compressed wire
+            # length here, so the preflight and size metadata are unreliable too).
+            enc = (response.headers.get("content-encoding") or "").strip().lower()
+            if enc and enc != "identity":
+                raise httpx.RequestError(
+                    f"Refusing compressed response (Content-Encoding: {enc}) after "
+                    "requesting identity: cannot bound decoded body size",
+                    request=httpx.Request("GET", current),
+                )
+
+            declared = None
+            raw_len = response.headers.get("content-length")
+            if raw_len and raw_len.isdigit():
+                declared = int(raw_len)
+            # Refuse before buffering anything when the server already tells
+            # us the body exceeds the absolute ceiling (Content-Length is wire
+            # bytes; the decompressed body can only be larger).
+            if declared is not None and declared > WEB_FETCH_HARD_MAX_BYTES:
+                raise BodyTooLargeError(current, declared)
+
+            chunks = []
+            read = 0
+            truncated = False
+            # We requested identity above, so iter_bytes yields the raw body in
+            # network-read-sized chunks (no decompression expansion); the cap
+            # therefore bounds what we actually buffer.
+            for chunk in response.iter_bytes():
+                read += len(chunk)
+                if read > cap:
+                    keep = cap - (read - len(chunk))
+                    if keep > 0:
+                        chunks.append(chunk[:keep])
+                    truncated = True
+                    break
+                chunks.append(chunk)
+            return _CappedFetch(response.status_code, response.headers,
+                                b"".join(chunks), truncated, declared,
+                                response.encoding, str(response.url))
     raise httpx.RequestError("Too many redirects", request=httpx.Request("GET", current))
 
 # PDF extraction (optional dependency)
@@ -222,9 +334,19 @@ def _empty_result(url: str, error: str = "") -> dict:
 # ----------------------------------------------------------------------
 # Main content fetcher
 # ----------------------------------------------------------------------
-def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) -> dict:
-    """Fetch and extract meaningful content from a webpage with caching."""
-    cache_key = generate_cache_key(url)
+def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
+                          max_bytes: int = None) -> dict:
+    """Fetch and extract meaningful content from a webpage with caching.
+
+    ``max_bytes`` raises the download budget per call (clamped to the hard
+    cap); the default is the soft cap. When the body is cut short the result
+    carries ``truncated``/``fetched_bytes``/``total_bytes`` so callers can
+    tell the model the content is partial (#3812).
+    """
+    effective_cap = min(max_bytes or WEB_FETCH_SOFT_MAX_BYTES, WEB_FETCH_HARD_MAX_BYTES)
+    # The cap is part of the cache identity: a truncated soft-cap fetch must
+    # not be served to a later full-budget request for the same URL.
+    cache_key = generate_cache_key(f"{url}#cap={effective_cap}")
     cache_file = CONTENT_CACHE_DIR / f"{cache_key}.cache"
 
     # Check cache
@@ -247,18 +369,24 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
     # Fetch
     try:
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "User-Agent": WEB_FETCH_USER_AGENT,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
-            "Accept-Encoding": "gzip, deflate",
+            # identity so the streamed size cap in _get_public_url stays honest
+            # (a compressed body can decode to far more than Content-Length).
+            "Accept-Encoding": "identity",
             "Connection": "keep-alive",
         }
-        response = _get_public_url(url, headers=headers, timeout=timeout)
+        response = _get_public_url(url, headers=headers, timeout=timeout,
+                                   max_bytes=effective_cap)
 
         if response.status_code == 429:
             raise RateLimitError(f"Rate limit hit for {url} (attempt {retry_attempt})")
 
         response.raise_for_status()
+    except BodyTooLargeError as e:
+        error_logger.warning(f"Refused oversized body for {url}: {e}")
+        return _empty_result(url, f"TooLarge: {e}")
     except httpx.HTTPStatusError as e:
         error_logger.warning(f"HTTP {e.response.status_code} fetching {url}: {e}")
         return _empty_result(url, f"HTTP {e.response.status_code}: {e}")
@@ -269,9 +397,27 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
         error_logger.error(str(e))
         return _empty_result(url, str(e))
 
+    # Size bookkeeping shared by every content branch below. getattr keeps
+    # plain httpx.Response stand-ins (tests) working without the cap fields.
+    _size_fields = {
+        "truncated": getattr(response, "truncated", False),
+        "fetched_bytes": len(response.content),
+        "total_bytes": getattr(response, "declared_bytes", None),
+    }
+
     # PDF handling
     content_type = response.headers.get("Content-Type", "").lower()
     if "application/pdf" in content_type or url.lower().endswith(".pdf"):
+        if _size_fields["truncated"]:
+            # A PDF cut mid-stream is not parseable; unlike text there is no
+            # useful partial result, so report the budget problem instead.
+            _declared = _size_fields["total_bytes"]
+            return _empty_result(
+                url,
+                f"TooLarge: PDF exceeds the {effective_cap:,}-byte fetch budget"
+                + (f" (size {_declared:,} bytes)" if _declared else "")
+                + "; retry with a larger budget if it fits under the hard cap",
+            )
         if pdf_extract_text is None:
             logger.error("pdfminer.six is not installed; cannot extract PDF text.")
             pdf_text = ""
@@ -295,6 +441,7 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
             "js_message": "",
             "success": bool(pdf_text),
             "error": "" if pdf_text else "Failed to extract PDF text",
+            **_size_fields,
         }
         _cache_result(cache_file, cache_key, result, url)
         return result
@@ -329,6 +476,7 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
             "js_message": "",
             "success": bool(text_body),
             "error": "" if text_body else "Empty response body",
+            **_size_fields,
         }
         _cache_result(cache_file, cache_key, result, url)
         return result
@@ -391,6 +539,7 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
         "js_message": js_message,
         "success": True,
         "error": "",
+        **_size_fields,
     }
     _cache_result(cache_file, cache_key, result, url)
     return result

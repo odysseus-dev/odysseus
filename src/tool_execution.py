@@ -9,6 +9,7 @@ Extracted from agent_tools.py.
 
 import asyncio
 import collections
+import contextvars
 import json
 import logging
 import os
@@ -20,7 +21,12 @@ from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 
 
-from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
+from src.tool_security import (
+    BUILTIN_EMAIL_TOOLS,
+    email_tool_policy_names,
+    is_public_blocked_tool,
+    owner_is_admin_or_single_user,
+)
 from src.tool_policy import ToolPolicy
 from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES, DATA_DIR
 from src.tool_utils import _truncate, get_mcp_manager
@@ -146,7 +152,13 @@ def _resolve_tool_path(raw_path: str) -> str:
 
     Returns the realpath on success. Raises ValueError on rejection.
     Symlinks are resolved before comparison.
+
+    When a workspace is active for this turn, paths are confined to it instead
+    of the default allowlist (see _resolve_tool_path_in_workspace).
     """
+    ws = get_active_workspace()
+    if ws:
+        return _resolve_tool_path_in_workspace(ws, raw_path)
     if raw_path is None or not str(raw_path).strip():
         raise ValueError("path is required")
     expanded = os.path.expanduser(str(raw_path).strip())
@@ -207,6 +219,55 @@ def _resolve_tool_path_in_workspace(workspace: str, raw_path: str) -> str:
 
 
 
+# ---------------------------------------------------------------------------
+# Active workspace (per-turn, context-local)
+# ---------------------------------------------------------------------------
+# Set ONCE in execute_tool_block from the request's `workspace`. The path
+# resolvers (_resolve_tool_path / _resolve_search_root) and the subprocess cwd
+# helper (agent_cwd) read it from here, so confinement is enforced in a single
+# place: any tool that resolves paths through these helpers is confined
+# automatically and cannot accidentally bypass the workspace. contextvars are
+# task-local, so concurrent turns don't leak into each other.
+_active_workspace: contextvars.ContextVar = contextvars.ContextVar(
+    "agent_active_workspace", default=None
+)
+
+
+def get_active_workspace() -> Optional[str]:
+    """The folder the agent is confined to this turn, or None."""
+    return _active_workspace.get()
+
+
+def vet_workspace(raw: str) -> Optional[str]:
+    """Validate a requested workspace path at bind time.
+
+    Returns the canonical path, or None when it is unusable: not a real
+    directory, or itself a sensitive path (.ssh, .gnupg, ...). The in-workspace
+    resolver deny-lists sensitive paths *inside* the workspace, but the
+    empty-path search root is the workspace itself, so the root has to be
+    vetted before it is ever bound.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    resolved = os.path.realpath(os.path.expanduser(raw))
+    if not os.path.isdir(resolved) or _is_sensitive_path(resolved):
+        return None
+    # Reject filesystem roots: binding / (or a Windows drive/UNC root) as the
+    # workspace would make every absolute path "inside" it, collapsing the
+    # confinement into host-wide file access. A root is its own dirname, which
+    # also covers C:\ and \\server\share without platform-specific lists.
+    if os.path.dirname(resolved) == resolved:
+        return None
+    return resolved
+
+
+def agent_cwd() -> str:
+    """Working directory for agent subprocesses (bash/python/background jobs):
+    the active workspace when set, else the persistent data dir."""
+    return get_active_workspace() or _AGENT_WORKDIR
+
+
 def get_mcp_manager():
     from src import agent_tools
     return agent_tools.get_mcp_manager()
@@ -217,10 +278,15 @@ def get_mcp_manager():
 def _resolve_search_root(raw_path: str) -> str:
     """Resolve + confine a code-nav path (grep/glob/ls).
 
-    An empty path defaults to the agent's primary root (project data dir) and a
-    supplied path is confined by the global allowlist + sensitive-file policy.
+    With a workspace active, the workspace folder is the root and a supplied
+    path is confined inside it. Otherwise an empty path defaults to the agent's
+    primary root (project data dir) and a supplied path is confined by the
+    global allowlist + sensitive-file policy.
     """
     raw = (raw_path or "").strip()
+    ws = get_active_workspace()
+    if ws:
+        return os.path.realpath(ws) if not raw else _resolve_tool_path_in_workspace(ws, raw)
     if not raw:
         roots = _tool_path_roots()
         return roots[0] if roots else os.path.realpath(".")
@@ -262,6 +328,24 @@ _MCP_TOOL_MAP = {
     "web_fetch":      ("web_fetch",  "web_fetch"),
     "generate_image": ("image_gen",  "generate_image"),
 }
+_EMAIL_MCP_OWNER_ARG = "_odysseus_owner"
+
+
+def _parse_qualified_mcp_args(tool: str, content: str) -> tuple[Dict, Optional[str]]:
+    raw = (content or "").strip()
+    if not raw:
+        return {}, None
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        if tool.startswith("mcp__email__"):
+            return {}, "Email MCP tool arguments must be a JSON object."
+        return {}, None
+    if not isinstance(parsed, dict):
+        if tool.startswith("mcp__email__"):
+            return {}, "Email MCP tool arguments must be a JSON object."
+        return {}, None
+    return parsed, None
 
 
 def _parse_generate_image(content: str) -> Dict:
@@ -311,8 +395,42 @@ _MCP_ARG_PARSERS: Dict[str, Callable[[str], Dict[str, str]]] = {
 }
 
 
+# Primary argument key(s) for the legacy line-parsed tools. When a fenced
+# block's content is a JSON object carrying one of these keys, it's structured
+# inline args (the relaxed parser's ```web_search {"query": "..."}``` shape) —
+# use the object directly instead of letting the line-based parsers wrap the
+# whole JSON string as the query/url/path/prompt. Keyed off membership only
+# (the primary key never changes), so this can't drift; an unrecognized object
+# safely falls through to the line-based parser, i.e. the previous behavior.
+#
+# IMPORTANT — this only covers the MCP path. _build_mcp_args is reached via
+# _call_mcp_tool only for _MCP_TOOL_MAP tools (so an entry outside that map is
+# dead, as manage_memory was). And of these, only generate_image has a live MCP
+# server today; web_search/web_fetch/read_file/write_file have none, so they run
+# via _direct_fallback -> TOOL_HANDLERS, whose handlers decode JSON themselves
+# (see ReadFileTool/WriteFileTool/WebSearchTool/WebFetchTool). The entries here
+# are kept as defense-in-depth for if/when those servers are added. The live
+# fix for each server-less tool lives in its handler. test_write_file_inline_
+# json_args and test_mcp_json_primary_keys_are_all_live pin both halves.
+_MCP_JSON_PRIMARY_KEYS: Dict[str, tuple] = {
+    "web_search":     ("query", "queries"),
+    "web_fetch":      ("url",),
+    "read_file":      ("path",),
+    "write_file":     ("path",),
+    "generate_image": ("prompt",),
+}
+
+
 def _build_mcp_args(tool: str, content: str) -> Dict:
     """Convert fenced-block text content to structured MCP arguments."""
+    primaries = _MCP_JSON_PRIMARY_KEYS.get(tool)
+    if primaries and content.strip().startswith("{"):
+        try:
+            decoded = json.loads(content.strip())
+        except (json.JSONDecodeError, TypeError):
+            decoded = None
+        if isinstance(decoded, dict) and any(k in decoded for k in primaries):
+            return decoded
     parser = _MCP_ARG_PARSERS.get(tool)
     return parser(content) if parser else {}
 
@@ -392,7 +510,8 @@ async def _direct_fallback(
     tool: str,
     content: str,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
-    workspace: Optional[str] = None,
+    session_id: Optional[str] = None,
+    owner: Optional[str] = None,
 ) -> Optional[Dict]:
     _subproc_env = {
         **os.environ,
@@ -405,8 +524,9 @@ async def _direct_fallback(
     try:
         ctx = {
             "progress_cb": progress_cb,
-            "workspace": workspace,
             "subproc_env": _subproc_env,
+            "session_id": session_id,
+            "owner": owner,
         }
 
         from src.agent_tools import TOOL_HANDLERS
@@ -448,15 +568,42 @@ async def execute_tool_block(
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
+    Thin wrapper: bind the per-turn workspace (so the path resolvers + subprocess
+    cwd confine to it) for the duration of this call, then delegate. Reset on the
+    way out so the binding never leaks to the next tool call.
+    """
+    token = _active_workspace.set(workspace or None)
+    try:
+        output = await _execute_tool_block_impl(
+            block,
+            session_id=session_id,
+            disabled_tools=disabled_tools,
+            owner=owner,
+            progress_cb=progress_cb,
+            tool_policy=tool_policy,
+        )
+        return output
+    finally:
+        _active_workspace.reset(token)
+
+
+async def _execute_tool_block_impl(
+    block: Any,
+    session_id: Optional[str] = None,
+    disabled_tools: Optional[set] = None,
+    owner: Optional[str] = None,
+    progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+    tool_policy: Optional[Any] = None,
+) -> Tuple[str, Dict]:
+    """Execute a single tool block. Returns (description, result_dict).
+
     `progress_cb` is forwarded to long-running subprocess tools
     (bash, python) so the agent loop can emit `tool_progress` SSE
     events while the command is in flight. Ignored by other tools.
     """
     from src.tool_implementations import (
         do_search_chats, do_manage_tasks,
-        do_manage_skills, do_api_call, do_manage_endpoints,
-        do_manage_mcp, do_manage_webhooks, do_manage_tokens,
-        do_manage_settings, do_manage_notes,
+        do_manage_skills, do_api_call, do_manage_notes,
         do_manage_calendar,
         do_download_model, do_serve_model, do_list_served_models, do_stop_served_model,
         do_tail_serve_output,
@@ -469,8 +616,30 @@ async def execute_tool_block(
         do_app_api,
     )
 
+    # HACK:
+    # This is a temporary workaround for a circular dependency between
+    # tool_execution.py and agent_tools.__init__.py.
+    #
+    # See issue #4277:
+    # refactor(tools): Move the registry from __init__.py into a
+    # dedicated registry.py module.
+    #
+    # Do not copy this pattern elsewhere. This import should be removed
+    # once the registry refactor is completed.
+    try:
+        agent_tools_mod = __import__("src.agent_tools", fromlist=["TOOL_HANDLERS"])
+        dynamic_handlers = getattr(agent_tools_mod, "TOOL_HANDLERS", {})
+    except ImportError:
+        dynamic_handlers = {}
+
     tool = block.tool_type
     content = block.content
+
+    # The block/disable gates below must match every policy-equivalent
+    # spelling of the tool name (bare email names alias their mcp__email__
+    # form — see email_tool_policy_names), not just the spelling the model
+    # happened to emit.
+    policy_names = email_tool_policy_names(tool)
 
     # Misformatted tool call detection: model put JSON inside ```python``` (or
     # similar) without naming the tool. Common with MiniMax-style outputs.
@@ -499,13 +668,13 @@ async def execute_tool_block(
             pass
 
     # Reject tools that the user has disabled for this request
-    if disabled_tools and tool in disabled_tools:
+    if disabled_tools and not policy_names.isdisjoint(disabled_tools):
         desc = f"{tool}: BLOCKED"
         result = {"error": f"Tool '{tool}' is disabled by user.", "exit_code": 1}
         logger.info(f"Tool blocked by user: {tool}")
         return desc, result
 
-    if tool_policy and tool_policy.blocks(tool):
+    if tool_policy and any(tool_policy.blocks(name) for name in policy_names):
         desc = f"{tool}: BLOCKED"
         result = {
             "error": f"Execution of tool '{tool}' is forbade by the active guide-only policy.",
@@ -532,86 +701,6 @@ async def execute_tool_block(
         logger.warning("Public tool policy blocked owner=%r tool=%s", owner, tool)
         return desc, result
 
-    # ask_user: the agent poses a multiple-choice question to the user to get a
-    # decision/clarification. This is a pure UI-control marker — no subprocess,
-    # no filesystem. It returns an `ask_user` payload that the agent loop turns
-    # into an `ask_user` SSE event and then ENDS the turn, so the chat waits for
-    # the user's selection (their choice arrives as the next message).
-    if tool == "ask_user":
-        question, options, multi = "", [], False
-        raw = (content or "").strip()
-        try:
-            parsed = json.loads(raw) if raw else {}
-        except (ValueError, TypeError):
-            parsed = {}
-        if isinstance(parsed, dict):
-            question = str(parsed.get("question", "")).strip()
-            multi = bool(parsed.get("multi") or parsed.get("multiSelect"))
-            for opt in (parsed.get("options") or []):
-                if isinstance(opt, dict):
-                    label = str(opt.get("label", "")).strip()
-                    descr = str(opt.get("description", "")).strip()
-                elif isinstance(opt, str):
-                    label, descr = opt.strip(), ""
-                else:
-                    continue
-                if label:
-                    options.append({"label": label, "description": descr})
-        else:
-            question = raw
-        if not question or len(options) < 2:
-            return "ask_user: invalid", {
-                "error": (
-                    "ask_user needs a non-empty `question` and at least 2 `options` "
-                    "(each an object with a `label`, optional `description`)."
-                ),
-                "exit_code": 1,
-            }
-        options = options[:6]  # keep the choice list sane
-        desc = f"ask_user: {question[:80]}"
-        labels = ", ".join(o["label"] for o in options)
-        result = {
-            "ask_user": {"question": question, "options": options, "multi": multi},
-            "output": f"Asked the user: {question}\nOptions: {labels}\nAwaiting their selection.",
-            "exit_code": 0,
-        }
-        logger.info("Tool executed: %s (%d options, multi=%s)", desc, len(options), multi)
-        return desc, result
-
-    # update_plan: the agent writes back to the active plan — tick an item done
-    # or revise steps (e.g. when the user asks to change something). Pure UI
-    # marker: returns a `plan_update` payload the agent loop turns into a
-    # `plan_update` SSE event; the frontend replaces the stored plan and refreshes
-    # the docked plan window. Does NOT end the turn.
-    if tool == "update_plan":
-        import json as _json
-        raw = (content or "").strip()
-        plan = ""
-        try:
-            parsed = _json.loads(raw) if raw else {}
-        except (ValueError, TypeError):
-            parsed = {}
-        if isinstance(parsed, dict) and parsed.get("plan"):
-            plan = str(parsed.get("plan", "")).strip()
-        else:
-            # Plain-string call (raw checklist) or JSON without a usable `plan`.
-            plan = raw
-        if not plan:
-            return "update_plan: invalid", {
-                "error": "update_plan needs a non-empty `plan` (the full updated checklist as markdown).",
-                "exit_code": 1,
-            }
-        plan = plan[:8192]
-        done = plan.count("- [x]") + plan.count("- [X]")
-        total = done + plan.count("- [ ]")
-        desc = f"update_plan: {done}/{total} done" if total else "update_plan"
-        result = {
-            "plan_update": {"plan": plan},
-            "output": f"Plan updated ({done}/{total} steps complete)." if total else "Plan updated.",
-            "exit_code": 0,
-        }
-        logger.info("Tool executed: %s", desc)
-        return desc, result
 
     # Background execution: a `bash` block whose first line is the `#!bg`
     # marker runs DETACHED — returns a job id immediately so the chat stream
@@ -621,15 +710,18 @@ async def execute_tool_block(
         _is_bg, _bg_cmd = _split_bg_marker(content)
         if _is_bg and _bg_cmd:
             from src import bg_jobs
-            rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=_AGENT_WORKDIR)
+            rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=agent_cwd())
             short = _bg_cmd.strip().split(chr(10))[0][:80]
             desc = f"bash (background): {short}"
             result = {
                 "output": (
-                    f"Started background job `{rec['id']}`. It is running detached — "
+                    f"Started background job `{rec['id']}`. It is running detached; "
                     f"do NOT wait for it or poll it. You will be automatically re-invoked "
                     f"with its full output when it finishes. Continue with other work, or "
-                    f"end your turn now and resume when the result arrives."
+                    f"end your turn now and resume when the result arrives. If the user "
+                    f"later asks to check progress or stop it, call the manage_bg_jobs "
+                    f"tool yourself (output or kill); do not tell them to run a tool "
+                    f"command, and do not surface raw tool syntax in your reply."
                 ),
                 "exit_code": 0,
                 "bg_job_id": rec["id"],
@@ -644,12 +736,17 @@ async def execute_tool_block(
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
         result = await _call_mcp_tool(tool, content, progress_cb=progress_cb)
-    elif tool in ("grep", "glob", "ls"):
+    elif tool in ("grep", "glob", "ls", "get_workspace"):
         # Code-navigation tools — no MCP server; run the direct implementation.
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
         result = await _direct_fallback(tool, content, progress_cb=progress_cb) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
+    elif tool == "manage_bg_jobs":
+        # Inspect/kill detached `bash` jobs; needs session_id to scope to chat.
+        desc = f"manage_bg_jobs: {content.split(chr(10))[0][:80]}"
+        result = await _direct_fallback(tool, content, session_id=session_id, owner=owner) \
+            or {"error": "manage_bg_jobs: execution failed", "exit_code": 1}
     elif tool in ("create_document", "update_document", "edit_document",
                   "suggest_document", "manage_documents"):
         desc = f"{tool}: {content.split(chr(10))[0][:80]}"
@@ -661,10 +758,24 @@ async def execute_tool_block(
         query = content.split("\n")[0].strip()
         desc = f"search_chats: {query[:80]}"
         result = await do_search_chats(query, owner=owner)
-    elif tool in ("chat_with_model", "create_session", "list_sessions",
-                  "send_to_session", "pipeline",
-                  "manage_session", "manage_memory", "list_models",
-                  "ui_control", "ask_teacher"):
+    elif tool in ("chat_with_model", "ask_teacher", "list_models"):
+        # Migrated to the agent_tools registry (#3629): dispatched through
+        # TOOL_HANDLERS with the owner/session ctx these tools need, instead
+        # of the legacy dispatch_ai_tool elif. The impls live in
+        # src/agent_tools/model_interaction_tools.py.
+        first_line = content.split(chr(10))[0].strip()[:60]
+        desc = f"{tool}: {first_line}" if first_line else tool
+        result = await _document_tool_dispatch(tool, content, session_id, owner) \
+            or {"error": f"{tool}: execution failed", "exit_code": 1}
+    elif tool in ("create_session", "list_sessions", "send_to_session", "manage_session"):
+        # Migrated to the agent_tools registry (#3629): dispatched through
+        # TOOL_HANDLERS with the owner/session ctx these tools need. The impls
+        # live in src/agent_tools/session_tools.py.
+        first_line = content.split(chr(10))[0].strip()[:60]
+        desc = f"{tool}: {first_line}" if first_line else tool
+        result = await _document_tool_dispatch(tool, content, session_id, owner) \
+            or {"error": f"{tool}: execution failed", "exit_code": 1}
+    elif tool in ("pipeline", "manage_memory", "ui_control"):
         from src.ai_interaction import dispatch_ai_tool
         desc, result = await dispatch_ai_tool(tool, content, session_id, owner=owner)
     elif tool == "manage_tasks":
@@ -677,21 +788,11 @@ async def execute_tool_block(
         first_line = content.split("\n")[0].strip()[:60]
         desc = f"api_call: {first_line}"
         result = await do_api_call(content)
-    elif tool == "manage_endpoints":
-        desc = "manage_endpoints"
-        result = await do_manage_endpoints(content, owner=owner)
-    elif tool == "manage_mcp":
-        desc = "manage_mcp"
-        result = await do_manage_mcp(content, owner=owner)
-    elif tool == "manage_webhooks":
-        desc = "manage_webhooks"
-        result = await do_manage_webhooks(content, owner=owner)
-    elif tool == "manage_tokens":
-        desc = "manage_tokens"
-        result = await do_manage_tokens(content, owner=owner)
-    elif tool == "manage_settings":
-        desc = "manage_settings"
-        result = await do_manage_settings(content, owner=owner)
+    elif tool in ("manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "manage_settings"):
+        # Registry-dispatched (agent_tools.admin_tools); owner threaded for ownership/admin checks.
+        desc = tool
+        result = await _direct_fallback(tool, content, owner=owner) \
+            or {"error": f"{tool}: execution failed", "exit_code": 1}
     elif tool == "manage_notes":
         desc = "manage_notes"
         result = await do_manage_notes(content, owner=owner)
@@ -744,7 +845,7 @@ async def execute_tool_block(
         desc = "edit_image"
         result = await do_edit_image(content, owner=owner)
     elif tool == "edit_file":
-        result = await _direct_fallback(tool, content, workspace=workspace) or {"error": "edit failed", "exit_code": 1}
+        result = await _direct_fallback(tool, content) or {"error": "edit failed", "exit_code": 1}
         desc = result.get("output") or result.get("error") or "edit_file"
     elif tool == "trigger_research":
         desc = "trigger_research"
@@ -767,22 +868,85 @@ async def execute_tool_block(
     elif tool == "vault_unlock":
         desc = "vault_unlock"
         result = await do_vault_unlock(content, owner=owner)
+    elif tool in BUILTIN_EMAIL_TOOLS:
+        # Bare email tool name from fenced-block models (e.g. Ollama) — route to MCP email server.
+        # Non-admin owners never reach here: BUILTIN_EMAIL_TOOLS ⊆ NON_ADMIN_BLOCKED_TOOLS,
+        # so is_public_blocked_tool() above already rejected them.
+        mcp = get_mcp_manager()
+        qualified = f"mcp__email__{tool}"
+        desc = f"email: {tool}"
+        if mcp:
+            _raw = content.strip()
+            args = {}
+            _args_error = None
+            if _raw:
+                # A non-empty body is always meant to be the call's arguments,
+                # and every email tool takes a JSON object. Anything that
+                # isn't one is a correctable error — NOT a silent empty-args
+                # call, which would read the DEFAULT mailbox/folder instead of
+                # the one the model meant (#3966 class). Only an EMPTY body
+                # keeps the no-arg path (e.g. ```list_email_accounts```).
+                try:
+                    parsed = json.loads(_raw)
+                except (json.JSONDecodeError, TypeError) as _je:
+                    # Covers both `{account: "work"}` (looks like JSON, bad)
+                    # and `account: work` (not JSON at all).
+                    _args_error = (
+                        f"'{tool}' arguments are not valid JSON ({_je}). "
+                        'Send a JSON object, e.g. {"account": "work"} — '
+                        "keys and string values need double quotes."
+                    )
+                else:
+                    if isinstance(parsed, dict):
+                        args = parsed
+                    else:
+                        _args_error = (
+                            f"'{tool}' arguments must be a JSON object, "
+                            'e.g. {"uid": "..."} — got a JSON array/value instead.'
+                        )
+            if _args_error is not None:
+                result = {"error": _args_error, "exit_code": 1}
+            else:
+                if owner:
+                    args = dict(args)
+                    args[_EMAIL_MCP_OWNER_ARG] = owner
+                result = await mcp.call_tool(qualified, args)
+        else:
+            result = {"error": "MCP manager not available", "exit_code": 1}
     elif tool.startswith("mcp__"):
         # MCP tool dispatch
         mcp = get_mcp_manager()
         if mcp:
-            try:
-                args = json.loads(content) if content.strip().startswith("{") else {}
-            except (json.JSONDecodeError, TypeError):
-                args = {}
             desc = f"mcp: {tool}"
-            result = await mcp.call_tool(tool, args)
+            args, parse_error = _parse_qualified_mcp_args(tool, content)
+            if parse_error:
+                result = {"error": parse_error, "exit_code": 1}
+            else:
+                if tool.startswith("mcp__email__") and owner:
+                    args = dict(args)
+                    args[_EMAIL_MCP_OWNER_ARG] = owner
+                result = await mcp.call_tool(tool, args)
         else:
             desc = f"mcp: {tool}"
             result = {"error": "MCP manager not available", "exit_code": 1}
+
+    
+    elif tool in dynamic_handlers:
+        first_line = content.split(chr(10))[0][:80]
+        desc = f"registry: {tool} {first_line}".strip()
+        res = await _direct_fallback(tool, content, progress_cb=progress_cb)
+        
+        if isinstance(res, tuple):
+            desc, result = res
+        else:
+            result = res or {"error": f"{tool}: execution failed", "exit_code": 1}
+
     else:
         desc = f"unknown: {tool}"
-        result = {"error": f"Unknown tool type: {tool}", "exit_code": 1}
+        result = {
+            "error": f"Unknown tool: {tool}",
+            "exit_code": 1
+        }
 
     logger.info(f"Tool executed: {desc} -> exit_code={result.get('exit_code', 'n/a')}")
     return desc, result

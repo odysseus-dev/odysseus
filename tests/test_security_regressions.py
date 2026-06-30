@@ -38,6 +38,8 @@ def test_untrusted_context_policy_marks_sources_as_data():
 
     assert "not instructions" in UNTRUSTED_CONTEXT_POLICY
     assert "overrides" in UNTRUSTED_CONTEXT_POLICY
+    assert "Do not quote" in UNTRUSTED_CONTEXT_POLICY
+    assert "acknowledge untrusted-source wrapper labels" in UNTRUSTED_CONTEXT_POLICY
 
 
 # ── secret_storage ─────────────────────────────────────────────
@@ -121,9 +123,12 @@ def test_docker_compose_binds_web_ui_to_loopback_by_default():
 
 
 def test_readme_native_quickstart_uses_loopback():
-    readme = Path("README.md").read_text(encoding="utf-8")
-    assert "python -m uvicorn app:app --host 127.0.0.1 --port 7000" in readme
-    assert "0.0.0.0` only when you intentionally want" in readme
+    # The README refresh (#4306) moved the native quickstart into docs/setup.md,
+    # so accept the loopback guidance from either the README or the setup guide.
+    docs = Path("README.md").read_text(encoding="utf-8")
+    docs += "\n" + Path("docs/setup.md").read_text(encoding="utf-8")
+    assert "python -m uvicorn app:app --host 127.0.0.1 --port 7000" in docs
+    assert "0.0.0.0` only when you intentionally want" in docs
 
 
 def test_ollama_cookbook_runner_does_not_force_public_bind():
@@ -901,7 +906,13 @@ def test_web_fetch_guard_blocks_redirect_into_private(monkeypatch):
         url = "http://public.example/start"
         headers = {"location": "http://169.254.169.254/latest/meta-data/"}
 
-    monkeypatch.setattr(httpx, "get", lambda url, **kwargs: _Resp())
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _fake_stream(method, url, **kwargs):
+        yield _Resp()
+
+    monkeypatch.setattr(httpx, "stream", _fake_stream)
 
     with _pytest.raises(httpx.RequestError) as exc:
         content._get_public_url("http://public.example/start", headers={}, timeout=5)
@@ -972,13 +983,25 @@ def test_mcp_oauth_page_escapes_reflected_values():
     src = Path(__file__).resolve().parents[1] / "routes" / "mcp_routes.py"
     text = src.read_text()
     body = text.split("def _oauth_authorize_page(", 1)[1].split("return f", 1)[0]
-    for var in ("auth_url", "server_id", "host"):
+    for var in ("auth_url", "server_id", "host", "redirect_uri"):
         assert f"{var} = html.escape({var}" in body, var
 
 
 def _import_mcp_routes():
     sys.modules.pop("routes.mcp_routes", None)
     return importlib.import_module("routes.mcp_routes")
+
+
+def test_google_mcp_oauth_uses_configured_redirect_base(monkeypatch):
+    monkeypatch.setenv("OAUTH_REDIRECT_BASE_URL", "https://odysseus.example/app/")
+    monkeypatch.delenv("APP_PUBLIC_URL", raising=False)
+    sys.modules.pop("src.mcp_oauth", None)
+    mcp_routes = _import_mcp_routes()
+
+    assert (
+        mcp_routes._mcp_oauth_redirect_uri()
+        == "https://odysseus.example/app/api/mcp/oauth/callback"
+    )
 
 
 def test_mcp_oauth_paths_resolve_under_data_dir(tmp_path, monkeypatch):
@@ -1076,9 +1099,9 @@ def _import_session_routes_for_filename():
 def _import_gallery_routes_for_filename():
     # Same rationale as the session route helper: import _sanitize_gallery_filename
     # against the real core.database and leave a clean, real module cached.
-    _drop_route_module_cache("routes.gallery_routes")
-    _drop_route_module_cache("routes.gallery_helpers")
-    return importlib.import_module("routes.gallery_routes")
+    _drop_route_module_cache("routes.gallery.gallery_routes")
+    _drop_route_module_cache("routes.gallery.gallery_helpers")
+    return importlib.import_module("routes.gallery.gallery_routes")
 
 
 def test_export_filename_sanitizer_blocks_header_and_path_chars():

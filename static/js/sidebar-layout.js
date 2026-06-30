@@ -103,7 +103,6 @@ export function initSidebarLayout(Storage, opts) {
   });
 
   // Hamburger cycles: full sidebar → mini → off → full
-  // Shift-click swaps sidebar side
   let _userToggledSidebar = false;
   let _wasAutoCollapsed = false;
 
@@ -122,8 +121,7 @@ export function initSidebarLayout(Storage, opts) {
     if (window.innerWidth < 768 && cc && cc.classList.contains('compare-active')) return;
     _userToggledSidebar = true;
     // Optionally place the sidebar on a specific edge (the swipe gesture passes
-    // the direction). Persist it + re-anchor the doc panel, same as a
-    // shift-click on the hamburger.
+    // the direction). Persist it + re-anchor the doc panel.
     if (side === 'left' || side === 'right') {
       const wantRight = side === 'right';
       if (sidebar.classList.contains('right-side') !== wantRight) {
@@ -143,13 +141,6 @@ export function initSidebarLayout(Storage, opts) {
     hamburgerBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       const sidebar = document.getElementById('sidebar');
-      if (e.shiftKey) {
-        sidebar.classList.toggle('right-side');
-        Storage.set(Storage.KEYS.SIDEBAR_SIDE, sidebar.classList.contains('right-side') ? 'right' : 'left');
-        syncRailSide();
-        if (documentModule && documentModule.swapSide) documentModule.swapSide();
-        return;
-      }
 
       _userToggledSidebar = true;
       const isSidebarVisible = !sidebar.classList.contains('hidden');

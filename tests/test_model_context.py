@@ -6,7 +6,7 @@ import types
 import pytest
 
 import src.model_context as model_context
-from src.model_context import _is_local_endpoint, estimate_tokens, _lookup_known
+from src.model_context import is_local_endpoint, estimate_tokens, _lookup_known
 
 
 class _Column:
@@ -56,20 +56,28 @@ def _install_endpoint_db(monkeypatch, rows):
 
 class TestIsLocalEndpoint:
     def test_localhost(self):
-        assert _is_local_endpoint("http://localhost:5000/v1/chat/completions") is True
+        assert is_local_endpoint("http://localhost:5000/v1/chat/completions") is True
 
     def test_loopback_ipv4(self):
-        assert _is_local_endpoint("http://127.0.0.1:8080/v1/chat/completions") is True
+        assert is_local_endpoint("http://127.0.0.1:8080/v1/chat/completions") is True
 
     def test_private_192_168(self):
-        assert _is_local_endpoint("http://192.168.1.1:11434/v1/chat/completions") is True
+        assert is_local_endpoint("http://192.168.1.1:11434/v1/chat/completions") is True
 
     def test_private_10(self):
-        assert _is_local_endpoint("http://10.0.0.5:8000/v1/chat/completions") is True
+        assert is_local_endpoint("http://10.0.0.5:8000/v1/chat/completions") is True
+
+    @pytest.mark.parametrize("host", [
+        "10.example-cloud.com",
+        "172.16.example-cloud.com",
+        "192.168.example-cloud.com",
+    ])
+    def test_private_prefix_dns_names_are_remote(self, host):
+        assert is_local_endpoint(f"https://{host}/v1/chat/completions") is False
 
     def test_tailscale_100(self):
         # 100.64.0.0/10 is the CGNAT range Tailscale uses.
-        assert _is_local_endpoint("http://100.64.0.1:5000/v1/chat/completions") is True
+        assert is_local_endpoint("http://100.64.0.1:5000/v1/chat/completions") is True
 
     def test_configured_tailscale_proxy_is_remote(self, monkeypatch):
         _install_endpoint_db(monkeypatch, [
@@ -81,19 +89,19 @@ class TestIsLocalEndpoint:
             )
         ])
 
-        assert _is_local_endpoint("http://100.117.136.97:34521/v1/chat/completions") is False
+        assert is_local_endpoint("http://100.117.136.97:34521/v1/chat/completions") is False
 
     def test_openai_is_remote(self):
-        assert _is_local_endpoint("https://api.openai.com/v1/chat/completions") is False
+        assert is_local_endpoint("https://api.openai.com/v1/chat/completions") is False
 
     def test_anthropic_is_remote(self):
-        assert _is_local_endpoint("https://api.anthropic.com/v1/messages") is False
+        assert is_local_endpoint("https://api.anthropic.com/v1/messages") is False
 
     def test_empty_url(self):
-        assert _is_local_endpoint("") is False
+        assert is_local_endpoint("") is False
 
     def test_malformed_url(self):
-        assert _is_local_endpoint("not-a-url") is False
+        assert is_local_endpoint("not-a-url") is False
 
 
 class TestEstimateTokens:
@@ -183,16 +191,26 @@ class TestLookupKnown:
         assert _lookup_known("gpt-4") == 8192
 
 
+class _FakeResp:
+    def __init__(self, payload, ok=True):
+        self._payload = payload
+        self.is_success = ok
+
+    def json(self):
+        return self._payload
+
+
 class TestGetContextLength:
     def setup_method(self):
         model_context._context_cache.clear()
+        model_context._catalog_ctx_cache.clear()
 
     def test_local_endpoint_requeries_same_model_after_restart(self, monkeypatch):
         calls = []
 
         def fake_query(endpoint_url, model):
             calls.append((endpoint_url, model))
-            return 8192 if len(calls) == 1 else 27000
+            return (8192, True) if len(calls) == 1 else (27000, True)
 
         monkeypatch.setattr(model_context, "_query_context_length", fake_query)
 
@@ -211,7 +229,7 @@ class TestGetContextLength:
 
         def fake_query(endpoint_url, model):
             calls.append((endpoint_url, model))
-            return 200000 if len(calls) == 1 else 12345
+            return (200000, True) if len(calls) == 1 else (12345, True)
 
         monkeypatch.setattr(model_context, "_query_context_length", fake_query)
 
@@ -225,7 +243,7 @@ class TestGetContextLength:
         assert second == 200000
         assert len(calls) == 1
 
-    def test_configured_proxy_uses_default_without_model_listing(self, monkeypatch):
+    def _proxy_db(self, monkeypatch):
         _install_endpoint_db(monkeypatch, [
             types.SimpleNamespace(
                 base_url="http://100.117.136.97:34521/v1",
@@ -234,18 +252,63 @@ class TestGetContextLength:
                 is_enabled=True,
             )
         ])
-        calls = []
+
+    def test_configured_proxy_known_model_skips_model_listing(self, monkeypatch):
+        # A model covered by the known-context table must still resolve without
+        # touching /models — the cheap path the proxy short-circuit exists for.
+        self._proxy_db(monkeypatch)
 
         def fake_get(*args, **kwargs):
-            calls.append(args)
-            raise AssertionError("/models should not be queried for configured proxy context")
+            raise AssertionError("/models must not be queried for a known proxy model")
 
         monkeypatch.setattr(model_context.httpx, "get", fake_get)
 
         endpoint = "http://100.117.136.97:34521/v1/chat/completions"
-        first = model_context.get_context_length(endpoint, "unknown-proxy-model")
-        second = model_context.get_context_length(endpoint, "unknown-proxy-model")
+        assert model_context.get_context_length(endpoint, "gpt-4o") == 128000
 
-        assert first == model_context.DEFAULT_CONTEXT
-        assert second == model_context.DEFAULT_CONTEXT
-        assert calls == []
+    def test_configured_proxy_unknown_model_reads_catalog_context(self, monkeypatch):
+        # A model missing from the known table (e.g. a new OpenRouter model)
+        # must report the catalog's real window, not the bare default (#4886).
+        # The catalog is fetched once per endpoint and reused for other models.
+        self._proxy_db(monkeypatch)
+        fetches = []
+
+        def fake_get(url, *args, **kwargs):
+            fetches.append(url)
+            return _FakeResp({"data": [
+                {"id": "owl-alpha", "context_length": 1048576},
+                {"id": "tiny-proxy-model", "context_length": 8192},
+            ]})
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+
+        endpoint = "http://100.117.136.97:34521/v1/chat/completions"
+        assert model_context.get_context_length(endpoint, "owl-alpha") == 1048576
+        # A second unknown model on the same endpoint reuses the cached catalog.
+        assert model_context.get_context_length(endpoint, "tiny-proxy-model") == 8192
+        assert len(fetches) == 1
+
+    def test_configured_proxy_unknown_model_falls_back_to_default(self, monkeypatch):
+        # If the catalog can be read but doesn't list the model, keep the
+        # conservative default rather than guessing.
+        self._proxy_db(monkeypatch)
+
+        def fake_get(url, *args, **kwargs):
+            return _FakeResp({"data": [{"id": "some-other-model", "context_length": 4096}]})
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+
+        endpoint = "http://100.117.136.97:34521/v1/chat/completions"
+        assert model_context.get_context_length(endpoint, "absent-model") == model_context.DEFAULT_CONTEXT
+
+    def test_configured_proxy_catalog_fetch_failure_uses_default(self, monkeypatch):
+        # A failed/unreachable catalog must not raise — fall back to the default.
+        self._proxy_db(monkeypatch)
+
+        def fake_get(url, *args, **kwargs):
+            raise RuntimeError("network down")
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+
+        endpoint = "http://100.117.136.97:34521/v1/chat/completions"
+        assert model_context.get_context_length(endpoint, "unknown-proxy-model") == model_context.DEFAULT_CONTEXT

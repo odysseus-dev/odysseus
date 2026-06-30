@@ -12,8 +12,8 @@ export function canvasCoords(e, canvas) {
   const rect = canvas.getBoundingClientRect();
   const scaleX = canvas.width / rect.width;
   const scaleY = canvas.height / rect.height;
-  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  const clientX = e.touches && e.touches.length ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches && e.touches.length ? e.touches[0].clientY : e.clientY;
   return {
     x: (clientX - rect.left) * scaleX,
     y: (clientY - rect.top) * scaleY,

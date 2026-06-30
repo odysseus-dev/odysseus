@@ -83,6 +83,7 @@ def test_is_wsl_true_when_proc_version_mentions_microsoft(monkeypatch):
     def fake_open(path, mode="r", *args, **kwargs):
         assert path == "/proc/version"
         assert mode == "r"
+        assert kwargs == {"encoding": "utf-8", "errors": "ignore"}
         return io.StringIO("Linux version 6.6.0 microsoft standard")
 
     monkeypatch.setattr("builtins.open", fake_open)
@@ -152,6 +153,7 @@ def test_get_wsl_windows_user_profile_prefers_powershell(monkeypatch):
 
 
 def test_get_wsl_windows_user_profile_falls_back_to_users_dir(monkeypatch):
+    import os
     monkeypatch.setattr(platform_compat, "is_wsl", lambda: True)
 
     def raise_run(*_a, **_k):
@@ -165,11 +167,14 @@ def test_get_wsl_windows_user_profile_falls_back_to_users_dir(monkeypatch):
     )
 
     def fake_isdir(path):
-        return path in {"/mnt/c/Users", "/mnt/c/Users/alice"}
+        return os.path.normpath(path) in {
+            os.path.normpath("/mnt/c/Users"),
+            os.path.normpath("/mnt/c/Users/alice")
+        }
 
     monkeypatch.setattr(platform_compat.os.path, "isdir", fake_isdir)
 
-    assert platform_compat.get_wsl_windows_user_profile() == "/mnt/c/Users/alice"
+    assert platform_compat.get_wsl_windows_user_profile() == os.path.join("/mnt/c/Users", "alice")
 
 
 def test_get_wsl_windows_user_profile_returns_none_when_nothing_found(monkeypatch):
