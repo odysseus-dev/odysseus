@@ -75,7 +75,7 @@ function isCompareActive() {
 }
 
 function _compareModeLabel() {
-  return ({ search: ' search providers', agent: ' agents', research: ' research models' }[state._compareMode] || ' models');
+  return ({ search: window.t(' search providers'), agent: window.t(' agents'), research: window.t(' research models') }[state._compareMode] || window.t(' models'));
 }
 
 function _setToolbarMode(mode, syncModeTools = !state.isActive) {
@@ -107,7 +107,7 @@ function _syncCompareModeFromToolbar(mode) {
   _setToolbarMode(state._compareMode, false);
   const headerLabel = document.querySelector('.compare-header-label');
   if (headerLabel) {
-    headerLabel.textContent = 'Comparing' + _compareModeLabel() + (state._blindMode ? ' (blind)' : '') + ' · ' + state._timeout + 's timeout';
+    headerLabel.textContent = window.t('Comparing') + _compareModeLabel() + (state._blindMode ? ' ' + window.t('(blind)') : '') + ' · ' + state._timeout + window.t('s timeout');
   }
   const evalWrap = document.getElementById('cmp-eval-wrap');
   if (evalWrap && typeof evalWrap._renderItems === 'function') evalWrap._renderItems();
@@ -231,7 +231,7 @@ async function deactivate(teardown) {
 /** Build the compare UI: sessions, header bar, grid of panes, vote bar, eval dropdown. */
 async function _buildCompareUI() {
   if (state._selectedModels.length < 1) {
-    if (uiModule) uiModule.showError('Select at least 1 model');
+    if (uiModule) uiModule.showError(window.t('Select at least 1 model'));
     return;
   }
 
@@ -351,7 +351,7 @@ async function _buildCompareUI() {
   const headerLabel = document.createElement('span');
   headerLabel.className = 'compare-header-label';
   headerLabel.style.cssText = 'font-size:10px;font-weight:400;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;';
-  headerLabel.textContent = 'Comparing' + _compareModeLabel() + (state._blindMode ? ' (blind)' : '') + ' · ' + state._timeout + 's timeout';
+  headerLabel.textContent = window.t('Comparing') + _compareModeLabel() + (state._blindMode ? ' ' + window.t('(blind)') : '') + ' · ' + state._timeout + window.t('s timeout');
   // Left side: the Compare tool icon (two side-by-side panes, matching the
   // rail/sidebar icon) + the label. Other tool headers carry their icon; this
   // one was missing it.
@@ -371,8 +371,8 @@ async function _buildCompareUI() {
 
   const checkBtn = document.createElement('button');
   checkBtn.id = 'compare-check-btn';
-  checkBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg><span style="font-size:11px;margin-left:3px;">Probe</span>';
-  checkBtn.title = 'Probe unverified models with a small test request';
+  checkBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg><span style="font-size:11px;margin-left:3px;">' + window.t('Probe') + '</span>';
+  checkBtn.title = window.t('Probe unverified models with a small test request');
   checkBtn.style.cssText = _btnCSS;
   checkBtn.addEventListener('click', () => _checkUnprobed());
   headerActions.appendChild(checkBtn);
@@ -392,8 +392,8 @@ async function _buildCompareUI() {
   exportWrap.style.cssText = 'position:relative;display:inline-flex;';
   const exportBtn = document.createElement('button');
   exportBtn.id = 'compare-export-btn';
-  exportBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span style="font-size:11px;margin-left:3px;">Export</span>';
-  exportBtn.title = 'Export options';
+  exportBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span style="font-size:11px;margin-left:3px;">' + window.t('Export') + '</span>';
+  exportBtn.title = window.t('Export options');
   exportBtn.style.cssText = _btnCSS;
   exportBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -404,16 +404,16 @@ async function _buildCompareUI() {
 
   const shuffleBtn = document.createElement('button');
   shuffleBtn.id = 'compare-shuffle-btn';
-  shuffleBtn.innerHTML = ICON_DICE + '<span style="font-size:11px;margin-left:3px;">Shuffle</span>';
-  shuffleBtn.title = 'Shuffle pane positions';
+  shuffleBtn.innerHTML = ICON_DICE + '<span style="font-size:11px;margin-left:3px;">' + window.t('Shuffle') + '</span>';
+  shuffleBtn.title = window.t('Shuffle pane positions');
   shuffleBtn.style.cssText = _btnCSS;
   shuffleBtn.addEventListener('click', () => shufflePanePositions());
   headerActions.appendChild(shuffleBtn);
 
   const addBtn = document.createElement('button');
   addBtn.id = 'compare-add-btn';
-  addBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span style="font-size:11px;margin-left:3px;">Add</span>';
-  addBtn.title = 'Add model pane';
+  addBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span style="font-size:11px;margin-left:3px;">' + window.t('Add') + '</span>';
+  addBtn.title = window.t('Add model pane');
   addBtn.style.cssText = _btnCSS;
   addBtn.addEventListener('click', () => _addPane(addBtn));
   headerActions.appendChild(addBtn);
@@ -421,7 +421,7 @@ async function _buildCompareUI() {
   const closeBtn = document.createElement('button');
   closeBtn.className = 'compare-close-btn';
   closeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-  closeBtn.title = 'Close compare mode';
+  closeBtn.title = window.t('Close compare mode');
   // Match Export/Score/Shuffle/Model styling so the X sits flush with
   // the rest of the toolbar instead of being a 24×24 bordered square.
   closeBtn.style.cssText = _btnCSS;
@@ -522,7 +522,7 @@ async function _buildCompareUI() {
   }
   const msgTA = document.getElementById('message');
   if (msgTA) {
-    msgTA.placeholder = window.matchMedia('(max-width: 767px)').matches ? '' : 'Enter prompt for all models...';
+    msgTA.placeholder = window.matchMedia('(max-width: 767px)').matches ? '' : window.t('Enter prompt for all models...');
     requestAnimationFrame(() => msgTA.focus());
   }
 
@@ -693,7 +693,7 @@ async function _executeCompare(message) {
         aiMsg.innerHTML = '<div class="role">Search</div><div class="body"></div>';
         const aiBody = aiMsg.querySelector('.body');
         if (spinnerModule) {
-          const spinner = spinnerModule.create('Searching...', 'right');
+          const spinner = spinnerModule.create(window.t('Searching...'), 'right');
           aiBody.appendChild(spinner.createElement());
           spinner.start();
         }
@@ -715,7 +715,7 @@ async function _executeCompare(message) {
           const data = await res.json();
           return { idx: i, data };
         } catch (err) {
-          return { idx: i, data: { results: [], error: err.name === 'AbortError' ? 'Stopped' : err.message } };
+          return { idx: i, data: { results: [], error: err.name === 'AbortError' ? window.t('Stopped') : err.message } };
         }
       }
 
@@ -741,16 +741,16 @@ async function _executeCompare(message) {
               const aiBody = aiMsg.querySelector('.body');
               aiBody.innerHTML = '';
               if (data.error) {
-                aiBody.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;">Error: ' + escapeHtml(data.error) + '</div>';
+                aiBody.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;">' + window.t('Error: ') + escapeHtml(data.error) + '</div>';
               } else if (!data.results || data.results.length === 0) {
-                aiBody.innerHTML = '<div style="color:color-mix(in srgb, var(--fg) 50%, transparent);font-size:0.85em;font-style:italic;">No results found</div>';
+                aiBody.innerHTML = '<div style="color:color-mix(in srgb, var(--fg) 50%, transparent);font-size:0.85em;font-style:italic;">' + window.t('No results found') + '</div>';
               } else {
                 aiBody.appendChild(_renderSearchResults(data));
               }
               const footer = document.createElement('div'); footer.className = 'msg-footer';
               const span = document.createElement('span'); span.className = 'response-metrics';
               const parts = [];
-              if (data.results) parts.push(data.results.length + ' results');
+              if (data.results) parts.push(data.results.length + ' ' + window.t('results'));
               if (data.time) parts.push(data.time + 's');
               span.textContent = parts.join(' | '); footer.appendChild(span); aiMsg.appendChild(footer);
               hist.scrollTop = hist.scrollHeight;
@@ -770,7 +770,7 @@ async function _executeCompare(message) {
                 synthMsg.innerHTML = '<div class="role">Analysis</div><div class="body"></div>';
                 const synthBody = synthMsg.querySelector('.body');
                 let spinner = null;
-                if (spinnerModule) { spinner = spinnerModule.create('Analyzing...', 'right'); synthBody.appendChild(spinner.createElement()); spinner.start(); }
+                if (spinnerModule) { spinner = spinnerModule.create(window.t('Analyzing...'), 'right'); synthBody.appendChild(spinner.createElement()); spinner.start(); }
                 seqHist.appendChild(synthMsg);
                 seqHist.scrollTop = seqHist.scrollHeight;
                 const resultsText = data.results.map((r, ri) => `[${ri + 1}] ${r.title}\n${r.snippet || ''}\nURL: ${r.url}`).join('\n\n');
@@ -806,7 +806,7 @@ async function _executeCompare(message) {
         const span = document.createElement('span');
         span.className = 'response-metrics';
         const parts = [];
-        if (data.results) parts.push(data.results.length + ' results');
+        if (data.results) parts.push(data.results.length + ' ' + window.t('results'));
         if (data.time) parts.push(data.time + 's');
         span.textContent = parts.join(' | ');
         footer.appendChild(span);
@@ -841,7 +841,7 @@ async function _executeCompare(message) {
           const synthBody = synthMsg.querySelector('.body');
           let spinner = null;
           if (spinnerModule) {
-            spinner = spinnerModule.create('Analyzing...', 'right');
+            spinner = spinnerModule.create(window.t('Analyzing...'), 'right');
             synthBody.appendChild(spinner.createElement());
             spinner.start();
           }
@@ -874,7 +874,7 @@ async function _executeCompare(message) {
       buildVoteBar(n);
     } catch (err) {
       console.error('Search compare error:', err);
-      if (uiModule) uiModule.showError('Search compare failed: ' + err.message);
+      if (uiModule) uiModule.showError(window.t('Search compare failed: ') + err.message);
     } finally {
       state._streaming = false;
       _setSendBtn('send');
@@ -915,8 +915,8 @@ async function _executeCompare(message) {
       if (spinnerModule) {
         // In sequential mode, only first pane says "Processing", rest say "Waiting"
         const label = (!state._parallel && i > 0)
-          ? 'Waiting for Model ' + _slotChar(i - 1) + '...'
-          : 'Processing...';
+          ? window.t('Waiting for Model {slot}...', { slot: _slotChar(i - 1) })
+          : window.t('Processing...');
         const spinner = spinnerModule.create(label, 'right');
         aiBody.appendChild(spinner.createElement());
         spinner.start();
@@ -980,7 +980,7 @@ async function _executeCompare(message) {
       for (let i = 0; i < state._paneSessionIds.length; i++) {
         // Update spinner
         if (aiElements[i] && aiElements[i]._spinner) {
-          aiElements[i]._spinner.updateLabel('Processing...');
+          aiElements[i]._spinner.updateLabel(window.t('Processing...'));
         }
 
         await streamToPane(i, state._paneSessionIds[i], message, aiElements[i], { searchContext: sharedSearchContext, timeout: runTimeout });
@@ -1004,7 +1004,7 @@ async function _executeCompare(message) {
 
   } catch (err) {
     console.error('Compare error:', err);
-    if (uiModule) uiModule.showError('Compare failed: ' + err.message);
+    if (uiModule) uiModule.showError(window.t('Compare failed: ') + err.message);
   } finally {
     state._streaming = false;
     _setSendBtn('send');
@@ -1071,9 +1071,9 @@ function _toggleExportMenu(btn) {
   m.className = 'compare-export-menu';
   m.style.cssText = 'position:fixed;z-index:10001;top:' + (r.bottom + 4) + 'px;left:' + r.left + 'px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:12px;display:flex;flex-direction:column;min-width:170px;';
   const opts = [
-    { label: 'Copy as Markdown', fn: () => _exportCopyMarkdown(btn) },
-    { label: 'Download .md',     fn: () => _exportDownloadMarkdown() },
-    { label: 'Print / Save PDF', fn: () => _exportPrint() },
+    { label: window.t('Copy as Markdown'), fn: () => _exportCopyMarkdown(btn) },
+    { label: window.t('Download .md'),     fn: () => _exportDownloadMarkdown() },
+    { label: window.t('Print / Save PDF'), fn: () => _exportPrint() },
   ];
   for (const o of opts) {
     const item = document.createElement('button');
@@ -1108,9 +1108,9 @@ async function _exportCopyMarkdown(_btn) {
       document.body.appendChild(ta);
       ta.select(); document.execCommand('copy'); ta.remove();
     }
-    try { window.uiModule?.showToast?.('Copied comparison to clipboard'); } catch {}
+    try { window.uiModule?.showToast?.(window.t('Copied comparison to clipboard')); } catch {}
   } catch (e) {
-    try { window.uiModule?.showToast?.('Copy failed'); } catch {}
+    try { window.uiModule?.showToast?.(window.t('Copy failed')); } catch {}
   }
 }
 
@@ -1232,10 +1232,10 @@ function _setupEvalPicker() {
   btn.type = 'button';
   btn.id = 'cmp-eval-btn';
   btn.className = 'cmp-eval-btn';
-  btn.title = 'Insert an evaluation prompt';
+  btn.title = window.t('Insert an evaluation prompt');
   btn.innerHTML =
     '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>'
-    + '<span class="cmp-eval-label">Eval prompts</span>'
+    + '<span class="cmp-eval-label">' + window.t('Eval prompts') + '</span>'
     + '<svg class="cmp-eval-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
 
   const menu = document.createElement('div');
@@ -1247,11 +1247,11 @@ function _setupEvalPicker() {
     const label = btn.querySelector('.cmp-eval-label');
     if (label) {
       label.textContent = ({
-        agent: 'Agent prompts',
-        chat: 'Chat prompts',
-        search: 'Search prompts',
-        research: 'Research prompts'
-      }[mode] || 'Eval prompts');
+        agent: window.t('Agent prompts'),
+        chat: window.t('Chat prompts'),
+        search: window.t('Search prompts'),
+        research: window.t('Research prompts'),
+      }[mode] || window.t('Eval prompts'));
     }
     // research/html aren't first-class compare types — fall back gracefully
     const key = EVAL_PROMPTS[mode] ? mode
@@ -1259,7 +1259,7 @@ function _setupEvalPicker() {
     const list = EVAL_PROMPTS[key] || [];
 
     if (!list.length) {
-      menu.innerHTML = '<div class="cmp-eval-empty">No prompts for this type</div>';
+      menu.innerHTML = '<div class="cmp-eval-empty">' + window.t('No prompts for this type') + '</div>';
       return;
     }
     // Group by sub-category in original order
@@ -1426,7 +1426,7 @@ function removeOverlays() {
 async function showShufflePoolEditor() {
   let models;
   try { models = await fetchModels(); } catch (e) {
-    if (uiModule) uiModule.showError('Failed to load models');
+    if (uiModule) uiModule.showError(window.t('Failed to load models'));
     return;
   }
 
@@ -1440,7 +1440,7 @@ async function showShufflePoolEditor() {
 
   const header = document.createElement('div');
   header.className = 'modal-header';
-  header.innerHTML = '<h4>Shuffle Pool</h4>';
+  header.innerHTML = '<h4>' + window.t('Shuffle Pool') + '</h4>';
   const closeBtn = document.createElement('button');
   closeBtn.className = 'close-btn';
   closeBtn.innerHTML = '&#x2716;';
@@ -1454,7 +1454,7 @@ async function showShufflePoolEditor() {
 
   const desc = document.createElement('p');
   desc.style.cssText = 'color:color-mix(in srgb, var(--fg) 55%, transparent);font-size:0.85em;margin:0 0 12px;';
-  desc.textContent = 'Uncheck models to exclude them from random shuffle. They can still be picked manually.';
+  desc.textContent = window.t('Uncheck models to exclude them from random shuffle. They can still be picked manually.');
   body.appendChild(desc);
 
   const list = document.createElement('div');
@@ -1470,7 +1470,7 @@ async function showShufflePoolEditor() {
     if (items.length === 0) return;
     const heading = document.createElement('div');
     heading.style.cssText = 'font-size:0.78em;font-weight:600;color:color-mix(in srgb, var(--fg) 50%, transparent);text-transform:uppercase;letter-spacing:0.5px;padding:8px 4px 4px;';
-    heading.textContent = type === 'chat' ? 'Chat Models' : 'Image Models';
+    heading.textContent = type === 'chat' ? window.t('Chat Models') : window.t('Image Models');
     list.appendChild(heading);
 
     items.forEach(m => {
