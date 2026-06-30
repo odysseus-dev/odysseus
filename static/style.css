@@ -8169,7 +8169,8 @@ button.hamburger {
   gap: 5px;
   padding: 2px 8px;
 }
-.context-chip-icon { font-size: 12px; line-height: 1; }
+.context-chip-icon { display: inline-flex; flex-shrink: 0; opacity: 0.7; }
+.context-chip-icon svg { width: 12px; height: 12px; }
 .context-chip-type {
   font-size: 10px;
   text-transform: uppercase;

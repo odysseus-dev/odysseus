@@ -570,7 +570,7 @@ export function el(id) {
  * Styled confirm dialog — replaces native browser confirm().
  * Returns a Promise<boolean>.
  */
-export function styledConfirm(message, { confirmText = 'Confirm', cancelText = 'Cancel', danger = false } = {}) {
+export function styledConfirm(message, { confirmText = 'Confirm', cancelText = 'Cancel', danger = false, title = 'Confirm', singleButton = false } = {}) {
   return new Promise(resolve => {
     // Reuse or create the modal
     let overlay = document.getElementById('styled-confirm-overlay');
@@ -590,13 +590,21 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
       document.body.appendChild(overlay);
     }
 
+    const titleEl = document.getElementById('styled-confirm-title');
     const msgEl = document.getElementById('styled-confirm-msg');
     const okBtn = document.getElementById('styled-confirm-ok');
     const cancelBtn = document.getElementById('styled-confirm-cancel');
 
+    titleEl.textContent = title;
     msgEl.textContent = message;
     okBtn.textContent = confirmText;
-    cancelBtn.textContent = cancelText;
+    if (singleButton) {
+      cancelBtn.style.display = 'none';
+      cancelBtn.textContent = '';
+    } else {
+      cancelBtn.style.display = '';
+      cancelBtn.textContent = cancelText;
+    }
     okBtn.className = danger ? 'confirm-btn confirm-btn-danger' : 'confirm-btn confirm-btn-primary';
     cancelBtn.className = 'confirm-btn confirm-btn-secondary';
 
@@ -619,7 +627,7 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
     function onCancel() { cleanup(false); }
     function onBackdrop(e) { if (e.target === overlay) cleanup(false); }
     function onKey(e) {
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      if (!singleButton && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
         e.preventDefault();
         const active = document.activeElement;
         if (active === okBtn) cancelBtn.focus();
@@ -632,10 +640,14 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
       } else if (e.key === 'Tab') {
         // Trap focus inside the dialog so Tab can't wander to the page behind.
         e.preventDefault();
-        const f = [cancelBtn, okBtn];
-        const i = f.indexOf(document.activeElement);
-        const n = e.shiftKey ? (i <= 0 ? f.length - 1 : i - 1) : (i >= f.length - 1 ? 0 : i + 1);
-        f[n].focus();
+        if (singleButton) {
+          okBtn.focus();
+        } else {
+          const f = [cancelBtn, okBtn];
+          const i = f.indexOf(document.activeElement);
+          const n = e.shiftKey ? (i <= 0 ? f.length - 1 : i - 1) : (i >= f.length - 1 ? 0 : i + 1);
+          f[n].focus();
+        }
       }
     }
 

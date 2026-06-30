@@ -23,7 +23,7 @@ from core.database import SessionLocal, Session as DbSession, Document, ChatMess
 logger = logging.getLogger(__name__)
 
 ALLOWED_TYPES = {"document", "research", "session"}
-MAX_REFS_PER_MESSAGE = 5
+MAX_REFS_PER_MESSAGE = 4
 MAX_REF_CHARS = 80_000
 TRUNCATED_SUFFIX = "\n[truncated]"
 

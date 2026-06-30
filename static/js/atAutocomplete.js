@@ -91,7 +91,7 @@ async function _searchResearch(q) {
     const res = await fetch(`${API_BASE}/api/research/library?search=${encodeURIComponent(q)}&limit=${MAX_PER_CATEGORY}`, { credentials: 'same-origin' });
     if (!res.ok) return [];
     const data = await res.json();
-    return (data.items || []).map(r => ({
+    return (data.research || data.items || []).map(r => ({
       type: 'research',
       id: r.id,
       title: r.query || 'Research',
