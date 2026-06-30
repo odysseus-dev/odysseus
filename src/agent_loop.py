@@ -2368,7 +2368,13 @@ async def stream_agent_loop(
         from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX, DEFAULT_BUDGET, budget_is_explicit as _budget_is_explicit
         from src.model_context import budget_context_for_model
 
-        soft_budget = int(get_setting("agent_input_token_budget", DEFAULT_BUDGET) or 0)
+        try:
+            soft_budget = int(get_setting("agent_input_token_budget", DEFAULT_BUDGET) or 0)
+        except (TypeError, ValueError):
+            # Corrupt/agent-written settings.json: treat a non-numeric value like
+            # "unset" (DEFAULT_BUDGET), matching the agent_input_token_hard_max
+            # guard below, rather than letting it bubble to the outer handler.
+            soft_budget = DEFAULT_BUDGET
         if soft_budget > 0:
             before_trim_tokens = estimate_tokens(messages)
             reserve_tokens = min(max(max_tokens or 1024, 512), 2048)
@@ -2555,7 +2561,13 @@ async def stream_agent_loop(
             _last_content = _last_user.lower()
             _wants_mcp = any(kw in _last_content for kw in _MCP_KEYWORDS)
             all_tool_schemas = mcp_schemas if (_wants_mcp and mcp_schemas) else []
-        agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
+        # No surrounding handler here, so a non-numeric agent_stream_timeout_seconds
+        # in a hand-edited/agent-written settings.json would raise ValueError and
+        # crash the agent loop. Fall back to the 300s default.
+        try:
+            agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
+        except (TypeError, ValueError):
+            agent_stream_timeout = 300
 
         _tool_names_sent = [t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")]
         logger.info(f"[agent-debug] round={round_num} model={model} _is_api_model={_is_api_model} tools_sent={len(_tool_names_sent)} tool_names={_tool_names_sent[:15]} relevant_tools={sorted(_relevant_tools)[:15] if _relevant_tools else 'ALL'}")
