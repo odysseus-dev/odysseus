@@ -37,7 +37,7 @@ registerMessages('pt-BR', {
   'Later today': 'Mais tarde hoje',
   'Tomorrow': 'Amanha',
   'Next week': 'Proxima semana',
-  'Pick date and time...': 'Escolher data e hora...',
+  'Pick date and time…': 'Escolher data e hora…',
 
   // emailInbox.js — reminder note content
   'Reply: ': 'Responder: ',

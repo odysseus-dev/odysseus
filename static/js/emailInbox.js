@@ -989,7 +989,7 @@ function _showRemindSubmenu(em, parentDropdown) {
   }
   const customItem = document.createElement('div');
   customItem.className = 'dropdown-item-compact';
-  customItem.innerHTML = `<span>${window.t('Pick date and time...')}</span>`;
+  customItem.innerHTML = `<span>${window.t('Pick date and time…')}</span>`;
   customItem.addEventListener('click', async (e) => {
     e.stopPropagation();
     dismissOrRemove(parentDropdown);
