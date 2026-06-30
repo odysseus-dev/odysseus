@@ -362,6 +362,30 @@ def _assert_owns_account(account_id: str, owner: str) -> None:
         logger.error(f"Account-owner check failed: {e}")
         raise HTTPException(503, "Account check failed")
 
+def _owner_or_matching_legacy_account(query, owner: str = ""):
+    """Scope a query to accounts that belong to `owner`.
+
+    A row is considered "this user's" if it is owned by them OR it is a legacy
+    owner-less row (`owner` NULL/empty) whose mailbox matches them
+    (`imap_user == owner` or `from_address == owner`). The latter exists because
+    pre-multi-user data was migrated without stamping `owner`, yet it is still
+    the logged-in mailbox and is returned by `list_email_accounts` /
+    `_get_email_config` — so every mutation path (set-default, create, delete)
+    must clear/promote using the *same* scope or the one-default invariant
+    breaks and "switching the default email" silently fails.
+
+    When `owner` is empty (single-user / unconfigured), returns the query
+    unchanged so the caller operates on all rows.
+    """
+    if not owner:
+        return query
+    from sqlalchemy import and_, or_
+    from core.database import EmailAccount as _EA
+    unowned = or_(_EA.owner == None, _EA.owner == "")  # noqa: E711
+    same_mailbox = or_(_EA.imap_user == owner, _EA.from_address == owner)
+    return query.filter(or_(_EA.owner == owner, and_(unowned, same_mailbox)))
+
+
 def _q(name: str) -> str:
     """Quote an IMAP mailbox name. Defensive: escapes `\\` and `"` and wraps
     in double quotes so user-supplied folder names with spaces or quotes can't
@@ -775,14 +799,6 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
     import os
     from core.database import SessionLocal as _SL, EmailAccount as _EA
 
-    def _owner_or_matching_legacy_account(query):
-        if not owner:
-            return query
-        from sqlalchemy import and_, or_
-        unowned = or_(_EA.owner == None, _EA.owner == "")  # noqa: E711
-        same_mailbox = or_(_EA.imap_user == owner, _EA.from_address == owner)
-        return query.filter(or_(_EA.owner == owner, and_(unowned, same_mailbox)))
-
     resolved_id = None
     row = None
     try:
@@ -801,11 +817,11 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
             # leak another user's default mailbox to an unconfigured user.
             if row is None:
                 q = db.query(_EA).filter(_EA.is_default == True, _EA.enabled == True)  # noqa: E712
-                q = _owner_or_matching_legacy_account(q)
+                q = _owner_or_matching_legacy_account(q, owner)
                 row = q.first()
             if row is None:
                 q = db.query(_EA).filter(_EA.enabled == True)  # noqa: E712
-                q = _owner_or_matching_legacy_account(q)
+                q = _owner_or_matching_legacy_account(q, owner)
                 row = q.order_by(_EA.created_at.asc()).first()
             if row is not None:
                 resolved_id = row.id

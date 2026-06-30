@@ -41,6 +41,7 @@ from src.upload_limits import read_upload_limited, EMAIL_COMPOSE_UPLOAD_MAX_BYTE
 
 from routes.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, require_owner, require_user, _assert_owns_account,
+    _owner_or_matching_legacy_account,
     _q, _attach_compose_uploads, _cleanup_compose_uploads,
     _load_settings, _save_settings, _get_email_config,
     _send_smtp_message, _smtp_security_mode,
@@ -341,14 +342,14 @@ def _resolve_send_config(account_id: str | None = None, owner: str = "") -> dict
         raise ValueError(f"Email account {cfg.get('account_name') or account_id} has no SMTP configured")
     try:
         from core.database import SessionLocal as _SL, EmailAccount as _EA
-        from sqlalchemy import and_, or_
         db = _SL()
         try:
-            q = db.query(_EA).filter(_EA.enabled == True)  # noqa: E712
-            if owner:
-                unowned = or_(_EA.owner == None, _EA.owner == "")  # noqa: E711
-                same_mailbox = or_(_EA.imap_user == owner, _EA.from_address == owner)
-                q = q.filter(or_(_EA.owner == owner, and_(unowned, same_mailbox)))
+            # Shared scope — same definition of "this user's accounts" as
+            # list/set-default/delete so SMTP fallback can't desync from the
+            # default-selection paths (see #5046).
+            q = _owner_or_matching_legacy_account(
+                db.query(_EA).filter(_EA.enabled == True), owner  # noqa: E712
+            )
             for row in q.order_by(_EA.is_default.desc(), _EA.created_at.asc()).all():
                 trial = _get_email_config(account_id=row.id, owner=owner)
                 if _smtp_ready(trial):
@@ -3301,20 +3302,15 @@ def setup_email_routes():
     async def list_email_accounts(owner: str = Depends(require_user)):
         """List all email accounts with credentials masked."""
         from core.database import SessionLocal, EmailAccount
-        from sqlalchemy import and_, or_
         db = SessionLocal()
         try:
             out = []
             # SECURITY: scope to this user's accounts. Previously returned
             # every row in the EmailAccount table, leaking IMAP/SMTP hosts +
-            # usernames across users. Also show legacy unowned rows that match
-            # the logged-in mailbox; _get_email_config already accepts those,
-            # so Settings should not hide the active account.
-            q = db.query(EmailAccount)
-            if owner:
-                unowned = or_(EmailAccount.owner == None, EmailAccount.owner == "")  # noqa: E711
-                same_mailbox = or_(EmailAccount.imap_user == owner, EmailAccount.from_address == owner)
-                q = q.filter(or_(EmailAccount.owner == owner, and_(unowned, same_mailbox)))
+            # usernames across users. Use the shared scope (also matches legacy
+            # owner-less rows for the logged-in mailbox) so Settings, set-default,
+            # create and delete all agree on what "this user's accounts" means.
+            q = _owner_or_matching_legacy_account(db.query(EmailAccount), owner)
             for r in q.order_by(
                 EmailAccount.is_default.desc(), EmailAccount.created_at.asc()
             ).all():
@@ -3383,10 +3379,10 @@ def setup_email_routes():
             # If there are no accounts yet OR caller asked for default, enforce
             # the one-default invariant — but scope it to THIS user's accounts,
             # otherwise creating a default would clear every other user's
-            # default flag too.
-            scope_q = db.query(EmailAccount)
-            if owner:
-                scope_q = scope_q.filter(EmailAccount.owner == owner)
+            # default flag too. Use the shared scope so a matching legacy
+            # owner-less row is cleared too — otherwise it keeps is_default and
+            # the switch appears to fail (see #5046).
+            scope_q = _owner_or_matching_legacy_account(db.query(EmailAccount), owner)
             existing_count = scope_q.count()
             if row.is_default or existing_count == 0:
                 scope_q.update({EmailAccount.is_default: False})
@@ -3453,8 +3449,7 @@ def setup_email_routes():
             # it as their default.
             if was_default:
                 promote_q = db.query(EmailAccount).filter(EmailAccount.enabled == True)  # noqa: E712
-                if owner:
-                    promote_q = promote_q.filter(EmailAccount.owner == owner)
+                promote_q = _owner_or_matching_legacy_account(promote_q, owner)
                 promote = promote_q.order_by(EmailAccount.created_at.asc()).first()
                 if promote:
                     promote.is_default = True
@@ -3594,10 +3589,11 @@ def setup_email_routes():
             if not row:
                 return {"ok": False, "error": "Account not found"}
             # SECURITY: scope the "clear other defaults" sweep to this user's
-            # accounts so we don't unset another user's default flag.
-            clear_q = db.query(EmailAccount)
-            if owner:
-                clear_q = clear_q.filter(EmailAccount.owner == owner)
+            # accounts so we don't unset another user's default flag. Use the
+            # shared scope so a matching legacy owner-less row is cleared too —
+            # otherwise it keeps is_default=True alongside the new default and
+            # the switch silently fails (see #5046).
+            clear_q = _owner_or_matching_legacy_account(db.query(EmailAccount), owner)
             clear_q.update({EmailAccount.is_default: False})
             row.is_default = True
             db.commit()
