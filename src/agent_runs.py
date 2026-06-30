@@ -19,7 +19,7 @@ import json
 import logging
 import os
 import time
-from typing import AsyncGenerator, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, Optional
 
 from src import agent_run_records
 
@@ -103,6 +103,54 @@ def _last_event_type(ev: str) -> str:
                 return "delta"
         return "data"
     return ""
+
+
+def _json_data_event(ev: str) -> Optional[Dict[str, Any]]:
+    """Return the JSON object carried by an SSE data event, if any."""
+    data_lines = []
+    for line in (ev or "").splitlines():
+        if line.startswith("data:"):
+            data_lines.append(line[5:].lstrip(" "))
+    if not data_lines:
+        return None
+    payload = "\n".join(data_lines).strip()
+    if not payload or payload == "[DONE]":
+        return None
+    try:
+        data = json.loads(payload)
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _durable_finish_fields(buffer: list) -> Dict[str, Any]:
+    """Derive durable lifecycle fields from the real detached SSE stream."""
+    assistant_message_id = ""
+    delta_chars = 0
+    last_agent_final = ""
+
+    for ev in buffer:
+        data = _json_data_event(ev)
+        if not data:
+            continue
+
+        if data.get("type") == "message_saved" and data.get("id"):
+            assistant_message_id = str(data.get("id"))
+
+        if "delta" in data:
+            if not data.get("thinking"):
+                delta_chars += len(str(data.get("delta") or ""))
+            continue
+
+        if data.get("type") == "agent_final" and isinstance(data.get("text"), str):
+            last_agent_final = data["text"]
+
+    fields: Dict[str, Any] = {
+        "partial_chars": delta_chars if delta_chars else len(last_agent_final),
+    }
+    if assistant_message_id:
+        fields["assistant_message_id"] = assistant_message_id
+    return fields
 
 
 def _schedule_evict(session_id: str) -> None:
@@ -229,6 +277,7 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
         _publish(run, "data: [DONE]\n\n")
     finally:
         if run.record_id:
+            finish_fields = _durable_finish_fields(run.buffer)
             agent_run_records.finish(
                 run.record_id,
                 status=run.status,
@@ -236,6 +285,7 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
                 error=run.error,
                 event_count=len(run.buffer),
                 last_event_type=_last_event_type(run.buffer[-1]) if run.buffer else "",
+                **finish_fields,
             )
         if run.watchdog_task and not run.watchdog_task.done():
             run.watchdog_task.cancel()

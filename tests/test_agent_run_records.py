@@ -1,3 +1,4 @@
+import json
 import types
 
 import pytest
@@ -84,6 +85,8 @@ def test_begin_and_finish_persist_agent_run_lifecycle(run_db):
         assert latest["id"] == run_id
         assert latest["status"] == "done"
         assert latest["event_count"] == 7
+        assert latest["partial_chars"] == 42
+        assert latest["assistant_message_id"] == "assistant-msg-1"
     finally:
         db.close()
 
@@ -119,7 +122,10 @@ async def test_detached_run_manager_finishes_durable_record(monkeypatch):
     monkeypatch.setattr(agent_runs.agent_run_records, "finish", _finish)
 
     async def _stream():
-        yield "data: hello\n\n"
+        yield f'data: {json.dumps({"delta": "Visible "})}\n\n'
+        yield f'data: {json.dumps({"delta": "thinking", "thinking": True})}\n\n'
+        yield f'data: {json.dumps({"delta": "answer."})}\n\n'
+        yield f'data: {json.dumps({"type": "message_saved", "id": "assistant-msg-1"})}\n\n'
         yield "data: [DONE]\n\n"
 
     session_id = "sess-agent-run-manager-record"
@@ -137,7 +143,45 @@ async def test_detached_run_manager_finishes_durable_record(monkeypatch):
             "status": "done",
             "stop_reason": "",
             "error": "",
+            "event_count": 5,
+            "partial_chars": len("Visible answer."),
+            "assistant_message_id": "assistant-msg-1",
+            "last_event_type": "done",
+        },
+    )]
+
+
+@pytest.mark.asyncio
+async def test_detached_run_manager_uses_agent_final_when_no_delta(monkeypatch):
+    calls = []
+
+    def _finish(run_id, **kwargs):
+        calls.append((run_id, kwargs))
+        return True
+
+    monkeypatch.setattr(agent_runs.agent_run_records, "finish", _finish)
+
+    async def _stream():
+        yield f'data: {json.dumps({"type": "agent_final", "text": "Final only."})}\n\n'
+        yield "data: [DONE]\n\n"
+
+    session_id = "sess-agent-run-manager-agent-final"
+    agent_runs._RUNS.pop(session_id, None)
+    run = agent_runs.start(session_id, _stream(), record_id="run-record-2")
+    try:
+        await run.task
+    finally:
+        agent_runs._RUNS.pop(session_id, None)
+
+    assert run.status == "done"
+    assert calls == [(
+        "run-record-2",
+        {
+            "status": "done",
+            "stop_reason": "",
+            "error": "",
             "event_count": 2,
+            "partial_chars": len("Final only."),
             "last_event_type": "done",
         },
     )]

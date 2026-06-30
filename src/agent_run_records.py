@@ -155,6 +155,7 @@ def latest_for_session(session_id: str) -> Optional[Dict[str, Any]]:
             "error": run.error,
             "event_count": run.event_count or 0,
             "partial_chars": run.partial_chars or 0,
+            "assistant_message_id": run.assistant_message_id,
             "last_event_type": run.last_event_type,
         }
     except Exception:
