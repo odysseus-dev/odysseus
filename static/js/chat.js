@@ -795,6 +795,13 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       if (_inject.prefix) _finalMsgWithInject = _inject.prefix + ' ' + _finalMsgWithInject;
       if (_inject.suffix) _finalMsgWithInject = _finalMsgWithInject + ' ' + _inject.suffix;
 
+      // Sticky /nothink mode: append the suppression token to the payload only
+      // (the visible bubble keeps `finalMsg`) so reasoning models skip their
+      // chain-of-thought. Flipped via the /think and /nothink slash commands.
+      if (slashCommands.getThinkMode && !slashCommands.getThinkMode()) {
+        _finalMsgWithInject += ' /no_think';
+      }
+
       const fd = new FormData();
       fd.append('message', _finalMsgWithInject);
       fd.append('session', streamSessionId);

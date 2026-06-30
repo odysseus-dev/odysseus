@@ -27,6 +27,13 @@ import { PROVIDER_DEVICE_FLOWS, formatDeviceFlowError, runProviderDeviceFlow } f
 
 let API_BASE = '';
 let setupMode = false;
+// Sticky thinking mode for reasoning models (Qwen3, DeepSeek-R1, etc.). When
+// off, an `/no_think` suffix is appended to each outgoing message payload (not
+// the visible bubble) so the model skips its chain-of-thought. Flipped by the
+// /think and /nothink commands; persisted so it survives a reload.
+let thinkMode = (() => {
+  try { return localStorage.getItem('odysseus-think-mode') !== 'off'; } catch (_) { return true; }
+})();
 let pendingSetupApiKey = '';
 let pendingSetupProvider = null;
 let setupIntroShown = false;
@@ -1211,6 +1218,21 @@ async function _cmdToggleWeb(args, ctx) { const v = (args[0]||'').toLowerCase();
 async function _cmdToggleBash(args, ctx) { const v = (args[0]||'').toLowerCase(); if (v === 'on' || v === 'off') _applyToggle('bash', v); else _quickToggle('bash'); return true; }
 async function _cmdToggleRag(args, ctx) { const v = (args[0]||'').toLowerCase(); if (v === 'on' || v === 'off') _applyToggle('rag', v); else _quickToggle('rag'); return true; }
 async function _cmdToggleResearch(args, ctx) { const v = (args[0]||'').toLowerCase(); if (v === 'on' || v === 'off') _applyToggle('research', v); else _quickToggle('research'); return true; }
+
+function _setThinkMode(on) {
+  thinkMode = on;
+  try { localStorage.setItem('odysseus-think-mode', on ? 'on' : 'off'); } catch (_) {}
+}
+async function _cmdThink() {
+  _setThinkMode(true);
+  slashReply('🧠 Thinking <b>ON</b> — the model reasons before replying. Stays on until <code>/nothink</code>.');
+  return true;
+}
+async function _cmdNoThink() {
+  _setThinkMode(false);
+  slashReply('⚡ Thinking <b>OFF</b> — fast, direct replies. Stays off until <code>/think</code>. <span style="opacity:0.6">(reasoning models only)</span>');
+  return true;
+}
 async function _cmdToggleIncognito(args, ctx) {
   const sessions = sessionModule.getSessions();
   const sess = ctx.sid ? sessions.find(s => s.id === ctx.sid) : null;
@@ -5789,6 +5811,22 @@ const COMMANDS = {
     noUserBubble: true,
     usage: '/workspace [set <path> | clear | pick]',
   },
+  think: {
+    alias: ['reason'],
+    category: 'Quick toggles',
+    help: 'Reasoning ON for following messages (until /nothink)',
+    handler: _cmdThink,
+    noUserBubble: true,
+    usage: '/think',
+  },
+  nothink: {
+    alias: ['no-think', 'notthink', 'fast'],
+    category: 'Quick toggles',
+    help: 'Reasoning OFF for following messages (until /think)',
+    handler: _cmdNoThink,
+    noUserBubble: true,
+    usage: '/nothink',
+  },
   memory: {
     alias: ['m'],
     category: 'Memory',
@@ -6485,6 +6523,15 @@ export function getSetupMode() {
 }
 
 /**
+ * Whether reasoning/thinking is currently enabled. False means each outgoing
+ * message gets a `/no_think` suffix appended to its payload. Sticky until the
+ * user flips it with /think or /nothink.
+ */
+export function getThinkMode() {
+  return thinkMode;
+}
+
+/**
  * Clear setup mode (e.g. when a slash command is typed during setup).
  */
 export function clearSetupMode(preservePendingState = false) {
@@ -6501,6 +6548,7 @@ const slashCommands = {
   initSlashCommands,
   isCommand,
   getSetupMode,
+  getThinkMode,
   clearSetupMode,
   handleSlashCommand,
   handleSetupInput,
