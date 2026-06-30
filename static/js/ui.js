@@ -8,6 +8,7 @@ import themeModule from './theme.js';
 import * as Modals from './modalManager.js';
 import spinnerModule from './spinner.js';
 import { registerMenuDismiss, dismissTopMenu, dismissOrRemove } from './escMenuStack.js';
+import { isInteractiveHtmlPreviewActive } from './htmlPreview.js';
 
 let toastEl = null;
 let autoScrollEnabled = true;
@@ -188,6 +189,7 @@ function _initHoverCardSpaceToggle() {
   }, true);
   document.addEventListener('keydown', (e) => {
     if (e.code !== 'Space' || e.repeat) return;
+    if (isInteractiveHtmlPreviewActive()) return;
     if (hoveredToggleCard && _isSpaceVisible(hoveredToggleCard)) {
       if (_spaceIsBlocked(e, hoveredToggleCard)) return;
       e.preventDefault();

@@ -11,6 +11,7 @@ import Storage from '../storage.js';
 import uiModule from '../ui.js';
 import spinnerModule from '../spinner.js';
 import { bindMenuDismiss } from '../escMenuStack.js';
+import { activateInteractivePreview, deactivateInteractivePreview } from '../htmlPreview.js';
 
 var escapeHtml = uiModule.esc;
 
@@ -223,6 +224,7 @@ function togglePanePreview(paneIdx) {
   const showingPreview = iframe.style.display !== 'none';
   if (showingPreview) {
     // Switch to code view
+    deactivateInteractivePreview(iframe);
     iframe.style.display = 'none';
     hist.style.display = '';
     btn.innerHTML = ICON_PLAY;
@@ -233,6 +235,7 @@ function togglePanePreview(paneIdx) {
     if (iframe._htmlCode) iframe.srcdoc = iframe._htmlCode;
     iframe.style.display = '';
     hist.style.display = 'none';
+    activateInteractivePreview(iframe);
     btn.innerHTML = ICON_CODE;
     btn.title = 'Show code';
     btn.classList.add('active');

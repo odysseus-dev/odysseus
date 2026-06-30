@@ -16,6 +16,7 @@ import spinnerModule from './spinner.js';
 import { openLibrary, closeLibrary, isLibraryOpen, initLibrary } from './documentLibrary.js';
 import signatureModule from './signature.js';
 import * as Modals from './modalManager.js';
+import { activateInteractivePreview, deactivateInteractivePreview } from './htmlPreview.js';
 
   let API_BASE = '';
   let isOpen = false;
@@ -3947,7 +3948,7 @@ import * as Modals from './modalManager.js';
       </div>
       <div id="doc-md-preview" class="doc-md-preview" style="display:none"></div>
       <div id="doc-csv-preview" class="doc-csv-preview" style="display:none"></div>
-      <iframe id="doc-html-preview" class="doc-html-preview" sandbox="allow-scripts allow-modals" style="display:none"></iframe>
+      <iframe id="doc-html-preview" class="doc-html-preview" sandbox="allow-scripts allow-modals" tabindex="-1" style="display:none"></iframe>
       <div id="doc-pdf-view" style="display:none;width:100%;flex:1;min-height:0;overflow:auto;background:#525659;padding:20px 0;position:relative;">
         <div id="doc-pdf-save-pill" style="display:none;position:absolute;top:8px;right:14px;padding:4px 10px;border-radius:12px;font-size:11px;z-index:5;pointer-events:none;background:transparent;color:transparent;"></div>
       </div>
@@ -8748,6 +8749,9 @@ import * as Modals from './modalManager.js';
       iframe.srcdoc = code;
       iframe.style.display = '';
       wrap.style.display = 'none';
+      activateInteractivePreview(iframe, {
+        blurRoot: document.getElementById('doc-editor-pane'),
+      });
       _htmlPreviewActive = true;
       renderTabs();
     } else {
@@ -8761,7 +8765,11 @@ import * as Modals from './modalManager.js';
     const wrap = document.getElementById('doc-editor-wrap');
     if (!_htmlPreviewActive) return;
     _htmlPreviewActive = false;
-    if (iframe) { iframe.style.display = 'none'; iframe.srcdoc = ''; }
+    if (iframe) {
+      deactivateInteractivePreview(iframe);
+      iframe.style.display = 'none';
+      iframe.srcdoc = '';
+    }
     if (wrap) wrap.style.display = '';
     renderTabs();
   }
