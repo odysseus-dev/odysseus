@@ -3657,6 +3657,9 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
   function switchToDoc(docId) {
     if (!docs.has(docId)) return;
+    // Clear the outgoing doc's find session so its marks/overlay don't carry
+    // over to the doc we're switching to. No-op when find isn't active.
+    if (_findTeardown) _findTeardown();
     _hideLoadingOverlay();
     if (_diffModeActive) exitDiffMode(true);
 
@@ -4947,6 +4950,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           pre.scrollLeft = ta.scrollLeft;
         }
         updateLineNumbers(ta.value);
+        // Find open -> the doc text just changed, so the cached match offsets are
+        // stale. Re-derive matches/index/counter from the new text NOW (so a
+        // scroll render can't measure stale offsets) and repaint (rAF-coalesced).
+        if (document.body.classList.contains('doc-find-active')) _refreshFindState();
         // Debounce expensive operations (syntax highlighting, auto-detect, auto-save)
         clearTimeout(_hlDebounce);
         _hlDebounce = setTimeout(syncHighlighting, 80);
@@ -4984,11 +4991,9 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         pre.scrollLeft = ta.scrollLeft;
         syncGutterScroll();
         syncSelectionOverlay();
-        // Re-position find rects so they track the textarea on scroll.
-        if (_findMatches && _findMatches.length) {
-          const _q = document.getElementById('doc-find-input')?.value || '';
-          if (_q) renderFindRects(_findMatches.map(s => [s, s + _q.length]), _findIdx);
-        }
+        // Re-position find rects so they track the textarea on scroll
+        // (rAF-coalesced; only re-measures the now-visible window).
+        if (document.body.classList.contains('doc-find-active')) _scheduleFindRender();
       });
       // Tab key inserts a real tab; Escape clears selection
       ta.addEventListener('keydown', (e) => {
@@ -5029,6 +5034,66 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       // ── In-document find (Ctrl+F) ──
       let _findMatches = [];
       let _findIdx = -1;
+      let _findDebounce = null;
+      let _findRenderRaf = 0;
+
+      // Single coalesced entry point for find-rect rendering. Every caller
+      // (input rescan, scroll reposition, manual next/prev) routes through
+      // here so we paint at most once per animation frame instead of
+      // thrashing layout on every keystroke / scroll tick.
+      function _scheduleFindRender() {
+        if (_findRenderRaf) return;
+        _findRenderRaf = requestAnimationFrame(() => {
+          _findRenderRaf = 0;
+          const q = document.getElementById('doc-find-input')?.value || '';
+          renderFindRects(_findMatches, q.length, _findIdx);
+        });
+      }
+
+      // Scan the CURRENT textarea text for `q` (case-insensitive, NON-overlapping
+      // so the rect, counter and <mark> index spaces all agree — "aa" in "aaaa"
+      // is 2 matches everywhere). Shared by _doFind and the doc-edit refresh.
+      function _computeFindMatches(q) {
+        const out = [];
+        if (!q) return out;
+        const lt = ta.value.toLowerCase();
+        const lq = q.toLowerCase();
+        let pos = 0;
+        while (true) {
+          const i = lt.indexOf(lq, pos);
+          if (i < 0) break;
+          out.push(i);
+          pos = i + q.length;
+        }
+        return out;
+      }
+
+      // Re-derive find state from the live text + query after the DOCUMENT
+      // changed while find is open (typing, undo, AI edits, version restore).
+      // Keeps offsets, the active index, the counter and the <mark> window all
+      // consistent and bounded, then repaints (rAF-coalesced).
+      function _refreshFindState() {
+        const fq = document.getElementById('doc-find-input')?.value || '';
+        _findMatches = _computeFindMatches(fq);
+        if (_findIdx >= _findMatches.length) _findIdx = _findMatches.length - 1;
+        if (_findIdx < 0 && _findMatches.length) _findIdx = 0;
+        const codeEl = document.getElementById('doc-editor-code');
+        if (codeEl) {
+          codeEl.dataset.findQuery = fq;
+          if (_findMatches.length) codeEl.dataset.findCurrent = String(_findIdx);
+          else delete codeEl.dataset.findCurrent;
+        }
+        const cnt = document.getElementById('doc-find-count');
+        if (cnt) cnt.textContent = fq ? (_findMatches.length ? `${_findIdx + 1} / ${_findMatches.length}` : '0 results') : '';
+        _scheduleFindRender();
+      }
+      // Expose the refresh to syncHighlighting (module scope) so doc mutations
+      // that bypass the find rescan still leave find consistent + bounded.
+      _findSyncRefresh = () => {
+        if (!document.body.classList.contains('doc-find-active')) return false;
+        _refreshFindState();
+        return true;
+      };
 
       function _openFindBar() {
         const bar = document.getElementById('doc-find-bar');
@@ -5043,10 +5108,18 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         const inp = document.getElementById('doc-find-input');
         if (inp) { inp.focus(); inp.select(); }
       }
-      function _closeFindBar() {
+      // Tear down all find state WITHOUT moving focus. Shared by _closeFindBar
+      // and the external teardown hook (doc switch / panel close / delete), where
+      // stealing focus to this textarea would be wrong.
+      function _teardownFind() {
         const bar = document.getElementById('doc-find-bar');
         if (bar) bar.style.display = 'none';
         document.body.classList.remove('doc-find-active');
+        // Cancel any in-flight rescan / render / mark pass so a queued frame
+        // can't repaint after the find state has been torn down.
+        clearTimeout(_findDebounce);
+        clearTimeout(_findMarkTimer);
+        if (_findRenderRaf) { cancelAnimationFrame(_findRenderRaf); _findRenderRaf = 0; }
         _findMatches = [];
         _findIdx = -1;
         const cnt = document.getElementById('doc-find-count');
@@ -5055,11 +5128,22 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         if (codeEl) {
           delete codeEl.dataset.findQuery;
           delete codeEl.dataset.findCurrent;
+          delete codeEl.dataset.findVisLo;
+          delete codeEl.dataset.findVisHi;
           applyFindMarks(codeEl);
         }
-        renderFindRects([], -1);
+        renderFindRects([], 0, -1);
+      }
+      function _closeFindBar() {
+        _teardownFind();
         ta.focus();
       }
+      // Expose teardown to module scope so closePanel / switchToDoc / doc-delete
+      // don't leak doc-find-active (and its overlay CSS) or pending timers onto
+      // the next-opened doc. No-ops when find isn't active.
+      _findTeardown = () => {
+        if (document.body.classList.contains('doc-find-active')) _teardownFind();
+      };
       function _doFind(dir, focusTextarea) {
         const inp = document.getElementById('doc-find-input');
         const cnt = document.getElementById('doc-find-count');
@@ -5069,25 +5153,33 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         if (!q) {
           _findMatches = []; _findIdx = -1;
           if (cnt) cnt.textContent = '';
-          if (codeEl) { delete codeEl.dataset.findQuery; delete codeEl.dataset.findCurrent; applyFindMarks(codeEl); }
+          if (codeEl) {
+            delete codeEl.dataset.findQuery;
+            delete codeEl.dataset.findCurrent;
+            delete codeEl.dataset.findVisLo;
+            delete codeEl.dataset.findVisHi;
+            applyFindMarks(codeEl);
+          }
+          // Clear any lingering overlay rects (empty query leaves no matches).
+          renderFindRects([], 0, -1);
           return;
         }
         const text = ta.value;
-        const lq = q.toLowerCase();
-        const lt = text.toLowerCase();
-        _findMatches = [];
-        let pos = 0;
-        while (true) {
-          const i = lt.indexOf(lq, pos);
-          if (i < 0) break;
-          _findMatches.push(i);
-          pos = i + 1;
-        }
+        _findMatches = _computeFindMatches(q);
+        // Clamp a stale index left over from a previous (larger) match set so
+        // next/prev arithmetic and the counter stay in range after a rescan.
+        if (_findIdx >= _findMatches.length) _findIdx = _findMatches.length - 1;
         if (_findMatches.length === 0) {
           _findIdx = -1;
           if (cnt) cnt.textContent = '0 results';
-          if (codeEl) { codeEl.dataset.findQuery = q; delete codeEl.dataset.findCurrent; applyFindMarks(codeEl); }
-          renderFindRects([], -1);
+          if (codeEl) {
+            codeEl.dataset.findQuery = q;
+            delete codeEl.dataset.findCurrent;
+            delete codeEl.dataset.findVisLo;
+            delete codeEl.dataset.findVisHi;
+            applyFindMarks(codeEl);
+          }
+          renderFindRects([], q.length, -1);
           return;
         }
         if (dir === 'next') {
@@ -5107,21 +5199,39 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         if (codeEl) {
           codeEl.dataset.findQuery = q;
           codeEl.dataset.findCurrent = String(_findIdx);
-          applyFindMarks(codeEl);
         }
         // Dedicated overlay rects on top of the textarea — bulletproof
-        // visibility across markdown / email / code modes.
-        renderFindRects(_findMatches.map(s => [s, s + q.length]), _findIdx);
+        // visibility across markdown / email / code modes. The rAF-coalesced
+        // render measures only the visible window and drives applyFindMarks
+        // for that same window, so there's no full-doc mark surgery.
+        // (Setting ta.scrollTop above already queued a frame via the scroll
+        // handler; this call coalesces into it.)
+        _scheduleFindRender();
         if (focusTextarea) ta.focus();
       }
 
       document.getElementById('doc-find-close')?.addEventListener('click', _closeFindBar);
-      document.getElementById('doc-find-next')?.addEventListener('click', () => _doFind('next', true));
-      document.getElementById('doc-find-prev')?.addEventListener('click', () => _doFind('prev', true));
-      document.getElementById('doc-find-input')?.addEventListener('input', () => _doFind('first', false));
+      document.getElementById('doc-find-next')?.addEventListener('click', () => { clearTimeout(_findDebounce); _doFind('next', true); });
+      document.getElementById('doc-find-prev')?.addEventListener('click', () => { clearTimeout(_findDebounce); _doFind('prev', true); });
+      document.getElementById('doc-find-input')?.addEventListener('input', () => {
+        // Debounce the full rescan + render so fast typing doesn't rescan and
+        // repaint on every keystroke (mirror of the _hlDebounce idiom above).
+        clearTimeout(_findDebounce);
+        _findDebounce = setTimeout(() => _doFind('first', false), 130);
+      });
       document.getElementById('doc-find-input')?.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') { e.preventDefault(); _closeFindBar(); }
-        else if (e.key === 'Enter') { e.preventDefault(); _doFind(e.shiftKey ? 'prev' : 'next', false); }
+        // stopImmediatePropagation so Esc closes ONLY the find bar — without it,
+        // Esc bubbles to app.js's global handler which minimizes the whole panel
+        // (it used to bail because _doFind left a textarea selection, but the
+        // 130ms rescan debounce means no selection exists during the race).
+        if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); _closeFindBar(); }
+        else if (e.key === 'Enter') {
+          e.preventDefault();
+          // Flush any pending debounced 'first' rescan first, so it can't fire
+          // afterwards and reset _findIdx to 0 on top of this manual nav.
+          clearTimeout(_findDebounce);
+          _doFind(e.shiftKey ? 'prev' : 'next', false);
+        }
       });
 
       // Intercept Ctrl+F on the editor pane
@@ -5972,6 +6082,9 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   }
 
   export function closePanel(direction) {
+    // Tear down any active find session (incl. minimize) so doc-find-active and
+    // its timers don't leak past this panel. No-op when find isn't active.
+    if (_findTeardown) _findTeardown();
     if (!isOpen) {
       if (direction !== 'down' && Modals.isRegistered('doc-panel')) {
         _minimizedDocId = null;
@@ -6459,25 +6572,57 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     });
   }
 
+  // Measurement-mirror memo. Writing the full-doc textContent into the mirror
+  // (then reading geometry) forces a full-doc reflow, so we only rebuild it when
+  // the doc text or editor width actually changed — NOT on find-box keystrokes
+  // or scrolls (the common case), where the Range reads then stay reflow-free.
+  let _findMirrorText = null;
+  let _findMirrorWidth = -1;
+  let _findMirrorFont = null;
+  // The <mark> overlay pass mutates the VISIBLE highlight layer, whose reflow
+  // scales with doc size. The translucent rects are the immediate highlight, so
+  // the mark pass is coalesced on a short trailing timer: during a scroll burst
+  // (no per-frame gate, unlike find-box typing which the 130ms rescan debounce
+  // already coalesces) the overlay reflows ONCE when motion settles, not per frame.
+  let _findMarkTimer = null;
+  // Registered by the find init so syncHighlighting (module scope) can re-derive
+  // find state for the possibly-changed text after it rewrites the overlay.
+  // Returns true when it handled the reapply (find active).
+  let _findSyncRefresh = null;
+  // Registered by the find init so closePanel / switchToDoc / doc-delete can tear
+  // down find state (class, timers, rects, marks) without leaking it onto the
+  // next-opened doc. No-ops when find isn't active.
+  let _findTeardown = null;
+
   // Find-result rectangles drawn ON TOP of the textarea — bypasses
   // the syntax-highlight overlay entirely so visibility works in
   // markdown, email, and any other mode regardless of single-layer-
   // rendering quirks. Same mirror-measurement approach as pinned
   // selections so wrap matches the textarea exactly.
-  //
-  // `matches` is an array of [start, end] offsets; `currentIdx` is
-  // the focused one (gets brighter accent). Pass empty matches to
-  // clear all rects.
-  function renderFindRects(matches, currentIdx) {
+  /** Draw the find-match overlay rects.
+   * `starts` is the array of match start offsets (full set), `qLen` the query
+   * length, `currentIdx` the active match. Only the rects inside the visible
+   * scroll window (plus the current match) are built, and the same window is
+   * handed to applyFindMarks so the <mark> pass stays bounded too. This keeps
+   * per-keystroke / per-scroll work O(visible) instead of O(matches). */
+  function renderFindRects(starts, qLen, currentIdx) {
     const wrap = document.getElementById('doc-editor-wrap');
     if (!wrap) return;
+    // Cancel any pending mark pass; this render either reschedules it (success
+    // path) or supersedes it (clear/guard paths), so it never fires stale.
+    clearTimeout(_findMarkTimer);
     wrap.querySelectorAll('.doc-find-rect').forEach(el => el.remove());
-    if (!matches || matches.length === 0) return;
+    const codeEl = document.getElementById('doc-editor-code');
+    if (!starts || starts.length === 0) {
+      // No matches -> nothing to draw and no window to mark.
+      if (codeEl) { delete codeEl.dataset.findVisLo; delete codeEl.dataset.findVisHi; }
+      return;
+    }
     const textarea = document.getElementById('doc-editor-textarea');
     if (!textarea) return;
     const text = textarea.value;
+    const textLen = text.length;
     const style = getComputedStyle(textarea);
-    const paddingTop = parseFloat(style.paddingTop) || 10;
     const paddingLeft = parseFloat(style.paddingLeft) || 48;
     const lineHeight = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) * 1.45);
 
@@ -6488,41 +6633,121 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       mirror.style.cssText = 'position:absolute;top:0;left:0;right:0;visibility:hidden;pointer-events:none;' +
         'white-space:pre-wrap;word-wrap:break-word;overflow-wrap:break-word;overflow:hidden;box-sizing:border-box;';
       wrap.appendChild(mirror);
+      _findMirrorText = null;
     }
-    mirror.style.font = style.font;
-    mirror.style.padding = style.padding;
-    mirror.style.borderWidth = style.borderWidth;
-    mirror.style.borderStyle = 'solid';
-    mirror.style.borderColor = 'transparent';
-    mirror.style.width = textarea.clientWidth + 'px';
-    mirror.style.tabSize = style.tabSize;
-    mirror.style.letterSpacing = style.letterSpacing;
-    mirror.style.wordSpacing = style.wordSpacing;
-    mirror.style.textIndent = style.textIndent;
+    // Rebuild the mirror (full-doc textContent + metric styles) ONLY when the
+    // doc text, editor width, or font metrics actually changed. When stable —
+    // typing in the find box, scrolling, next/prev — we skip the write entirely
+    // so layout stays clean and the Range reads below cost no reflow.
+    // The font key catches the S/M/L size button and the email-mode family swap,
+    // which change font WITHOUT touching value or clientWidth (scrollbar-gutter
+    // keeps clientWidth fixed); the `font` shorthand alone is "" in some engines.
+    const clientWidth = textarea.clientWidth;
+    const fontKey = style.fontSize + '|' + style.lineHeight + '|' + style.fontFamily;
+    if (mirror.firstChild === null || _findMirrorText !== text || _findMirrorWidth !== clientWidth || _findMirrorFont !== fontKey) {
+      mirror.style.font = style.font;
+      mirror.style.fontSize = style.fontSize;
+      mirror.style.lineHeight = style.lineHeight;
+      mirror.style.fontFamily = style.fontFamily;
+      mirror.style.padding = style.padding;
+      mirror.style.borderWidth = style.borderWidth;
+      mirror.style.borderStyle = 'solid';
+      mirror.style.borderColor = 'transparent';
+      mirror.style.width = clientWidth + 'px';
+      mirror.style.tabSize = style.tabSize;
+      mirror.style.letterSpacing = style.letterSpacing;
+      mirror.style.wordSpacing = style.wordSpacing;
+      mirror.style.textIndent = style.textIndent;
+      mirror.textContent = text;
+      _findMirrorText = text;
+      _findMirrorWidth = clientWidth;
+      _findMirrorFont = fontKey;
+    }
+    const tn = mirror.firstChild;
+    if (!tn) {
+      // Empty document (text === '') -> nothing to measure; guard against the
+      // null text node (setStart on null throws). Clear the mark window too.
+      if (codeEl) { delete codeEl.dataset.findVisLo; delete codeEl.dataset.findVisHi; }
+      return;
+    }
+    const mTop = mirror.getBoundingClientRect().top;
+    const range = document.createRange();
+    // Content-y (unscrolled) of match i's row, relative to the mirror top.
+    // Monotonic non-decreasing in offset, so it's binary-searchable. starts[]
+    // can be momentarily stale vs the live text (a scroll render may fire
+    // between a doc edit and the rescan), so EVERY offset is clamped into the
+    // node length -> setStart/setEnd never throw IndexSizeError.
+    const yTop = (i) => {
+      range.setStart(tn, Math.min(starts[i], textLen));
+      range.setEnd(tn, Math.min(starts[i] + qLen, textLen));
+      return range.getBoundingClientRect().top - mTop;
+    };
 
+    // Visible window in scroll-space, padded by one viewport on each side so a
+    // scroll nudge can't expose an unpainted rect before the next frame.
     const scrollTop = textarea.scrollTop;
-    for (let i = 0; i < matches.length; i++) {
-      const [s, e] = matches[i];
-      // Line-band style: highlight the FULL visual row containing the
-      // match. Cheap, always-visible, doesn't need character-precise
-      // mirror measurement that varies across email/markdown/code modes.
-      mirror.textContent = text.substring(0, s);
-      const startTop = mirror.scrollHeight - paddingTop;
-      // Find the wrap-row's end by measuring with one extra char beyond
-      // the match end and stepping back to the last whitespace boundary.
-      mirror.textContent = text.substring(0, e);
-      const endHeight = mirror.scrollHeight - paddingTop;
-      mirror.textContent = '';
+    const ch = textarea.clientHeight;
+    const winTop = scrollTop - ch;
+    const winBot = scrollTop + 2 * ch;
 
-      const top = paddingTop + startTop - scrollTop;
-      const height = Math.max(endHeight - startTop, lineHeight);
+    // lo = first match with yTop >= winTop (lower bound).
+    let lo = starts.length;
+    let a = 0, b = starts.length - 1;
+    while (a <= b) {
+      const mid = (a + b) >> 1;
+      if (yTop(mid) >= winTop) { lo = mid; b = mid - 1; } else { a = mid + 1; }
+    }
+    // hi = last match with yTop <= winBot (upper bound).
+    let hi = -1;
+    a = 0; b = starts.length - 1;
+    while (a <= b) {
+      const mid = (a + b) >> 1;
+      if (yTop(mid) <= winBot) { hi = mid; a = mid + 1; } else { b = mid - 1; }
+    }
+
+    const mkRect = (i, forceCurrent) => {
+      if (starts[i] > textLen) return null;  // stale offset past EOF -> skip
+      range.setStart(tn, Math.min(starts[i], textLen));
+      range.setEnd(tn, Math.min(starts[i] + qLen, textLen));
+      const r = range.getBoundingClientRect();
+      const top = (r.top - mTop) - scrollTop;
+      const height = Math.max(r.height, lineHeight);
       const rect = document.createElement('div');
-      rect.className = 'doc-find-rect' + (i === currentIdx ? ' current' : '');
+      rect.className = 'doc-find-rect' + ((forceCurrent || i === currentIdx) ? ' current' : '');
       rect.style.cssText =
         `position:absolute;left:${paddingLeft}px;right:8px;` +
         `top:${top}px;height:${height}px;` +
         `pointer-events:none;z-index:6;border-radius:2px;`;
-      wrap.appendChild(rect);
+      return rect;
+    };
+
+    // Build only the tight visible window [lo,hi] into a fragment, appended
+    // ONCE. Appending per-match would re-dirty layout and reintroduce thrash.
+    const frag = document.createDocumentFragment();
+    for (let i = lo; i <= hi; i++) {
+      const rect = mkRect(i, false);
+      if (rect) frag.appendChild(rect);
+    }
+    // Keep the active match painted even when scrolled far outside the window,
+    // but as exactly ONE extra rect -> O(1), never the whole span in between
+    // (that stretch was an O(matches)-on-scroll regression).
+    if (currentIdx >= 0 && currentIdx < starts.length && (currentIdx < lo || currentIdx > hi)) {
+      const rect = mkRect(currentIdx, true);
+      if (rect) frag.appendChild(rect);
+    }
+    wrap.appendChild(frag);
+
+    // Hand the tight window to the <mark> pass (coalesced on a trailing timer;
+    // see _findMarkTimer). applyFindMarks re-includes the current occurrence
+    // itself when it falls outside [lo,hi].
+    if (codeEl) {
+      codeEl.dataset.findVisLo = String(lo);
+      codeEl.dataset.findVisHi = String(hi);
+      _findMarkTimer = setTimeout(() => {
+        _findMarkTimer = null;
+        const ce = document.getElementById('doc-editor-code');
+        if (ce && document.body.classList.contains('doc-find-active')) applyFindMarks(ce);
+      }, 80);
     }
   }
 
@@ -6541,7 +6766,17 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const q = codeEl.dataset.findQuery || '';
     if (!q) return;
     const currentIdx = parseInt(codeEl.dataset.findCurrent || '-1', 10);
+    // Visible occurrence window stashed by renderFindRects. When unset (e.g.
+    // applyFindMarks called from syncHighlighting after hljs rewrote the DOM)
+    // fall back to marking every occurrence so nothing visible is missed.
+    const lo = parseInt(codeEl.dataset.findVisLo ?? '-1', 10);
+    const hi = parseInt(codeEl.dataset.findVisHi ?? '-1', 10);
+    const windowed = lo >= 0 && hi >= 0;
+    // Walk far enough to also reach an off-window current match (which we still
+    // wrap so its highlight renders when scrolled away from the viewport).
+    const hiBound = windowed ? Math.max(hi, currentIdx) : -1;
     const lq = q.toLowerCase();
+    const qLen = q.length;
     let occurrence = 0;
     const walker = document.createTreeWalker(codeEl, NodeFilter.SHOW_TEXT, null);
     const nodes = [];
@@ -6551,20 +6786,48 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       const val = node.nodeValue || '';
       const lv = val.toLowerCase();
       if (!lv.includes(lq)) continue;
-      const frag = document.createDocumentFragment();
-      let i = 0;
-      while (i < val.length) {
-        const hit = lv.indexOf(lq, i);
-        if (hit < 0) { frag.appendChild(document.createTextNode(val.slice(i))); break; }
-        if (hit > i) frag.appendChild(document.createTextNode(val.slice(i, hit)));
-        const mark = document.createElement('mark');
-        mark.className = 'doc-find-mark' + (occurrence === currentIdx ? ' current' : '');
-        mark.textContent = val.slice(hit, hit + q.length);
-        frag.appendChild(mark);
-        occurrence++;
-        i = hit + q.length;
+      // Count this node's hits up front (non-overlapping) so the global
+      // occurrence index stays aligned with currentIdx even when we skip the
+      // node or early-break its rebuild.
+      let count = 0, cp = 0;
+      while (true) { const h = lv.indexOf(lq, cp); if (h < 0) break; count++; cp = h + qLen; }
+      const nodeFirst = occurrence;
+      const nodeLast = occurrence + count - 1;
+      const hasCurrent = currentIdx >= nodeFirst && currentIdx <= nodeLast;
+      // Whole node outside the window AND not holding the current match -> leave
+      // it as plain text and just advance the counter. This is the cheap path
+      // that avoids the O(matches) <mark> surgery on large docs.
+      if (windowed && !hasCurrent && (nodeLast < lo || nodeFirst > hi)) {
+        occurrence += count;
+        if (occurrence > hiBound) break;
+        continue;
       }
+      // Rebuild the node, wrapping ONLY in-window (and current) occurrences.
+      // Out-of-window matches stay inside contiguous plain-text chunks (never
+      // split per match) and we stop scanning once past the window, so the DOM
+      // work here is O(visible) — not O(matches-in-node), which matters when a
+      // whole low-granularity doc lands in a single giant text node.
+      const frag = document.createDocumentFragment();
+      let lastEmit = 0, scan = 0, occ = nodeFirst;
+      while (true) {
+        const hit = lv.indexOf(lq, scan);
+        if (hit < 0) break;
+        if (!windowed || (occ >= lo && occ <= hi) || occ === currentIdx) {
+          if (hit > lastEmit) frag.appendChild(document.createTextNode(val.slice(lastEmit, hit)));
+          const mark = document.createElement('mark');
+          mark.className = 'doc-find-mark' + (occ === currentIdx ? ' current' : '');
+          mark.textContent = val.slice(hit, hit + qLen);
+          frag.appendChild(mark);
+          lastEmit = hit + qLen;
+        }
+        occ++;
+        scan = hit + qLen;
+        if (windowed && occ > hiBound) break;  // no further in-window matches here
+      }
+      if (lastEmit < val.length) frag.appendChild(document.createTextNode(val.slice(lastEmit)));
       node.parentNode.replaceChild(frag, node);
+      occurrence = nodeFirst + count;  // advance past ALL hits (scan may early-break)
+      if (windowed && occurrence > hiBound) break;
     }
   }
 
@@ -6596,8 +6859,14 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       _postProcessMarkdown(codeEl);
     }
 
-    // Reapply find highlights after hljs rewrote the DOM
-    if (codeEl.dataset.findQuery) applyFindMarks(codeEl);
+    // Reapply find highlights after hljs rewrote the DOM. When find is active,
+    // let it re-derive state for the (possibly changed) text and repaint a fresh
+    // BOUNDED window — this is the path for undo / AI edits / version restore /
+    // streaming that mutate the doc without going through the find rescan.
+    // Otherwise fall back to a direct re-mark.
+    if (codeEl.dataset.findQuery) {
+      if (!(_findSyncRefresh && _findSyncRefresh())) applyFindMarks(codeEl);
+    }
 
     // Keep scroll in sync
     if (pre) {
