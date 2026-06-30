@@ -1,0 +1,55 @@
+// ============================================
+// pt-BR dictionary — Compare
+// ============================================
+// Filled by the "Compare" i18n work unit. Auto-loaded via static/app.js.
+// Keys are the EXACT English source strings; values are the pt-BR translations.
+import { registerMessages } from '../i18n.js';
+
+registerMessages('pt-BR', {
+  // ── index.js ──
+  'Select at least 1 model': 'Selecione ao menos 1 modelo',
+  'Comparing': 'Comparando',
+  '(blind)': '(às cegas)',
+  's timeout': 's de tempo limite',
+  'Probe': 'Verificar',
+  'Probe unverified models with a small test request': 'Verificar modelos não testados com uma requisição de teste',
+  'Export': 'Exportar',
+  'Export options': 'Opções de exportação',
+  'Shuffle': 'Embaralhar',
+  'Shuffle pane positions': 'Embaralhar posições dos painéis',
+  'Add': 'Adicionar',
+  'Add model pane': 'Adicionar painel de modelo',
+  'Close compare mode': 'Fechar modo de comparação',
+  'Enter prompt for all models...': 'Digite o prompt para todos os modelos...',
+  'Agent prompts': 'Prompts de agente',
+  'Chat prompts': 'Prompts de chat',
+  'Search prompts': 'Prompts de busca',
+  'Research prompts': 'Prompts de pesquisa',
+  'Eval prompts': 'Prompts de avaliação',
+  'No prompts for this type': 'Sem prompts para este tipo',
+  'Insert an evaluation prompt': 'Inserir um prompt de avaliação',
+  'Copy as Markdown': 'Copiar como Markdown',
+  'Download .md': 'Baixar .md',
+  'Print / Save PDF': 'Imprimir / Salvar PDF',
+  'Copied comparison to clipboard': 'Comparação copiada para a área de transferência',
+  'Copy failed': 'Falha ao copiar',
+  ' search providers': ' provedores de busca',
+  ' agents': ' agentes',
+  ' research models': ' modelos de pesquisa',
+  ' models': ' modelos',
+  'Compare failed: ': 'Falha na comparação: ',
+  'Search compare failed: ': 'Falha na comparação de busca: ',
+  'No results found': 'Nenhum resultado encontrado',
+  'Searching...': 'Buscando...',
+  'Stopped': 'Interrompido',
+  'Waiting for Model {slot}...': 'Aguardando Modelo {slot}...',
+  'Processing...': 'Processando...',
+  'Error: ': 'Erro: ',
+  'results': 'resultados',
+  'Analyzing...': 'Analisando...',
+  'Failed to load models': 'Falha ao carregar modelos',
+  'Uncheck models to exclude them from random shuffle. They can still be picked manually.': 'Desmarque modelos para excluí-los do embaralhamento aleatório. Eles ainda podem ser escolhidos manualmente.',
+  'Chat Models': 'Modelos de Chat',
+  'Image Models': 'Modelos de Imagem',
+  'Shuffle Pool': 'Pool de Embaralhamento',
+});

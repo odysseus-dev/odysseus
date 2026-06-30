@@ -13,6 +13,8 @@
 // Drag-away from the right edge un-docks back to a centered window —
 // the same restore values the snap-to-top exit path uses.
 
+import { t } from './i18n.js';
+
 // Wider snap zone than the top-snap fullscreen (6px) — the right edge
 // is harder to hit precisely since most users drag broadly toward the
 // side rather than aiming at a 1px line. 60px feels generous without
@@ -816,7 +818,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
     handle.style.pointerEvents = 'auto';
     handle.style.touchAction = 'none';
     handle.style.display = 'none';
-    handle.title = 'Drag to resize docked window';
+    handle.title = t('Drag to resize docked window');
     document.body.appendChild(handle);
   }
 
@@ -1003,7 +1005,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
   stripe.style.pointerEvents = 'auto';
   stripe.style.touchAction = 'none';
   stripe.style.display = 'none';
-  stripe.title = 'Drag to resize email and draft';
+  stripe.title = t('Drag to resize email and draft');
 
   const _activeLeftDockContent = () => {
     const modal = document.querySelector(

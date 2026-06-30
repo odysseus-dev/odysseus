@@ -132,7 +132,7 @@ async function _runNow(id, force = false) {
       const data = await res.json();
       if (data && data.detail) msg = data.detail;
     } catch (_) {}
-    if (res.status === 409) msg = 'Task is already running';
+    if (res.status === 409) msg = window.t('Task is already running');
     throw new Error(msg);
   }
 }
@@ -234,28 +234,28 @@ function _scheduleLabel(task) {
   if (tt === 'event') {
     const evtName = (task.trigger_event || 'event').replace(/_/g, ' ');
     const n = task.trigger_count || 1;
-    return `Every ${n} ${evtName}${n > 1 ? 's' : ''}`;
+    return window.t('Every {n} {evtName}{s}', { n, evtName, s: n > 1 ? 's' : '' });
   }
-  if (tt === 'webhook') return 'Webhook';
+  if (tt === 'webhook') return window.t('Webhook');
   const t = task.scheduled_time || '00:00';
-  if (task.schedule === 'cron') return `Cron: ${task.cron_expression || '?'}`;
+  if (task.schedule === 'cron') return window.t('Cron: {expr}', { expr: task.cron_expression || '?' });
   if (task.schedule === 'once') {
     if (task.scheduled_date) {
       const d = new Date(task.scheduled_date);
-      return `Once on ${d.toLocaleDateString()} at ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      return window.t('Once on {date} at {time}', { date: d.toLocaleDateString(), time: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
     }
-    return 'Once';
+    return window.t('Once');
   }
   const localTime = _utcTimeToLocal(t);
-  if (task.schedule === 'daily') return `Daily at ${localTime}`;
+  if (task.schedule === 'daily') return window.t('Daily at {localTime}', { localTime });
   if (task.schedule === 'weekly') {
     const day = DAYS_OF_WEEK[task.scheduled_day ?? 0];
-    return `Weekly on ${day} at ${localTime}`;
+    return window.t('Weekly on {day} at {localTime}', { day, localTime });
   }
   if (task.schedule === 'monthly') {
     const d = task.scheduled_day ?? 1;
     const suffix = ordinalSuffix(d);
-    return `Monthly on ${d}${suffix} at ${localTime}`;
+    return window.t('Monthly on {d}{suffix} at {localTime}', { d, suffix, localTime });
   }
   return task.schedule || '—';
 }
@@ -284,17 +284,17 @@ function _relativeTime(iso) {
   const diff = d - now;
   const abs = Math.abs(diff);
   const past = diff < 0;
-  if (abs < 60000) return past ? 'just now' : 'in a moment';
+  if (abs < 60000) return past ? window.t('just now') : window.t('in a moment');
   if (abs < 3600000) {
     const m = Math.round(abs / 60000);
-    return past ? `${m}m ago` : `in ${m}m`;
+    return past ? window.t('{m}m ago', { m }) : window.t('in {m}m', { m });
   }
   if (abs < 86400000) {
     const h = Math.round(abs / 3600000);
-    return past ? `${h}h ago` : `in ${h}h`;
+    return past ? window.t('{h}h ago', { h }) : window.t('in {h}h', { h });
   }
   const days = Math.round(abs / 86400000);
-  return past ? `${days}d ago` : `in ${days}d`;
+  return past ? window.t('{days}d ago', { days }) : window.t('in {days}d', { days });
 }
 
 // Absolute local time — unique per second. Used in run history so clustered
@@ -551,7 +551,7 @@ function _taskEnterSelect() {
   _taskSelectMode = true; _taskSelected.clear();
   document.getElementById('tasks-bulk-bar')?.classList.remove('hidden');
   const _sb = document.getElementById('tasks-select-btn');
-  if (_sb) { _sb.classList.add('active'); _sb.textContent = 'Cancel'; }
+  if (_sb) { _sb.classList.add('active'); _sb.textContent = window.t('Cancel'); }
   _taskUpdateBulkCount();
   _renderList();
 }
@@ -559,7 +559,7 @@ function _taskExitSelect() {
   _taskSelectMode = false; _taskSelected.clear();
   document.getElementById('tasks-bulk-bar')?.classList.add('hidden');
   const _sb = document.getElementById('tasks-select-btn');
-  if (_sb) { _sb.classList.remove('active'); _sb.textContent = 'Select'; }
+  if (_sb) { _sb.classList.remove('active'); _sb.textContent = window.t('Select'); }
   const sa = document.getElementById('tasks-select-all'); if (sa) sa.checked = false;
   _renderList();
 }
@@ -572,7 +572,7 @@ function _taskToggleSelectAll() {
 }
 function _taskUpdateBulkCount() {
   const c = document.getElementById('tasks-selected-count');
-  if (c) c.textContent = `${_taskSelected.size} Selected`;
+  if (c) c.textContent = window.t('{n} Selected', { n: _taskSelected.size });
   const del = document.getElementById('tasks-bulk-delete');
   if (del) del.disabled = _taskSelected.size === 0;
 }
@@ -580,13 +580,13 @@ async function _taskBulkDelete() {
   const ids = [..._taskSelected];
   if (!ids.length) return;
   const ok = uiModule?.styledConfirm
-    ? await uiModule.styledConfirm(`Delete ${ids.length} task${ids.length > 1 ? 's' : ''}? This cannot be undone.`, { confirmText: 'Delete', danger: true })
-    : confirm(`Delete ${ids.length} task(s)?`);
+    ? await uiModule.styledConfirm(window.t('Delete {n} task(s)? This cannot be undone.', { n: ids.length }), { confirmText: window.t('Delete'), danger: true })
+    : confirm(window.t('Delete {n} task(s)?', { n: ids.length }));
   if (!ok) return;
   const results = await Promise.allSettled(ids.map(id => _deleteTask(id)));
   const deletedIds = ids.filter((_, i) => results[i].status === 'fulfilled');
   await _animateTaskRemoval(deletedIds);
-  if (uiModule) uiModule.showToast(`Deleted ${deletedIds.length} task${deletedIds.length > 1 ? 's' : ''}`);
+  if (uiModule) uiModule.showToast(window.t('Deleted {n} task(s)', { n: deletedIds.length }));
   await _fetchTasks();
   _taskExitSelect();  // clears selection + re-renders the fresh list
 }
@@ -638,16 +638,16 @@ function _renderList() {
   const _tabCount = document.getElementById('tasks-tab-count');
   if (_tabCount) _tabCount.textContent = _tasks.length;
   const _headCount = document.getElementById('tasks-head-count');
-  if (_headCount) _headCount.textContent = _tasks.length ? `${_tasks.length} task${_tasks.length !== 1 ? 's' : ''}` : '';
+  if (_headCount) _headCount.textContent = _tasks.length ? window.t('{n} task(s)', { n: _tasks.length }) : '';
 
   if (_tasks.length === 0) {
     // Differentiate "still loading" from "really empty" so the first paint
     // shows the app whirlpool (matching the document library) rather than a
     // misleading "No tasks yet" message before the fetch completes.
     if (!_tasksFetched) {
-      list.appendChild(spinnerModule.createLoadingRow('Loading…'));
+      list.appendChild(spinnerModule.createLoadingRow(window.t('Loading...')));
     } else {
-      list.innerHTML = '<div style="opacity:0.4;font-size:12px;text-align:center;padding:24px 0;">No tasks yet. Create one to get started.</div>';
+      list.innerHTML = `<div style="opacity:0.4;font-size:12px;text-align:center;padding:24px 0;">${window.t('No tasks yet. Create one to get started.')}</div>`;
     }
     return;
   }
@@ -676,7 +676,7 @@ function _renderList() {
     return (a.name || '').localeCompare(b.name || '');
   });
   if (visible.length === 0) {
-    list.innerHTML = '<div style="opacity:0.4;font-size:12px;text-align:center;padding:24px 0;">No matching tasks.</div>';
+    list.innerHTML = `<div style="opacity:0.4;font-size:12px;text-align:center;padding:24px 0;">${window.t('No matching tasks.')}</div>`;
     return;
   }
 
@@ -690,12 +690,12 @@ function _renderList() {
     const titleRow = document.createElement('div');
     titleRow.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;';
     const statusBadge = task.status === 'paused'
-      ? `<span class="task-status-badge task-state-badge task-paused-badge" data-task-status-action="resume" title="Paused - click to resume" style="position:relative;top:4px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="7 4 19 12 7 20 7 4"/></svg><span class="task-state-label">paused</span></span>`
+      ? `<span class="task-status-badge task-state-badge task-paused-badge" data-task-status-action="resume" title="${window.t('Paused - click to resume')}" style="position:relative;top:4px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="7 4 19 12 7 20 7 4"/></svg><span class="task-state-label">${window.t('paused')}</span></span>`
       : task.status === 'active'
-        ? `<span class="task-status-badge task-state-badge task-active-badge" data-task-status-action="pause" title="Active - click to pause" style="position:relative;top:4px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg><span class="task-state-label">active</span></span>`
+        ? `<span class="task-status-badge task-state-badge task-active-badge" data-task-status-action="pause" title="${window.t('Active - click to pause')}" style="position:relative;top:4px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg><span class="task-state-label">${window.t('active')}</span></span>`
         : '';
     const builtinBadge = task.is_builtin
-      ? `<span class="task-builtin-badge${task.is_modified ? ' modified' : ''}" title="${task.is_modified ? 'Built-in task — edited from its default' : 'Built-in task'}">built-in${task.is_modified ? ' · edited' : ''}</span>`
+      ? `<span class="task-builtin-badge${task.is_modified ? ' modified' : ''}" title="${task.is_modified ? window.t('Built-in task — edited from its default') : window.t('Built-in task')}">${window.t('built-in')}${task.is_modified ? ' · ' + window.t('edited') : ''}</span>`
       : '';
     titleRow.innerHTML = `${_taskIcon(task)}<span class="memory-item-title">${_esc(task.name)}</span>${_taskAiMark(task)}${builtinBadge}<span style="flex:1;"></span>${statusBadge}`;
 
@@ -704,7 +704,7 @@ function _renderList() {
     actionsWrap.className = 'memory-item-actions';
     const menuBtn = document.createElement('button');
     menuBtn.className = 'memory-item-btn';
-    menuBtn.title = 'Actions';
+    menuBtn.title = window.t('Actions');
     menuBtn.style.position = 'relative';
     menuBtn.style.top = '4px';
     menuBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
@@ -713,18 +713,18 @@ function _renderList() {
       const items = [];
       // Run now stays in the kebab too (alongside the new Run button on the
       // card) for users coming from muscle-memory / mobile long-press.
-      if (task.status !== 'completed') items.push({ label: 'Run now', icon: '<polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>', action: () => _doRunNow(task.id) });
-      items.push({ label: 'Edit', icon: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>', action: () => _showForm(task) });
-      if (task.status === 'active') items.push({ label: 'Pause', icon: '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>', action: () => _doPause(task.id) });
-      else if (task.status === 'paused') items.push({ label: 'Resume', icon: '<polygon points="5 3 19 12 5 21 5 3"/>', action: () => _doResume(task.id) });
-      items.push({ label: 'History', icon: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>', action: () => _showRunHistory(task.id, task.name) });
+      if (task.status !== 'completed') items.push({ label: window.t('Run now'), icon: '<polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>', action: () => _doRunNow(task.id) });
+      items.push({ label: window.t('Edit'), icon: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>', action: () => _showForm(task) });
+      if (task.status === 'active') items.push({ label: window.t('Pause'), icon: '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>', action: () => _doPause(task.id) });
+      else if (task.status === 'paused') items.push({ label: window.t('Resume'), icon: '<polygon points="5 3 19 12 5 21 5 3"/>', action: () => _doResume(task.id) });
+      items.push({ label: window.t('History'), icon: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>', action: () => _showRunHistory(task.id, task.name) });
       if (task.is_builtin && task.is_modified) {
-        items.push({ label: 'Revert to default', icon: '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>', action: () => _doRevert(task.id) });
+        items.push({ label: window.t('Revert to default'), icon: '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>', action: () => _doRevert(task.id) });
       }
       if (_taskClearCacheLabel(task)) {
-        items.push({ label: 'Clear cache', icon: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/>', action: () => _doClearTaskCache(task.id, _taskClearCacheLabel(task)) });
+        items.push({ label: window.t('Clear cache'), icon: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/>', action: () => _doClearTaskCache(task.id, _taskClearCacheLabel(task)) });
       }
-      items.push({ label: 'Delete', icon: '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>', action: () => _doDelete(task.id), danger: true });
+      items.push({ label: window.t('Delete'), icon: '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>', action: () => _doDelete(task.id), danger: true });
       _showTaskDropdown(menuBtn, items);
     });
     actionsWrap.appendChild(menuBtn);
@@ -733,9 +733,9 @@ function _renderList() {
     if (task.status !== 'completed') {
       const runBtn = document.createElement('button');
       runBtn.className = 'task-status-badge task-run-now-badge task-card-run-btn';
-      runBtn.title = 'Run now';
+      runBtn.title = window.t('Run now');
       runBtn.style.cssText = 'position:relative;top:1px;margin-right:4px;';
-      runBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Run</span>';
+      runBtn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>${window.t('Run')}</span>`;
       runBtn.addEventListener('click', (e) => { e.stopPropagation(); _doRunNow(task.id); });
       actionsWrap.insertBefore(runBtn, menuBtn);
     }
@@ -749,8 +749,8 @@ function _renderList() {
 
     // Slim meta line (always visible): schedule · next · run count.
     const metaParts = [_scheduleLabel(task)];
-    if (task.next_run && task.status === 'active') metaParts.push('Next: ' + _relativeTime(task.next_run));
-    if (task.run_count > 0) metaParts.push(task.run_count + ' run' + (task.run_count !== 1 ? 's' : ''));
+    if (task.next_run && task.status === 'active') metaParts.push(window.t('Next: {time}', { time: _relativeTime(task.next_run) }));
+    if (task.run_count > 0) metaParts.push(window.t('{n} run(s)', { n: task.run_count }));
     const meta = document.createElement('div');
     meta.className = 'memory-item-meta';
     meta.style.cssText = 'font-size:10px;opacity:0.4;margin-top:-1px;';
@@ -771,9 +771,9 @@ function _renderList() {
     const detail = document.createElement('div');
     detail.style.cssText = 'display:none;margin-top:7px;padding:8px 0 2px;border-top:1px solid var(--border);';
     const extra = [];
-    if (task.last_run) extra.push('Last: ' + _relativeTime(task.last_run));
+    if (task.last_run) extra.push(window.t('Last: {time}', { time: _relativeTime(task.last_run) }));
     if (task.output_target && task.output_target !== 'session') extra.push('→ ' + task.output_target.replace(/^mcp__/, '').replace(/__/g, ' › '));
-    if (task.model) extra.push('model: ' + (task.model.split('/').pop() || task.model));
+    if (task.model) extra.push(window.t('model: {model}', { model: task.model.split('/').pop() || task.model }));
     if (extra.length) {
       const ex = document.createElement('div');
       ex.style.cssText = 'font-size:10px;opacity:0.4;margin-bottom:6px;';
@@ -787,8 +787,8 @@ function _renderList() {
       const prev = result.length > 200 ? result.slice(0, 200) + '…' : result;
       const lr = document.createElement('div');
       lr.style.cssText = `font-size:11px;margin-bottom:6px;padding:4px 8px;border-left:2px solid ${color};background:color-mix(in srgb, ${color} 8%, transparent);border-radius:2px;line-height:1.4;cursor:pointer;`;
-      lr.innerHTML = `<span style="font-weight:600;color:${color};">${isErr ? '✗' : '✓'}</span> <span style="opacity:0.9;">${_esc(prev) || (isErr ? 'Failed (no detail)' : 'Success (no output)')}</span>`;
-      lr.title = 'Open full history';
+      lr.innerHTML = `<span style="font-weight:600;color:${color};">${isErr ? '✗' : '✓'}</span> <span style="opacity:0.9;">${_esc(prev) || (isErr ? window.t('Failed (no detail)') : window.t('Success (no output)'))}</span>`;
+      lr.title = window.t('Open full history');
       lr.addEventListener('click', (e) => { e.stopPropagation(); _showRunHistory(task.id, task.name); });
       detail.appendChild(lr);
     }
@@ -970,22 +970,22 @@ function _showPresetPicker() {
   if (!body) return;
 
   let html = '<div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">';
-  html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;"><h2 style="margin:0;padding:0;line-height:1;">Add Task</h2></div>';
-  html += '<p class="memory-desc" style="position:relative;top:4px;">Describe a task for the AI to draft, or pick a type below to set one up manually.</p>';
+  html += `<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;"><h2 style="margin:0;padding:0;line-height:1;">${window.t('Add Task')}</h2></div>`;
+  html += `<p class="memory-desc" style="position:relative;top:4px;">${window.t('Describe a task for the AI to draft, or pick a type below to set one up manually.')}</p>`;
   // flex-wrap + min-width:0 on the input lets the row collapse cleanly
   // on narrow modal widths instead of pushing the AI button past the
   // right edge. margin-left:-4px nudges the compose row 4px into the
   // description bar above so the input lines up with it visually.
   html += '<div class="task-ai-compose" style="display:flex;gap:6px;margin:6px 0 10px -4px;flex-wrap:wrap;align-items:center;">'
-    + '<input type="text" id="task-ai-input" class="memory-search-input" style="flex:1 1 220px;min-width:0;" placeholder="Describe a task — e.g. &quot;every weekday 7am summarize my unread email&quot;" />'
-    + '<button class="memory-toolbar-btn active" id="task-ai-btn" title="Draft a task with AI" style="white-space:nowrap;height:28px;flex:0 0 auto;"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:3px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>Draft with AI</button>'
+    + `<input type="text" id="task-ai-input" class="memory-search-input" style="flex:1 1 220px;min-width:0;" placeholder="${window.t('Describe a task — e.g. &quot;every weekday 7am summarize my unread email&quot;')}" />`
+    + `<button class="memory-toolbar-btn active" id="task-ai-btn" title="${window.t('Draft a task with AI')}" style="white-space:nowrap;height:28px;flex:0 0 auto;"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:3px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>${window.t('Draft with AI')}</button>`
     + '</div>';
   html += '<div class="memory-list" style="max-height:none;flex:1;gap:0px;margin-top:2px;padding-right:8px;">';
   _TASK_PRESETS.forEach((p, i) => {
     html += `<button class="memory-item task-card" data-idx="${i}" style="cursor:pointer;text-align:left;width:100%;font-family:inherit;">
       <div style="flex:1;min-width:0;">
-        <div style="display:flex;align-items:center;gap:6px;">${_presetIcon(p)}<span class="memory-item-title" style="flex:1;position:relative;top:0px;">${p.label}</span></div>
-        <div style="font-size:10px;opacity:0.4;margin-top:-1px;position:relative;top:3px;">${p.desc}</div>
+        <div style="display:flex;align-items:center;gap:6px;">${_presetIcon(p)}<span class="memory-item-title" style="flex:1;position:relative;top:0px;">${window.t(p.label)}</span></div>
+        <div style="font-size:10px;opacity:0.4;margin-top:-1px;position:relative;top:3px;">${window.t(p.desc)}</div>
       </div>
     </button>`;
   });
@@ -1024,14 +1024,14 @@ function _showForm(existing, initTaskType, initTriggerType) {
   body.innerHTML = `
     <div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
       <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">
-        <h2 style="margin:0;padding:0;line-height:1;">${existing?.id ? 'Edit Task' : 'New Task'}</h2>
+        <h2 style="margin:0;padding:0;line-height:1;">${existing?.id ? window.t('Edit Task') : window.t('New Task')}</h2>
       </div>
-      <p class="memory-desc">${existing?.id ? 'Update this task’s schedule, prompt, and output.' : 'Configure a prompt, research, or action to run automatically.'}</p>
+      <p class="memory-desc">${existing?.id ? window.t('Update this task’s schedule, prompt, and output.') : window.t('Configure a prompt, research, or action to run automatically.')}</p>
     <div class="task-form" style="flex:1;overflow-y:auto;min-height:0;">
-      <label class="task-form-label">Name</label>
-      <input type="text" id="task-form-name" class="task-form-input" value="${_esc(existing?.name || '')}" placeholder="${existing ? '' : 'Auto-generated if blank'}" />
+      <label class="task-form-label">${window.t('Name')}</label>
+      <input type="text" id="task-form-name" class="task-form-input" value="${_esc(existing?.name || '')}" placeholder="${existing ? '' : window.t('Auto-generated if blank')}" />
 
-      <label class="task-form-label">Type</label>
+      <label class="task-form-label">${window.t('Type')}</label>
       <div class="task-form-toggle" id="task-form-type-toggle">
         <button class="task-toggle-btn ${curTaskType === 'llm' ? 'active' : ''}" data-val="llm" style="position:relative;top:-4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>Prompt</button>
         <button class="task-toggle-btn ${curTaskType === 'research' ? 'active' : ''}" data-val="research" style="position:relative;top:-4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Research</button>
@@ -1040,7 +1040,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
 
       <div id="task-form-type-opts"></div>
 
-      <label class="task-form-label">Trigger</label>
+      <label class="task-form-label">${window.t('Trigger')}</label>
       <div class="task-form-toggle" id="task-form-trigger-toggle">
         <button class="task-toggle-btn ${curTriggerType === 'schedule' ? 'active' : ''}" data-val="schedule" style="position:relative;top:-4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Schedule</button>
         <button class="task-toggle-btn ${curTriggerType === 'event' ? 'active' : ''}" data-val="event" style="position:relative;top:-4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>Event</button>
@@ -1049,30 +1049,30 @@ function _showForm(existing, initTaskType, initTriggerType) {
 
       <div id="task-form-trigger-opts"></div>
 
-      <label class="task-form-label">Output</label>
+      <label class="task-form-label">${window.t('Output')}</label>
       <select id="task-form-output" class="task-form-input">
-        <option value="session">Session</option>
+        <option value="session">${window.t('Session')}</option>
       </select>
 
-      <label class="task-form-label">Model <span style="opacity:0.5;font-weight:normal;font-size:10px;">(optional — overrides session default)</span></label>
+      <label class="task-form-label">${window.t('Model')} <span style="opacity:0.5;font-weight:normal;font-size:10px;">${window.t('(optional — overrides session default)')}</span></label>
       <select id="task-form-model" class="task-form-input">
-        <option value="">Use session default</option>
+        <option value="">${window.t('Use session default')}</option>
       </select>
 
-      <label class="task-form-label">Chain</label>
+      <label class="task-form-label">${window.t('Chain')}</label>
       <select id="task-form-chain" class="task-form-input">
-        <option value="">None</option>
+        <option value="">${window.t('None')}</option>
       </select>
 
       <label class="task-form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
         <input type="checkbox" id="task-form-notif" ${existing && existing.notifications_enabled === false ? '' : 'checked'} style="margin:0;cursor:pointer;">
-        <span>Notifications</span>
-        <span style="opacity:0.55;font-weight:normal;font-size:10px;">— uncheck to silence completion notifications for this task (helpful for chatty cron jobs)</span>
+        <span>${window.t('Notifications')}</span>
+        <span style="opacity:0.55;font-weight:normal;font-size:10px;">${window.t('— uncheck to silence completion notifications for this task (helpful for chatty cron jobs)')}</span>
       </label>
 
       <div class="task-form-actions">
-        <button id="task-form-cancel" class="memory-toolbar-btn"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-1px;margin-right:4px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Cancel</button>
-        <button id="task-form-save" class="memory-toolbar-btn active"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><polyline points="20 6 9 17 4 12"/></svg>${existing?.id ? 'Save' : 'Create'}</button>
+        <button id="task-form-cancel" class="memory-toolbar-btn"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-1px;margin-right:4px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>${window.t('Cancel')}</button>
+        <button id="task-form-save" class="memory-toolbar-btn active"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><polyline points="20 6 9 17 4 12"/></svg>${existing?.id ? window.t('Save') : window.t('Create')}</button>
       </div>
     </div>
     </div>
@@ -1086,7 +1086,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
   function renderTypeOpts() {
     typeOpts.innerHTML = '';
     if (taskType === 'llm' || taskType === 'research') {
-      const placeholder = taskType === 'research' ? 'What should be researched?' : 'What should the AI do?';
+      const placeholder = taskType === 'research' ? window.t('What should be researched?') : window.t('What should the AI do?');
       const _personaOpts = [
         ['', 'Default (no persona)'],
         ['socrates', 'Socrates'],
@@ -1099,17 +1099,17 @@ function _showForm(existing, initTaskType, initTriggerType) {
       const _personaOptsHtml = _personaOpts.map(([v, label]) =>
         `<option value="${v}" ${v === _curPersona ? 'selected' : ''}>${label}</option>`).join('');
       typeOpts.innerHTML = `
-        <label class="task-form-label">${taskType === 'research' ? 'Research question' : 'Prompt'}</label>
+        <label class="task-form-label">${taskType === 'research' ? window.t('Research question') : window.t('Prompt')}</label>
         <textarea id="task-form-prompt" class="task-form-input task-form-textarea" rows="4" placeholder="${placeholder}">${existing?.prompt || ''}</textarea>
 
-        <label class="task-form-label">Persona <span style="opacity:0.5;font-weight:normal;font-size:10px;">(optional — biases the output voice)</span></label>
+        <label class="task-form-label">${window.t('Persona')} <span style="opacity:0.5;font-weight:normal;font-size:10px;">${window.t('(optional — biases the output voice)')}</span></label>
         <select id="task-form-persona" class="task-form-input">${_personaOptsHtml}</select>
       `;
     } else {
       typeOpts.innerHTML = `
-        <label class="task-form-label">Action</label>
+        <label class="task-form-label">${window.t('Action')}</label>
         <select id="task-form-action" class="task-form-input">
-          <option value="">Loading…</option>
+          <option value="">${window.t('Loading...')}</option>
         </select>
         <div id="task-form-action-extra"></div>
       `;
@@ -1122,9 +1122,9 @@ function _showForm(existing, initTaskType, initTriggerType) {
           return;
         }
         extra.innerHTML = `
-          <label class="task-form-label">Email triage rules</label>
-          <textarea id="task-form-urgent-email-prompt" class="task-form-input task-form-textarea" rows="4" placeholder="What should count as urgent? e.g. deadlines, blockers, people waiting outside."></textarea>
-          <div class="memory-desc" style="font-size:11px;margin-top:4px;">Pause/resume and schedule are controlled by this task. It tags urgent, reply-soon, newsletter, marketing, and spam. Urgent/reply-soon emails use your reminder settings.</div>
+          <label class="task-form-label">${window.t('Email triage rules')}</label>
+          <textarea id="task-form-urgent-email-prompt" class="task-form-input task-form-textarea" rows="4" placeholder="${window.t('What should count as urgent? e.g. deadlines, blockers, people waiting outside.')}"></textarea>
+          <div class="memory-desc" style="font-size:11px;margin-top:4px;">${window.t('Pause/resume and schedule are controlled by this task. It tags urgent, reply-soon, newsletter, marketing, and spam. Urgent/reply-soon emails use your reminder settings.')}</div>
         `;
         const settings = await _fetchUrgentEmailSettings();
         const promptEl = document.getElementById('task-form-urgent-email-prompt');
@@ -1170,17 +1170,17 @@ function _showForm(existing, initTaskType, initTriggerType) {
     triggerOpts.innerHTML = '';
     if (triggerType === 'schedule') {
       triggerOpts.innerHTML = `
-        <label class="task-form-label">Frequency</label>
+        <label class="task-form-label">${window.t('Frequency')}</label>
         <select id="task-form-schedule" class="task-form-input">
-          <option value="daily" ${(!existing || existing.schedule === 'daily') ? 'selected' : ''}>Daily</option>
-          <option value="weekly" ${existing?.schedule === 'weekly' ? 'selected' : ''}>Weekly</option>
-          <option value="monthly" ${existing?.schedule === 'monthly' ? 'selected' : ''}>Monthly</option>
-          <option value="once" ${existing?.schedule === 'once' ? 'selected' : ''}>Once</option>
+          <option value="daily" ${(!existing || existing.schedule === 'daily') ? 'selected' : ''}>${window.t('Daily')}</option>
+          <option value="weekly" ${existing?.schedule === 'weekly' ? 'selected' : ''}>${window.t('Weekly')}</option>
+          <option value="monthly" ${existing?.schedule === 'monthly' ? 'selected' : ''}>${window.t('Monthly')}</option>
+          <option value="once" ${existing?.schedule === 'once' ? 'selected' : ''}>${window.t('Once')}</option>
           <option value="cron" ${existing?.schedule === 'cron' ? 'selected' : ''}>Cron</option>
         </select>
         <div id="task-form-schedule-opts"></div>
         <div id="task-form-time-section">
-          <label class="task-form-label">Time</label>
+          <label class="task-form-label">${window.t('Time')}</label>
           <div class="task-time-picker" id="task-form-time-wrap"></div>
         </div>
       `;
@@ -1207,7 +1207,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
         if (sched === 'weekly') {
           const label = document.createElement('label');
           label.className = 'task-form-label';
-          label.textContent = 'Day of week';
+          label.textContent = window.t('Day of week');
           schedOpts.appendChild(label);
           const sel = document.createElement('select');
           sel.id = 'task-form-day';
@@ -1223,7 +1223,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
         } else if (sched === 'monthly') {
           const label = document.createElement('label');
           label.className = 'task-form-label';
-          label.textContent = 'Day of month';
+          label.textContent = window.t('Day of month');
           schedOpts.appendChild(label);
           const inp = document.createElement('input');
           inp.type = 'number';
@@ -1235,7 +1235,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
         } else if (sched === 'once') {
           const label = document.createElement('label');
           label.className = 'task-form-label';
-          label.textContent = 'Date';
+          label.textContent = window.t('Date');
           schedOpts.appendChild(label);
           const dateWrap = document.createElement('div');
           dateWrap.className = 'task-date-picker';
@@ -1245,7 +1245,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
         } else if (sched === 'cron') {
           const label = document.createElement('label');
           label.className = 'task-form-label';
-          label.textContent = 'Cron expression';
+          label.textContent = window.t('Cron expression');
           schedOpts.appendChild(label);
           const inp = document.createElement('input');
           inp.type = 'text';
@@ -1256,7 +1256,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
           schedOpts.appendChild(inp);
           const hint = document.createElement('div');
           hint.style.cssText = 'font-size:10px;opacity:0.4;margin-top:2px;';
-          hint.textContent = 'min hour day month weekday — e.g. "0 */2 * * *" = every 2 hours';
+          hint.textContent = window.t('min hour day month weekday — e.g. "0 */2 * * *" = every 2 hours');
           schedOpts.appendChild(hint);
         }
       }
@@ -1265,11 +1265,11 @@ function _showForm(existing, initTaskType, initTriggerType) {
 
     } else if (triggerType === 'event') {
       triggerOpts.innerHTML = `
-        <label class="task-form-label">Event</label>
+        <label class="task-form-label">${window.t('Event')}</label>
         <select id="task-form-event" class="task-form-input">
-          <option value="">Loading…</option>
+          <option value="">${window.t('Loading...')}</option>
         </select>
-        <label class="task-form-label">Every N occurrences</label>
+        <label class="task-form-label">${window.t('Every N occurrences')}</label>
         <input type="number" id="task-form-trigger-count" class="task-form-input" min="1" max="1000" value="${existing?.trigger_count || 5}" />
       `;
       _fetchEvents().then(events => {
@@ -1288,19 +1288,19 @@ function _showForm(existing, initTaskType, initTriggerType) {
       if (existing?.webhook_token) {
         const url = `${API_BASE}/api/tasks/${existing.id}/webhook/${existing.webhook_token}`;
         triggerOpts.innerHTML = `
-          <label class="task-form-label">Webhook URL</label>
+          <label class="task-form-label">${window.t('Webhook URL')}</label>
           <div style="display:flex;gap:4px;align-items:center;">
             <input type="text" class="task-form-input" value="${url}" readonly style="flex:1;font-size:11px;opacity:0.8;" id="task-form-webhook-url" />
-            <button class="task-btn" id="task-form-webhook-copy" style="white-space:nowrap;">Copy</button>
+            <button class="task-btn" id="task-form-webhook-copy" style="white-space:nowrap;">${window.t('Copy')}</button>
           </div>
-          <div style="font-size:10px;opacity:0.4;margin-top:4px;">POST this URL from any external service to trigger the task. No auth needed.</div>
+          <div style="font-size:10px;opacity:0.4;margin-top:4px;">${window.t('POST this URL from any external service to trigger the task. No auth needed.')}</div>
         `;
         document.getElementById('task-form-webhook-copy')?.addEventListener('click', () => {
           navigator.clipboard.writeText(url);
-          if (uiModule) uiModule.showToast('Copied');
+          if (uiModule) uiModule.showToast(window.t('Copied'));
         });
       } else {
-        triggerOpts.innerHTML = '<div style="font-size:11px;opacity:0.5;margin-top:4px;">Webhook URL will be generated when the task is saved.</div>';
+        triggerOpts.innerHTML = `<div style="font-size:11px;opacity:0.5;margin-top:4px;">${window.t('Webhook URL will be generated when the task is saved.')}</div>`;
       }
     }
   }
@@ -1333,7 +1333,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
     if (existing?.output_target && !matchedOutput) {
       const opt = document.createElement('option');
       opt.value = existing.output_target;
-      opt.textContent = existing.output_target.includes('@') ? `Email: ${existing.output_target}` : existing.output_target;
+      opt.textContent = existing.output_target.includes('@') ? window.t('Email: {addr}', { addr: existing.output_target }) : existing.output_target;
       opt.selected = true;
       outputSel.appendChild(opt);
     }
@@ -1370,7 +1370,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
       if (curKey && modelSel.value !== curKey) {
         const opt = document.createElement('option');
         opt.value = curKey;
-        opt.textContent = `${existing.model} (unlisted endpoint)`;
+        opt.textContent = window.t('{model} (unlisted endpoint)', { model: existing.model });
         opt.selected = true;
         modelSel.appendChild(opt);
       }
@@ -1457,7 +1457,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
     if (taskType === 'llm' || taskType === 'research') {
       const prompt = document.getElementById('task-form-prompt')?.value?.trim();
       if (!prompt) {
-        if (uiModule) uiModule.showError('Prompt is required');
+        if (uiModule) uiModule.showError(window.t('Prompt is required'));
         return;
       }
       payload.prompt = prompt;
@@ -1468,7 +1468,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
       payload.character_id = '';
       const action = document.getElementById('task-form-action')?.value;
       if (!action) {
-        if (uiModule) uiModule.showError('Select an action');
+        if (uiModule) uiModule.showError(window.t('Select an action'));
         return;
       }
       payload.action = action;
@@ -1477,7 +1477,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
         try {
           await _saveUrgentEmailSettings(urgentPrompt);
         } catch (e) {
-          if (uiModule) uiModule.showError('Failed to save urgency rules');
+          if (uiModule) uiModule.showError(window.t('Failed to save urgency rules'));
           return;
         }
       }
@@ -1491,7 +1491,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
       if (payload.schedule === 'cron') {
         const cronVal = document.getElementById('task-form-cron')?.value?.trim();
         if (!cronVal) {
-          if (uiModule) uiModule.showError('Cron expression is required');
+          if (uiModule) uiModule.showError(window.t('Cron expression is required'));
           return;
         }
         payload.cron_expression = cronVal;
@@ -1513,7 +1513,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
       const evSel = document.getElementById('task-form-event');
       const countInput = document.getElementById('task-form-trigger-count');
       if (!evSel?.value) {
-        if (uiModule) uiModule.showError('Select an event');
+        if (uiModule) uiModule.showError(window.t('Select an event'));
         return;
       }
       payload.trigger_event = evSel.value;
@@ -1526,10 +1526,10 @@ function _showForm(existing, initTaskType, initTriggerType) {
       // object passed for AI pre-fill has no id → create via POST.
       if (existing && existing.id) {
         await _updateTask(existing.id, payload);
-        if (uiModule) uiModule.showToast('Task updated');
+        if (uiModule) uiModule.showToast(window.t('Task updated'));
       } else {
         await _createTask(payload);
-        if (uiModule) uiModule.showToast('Task created');
+        if (uiModule) uiModule.showToast(window.t('Task created'));
       }
       await _fetchTasks();
       _switchTab('tasks');
@@ -1549,17 +1549,17 @@ async function _showRunHistory(taskId, taskName) {
   if (!body) return;
 
   body.innerHTML = '';
-  body.appendChild(spinnerModule.createLoadingRow('Loading…'));
+  body.appendChild(spinnerModule.createLoadingRow(window.t('Loading...')));
 
   const runs = await _fetchRuns(taskId);
 
   let html = `<div class="task-history-header">
-    <button id="task-history-back" class="task-btn">← Back</button>
-    <span style="font-size:13px;opacity:0.7;">${_esc(taskName)} — Run history</span>
+    <button id="task-history-back" class="task-btn">← ${window.t('Back')}</button>
+    <span style="font-size:13px;opacity:0.7;">${_esc(taskName)} — ${window.t('Run history')}</span>
   </div>`;
 
   if (runs.length === 0) {
-    html += '<div style="opacity:0.4;font-size:12px;text-align:center;padding:24px 0;">No runs yet.</div>';
+    html += `<div style="opacity:0.4;font-size:12px;text-align:center;padding:24px 0;">${window.t('No runs yet.')}</div>`;
   } else {
     html += '<div class="task-runs-list">';
     for (const run of runs) {
@@ -1603,7 +1603,7 @@ async function _showRunHistory(taskId, taskName) {
 async function _doPause(id) {
   try {
     await _pauseTask(id);
-    if (uiModule) uiModule.showToast('Task paused');
+    if (uiModule) uiModule.showToast(window.t('Task paused'));
     await _fetchTasks();
     _renderMainView();
   } catch (e) { if (uiModule) uiModule.showError(e.message); }
@@ -1612,7 +1612,7 @@ async function _doPause(id) {
 async function _doResume(id) {
   try {
     await _resumeTask(id);
-    if (uiModule) uiModule.showToast('Task resumed');
+    if (uiModule) uiModule.showToast(window.t('Task resumed'));
     await _fetchTasks();
     _renderMainView();
   } catch (e) { if (uiModule) uiModule.showError(e.message); }
@@ -1621,12 +1621,12 @@ async function _doResume(id) {
 async function _doRunNow(id, force = false) {
   try {
     await _runNow(id, force);
-    if (uiModule) uiModule.showToast(force ? 'Task triggered in parallel' : 'Task triggered');
+    if (uiModule) uiModule.showToast(force ? window.t('Task triggered in parallel') : window.t('Task triggered'));
   } catch (e) {
     // Mirror the polling notification surface so the user sees the same kind
     // of feedback they get for finished/failed tasks — a real browser
     // Notification when permission is granted, toast fallback otherwise.
-    const msg = e.message || 'Failed to trigger task';
+    const msg = e.message || window.t('Failed to trigger task');
     let fired = false;
     try {
       if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
@@ -1640,13 +1640,13 @@ async function _doRunNow(id, force = false) {
 
 async function _doDelete(id) {
   const ok = uiModule?.styledConfirm
-    ? await uiModule.styledConfirm('Delete this task and all its run history?', { confirmText: 'Delete', danger: true })
-    : confirm('Delete this task and all its run history?');
+    ? await uiModule.styledConfirm(window.t('Delete this task and all its run history?'), { confirmText: window.t('Delete'), danger: true })
+    : confirm(window.t('Delete this task and all its run history?'));
   if (!ok) return;
   try {
     await _deleteTask(id);
     await _animateTaskRemoval([id]);
-    if (uiModule) uiModule.showToast('Task deleted');
+    if (uiModule) uiModule.showToast(window.t('Task deleted'));
     await _fetchTasks();
     _renderMainView();
   } catch (e) { if (uiModule) uiModule.showError(e.message); }
@@ -1654,13 +1654,13 @@ async function _doDelete(id) {
 
 async function _doRevert(id) {
   const ok = uiModule?.styledConfirm
-    ? await uiModule.styledConfirm('Revert this built-in task to its default schedule and settings?', { confirmText: 'Revert' })
-    : confirm('Revert this built-in task to its default?');
+    ? await uiModule.styledConfirm(window.t('Revert this built-in task to its default schedule and settings?'), { confirmText: window.t('Revert') })
+    : confirm(window.t('Revert this built-in task to its default?'));
   if (!ok) return;
   try {
     const res = await fetch(`${API_BASE}/api/tasks/${id}/revert`, { method: 'POST', credentials: 'same-origin' });
     if (!res.ok) throw new Error('Failed to revert task');
-    if (uiModule) uiModule.showToast('Reverted to default');
+    if (uiModule) uiModule.showToast(window.t('Reverted to default'));
     await _fetchTasks();
     _renderMainView();
   } catch (e) { if (uiModule) uiModule.showError(e.message); }
@@ -1668,8 +1668,8 @@ async function _doRevert(id) {
 
 async function _doClearTaskCache(id, label = 'cache') {
   const ok = uiModule?.styledConfirm
-    ? await uiModule.styledConfirm(`Clear cached ${label} for this task?`, { confirmText: 'Clear' })
-    : confirm(`Clear cached ${label} for this task?`);
+    ? await uiModule.styledConfirm(window.t('Clear cached {label} for this task?', { label }), { confirmText: window.t('Clear') })
+    : confirm(window.t('Clear cached {label} for this task?', { label }));
   if (!ok) return;
   try {
     const res = await fetch(`${API_BASE}/api/tasks/${encodeURIComponent(id)}/clear-cache`, {
@@ -1679,9 +1679,9 @@ async function _doClearTaskCache(id, label = 'cache') {
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
     const n = Object.values(data.cleared || {}).reduce((a, b) => a + Number(b || 0), 0) + Number(data.files || 0);
-    if (uiModule) uiModule.showToast(`Cleared ${label}${n ? ` (${n})` : ''}`);
+    if (uiModule) uiModule.showToast(window.t('Cleared {label}{count}', { label, count: n ? ` (${n})` : '' }));
   } catch (e) {
-    if (uiModule) uiModule.showError(`Clear cache failed: ${e.message || e}`);
+    if (uiModule) uiModule.showError(window.t('Clear cache failed: {msg}', { msg: e.message || e }));
   }
 }
 
@@ -1690,18 +1690,20 @@ async function _doToggleAll() {
   const hasActive = _tasks.some(t => t.status === 'active');
   const targets = _tasks.filter(t => t.status === (hasActive ? 'active' : 'paused'));
   if (targets.length === 0) {
-    if (uiModule) uiModule.showToast('No tasks to ' + (hasActive ? 'pause' : 'resume'));
+    if (uiModule) uiModule.showToast(hasActive ? window.t('No tasks to pause') : window.t('No tasks to resume'));
     return;
   }
-  const verb = hasActive ? 'Pause' : 'Resume';
+  const verb = hasActive ? window.t('Pause') : window.t('Resume');
+  const verbPast = hasActive ? window.t('Paused') : window.t('Resumed');
+  const stateLabel = hasActive ? window.t('active') : window.t('paused');
   let confirmed = true;
   if (uiModule?.styledConfirm) {
     confirmed = await uiModule.styledConfirm(
-      `${verb} all ${targets.length} ${hasActive ? 'active' : 'paused'} task(s)?`,
-      { confirmText: verb + ' all' }
+      window.t('{verb} all {n} {state} task(s)?', { verb, n: targets.length, state: stateLabel }),
+      { confirmText: window.t('{verb} all', { verb }) }
     );
   } else if (typeof confirm === 'function') {
-    confirmed = confirm(`${verb} ${targets.length} task(s)?`);
+    confirmed = confirm(window.t('{verb} {n} task(s)?', { verb, n: targets.length }));
   }
   if (!confirmed) return;
   let ok = 0, fails = [];
@@ -1715,8 +1717,8 @@ async function _doToggleAll() {
     }
   }
   if (uiModule) {
-    if (fails.length === 0) uiModule.showToast(`${verb}d all ${ok} task(s)`);
-    else uiModule.showError(`${verb}d ${ok}/${targets.length} — failed: ${fails.slice(0, 3).join(', ')}`);
+    if (fails.length === 0) uiModule.showToast(window.t('{verbPast} all {n} task(s)', { verbPast, n: ok }));
+    else uiModule.showError(window.t('{verbPast} {ok}/{total} — failed: {names}', { verbPast, ok, total: targets.length, names: fails.slice(0, 3).join(', ') }));
   }
   await _fetchTasks();
   _renderMainView();
@@ -1730,17 +1732,17 @@ function _syncPauseAllButton() {
   const hasActive = _tasks.some(t => t.status === 'active');
   const hasPaused = _tasks.some(t => t.status === 'paused');
   if (hasActive) {
-    btn.innerHTML = pauseIco + 'Pause all';
-    btn.title = 'Pause every active task';
+    btn.innerHTML = pauseIco + window.t('Pause all');
+    btn.title = window.t('Pause every active task');
     btn.style.opacity = '1';
     btn.disabled = false;
   } else if (hasPaused) {
-    btn.innerHTML = playIco + 'Resume all';
-    btn.title = 'Resume every paused task';
+    btn.innerHTML = playIco + window.t('Resume all');
+    btn.title = window.t('Resume every paused task');
     btn.style.opacity = '1';
     btn.disabled = false;
   } else {
-    btn.innerHTML = pauseIco + 'Pause all';
+    btn.innerHTML = pauseIco + window.t('Pause all');
     btn.style.opacity = '0.4';
     btn.disabled = true;
   }
@@ -1773,12 +1775,12 @@ async function _renderActivityView() {
   body.innerHTML = `
     <div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
       <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">
-        <h2 style="margin:0;padding:0;line-height:1;">Activity</h2>
-        <button class="memory-toolbar-btn" id="tasks-activity-refresh" title="Refresh" style="margin-left:auto;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg></button>
+        <h2 style="margin:0;padding:0;line-height:1;">${window.t('Activity')}</h2>
+        <button class="memory-toolbar-btn" id="tasks-activity-refresh" title="${window.t('Refresh')}" style="margin-left:auto;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg></button>
       </div>
-      <p class="memory-desc">Recent task runs across all scheduled tasks.</p>
+      <p class="memory-desc">${window.t('Recent task runs across all scheduled tasks.')}</p>
       <div style="display:flex;align-items:center;gap:6px;margin:6px 0 8px;">
-        <input type="text" id="tasks-activity-search" placeholder="Filter activity…" class="memory-search-input" style="flex:1;" />
+        <input type="text" id="tasks-activity-search" placeholder="${window.t('Filter activity...')}" class="memory-search-input" style="flex:1;" />
       </div>
       <div class="tasks-activity-filters" id="tasks-activity-chips" style="display:flex;gap:5px;margin-bottom:8px;flex-wrap:wrap;"></div>
       <div id="tasks-activity-list" class="memory-list" style="flex:1;overflow:auto;font-size:13px;"></div>
@@ -1820,7 +1822,7 @@ async function _renderActivityView() {
       return true;
     });
     if (filtered.length === 0) {
-      list.innerHTML = '<div style="opacity:0.5;padding:12px;">No matching activity.</div>';
+      list.innerHTML = `<div style="opacity:0.5;padding:12px;">${window.t('No matching activity.')}</div>`;
       return;
     }
     list.innerHTML = _stackActivityEntries(filtered).map(_renderActivityEntry).join('');
@@ -1879,7 +1881,7 @@ async function _renderActivityView() {
     _buildChips();
     _applyFilter();
   } else if (_actList) {
-    _actList.appendChild(spinnerModule.createLoadingRow('Loading…'));
+    _actList.appendChild(spinnerModule.createLoadingRow(window.t('Loading...')));
   }
 
   try {
@@ -1890,7 +1892,7 @@ async function _renderActivityView() {
     const list = document.getElementById('tasks-activity-list');
     if (!list) return;
     if (runs.length === 0) {
-      list.innerHTML = '<div style="opacity:0.5;padding:12px;">No activity yet. Scheduled tasks will log here once they run.</div>';
+      list.innerHTML = `<div style="opacity:0.5;padding:12px;">${window.t('No activity yet. Scheduled tasks will log here once they run.')}</div>`;
       return;
     }
     _activityEntries = runs.map(r => {
@@ -1923,7 +1925,7 @@ async function _renderActivityView() {
     _applyFilter();
   } catch (e) {
     const list = document.getElementById('tasks-activity-list');
-    if (list) list.innerHTML = `<div style="opacity:0.5;padding:12px;">Failed to load activity: ${_escHtml(e.message || String(e))}</div>`;
+    if (list) list.innerHTML = `<div style="opacity:0.5;padding:12px;">${window.t('Failed to load activity: {msg}', { msg: _escHtml(e.message || String(e)) })}</div>`;
   }
 }
 
@@ -2062,10 +2064,10 @@ function _wireActivityRows(list) {
       if (!entry?.taskId) return;
       try {
         await _stopTask(entry.taskId);
-        uiModule.showToast('Task stopped');
+        uiModule.showToast(window.t('Task stopped'));
         _renderActivityView();
       } catch (err) {
-        uiModule.showError(err.message || 'Failed to stop task');
+        uiModule.showError(err.message || window.t('Failed to stop task'));
       }
     });
     row.querySelector('.task-log-run-again')?.addEventListener('click', (e) => {
@@ -2082,8 +2084,8 @@ function _wireActivityRows(list) {
       const txt = `${entry.taskName || ''}\n${entry.result || ''}`.trim();
       try {
         uiModule.copyToClipboard(txt);
-        uiModule.showToast('Log copied');
-      } catch (_) { uiModule.showError('Copy failed'); }
+        uiModule.showToast(window.t('Log copied'));
+      } catch (_) { uiModule.showError(window.t('Copy failed')); }
     });
     row.querySelector('.task-log-clear-cache')?.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2148,10 +2150,10 @@ async function _openResultInChat(entry) {
     if (model) fd.append('model', model);
     if (epId) fd.append('endpoint_id', epId);
     const res = await fetch(`${API_BASE}/api/session`, { method: 'POST', credentials: 'same-origin', body: fd });
-    if (!res.ok) { uiModule.showToast(`Couldn't create chat (HTTP ${res.status})`); return; }
+    if (!res.ok) { uiModule.showToast(window.t("Couldn't create chat (HTTP {status})", { status: res.status })); return; }
     const sess = await res.json();
     const sid = sess.id || sess.session_id;
-    if (!sid) { uiModule.showToast('Chat created but no session id returned'); return; }
+    if (!sid) { uiModule.showToast(window.t('Chat created but no session id returned')); return; }
 
     // Seed the conversation: a framing user line + the result as assistant.
     await fetch(`${API_BASE}/api/session/${sid}/inject_messages`, {
@@ -2169,7 +2171,7 @@ async function _openResultInChat(entry) {
       if (window.sessionModule.selectSession) window.sessionModule.selectSession(sid);
     }
   } catch (e) {
-    uiModule.showToast(`Open in chat failed: ${e.message || e}`);
+    uiModule.showToast(window.t('Open in chat failed: {msg}', { msg: e.message || e }));
   }
 }
 
@@ -2230,7 +2232,7 @@ function _renderActivityEntry(entry) {
   // index, which would be wrong) — used by the Open-in-chat handler.
   const entryIdx = Number.isInteger(entry.sourceIdx) ? entry.sourceIdx : _activityEntries.indexOf(entry);
   const repeatBadge = entry.repeatCount > 1
-    ? `<span class="task-log-repeat" title="${entry.repeatCount} similar activity rows">+${entry.repeatCount - 1} repeats</span>`
+    ? `<span class="task-log-repeat" title="${window.t('{n} similar activity rows', { n: entry.repeatCount })}">+${entry.repeatCount - 1} ${window.t('repeats')}</span>`
     : '';
   const tsLabel = _relativeTime(entry.ts);
   const tsAbs = entry.ts ? new Date(entry.ts).toLocaleString() : '';
@@ -2249,7 +2251,7 @@ function _renderActivityEntry(entry) {
   }
   const statusDot = `<span class="task-log-status task-log-status-${status}" title="${status}"></span>`;
   const failedTag = status === 'error'
-    ? '<span class="task-log-failed-tag">(failed)</span>'
+    ? `<span class="task-log-failed-tag">(${window.t('failed')})</span>`
     : '';
   // Render the result through markdown so code blocks, lists, links look right.
   let resultHtml;
@@ -2303,33 +2305,33 @@ function _renderActivityEntry(entry) {
   const _isChatWorthy = entry.kind === 'llm' || entry.kind === 'research';
   let actionBtn = '';
   if (hasResult && _isChatWorthy) {
-    actionBtn = `<button class="task-log-open-chat" type="button" title="Open this result in a chat to read full-width + ask follow-ups">
+    actionBtn = `<button class="task-log-open-chat" type="button" title="${window.t('Open this result in a chat to read full-width + ask follow-ups')}">
          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-         Open in chat
+         ${window.t('Open in chat')}
        </button>`;
     if (entry.kind === 'research' && entry.researchId) {
-      actionBtn += `<button class="task-log-open-report" type="button" title="Open the visual research report">
+      actionBtn += `<button class="task-log-open-report" type="button" title="${window.t('Open the visual research report')}">
          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>
-         Visual report
+         ${window.t('Visual report')}
        </button>`;
     }
   } else if (hasResult) {
-    actionBtn = `<button class="task-log-copy" type="button" title="Copy this log entry">
+    actionBtn = `<button class="task-log-copy" type="button" title="${window.t('Copy this log entry')}">
          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-         Copy log
+         ${window.t('Copy log')}
        </button>`;
   }
   const clearLabel = _taskClearCacheLabel(entry);
   if (hasResult && clearLabel && entry.taskId) {
-    actionBtn += `<button class="task-log-clear-cache" type="button" title="Clear cached ${_escHtml(clearLabel)} for this task">
+    actionBtn += `<button class="task-log-clear-cache" type="button" title="${window.t('Clear cached {label} for this task', { label: _escHtml(clearLabel) })}">
          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg>
-         Clear cache
+         ${window.t('Clear cache')}
        </button>`;
   }
   if (hasResult && entry.taskId) {
-    actionBtn += `<button class="task-log-run-again" type="button" title="Run this task again">
+    actionBtn += `<button class="task-log-run-again" type="button" title="${window.t('Run this task again')}">
          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-         Run again
+         ${window.t('Run again')}
        </button>`;
   }
   // Running rows replace the relative-time on the right with "Running NN" + a
@@ -2342,10 +2344,10 @@ function _renderActivityEntry(entry) {
     // Initial elapsed for the first paint; the 1s interval below keeps it live.
     const startMs = entry.ts ? new Date(entry.ts).getTime() : Date.now();
     const stale = !isQueued && (Date.now() - startMs) > 30 * 60 * 1000;
-    const label = isQueued ? 'Queued' : stale ? 'Still running' : 'Running';
+    const label = isQueued ? window.t('Queued') : stale ? window.t('Still running') : window.t('Running');
     const elapsedInit = isQueued ? '' : `<span class="task-log-running-elapsed" data-since="${startMs}">${_fmtElapsed(Date.now() - startMs)}</span>`;
-    const forceBtn = isQueued && entry.taskId ? `<button class="task-log-force-run" type="button" title="Start now in parallel, bypassing the queue"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg><span>Start now</span></button>` : '';
-    const stopBtn = entry.taskId ? `<button class="task-log-stop" type="button" title="Stop this task"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></button>` : '';
+    const forceBtn = isQueued && entry.taskId ? `<button class="task-log-force-run" type="button" title="${window.t('Start now in parallel, bypassing the queue')}"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg><span>${window.t('Start now')}</span></button>` : '';
+    const stopBtn = entry.taskId ? `<button class="task-log-stop" type="button" title="${window.t('Stop this task')}"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></button>` : '';
     rightHtml = `<span class="task-log-running-inline"><span class="task-log-running-label">${label}</span>${elapsedInit}<span data-spin-here="1"></span>${forceBtn}${stopBtn}</span>`;
   } else {
     rightHtml = `<span class="task-log-time" title="${_escHtml(tsAbs)}">${_escHtml(tsLabel)}</span>`;
@@ -2363,7 +2365,7 @@ function _renderActivityEntry(entry) {
           <span class="task-log-task-icon">${_taskIcon({ action: entry.action, task_type: entry.kind })}</span>
           <span class="task-log-name">${_escHtml(entry.taskName)}</span>${_taskAiMark(entry)}
           ${repeatBadge}
-          <span class="task-log-skipped-reason">skipped${reason ? ' — ' + _escHtml(reason) : ''}</span>
+          <span class="task-log-skipped-reason">${window.t('skipped')}${reason ? ' — ' + _escHtml(reason) : ''}</span>
           <span class="task-log-time" title="${_escHtml(tsAbs)}">${_escHtml(tsLabel)}</span>
         </div>
       </div>
@@ -2382,7 +2384,7 @@ function _renderActivityEntry(entry) {
       ${(_isRunning && !hasRunningProgress) ? '' : `<div class="task-log-row-body">${resultHtml}</div>`}
       ${promptHtml}
       <div class="task-log-row-actions">
-        ${long ? '<button class="task-log-row-toggle" type="button">Show more</button>' : '<span></span>'}
+        ${long ? `<button class="task-log-row-toggle" type="button">${window.t('Show more')}</button>` : '<span></span>'}
         ${actionBtn}
       </div>
     </div>
@@ -2426,7 +2428,7 @@ async function _aiDraftTask(inputEl, btnEl) {
     });
     const data = await res.json();
     if (!data.success || !data.draft) {
-      if (uiModule) uiModule.showError(data.message || 'Could not draft task');
+      if (uiModule) uiModule.showError(data.message || window.t('Could not draft task'));
       return;
     }
     const draft = data.draft;
@@ -2440,7 +2442,7 @@ async function _aiDraftTask(inputEl, btnEl) {
     // field but still creates via POST on save.
     _showForm(draft, draft.task_type, draft.trigger_type || 'schedule');
   } catch (e) {
-    if (uiModule) uiModule.showError('AI draft failed: ' + (e.message || e));
+    if (uiModule) uiModule.showError(window.t('AI draft failed: {msg}', { msg: e.message || e }));
   } finally {
     try { _sp.stop(); } catch (_) {}
     btnEl.classList.remove('spinning');
@@ -2458,26 +2460,26 @@ function _renderMainView() {
   body.innerHTML = `
     <div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative;top:-2px;">
       <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">
-        <h2 style="margin:0;padding:0;line-height:1;position:relative;top:-4px;">Ongoing Tasks <span id="tasks-head-count" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
-        <button class="memory-toolbar-btn" id="tasks-pause-all-btn" title="Pause all active tasks" style="margin-left:auto;">Pause all</button>
+        <h2 style="margin:0;padding:0;line-height:1;position:relative;top:-4px;">${window.t('Ongoing Tasks')} <span id="tasks-head-count" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
+        <button class="memory-toolbar-btn" id="tasks-pause-all-btn" title="${window.t('Pause all active tasks')}" style="margin-left:auto;">${window.t('Pause all')}</button>
       </div>
-      <p class="memory-desc" style="position:relative;top:-4px;">Scheduled prompts and actions that run automatically. Results appear in a dedicated session.</p>
+      <p class="memory-desc" style="position:relative;top:-4px;">${window.t('Scheduled prompts and actions that run automatically. Results appear in a dedicated session.')}</p>
       <div class="memory-toolbar">
         <div class="memory-category-filters" style="display:flex;align-items:center;gap:6px;">
-          <select class="memory-sort-select" id="tasks-sort" aria-label="Sort tasks" title="Sort tasks" style="position:relative;top:-4px;width:86px;font-size:11px;height:24px;">
-            <option value="recent">Recent</option>
-            <option value="name">A–Z</option>
-            <option value="status">Status</option>
+          <select class="memory-sort-select" id="tasks-sort" aria-label="${window.t('Sort tasks')}" title="${window.t('Sort tasks')}" style="position:relative;top:-4px;width:86px;font-size:11px;height:24px;">
+            <option value="recent">${window.t('Recent')}</option>
+            <option value="name">${window.t('A–Z')}</option>
+            <option value="status">${window.t('Status')}</option>
           </select>
-          <button class="memory-toolbar-btn" id="tasks-select-btn" title="Select tasks" style="position:relative;top:-7px;">Select</button>
+          <button class="memory-toolbar-btn" id="tasks-select-btn" title="${window.t('Select tasks')}" style="position:relative;top:-7px;">${window.t('Select')}</button>
         </div>
-        <input type="text" id="tasks-search" placeholder="Search tasks…" class="memory-search-input" value="${_esc(_taskSearch)}" style="position:relative;top:-4px;" />
+        <input type="text" id="tasks-search" placeholder="${window.t('Search tasks...')}" class="memory-search-input" value="${_esc(_taskSearch)}" style="position:relative;top:-4px;" />
       </div>
       <div id="tasks-bulk-bar" class="memory-bulk-bar${_taskSelectMode ? '' : ' hidden'}" style="position:relative;top:-4px;">
         <label class="memory-bulk-check-all" style="position:relative;top:0px;"><input type="checkbox" id="tasks-select-all" /> All</label>
         <span id="tasks-selected-count">0 Selected</span>
         <button id="tasks-bulk-delete" class="memory-toolbar-btn danger" style="position:relative;top:-2px;" disabled><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Delete</button>
-        <button id="tasks-bulk-cancel" class="memory-toolbar-btn" title="Cancel (Esc)" style="margin-left:4px;padding:3px 6px;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        <button id="tasks-bulk-cancel" class="memory-toolbar-btn" title="${window.t('Cancel (Esc)')}" style="margin-left:4px;padding:3px 6px;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
       <div id="tasks-filter-chips" class="tasks-activity-filters" style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px;position:relative;top:-4px;"></div>
       <div id="tasks-list" class="memory-list" style="flex:1;gap:4px;position:relative;top:-4px;"></div>
@@ -2717,7 +2719,7 @@ async function _pollTaskNotifications() {
         if (!fired && uiModule) uiModule.showToast(title + ': ' + n.body.slice(0, 140), { duration: 7000 });
         continue;
       }
-      const msg = `Task ${ok ? 'finished' : 'failed'}: ${n.task_name}`;
+      const msg = ok ? window.t('Task finished: {name}', { name: n.task_name }) : window.t('Task failed: {name}', { name: n.task_name });
       if (!uiModule) continue;
       if (ok) uiModule.showToast(msg, { duration: 5000 });
       else {
