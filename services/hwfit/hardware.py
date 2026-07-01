@@ -601,7 +601,7 @@ def _detect_windows():
         }
         catch {}
         if (-not $r.gpu_name) { 
-            $wmiGpu = Get-CimInstance Win32_VideoController | Where-Object { $_.AdapterRAM -gt 0 } | Select-Object -First 1
+            $wmiGpu = Get-CimInstance Win32_VideoController | Where-Object { $_.AdapterRAM -gt 0 } | Sort-Object AdapterRAM -Descending | Select-Object -First 1
             $GPUDriverKey = "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0*"
             $GPUDeviceID = $wmiGpu.PNPDeviceID.Split('&')[0..1] -join '&'
             $VRAMfromRegistry = Get-ItemProperty -Path $GPUDriverKey |
@@ -619,7 +619,11 @@ def _detect_windows():
                 }
                 $r.gpu_count = 1
                 # WMI doesn't tell us CUDA/ROCm
-                $r.gpu_backend = 'cpu_x86';
+                if ($wmiGpu.Name -like "*Radeon*" -or $wmiGpu.Name -like "*AMD*") {
+                    $r.gpu_backend = 'rocm'
+                } else {
+                    $r.gpu_backend = 'cpu_x86'
+                }
             } 
         }
         $r | ConvertTo-Json -Compress
