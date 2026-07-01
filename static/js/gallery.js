@@ -24,7 +24,7 @@ let _totalTagged = 0;
 // Update the "X/Y tagged" badge in the AI-tagging settings header.
 function _updateTagCount() {
   const el = document.getElementById('gallery-tag-count');
-  if (el) el.textContent = _total ? `${_totalTagged}/${_total} tagged` : '';
+  if (el) el.textContent = _total ? window.t('{tagged}/{total} tagged', { tagged: _totalTagged, total: _total }) : '';
 }
 let _search = '';
 // Stack of active tag filters. Multiple tags AND together — the user
@@ -214,14 +214,14 @@ async function _bulkUpload(filesOrItems, fallbackAlbumId) {
       } catch (e) { errors++; }
       done++;
       if (progress) progress.style.width = `${(done / total) * 100}%`;
-      if (status) status.textContent = `${done}/${total}${dupes ? ` (${dupes} duplicates)` : ''}`;
+      if (status) status.textContent = `${done}/${total}` + (dupes ? ' ' + window.t('({dupes} duplicates)', { dupes }) : '');
     }
   }
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, total) }, worker));
 
-  const msg = `${done - dupes - errors} imported` +
-    (dupes ? `, ${dupes} duplicates skipped` : '') +
-    (errors ? `, ${errors} errors` : '');
+  const msg = window.t('{n} imported', { n: done - dupes - errors }) +
+    (dupes ? ', ' + window.t('{n} duplicates skipped', { n: dupes }) : '') +
+    (errors ? ', ' + window.t('{n} errors', { n: errors }) : '');
   if (status) status.textContent = msg;
   uiModule.showToast(msg);
   setTimeout(() => { bar.style.display = 'none'; }, 3000);
@@ -335,9 +335,9 @@ async function _handleGalleryDrop(e) {
     dtItems.some(it => it.kind === 'string')
   );
   if (looksLikeFolderUri) {
-    uiModule.showError('Browsers can’t read folders dropped from native file managers (Thunar/Nautilus). Use the "Upload album" tile in the Albums tab instead.');
+    uiModule.showError(window.t("Browsers can't read folders dropped from native file managers (Thunar/Nautilus). Use the \"Upload album\" tile in the Albums tab instead."));
   } else if (entries.length || dtItems.length) {
-    uiModule.showToast('No images found in that drop');
+    uiModule.showToast(window.t('No images found in that drop'));
   }
 }
 
@@ -491,7 +491,7 @@ function _ensureAlbumsToolbar(container) {
   });
   container.querySelector('#gallery-albums-bulk-delete').addEventListener('click', (e) => {
     e.stopPropagation();
-    if (!_albumSelected.size) { uiModule.showToast('Select albums first'); return; }
+    if (!_albumSelected.size) { uiModule.showToast(window.t('Select albums first')); return; }
     _bulkDeleteAlbums([..._albumSelected]);
   });
 }
@@ -500,7 +500,7 @@ function _setAlbumSelectMode(on) {
   _albumSelectMode = on;
   if (!on) _albumSelected.clear();
   const container = document.getElementById('gallery-albums-container');
-  container.querySelector('#gallery-albums-select-btn span').textContent = on ? 'Cancel' : 'Select';
+  container.querySelector('#gallery-albums-select-btn span').textContent = on ? window.t('Cancel') : window.t('Select');
   container.querySelector('#gallery-albums-select-btn').classList.toggle('active', on);
   container.querySelector('#gallery-albums-bulk-bar').classList.toggle('hidden', !on);
   _renderAlbumsGrid();
@@ -511,7 +511,7 @@ function _updateAlbumBulkCount() {
   if (!container) return;
   const sel = _albumSelected.size;
   const cnt = container.querySelector('#gallery-albums-bulk-count');
-  if (cnt) cnt.textContent = sel + ' selected';
+  if (cnt) cnt.textContent = window.t('{n} selected', { n: sel });
   const all = container.querySelector('#gallery-albums-bulk-all');
   const total = _filteredAlbums().length;
   if (all) { all.checked = total > 0 && sel === total; all.indeterminate = sel > 0 && sel < total; }
@@ -529,14 +529,14 @@ function _renderAlbumsGrid() {
   if (!_albums.length) {
     wrap.innerHTML = `
       <div class="gallery-albums-empty">
-        <p>No albums yet.</p>
-        <button class="gallery-select-btn" id="gallery-albums-new">+ New album</button>
+        <p>${window.t('No albums yet.')}</p>
+        <button class="gallery-select-btn" id="gallery-albums-new">${window.t('+ New album')}</button>
       </div>`;
     _wireAlbumsEvents(wrap);
     return;
   }
   if (!albums.length) {
-    wrap.innerHTML = `<div class="gallery-albums-empty"><p>No albums match "${_esc(_albumSearch)}".</p></div>`;
+    wrap.innerHTML = `<div class="gallery-albums-empty"><p>${window.t('No albums match "{query}".', { query: _esc(_albumSearch) })}</p></div>`;
     return;
   }
 
@@ -551,7 +551,7 @@ function _renderAlbumsGrid() {
           <div class="gallery-album-placeholder">+</div>
         </div>
         <div class="gallery-album-info">
-          <div class="gallery-album-name">New album</div>
+          <div class="gallery-album-name">${window.t('New album')}</div>
         </div>
       </div>
       <div class="gallery-album-card gallery-album-card-add" id="gallery-albums-upload">
@@ -561,8 +561,8 @@ function _renderAlbumsGrid() {
           </div>
         </div>
         <div class="gallery-album-info">
-          <div class="gallery-album-name">Upload album</div>
-          <div class="gallery-album-count">Pick a folder</div>
+          <div class="gallery-album-name">${window.t('Upload album')}</div>
+          <div class="gallery-album-count">${window.t('Pick a folder')}</div>
         </div>
       </div>`;
   }
@@ -583,27 +583,27 @@ function _renderAlbumsGrid() {
     html += `
       <div class="${cls}" data-album="${_esc(a.id)}">
         ${dot}
-        <button class="gallery-album-menu-btn" data-album="${_esc(a.id)}" title="Options" aria-label="Album options"${_albumSelectMode ? ' style="display:none"' : ''}>
+        <button class="gallery-album-menu-btn" data-album="${_esc(a.id)}" title="${window.t('Options')}" aria-label="${window.t('Album options')}"${_albumSelectMode ? ' style="display:none"' : ''}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="position:relative;top:2px;"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
         </button>
         <div class="gallery-album-menu-pop dropdown" data-album="${_esc(a.id)}" hidden>
           <div class="dropdown-item-compact" data-action="upload">
             <span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>
-            <span>Upload here</span>
+            <span>${window.t('Upload here')}</span>
           </div>
           <div class="dropdown-item-compact" data-action="rename">
             <span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span>
-            <span>Rename</span>
+            <span>${window.t('Rename')}</span>
           </div>
           <div class="dropdown-item-compact dropdown-item-danger" data-action="delete">
             <span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></span>
-            <span>Delete</span>
+            <span>${window.t('Delete')}</span>
           </div>
         </div>
         <div class="gallery-album-cover">${cover}</div>
         <div class="gallery-album-info">
           <div class="gallery-album-name">${_esc(a.name)}</div>
-          <div class="gallery-album-count">${a.count} photo${a.count === 1 ? '' : 's'}</div>
+          <div class="gallery-album-count">${window.t('{n} photo{s}', { n: a.count, s: a.count === 1 ? '' : 's' })}</div>
         </div>
       </div>`;
   });
@@ -697,7 +697,7 @@ function _wireAlbumsEvents(scope) {
       e.stopPropagation();
       pop.hidden = true;
       const album = _albums.find(a => a.id === id);
-      const newName = prompt('Rename album:', album?.name || '');
+      const newName = prompt(window.t('Rename album:'), album?.name || '');
       if (!newName || !newName.trim() || newName.trim() === album?.name) return;
       const r = await fetch(`${API_BASE}/api/gallery/albums/${id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -706,9 +706,9 @@ function _wireAlbumsEvents(scope) {
       if (r.ok) {
         await _fetchAlbums();
         _renderAlbumsTab();
-        if (uiModule) uiModule.showToast('Album renamed');
+        if (uiModule) uiModule.showToast(window.t('Album renamed'));
       } else if (uiModule) {
-        uiModule.showError('Rename failed');
+        uiModule.showError(window.t('Rename failed'));
       }
     });
     pop.querySelector('[data-action="delete"]')?.addEventListener('click', async (e) => {
@@ -716,8 +716,8 @@ function _wireAlbumsEvents(scope) {
       pop.hidden = true;
       const album = _albums.find(a => a.id === id);
       const ok = await uiModule.styledConfirm(
-        `Delete album "${album?.name || ''}"? Photos inside will stay in your library.`,
-        { confirmText: 'Delete', danger: true },
+        window.t('Delete album "{name}"? Photos inside will stay in your library.', { name: album?.name || '' }),
+        { confirmText: window.t('Delete'), danger: true },
       );
       if (!ok) return;
       const r = await fetch(`${API_BASE}/api/gallery/albums/${id}`, {
@@ -728,17 +728,17 @@ function _wireAlbumsEvents(scope) {
         await _fetchAlbums();
         _renderAlbumsTab();
         _renderAlbums();
-        if (uiModule) uiModule.showToast('Album deleted');
+        if (uiModule) uiModule.showToast(window.t('Album deleted'));
       } else if (uiModule) {
-        uiModule.showError('Delete failed');
+        uiModule.showError(window.t('Delete failed'));
       }
     });
   });
 
   document.getElementById('gallery-albums-new')?.addEventListener('click', async () => {
     const name = (uiModule.styledPrompt
-      ? await uiModule.styledPrompt('Name your new album.', { title: 'New album', placeholder: 'e.g. Vacation 2026', confirmText: 'Create' })
-      : prompt('Album name:'));
+      ? await uiModule.styledPrompt(window.t('Name your new album.'), { title: window.t('New album'), placeholder: window.t('e.g. Vacation 2026'), confirmText: window.t('Create') })
+      : prompt(window.t('Album name:')));
     if (!name?.trim()) return;
     await fetch(`${API_BASE}/api/gallery/albums`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
