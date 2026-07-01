@@ -6,16 +6,19 @@
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
-const PHASE_LABEL = {
-  probing:   'verifying model',
-  planning:  'planning strategy',
-  searching: 'searching',
-  reading:   'reading sources',
-  analyzing: 'analyzing findings',
-  writing:   'writing report',
-  error:     'error',
-  done:      'complete',
-};
+function _phaseLabel(phase) {
+  switch (phase) {
+    case 'probing': return window.t('verifying model');
+    case 'planning': return window.t('planning strategy');
+    case 'searching': return window.t('searching');
+    case 'reading': return window.t('reading sources');
+    case 'analyzing': return window.t('analyzing findings');
+    case 'writing': return window.t('writing report');
+    case 'error': return window.t('error');
+    case 'done': return window.t('complete');
+    default: return null;
+  }
+}
 
 function rand(a, b) { return Math.random() * (b - a) + a; }
 function pick(arr)  { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -35,11 +38,11 @@ export default function createResearchSynapse(container, opts = {}) {
       </svg>
     </div>
     <div class="rs-meta">
-      <span class="rs-status">starting…</span>
+      <span class="rs-status">${window.t('starting…')}</span>
       <span class="rs-sep">·</span>
-      <span class="rs-round">round <b>0</b></span>
+      <span class="rs-round">${window.t('round')} <b>0</b></span>
       <span class="rs-sep">·</span>
-      <span class="rs-sources"><b>0</b> sources</span>
+      <span class="rs-sources"><b>0</b> ${window.t('sources')}</span>
       <span class="rs-sep">·</span>
       <span class="rs-timer">00:00</span>
     </div>
@@ -65,7 +68,7 @@ export default function createResearchSynapse(container, opts = {}) {
   rootLabel.setAttribute('y', cy + 28);
   rootLabel.setAttribute('text-anchor', 'middle');
   rootLabel.setAttribute('class', 'rs-label');
-  rootLabel.textContent = _trunc(opts.query || 'query', 28);
+  rootLabel.textContent = _trunc(opts.query || window.t('query'), 28);
   nodesG.appendChild(rootLabel);
 
   const subs = []; // { x, y, count }
@@ -171,11 +174,11 @@ export default function createResearchSynapse(container, opts = {}) {
     /** Reflect a phase change in the status text + side effects. */
     setPhase(phase, extra = {}) {
       if (completed) return;
-      const label = PHASE_LABEL[phase] || phase || '';
+      const label = _phaseLabel(phase) || phase || '';
       let txt = label;
-      if (phase === 'searching' && extra.queries) txt += ` · ${extra.queries} queries`;
-      else if (phase === 'reading' && extra.title) txt = `reading: ${_trunc(extra.title, 32)}`;
-      else if (phase === 'analyzing' && extra.total_findings) txt += ` · ${extra.total_findings} findings`;
+      if (phase === 'searching' && extra.queries) txt += ` · ${window.t('{n} queries', { n: extra.queries })}`;
+      else if (phase === 'reading' && extra.title) txt = window.t('reading: {title}', { title: _trunc(extra.title, 32) });
+      else if (phase === 'analyzing' && extra.total_findings) txt += ` · ${window.t('{n} findings', { n: extra.total_findings })}`;
       statusE.textContent = txt;
       // Visual cue per phase
       if (phase === 'error') wrap.classList.add('rs-error');
@@ -213,7 +216,7 @@ export default function createResearchSynapse(container, opts = {}) {
       if (completed) return;
       completed = true;
       wrap.classList.add('rs-complete');
-      statusE.textContent = 'complete';
+      statusE.textContent = window.t('complete');
       if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
     },
 

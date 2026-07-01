@@ -62,7 +62,7 @@ function _deselectCurrentSession(sid) {
   if (currentSessionId !== sid) return;
   currentSessionId = null;
   uiModule.el('chat-history').innerHTML = '';
-  uiModule.el('current-meta').textContent = 'Odysseus Chat';
+  uiModule.el('current-meta').textContent = window.t('Odysseus Chat');
   Storage.remove('lastSessionId');
   history.replaceState(null, '', window.location.pathname);
   if (window.chatModule && window.chatModule.showWelcomeScreen) {
@@ -160,7 +160,7 @@ function buildFolderSubmenu(sessionId, currentFolder, dropdown) {
   moveItem.className = 'dropdown-item-compact';
   moveItem.style.position = 'relative';
   const _folderIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
-  moveItem.innerHTML = '<span class="dropdown-icon">' + _folderIcon + '</span><span>Move to folder</span>';
+  moveItem.innerHTML = '<span class="dropdown-icon">' + _folderIcon + '</span><span>' + window.t('Move to folder') + '</span>';
 
   const sub = document.createElement('div');
   sub.className = 'dropdown session-folder-submenu';
@@ -169,7 +169,7 @@ function buildFolderSubmenu(sessionId, currentFolder, dropdown) {
   const noneOpt = document.createElement('div');
   noneOpt.className = 'dropdown-item-compact';
   if (!currentFolder) noneOpt.style.opacity = '0.5';
-  noneOpt.textContent = '(No folder)';
+  noneOpt.textContent = window.t('(No folder)');
   noneOpt.addEventListener('click', async (e) => {
     e.stopPropagation();
     await moveToFolder(sessionId, '');
@@ -200,13 +200,13 @@ function buildFolderSubmenu(sessionId, currentFolder, dropdown) {
   const newOpt = document.createElement('div');
   newOpt.className = 'dropdown-item-compact';
   newOpt.style.color = 'var(--accent-primary)';
-  newOpt.textContent = '+ New Folder';
+  newOpt.textContent = window.t('+ New Folder');
   newOpt.addEventListener('click', async (e) => {
     e.stopPropagation();
-    const name = await styledPrompt('Name this folder:', {
-      title: 'New folder',
-      placeholder: 'e.g. Work, Research, Drafts',
-      confirmText: 'Create',
+    const name = await styledPrompt(window.t('Name this folder:'), {
+      title: window.t('New folder'),
+      placeholder: window.t('e.g. Work, Research, Drafts'),
+      confirmText: window.t('Create'),
     });
     if (!name || !name.trim()) return;
     await moveToFolder(sessionId, name.trim());
@@ -283,7 +283,7 @@ function createSessionItem(s) {
   const handle = document.createElement('span');
   handle.className = 'item-drag-handle';
   handle.textContent = '\u22EE\u22EE';
-  handle.title = 'Drag to reorder';
+  handle.title = window.t('Drag to reorder');
   div.appendChild(handle);
 
   // Provider dot indicator
@@ -324,7 +324,7 @@ function createSessionItem(s) {
   // Favorite bookmark replaces session-icon when important
   if (s.is_important && !isOpenClaw) {
     icon.className = 'session-icon session-fav';
-    icon.title = 'Unfavorite';
+    icon.title = window.t('Unfavorite');
     icon.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
     icon.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -332,7 +332,7 @@ function createSessionItem(s) {
       fd.append('important', false);
       await fetch(`${API_BASE}/api/session/${s.id}/important`, { method: 'POST', body: fd });
       s.is_important = false;
-      uiModule.showToast('Unfavorited');
+      uiModule.showToast(window.t('Unfavorited'));
       renderSessionList();
     });
   }
@@ -345,7 +345,7 @@ function createSessionItem(s) {
   if (_isGroup) chatTitle = chatTitle.replace(/^\[GRP\]\s*/, '');
   let label = chatTitle;
   if (s.model) label += ' · ' + s.model.split('/').pop();
-  if (s.archived) label += ' [archived]';
+  if (s.archived) label += ' ' + window.t('[archived]');
   span.textContent = label;
   span.title = (s.model ? s.model.split('/').pop() + ' · ' : '') + chatTitle;
   span.classList.add('text-ellipsis');
@@ -370,7 +370,7 @@ function createSessionItem(s) {
           fd.append('name', newName);
           await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'PATCH', body: fd });
           s.name = newName;
-          uiModule.showToast('Renamed');
+          uiModule.showToast(window.t('Renamed'));
         }
         _forceSidebarOpen();
         renderSessionList();
@@ -444,7 +444,7 @@ function createSessionItem(s) {
   // Create a dropdown menu button
   const menuBtn = document.createElement('button');
   menuBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
-  menuBtn.title = 'Session actions';
+  menuBtn.title = window.t('Session actions');
   menuBtn.className = 'hamburger session-menu-btn';
 
   // Create dropdown menu
@@ -460,15 +460,15 @@ function createSessionItem(s) {
 
   const renameItem = document.createElement('div');
   renameItem.className = 'dropdown-item-compact';
-  renameItem.innerHTML = _icon(_renameIcon) + '<span>Rename</span>';
+  renameItem.innerHTML = _icon(_renameIcon) + '<span>' + window.t('Rename') + '</span>';
 
   const archiveItem = document.createElement('div');
   archiveItem.className = 'dropdown-item-compact';
-  archiveItem.innerHTML = _icon(_archiveIcon) + '<span>Archive</span>';
+  archiveItem.innerHTML = _icon(_archiveIcon) + '<span>' + window.t('Archive') + '</span>';
 
   const deleteItem = document.createElement('div');
   deleteItem.className = 'dropdown-item-compact dropdown-item-danger';
-  deleteItem.innerHTML = _icon(_deleteIcon) + '<span>Delete</span><span class="dropdown-shortcut">' + _mod + '+Alt+D</span>';
+  deleteItem.innerHTML = _icon(_deleteIcon) + '<span>' + window.t('Delete') + '</span><span class="dropdown-shortcut">' + _mod + '+Alt+D</span>';
 
 
 
@@ -481,7 +481,7 @@ function createSessionItem(s) {
       : '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
     const starItem = document.createElement('div');
     starItem.className = 'dropdown-item-compact';
-    starItem.innerHTML = _icon(_favIcon) + '<span>' + (s.is_important ? 'Unfavorite' : 'Favorite') + '</span><span class="dropdown-shortcut">' + _mod + '+Alt+F</span>';
+    starItem.innerHTML = _icon(_favIcon) + '<span>' + (s.is_important ? window.t('Unfavorite') : window.t('Favorite')) + '</span><span class="dropdown-shortcut">' + _mod + '+Alt+F</span>';
     starItem.addEventListener('click', async (e) => {
       e.stopPropagation();
       const newVal = !s.is_important;
@@ -497,7 +497,7 @@ function createSessionItem(s) {
 
   const copyItem = document.createElement('div');
   copyItem.className = 'dropdown-item-compact';
-  copyItem.innerHTML = _icon(_copyIcon) + '<span>Copy Chat</span>';
+  copyItem.innerHTML = _icon(_copyIcon) + '<span>' + window.t('Copy Chat') + '</span>';
   copyItem.addEventListener('click', async (e) => {
     e.stopPropagation();
     dropdown.style.display = 'none';
@@ -505,11 +505,11 @@ function createSessionItem(s) {
       const res = await fetch(`${API_BASE}/api/history/${s.id}`);
       const data = await res.json();
       const msgs = data.history || [];
-      if (!msgs.length) { uiModule.showToast('No messages to copy'); return; }
+      if (!msgs.length) { uiModule.showToast(window.t('No messages to copy')); return; }
       const lines = msgs
         .filter(m => m.role === 'user' || m.role === 'assistant')
         .map(m => {
-          const label = m.role === 'user' ? 'You' : 'AI';
+          const label = m.role === 'user' ? window.t('You') : window.t('AI');
           const text = typeof m.content === 'string' ? m.content.trim() : JSON.stringify(m.content);
           return `${label}: ${text}`;
         });
@@ -526,10 +526,10 @@ function createSessionItem(s) {
         document.execCommand('copy');
         ta.remove();
       }
-      uiModule.showToast('Chat copied to clipboard');
+      uiModule.showToast(window.t('Chat copied to clipboard'));
     } catch (e) {
       console.error('Copy chat failed:', e);
-      uiModule.showError('Failed to copy chat');
+      uiModule.showError(window.t('Failed to copy chat'));
     }
   });
 
@@ -539,7 +539,7 @@ function createSessionItem(s) {
   if (!isOpenClaw) {
     const selectMoreItem = document.createElement('div');
     selectMoreItem.className = 'dropdown-item-compact';
-    selectMoreItem.innerHTML = _icon('<span style="font-size:16px;line-height:1;">●</span>') + '<span>Select</span>';
+    selectMoreItem.innerHTML = _icon('<span style="font-size:16px;line-height:1;">●</span>') + '<span>' + window.t('Select') + '</span>';
     selectMoreItem.addEventListener('click', (e) => {
       e.stopPropagation();
       dropdown.style.display = 'none';
@@ -574,7 +574,7 @@ function createSessionItem(s) {
   const _cancelIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
   const cancelItem = document.createElement('div');
   cancelItem.className = 'dropdown-item-compact dropdown-cancel-mobile';
-  cancelItem.innerHTML = _icon(_cancelIcon) + '<span>Cancel</span>';
+  cancelItem.innerHTML = _icon(_cancelIcon) + '<span>' + window.t('Cancel') + '</span>';
   cancelItem.addEventListener('click', (e) => {
     e.stopPropagation();
     dropdown.style.display = 'none';
@@ -632,7 +632,7 @@ function createSessionItem(s) {
         fd.append('name', newName);
         await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'PATCH', body: fd });
         s.name = newName;
-        uiModule.showToast('Renamed');
+        uiModule.showToast(window.t('Renamed'));
       }
       _forceSidebarOpen();
       renderSessionList();
@@ -647,12 +647,12 @@ function createSessionItem(s) {
 
   deleteItem.addEventListener('click', async () => {
     if (s.is_important) {
-      uiModule.showToast('Unfavorite before deleting');
+      uiModule.showToast(window.t('Unfavorite before deleting'));
       dropdown.style.display = 'none';
       return;
     }
     dropdown.style.display = 'none';
-    if (!await uiModule.styledConfirm('Delete this session?', { confirmText: 'Delete', danger: true })) {
+    if (!await uiModule.styledConfirm(window.t('Delete this session?'), { confirmText: window.t('Delete'), danger: true })) {
       _forceSidebarOpen();
       return;
     }
@@ -697,13 +697,13 @@ function createSessionItem(s) {
         _forceSidebarOpen();
         await loadSessions();
         dropdown.style.display = 'none';
-        uiModule.showToast('Session archived');
+        uiModule.showToast(window.t('Session archived'));
       } else {
         throw new Error('Failed to archive session');
       }
     } catch (error) {
       console.error('Error archiving session:', error);
-      uiModule.showError('Failed to archive session');
+      uiModule.showError(window.t('Failed to archive session'));
     }
   });
 
@@ -816,7 +816,7 @@ function _renderSessionListImpl() {
       const remaining = allFlat.length - SIDEBAR_MAX_VISIBLE;
       const toggleBtn = document.createElement('button');
       toggleBtn.className = 'session-show-more-btn';
-      toggleBtn.textContent = _showAllSessions ? 'Show less' : `Show ${remaining} more`;
+      toggleBtn.textContent = _showAllSessions ? window.t('Show less') : window.t('Show {n} more', { n: remaining });
       toggleBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         _showAllSessions = !_showAllSessions;
@@ -880,7 +880,7 @@ function _renderSessionListImpl() {
     const dragHandle = document.createElement('span');
     dragHandle.className = 'folder-drag-handle';
     dragHandle.textContent = '\u2630';
-    dragHandle.title = 'Drag to reorder folder';
+    dragHandle.title = window.t('Drag to reorder folder');
     header.appendChild(dragHandle);
 
     const toggle = document.createElement('span');
@@ -902,11 +902,11 @@ function _renderSessionListImpl() {
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'folder-delete-btn';
     deleteBtn.textContent = '\u00d7';
-    deleteBtn.title = 'Delete folder and all sessions';
+    deleteBtn.title = window.t('Delete folder and all sessions');
     deleteBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const count = folders[folderName].length;
-      if (!await uiModule.styledConfirm(`Delete folder "${folderName}" and all ${count} session(s) inside it?`, { confirmText: 'Delete', danger: true })) return;
+      if (!await uiModule.styledConfirm(window.t('Delete folder "{folderName}" and all {count} session(s) inside it?', { folderName, count }), { confirmText: window.t('Delete'), danger: true })) return;
       for (const s of folders[folderName]) {
         try {
           await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' });
@@ -937,10 +937,10 @@ function _renderSessionListImpl() {
     header.addEventListener('dblclick', async (e) => {
       e.stopPropagation();
       if (e.target.closest('.folder-delete-btn')) return;
-      const newName = await styledPrompt('Rename folder:', {
-        title: 'Rename folder',
+      const newName = await styledPrompt(window.t('Rename folder:'), {
+        title: window.t('Rename folder'),
         defaultValue: folderName,
-        confirmText: 'Rename',
+        confirmText: window.t('Rename'),
       });
       if (!newName || !newName.trim() || newName.trim() === folderName) return;
       const promises = folders[folderName].map(s => moveToFolder(s.id, newName.trim()));
@@ -971,7 +971,7 @@ function _renderSessionListImpl() {
         const rem = folderSessions.length - FOLDER_MAX_VISIBLE;
         const moreBtn = document.createElement('button');
         moreBtn.className = 'session-show-more-btn';
-        moreBtn.textContent = folderExpanded ? 'Show less' : `Show ${rem} more`;
+        moreBtn.textContent = folderExpanded ? window.t('Show less') : window.t('Show {n} more', { n: rem });
         moreBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           _expandedFolders[folderName] = !folderExpanded;
@@ -1009,7 +1009,7 @@ function _renderSessionListImpl() {
     const dragHandle = document.createElement('span');
     dragHandle.className = 'folder-drag-handle';
     dragHandle.textContent = '\u2630';
-    dragHandle.title = 'Drag to reorder folder';
+    dragHandle.title = window.t('Drag to reorder folder');
     unsortedHeader.appendChild(dragHandle);
 
     const toggle = document.createElement('span');
@@ -1018,7 +1018,7 @@ function _renderSessionListImpl() {
     unsortedHeader.appendChild(toggle);
     const nameSpan = document.createElement('span');
     nameSpan.className = 'folder-name';
-    nameSpan.textContent = 'Unsorted';
+    nameSpan.textContent = window.t('Unsorted');
     unsortedHeader.appendChild(nameSpan);
     const countSpan = document.createElement('span');
     countSpan.className = 'folder-count';
@@ -1028,10 +1028,10 @@ function _renderSessionListImpl() {
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'folder-delete-btn';
     deleteBtn.textContent = '\u00d7';
-    deleteBtn.title = 'Delete all unsorted sessions';
+    deleteBtn.title = window.t('Delete all unsorted sessions');
     deleteBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (!await uiModule.styledConfirm(`Delete all ${unfiled.length} unsorted session(s)?`, { confirmText: 'Delete', danger: true })) return;
+      if (!await uiModule.styledConfirm(window.t('Delete all {n} unsorted session(s)?', { n: unfiled.length }), { confirmText: window.t('Delete'), danger: true })) return;
       for (const s of unfiled) {
         try {
           await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' });
@@ -1075,7 +1075,7 @@ function _renderSessionListImpl() {
     const remaining = unfiled.length - SIDEBAR_MAX_VISIBLE;
     const toggleBtn = document.createElement('button');
     toggleBtn.className = 'session-show-more-btn';
-    toggleBtn.textContent = _showAllSessions ? 'Show less' : `Show ${remaining} more`;
+    toggleBtn.textContent = _showAllSessions ? window.t('Show less') : window.t('Show {n} more', { n: remaining });
     toggleBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       _showAllSessions = !_showAllSessions;
@@ -1129,7 +1129,7 @@ function _showSwipeHint(list) {
       localStorage.setItem('ody-swipe-hint-shown', '1');
       const hint = document.createElement('div');
       hint.className = 'swipe-hint';
-      hint.innerHTML = '<span class="swipe-hint-arrow">\u2190</span> swipe to delete';
+      hint.innerHTML = '<span class="swipe-hint-arrow">\u2190</span> ' + window.t('swipe to delete');
       firstItem.style.position = 'relative';
       firstItem.appendChild(hint);
       setTimeout(() => { hint.style.opacity = '0'; }, 3000);
@@ -1293,7 +1293,7 @@ function _initBulkSelect() {
     archiveBtn.addEventListener('click', async () => {
       if (_selectedIds.size === 0) return;
       const count = _selectedIds.size;
-      if (!await uiModule.styledConfirm(`Archive ${count} session(s)?`, { confirmText: 'Archive' })) return;
+      if (!await uiModule.styledConfirm(window.t('Archive {n} session(s)?', { n: count }), { confirmText: window.t('Archive') })) return;
       for (const sid of _selectedIds) {
         try {
           await fetch(`${API_BASE}/api/session/${sid}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
@@ -1302,7 +1302,7 @@ function _initBulkSelect() {
       _exitSelectMode();
       if (window._suppressSidebarClose !== undefined) { window._suppressSidebarClose = true; setTimeout(() => { window._suppressSidebarClose = false; }, 1500); }
       await loadSessions();
-      uiModule.showToast(`${count} session(s) archived`);
+      uiModule.showToast(window.t('{n} session(s) archived', { n: count }));
     });
   }
 
@@ -1311,7 +1311,7 @@ function _initBulkSelect() {
     deleteBtn.addEventListener('click', async () => {
       if (_selectedIds.size === 0) return;
       const count = _selectedIds.size;
-      if (!await uiModule.styledConfirm(`Delete ${count} session(s)? This cannot be undone.`, { confirmText: 'Delete', danger: true })) return;
+      if (!await uiModule.styledConfirm(window.t('Delete {n} session(s)? This cannot be undone.', { n: count }), { confirmText: window.t('Delete'), danger: true })) return;
       const deletedIds = [];
       for (const sid of _selectedIds) {
         try {
@@ -1323,7 +1323,7 @@ function _initBulkSelect() {
       _exitSelectMode();
       if (window._suppressSidebarClose !== undefined) { window._suppressSidebarClose = true; setTimeout(() => { window._suppressSidebarClose = false; }, 1500); }
       await loadSessions();
-      uiModule.showToast(`${deletedIds.length} session(s) deleted`);
+      uiModule.showToast(window.t('{n} session(s) deleted', { n: deletedIds.length }));
     });
   }
 }
@@ -1484,7 +1484,7 @@ export async function loadSessions() {
     }
   } catch (error) {
     console.error('Error in loadSessions:', error);
-    uiModule.showError('Failed to load sessions: ' + error.message);
+    uiModule.showError(window.t('Failed to load sessions: {msg}', { msg: error.message }));
   }
 }
 
@@ -1546,7 +1546,7 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     if (sendBtn && sendBtn.dataset.mode === 'streaming') {
       sendBtn.dataset.mode = '';
       sendBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
-      sendBtn.title = 'Send message';
+      sendBtn.title = window.t('Send message');
     }
     // Deactivate compare mode on session switch
     if (window.compareModule) {
@@ -1573,7 +1573,7 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
 
     const currentMetaEl = uiModule.el('current-meta');
     if (currentMetaEl) {
-      currentMetaEl.textContent = meta ? meta.name : 'Odysseus Chat';
+      currentMetaEl.textContent = meta ? meta.name : window.t('Odysseus Chat');
     }
     // Update model picker visibility
     updateModelPicker();
@@ -1639,8 +1639,8 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     if (isOC) {
       if (window.chatModule && window.chatModule.showWelcomeScreen) window.chatModule.showWelcomeScreen();
       window.chatModule.addMessage('assistant',
-        `<p>\uD83E\uDD9E <strong>OpenClaw Agent Connected</strong></p>
-         <p>Messages will be routed through your OpenClaw agent. The agent has access to tools, memory, and skills configured in your OpenClaw workspace.</p>`,
+        `<p>\uD83E\uDD9E <strong>${window.t('OpenClaw Agent Connected')}</strong></p>
+         <p>${window.t('Messages will be routed through your OpenClaw agent. The agent has access to tools, memory, and skills configured in your OpenClaw workspace.')}</p>`,
         'OpenClaw');
     } else if (msgHistory.length) {
       for (const msg of msgHistory) {
@@ -1740,7 +1740,7 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
 
   } catch (error) {
     console.error('Error in selectSession:', error);
-    uiModule.showError('Failed to load session: ' + error.message);
+    uiModule.showError(window.t('Failed to load session: {msg}', { msg: error.message }));
   } finally {
     // Ensure memories are loaded after session selection
     if (window.memoryModule && window.memoryModule.loadMemories) {
@@ -1809,7 +1809,7 @@ export function createDirectChat(url, modelId, endpointId) {
   // Update current-meta header
   const metaEl = document.getElementById('current-meta');
   if (metaEl) {
-    metaEl.textContent = 'New Chat';
+    metaEl.textContent = window.t('New Chat');
   }
 
   // Enable input
@@ -1843,7 +1843,7 @@ export async function materializePendingSession() {
   try {
     res = await fetch(`${API_BASE}/api/session`, { method: 'POST', body: fd });
   } catch (e) {
-    uiModule.showError('Failed to reach backend: ' + e);
+    uiModule.showError(window.t('Failed to reach backend: {msg}', { msg: e }));
     return false;
   }
 
@@ -1855,7 +1855,7 @@ export async function materializePendingSession() {
   }
 
   if (!res.ok) {
-    uiModule.showError(`Session create failed (${res.status}) ${payload.detail || JSON.stringify(payload)}`);
+    uiModule.showError(window.t('Session create failed ({status}) {detail}', { status: res.status, detail: payload.detail || JSON.stringify(payload) }));
     return false;
   }
 
@@ -1944,10 +1944,10 @@ async function _onSessionListKeydown(e) {
     const s = sessions.find(x => x.id === sid);
     if (!s) return;
     if (s.is_important) {
-      uiModule.showToast('Unfavorite before deleting');
+      uiModule.showToast(window.t('Unfavorite before deleting'));
       return;
     }
-    const ok = await uiModule.styledConfirm('Delete this session?', { confirmText: 'Delete', danger: true });
+    const ok = await uiModule.styledConfirm(window.t('Delete this session?'), { confirmText: window.t('Delete'), danger: true });
     if (!ok) return;
     _sessionListFocused = true;
     (async () => {
@@ -2179,7 +2179,7 @@ async function _checkServerStream(sessionId) {
     const bodyDiv = holder.querySelector('.body');
 
     const spinnerMod = await import('./spinner.js');
-    const spinner = spinnerMod.default.create('Generating response...', 'right');
+    const spinner = spinnerMod.default.create(window.t('Generating response...'), 'right');
     bodyDiv.appendChild(spinner.createElement());
     spinner.start();
     box.appendChild(holder);
@@ -2368,7 +2368,7 @@ async function _arcPeekOpen(sid) {
     // Find the archived session metadata
     const meta = _arc.data.find(s => s.id === sid);
     const metaEl = document.getElementById('current-meta');
-    if (metaEl) metaEl.textContent = (meta?.name || 'Archived') + ' (archived)';
+    if (metaEl) metaEl.textContent = (meta?.name || window.t('Archived')) + ' ' + window.t('(archived)');
 
     // Render the chat history
     const chatBox = document.getElementById('chat-history');
@@ -2388,7 +2388,7 @@ async function _arcPeekOpen(sid) {
     if (window.uiModule) window.uiModule.scrollHistory();
   } catch (e) {
     console.error('Peek open failed:', e);
-    uiModule.showError('Failed to open archived session');
+    uiModule.showError(window.t('Failed to open archived session'));
   }
 }
 
@@ -2405,21 +2405,21 @@ async function _arcRestore(sid) {
     if (!res.ok) throw new Error('Failed');
     _arcRemove(sid);
     _arcRefreshUI();
-    uiModule.showToast('Session restored');
+    uiModule.showToast(window.t('Session restored'));
     loadSessions();
-  } catch { uiModule.showError('Failed to restore session'); }
+  } catch { uiModule.showError(window.t('Failed to restore session')); }
 }
 
 async function _arcDelete(sid) {
-  if (!await window.styledConfirm('Delete this session permanently?', { confirmText: 'Delete', danger: true })) return;
+  if (!await window.styledConfirm(window.t('Delete this session permanently?'), { confirmText: window.t('Delete'), danger: true })) return;
   try {
     const res = await fetch(`${API_BASE}/api/session/${sid}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('Failed');
     await _animateSessionRowsRemoving([sid], '#archive-grid .archive-row[data-session-id]');
     _arcRemove(sid);
     _arcRefreshUI();
-    uiModule.showToast('Session deleted');
-  } catch { uiModule.showError('Failed to delete session'); }
+    uiModule.showToast(window.t('Session deleted'));
+  } catch { uiModule.showError(window.t('Failed to delete session')); }
 }
 
 function _arcRemove(sid) {
@@ -2439,14 +2439,14 @@ async function _arcBulkRestore() {
   }
   _arc.selected.clear();
   _arcRefreshUI();
-  uiModule.showToast(`${ids.length} session${ids.length > 1 ? 's' : ''} restored`);
+  uiModule.showToast(window.t('{n} session(s) restored', { n: ids.length }));
   loadSessions();
 }
 
 async function _arcBulkDelete() {
   const ids = [..._arc.selected];
   if (!ids.length) return;
-  const ok = await uiModule.styledConfirm(`Delete ${ids.length} session${ids.length > 1 ? 's' : ''} permanently?`, { confirmText: 'Delete', danger: true });
+  const ok = await uiModule.styledConfirm(window.t('Delete {n} session(s) permanently?', { n: ids.length }), { confirmText: window.t('Delete'), danger: true });
   if (!ok) return;
   const deletedIds = [];
   for (const sid of ids) {
@@ -2461,7 +2461,7 @@ async function _arcBulkDelete() {
   await _animateSessionRowsRemoving(deletedIds, '#archive-grid .archive-row[data-session-id]');
   _arc.selected.clear();
   _arcRefreshUI();
-  uiModule.showToast(`${deletedIds.length} session${deletedIds.length > 1 ? 's' : ''} deleted`);
+  uiModule.showToast(window.t('{n} session(s) deleted', { n: deletedIds.length }));
 }
 
 function _arcToggleSelectMode() {
@@ -2475,9 +2475,9 @@ function _arcUpdateBulkBar() {
   const count = document.getElementById('archive-selected-count');
   const selectBtn = document.getElementById('archive-select-btn');
   if (bar) bar.classList.toggle('hidden', !_arc.selectMode);
-  if (count) count.textContent = `${_arc.selected.size} selected`;
+  if (count) count.textContent = window.t('{n} selected', { n: _arc.selected.size });
   if (selectBtn) {
-    selectBtn.textContent = _arc.selectMode ? 'Cancel' : 'Select';
+    selectBtn.textContent = _arc.selectMode ? window.t('Cancel') : window.t('Select');
     selectBtn.classList.toggle('active', _arc.selectMode);
   }
 }

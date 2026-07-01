@@ -195,16 +195,18 @@ export function formatElapsed(ms) {
 }
 
 export function formatPhase(progress, maxRounds) {
-  if (!progress || !progress.phase) return 'Starting...';
+  if (!progress || !progress.phase) return window.t('Starting...');
   const p = progress;
-  const rn = p.round ? (maxRounds ? `Round ${p.round}/${maxRounds}: ` : `Round ${p.round}: `) : '';
+  const rn = p.round
+    ? (maxRounds ? window.t('Round {round}/{maxRounds}: ', { round: p.round, maxRounds }) : window.t('Round {round}: ', { round: p.round }))
+    : '';
   switch (p.phase) {
-    case 'probing': return 'Probing model...';
-    case 'planning': return 'Planning research strategy...';
-    case 'searching': return `${rn}Searching (${p.queries || 0} queries)`;
-    case 'reading': return `${rn}Reading ${p.total_sources || 0} sources`;
-    case 'analyzing': return `${rn}Analyzing ${p.total_findings || 0} findings`;
-    case 'writing': return `Writing report -- ${p.total_sources || 0} sources`;
+    case 'probing': return window.t('Probing model...');
+    case 'planning': return window.t('Planning research strategy...');
+    case 'searching': return `${rn}${window.t('Searching ({queries} queries)', { queries: p.queries || 0 })}`;
+    case 'reading': return `${rn}${window.t('Reading {n} sources', { n: p.total_sources || 0 })}`;
+    case 'analyzing': return `${rn}${window.t('Analyzing {n} findings', { n: p.total_findings || 0 })}`;
+    case 'writing': return window.t('Writing report -- {n} sources', { n: p.total_sources || 0 });
     default: return p.phase;
   }
 }
@@ -307,7 +309,7 @@ function _finishJob(job, status) {
   job.elapsed = Date.now() - (job.startedAt || Date.now());
   if (status === 'done') {
     if ('Notification' in window && Notification.permission === 'granted') {
-      try { new Notification('Research Complete', { body: job.query.slice(0, 80) }); } catch {}
+      try { new Notification(window.t('Research Complete'), { body: job.query.slice(0, 80) }); } catch {}
     }
     if (_onCompleteCb) _onCompleteCb(job);
   }
