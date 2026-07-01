@@ -17,4 +17,21 @@ registerMessages('pt-BR', {
   'Analyzing {n} findings': 'Analisando {n} achados',
   'Writing report -- {n} sources': 'Escrevendo relatório -- {n} fontes',
   'Research Complete': 'Pesquisa concluída',
+
+  // --- researchSynapse.js ---
+  'verifying model': 'verificando modelo',
+  'planning strategy': 'planejando estratégia',
+  'searching': 'buscando',
+  'reading sources': 'lendo fontes',
+  'analyzing findings': 'analisando achados',
+  'writing report': 'escrevendo relatório',
+  'error': 'erro',
+  'complete': 'concluido',
+  'starting…': 'iniciando…',
+  'round': 'rodada',
+  'sources': 'fontes',
+  'query': 'consulta',
+  '{n} queries': '{n} consultas',
+  'reading: {title}': 'lendo: {title}',
+  '{n} findings': '{n} achados',
 });
