@@ -3607,16 +3607,31 @@ async def stream_agent_loop(
                         await _progress_q.put(None)
 
                 _tool_task = asyncio.create_task(_run_tool())
-                # Drain progress events as they arrive — block until the
-                # next event OR the tool finishes (sentinel = None).
-                while True:
-                    evt = await _progress_q.get()
-                    if evt is None:
-                        break
-                    yield (
-                        f'data: {json.dumps({"type": "tool_progress", "tool": block.tool_type, "round": round_num, **evt})}\n\n'
-                    )
-                desc, result = await _tool_task
+                try:
+                    # Drain progress events as they arrive — block until the
+                    # next event OR the tool finishes (sentinel = None).
+                    while True:
+                        evt = await _progress_q.get()
+                        if evt is None:
+                            break
+                        yield (
+                            f'data: {json.dumps({"type": "tool_progress", "tool": block.tool_type, "round": round_num, **evt})}\n\n'
+                        )
+                    desc, result = await _tool_task
+                finally:
+                    # If the SSE client disconnects (or this generator is
+                    # otherwise closed) while we're awaiting a progress event
+                    # above, GeneratorExit is thrown in right here and the
+                    # `await _tool_task` on the line above never runs — the
+                    # task (and any subprocess execute_tool_block spawned for
+                    # bash/python tools) would otherwise keep running
+                    # orphaned with nothing left to await or cancel it.
+                    if not _tool_task.done():
+                        _tool_task.cancel()
+                        try:
+                            await _tool_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
 
             # A skill the model just loaded can prescribe tools that weren't
             # RAG-selected this turn (declared via requires_toolsets in its
