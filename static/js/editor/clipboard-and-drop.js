@@ -39,7 +39,7 @@ export function wireClipboardAndDrop({
     function pasteAsLayer(imgSource, label) {
       if (!state.editorOpen) return; // user closed mid-paste
       saveState();
-      const layer = createLayer(label || 'Pasted', imgSource.width, imgSource.height);
+      const layer = createLayer(label || window.t('Pasted'), imgSource.width, imgSource.height);
       layer.ctx.drawImage(imgSource, 0, 0);
       state.layers.push(layer);
       state.activeLayerId = layer.id;
@@ -48,14 +48,14 @@ export function wireClipboardAndDrop({
       if (tb) tb.querySelectorAll('.ge-tool-btn').forEach(b => b.classList.toggle('active', b.dataset.tool === 'move'));
       renderLayerPanel();
       composite();
-      uiModule.showToast('Pasted as new layer');
+      uiModule.showToast(window.t('Pasted as new layer'));
     }
 
     // Check internal clipboard first (from Ctrl+C lasso/wand).
     if (state.internalClipboard) {
       e.preventDefault();
       e.stopImmediatePropagation();
-      pasteAsLayer(state.internalClipboard, 'Pasted Selection');
+      pasteAsLayer(state.internalClipboard, window.t('Pasted Selection'));
       return;
     }
 
@@ -69,7 +69,7 @@ export function wireClipboardAndDrop({
       const blob = item.getAsFile();
       const url = URL.createObjectURL(blob);
       const img = new Image();
-      img.onload = () => { pasteAsLayer(img, 'Pasted'); URL.revokeObjectURL(url); };
+      img.onload = () => { pasteAsLayer(img, window.t('Pasted')); URL.revokeObjectURL(url); };
       img.src = url;
       break;
     }
@@ -89,7 +89,7 @@ export function wireClipboardAndDrop({
     if (!ov) {
       ov = document.createElement('div');
       ov.className = 'ge-drop-overlay';
-      ov.innerHTML = '<div class="ge-drop-overlay-msg">Drop image to add as new layer</div>';
+      ov.innerHTML = `<div class="ge-drop-overlay-msg">${window.t('Drop image to add as new layer')}</div>`;
       dropZone.appendChild(ov);
     }
     ov.style.display = '';

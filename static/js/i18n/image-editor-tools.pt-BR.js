@@ -243,4 +243,13 @@ registerMessages('pt-BR', {
   'Erase mask': 'Apagar mascara',
   'Paint mask': 'Pintar mascara',
   'Stroke': 'Traco',
+
+  // canvas-transforms.js
+  'Rotate {deg}°': 'Girar {deg}°',
+
+  // clipboard-and-drop.js
+  'Pasted': 'Colado',
+  'Pasted Selection': 'Selecao colada',
+  'Pasted as new layer': 'Colado como nova camada',
+  'Drop image to add as new layer': 'Solte a imagem para adicionar como nova camada',
 });
