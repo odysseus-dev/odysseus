@@ -220,4 +220,11 @@ registerMessages('pt-BR', {
   'Failed to update album': 'Falha ao atualizar album',
   'Added to album': 'Adicionado ao album',
   'Removed from album': 'Removido do album',
+
+  // gallery.js — round 10 (modal header/tabs)
+  'Gallery': 'Galeria',
+  'Photos': 'Fotos',
+  'Albums': 'Albuns',
+  'Close edit': 'Fechar edicao',
+  'Settings': 'Configuracoes',
 });
