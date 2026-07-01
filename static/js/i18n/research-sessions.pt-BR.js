@@ -114,4 +114,15 @@ registerMessages('pt-BR', {
   '+ New Folder': '+ Nova pasta',
   'Name this folder:': 'Nomeie esta pasta:',
   'e.g. Work, Research, Drafts': 'ex.: Trabalho, Pesquisa, Rascunhos',
+
+  // --- sessions.js: session list item + dropdown menu ---
+  'Drag to reorder': 'Arraste para reordenar',
+  '[archived]': '[arquivado]',
+  'Session actions': 'Ações da sessão',
+  'Copy Chat': 'Copiar conversa',
+  'No messages to copy': 'Nenhuma mensagem para copiar',
+  'You': 'Você',
+  'AI': 'IA',
+  'Chat copied to clipboard': 'Conversa copiada para a área de transferência',
+  'Failed to copy chat': 'Falha ao copiar conversa',
 });

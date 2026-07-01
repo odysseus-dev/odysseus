@@ -283,7 +283,7 @@ function createSessionItem(s) {
   const handle = document.createElement('span');
   handle.className = 'item-drag-handle';
   handle.textContent = '\u22EE\u22EE';
-  handle.title = 'Drag to reorder';
+  handle.title = window.t('Drag to reorder');
   div.appendChild(handle);
 
   // Provider dot indicator
@@ -324,7 +324,7 @@ function createSessionItem(s) {
   // Favorite bookmark replaces session-icon when important
   if (s.is_important && !isOpenClaw) {
     icon.className = 'session-icon session-fav';
-    icon.title = 'Unfavorite';
+    icon.title = window.t('Unfavorite');
     icon.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
     icon.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -332,7 +332,7 @@ function createSessionItem(s) {
       fd.append('important', false);
       await fetch(`${API_BASE}/api/session/${s.id}/important`, { method: 'POST', body: fd });
       s.is_important = false;
-      uiModule.showToast('Unfavorited');
+      uiModule.showToast(window.t('Unfavorited'));
       renderSessionList();
     });
   }
@@ -345,7 +345,7 @@ function createSessionItem(s) {
   if (_isGroup) chatTitle = chatTitle.replace(/^\[GRP\]\s*/, '');
   let label = chatTitle;
   if (s.model) label += ' · ' + s.model.split('/').pop();
-  if (s.archived) label += ' [archived]';
+  if (s.archived) label += ' ' + window.t('[archived]');
   span.textContent = label;
   span.title = (s.model ? s.model.split('/').pop() + ' · ' : '') + chatTitle;
   span.classList.add('text-ellipsis');
@@ -370,7 +370,7 @@ function createSessionItem(s) {
           fd.append('name', newName);
           await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'PATCH', body: fd });
           s.name = newName;
-          uiModule.showToast('Renamed');
+          uiModule.showToast(window.t('Renamed'));
         }
         _forceSidebarOpen();
         renderSessionList();
@@ -444,7 +444,7 @@ function createSessionItem(s) {
   // Create a dropdown menu button
   const menuBtn = document.createElement('button');
   menuBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
-  menuBtn.title = 'Session actions';
+  menuBtn.title = window.t('Session actions');
   menuBtn.className = 'hamburger session-menu-btn';
 
   // Create dropdown menu
@@ -460,15 +460,15 @@ function createSessionItem(s) {
 
   const renameItem = document.createElement('div');
   renameItem.className = 'dropdown-item-compact';
-  renameItem.innerHTML = _icon(_renameIcon) + '<span>Rename</span>';
+  renameItem.innerHTML = _icon(_renameIcon) + '<span>' + window.t('Rename') + '</span>';
 
   const archiveItem = document.createElement('div');
   archiveItem.className = 'dropdown-item-compact';
-  archiveItem.innerHTML = _icon(_archiveIcon) + '<span>Archive</span>';
+  archiveItem.innerHTML = _icon(_archiveIcon) + '<span>' + window.t('Archive') + '</span>';
 
   const deleteItem = document.createElement('div');
   deleteItem.className = 'dropdown-item-compact dropdown-item-danger';
-  deleteItem.innerHTML = _icon(_deleteIcon) + '<span>Delete</span><span class="dropdown-shortcut">' + _mod + '+Alt+D</span>';
+  deleteItem.innerHTML = _icon(_deleteIcon) + '<span>' + window.t('Delete') + '</span><span class="dropdown-shortcut">' + _mod + '+Alt+D</span>';
 
 
 
@@ -481,7 +481,7 @@ function createSessionItem(s) {
       : '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
     const starItem = document.createElement('div');
     starItem.className = 'dropdown-item-compact';
-    starItem.innerHTML = _icon(_favIcon) + '<span>' + (s.is_important ? 'Unfavorite' : 'Favorite') + '</span><span class="dropdown-shortcut">' + _mod + '+Alt+F</span>';
+    starItem.innerHTML = _icon(_favIcon) + '<span>' + (s.is_important ? window.t('Unfavorite') : window.t('Favorite')) + '</span><span class="dropdown-shortcut">' + _mod + '+Alt+F</span>';
     starItem.addEventListener('click', async (e) => {
       e.stopPropagation();
       const newVal = !s.is_important;
@@ -497,7 +497,7 @@ function createSessionItem(s) {
 
   const copyItem = document.createElement('div');
   copyItem.className = 'dropdown-item-compact';
-  copyItem.innerHTML = _icon(_copyIcon) + '<span>Copy Chat</span>';
+  copyItem.innerHTML = _icon(_copyIcon) + '<span>' + window.t('Copy Chat') + '</span>';
   copyItem.addEventListener('click', async (e) => {
     e.stopPropagation();
     dropdown.style.display = 'none';
@@ -505,11 +505,11 @@ function createSessionItem(s) {
       const res = await fetch(`${API_BASE}/api/history/${s.id}`);
       const data = await res.json();
       const msgs = data.history || [];
-      if (!msgs.length) { uiModule.showToast('No messages to copy'); return; }
+      if (!msgs.length) { uiModule.showToast(window.t('No messages to copy')); return; }
       const lines = msgs
         .filter(m => m.role === 'user' || m.role === 'assistant')
         .map(m => {
-          const label = m.role === 'user' ? 'You' : 'AI';
+          const label = m.role === 'user' ? window.t('You') : window.t('AI');
           const text = typeof m.content === 'string' ? m.content.trim() : JSON.stringify(m.content);
           return `${label}: ${text}`;
         });
@@ -526,10 +526,10 @@ function createSessionItem(s) {
         document.execCommand('copy');
         ta.remove();
       }
-      uiModule.showToast('Chat copied to clipboard');
+      uiModule.showToast(window.t('Chat copied to clipboard'));
     } catch (e) {
       console.error('Copy chat failed:', e);
-      uiModule.showError('Failed to copy chat');
+      uiModule.showError(window.t('Failed to copy chat'));
     }
   });
 
@@ -539,7 +539,7 @@ function createSessionItem(s) {
   if (!isOpenClaw) {
     const selectMoreItem = document.createElement('div');
     selectMoreItem.className = 'dropdown-item-compact';
-    selectMoreItem.innerHTML = _icon('<span style="font-size:16px;line-height:1;">●</span>') + '<span>Select</span>';
+    selectMoreItem.innerHTML = _icon('<span style="font-size:16px;line-height:1;">●</span>') + '<span>' + window.t('Select') + '</span>';
     selectMoreItem.addEventListener('click', (e) => {
       e.stopPropagation();
       dropdown.style.display = 'none';
