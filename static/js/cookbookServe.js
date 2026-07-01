@@ -1292,20 +1292,20 @@ function _rerenderCachedModels() {
       // (llama.cpp GPU/CPU toggle, llamacpp-only). GPUs lives next to
       // GPU Mem so "which devices + how much" sit adjacent. Max Seqs
       // follows Context per the "request-shape" cluster.
-      panelHtml += `<label>${_l('Dtype','Data type for weights. auto picks best for GPU')}<select class="hwfit-sf" data-field="dtype">${dtypeOpts}</select></label>`;
-      panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('TP','Tensor Parallelism — split model across N GPUs')}<select class="hwfit-sf" data-field="tp">${tpOpts}</select></label>`;
+      panelHtml += `<label>${_l(window.t('Dtype'), window.t('Data type for weights. auto picks best for GPU'))}<select class="hwfit-sf" data-field="dtype">${dtypeOpts}</select></label>`;
+      panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l(window.t('TP'), window.t('Tensor Parallelism — split model across N GPUs'))}<select class="hwfit-sf" data-field="tp">${tpOpts}</select></label>`;
       // ctx resets to the model's max on every panel open (the real ctx slider
       // lives in the Scan/Download toolbar — see cookbook.js .hwfit-ctx-control).
       const _knownCtxDefault = _knownModelContextMax({ ...m, repo_id: repo });
       const _ctxDefault = _knownCtxDefault ? String(_knownCtxDefault) : (m.context_length || m.context || '20000');
       const _ctxSavedValue = sv('ctx', _ctxDefault);
       const _ctxValue = _isMiniMaxMSeries && ['20000', '32768'].includes(String(_ctxSavedValue)) ? _ctxDefault : _ctxSavedValue;
-      panelHtml += `<label class="hwfit-context-label">${_l('Context','Max tokens per request. Calculate suggests a value from model limit + selected GPU VRAM; edit manually to override.')}<span class="hwfit-context-control"><input type="text" class="hwfit-sf" data-field="ctx" value="${esc(_ctxValue)}" /><button type="button" class="hwfit-context-calc-btn cookbook-btn" title="Calculate and use suggested context from scanned hardware">Auto</button></span><span class="hwfit-auto-ctx-note"></span></label>`;
-      panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('Max Seqs','Maximum concurrent requests. Lower = less memory. Default 4 — prosumer GPUs often OOM on vLLM default 256 during CUDA graph capture.')}<input type="text" class="hwfit-sf" data-field="max_seqs" value="${esc(sv('max_seqs', '4'))}" placeholder="4" /></label>`;
+      panelHtml += `<label class="hwfit-context-label">${_l(window.t('Context'), window.t('Max tokens per request. Calculate suggests a value from model limit + selected GPU VRAM; edit manually to override.'))}<span class="hwfit-context-control"><input type="text" class="hwfit-sf" data-field="ctx" value="${esc(_ctxValue)}" /><button type="button" class="hwfit-context-calc-btn cookbook-btn" title="${window.t('Calculate and use suggested context from scanned hardware')}">${window.t('Auto')}</button></span><span class="hwfit-auto-ctx-note"></span></label>`;
+      panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l(window.t('Max Seqs'), window.t('Maximum concurrent requests. Lower = less memory. Default 4 — prosumer GPUs often OOM on vLLM default 256 during CUDA graph capture.'))}<input type="text" class="hwfit-sf" data-field="max_seqs" value="${esc(sv('max_seqs', '4'))}" placeholder="4" /></label>`;
       // GPU "auto" field removed — the GPU button strip below already
       // writes data-field="gpus" (the canonical comma-separated device
       // list) and the command builders now read from that single source.
-      panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('GPU Mem','Fraction of GPU memory (0.0–1.0). Lower if OOM')}<input type="text" class="hwfit-sf" data-field="gpu_mem" value="${esc(sv('gpu_mem', _isMiniMaxMSeries ? '0.95' : '0.90'))}" /></label>`;
+      panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l(window.t('GPU Mem'), window.t('Fraction of GPU memory (0.0–1.0). Lower if OOM'))}<input type="text" class="hwfit-sf" data-field="gpu_mem" value="${esc(sv('gpu_mem', _isMiniMaxMSeries ? '0.95' : '0.90'))}" /></label>`;
       panelHtml += `</div>`;
       // ── Advanced (collapsed by default) ──
       // Everything below the fold is tuning users only touch occasionally:
