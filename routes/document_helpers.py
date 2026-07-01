@@ -35,11 +35,15 @@ class DocumentPatch(BaseModel):
     title: Optional[str] = None
     language: Optional[str] = None
     session_id: Optional[str] = None  # link/unlink document to a session
+    # File into / out of a folder. None = leave unchanged; "" / "__none__" =
+    # unfile (folder_id -> NULL); any other value = a folder id to move into.
+    folder_id: Optional[str] = None
 
 
 # ---- Helpers ----
 
 def _doc_to_dict(doc: Document) -> Dict[str, Any]:
+    _folder = getattr(doc, "folder", None)
     return {
         "id": doc.id,
         "session_id": doc.session_id,
@@ -49,6 +53,9 @@ def _doc_to_dict(doc: Document) -> Dict[str, Any]:
         "version_count": doc.version_count,
         "is_active": doc.is_active,
         "archived": bool(getattr(doc, "archived", False)),
+        # Folder filing: id (or null) + resolved name (or null) for display.
+        "folder_id": getattr(doc, "folder_id", None),
+        "folder_name": _folder.name if _folder is not None else None,
         "created_at": (doc.created_at.isoformat() + "Z") if doc.created_at else None,
         "updated_at": (doc.updated_at.isoformat() + "Z") if doc.updated_at else None,
         # Source-email provenance (set when doc was created from an email

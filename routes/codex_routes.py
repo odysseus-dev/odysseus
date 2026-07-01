@@ -455,7 +455,8 @@ def setup_codex_routes(
         offset, limit = _clamp_pagination(offset, limit)
         result = await _as_owner(
             request, owner, documents_library_endpoint,
-            request, search, language, sort, offset, limit, archived,
+            request, search=search, language=language, sort=sort,
+            offset=offset, limit=limit, archived=archived,
         )
         if isinstance(result, dict):
             docs = result.get("documents")

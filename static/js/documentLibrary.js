@@ -57,6 +57,14 @@ let _docsVisibleLimit = 20;  // chunked reveal (matches the Chats tab's 20)
 let _libraryLanguages = {};
 let _librarySessionCount = 0;
 let _libraryActiveLanguage = null;
+// ── Folder tree navigation ──
+// Where we are in the tree: null = root ("All documents", a file-manager home
+// showing the top-level folders AND the unfiled documents inline), else the id
+// of the folder we've drilled into.
+let _libraryCurrentFolder = null;
+let _libraryFolders = [];            // [{id,name,parent_id,depth,count,...}] — every folder the owner has
+let _libraryFolderIndex = new Map(); // id(str) -> folder object, rebuilt on every fetch
+let _libraryUnfiledCount = 0;        // documents that belong to no folder
 let _librarySort = 'recent';
 let _librarySearch = '';
 let _librarySearchDebounce = null;
@@ -191,6 +199,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     delete: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>',
     clone: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
     copy: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+    folder: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+    folderPlus: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>',
+    nofolder: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="9" y1="14" x2="15" y2="14"/></svg>',
+    rename: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>',
   };
 
   function _showLibDropdown(anchor, items, opts) {
@@ -201,9 +213,25 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     for (const item of items) {
       const row = document.createElement('div');
       row.className = 'dropdown-item-compact' + (item.danger ? ' dropdown-item-danger' : '');
+      // Tree pickers (Move to folder…) pass a depth so nested folders indent —
+      // one level = 14px. Uses inline !important so it beats the mobile
+      // `.dropdown-item-compact { padding: …!important }` touch-sizing rule.
+      if (item.depth) row.style.setProperty('padding-left', (10 + item.depth * 14) + 'px', 'important');
       const iconKey = item.icon || item.label.toLowerCase();
       const iconSvg = _LIB_DD_ICONS[iconKey] || '';
-      row.innerHTML = (iconSvg ? '<span class="dropdown-icon">' + iconSvg + '</span>' : '') + '<span>' + item.label + '</span>';
+      if (iconSvg) {
+        // Icon markup comes from our static _LIB_DD_ICONS map — safe to inject.
+        const iconSpan = document.createElement('span');
+        iconSpan.className = 'dropdown-icon';
+        iconSpan.innerHTML = iconSvg;
+        row.appendChild(iconSpan);
+      }
+      // Label via textContent, never innerHTML: a caller-supplied label (e.g. a
+      // document folder name, which can originate from agent/email/upload data)
+      // must never be able to inject HTML. Fixes stored XSS via folder names.
+      const labelSpan = document.createElement('span');
+      labelSpan.textContent = item.label;
+      row.appendChild(labelSpan);
       row.addEventListener('click', (e) => { e.stopPropagation(); teardown(); item.action(); });
       dd.appendChild(row);
     }
@@ -325,6 +353,21 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     if (_librarySearch) params.set('search', _librarySearch);
     if (_libraryActiveLanguage) params.set('language', _libraryActiveLanguage);
     if (_libraryArchivedView) params.set('archived', 'true');
+    // Folder scoping — Documents tab only, never on the archived view (whose
+    // rows aren't folder-organised). Inside a folder we send folder_id for its
+    // direct children; adding a search/language filter widens to a recursive
+    // subtree search. At the root, idle browsing sends unfiled=true so the loose
+    // (no-folder) documents list inline beneath the top-level folder tiles —
+    // nothing hides behind a click. Root + search stays global (no params).
+    if (!_libraryArchivedView) {
+      const _searching = !!(_librarySearch || _libraryActiveLanguage);
+      if (_libraryCurrentFolder) {
+        params.set('folder_id', _libraryCurrentFolder);
+        if (_searching) params.set('recursive', 'true');
+      } else if (!_searching) {
+        params.set('unfiled', 'true');
+      }
+    }
 
     try {
       const res = await fetch(`${API_BASE}/api/documents/library?${params}`);
@@ -340,8 +383,22 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       _libraryTotal = data.total;
       _libraryLanguages = data.languages;
       _librarySessionCount = data.session_count;
+      // Folder metadata is global (all of the owner's folders, including empty
+      // ones), so refresh it on every fetch — append or not. Server counts are
+      // the source of truth; we never hand-adjust them.
+      _libraryFolders = Array.isArray(data.folders) ? data.folders : [];
+      _libraryUnfiledCount = data.unfiled_count || 0;
+      // Rebuild the id -> folder index that backs the breadcrumb + tree tiles.
+      _libraryFolderIndex = new Map();
+      for (const f of _libraryFolders) _libraryFolderIndex.set(String(f.id), f);
+      // If the folder we were sitting in vanished (deleted elsewhere, e.g. by an
+      // agent), fall back to the root rather than stranding the view.
+      if (_libraryCurrentFolder && !_libraryFolderIndex.has(String(_libraryCurrentFolder))) {
+        _libraryCurrentFolder = null;
+      }
 
       libraryRenderStats();
+      libraryRenderBreadcrumb();
       libraryRenderLangChips();
       libraryRenderGrid();
       libraryRenderLoadMore();
@@ -354,7 +411,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     const el = document.getElementById('doclib-stats');
     if (!el) return;
     const totalAll = Object.values(_libraryLanguages).reduce((a, b) => a + b, 0);
-    if (_librarySearch || _libraryActiveLanguage) {
+    // `total` is scoped to the active folder/search/language, but the language
+    // facet (totalAll) is NOT folder-scoped. So when a folder filter is on, show
+    // "X of Y" rather than a bare count that wouldn't match the filtered grid.
+    if (_librarySearch || _libraryActiveLanguage || _libraryCurrentFolder) {
       el.textContent = `${_libraryTotal} of ${totalAll} document${totalAll !== 1 ? 's' : ''}`;
     } else {
       el.textContent = `${totalAll} document${totalAll !== 1 ? 's' : ''}`;
@@ -401,6 +461,196 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     }
   }
 
+  // ── Folder tree: derivations ──
+
+  // Direct child folders of `parentId` (null = top level), sorted by name.
+  function _libraryChildFolders(parentId) {
+    const pid = parentId == null ? null : String(parentId);
+    return _libraryFolders
+      .filter(f => (f.parent_id == null ? null : String(f.parent_id)) === pid)
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' }));
+  }
+
+  // Every folder in DFS order (parent before children), each tagged with a
+  // 0-based depth for indentation. Used by the "Move to folder…" tree picker.
+  function _libraryFolderTreeOrder() {
+    const byParent = new Map();
+    for (const f of _libraryFolders) {
+      const pid = f.parent_id == null ? '__root__' : String(f.parent_id);
+      if (!byParent.has(pid)) byParent.set(pid, []);
+      byParent.get(pid).push(f);
+    }
+    for (const arr of byParent.values()) {
+      arr.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' }));
+    }
+    const out = [];
+    const walk = (pid, depth) => {
+      for (const f of (byParent.get(pid) || [])) {
+        out.push({ folder: f, depth });
+        walk(String(f.id), depth + 1);
+      }
+    };
+    walk('__root__', 0);
+    return out;
+  }
+
+  // Breadcrumb path for `id`: [top-level ancestor, …, folder]. Climbs parent_id
+  // with a cycle guard so malformed data can't spin forever.
+  function _libraryFolderPath(id) {
+    const path = [];
+    let cur = id != null ? _libraryFolderIndex.get(String(id)) : null;
+    let guard = 0;
+    while (cur && guard++ < 100) {
+      path.unshift(cur);
+      cur = cur.parent_id != null ? _libraryFolderIndex.get(String(cur.parent_id)) : null;
+    }
+    return path;
+  }
+
+  // ── Folder tree: navigation ──
+
+  // Entering / leaving a folder clears any active search + language filter so
+  // the new location starts from a clean, browsable state (tiles, not results).
+  function _libraryResetFilters() {
+    _librarySearch = '';
+    _libraryActiveLanguage = null;
+    const si = document.getElementById('doclib-search');
+    if (si) si.value = '';
+    if (_librarySelectMode) libraryExitSelectMode();
+  }
+  function libraryEnterFolder(id) {
+    _libraryCurrentFolder = id != null ? String(id) : null;
+    _libraryResetFilters();
+    libraryFetch(false);
+  }
+  function libraryGoRoot() {
+    _libraryCurrentFolder = null;
+    _libraryResetFilters();
+    libraryFetch(false);
+  }
+
+  // ── Folder tree: breadcrumb ──
+  // "All documents > Folder > Subfolder" injected after the toolbar. Every
+  // segment but the last is clickable; the chevron separator is inline SVG (no
+  // emoji). Names go through textContent — folder names are user/agent/email
+  // data, so this preserves the anti-XSS guarantee across the new UI too.
+  function libraryRenderBreadcrumb() {
+    const wrap = document.getElementById('doclib-breadcrumb');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    // Root is the home view (folders + unfiled docs inline), so a lone
+    // "All documents" crumb would just be noise — only show once we've drilled in.
+    if (!_libraryCurrentFolder) return;
+
+    const sep = () => {
+      const s = document.createElement('span');
+      s.className = 'doclib-breadcrumb-sep';
+      s.setAttribute('aria-hidden', 'true');
+      s.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+      return s;
+    };
+    const seg = (label, onClick, isCurrent) => {
+      const el = document.createElement(onClick ? 'button' : 'span');
+      el.className = 'doclib-breadcrumb-seg' + (isCurrent ? ' current' : '');
+      el.textContent = label;                 // XSS-safe
+      if (onClick) {
+        el.type = 'button';
+        el.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+      }
+      return el;
+    };
+
+    // Root anchor — always clickable back to "All documents" (the home view
+    // that lists the unfiled documents inline).
+    wrap.appendChild(seg('All documents', () => libraryGoRoot(), false));
+
+    const path = _libraryFolderPath(_libraryCurrentFolder);
+    path.forEach((f, i) => {
+      wrap.appendChild(sep());
+      const isCurrent = i === path.length - 1;
+      wrap.appendChild(seg(f.name || 'Untitled', isCurrent ? null : () => libraryEnterFolder(f.id), isCurrent));
+    });
+  }
+
+  // ── Folder tree: tiles (rendered at the top of #doclib-grid when browsing) ──
+  // Each tile reuses the .doclib-card / .memory-item row frame, a monochrome
+  // folder SVG, and a .memory-count badge for the direct-document count.
+
+  function _libraryFolderTile(folder) {
+    const tile = document.createElement('div');
+    tile.className = 'doclib-card memory-item doclib-folder-tile';
+    tile.dataset.folderId = folder.id;
+    tile.setAttribute('role', 'button');
+    tile.tabIndex = 0;
+
+    const icon = document.createElement('span');
+    icon.className = 'doclib-folder-tile-icon';
+    icon.innerHTML = _LIB_DD_ICONS.folder;   // static SVG map — safe to inject
+
+    const label = document.createElement('span');
+    label.className = 'doclib-folder-tile-label memory-item-title';
+    label.textContent = folder.name || 'Untitled';   // XSS-safe
+
+    const count = document.createElement('span');
+    count.className = 'memory-count doclib-folder-tile-count';
+    count.textContent = String(folder.count || 0);
+
+    // "..." menu — Rename / New subfolder / Delete folder.
+    const actions = document.createElement('div');
+    actions.className = 'memory-item-actions';
+    const menuBtn = document.createElement('button');
+    menuBtn.className = 'memory-item-btn doclib-folder-tile-menu';
+    menuBtn.title = 'Folder actions';
+    menuBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
+    menuBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _showLibDropdown(menuBtn, [
+        { label: 'Rename', icon: 'rename', action: () => libraryRenameFolder(folder.id, folder.name) },
+        { label: 'New subfolder', icon: 'folderPlus', action: () => libraryCreateFolder(folder.id) },
+        { label: 'Delete folder', icon: 'delete', danger: true, action: () => libraryDeleteFolder(folder.id, folder.name) },
+      ]);
+    });
+    actions.appendChild(menuBtn);
+
+    tile.appendChild(icon);
+    tile.appendChild(label);
+    tile.appendChild(count);
+    tile.appendChild(actions);
+
+    const enter = () => libraryEnterFolder(folder.id);
+    tile.addEventListener('click', () => {
+      if (tile._suppressNextClick) { tile._suppressNextClick = false; return; }
+      enter();
+    });
+    tile.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); enter(); } });
+    _attachLongPressMenu(tile, '.doclib-folder-tile-menu');
+    return tile;
+  }
+
+  function _libraryNewFolderTile() {
+    const tile = document.createElement('div');
+    tile.className = 'doclib-card memory-item doclib-folder-tile doclib-folder-tile-new';
+    tile.setAttribute('role', 'button');
+    tile.tabIndex = 0;
+
+    const icon = document.createElement('span');
+    icon.className = 'doclib-folder-tile-icon';
+    icon.innerHTML = _LIB_DD_ICONS.folderPlus;
+
+    const label = document.createElement('span');
+    label.className = 'doclib-folder-tile-label memory-item-title';
+    label.textContent = 'New folder';
+
+    tile.appendChild(icon);
+    tile.appendChild(label);
+
+    // Creates under the folder we're currently browsing (null = a top-level one).
+    const create = () => libraryCreateFolder(_libraryCurrentFolder);
+    tile.addEventListener('click', create);
+    tile.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); create(); } });
+    return tile;
+  }
+
   function libraryRemoveDocumentFromState(docId) {
     const removed = _libraryDocs.find(d => String(d.id) === String(docId));
     _libraryDocs = _libraryDocs.filter(d => String(d.id) !== String(docId));
@@ -433,23 +683,52 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     // Drop any previous inline load-more — regenerated below alongside the list.
     if (grid.parentElement) grid.parentElement.querySelectorAll(':scope > .doclib-inline-load-more').forEach(b => b.remove());
 
+    const searching = !!(_librarySearch || _libraryActiveLanguage);
+    const atRoot = !_libraryCurrentFolder;
+    // Folder tiles show while idle-browsing the tree (at the root AND inside a
+    // folder); a search/language filter flattens to results and hides them, as
+    // does the archived view.
+    const showTiles = !searching && !_libraryArchivedView;
+
+    if (showTiles) {
+      for (const f of _libraryChildFolders(_libraryCurrentFolder)) grid.appendChild(_libraryFolderTile(f));
+      grid.appendChild(_libraryNewFolderTile());
+    }
+
+    // Documents. At the root (idle) these are the UNFILED docs, listed inline
+    // beneath the folder tiles — file-manager style, so nothing disappears
+    // behind a click. Inside a folder they're its direct docs; while searching
+    // they're the flattened results.
     if (_libraryDocs.length === 0) {
-      if (_librarySearch || _libraryActiveLanguage) {
-        grid.innerHTML = '<div class="doclib-empty">No documents match your search.</div>';
-      } else {
+      // Brand-new, empty library at the root: first-run import hint under the tile.
+      if (atRoot && !searching && !_libraryFolders.length && !_libraryUnfiledCount && _libraryTotal === 0) {
         const _impIco = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin:0 4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
-        grid.innerHTML =
-          '<div class="doclib-empty" style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;">' +
-            '<span>No documents yet</span>' +
-            '<span style="opacity:0.7;font-size:11px;">' +
-              '<a href="#" data-doclib-import style="color:var(--accent,var(--red));text-decoration:underline;">Import' + _impIco + '</a>' +
-              ' &middot; or create one in a session' +
-            '</span>' +
-          '</div>';
-        grid.querySelector('[data-doclib-import]')?.addEventListener('click', (e) => {
+        const cta = document.createElement('div');
+        cta.className = 'doclib-empty';
+        cta.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;';
+        cta.innerHTML =
+          '<span>No documents yet</span>' +
+          '<span style="opacity:0.7;font-size:11px;">' +
+            '<a href="#" data-doclib-import style="color:var(--accent,var(--red));text-decoration:underline;">Import' + _impIco + '</a>' +
+            ' &middot; or create one in a session' +
+          '</span>';
+        cta.querySelector('[data-doclib-import]')?.addEventListener('click', (e) => {
           e.preventDefault();
           document.getElementById('doclib-import-file-btn')?.click();
         });
+        grid.appendChild(cta);
+        return;
+      }
+      // Otherwise an explanatory empty line. At the root with folders present
+      // there simply are no loose docs — the tiles are enough, so no message.
+      let msg = '';
+      if (searching) msg = 'No documents match your search.';
+      else if (_libraryCurrentFolder) msg = 'No documents in this folder.';
+      if (msg) {
+        const d = document.createElement('div');
+        d.className = 'doclib-empty';
+        d.textContent = msg;   // XSS-safe; also sits below any subfolder tiles
+        grid.appendChild(d);
       }
       return;
     }
@@ -612,6 +891,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         const items = [];
         if (doc.session_id) items.push({ label: 'Open', action: () => libraryOpenInSession(doc) });
         items.push({ label: 'Clone', action: () => libraryImportDocument(doc) });
+        items.push({ label: 'Move to folder', icon: 'folder', action: () => _showFolderPicker(menuBtn, (id) => libraryMoveSingle(doc, id)) });
         _showLibDropdown(menuBtn, items, { onSelect: () => {
           libraryEnterSelectMode();
           _librarySelectedIds.add(doc.id);
@@ -698,6 +978,16 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     cloneItem.title = 'Clone to active session';
     cloneItem.addEventListener('click', (e) => { e.stopPropagation(); hideCardDropdown(); libraryImportDocument(doc); });
     dropdown.appendChild(cloneItem);
+
+    // Move to folder — opens the folder picker, then PATCHes this doc.
+    const _moveIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
+    const moveItem = document.createElement('button');
+    moveItem.className = 'dropdown-item-compact';
+    moveItem.style.cssText = 'background:none;border:none;width:100%;';
+    moveItem.innerHTML = _di(_moveIco) + '<span>Move to folder</span>';
+    moveItem.title = 'Move to a folder';
+    moveItem.addEventListener('click', (e) => { e.stopPropagation(); hideCardDropdown(); _showFolderPicker(menuBtn, (id) => libraryMoveSingle(doc, id)); });
+    dropdown.appendChild(moveItem);
 
     // Export
     const _exportIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
@@ -1356,6 +1646,182 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     if (uiModule) uiModule.showToast(`Exported ${_librarySelectedIds.size} document${_librarySelectedIds.size !== 1 ? 's' : ''}`);
   }
 
+  // ---- Document folders ----
+  // Flat, owner-scoped grouping for library documents. The chip row filters by
+  // folder; the picker moves docs into one. Every mutation refetches so the chip
+  // counts stay server-true rather than being hand-decremented.
+
+  // Dropdown picker showing the FULL folder tree (indented by depth) plus
+  // "(No folder)" and "New folder…". `onPick` receives a folder id, or
+  // '__none__' to unfile. Positioning + desktop-right / mobile-below behaviour
+  // and swipe-to-dismiss all come from _showLibDropdown, so this stays simple
+  // and robust across desktop / mobile / WebKit (a flat indented list rather
+  // than a nested submenu, which avoids sessions.js's chat-state coupling).
+  function _showFolderPicker(anchor, onPick) {
+    const items = [];
+    for (const { folder, depth } of _libraryFolderTreeOrder()) {
+      items.push({ label: `${folder.name} (${folder.count || 0})`, icon: 'folder', depth, action: () => onPick(folder.id) });
+    }
+    items.push({ label: '(No folder)', icon: 'nofolder', action: () => onPick('__none__') });
+    items.push({ label: 'New folder…', icon: 'folderPlus', action: async () => {
+      const newId = await libraryCreateFolder(_libraryCurrentFolder);
+      if (newId) onPick(newId);
+    } });
+    _showLibDropdown(anchor, items);
+  }
+
+  // Move a single document into a folder (or '__none__' to unfile). The frozen
+  // contract wants folder_id="<id>" to file and folder_id="" to unfile. We
+  // refetch afterwards so the doc drops out of the current view automatically
+  // when it moved elsewhere, and every folder count stays server-true.
+  async function libraryMoveSingle(doc, folderId) {
+    try {
+      const res = await fetch(`${API_BASE}/api/document/${doc.id}`, {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder_id: folderId === '__none__' ? '' : folderId }),
+      });
+      if (!res.ok) throw new Error('failed');
+      await libraryFetch(false);
+      if (uiModule) uiModule.showToast(folderId === '__none__' ? 'Removed from folder' : 'Moved to folder');
+    } catch {
+      if (uiModule) uiModule.showError('Failed to move document');
+    }
+  }
+
+  // Bulk move: pick a target folder once, then a single batch request. The
+  // frozen contract's move-documents endpoint takes folder_id=null to unfile,
+  // so '__none__' maps to null here. Refetch keeps counts + the grid true.
+  function libraryBulkMove() {
+    if (_librarySelectedIds.size === 0) return;
+    const anchor = document.getElementById('doclib-bulk-actions') || document.body;
+    _showFolderPicker(anchor, async (folderId) => {
+      const ids = [..._librarySelectedIds];
+      try {
+        const res = await fetch(`${API_BASE}/api/document-folders/move-documents`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ document_ids: ids, folder_id: folderId === '__none__' ? null : folderId }),
+        });
+        if (!res.ok) throw new Error('failed');
+        const data = await res.json().catch(() => ({}));
+        const n = data.count != null ? data.count : ids.length;
+        libraryExitSelectMode();
+        await libraryFetch(false);
+        if (uiModule) uiModule.showToast(`Moved ${n} document${n !== 1 ? 's' : ''}`);
+      } catch {
+        if (uiModule) uiModule.showError('Failed to move documents');
+      }
+    });
+  }
+
+  // Create a folder via styledPrompt, nested under `parentId` (defaults to the
+  // folder we're browsing; null = a new top-level folder). Returns the new
+  // folder id so the picker can chain a move into it; null on cancel / failure.
+  async function libraryCreateFolder(parentId = _libraryCurrentFolder) {
+    if (!uiModule || !uiModule.styledPrompt) return null;
+    const name = await uiModule.styledPrompt('Name your new folder', {
+      title: 'New folder',
+      placeholder: 'Folder name',
+      confirmText: 'Create',
+    });
+    const clean = (name || '').trim();
+    if (!clean) return null;
+    try {
+      const res = await fetch(`${API_BASE}/api/document-folders`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: clean, parent_id: parentId != null ? String(parentId) : null }),
+      });
+      if (res.status === 409) {
+        if (uiModule) uiModule.showToast('A folder with that name already exists');
+        return null;
+      }
+      if (!res.ok) {
+        // Surface the server's reason (e.g. the depth cap) instead of a
+        // generic failure; fall back to the generic message if absent.
+        let detail = '';
+        try { detail = ((await res.json()) || {}).detail || ''; } catch {}
+        if (uiModule) uiModule.showError(detail || 'Failed to create folder');
+        return null;
+      }
+      const data = await res.json();
+      await libraryFetch(false);
+      if (uiModule) uiModule.showToast(data.created === false ? 'Folder already exists' : 'Folder created');
+      return data.id;
+    } catch {
+      if (uiModule) uiModule.showError('Failed to create folder');
+      return null;
+    }
+  }
+
+  // Rename a folder. A 409 from the server means the new name collides.
+  async function libraryRenameFolder(id, oldName) {
+    if (!uiModule || !uiModule.styledPrompt) return;
+    const name = await uiModule.styledPrompt(`Rename "${oldName}"`, {
+      title: 'Rename folder',
+      defaultValue: oldName || '',
+      placeholder: 'Folder name',
+      confirmText: 'Rename',
+    });
+    const clean = (name || '').trim();
+    if (!clean || clean === oldName) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/document-folders/${id}`, {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: clean }),
+      });
+      if (res.status === 409) {
+        if (uiModule) uiModule.showError('A folder with that name already exists');
+        return;
+      }
+      if (!res.ok) throw new Error('failed');
+      await libraryFetch(false);
+      if (uiModule) uiModule.showToast('Folder renamed');
+    } catch {
+      if (uiModule) uiModule.showError('Failed to rename folder');
+    }
+  }
+
+  // Delete a folder — NON-destructive. The server moves its documents and any
+  // subfolders up to the deleted folder's parent (they are not deleted); the
+  // confirm copy says so. If we were inside the folder we just deleted, follow
+  // its contents up to the parent (new_parent_id) rather than snapping to root.
+  async function libraryDeleteFolder(id, name) {
+    const message = `Delete the folder "${name}"? Its documents and subfolders won't be deleted — they move up to the parent folder.`;
+    if (uiModule && uiModule.styledConfirm) {
+      const ok = await uiModule.styledConfirm(message, { confirmText: 'Delete folder', danger: true });
+      if (!ok) return;
+    } else if (!confirm(message)) {
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/document-folders/${id}`, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+      });
+      if (!res.ok) throw new Error('failed');
+      const data = await res.json().catch(() => ({}));
+      if (String(_libraryCurrentFolder) === String(id)) {
+        _libraryCurrentFolder = data.new_parent_id != null ? String(data.new_parent_id) : null;
+      }
+      await libraryFetch(false);
+      if (uiModule) {
+        const n = data.reparented_docs || 0;
+        uiModule.showToast(n > 0
+          ? `Folder deleted · ${n} document${n !== 1 ? 's' : ''} moved up`
+          : 'Folder deleted');
+      }
+    } catch {
+      if (uiModule) uiModule.showError('Failed to delete folder');
+    }
+  }
+
   /** Lazy-load SheetJS for spreadsheet parsing */
   let _xlsxReady = null;
   function ensureXLSX() {
@@ -1587,6 +2053,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     _librarySelectedIds.clear();
     _librarySearch = '';
     _libraryActiveLanguage = null;
+    _libraryCurrentFolder = null;
     _librarySort = 'recent';
     _libraryOffset = 0;
     _libraryDocs = [];
@@ -1711,10 +2178,12 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
                 </select>
                 <button class="memory-toolbar-btn" id="doclib-select-btn" title="Select documents">Select</button>
                 <button class="memory-toolbar-btn" id="doclib-tidy-btn" title="Tidy: remove empty / junk / duplicate documents">Tidy</button>
+                <button class="memory-toolbar-btn" id="doclib-new-folder-btn" title="Create a new folder"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg> New folder</button>
               </div>
               <input type="text" id="doclib-search" placeholder="Search titles &amp; content\u2026" class="memory-search-input" />
               <div id="doclib-chips" class="doclib-lang-chips"></div>
             </div>
+            <div id="doclib-breadcrumb" class="doclib-breadcrumb"></div>
             <input type="file" id="doclib-file-input" multiple style="display:none" />
             <div id="doclib-bulk-bar" class="memory-bulk-bar hidden" style="margin-bottom:5px;">
               <label class="memory-bulk-check-all" style="position:relative;top:0px;left:1px;"><input type="checkbox" id="doclib-select-all" /> All</label>
@@ -3241,6 +3710,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       });
     }
 
+    // New folder button — create a folder, then refresh from the server.
+    const newFolderBtn = document.getElementById('doclib-new-folder-btn');
+    if (newFolderBtn) newFolderBtn.addEventListener('click', () => { libraryCreateFolder(); });
+
     // Archived toggle — flip the Documents list between active and archived.
     const archivedBtn = document.getElementById('doclib-archived-btn');
     if (archivedBtn) archivedBtn.addEventListener('click', () => {
@@ -3349,6 +3822,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       }
       _showLibDropdown(e.currentTarget, [
         { label: _libraryArchivedView ? 'Restore' : 'Archive', icon: _libraryArchivedView ? 'restore' : 'archive', action: libraryBulkArchive },
+        { label: 'Move to folder', icon: 'folder', action: libraryBulkMove },
         { label: 'Clone', icon: 'clone', action: libraryBulkClone },
         { label: 'Export', icon: 'open', action: libraryBulkExport },
         { label: 'Delete', icon: 'delete', danger: true, action: libraryBulkDelete },

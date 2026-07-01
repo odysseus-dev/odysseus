@@ -2,16 +2,23 @@
 
 import uuid
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Form
 
 from sqlalchemy import case, func, or_
-from core.database import SessionLocal, Document, DocumentVersion
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import joinedload
+from core.database import SessionLocal, Document, DocumentVersion, DocumentFolder
 from core.database import Session as DbSession
 from src.auth_helpers import get_current_user, _auth_disabled
-from src.constants import MAIL_ATTACHMENTS_DIR
+from src.constants import MAIL_ATTACHMENTS_DIR, DOCUMENT_FOLDER_MAX_DEPTH
+from src.document_folders import (
+    find_or_create_folder, normalize_folder_name, folder_to_dict,
+    _folder_depth, _descendant_ids, _subtree_height,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +45,108 @@ def _aggregate_language_facets(lang_rows):
         key = lang or "text"
         out[key] = out.get(key, 0) + cnt
     return out
+
+
+def _owner_folder_filter(q, user):
+    """Restrict a DocumentFolder query to the caller.
+
+    Mirrors _owner_session_filter exactly: passthrough in single-user / no-auth
+    mode (falsey user), fail closed for an auth-enabled null user, else match
+    the folder owner strictly.
+    """
+    if not user:
+        if user == "" or _auth_disabled():
+            return q
+        return q.filter(False)
+    return q.filter(DocumentFolder.owner == user)
+
+
+# Per-owner lock serializing the read-validate-commit of a folder MOVE
+# (reparent). Two concurrent moves of the same owner (e.g. A->B and B->A) would
+# otherwise each validate anti-cycle against a stale pre-write snapshot and both
+# commit, producing a cycle with the subtree orphaned from every root. Holding
+# this across load+validate+commit forces the second move to read the first's
+# COMMITTED state, so its existing anti-cycle check fires. Single-process uvicorn
+# deployment => an in-process lock covers all concurrency; keyed by owner so
+# unrelated owners never contend. Only the MOVE path takes it (create/rename/
+# delete can't introduce a cycle).
+_move_locks_guard = threading.Lock()
+_move_locks: Dict[str, threading.Lock] = {}
+
+
+def _owner_move_lock(user) -> threading.Lock:
+    key = user if user is not None else "\x00__no_owner__"
+    with _move_locks_guard:
+        lock = _move_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _move_locks[key] = lock
+        return lock
+
+
+def _load_owner_folders(db, user):
+    """All of the caller's folders (owner-scoped). Small set — loaded whole for
+    the in-Python tree math (depth <= DOCUMENT_FOLDER_MAX_DEPTH), never a
+    recursive SQL walk."""
+    return _owner_folder_filter(db.query(DocumentFolder), user).all()
+
+
+def _direct_folder_count(db, folder_id, user, archived: bool) -> int:
+    """Direct (non-recursive) count of one folder's active, non-archived docs,
+    owner-scoped — matches the per-folder count the facet computes in bulk."""
+    _arch_cond = (Document.archived == True) if archived else or_(
+        Document.archived == False, Document.archived.is_(None))
+    q = (
+        db.query(func.count(Document.id))
+        .filter(Document.folder_id == folder_id)
+        .filter(Document.is_active == True).filter(_arch_cond)
+    )
+    q = _owner_session_filter(q, user)
+    return q.scalar() or 0
+
+
+def _folder_facets(db, user, archived: bool) -> Dict[str, Any]:
+    """Per-folder document counts + unfiled count for the library sidebar.
+
+    Counts are DIRECT (per folder, not recursive), use the archived/active +
+    owner scope, and are INDEPENDENT of the active search/language/folder-scope
+    filters, so the sidebar tree stays stable as the user filters the list.
+    Returns every folder the caller owns, including empty ones (count 0), each
+    with its 1-based tree depth and parent_id.
+    """
+    _arch_cond = (Document.archived == True) if archived else or_(
+        Document.archived == False, Document.archived.is_(None))
+
+    # Per-folder counts (only rows that ARE filed; unfiled handled separately).
+    count_q = (
+        db.query(Document.folder_id, func.count(Document.id))
+        .filter(Document.is_active == True).filter(_arch_cond)
+        .filter(Document.folder_id.isnot(None))
+    )
+    count_q = _owner_session_filter(count_q, user)
+    counts = dict(count_q.group_by(Document.folder_id).all())
+
+    # Documents with no folder, under the same scope.
+    unfiled_q = (
+        db.query(func.count(Document.id))
+        .filter(Document.is_active == True).filter(_arch_cond)
+        .filter(Document.folder_id.is_(None))
+    )
+    unfiled_q = _owner_session_filter(unfiled_q, user)
+    unfiled_count = unfiled_q.scalar() or 0
+
+    # ALL of the owner's folders, sorted by name, empties included. Depth is
+    # computed in Python from the owner's own parent map (bounded by the max
+    # depth), so the sidebar never issues a recursive SQL walk.
+    folder_rows = _owner_folder_filter(
+        db.query(DocumentFolder), user
+    ).order_by(DocumentFolder.name.asc()).all()
+    parent_by_id = {f.id: f.parent_id for f in folder_rows}
+    folders = [
+        folder_to_dict(f, counts.get(f.id, 0), depth=_folder_depth(f.id, parent_by_id))
+        for f in folder_rows
+    ]
+    return {"folders": folders, "unfiled_count": unfiled_count}
 
 
 def _library_language_for_document(doc: Document) -> str:
@@ -265,12 +374,18 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         request: Request,
         search: Optional[str] = Query(None),
         language: Optional[str] = Query(None),
+        folder_id: Optional[str] = Query(None),
+        recursive: bool = Query(False),
+        unfiled: bool = Query(False),
         sort: str = Query("recent"),
         offset: int = Query(0, ge=0),
         limit: int = Query(20, ge=1, le=50),
         archived: bool = Query(False),
     ) -> Dict[str, Any]:
         user = get_current_user(request)
+        # unfiled and folder_id are mutually exclusive folder filters.
+        if unfiled and folder_id:
+            raise HTTPException(400, "Pass either folder_id or unfiled, not both")
         db = SessionLocal()
         try:
             from sqlalchemy import or_
@@ -287,25 +402,55 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             # them (NULL = legacy rows that predate the column = not archived).
             _arch_cond = (Document.archived == True) if archived else or_(
                 Document.archived == False, Document.archived.is_(None))
-            # Language facet counts (owner-filtered). PDF documents are stored
-            # as markdown wrappers, so group by the library display language
-            # instead of the raw stored language.
+
+            # Resolve the folder SCOPE the visible list AND the language facet
+            # share: unfiled -> only NULL; folder_id -> that folder (plus its
+            # subtree when recursive); neither -> everything (global). The
+            # per-folder sidebar facet stays INDEPENDENT of this (see below).
+            scope_ids = None       # None => no folder_id restriction (global)
+            scope_unfiled = unfiled
+            if folder_id:
+                owner_folders = _load_owner_folders(db, user)
+                by_id = {f.id: f for f in owner_folders}
+                if folder_id not in by_id:
+                    # Cross-owner / unknown folder — 404, never leak (no IDOR).
+                    raise HTTPException(404, "Folder not found")
+                if recursive:
+                    children_by_parent: Dict[str, List[str]] = {}
+                    for f in owner_folders:
+                        if f.parent_id:
+                            children_by_parent.setdefault(f.parent_id, []).append(f.id)
+                    scope_ids = [folder_id] + _descendant_ids(folder_id, children_by_parent)
+                else:
+                    scope_ids = [folder_id]
+
+            def _apply_folder_scope(query):
+                if scope_unfiled:
+                    return query.filter(Document.folder_id.is_(None))
+                if scope_ids is not None:
+                    return query.filter(Document.folder_id.in_(scope_ids))
+                return query
+
+            # Language facet counts (owner-filtered, folder-scoped to match the
+            # visible list, but NOT search/language-filtered). PDF documents are
+            # stored as markdown wrappers, so group by the library display
+            # language instead of the raw stored language.
             lang_q = (
                 db.query(library_language_expr, func.count(Document.id))
                 .outerjoin(DbSession, Document.session_id == DbSession.id)
                 .filter(Document.is_active == True).filter(_arch_cond)
             )
-            lang_q = _owner_session_filter(lang_q, user)
+            lang_q = _apply_folder_scope(_owner_session_filter(lang_q, user))
             lang_rows = lang_q.group_by(library_language_expr).all()
             languages = _aggregate_language_facets(lang_rows)
 
-            # Session count (owner-filtered)
+            # Session count (owner-filtered, same folder scope as the list)
             sc_q = (
                 db.query(func.count(func.distinct(Document.session_id)))
                 .outerjoin(DbSession, Document.session_id == DbSession.id)
                 .filter(Document.is_active == True).filter(_arch_cond)
             )
-            sc_q = _owner_session_filter(sc_q, user)
+            sc_q = _apply_folder_scope(_owner_session_filter(sc_q, user))
             session_count = sc_q.scalar()
 
             # Base query
@@ -314,7 +459,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 .outerjoin(DbSession, Document.session_id == DbSession.id)
                 .filter(Document.is_active == True).filter(_arch_cond)
             )
-            q = _owner_session_filter(q, user)
+            q = _apply_folder_scope(_owner_session_filter(q, user))
 
             # Search filter — split on whitespace and require EACH term to
             # match (title OR content). A single `%foo bar%` LIKE only matched
@@ -340,6 +485,9 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     if language == "markdown":
                         q = q.filter(~pdf_marker_cond)
 
+            # (Folder scope was applied up-front via _apply_folder_scope so the
+            # language/session facets share it; nothing more to filter here.)
+
             # Total before pagination
             total = q.count()
 
@@ -355,6 +503,12 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
             rows = q.offset(offset).limit(limit).all()
 
+            # Folder facets (owner's folders + counts + unfiled) under the same
+            # scope as the language facet. Build an id->name map once from the
+            # facet rows so each doc can carry its folder_name without N lookups.
+            facets = _folder_facets(db, user, archived)
+            folder_name_by_id = {f["id"]: f["name"] for f in facets["folders"]}
+
             documents = []
             for doc, session_name in rows:
                 documents.append({
@@ -365,6 +519,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     "language": _library_language_for_document(doc),
                     "preview": (doc.current_content or "")[:500],
                     "version_count": doc.version_count,
+                    "folder_id": doc.folder_id,
+                    "folder_name": folder_name_by_id.get(doc.folder_id),
                     "created_at": (doc.created_at.isoformat() + "Z") if doc.created_at else None,
                     "updated_at": (doc.updated_at.isoformat() + "Z") if doc.updated_at else None,
                 })
@@ -374,7 +530,13 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 "total": total,
                 "languages": languages,
                 "session_count": session_count,
+                "folders": facets["folders"],
+                "unfiled_count": facets["unfiled_count"],
             }
+        except HTTPException:
+            # e.g. a 400 (unfiled+folder_id) or 404 (cross-owner folder_id) —
+            # let it through instead of masking it as a generic 500.
+            raise
         except Exception as e:
             logger.error(f"Failed to fetch document library: {e}")
             raise HTTPException(500, f"Failed to fetch document library: {e}")
@@ -395,7 +557,10 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             # UI treats identically to "no docs" and silently masks
             # auth failures.
             _get_session_or_404(db, session_id, user)
-            q = db.query(Document).filter(
+            # Eager-load the folder relationship: _doc_to_dict reads doc.folder
+            # for folder_name, and this is the one path that serializes docs in
+            # a loop — a lazy load would be a SELECT per filed doc (N+1).
+            q = db.query(Document).options(joinedload(Document.folder)).filter(
                 Document.session_id == session_id
             )
             if user:
@@ -650,6 +815,22 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                         clear_active_document(doc_id)
                     except Exception as e:
                         logger.warning("Failed to clear active document %r on detach", doc_id, exc_info=e)
+            # Folder filing. Only act when folder_id was actually present in the
+            # request body (model_fields_set), so a rename/relink PATCH that
+            # omits it never clobbers the doc's folder. Explicit "", "__none__",
+            # or null all unfile; any other value must be a folder the caller
+            # owns (404 otherwise — never leak/file into another user's folder).
+            if "folder_id" in req.model_fields_set:
+                fid = req.folder_id
+                if not fid or fid == "__none__":
+                    doc.folder_id = None
+                else:
+                    folder = _owner_folder_filter(
+                        db.query(DocumentFolder).filter(DocumentFolder.id == fid), user
+                    ).first()
+                    if not folder:
+                        raise HTTPException(404, "Folder not found")
+                    doc.folder_id = folder.id
             db.commit()
             db.refresh(doc)
             return _doc_to_dict(doc)
@@ -1732,6 +1913,267 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     "source_message_id": doc.source_email_message_id,
                 },
             }
+        finally:
+            db.close()
+
+    # ---- Document folders (nested, owner-scoped filing) ----
+
+    @router.post("/api/document-folders")
+    async def create_document_folder(request: Request) -> Dict[str, Any]:
+        """Find-or-create a folder by name under an optional parent.
+
+        Root (parent_id null): find-or-create by name — the partial unique index
+        keys off root name. Nested: find-or-create by (name, parent); duplicate
+        names ARE allowed under different parents. 400 on a blank name or when nesting would exceed
+        DOCUMENT_FOLDER_MAX_DEPTH; 404 when parent_id isn't the caller's folder.
+        Returns {id, name, parent_id, depth, count, created}."""
+        user = get_current_user(request)
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+        data = data or {}
+        name = normalize_folder_name(data.get("name") or "")
+        if not name:
+            raise HTTPException(400, "Folder name required")
+        parent_id = data.get("parent_id") or None
+        db = SessionLocal()
+        try:
+            depth = 1
+            if parent_id:
+                folders = _load_owner_folders(db, user)
+                by_id = {f.id: f for f in folders}
+                if parent_id not in by_id:
+                    raise HTTPException(404, "Parent folder not found")
+                parent_by_id = {f.id: f.parent_id for f in folders}
+                depth = _folder_depth(parent_id, parent_by_id) + 1
+                if depth > DOCUMENT_FOLDER_MAX_DEPTH:
+                    raise HTTPException(
+                        400, f"Folder nesting cannot exceed {DOCUMENT_FOLDER_MAX_DEPTH} levels")
+            # `created` reflects whether the slot already held this folder — use
+            # the SAME (owner, name, parent) scope find_or_create resolves on.
+            before_q = db.query(DocumentFolder).filter(
+                DocumentFolder.owner == user, DocumentFolder.name == name)
+            before_q = (before_q.filter(DocumentFolder.parent_id == parent_id)
+                        if parent_id else before_q.filter(DocumentFolder.parent_id.is_(None)))
+            before = before_q.first()
+            folder = find_or_create_folder(db, user, name, parent_id=parent_id)
+            count = _direct_folder_count(db, folder.id, user, archived=False)
+            out = folder_to_dict(folder, count, depth=depth)
+            out["created"] = before is None
+            return out
+        finally:
+            db.close()
+
+    @router.get("/api/document-folders")
+    async def list_document_folders(
+        request: Request, archived: bool = Query(False)
+    ) -> Dict[str, Any]:
+        """All of the caller's folders (empties included) with parent_id, 1-based
+        depth, per-folder direct count + timestamps, plus the unfiled count,
+        under the archived/active scope requested."""
+        user = get_current_user(request)
+        db = SessionLocal()
+        try:
+            return _folder_facets(db, user, archived)
+        finally:
+            db.close()
+
+    @router.patch("/api/document-folders/{folder_id}")
+    async def update_document_folder(request: Request, folder_id: str) -> Dict[str, Any]:
+        """Rename and/or reparent (move) a folder the caller owns.
+
+        Body may carry "name" (rename) and/or "parent_id" (move; null -> make it
+        a root folder). 404 if the folder — or a supplied parent — isn't the
+        caller's. 400 on a cycle (moving into itself or a descendant) or when the
+        move would push the moved subtree past DOCUMENT_FOLDER_MAX_DEPTH. 409 only
+        when a RENAME collides with another ROOT folder of the same name (root
+        names stay unique; duplicates are allowed deeper in the tree)."""
+        user = get_current_user(request)
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+        data = data or {}
+        has_name = "name" in data
+        has_parent = "parent_id" in data
+        new_name = normalize_folder_name(data.get("name") or "") if has_name else None
+        if has_name and not new_name:
+            raise HTTPException(400, "Folder name required")
+        # A reparent (move) serializes read-validate-commit per owner so a
+        # concurrent opposing move can't validate anti-cycle against a stale
+        # snapshot and commit a cycle. Rename-only PATCHes take no lock.
+        move_lock = _owner_move_lock(user) if has_parent else None
+        if move_lock is not None:
+            move_lock.acquire()
+        try:
+            db = SessionLocal()
+            try:
+                folders = _load_owner_folders(db, user)
+                by_id = {f.id: f for f in folders}
+                folder = by_id.get(folder_id)
+                if folder is None:
+                    raise HTTPException(404, "Folder not found")
+
+                parent_by_id = {f.id: f.parent_id for f in folders}
+                effective_parent = folder.parent_id
+                if has_parent:
+                    new_parent = data.get("parent_id") or None
+                    if new_parent:
+                        if new_parent not in by_id:
+                            raise HTTPException(404, "Parent folder not found")
+                        children_by_parent: Dict[str, List[str]] = {}
+                        for f in folders:
+                            if f.parent_id:
+                                children_by_parent.setdefault(f.parent_id, []).append(f.id)
+                        # Anti-cycle: never move a folder into itself or its subtree.
+                        blocked = {folder_id} | set(_descendant_ids(folder_id, children_by_parent))
+                        if new_parent in blocked:
+                            raise HTTPException(
+                                400, "Cannot move a folder into itself or its own subtree")
+                        # Depth: the deepest node of the moved subtree must still fit.
+                        new_parent_depth = _folder_depth(new_parent, parent_by_id)
+                        height = _subtree_height(folder_id, children_by_parent)
+                        if new_parent_depth + height > DOCUMENT_FOLDER_MAX_DEPTH:
+                            raise HTTPException(
+                                400, f"Move would exceed {DOCUMENT_FOLDER_MAX_DEPTH} folder levels")
+                    effective_parent = new_parent
+
+                # Root-name uniqueness only bites when the folder is (or becomes)
+                # a root — that's the only slot the partial unique index guards.
+                if has_name and effective_parent is None:
+                    clash = _owner_folder_filter(
+                        db.query(DocumentFolder).filter(
+                            DocumentFolder.name == new_name,
+                            DocumentFolder.id != folder_id,
+                            DocumentFolder.parent_id.is_(None),
+                        ), user,
+                    ).first()
+                    if clash:
+                        raise HTTPException(409, "A folder with that name already exists")
+
+                if has_name:
+                    folder.name = new_name
+                if has_parent:
+                    folder.parent_id = effective_parent
+
+                # Belt-and-suspenders: re-verify the applied graph is acyclic by
+                # walking ancestors from the moved node in the flushed state. The
+                # lock already makes the check above run against committed data,
+                # so this only bites a logic slip; a revisit / overrun past the
+                # owner's folder count means a cycle -> roll back + 400.
+                if has_parent and folder.parent_id is not None:
+                    db.flush()
+                    fresh = {f.id: f.parent_id for f in _load_owner_folders(db, user)}
+                    seen = set()
+                    cur = folder_id
+                    cap = len(fresh) + 1
+                    steps = 0
+                    while cur is not None:
+                        if cur in seen or steps > cap:
+                            db.rollback()
+                            raise HTTPException(
+                                400, "Cannot move a folder into itself or its own subtree")
+                        seen.add(cur)
+                        cur = fresh.get(cur)
+                        steps += 1
+
+                db.commit()
+                db.refresh(folder)
+                parent_by_id[folder_id] = folder.parent_id
+                depth = _folder_depth(folder_id, parent_by_id)
+                return {"ok": True, "id": folder.id, "name": folder.name,
+                        "parent_id": folder.parent_id, "depth": depth}
+            except HTTPException:
+                raise
+            except IntegrityError:
+                # Lost a rename race against the root partial unique index.
+                db.rollback()
+                raise HTTPException(409, "A folder with that name already exists")
+            finally:
+                db.close()
+        finally:
+            if move_lock is not None:
+                move_lock.release()
+
+    @router.delete("/api/document-folders/{folder_id}")
+    async def delete_document_folder(request: Request, folder_id: str) -> Dict[str, Any]:
+        """Delete a folder the caller owns — NON-destructively. In one
+        transaction, the caller's direct documents AND direct subfolders are
+        reparented up to the folder's own parent (NULL when it was top-level),
+        THEN the row is removed. Nothing is deleted but the row itself; the FK's
+        ondelete=SET NULL is only a backstop for any foreign straggler. 404 if
+        not the owner. Returns the new parent + reparented counts."""
+        user = get_current_user(request)
+        db = SessionLocal()
+        try:
+            folder = _owner_folder_filter(
+                db.query(DocumentFolder).filter(DocumentFolder.id == folder_id), user
+            ).first()
+            if not folder:
+                raise HTTPException(404, "Folder not found")
+            new_parent_id = folder.parent_id
+            # Reparent the caller's direct docs up a level (owner-scoped + counted).
+            docs_q = db.query(Document).filter(Document.folder_id == folder_id)
+            if user is not None:
+                docs_q = docs_q.filter(Document.owner == user)
+            reparented_docs = docs_q.update(
+                {"folder_id": new_parent_id}, synchronize_session=False)
+            # Reparent the caller's direct subfolders up a level.
+            sub_q = _owner_folder_filter(
+                db.query(DocumentFolder).filter(DocumentFolder.parent_id == folder_id), user
+            )
+            reparented_folders = sub_q.update(
+                {"parent_id": new_parent_id}, synchronize_session=False)
+            db.delete(folder)
+            db.commit()
+            return {"ok": True, "new_parent_id": new_parent_id,
+                    "reparented_docs": reparented_docs,
+                    "reparented_folders": reparented_folders}
+        except HTTPException:
+            raise
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(500, str(e))
+        finally:
+            db.close()
+
+    @router.post("/api/document-folders/move-documents")
+    async def move_documents_to_folder(request: Request) -> Dict[str, Any]:
+        """Bulk-file documents into a folder (or unfile them with folder_id
+        null). Only the caller's OWN documents are affected. Atomic single
+        UPDATE. 404 if the target folder isn't the caller's."""
+        user = get_current_user(request)
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+        data = data or {}
+        ids = data.get("document_ids") or []
+        target = data.get("folder_id") or None
+        if not isinstance(ids, list):
+            raise HTTPException(400, "document_ids must be a list")
+        db = SessionLocal()
+        try:
+            if target:
+                folder = _owner_folder_filter(
+                    db.query(DocumentFolder).filter(DocumentFolder.id == target), user
+                ).first()
+                if not folder:
+                    raise HTTPException(404, "Folder not found")
+                target = folder.id
+            if not ids:
+                return {"ok": True, "count": 0}
+            q = db.query(Document).filter(Document.id.in_(ids))
+            q = _owner_session_filter(q, user)
+            count = q.update({"folder_id": target}, synchronize_session=False)
+            db.commit()
+            return {"ok": True, "count": count}
+        except HTTPException:
+            raise
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(500, str(e))
         finally:
             db.close()
 

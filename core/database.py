@@ -222,6 +222,10 @@ class Document(TimestampMixin, Base):
     # Soft-archive: hidden from the Library's Documents list/search/Tidy until
     # restored. Distinct from is_active (which tracks "open in a session").
     archived        = Column(Boolean, default=False)
+    # Folder this document is filed under (flat, owner-scoped). NULL = unfiled.
+    # ondelete=SET NULL keeps the document when its folder is removed; the
+    # DELETE-folder endpoint also emulates the same nulling, owner-scoped.
+    folder_id       = Column(String, ForeignKey("document_folders.id", ondelete="SET NULL"), nullable=True, index=True)
     # Owner of this document. Documents used to derive ownership from their
     # linked chat session, but a session can be deleted (session_id → NULL via
     # SET NULL), orphaning the doc and making it vanish from the owner's
@@ -237,6 +241,7 @@ class Document(TimestampMixin, Base):
     source_email_message_id  = Column(String, nullable=True, index=True)
 
     session  = relationship("Session", backref=backref("documents", cascade="save-update, merge"))
+    folder   = relationship("DocumentFolder")
     versions = relationship("DocumentVersion", back_populates="document",
                            cascade="all, delete-orphan", order_by="DocumentVersion.version_number")
 
@@ -267,6 +272,40 @@ class GalleryAlbum(TimestampMixin, Base):
     owner       = Column(String, nullable=True, index=True)
 
     images = relationship("GalleryImage", back_populates="album")
+
+
+class DocumentFolder(TimestampMixin, Base):
+    """An owner-scoped folder for filing documents, nestable into a tree.
+
+    `parent_id` points at the containing folder (NULL = a root/top-level
+    folder). ondelete=SET NULL — never CASCADE: deleting a folder must be
+    NON-destructive, so the DELETE endpoint reparents the caller's docs and
+    subfolders up a level first and this FK is only a backstop that detaches
+    (does not delete) any straggler.
+
+    Uniqueness is a PARTIAL unique index on (owner, name) WHERE parent_id IS
+    NULL: top-level names stay unique per owner (so a root folder resolves
+    deterministically by name), while duplicate names ARE allowed between
+    nesting levels / different parents (product call).
+    """
+    __tablename__ = "document_folders"
+    id        = Column(String, primary_key=True, index=True)
+    name      = Column(String(collation="NOCASE"), nullable=False)
+    owner     = Column(String, nullable=True, index=True)
+    parent_id = Column(String, ForeignKey("document_folders.id", ondelete="SET NULL"),
+                       nullable=True, index=True)
+
+    # Self-referential tree: `parent` is the containing folder, `children` the
+    # direct subfolders. remote_side=[id] marks which side is the "one".
+    parent = relationship("DocumentFolder", remote_side=[id], backref="children")
+
+    __table_args__ = (
+        # Root-only uniqueness (see class docstring) — SQLite partial index.
+        Index("ix_document_folders_owner_name_root", "owner", "name",
+              unique=True, sqlite_where=text("parent_id IS NULL")),
+        # Owner-scoped child/subtree lookups (a folder's direct children).
+        Index("ix_document_folders_owner_parent", "owner", "parent_id"),
+    )
 
 
 class GalleryImage(TimestampMixin, Base):
@@ -768,6 +807,43 @@ def _migrate_add_document_archived_column():
             logging.getLogger(__name__).info("Migrated: added 'archived' to documents")
     except Exception as e:
         logging.getLogger(__name__).warning(f"documents.archived migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _migrate_add_document_folder_id_column():
+    """Add `folder_id` FK to documents (filing into folders). Guarded + idempotent.
+
+    Mirrors _migrate_add_document_archived_column. init_db runs create_all()
+    first, which creates the new document_folders table, so the FK target
+    already exists by the time this ALTER runs. A nullable column with a NULL
+    default keeps the REFERENCES clause valid for SQLite's ADD COLUMN. Wrapped
+    so any failure logs-and-continues and can never break boot / /api/health.
+    """
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(documents)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "folder_id" not in columns:
+            conn.execute(
+                "ALTER TABLE documents ADD COLUMN folder_id TEXT "
+                "REFERENCES document_folders(id) ON DELETE SET NULL"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS ix_documents_folder_id ON documents(folder_id)"
+            )
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'folder_id' to documents")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"documents.folder_id migration failed: {e}")
     finally:
         try:
             conn.close()
@@ -1831,6 +1907,7 @@ def init_db():
     _migrate_add_task_run_model_column()
     _migrate_add_owner_column()
     _migrate_add_document_archived_column()
+    _migrate_add_document_folder_id_column()
     _migrate_add_last_message_at_column()
     _migrate_add_folder_column()
     _migrate_add_token_columns()

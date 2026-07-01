@@ -39695,3 +39695,86 @@ body.theme-frosted .modal {
 .log-line-default {
   color: var(--fg, #9cdef2);
 }
+
+/* ── Document library: folder tree (breadcrumb + folder tiles) ──
+   Layout-only. Colours reuse --fg / --fg-muted / --border and the pervasive
+   color-mix(var(--fg) …) hover idiom; the count badge reuses .memory-count and
+   the label reuses .memory-item-title — so no new colour or font-size here. */
+.doclib-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;                 /* wraps onto new lines on narrow / in-modal widths */
+  align-items: center;
+  gap: 2px 4px;
+  padding: 2px 0 6px;
+}
+.doclib-breadcrumb:empty { display: none; }
+.doclib-breadcrumb-seg {
+  max-width: 100%;                 /* long names ellipsise instead of overflowing */
+  padding: 4px 6px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--fg-muted);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.2;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  transition: color 0.15s, background 0.15s;
+}
+button.doclib-breadcrumb-seg:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.doclib-breadcrumb-seg.current {
+  color: var(--fg);
+  font-weight: 500;
+  cursor: default;
+}
+.doclib-breadcrumb-sep {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--fg-muted);
+  opacity: 0.55;
+}
+.doclib-breadcrumb-sep svg { display: block; }
+
+/* Folder tiles sit at the top of #doclib-grid, reusing the .doclib-card /
+   .memory-item row frame. Center the single line: icon · label · count · menu. */
+.doclib-folder-tile {
+  box-sizing: border-box;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+}
+.doclib-folder-tile .doclib-folder-tile-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--fg-muted);
+}
+.doclib-folder-tile .doclib-folder-tile-icon svg { display: block; }
+.doclib-folder-tile .doclib-folder-tile-label {
+  flex: 1 1 auto;
+  min-width: 0;                    /* lets the label ellipsise inside the flex row */
+}
+.doclib-folder-tile .doclib-folder-tile-count {
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+/* "New folder" is a structural tile, not a real folder — dim it a touch so
+   real folders read as the primary rows. */
+.doclib-folder-tile-new .doclib-folder-tile-icon,
+.doclib-folder-tile-new .doclib-folder-tile-label {
+  color: var(--fg-muted);
+}
+
+@media (max-width: 768px) {
+  /* Comfortable touch targets: the whole tile >=44px, breadcrumb segments >=36px
+     (the row's primary tap is entering the folder; long-press opens its menu). */
+  .doclib-folder-tile { min-height: 44px; }
+  .doclib-breadcrumb-seg { min-height: 36px; padding: 6px 8px; }
+}
