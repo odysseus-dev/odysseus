@@ -11,7 +11,7 @@ registerMessages('pt-BR', {
   'Comparing': 'Comparando',
   '(blind)': '(às cegas)',
   's timeout': 's de tempo limite',
-  'Probe': 'Verificar',
+  'Probe': 'Testar',
   'Probe unverified models with a small test request': 'Verificar modelos não testados com uma requisição de teste',
   'Export': 'Exportar',
   'Export options': 'Opções de exportação',

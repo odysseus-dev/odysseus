@@ -18,8 +18,6 @@ registerMessages('pt-BR', {
 
   // --- _scheduleLabel ---
   'Every {n} {evtName}{s}': 'A cada {n} {evtName}{s}',
-  'Webhook': 'Webhook',
-  'Cron: {expr}': 'Cron: {expr}',
   'Once on {date} at {time}': 'Uma vez em {date} às {time}',
   'Once': 'Uma vez',
   'Daily at {localTime}': 'Diariamente às {localTime}',
@@ -134,8 +132,6 @@ registerMessages('pt-BR', {
   'What should be researched?': 'O que deve ser pesquisado?',
   'What should the AI do?': 'O que a IA deve fazer?',
   'Research question': 'Questão de pesquisa',
-  'Prompt': 'Prompt',
-  'Persona': 'Persona',
   '(optional — biases the output voice)': '(opcional — influencia o estilo de resposta)',
   'Action': 'Ação',
   'Email triage rules': 'Regras de triagem de e-mail',
@@ -147,7 +143,7 @@ registerMessages('pt-BR', {
   'Daily': 'Diariamente',
   'Weekly': 'Semanalmente',
   'Monthly': 'Mensalmente',
-  'Time': 'Horário',
+  'Time': 'Tempo',
   'Day of week': 'Dia da semana',
   'Day of month': 'Dia do mês',
   'Date': 'Data',
@@ -166,8 +162,6 @@ registerMessages('pt-BR', {
   'Pause all active tasks': 'Pausar todas as tarefas ativas',
   'Sort tasks': 'Ordenar tarefas',
   'Recent': 'Recentes',
-  'A–Z': 'A–Z',
-  'Status': 'Status',
   'Select tasks': 'Selecionar tarefas',
   'Select': 'Selecionar',
   'Search tasks...': 'Pesquisar tarefas...',
@@ -268,7 +262,7 @@ registerMessages('pt-BR', {
   'No runs yet.': 'Nenhuma execução ainda.',
 
   // --- bulk select ---
-  '{n} Selected': '{n} selecionada(s)',
+  '{n} Selected': '{n} selecionado(s)',
   'Delete {n} task(s)? This cannot be undone.': 'Excluir {n} tarefa(s)? Esta ação não pode ser desfeita.',
   'Delete {n} task(s)?': 'Excluir {n} tarefa(s)?',
   'Deleted {n} task(s)': '{n} tarefa(s) excluída(s)',

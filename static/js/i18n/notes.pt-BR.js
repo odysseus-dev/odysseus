@@ -9,7 +9,6 @@ registerMessages('pt-BR', {
   // Panel header & hint
   'Notes': 'Notas',
   'is your basic todo list, and also where reminders are managed.': 'e a sua lista de tarefas basica, e tambem onde os lembretes sao gerenciados.',
-  'OK': 'OK',
   'View archive': 'Ver arquivo morto',
   'Exit archive': 'Sair do arquivo',
   'Archive': 'Arquivar',
@@ -21,7 +20,7 @@ registerMessages('pt-BR', {
   'Minimize notes': 'Minimizar notas',
   'Search notes...': 'Pesquisar notas...',
   'Select': 'Selecionar',
-  'All': 'Tudo',
+  'All': 'Todos',
   'Selected': 'Selecionado(s)',
   'Delete': 'Excluir',
   'Cancel': 'Cancelar',
@@ -47,7 +46,7 @@ registerMessages('pt-BR', {
 
   // Bulk actions
   'Archived {n}': '{n} arquivado(s)',
-  'Deleted {n}': '{n} excluido(s)',
+  'Deleted {n}': '{n} excluída(s)',
   'Delete {n} note{s}?': 'Excluir {n} nota{s}?',
 
   // Toasts
@@ -55,7 +54,7 @@ registerMessages('pt-BR', {
 
   // Label chips / filters
   'Show notes without tags': 'Mostrar notas sem etiquetas',
-  'Default': 'Padrao',
+  'Default': 'Padrão',
   'Next step from every goal': 'Proximo passo de cada meta',
   'Goals': 'Metas',
   'Showing only reminders — click to show all': 'Exibindo apenas lembretes — clique para mostrar todos',
@@ -81,7 +80,7 @@ registerMessages('pt-BR', {
   'Delete permanently': 'Excluir permanentemente',
   'Save (archive)': 'Salvar (arquivar)',
   'More': 'Mais',
-  'More actions': 'Mais acoes',
+  'More actions': 'Mais ações',
   '+ Add item': '+ Adicionar item',
 
   // Empty states

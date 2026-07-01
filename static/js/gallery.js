@@ -1107,7 +1107,7 @@ function _renderEditorLanding() {
         <div class="gallery-bulk-bar hidden" id="gallery-editor-drafts-bulk">
           <label class="memory-bulk-check-all"><input type="checkbox" id="gallery-editor-drafts-select-all"> ${window.t('All')}</label>
           <span class="gallery-bulk-count" id="gallery-editor-drafts-bulk-count">${window.t('0 selected')}</span>
-          <button class="gallery-bulk-delete" id="gallery-editor-drafts-bulk-delete"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>${window.t('Delete selected')}</button>
+          <button class="gallery-bulk-delete" id="gallery-editor-drafts-bulk-delete"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>${window.t('Delete selected drafts')}</button>
           <button class="memory-toolbar-btn" id="gallery-editor-drafts-bulk-cancel" title="${window.t('Cancel (Esc)')}" style="margin-left:4px;padding:3px 6px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
         <div class="gallery-editor-drafts-grid" id="gallery-editor-drafts-grid"></div>

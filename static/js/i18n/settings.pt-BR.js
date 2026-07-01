@@ -11,7 +11,7 @@ registerMessages('pt-BR', {
   'Failed to save': 'Falha ao salvar',
   'Pick an endpoint + model': 'Escolha um endpoint + modelo',
   'Disabled': 'Desativado',
-  'Same as chat': 'Igual ao chat',
+  'Same as chat': 'Igual à conversa',
   // ── TTS preview button ──
   'Preview': 'Visualizar',
   'Loading...': 'Carregando...',
@@ -37,7 +37,7 @@ registerMessages('pt-BR', {
   'Open Tools': 'Abrir Ferramentas',
   // ── Account tab ──
   'Admin': 'Administrador',
-  'User': 'Usuario',
+  'User': 'Usuário',
   'New password (min {n})': 'Nova senha (min {n})',
   'Fill in all fields': 'Preencha todos os campos',
   'Min {n} characters': 'Min {n} caracteres',
@@ -71,7 +71,7 @@ registerMessages('pt-BR', {
   'Toggle sidebar': 'Alternar barra lateral',
   'New session': 'Nova sessao',
   'Favorite session': 'Sessao favorita',
-  'Delete session': 'Excluir sessao',
+  'Delete session': 'Excluir sessão',
   'Cancel / close': 'Cancelar / fechar',
   'Play/stop TTS': 'Reproduzir/parar TTS',
   'Toggle incognito': 'Alternar modo incognito',

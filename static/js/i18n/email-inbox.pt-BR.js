@@ -22,7 +22,6 @@ registerMessages('pt-BR', {
 
   // emailInbox.js — spam tag
   'AI flagged as spam — click ✓ to unflag': 'IA marcou como spam — clique ✓ para desmarcar',
-  'spam': 'spam',
   'Not spam': 'Nao e spam',
 
   // emailInbox.js — context menu
@@ -61,7 +60,6 @@ registerMessages('pt-BR', {
   // emailInbox.js — folder display names
   'INBOX': 'CAIXA DE ENTRADA',
   'Archive / All Mail': 'Arquivo / Todos os e-mails',
-  'Spam': 'Spam',
   'Junk': 'Lixo eletronico',
   'Trash': 'Lixeira',
   'Sent': 'Enviados',

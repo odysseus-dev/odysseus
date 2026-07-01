@@ -21,10 +21,8 @@ registerMessages('pt-BR', {
   'Missing: {list}': 'Faltando: {list}',
   'Bad hex for {k}': 'Hex inválido para {k}',
   'Auto-saved': 'Salvo automaticamente',
-  'original': 'original',
 
   // --- modelPicker.js ---
-  'endpoint offline': 'endpoint offline',
   'not responding': 'não está respondendo',
   'Search models…': 'Buscar modelos…',
   'No models connected': 'Nenhum modelo conectado',
@@ -75,20 +73,15 @@ registerMessages('pt-BR', {
   'Persona saved': 'Persona salva',
   'Failed to save custom preset': 'Falha ao salvar predefinição personalizada',
   'Persona: {name} — click to configure': 'Persona: {name} — clique para configurar',
-  'Prompt': 'Prompt',
   'Custom settings active — click to configure': 'Configurações personalizadas ativas — clique para configurar',
 
   // --- models.js ---
   'Drag to reorder': 'Arraste para reordenar',
   'Toggle favorite': 'Alternar favorito',
   'Image generation model': 'Modelo de geração de imagem',
-  'Offline': 'Offline',
   '+ Image': '+ Imagem',
-  '+ Chat': '+ Chat',
+  '+ Chat': '+ Conversa',
   'Session module not loaded': 'Módulo de sessão não carregado',
-  'Local': 'Local',
-  'API': 'API',
-  '(offline)': '(offline)',
   'Show {n} more model': 'Mostrar mais {n} modelo',
   'Show {n} more models': 'Mostrar mais {n} modelos',
   'Search models...': 'Buscar modelos...',

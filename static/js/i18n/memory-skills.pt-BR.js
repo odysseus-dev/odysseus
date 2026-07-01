@@ -48,7 +48,7 @@ registerMessages('pt-BR', {
 
   // ---- memory.js — tidy ----
   'Tidy': 'Organizar',
-  'Already clean': 'Já está limpo',
+  'Already clean': 'Já está tudo organizado',
   'Tidying memories': 'Organizando memórias',
   'Tidied: {removed} removed ({before} → {after})': 'Organizado: {removed} removido(s) ({before} → {after})',
   'Tidy failed — check console': 'Falha ao organizar — verifique o console',
@@ -59,9 +59,7 @@ registerMessages('pt-BR', {
   'Import in Add tab': 'Importar na aba Adicionar',
 
   // ---- memory.js — memory item badges ----
-  'pinned': 'fixada',
-  'auto': 'auto',
-  'manual': 'manual',
+  'pinned': 'fixado',
   'Injected into chat context {n} time{s}': 'Injetada no contexto do chat {n} vez{s}',
 
   // ---- memory.js — memory item actions ----
@@ -130,7 +128,7 @@ registerMessages('pt-BR', {
   'Saved': 'Salvo',
   'Save failed: {msg}': 'Falha ao salvar: {msg}',
   'Built-in capability updated': 'Capacidade integrada atualizada',
-  'Reverted to default': 'Revertido ao padrão',
+  'Reverted to default': 'Restaurado ao padrão',
   'Revert failed: {msg}': 'Falha ao reverter: {msg}',
   'Skill deleted': 'Skill excluída',
   'Delete failed: {msg}': 'Falha ao excluir: {msg}',
@@ -158,11 +156,9 @@ registerMessages('pt-BR', {
   'Delete {n} {skills}? This removes their SKILL.md files.': 'Excluir {n} {skills}? Isso remove os arquivos SKILL.md.',
   'Delete {n} selected non-passing {skills}? This removes duplicates, generic/irrelevant skills, failed audits, and anything below {pct}%.':
     'Excluir {n} {skills} não aprovada(s) selecionada(s)? Remove duplicatas, skills genéricas/irrelevantes, auditorias com falha e qualquer coisa abaixo de {pct}%.',
-  'skill': 'skill',
-  'skills': 'skills',
   'Delete non passing': 'Excluir não aprovadas',
   'Revert "{name}" to its original built-in instructions?': 'Reverter "{name}" para as instruções integradas originais?',
-  'Revert': 'Reverter',
+  'Revert': 'Restaurar',
 
   // ---- skills.js — bulk bar counts ----
   'Delete {count} selected non-passing {noun}': 'Excluir {count} {noun} não aprovada(s) selecionada(s)',

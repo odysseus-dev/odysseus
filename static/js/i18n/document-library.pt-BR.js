@@ -13,11 +13,11 @@ registerMessages('pt-BR', {
 
   // --- relative time ---
   'just now': 'agora mesmo',
-  '{n}m ago': 'ha {n} min',
-  '{n}h ago': 'ha {n} h',
+  '{n}m ago': 'há {n}m',
+  '{n}h ago': 'há {n}h',
   'yesterday': 'ontem',
-  '{n}d ago': 'ha {n} d',
-  '{n}w ago': 'ha {n} sem',
+  '{n}d ago': 'há {n}d',
+  '{n}w ago': 'há {n}sem',
 
   // --- stats ---
   '{a} of {b} documents': '{a} de {b} documentos',
@@ -34,7 +34,7 @@ registerMessages('pt-BR', {
   'Load more ({a} of {b})': 'Carregar mais ({a} de {b})',
 
   // --- card menu / actions ---
-  'Actions': 'Acoes',
+  'Actions': 'Ações',
   'Open': 'Abrir',
   'Clone': 'Clonar',
   'Export': 'Exportar',
@@ -58,7 +58,7 @@ registerMessages('pt-BR', {
   'Could not create a session': 'Nao foi possivel criar uma sessao',
   'Document cloned to session': 'Documento clonado para a sessao',
   'Failed to import document': 'Falha ao importar o documento',
-  'Document deleted': 'Documento excluido',
+  'Document deleted': 'Documento excluído',
   'Failed to delete document: {msg}': 'Falha ao excluir o documento: {msg}',
   'Delete this document?': 'Excluir este documento?',
   'Delete {n} documents?': 'Excluir {n} documentos?',
@@ -87,14 +87,13 @@ registerMessages('pt-BR', {
   'Chats': 'Conversas',
   'Documents': 'Documentos',
   'Research': 'Pesquisa',
-  'Archive': 'Arquivo',
+  'Archive folder': 'Arquivo',
 
   // --- Chats panel ---
   'All active chat sessions. Click to open.': 'Todas as sessoes de conversa ativas. Clique para abrir.',
   'Recent': 'Recentes',
   'Oldest': 'Mais antigos',
   'Most messages': 'Mais mensagens',
-  'A–Z': 'A–Z',
   'AI tidy: delete junk sessions and organize into folders': 'Organizacao com IA: exclui sessoes descartaveis e organiza em pastas',
   'Tidy': 'Organizar',
   'Search chats…': 'Buscar conversas…',
@@ -131,8 +130,6 @@ registerMessages('pt-BR', {
   '{n} chats': '{n} conversas',
   '{n} chat': '{n} conversa',
   'No chats': 'Sem conversas',
-  '{n} msg': '{n} msg',
-  '{n} msgs': '{n} msgs',
   'all': 'todos',
   'Failed to archive {a} of {b} chats': 'Falha ao arquivar {a} de {b} conversas',
   'Failed to archive {a} of {b} chat': 'Falha ao arquivar {a} de {b} conversa',

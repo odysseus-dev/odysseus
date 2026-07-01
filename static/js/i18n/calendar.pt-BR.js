@@ -27,7 +27,7 @@ registerMessages('pt-BR', {
   'set up CalDAV sync': 'configurar sincronizacao CalDAV',
 
   // Header / toolbar
-  'Calendar': 'Calendario',
+  'Calendar': 'Calendário',
   'Today': 'Hoje',
   'Upcoming': 'Proximos',
   'January': 'Janeiro',
@@ -45,11 +45,10 @@ registerMessages('pt-BR', {
   'Week': 'Semana',
   'Month': 'Mes',
   'Year': 'Ano',
-  'Agenda': 'Agenda',
   'Calendar settings': 'Configuracoes do calendario',
   'Refresh from database': 'Atualizar do banco de dados',
   'New event': 'Novo evento',
-  'New': 'Novo',
+  'New (event, short)': 'Novo',
   'Quick add': 'Adicao rapida',
 
   // Filters
@@ -59,8 +58,6 @@ registerMessages('pt-BR', {
   'health': 'saude',
   'travel': 'viagem',
   'meal': 'refeicao',
-  'social': 'social',
-  'admin': 'admin',
   'other': 'outro',
   'untagged': 'sem etiqueta',
   'Show filters': 'Mostrar filtros',
@@ -103,20 +100,14 @@ registerMessages('pt-BR', {
   'No events match your search': 'Nenhum evento corresponde a busca',
 
   // Year view
-  'Jan': 'Jan',
   'Feb': 'Fev',
-  'Mar': 'Mar',
   'Apr': 'Abr',
-  'Jun': 'Jun',
-  'Jul': 'Jul',
   'Aug': 'Ago',
   'Sep': 'Set',
   'Oct': 'Out',
-  'Nov': 'Nov',
   'Dec': 'Dez',
   'S': 'D',
   'M': 'S',
-  'T': 'T',
   'W': 'Q',
   'F': 'S',
   '{n} events': '{n} eventos',
@@ -174,7 +165,7 @@ registerMessages('pt-BR', {
   'Event title': 'Titulo do evento',
   "What's happening?": 'O que esta acontecendo?',
   'to': 'ate',
-  'Location': 'Local',
+  'Location': 'Localização',
   'Open in Maps': 'Abrir no Maps',
   'Open in Apple Maps': 'Abrir no Apple Maps',
   'Does not repeat': 'Nao se repete',
@@ -202,7 +193,7 @@ registerMessages('pt-BR', {
   'Create': 'Criar',
 
   // CAL_COLORS names
-  'default': 'padrao',
+  'default': 'padrão',
   'red': 'vermelho',
   'orange': 'laranja',
   'yellow': 'amarelo',

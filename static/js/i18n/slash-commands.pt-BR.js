@@ -55,7 +55,7 @@ registerMessages('pt-BR', {
   'No active sessions': 'Nenhuma sessao ativa',
   'Usage: /switch <name or id>': 'Uso: /switch <nome ou id>',
   'Auto-sorting sessions...': 'Ordenando sessoes automaticamente...',
-  'Auto-sort failed': 'Falha na ordenacao automatica',
+  'Auto-sort failed': 'Falha ao organizar automaticamente',
   'Session not found': 'Sessao nao encontrada',
   'Chat display cleared': 'Exibicao do chat limpa',
 });
