@@ -1967,6 +1967,7 @@ async function _refreshEmailLibraryFromUi(btn = null) {
   // mid-refresh. `force: true` adds the cache-buster so the server's
   // 8s list cache is bypassed for an actually-fresh result.
   try {
+    await _loadFolders({ resetMissing: true, refresh: true });
     await _loadEmails({ force: true });
   } finally {
     btn?.classList.remove('email-lib-refreshing');
@@ -2937,7 +2938,7 @@ export function openEmailLibrary(opts = {}) {
   // otherwise waited on `/accounts` before even trying the cheap indexed list.
   (async () => {
     await _loadAccounts();
-    _loadFolders();
+    _loadFolders({ refresh: true });
     _loadEmailReminderBellVisibility();
     if (!fastAccountAtOpen || fastAccountAtOpen !== (state._libAccountId || '')) {
       _loadEmailsWhenChatIdle();
@@ -3253,13 +3254,14 @@ function _snapEmailModalToLeftSidebar(modal) {
   return true;
 }
 
-async function _loadFolders({ resetMissing = false, live = false } = {}) {
+async function _loadFolders({ resetMissing = false, live = false, refresh = false } = {}) {
   const seq = ++_libFolderSeq;
   const accountAtStart = state._libAccountId || '';
   try {
     const res = await fetch(emailApiUrl('/api/email/folders', {
       account_id: accountAtStart || undefined,
-      cached_only: live ? undefined : 1,
+      cached_only: (live || refresh) ? undefined : 1,
+      refresh: refresh ? 1 : undefined,
     }));
     let data = await res.json();
     if (seq !== _libFolderSeq || accountAtStart !== (state._libAccountId || '')) return;

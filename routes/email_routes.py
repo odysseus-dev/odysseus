@@ -1608,6 +1608,17 @@ def setup_email_routes():
             for k in list(_FOLDER_CACHE.keys())[:-16]:
                 _FOLDER_CACHE.pop(k, None)
 
+    def _invalidate_folder_cache(account_id=None, owner=None):
+        if account_id is None and owner is None:
+            _FOLDER_CACHE.clear()
+            return
+        for k in list(_FOLDER_CACHE.keys()):
+            k_acct = k[0] if len(k) > 0 else ""
+            k_owner = k[1] if len(k) > 1 else ""
+            if (account_id is None or k_acct == (account_id or "")) and \
+               (owner is None or k_owner == (owner or "")):
+                _FOLDER_CACHE.pop(k, None)
+
     def _invalidate_list_cache(account_id=None, folder=None):
         """Drop list cache entries that the caller's mutation may have stale-ed.
 
@@ -3843,12 +3854,13 @@ def setup_email_routes():
     async def list_folders(
         account_id: str | None = Query(None),
         cached_only: int = Query(0),
+        refresh: bool = Query(False),
         owner: str = Depends(require_owner),
     ):
         """List IMAP folders."""
         if _fixture_email_enabled():
             return {"folders": ["INBOX", "Archive", "Sent"], "sync": {"source": "fixture"}}
-        cached = _folder_cache_get(account_id, owner)
+        cached = None if refresh else _folder_cache_get(account_id, owner)
         if cached is not None:
             payload = dict(cached)
             sync_meta = dict(payload.get("sync") or {})
@@ -3923,6 +3935,7 @@ def setup_email_routes():
             if result["folder"] not in names:
                 names.append(result["folder"])
             _invalidate_list_cache(account_id)
+            _invalidate_folder_cache(account_id, owner)
             return {"success": True, **result, "folders": names}
         except Exception as e:
             logger.error(f"create_archive_folder failed for {folder_name!r}: {e}")
