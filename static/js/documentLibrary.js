@@ -2397,7 +2397,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         const content = (full.current_content || '').slice(0, 20000);
         const pre = document.createElement('pre');
         pre.style.cssText = 'white-space:pre-wrap;word-break:break-word;font-size:11px;margin:6px 4px;max-height:50vh;overflow:auto;';
-        pre.textContent = content || '(empty document)';
+        pre.textContent = content || window.t('(empty document)');
         preview.innerHTML = '';
         preview.appendChild(pre);
 
@@ -2408,12 +2408,12 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         const actions = document.createElement('div');
         actions.className = 'doclib-chat-preview-actions';
         actions.innerHTML =
-          '<button class="doclib-chat-delete-btn"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Delete</button>' +
-          '<button class="doclib-chat-restore-btn"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M4 9h11a5 5 0 0 1 5 5v0a5 5 0 0 1-5 5H9"/></svg>Restore</button>' +
-          '<button class="doclib-chat-open-btn"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>Open</button>';
+          '<button class="doclib-chat-delete-btn"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>' + window.t('Delete') + '</button>' +
+          '<button class="doclib-chat-restore-btn"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M4 9h11a5 5 0 0 1 5 5v0a5 5 0 0 1-5 5H9"/></svg>' + window.t('Restore') + '</button>' +
+          '<button class="doclib-chat-open-btn"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>' + window.t('Open') + '</button>';
         actions.querySelector('.doclib-chat-delete-btn').addEventListener('click', async (ev) => {
           ev.stopPropagation();
-          if (!await window.styledConfirm('Delete this document?', { confirmText: 'Delete', danger: true })) return;
+          if (!await window.styledConfirm(window.t('Delete this document?'), { confirmText: window.t('Delete'), danger: true })) return;
           await fetch(`${API_BASE}/api/document/${d.id}`, { method: 'DELETE', credentials: 'same-origin' });
           _renderLibArchive();
         });
@@ -2429,7 +2429,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         });
         preview.appendChild(actions);
       } catch {
-        preview.innerHTML = '<div style="opacity:0.4;font-size:11px;padding:8px 4px;">Failed to load preview</div>';
+        preview.innerHTML = '<div style="opacity:0.4;font-size:11px;padding:8px 4px;">' + window.t('Failed to load preview') + '</div>';
       }
     }
 
@@ -2437,7 +2437,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const grid = document.getElementById('doclib-arc-grid');
       if (!grid) return;
       const _asb = document.getElementById('doclib-arc-select-btn');
-      if (_asb) { _asb.classList.toggle('active', _arcSelectMode); _asb.textContent = _arcSelectMode ? 'Cancel' : 'Select'; }
+      if (_asb) { _asb.classList.toggle('active', _arcSelectMode); _asb.textContent = _arcSelectMode ? window.t('Cancel') : window.t('Select'); }
       let filtered = _arcSessions.slice();
       if (_arcSearch) {
         const q = _arcSearch.toLowerCase();
@@ -2463,12 +2463,15 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       if (!_showResearch) filtResearch = [];
 
       const stats = document.getElementById('doclib-arc-stats');
-      if (stats) stats.textContent = (filtered.length + filtDocs.length + filtResearch.length) + ' archived';
+      const _arcTotalCount = filtered.length + filtDocs.length + filtResearch.length;
+      if (stats) stats.textContent = _arcTotalCount !== 1
+        ? window.t('{n} archived', { n: _arcTotalCount })
+        : window.t('{n} archived (one)', { n: _arcTotalCount });
 
       if (!filtered.length && !filtDocs.length && !filtResearch.length) {
         // Neutral / no-smile face for "nothing archived here".
         const _neutralIco = '<span style="vertical-align:-3px;margin-left:6px;">' + uiModule.emptyStateIcon('neutral') + '</span>';
-        grid.innerHTML = '<div class="doclib-empty">No archived items' + _neutralIco + '</div>';
+        grid.innerHTML = '<div class="doclib-empty">' + window.t('No archived items') + _neutralIco + '</div>';
         _appendInlineLoadMore(grid, 0, _arcVisibleLimit, () => {});
         return;
       }
@@ -2492,17 +2495,17 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
               '<div class="memory-item-title">' + arcIconSvg + _esc(s.name || 'Untitled') + '</div>' +
               '<div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">' + [model, _relTime(s.updated_at)].filter(Boolean).join(' \u00b7 ') + '</div>' +
             '</div>' +
-            '<div class="memory-item-actions"><button class="memory-item-btn _arc-menu" title="Actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button></div>' +
+            '<div class="memory-item-actions"><button class="memory-item-btn _arc-menu" title="' + window.t('Actions') + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button></div>' +
           '</div>' +
           '<div class="doclib-chat-preview" style="display:none;"></div>';
         const cb = card.querySelector('.memory-select-cb');
         if (cb) { cb.addEventListener('click', e => e.stopPropagation()); cb.addEventListener('change', () => { if (cb.checked) _arcSelected.add('chats:' + s.id); else _arcSelected.delete('chats:' + s.id); _updateArcCount(); }); }
         card.querySelector('._arc-menu').addEventListener('click', (e) => { e.stopPropagation(); _showLibDropdown(e.currentTarget, [
-          { label: 'Open', action: () => { if (window.sessionModule) window.sessionModule.selectSession(s.id); } },
-          { label: 'Copy', action: () => _copyChatById(s.id) },
-          { label: 'Restore', action: async () => { await fetch(API_BASE + '/api/session/' + s.id + '/unarchive', { method: 'POST' }); _renderLibArchive(); } },
-          { label: 'Delete', action: async () => {
-            if (!await window.styledConfirm('Delete this chat permanently?', { confirmText: 'Delete', danger: true })) return;
+          { label: window.t('Open'), action: () => { if (window.sessionModule) window.sessionModule.selectSession(s.id); } },
+          { label: window.t('Copy'), action: () => _copyChatById(s.id) },
+          { label: window.t('Restore'), action: async () => { await fetch(API_BASE + '/api/session/' + s.id + '/unarchive', { method: 'POST' }); _renderLibArchive(); } },
+          { label: window.t('Delete'), action: async () => {
+            if (!await window.styledConfirm(window.t('Delete this chat permanently?'), { confirmText: window.t('Delete'), danger: true })) return;
             await fetch(API_BASE + '/api/session/' + s.id, { method: 'DELETE' });
             _renderLibArchive();
           }, danger: true },
@@ -2534,9 +2537,9 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             _dcb +
             '<div style="flex:1;min-width:0;">' +
               '<div class="memory-item-title">' + _arcDocIco + _esc(d.title || 'Untitled') + '</div>' +
-              '<div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">' + ['Document', (d.language || 'text'), _relTime(d.updated_at)].filter(Boolean).join(' · ') + '</div>' +
+              '<div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">' + [window.t('Document'), (d.language || 'text'), _relTime(d.updated_at)].filter(Boolean).join(' · ') + '</div>' +
             '</div>' +
-            '<div class="memory-item-actions"><button class="memory-item-btn _arc-doc-menu" title="Actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button></div>' +
+            '<div class="memory-item-actions"><button class="memory-item-btn _arc-doc-menu" title="' + window.t('Actions') + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button></div>' +
           '</div>' +
           '<div class="doclib-chat-preview" style="display:none;"></div>';
         const _dcbEl = card.querySelector('.memory-select-cb');
@@ -2547,8 +2550,8 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           _toggleArcDocPreview(card, d);
         });
         card.querySelector('._arc-doc-menu').addEventListener('click', (e) => { e.stopPropagation(); _showLibDropdown(e.currentTarget, [
-          { label: 'Restore', action: async () => { await fetch(API_BASE + '/api/document/' + d.id + '/archive?archived=false', { method: 'POST', credentials: 'same-origin' }); _renderLibArchive(); } },
-          { label: 'Delete', danger: true, action: async () => { if (!await window.styledConfirm('Delete this document?', { confirmText: 'Delete', danger: true })) return; await fetch(API_BASE + '/api/document/' + d.id, { method: 'DELETE', credentials: 'same-origin' }); _renderLibArchive(); } },
+          { label: window.t('Restore'), action: async () => { await fetch(API_BASE + '/api/document/' + d.id + '/archive?archived=false', { method: 'POST', credentials: 'same-origin' }); _renderLibArchive(); } },
+          { label: window.t('Delete'), danger: true, action: async () => { if (!await window.styledConfirm(window.t('Delete this document?'), { confirmText: window.t('Delete'), danger: true })) return; await fetch(API_BASE + '/api/document/' + d.id, { method: 'DELETE', credentials: 'same-origin' }); _renderLibArchive(); } },
         ], { onSelect: () => {
           _arcSelectMode = true;
           _arcSelected.add('documents:' + d.id);
@@ -2570,10 +2573,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           '<div class="doclib-chat-header" style="display:flex;align-items:center;width:100%;gap:6px;">' +
             _rcb +
             '<div style="flex:1;min-width:0;">' +
-              '<div class="memory-item-title">' + _arcResIco + _esc(r.query || 'Research') + '</div>' +
-              '<div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">' + ['Research', (r.source_count ? r.source_count + ' sources' : ''), _relTime(r.completed_at ? new Date(r.completed_at * 1000).toISOString() : '')].filter(Boolean).join(' · ') + '</div>' +
+              '<div class="memory-item-title">' + _arcResIco + _esc(r.query || window.t('Research')) + '</div>' +
+              '<div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">' + [window.t('Research'), (r.source_count ? window.t('{n} sources', { n: r.source_count }) : ''), _relTime(r.completed_at ? new Date(r.completed_at * 1000).toISOString() : '')].filter(Boolean).join(' · ') + '</div>' +
             '</div>' +
-            '<div class="memory-item-actions"><button class="memory-item-btn _arc-res-menu" title="Actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button></div>' +
+            '<div class="memory-item-actions"><button class="memory-item-btn _arc-res-menu" title="' + window.t('Actions') + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button></div>' +
           '</div>' +
           '<div class="doclib-chat-preview" style="display:none;"></div>';
         const _rcbEl = card.querySelector('.memory-select-cb');
@@ -2584,9 +2587,9 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           _toggleResearchPreview(card, r);
         });
         card.querySelector('._arc-res-menu').addEventListener('click', (e) => { e.stopPropagation(); _showLibDropdown(e.currentTarget, [
-          { label: 'Open', action: () => { const a = document.createElement('a'); a.href = '/api/research/report/' + r.id; a.target = '_blank'; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove(); } },
-          { label: 'Restore', action: async () => { await fetch('/api/research/' + r.id + '/archive?archived=false', { method: 'POST', credentials: 'same-origin' }); _renderLibArchive(); } },
-          { label: 'Delete', danger: true, action: async () => { if (!await window.styledConfirm('Delete this research?', { confirmText: 'Delete', danger: true })) return; await fetch('/api/research/' + r.id, { method: 'DELETE', credentials: 'same-origin' }); _renderLibArchive(); } },
+          { label: window.t('Open'), action: () => { const a = document.createElement('a'); a.href = '/api/research/report/' + r.id; a.target = '_blank'; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove(); } },
+          { label: window.t('Restore'), action: async () => { await fetch('/api/research/' + r.id + '/archive?archived=false', { method: 'POST', credentials: 'same-origin' }); _renderLibArchive(); } },
+          { label: window.t('Delete'), danger: true, action: async () => { if (!await window.styledConfirm(window.t('Delete this research?'), { confirmText: window.t('Delete'), danger: true })) return; await fetch('/api/research/' + r.id, { method: 'DELETE', credentials: 'same-origin' }); _renderLibArchive(); } },
         ], { onSelect: () => {
           _arcSelectMode = true;
           _arcSelected.add('research:' + r.id);
@@ -2616,13 +2619,13 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       };
       const total = _arcSessions.length + _arcDocs.length + _arcResearch.length;
       if (!total) return;
-      mk('All', '', total);
-      if (_arcSessions.length) mk('Chats', 'chats', _arcSessions.length);
-      if (_arcDocs.length) mk('Documents', 'documents', _arcDocs.length);
-      if (_arcResearch.length) mk('Research', 'research', _arcResearch.length);
+      mk(window.t('All'), '', total);
+      if (_arcSessions.length) mk(window.t('Chats'), 'chats', _arcSessions.length);
+      if (_arcDocs.length) mk(window.t('Documents'), 'documents', _arcDocs.length);
+      if (_arcResearch.length) mk(window.t('Research'), 'research', _arcResearch.length);
     }
 
-    function _updateArcCount() { const el = document.getElementById('doclib-arc-selected-count'); if (el) el.textContent = _arcSelected.size + ' Selected'; }
+    function _updateArcCount() { const el = document.getElementById('doclib-arc-selected-count'); if (el) el.textContent = window.t('{n} Selected', { n: _arcSelected.size }); }
 
     // Archive event listeners
     document.getElementById('doclib-arc-sort').addEventListener('change', (e) => { _arcSort = e.target.value; _renderArcGrid(); });

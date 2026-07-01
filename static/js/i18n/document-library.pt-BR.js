@@ -144,4 +144,15 @@ registerMessages('pt-BR', {
   'Sorted {a} sessions into {b} folders': '{a} sessoes organizadas em {b} pastas',
   'Nothing to tidy': 'Nada para organizar',
   'Tidy: {msg}': 'Organizar: {msg}',
+
+  // --- archive tab: doc/research previews ---
+  '(empty document)': '(documento vazio)',
+  'Delete this document?': 'Excluir este documento?',
+  '{n} archived': '{n} arquivados',
+  '{n} archived (one)': '{n} arquivado',
+  'No archived items': 'Nenhum item arquivado',
+  'Delete this chat permanently?': 'Excluir esta conversa permanentemente?',
+  'Document': 'Documento',
+  '{n} sources': '{n} fontes',
+  'Delete this research?': 'Excluir esta pesquisa?',
 });
