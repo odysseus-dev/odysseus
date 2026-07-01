@@ -115,4 +115,16 @@ registerMessages('pt-BR', {
   '(scan failed)': '(falha na varredura)',
   '(render failed: {error})': '(falha ao renderizar: {error})',
   'Unknown': 'Desconhecido',
+
+  // --- colorPicker.js ---
+  'Complement': 'Complementar',
+  'Analogous +30°': 'Análoga +30°',
+  'Analogous -30°': 'Análoga -30°',
+  'Split-complement': 'Complementar dividida',
+  'Tone shift': 'Mudança de tom',
+  'Eyedropper': 'Conta-gotas',
+  'Suggestions': 'Sugestões',
+  'Recent': 'Recentes',
+  '(none yet)': '(nenhuma ainda)',
+  'Eyedropper not supported in this browser': 'Conta-gotas não suportado neste navegador',
 });

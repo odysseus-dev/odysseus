@@ -144,10 +144,10 @@ export function providerLabel(endpointUrl) {
     // Don't name the serving tool from the port — it isn't authoritative
     // (vLLM/SGLang/llama.cpp share 8000/8080). Discovery identifies the tool by
     // probing /props and stores the result as the endpoint's name instead.
-    return "Local";
+    return window.t("Local");
   }
   if (/^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(host)) {
-    return "Local";
+    return window.t("Local");
   }
   for (const [re, label] of _ENDPOINT_LABELS) {
     if (re.test(host)) return label;
