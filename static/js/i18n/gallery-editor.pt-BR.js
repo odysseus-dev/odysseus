@@ -42,4 +42,23 @@ registerMessages('pt-BR', {
   'Apply Style': 'Aplicar estilo',
   'Add layer': 'Adicionar camada',
   'Layer {n}': 'Camada {n}',
+
+  // ai-inpaint.js
+  'Draw the area you want to inpaint first': 'Desenhe primeiro a area que deseja pintar',
+  'No image returned from inpaint endpoint': 'Nenhuma imagem retornada pelo endpoint de pintura',
+  'Inpaint: {prompt}': 'Pintura: {prompt}',
+  'Inpaint Result': 'Resultado da pintura',
+  'Inpaint complete — drag Edge feather / Edge stroke to blend': 'Pintura concluida — arraste Suavizar borda / Traco de borda para mesclar',
+  'Inpaint render failed:': 'Falha ao renderizar a pintura:',
+  'Inpaint result failed to decode': 'Falha ao decodificar o resultado da pintura',
+  'Inpaint failed:': 'Falha na pintura:',
+  'Enter a prompt for inpainting': 'Digite um prompt para a pintura',
+  'Generate': 'Gerar',
+  'Generating': 'Gerando',
+  'Remove': 'Remover',
+  'Removing': 'Removendo',
+  'No empty areas to outpaint — canvas is fully covered.': 'Nenhuma area vazia para expandir — a tela esta totalmente preenchida.',
+  'No active layer for outpaint': 'Nenhuma camada ativa para expandir',
+  'Outpaint': 'Expandir',
+  'Outpainting': 'Expandindo',
 });
