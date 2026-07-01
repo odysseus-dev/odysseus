@@ -816,10 +816,10 @@ function _createGroupBubble(model, box, options = {}) {
   wrap.style.position = 'relative';
 
   // Role label — use character name if assigned, otherwise model name
-  const roleLabel = model._groupName || (model.character ? model.character.characterName : chatRenderer.shortModel(model.mid));
+  let roleLabel = model._groupName || (model.character ? model.character.characterName : chatRenderer.shortModel(model.mid));
   const roleTs = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const displayLabel = options.whisper ? `Whisper from ${roleLabel}` : roleLabel;
-  wrap.innerHTML = `<div class="role">${uiModule.esc(displayLabel)} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
+  roleLabel = options.whisper ? `Whisper from ${roleLabel}` : roleLabel;
+  wrap.innerHTML = `<div class="role">${uiModule.esc(roleLabel)} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
   chatRenderer.applyModelColor(wrap.querySelector('.role'), model.mid);
 
   // Spinner — identical to chat.js line 3062
