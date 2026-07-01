@@ -265,17 +265,17 @@ export const ERROR_PATTERNS = [
   },
   {
     pattern: /403 Forbidden|401 Unauthorized|Access to model.*is restricted|gated repo|not in the authorized list|awaiting a review/i,
-    message: 'Gated model. Your HF token IS being sent — but its account must be granted access first: open the model page, accept the license, and wait for approval (Meta models can take a while).',
+    message: window.t('Gated model. Your HF token IS being sent — but its account must be granted access first: open the model page, accept the license, and wait for approval (Meta models can take a while).'),
     // Extract repo name from error text to build HF link
     _repoPattern: /Access to model\s+(\S+)\s+is restricted|gated repo.*?huggingface\.co\/([^\s/]+\/[^\s/]+)/i,
     fixes: [
-      { label: 'Request access on HF', action: (panel, _text) => {
+      { label: window.t('Request access on HF'), action: (panel, _text) => {
         const m = _text && (_text.match(/Access to model\s+(\S+)\s+is restricted/i) || _text.match(/huggingface\.co\/([^\s/]+\/[^\s/]+)/i));
         const repo = m && (m[1] || m[2]);
         if (repo) window.open('https://huggingface.co/' + repo, '_blank');
         else window.open('https://huggingface.co/settings/gated-repos', '_blank');
       }},
-      { label: 'Check HF Token', action: (panel) => {
+      { label: window.t('Check HF Token'), action: (panel) => {
         const el = panel.querySelector('[data-field="hf_token"]');
         if (el) { el.focus(); el.style.borderColor = 'var(--red)'; }
       }},
@@ -283,9 +283,9 @@ export const ERROR_PATTERNS = [
   },
   {
     pattern: /Weights for this component appear to be missing|load the component before passing/i,
-    message: 'Single-file checkpoint needs a base model for missing components (text encoder, VAE). The base model may be gated — accept the license and set your HF token.',
+    message: window.t('Single-file checkpoint needs a base model for missing components (text encoder, VAE). The base model may be gated — accept the license and set your HF token.'),
     fixes: [
-      { label: 'Request access to base model', action: (panel, _text) => {
+      { label: window.t('Request access to base model'), action: (panel, _text) => {
         // Extract gated repo from error, or infer from model name
         const gated = _text && _text.match(/Access to model\s+(\S+)\s+is restricted/i);
         const base = _text && _text.match(/config=([^\s,)]+)/i);
@@ -294,7 +294,7 @@ export const ERROR_PATTERNS = [
         if (repo) window.open('https://huggingface.co/' + repo, '_blank');
         else if (model && model[1]) window.open('https://huggingface.co/' + model[1].replace(/[.]$/, ''), '_blank');
       }},
-      { label: 'Check HF Token', action: (panel) => {
+      { label: window.t('Check HF Token'), action: (panel) => {
         const el = panel.querySelector('[data-field="hf_token"]');
         if (el) { el.focus(); el.style.borderColor = 'var(--red)'; }
       }},
@@ -302,15 +302,15 @@ export const ERROR_PATTERNS = [
   },
   {
     pattern: /Entry Not Found.*model_index\.json|Could not load model.*Check diffusers/i,
-    message: 'Single-file model — needs base config from a gated repo. Accept the license and set your HF token.',
+    message: window.t('Single-file model — needs base config from a gated repo. Accept the license and set your HF token.'),
     fixes: [
-      { label: 'Request access to base model', action: (panel, _text) => {
+      { label: window.t('Request access to base model'), action: (panel, _text) => {
         const gated = _text && _text.match(/Access to model\s+(\S+)\s+is restricted/i);
         const repo = (gated && gated[1]) || _inferBaseRepo(_text);
         if (repo) window.open('https://huggingface.co/' + repo, '_blank');
         else window.open('https://huggingface.co/settings/gated-repos', '_blank');
       }},
-      { label: 'Check HF Token', action: (panel) => {
+      { label: window.t('Check HF Token'), action: (panel) => {
         const el = panel.querySelector('[data-field="hf_token"]');
         if (el) { el.focus(); el.style.borderColor = 'var(--red)'; }
       }},
@@ -318,9 +318,9 @@ export const ERROR_PATTERNS = [
   },
   {
     pattern: /does not appear to have a file named|not a valid model|No such file or directory.*model/i,
-    message: 'Model path or ID not found.',
+    message: window.t('Model path or ID not found.'),
     fixes: [
-      { label: 'Check model name', action: (panel) => {
+      { label: window.t('Check model name'), action: (panel) => {
         const header = panel.querySelector('.hwfit-panel-model');
         if (header) header.style.color = 'var(--red)';
       }},
@@ -328,27 +328,27 @@ export const ERROR_PATTERNS = [
   },
   {
     pattern: /NCCL error|ncclSystemError|ncclInternalError/i,
-    message: 'Multi-GPU communication (NCCL) failed.',
+    message: window.t('Multi-GPU communication (NCCL) failed.'),
     fixes: [
-      { label: 'Set TP to 1 (single GPU)', action: (panel) => _setPanelField(panel, 'tp', '1') },
-      { label: 'Enable enforce eager', action: (panel) => _setPanelCheckbox(panel, 'enforce_eager', true) },
+      { label: window.t('Set TP to 1 (single GPU)'), action: (panel) => _setPanelField(panel, 'tp', '1') },
+      { label: window.t('Enable enforce eager'), action: (panel) => _setPanelCheckbox(panel, 'enforce_eager', true) },
     ],
   },
   {
     pattern: /KV cache.*too (small|large)|max_model_len.*exceeds|maximum.*context/i,
-    message: 'Context length too large for available GPU memory.',
+    message: window.t('Context length too large for available GPU memory.'),
     fixes: [
-      { label: 'Lower to 8192', action: (panel) => _setPanelField(panel, 'ctx', '8192') },
-      { label: 'Lower to 4096', action: (panel) => _setPanelField(panel, 'ctx', '4096') },
-      { label: 'Lower to 2048', action: (panel) => _setPanelField(panel, 'ctx', '2048') },
+      { label: window.t('Lower to 8192'), action: (panel) => _setPanelField(panel, 'ctx', '8192') },
+      { label: window.t('Lower to 4096'), action: (panel) => _setPanelField(panel, 'ctx', '4096') },
+      { label: window.t('Lower to 2048'), action: (panel) => _setPanelField(panel, 'ctx', '2048') },
     ],
   },
   {
     pattern: /vllm.*command not found|No module named vllm/i,
-    message: 'vLLM is not installed or not in PATH.',
+    message: window.t('vLLM is not installed or not in PATH.'),
     fixes: [
-      { label: 'Open Dependencies', action: () => _openCookbookDependencies('vllm') },
-      { label: 'Check environment is set', action: (panel) => {
+      { label: window.t('Open Dependencies'), action: () => _openCookbookDependencies('vllm') },
+      { label: window.t('Check environment is set'), action: (panel) => {
         const el = panel.querySelector('[data-field="env_type"]');
         if (el) { el.focus(); el.style.borderColor = 'var(--red)'; }
       }},
@@ -356,69 +356,69 @@ export const ERROR_PATTERNS = [
   },
   {
     pattern: /sgl_kernel[\s\S]*(Python\.h|libnuma\.so\.1|common_ops)|(Python\.h|libnuma\.so\.1|common_ops)[\s\S]*sgl_kernel|Please ensure sgl_kernel is properly installed/i,
-    message: 'SGLang native dependencies are missing on this server.',
+    message: window.t('SGLang native dependencies are missing on this server.'),
     fixes: [
-      { label: 'Copy OS package command', action: () => _copyText('sudo apt-get install -y libnuma-dev python3.12-dev build-essential') },
-      { label: 'Copy kernel upgrade', action: () => _copyText('python3 -m pip install --upgrade sglang-kernel') },
-      { label: 'Open Dependencies', action: () => _openCookbookDependencies('sglang') },
+      { label: window.t('Copy OS package command'), action: () => _copyText('sudo apt-get install -y libnuma-dev python3.12-dev build-essential') },
+      { label: window.t('Copy kernel upgrade'), action: () => _copyText('python3 -m pip install --upgrade sglang-kernel') },
+      { label: window.t('Open Dependencies'), action: () => _openCookbookDependencies('sglang') },
     ],
   },
   {
     pattern: /sglang.*command not found|No module named sglang|SGLang is not installed/i,
-    message: 'SGLang is not installed or not in PATH.',
+    message: window.t('SGLang is not installed or not in PATH.'),
     fixes: [
-      { label: 'Open Dependencies', action: () => _openCookbookDependencies('sglang') },
-      { label: 'Copy install command', action: () => _copyText('python3 -m pip install "sglang[all]"') },
+      { label: window.t('Open Dependencies'), action: () => _openCookbookDependencies('sglang') },
+      { label: window.t('Copy install command'), action: () => _copyText('python3 -m pip install "sglang[all]"') },
     ],
   },
   {
     pattern: /No accelerator \(CUDA, XPU, HPU, NPU, MUSA, MPS\) is available|Triton is not supported on current platform/i,
-    message: 'SGLang needs a visible GPU/accelerator on this server.',
-    suggestion: 'Suggested action: switch this serve config to llama.cpp for CPU/local serving, or choose a GPU server.',
+    message: window.t('SGLang needs a visible GPU/accelerator on this server.'),
+    suggestion: window.t('Suggested action: switch this serve config to llama.cpp for CPU/local serving, or choose a GPU server.'),
     fixes: [
-      { label: 'Switch to llama.cpp', action: (panel) => _openCpuServeEdit(panel) },
-      { label: 'Choose GPU server', action: (panel) => _openServeEditFromDiagnosis(panel) },
+      { label: window.t('Switch to llama.cpp'), action: (panel) => _openCpuServeEdit(panel) },
+      { label: window.t('Choose GPU server'), action: (panel) => _openServeEditFromDiagnosis(panel) },
     ],
   },
   {
     pattern: /flashinfer.*version.*does not match|flashinfer-cubin version/i,
-    message: 'FlashInfer version mismatch.',
+    message: window.t('FlashInfer version mismatch.'),
     fixes: [
-      { label: 'Auto-fix: bypass version check', action: (panel) => _serveAutoFix(panel, 'FLASHINFER_DISABLE_VERSION_CHECK=1'), autofix: true },
-      { label: 'Fix properly: pip install matching version', action: () => {} },
+      { label: window.t('Auto-fix: bypass version check'), action: (panel) => _serveAutoFix(panel, 'FLASHINFER_DISABLE_VERSION_CHECK=1'), autofix: true },
+      { label: window.t('Fix properly: pip install matching version'), action: () => {} },
     ],
   },
   {
     pattern: /torch\.cuda\.is_available\(\).*False|No CUDA runtime/i,
-    message: 'vLLM needs a visible CUDA/ROCm GPU.',
-    suggestion: 'Suggested action: switch this serve config to llama.cpp for CPU/local serving, or choose a GPU server.',
+    message: window.t('vLLM needs a visible CUDA/ROCm GPU.'),
+    suggestion: window.t('Suggested action: switch this serve config to llama.cpp for CPU/local serving, or choose a GPU server.'),
     fixes: [
-      { label: 'Switch to llama.cpp', action: (panel) => _openCpuServeEdit(panel) },
-      { label: 'Choose GPU server', action: (panel) => _openServeEditFromDiagnosis(panel) },
+      { label: window.t('Switch to llama.cpp'), action: (panel) => _openCpuServeEdit(panel) },
+      { label: window.t('Choose GPU server'), action: (panel) => _openServeEditFromDiagnosis(panel) },
     ],
   },
   {
     pattern: /Engine core initialization failed/i,
-    message: 'vLLM engine failed to start. Check the error above.',
+    message: window.t('vLLM engine failed to start. Check the error above.'),
     fixes: [
-      { label: 'Retry with --enforce-eager', action: (panel) => _serveAutoRetry(panel, '--enforce-eager'), autofix: true },
-      { label: 'Retry with context 4096', action: (panel) => _serveAutoRetry(panel, '--max-model-len 4096'), autofix: true },
-      { label: 'Lower context to 4096', action: (panel) => _setPanelField(panel, 'ctx', '4096') },
-      { label: 'Lower GPU mem to 0.80', action: (panel) => _setPanelField(panel, 'gpu_mem', '0.80') },
+      { label: window.t('Retry with --enforce-eager'), action: (panel) => _serveAutoRetry(panel, '--enforce-eager'), autofix: true },
+      { label: window.t('Retry with context 4096'), action: (panel) => _serveAutoRetry(panel, '--max-model-len 4096'), autofix: true },
+      { label: window.t('Lower context to 4096'), action: (panel) => _setPanelField(panel, 'ctx', '4096') },
+      { label: window.t('Lower GPU mem to 0.80'), action: (panel) => _setPanelField(panel, 'gpu_mem', '0.80') },
     ],
   },
   {
     pattern: /weight_loader.*unexpected keyword|Unexpected key.*state_dict/i,
-    message: 'Model format incompatible with this vLLM version.',
+    message: window.t('Model format incompatible with this vLLM version.'),
     fixes: [
-      { label: 'Try trust remote code', action: (panel) => _setPanelCheckbox(panel, 'trust_remote', true) },
+      { label: window.t('Try trust remote code'), action: (panel) => _setPanelCheckbox(panel, 'trust_remote', true) },
     ],
   },
   {
     pattern: /enable-auto-tool-choice requires --tool-call-parser/i,
-    message: 'Auto tool choice needs a tool call parser.',
+    message: window.t('Auto tool choice needs a tool call parser.'),
     fixes: [
-      { label: 'Retry with --tool-call-parser hermes', action: (panel) => _serveAutoRetry(panel, '--tool-call-parser hermes'), autofix: true },
+      { label: window.t('Retry with --tool-call-parser hermes'), action: (panel) => _serveAutoRetry(panel, '--tool-call-parser hermes'), autofix: true },
     ],
   },
   {
