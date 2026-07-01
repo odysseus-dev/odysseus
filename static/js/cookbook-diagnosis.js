@@ -423,17 +423,17 @@ export const ERROR_PATTERNS = [
   },
   {
     pattern: /Please pass.*trust.remote.code=True|contains custom code which must be executed to correctly load/i,
-    message: 'Model requires custom code. Enable --trust-remote-code.',
+    message: window.t('Model requires custom code. Enable --trust-remote-code.'),
     fixes: [
-      { label: 'Retry with --trust-remote-code', action: (panel) => _serveAutoRetry(panel, '--trust-remote-code'), autofix: true },
+      { label: window.t('Retry with --trust-remote-code'), action: (panel) => _serveAutoRetry(panel, '--trust-remote-code'), autofix: true },
     ],
   },
   {
     pattern: /does not recognize this architecture|model type.*but Transformers does not/i,
-    message: 'Model architecture too new for installed vLLM/transformers.',
+    message: window.t('Model architecture too new for installed vLLM/transformers.'),
     fixes: [
-      { label: 'Try --trust-remote-code', action: (panel) => _serveAutoRetry(panel, '--trust-remote-code'), autofix: true },
-      { label: 'Update vLLM on server', action: () => {
+      { label: window.t('Try --trust-remote-code'), action: (panel) => _serveAutoRetry(panel, '--trust-remote-code'), autofix: true },
+      { label: window.t('Update vLLM on server'), action: () => {
         // Use the venv's python3 by absolute path when configured (SSH non-
         // interactive sessions often pick user-site Python over the venv).
         const _vp = (_envState.env === 'venv' && _envState.envPath)
@@ -444,21 +444,21 @@ export const ERROR_PATTERNS = [
   },
   {
     pattern: /Either a revision or a version must be specified|transformers\.integrations\.hub_kernels|kernels\/layer/i,
-    message: 'Transformers/kernels package mismatch.',
+    message: window.t('Transformers/kernels package mismatch.'),
     fixes: [
-      { label: 'Repair kernel package', action: () => {
+      { label: window.t('Repair kernel package'), action: () => {
         const _vp = (_envState.env === 'venv' && _envState.envPath)
           ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
         _launchServeTask('repair-kernels', 'pip-update', `${_vp} -m pip install --user --break-system-packages "kernels<0.15"`);
       }},
-      { label: 'Open Dependencies', action: () => _openCookbookDependencies('sglang') },
+      { label: window.t('Open Dependencies'), action: () => _openCookbookDependencies('sglang') },
     ],
   },
   {
     pattern: /ollama.*command not found/i,
-    message: 'Ollama is not installed on this server. Run: curl -fsSL https://ollama.com/install.sh | sh',
+    message: window.t('Ollama is not installed on this server. Run: curl -fsSL https://ollama.com/install.sh | sh'),
     fixes: [
-      { label: 'Copy install command', action: () => _copyText('curl -fsSL https://ollama.com/install.sh | sh') },
+      { label: window.t('Copy install command'), action: () => _copyText('curl -fsSL https://ollama.com/install.sh | sh') },
     ],
   },
   // System build deps must be checked BEFORE the llama-server catch-all:
@@ -470,70 +470,70 @@ export const ERROR_PATTERNS = [
   // missing OS-package toolchain that pip can't ship.
   {
     pattern: /cmake: command not found|cmake.*not found.*Could not/i,
-    message: 'cmake is required to compile llama.cpp from source, but it is not installed on this server.',
-    suggestion: 'Suggested action: install cmake via the OS package manager — apt: cmake build-essential / pacman: cmake base-devel / dnf: cmake gcc-c++ make / brew: cmake. Cookbook can do this automatically on the next launch if your user has passwordless sudo for apt/pacman/dnf.',
+    message: window.t('cmake is required to compile llama.cpp from source, but it is not installed on this server.'),
+    suggestion: window.t('Suggested action: install cmake via the OS package manager — apt: cmake build-essential / pacman: cmake base-devel / dnf: cmake gcc-c++ make / brew: cmake. Cookbook can do this automatically on the next launch if your user has passwordless sudo for apt/pacman/dnf.'),
     fixes: [
-      { label: 'Open Dependencies', action: () => _openCookbookDependencies('llama_cpp') },
-      { label: 'Copy apt install', action: () => _copyText('sudo apt install -y cmake build-essential git') },
-      { label: 'Copy pacman install', action: () => _copyText('sudo pacman -Sy --needed cmake base-devel git') },
-      { label: 'Copy dnf install', action: () => _copyText('sudo dnf install -y cmake gcc gcc-c++ make git') },
+      { label: window.t('Open Dependencies'), action: () => _openCookbookDependencies('llama_cpp') },
+      { label: window.t('Copy apt install'), action: () => _copyText('sudo apt install -y cmake build-essential git') },
+      { label: window.t('Copy pacman install'), action: () => _copyText('sudo pacman -Sy --needed cmake base-devel git') },
+      { label: window.t('Copy dnf install'), action: () => _copyText('sudo dnf install -y cmake gcc gcc-c++ make git') },
     ],
   },
   {
     pattern: /^(make|g\+\+|gcc): command not found|Could not find C\+\+ compiler/i,
-    message: 'A C/C++ compiler (build-essential / base-devel) is required to compile llama.cpp.',
+    message: window.t('A C/C++ compiler (build-essential / base-devel) is required to compile llama.cpp.'),
     fixes: [
-      { label: 'Open Dependencies', action: () => _openCookbookDependencies('llama_cpp') },
-      { label: 'Copy apt install', action: () => _copyText('sudo apt install -y build-essential') },
+      { label: window.t('Open Dependencies'), action: () => _openCookbookDependencies('llama_cpp') },
+      { label: window.t('Copy apt install'), action: () => _copyText('sudo apt install -y build-essential') },
     ],
   },
   {
     pattern: /^git: command not found/i,
-    message: 'git is required to clone the llama.cpp source tree.',
+    message: window.t('git is required to clone the llama.cpp source tree.'),
     fixes: [
-      { label: 'Open Dependencies', action: () => _openCookbookDependencies('llama_cpp') },
-      { label: 'Copy apt install', action: () => _copyText('sudo apt install -y git') },
+      { label: window.t('Open Dependencies'), action: () => _openCookbookDependencies('llama_cpp') },
+      { label: window.t('Copy apt install'), action: () => _copyText('sudo apt install -y git') },
     ],
   },
   {
     pattern: /llama-server.*command not found|llama\.cpp.*not found|No module named.*llama_cpp|No module named 'starlette_context'/i,
-    message: 'llama-cpp-python server is not installed. Run: pip install "llama-cpp-python[server]"',
+    message: window.t('llama-cpp-python server is not installed. Run: pip install "llama-cpp-python[server]"'),
     fixes: [
-      { label: 'Open Dependencies', action: () => _openCookbookDependencies('llama_cpp') },
-      { label: 'Copy install command', action: () => _copyText('pip install "llama-cpp-python[server]"') },
+      { label: window.t('Open Dependencies'), action: () => _openCookbookDependencies('llama_cpp') },
+      { label: window.t('Copy install command'), action: () => _copyText('pip install "llama-cpp-python[server]"') },
     ],
   },
   {
     pattern: /Windows Error 0xc000001d|Illegal instruction|0xc000001d/i,
-    message: 'AVX2 Instruction Set Mismatch: the precompiled llama-cpp-python wheel requires CPU features (AVX2/FMA) that your processor or virtual machine lacks.',
-    suggestion: 'Suggested action: switch this serve config to Ollama (highly recommended, has dynamic CPU fallbacks), or choose a remote Linux GPU server.',
+    message: window.t('AVX2 Instruction Set Mismatch: the precompiled llama-cpp-python wheel requires CPU features (AVX2/FMA) that your processor or virtual machine lacks.'),
+    suggestion: window.t('Suggested action: switch this serve config to Ollama (highly recommended, has dynamic CPU fallbacks), or choose a remote Linux GPU server.'),
     fixes: [
-      { label: 'Switch to Ollama', action: (panel) => _openServeEditFromDiagnosis(panel, { backend: 'ollama' }) },
-      { label: 'Choose remote server', action: (panel) => _openServeEditFromDiagnosis(panel) },
+      { label: window.t('Switch to Ollama'), action: (panel) => _openServeEditFromDiagnosis(panel, { backend: 'ollama' }) },
+      { label: window.t('Choose remote server'), action: (panel) => _openServeEditFromDiagnosis(panel) },
     ],
   },
   {
     pattern: /CUDA Toolkit not found|Unable to find cudart library|missing:\s*CUDA_CUDART/i,
-    message: 'llama.cpp found nvcc, but the CUDA runtime library is missing.',
-    suggestion: 'Suggested action: relaunch with the updated runner so llama.cpp builds CPU-only, or install a complete CUDA toolkit/runtime on this server for GPU llama.cpp.',
+    message: window.t('llama.cpp found nvcc, but the CUDA runtime library is missing.'),
+    suggestion: window.t('Suggested action: relaunch with the updated runner so llama.cpp builds CPU-only, or install a complete CUDA toolkit/runtime on this server for GPU llama.cpp.'),
     fixes: [
-      { label: 'Edit serve', action: (panel) => _openServeEditFromDiagnosis(panel) },
-      { label: 'Open Dependencies', action: () => _openCookbookDependencies('llama_cpp') },
+      { label: window.t('Edit serve'), action: (panel) => _openServeEditFromDiagnosis(panel) },
+      { label: window.t('Open Dependencies'), action: () => _openCookbookDependencies('llama_cpp') },
     ],
   },
   {
     pattern: /No module named ['"]?torch|No module named ['"]?diffusers|diffusers.*command not found/i,
-    message: 'Diffusion serving needs PyTorch and diffusers. Install diffusers from Cookbook → Dependencies.',
+    message: window.t('Diffusion serving needs PyTorch and diffusers. Install diffusers from Cookbook → Dependencies.'),
     fixes: [
-      { label: 'Open Dependencies', action: () => _openCookbookDependencies('diffusers') },
-      { label: 'Copy install command', action: () => _copyText('python3 -m pip install "diffusers[torch]"') },
+      { label: window.t('Open Dependencies'), action: () => _openCookbookDependencies('diffusers') },
+      { label: window.t('Copy install command'), action: () => _copyText('python3 -m pip install "diffusers[torch]"') },
     ],
   },
   {
     pattern: /Triton kernels.*Failed to import|cannot import name '\w+' from 'triton_kernels/i,
-    message: 'Triton kernels version mismatch. Non-fatal warning — model will still run, just without optimized MoE kernels.',
+    message: window.t('Triton kernels version mismatch. Non-fatal warning — model will still run, just without optimized MoE kernels.'),
     fixes: [
-      { label: 'Update triton on server', action: () => {
+      { label: window.t('Update triton on server'), action: () => {
         const _vp = (_envState.env === 'venv' && _envState.envPath)
           ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
         _launchServeTask('update-triton', 'pip-update', `${_vp} -m pip install -U triton triton-kernels`);
@@ -542,23 +542,23 @@ export const ERROR_PATTERNS = [
   },
   {
     pattern: /No space left on device|Disk quota exceeded|ENOSPC/i,
-    message: 'Disk full on the server. Free up space before retrying.',
+    message: window.t('Disk full on the server. Free up space before retrying.'),
     fixes: [
-      { label: 'Check HF cache size', action: (panel) => _runQuickCmd(panel, 'du -sh ~/.cache/huggingface 2>/dev/null') },
+      { label: window.t('Check HF cache size'), action: (panel) => _runQuickCmd(panel, 'du -sh ~/.cache/huggingface 2>/dev/null') },
     ],
   },
   {
     pattern: /Connection refused|Could not connect|Connection reset by peer/i,
-    message: 'Network connection failed. Server may be unreachable or HuggingFace is down.',
+    message: window.t('Network connection failed. Server may be unreachable or HuggingFace is down.'),
     fixes: [
-      { label: 'Test HF connectivity', action: (panel) => _runQuickCmd(panel, 'curl -sI https://huggingface.co 2>&1 | head -3') },
+      { label: window.t('Test HF connectivity'), action: (panel) => _runQuickCmd(panel, 'curl -sI https://huggingface.co 2>&1 | head -3') },
     ],
   },
   {
     pattern: /attention_sink|sliding.window.*not supported|sliding_window.*incompatible/i,
-    message: 'Model uses attention features unsupported in this vLLM version.',
+    message: window.t('Model uses attention features unsupported in this vLLM version.'),
     fixes: [
-      { label: 'Update vLLM on server', action: () => {
+      { label: window.t('Update vLLM on server'), action: () => {
         const _vp = (_envState.env === 'venv' && _envState.envPath)
           ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
         _launchServeTask('update-vllm', 'pip-update', `${_vp} -m pip install -U vllm`);
@@ -573,11 +573,11 @@ export const ERROR_PATTERNS = [
     // non-flashinfer attention backend, or set CUDACXX to a newer nvcc
     // (vLLM installs nvidia-cuda-nvcc into the venv — point at that).
     pattern: /nvcc fatal\s+:\s+Unsupported gpu architecture 'compute_\d+'/i,
-    message: 'FlashInfer is JIT-compiling sampling kernels with an nvcc too old for this GPU (no sm_89 / sm_90 support — pre-CUDA 11.8). Changing the attention backend does not help — flashinfer JITs the SAMPLER too. The clean fix is to set VLLM_USE_FLASHINFER_SAMPLER=0 so vLLM uses its native sampler instead.',
-    suggestion: 'Suggested action: relaunch with VLLM_USE_FLASHINFER_SAMPLER=0 prepended. (Confirmed on the QuantTrio/Qwen3.5 model card as the canonical workaround.)',
+    message: window.t('FlashInfer is JIT-compiling sampling kernels with an nvcc too old for this GPU (no sm_89 / sm_90 support — pre-CUDA 11.8). Changing the attention backend does not help — flashinfer JITs the SAMPLER too. The clean fix is to set VLLM_USE_FLASHINFER_SAMPLER=0 so vLLM uses its native sampler instead.'),
+    suggestion: window.t('Suggested action: relaunch with VLLM_USE_FLASHINFER_SAMPLER=0 prepended. (Confirmed on the QuantTrio/Qwen3.5 model card as the canonical workaround.)'),
     fixes: [
-      { label: 'Retry with VLLM_USE_FLASHINFER_SAMPLER=0', action: (panel) => _serveAutoRetryReplace(panel, '', 'VLLM_USE_FLASHINFER_SAMPLER=0 ', { prepend: true }) },
-      { label: 'Uninstall flashinfer-python', action: () => {
+      { label: window.t('Retry with VLLM_USE_FLASHINFER_SAMPLER=0'), action: (panel) => _serveAutoRetryReplace(panel, '', 'VLLM_USE_FLASHINFER_SAMPLER=0 ', { prepend: true }) },
+      { label: window.t('Uninstall flashinfer-python'), action: () => {
         // Hard fallback: vLLM 0.22 reaches into flashinfer for sampling kernels
         // even with VLLM_USE_FLASHINFER_SAMPLER=0 in some configs. Removing
         // the package forces it onto the native sampler.
@@ -585,7 +585,7 @@ export const ERROR_PATTERNS = [
           ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
         _launchServeTask('uninstall-flashinfer', 'pip-update', `${_vp} -m pip uninstall flashinfer-python -y`);
       }},
-      { label: 'Edit serve', action: (panel) => _openServeEditFromDiagnosis(panel) },
+      { label: window.t('Edit serve'), action: (panel) => _openServeEditFromDiagnosis(panel) },
     ],
   },
   {
@@ -595,16 +595,16 @@ export const ERROR_PATTERNS = [
     // any server code runs. Fix is to reinstall vllm (which pulls a matching
     // torch) or upgrade torch directly.
     pattern: /ImportError: cannot import name '[^']+' from 'torch(\.\w+)+'/i,
-    message: 'vLLM was built against a newer torch than what is installed. Reinstall vLLM so pip pulls a compatible torch (or upgrade torch directly).',
+    message: window.t('vLLM was built against a newer torch than what is installed. Reinstall vLLM so pip pulls a compatible torch (or upgrade torch directly).'),
     fixes: [
-      { label: 'Reinstall vLLM (pulls matching torch)', action: () => {
+      { label: window.t('Reinstall vLLM (pulls matching torch)'), action: () => {
         // Absolute path to the venv's python3 — bare `python3` lands in the
         // wrong site-packages over SSH when ~/.local/bin precedes the venv.
         const _vp = (_envState.env === 'venv' && _envState.envPath)
           ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
         _launchServeTask('reinstall-vllm', 'pip-reinstall', `${_vp} -m pip install --force-reinstall vllm`);
       }},
-      { label: 'Upgrade torch only', action: () => {
+      { label: window.t('Upgrade torch only'), action: () => {
         const _vp = (_envState.env === 'venv' && _envState.envPath)
           ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
         _launchServeTask('upgrade-torch', 'pip-update', `${_vp} -m pip install -U torch`);
@@ -623,8 +623,8 @@ export const ERROR_PATTERNS = [
       if (/Application startup complete|"(?:GET|POST)\s+\/v1\/[^"]+ HTTP\/[\d.]+"\s*2\d\d|Uvicorn running on|server is listening on https?:\/\//i.test(TAIL)) return false;
       return /Failed to build\b|subprocess-exited-with-error|Could not build wheels|metadata-generation-failed/i.test(TAIL);
     },
-    message: 'A dependency failed to build during install — usually an older package whose build breaks on this Python version, not a server problem. The install did not finish.',
-    suggestion: 'Suggested action: check the captured output for the package that failed to build; it may need a newer release or a patch to install on this Python version.',
+    message: window.t('A dependency failed to build during install — usually an older package whose build breaks on this Python version, not a server problem. The install did not finish.'),
+    suggestion: window.t('Suggested action: check the captured output for the package that failed to build; it may need a newer release or a patch to install on this Python version.'),
     fixes: [],
   },
   {
@@ -638,9 +638,9 @@ export const ERROR_PATTERNS = [
       if (/Application startup complete|"GET \/v1\/[^"]+ HTTP\/[\d.]+" 2\d\d|Uvicorn running on/i.test(TAIL)) return false;
       return /vllm/i.test(TAIL);
     },
-    message: 'A vLLM process hit a Python traceback and may be wedged.',
+    message: window.t('A vLLM process hit a Python traceback and may be wedged.'),
     fixes: [
-      { label: 'Kill vLLM processes', action: (panel) => _runQuickCmd(panel, 'pkill -f vllm') },
+      { label: window.t('Kill vLLM processes'), action: (panel) => _runQuickCmd(panel, 'pkill -f vllm') },
     ],
   },
   {
@@ -652,8 +652,8 @@ export const ERROR_PATTERNS = [
       if (/Application startup complete|"GET \/v1\/[^"]+ HTTP\/[\d.]+" 2\d\d|Uvicorn running on/i.test(TAIL)) return false;
       return true;
     },
-    message: 'Python traceback detected — check the captured output below for the underlying error.',
-    suggestion: 'Suggested action: read the captured output for the failing step; copy the troubleshooting bundle if you need help.',
+    message: window.t('Python traceback detected — check the captured output below for the underlying error.'),
+    suggestion: window.t('Suggested action: read the captured output for the failing step; copy the troubleshooting bundle if you need help.'),
     fixes: [],
   },
 ];
