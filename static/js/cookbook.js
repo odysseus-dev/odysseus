@@ -2304,11 +2304,11 @@ function _wireTabEvents(body) {
         hfList.appendChild(_spin.element);
         const lbl = document.createElement('div');
         lbl.className = 'hwfit-loading';
-        lbl.textContent = 'Scanning models…';
+        lbl.textContent = window.t('Scanning models…');
         lbl.style.cssText = 'text-align:center;opacity:0.5;font-size:11px;margin-top:6px;';
         hfList.appendChild(lbl);
       } catch {
-        hfList.innerHTML = '<div class="hwfit-loading">Scanning models…</div>';
+        hfList.innerHTML = `<div class="hwfit-loading">${window.t('Scanning models…')}</div>`;
       }
       const hwInfo = await _getSelectedServerHw();
       const vram = hwInfo.vram || 0;
@@ -2328,8 +2328,8 @@ function _wireTabEvents(body) {
           // Distinguish "the HF API failed" from "nothing matched" so an outage
           // doesn't masquerade as no-fitting-models.
           const msg = lastErr
-            ? `Couldn't load trending models (${esc(lastErr)})`
-            : 'No trending models found';
+            ? window.t("Couldn't load trending models ({err})", { err: esc(lastErr) })
+            : window.t('No trending models found');
           hfList.innerHTML = `<div class="hwfit-loading">${msg}</div>`;
           return;
         }
@@ -2340,7 +2340,7 @@ function _wireTabEvents(body) {
           const meta = [];
           if (org) meta.push(esc(org));
           if (m.needed_vram_gb) meta.push(`~${m.needed_vram_gb}GB`);
-          if (m.downloads) meta.push(`${m.downloads.toLocaleString()} downloads`);
+          if (m.downloads) meta.push(window.t('{n} downloads', { n: m.downloads.toLocaleString() }));
           const date = m.createdAt ? new Date(m.createdAt).toISOString().slice(0, 10) : '';
           if (date) meta.push(date);
           html += `<div class="doclib-card memory-item cookbook-hf-latest-card" data-repo="${esc(m.repo_id)}" style="cursor:pointer;">`;
@@ -2362,7 +2362,7 @@ function _wireTabEvents(body) {
           });
         });
       } catch (e) {
-        hfList.innerHTML = '<div class="hwfit-loading">Failed to load</div>';
+        hfList.innerHTML = `<div class="hwfit-loading">${window.t('Failed to load')}</div>`;
       }
     }
     hfToggle.addEventListener('click', () => {
@@ -2406,13 +2406,13 @@ function _wireTabEvents(body) {
   if (olToggle && olList) {
     let _olLoaded = false;
     async function _loadOllama(refresh = false) {
-      olList.innerHTML = '<div class="hwfit-loading" style="opacity:0.5;font-size:11px;text-align:center;padding:12px;">Loading…</div>';
+      olList.innerHTML = `<div class="hwfit-loading" style="opacity:0.5;font-size:11px;text-align:center;padding:12px;">${window.t('Loading…')}</div>`;
       try {
         const res = await fetch(`/api/cookbook/ollama/library${refresh ? '?refresh=1' : ''}`);
         const data = await res.json();
         const models = data.models || [];
         if (!models.length) {
-          olList.innerHTML = '<div class="hwfit-loading">No models</div>';
+          olList.innerHTML = `<div class="hwfit-loading">${window.t('No models')}</div>`;
           return;
         }
         let html = '';

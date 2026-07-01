@@ -92,4 +92,11 @@ registerMessages('pt-BR', {
   'Enter a full HuggingFace repo ID like "org/model-name", or an Ollama name like "qwen2.5:14b".': 'Digite um ID de repositório HuggingFace completo como "org/nome-modelo", ou um nome Ollama como "qwen2.5:14b".',
   'Pick a GGUF quant first. Odysseus will not download the whole GGUF repo without an include pattern.': 'Escolha uma quantização GGUF primeiro. O Odysseus não baixará o repositório GGUF inteiro sem um padrão de inclusão.',
   'Pick the GGUF quant, then press Download again.': 'Escolha a quantização GGUF e pressione Baixar novamente.',
+  'Scanning models…': 'Escaneando modelos…',
+  "Couldn't load trending models ({err})": 'Não foi possível carregar os modelos em alta ({err})',
+  'No trending models found': 'Nenhum modelo em alta encontrado',
+  '{n} downloads': '{n} downloads',
+  'Failed to load': 'Falha ao carregar',
+  'Loading…': 'Carregando…',
+  'No models': 'Nenhum modelo',
 });
