@@ -1884,10 +1884,10 @@ export function _hwfitInit() {
     for (const sel of selectors) {
       if (!sel) continue;
       const currentVal = sel.value;
-      let html = `<option value="local">Local</option>`;
+      let html = `<option value="local">${uiModule.esc(window.t('Local'))}</option>`;
       _envState.servers.forEach((s, i) => {
         if (!s.host) return;
-        const label = s.name || s.host || `Server ${i + 1}`;
+        const label = s.name || s.host || window.t('Server {n}', { n: i + 1 });
         html += `<option value="${i}">${uiModule.esc(label)}</option>`;
       });
       sel.innerHTML = html;
@@ -1953,13 +1953,13 @@ export function _hwfitInit() {
     if (!dot) return;
     if (!host) {
       dot.className = 'cookbook-srv-status';
-      dot.title = 'Enter user@host to test';
+      dot.title = window.t('Enter user@host to test');
       setMsg('');
       return;
     }
     dot.className = 'cookbook-srv-status testing';
-    dot.title = 'Testing SSH…';
-    setMsg('Testing SSH...');
+    dot.title = window.t('Testing SSH…');
+    setMsg(window.t('Testing SSH...'));
     const pf = port && port !== '22' ? `-p ${port} ` : '';
     const cmd = `ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new ${pf}${host} "echo ok"`;
     const t0 = Date.now();
@@ -1974,18 +1974,18 @@ export function _hwfitInit() {
       const out = (data.stdout || '').trim();
       if (data.exit_code === 0 && out.startsWith('ok')) {
         dot.className = 'cookbook-srv-status ok';
-        dot.title = `Reachable · ${ms} ms · use Dependencies to check tmux/HF setup`;
-        setMsg(`Connected · ${ms} ms`, 'var(--green,#50fa7b)');
+        dot.title = window.t('Reachable · {ms} ms · use Dependencies to check tmux/HF setup', { ms });
+        setMsg(window.t('Connected · {ms} ms', { ms }), 'var(--green,#50fa7b)');
       } else {
         dot.className = 'cookbook-srv-status fail';
         const err = (data.stderr || data.stdout || `exit ${data.exit_code}`).toString().trim().slice(0, 240);
-        dot.title = `SSH failed: ${err}`;
-        setMsg(`Failed · ${err}`, 'var(--red,#e06c75)');
+        dot.title = window.t('SSH failed: {err}', { err });
+        setMsg(window.t('Failed · {err}', { err }), 'var(--red,#e06c75)');
       }
     } catch (e) {
       dot.className = 'cookbook-srv-status fail';
-      dot.title = `Test failed: ${e.message || e}`;
-      setMsg(`Failed · ${e.message || e}`, 'var(--red,#e06c75)');
+      dot.title = window.t('Test failed: {err}', { err: e.message || e });
+      setMsg(window.t('Failed · {err}', { err: e.message || e }), 'var(--red,#e06c75)');
     }
   }
 
