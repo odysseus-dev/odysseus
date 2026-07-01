@@ -6,5 +6,12 @@
 import { registerMessages } from '../i18n.js';
 
 registerMessages('pt-BR', {
-  // entries added by the work unit
+  // ai-tool-runner.js
+  'No image returned': 'Nenhuma imagem retornada',
+  'complete': 'concluido',
+  'Failed to load result': 'Falha ao carregar resultado',
+  'failed: {pkg} is not installed on the server.': 'falhou: {pkg} nao esta instalado no servidor.',
+  'Install {pkg}': 'Instalar {pkg}',
+  'failed:': 'falhou:',
+  'Open Cookbook': 'Abrir Cookbook',
 });
