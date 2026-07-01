@@ -183,4 +183,13 @@ registerMessages('pt-BR', {
   'Configure & serve': 'Configurar e servir',
   'Configure': 'Configurar',
   'This is a safetensors GPU-serving format. Use vLLM/SGLang with a visible CUDA/ROCm accelerator, or pick a GGUF download for llama.cpp/Ollama.': 'Este é um formato safetensors para servir em GPU. Use vLLM/SGLang com um acelerador CUDA/ROCm visível, ou escolha um download GGUF para llama.cpp/Ollama.',
+  'Model not downloaded yet — starting download. Run again to serve once it finishes.': 'Modelo ainda não baixado — iniciando o download. Execute novamente para servir quando terminar.',
+  '{count} model{plural} on port {port} ({names}). Stop it and launch this one?': '{count} modelo{plural} na porta {port} ({names}). Parar e iniciar este agora?',
+  'Stop & launch': 'Parar e iniciar',
+  'Cancel': 'Cancelar',
+  'Stopping…': 'Parando…',
+  "Can't launch: GPU driver error — {error}. Reinstall or repair the NVIDIA driver, then re-scan.": 'Não é possível iniciar: erro no driver da GPU — {error}. Reinstale ou repare o driver da NVIDIA e escaneie novamente.',
+  "Can't launch: no GPU detected by nvidia-smi. {backend} needs a working CUDA or ROCm device.": 'Não é possível iniciar: nenhuma GPU detectada pelo nvidia-smi. {backend} precisa de um dispositivo CUDA ou ROCm funcional.',
+  "Can't launch: {pkg} isn't installed{onHost}. Install it first:\n{hint}": 'Não é possível iniciar: {pkg} não está instalado{onHost}. Instale-o primeiro:\n{hint}',
+  "Can't launch: {model} needs {pkg} ≥ {minVer}, but {curVer} is installed{onHost}. Upgrade:\n{hint}": 'Não é possível iniciar: {model} precisa de {pkg} ≥ {minVer}, mas {curVer} está instalado{onHost}. Atualize:\n{hint}',
 });

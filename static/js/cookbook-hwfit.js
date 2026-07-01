@@ -1485,7 +1485,7 @@ export function _expandModelRow(row, modelData) {
         || [..._cachedModelIds].some(id => id === modelData.name || id.endsWith('/' + _short))
       );
       if (_cachedModelIds && !_downloaded) {
-        uiModule.showToast('Model not downloaded yet — starting download. Run again to serve once it finishes.');
+        uiModule.showToast(window.t('Model not downloaded yet — starting download. Run again to serve once it finishes.'));
         if (backend === 'ollama') {
           _runPanelCmd(panel, _buildDownloadCmd(modelData, backend), { timeout: 0 });
         } else {
@@ -1513,12 +1513,17 @@ export function _expandModelRow(row, modelData) {
         if (_clashing.length) {
           const _names = _clashing.map(t => t.payload?.repo_id || t.repo || t.name || '?').filter(Boolean);
           const _ok = await window.styledConfirm?.(
-            `${_clashing.length} model${_clashing.length === 1 ? '' : 's'} on port ${_qrPort} (${_names.join(', ')}). Stop it and launch this one?`,
-            { confirmText: 'Stop & launch', cancelText: 'Cancel' }
+            window.t('{count} model{plural} on port {port} ({names}). Stop it and launch this one?', {
+              count: _clashing.length,
+              plural: _clashing.length === 1 ? '' : 's',
+              port: _qrPort,
+              names: _names.join(', '),
+            }),
+            { confirmText: window.t('Stop & launch'), cancelText: window.t('Cancel') }
           );
           if (!_ok) return;
           quickRunBtn.disabled = true;
-          quickRunBtn.textContent = 'Stopping…';
+          quickRunBtn.textContent = window.t('Stopping…');
           for (const t of _clashing) {
             try {
               const _taskEl = document.querySelector(`.cookbook-task[data-task-id="${t.sessionId}"]`);
@@ -1552,11 +1557,11 @@ export function _expandModelRow(row, modelData) {
       if (_qrRunBackend === 'vllm' || _qrRunBackend === 'sglang') {
         const _sys = _hwfitCache?.system || {};
         if (_sys.gpu_error) {
-          uiModule.showError(`Can't launch: GPU driver error — ${_sys.gpu_error}. Reinstall or repair the NVIDIA driver, then re-scan.`);
+          uiModule.showError(window.t("Can't launch: GPU driver error — {error}. Reinstall or repair the NVIDIA driver, then re-scan.", { error: _sys.gpu_error }));
           return;
         }
         if (!_sys.has_gpu || !(_sys.gpu_count > 0)) {
-          uiModule.showError(`Can't launch: no GPU detected by nvidia-smi. ${_qrRunBackend === 'vllm' ? 'vLLM' : 'SGLang'} needs a working CUDA or ROCm device.`);
+          uiModule.showError(window.t("Can't launch: no GPU detected by nvidia-smi. {backend} needs a working CUDA or ROCm device.", { backend: _qrRunBackend === 'vllm' ? 'vLLM' : 'SGLang' }));
           return;
         }
       }
@@ -1595,7 +1600,7 @@ export function _expandModelRow(row, modelData) {
               const _hint = _qrRunBackend === 'vllm'
                 ? 'uv pip install -U vllm --torch-backend auto'
                 : "pip install -U 'sglang[all]'";
-              uiModule.showError(`Can't launch: ${_pkg} isn't installed${_qrHostStr ? ' on ' + _qrHostStr : ''}. Install it first:\n${_hint}`);
+              uiModule.showError(window.t("Can't launch: {pkg} isn't installed{onHost}. Install it first:\n{hint}", { pkg: _pkg, onHost: _qrHostStr ? ' on ' + _qrHostStr : '', hint: _hint }));
               return;
             }
             // Version-floor check. _minBackendVersion returns null when this
@@ -1609,7 +1614,7 @@ export function _expandModelRow(row, modelData) {
               const _hint = _qrRunBackend === 'vllm'
                 ? 'uv pip install -U vllm --torch-backend auto'
                 : "pip install -U 'sglang[all]'";
-              uiModule.showError(`Can't launch: ${modelData.name} needs ${_pkg} ≥ ${_minVer}, but ${_curVer} is installed${_qrHostStr ? ' on ' + _qrHostStr : ''}. Upgrade:\n${_hint}`);
+              uiModule.showError(window.t("Can't launch: {model} needs {pkg} ≥ {minVer}, but {curVer} is installed{onHost}. Upgrade:\n{hint}", { model: modelData.name, pkg: _pkg, minVer: _minVer, curVer: _curVer, onHost: _qrHostStr ? ' on ' + _qrHostStr : '', hint: _hint }));
               return;
             }
           }
