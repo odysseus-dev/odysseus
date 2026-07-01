@@ -177,4 +177,22 @@ registerMessages('pt-BR', {
   'Next': 'Proximo',
   'Name': 'Nome',
   'Untitled photo (press Enter to save)': 'Foto sem titulo (pressione Enter para salvar)',
+
+  // gallery.js — round 7 (detail sidebar labels)
+  'Prompt': 'Prompt',
+  'Date': 'Data',
+  'Dimensions': 'Dimensoes',
+  'Camera': 'Camera',
+  'Location': 'Localizacao',
+  'Source': 'Origem',
+  'Session': 'Sessao',
+  'AI Tags': 'Marcacoes de IA',
+  'AI-generated tag — click to filter to photos tagged "{tag}"': 'Marcacao gerada por IA — clique para filtrar fotos marcadas com "{tag}"',
+  'Tags': 'Marcacoes',
+  'Filter to photos tagged "{tag}"': 'Filtrar fotos marcadas com "{tag}"',
+  'Remove tag': 'Remover marcacao',
+  'Add a tag': 'Adicionar marcacao',
+  'Type a tag and press Enter to add it': 'Digite uma marcacao e pressione Enter para adiciona-la',
+  'Album': 'Album',
+  'People in this photo': 'Pessoas nesta foto',
 });

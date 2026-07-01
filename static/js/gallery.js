@@ -1412,39 +1412,39 @@ function _openDetail(img) {
             <svg class="gallery-name-enter" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
           </div>
         </div>
-        ${img.prompt && img.model !== 'imported' ? `<div class="gallery-detail-section"><label>Prompt</label><div class="gallery-detail-prompt">${_esc(img.prompt)}</div></div>` : ''}
+        ${img.prompt && img.model !== 'imported' ? `<div class="gallery-detail-section"><label>${window.t('Prompt')}</label><div class="gallery-detail-prompt">${_esc(img.prompt)}</div></div>` : ''}
         <div class="gallery-detail-section gallery-detail-section-date">
-          <label>Date</label>
+          <label>${window.t('Date')}</label>
           <div>${date}</div>
         </div>
         ${editedHtml}
         <div class="gallery-detail-section">
-          <label>Dimensions</label>
+          <label>${window.t('Dimensions')}</label>
           <div>${dims}${fileSize ? ` (${fileSize})` : ''}</div>
         </div>
-        ${img.camera ? `<div class="gallery-detail-section"><label>Camera</label><div>${_esc(img.camera)}</div></div>` : ''}
-        ${img.gps ? `<div class="gallery-detail-section"><label>Location</label><div>${img.gps.lat}, ${img.gps.lng}</div></div>` : ''}
-        ${img.model ? `<div class="gallery-detail-section"><label>Source</label><div>${_esc(img.model)}</div></div>` : ''}
-        ${img.session_name ? `<div class="gallery-detail-section"><label>Session</label><div>${_esc(img.session_name)}</div></div>` : ''}
-        ${aiTags ? `<div class="gallery-detail-section"><label>AI Tags</label><div class="gallery-ai-tags">${aiTags.split(',').map(t => t.trim()).filter(Boolean).map(t => `<button class="gallery-ai-chip gallery-aitag-chip" data-tag-filter="${_esc(t)}" title="AI-generated tag — click to filter to photos tagged “${_esc(t)}”"><span class="gallery-aitag-mark" aria-hidden="true">✦</span>${_esc(t)}</button>`).join('')}</div></div>` : ''}
+        ${img.camera ? `<div class="gallery-detail-section"><label>${window.t('Camera')}</label><div>${_esc(img.camera)}</div></div>` : ''}
+        ${img.gps ? `<div class="gallery-detail-section"><label>${window.t('Location')}</label><div>${img.gps.lat}, ${img.gps.lng}</div></div>` : ''}
+        ${img.model ? `<div class="gallery-detail-section"><label>${window.t('Source')}</label><div>${_esc(img.model)}</div></div>` : ''}
+        ${img.session_name ? `<div class="gallery-detail-section"><label>${window.t('Session')}</label><div>${_esc(img.session_name)}</div></div>` : ''}
+        ${aiTags ? `<div class="gallery-detail-section"><label>${window.t('AI Tags')}</label><div class="gallery-ai-tags">${aiTags.split(',').map(t => t.trim()).filter(Boolean).map(t => `<button class="gallery-ai-chip gallery-aitag-chip" data-tag-filter="${_esc(t)}" title="${window.t('AI-generated tag — click to filter to photos tagged "{tag}"', { tag: _esc(t) })}"><span class="gallery-aitag-mark" aria-hidden="true">✦</span>${_esc(t)}</button>`).join('')}</div></div>` : ''}
         <div class="gallery-detail-section">
-          <label>Tags</label>
-          <div class="gallery-ai-tags" id="gallery-user-tag-chips">${userTags.split(',').map(t => t.trim()).filter(Boolean).map(t => `<button class="gallery-ai-chip gallery-user-chip" data-tag-filter="${_esc(t)}" title="Filter to photos tagged “${_esc(t)}”">${_esc(t)}<span class="gallery-tag-x" title="Remove tag" aria-label="Remove tag">×</span></button>`).join('')}</div>
+          <label>${window.t('Tags')}</label>
+          <div class="gallery-ai-tags" id="gallery-user-tag-chips">${userTags.split(',').map(t => t.trim()).filter(Boolean).map(t => `<button class="gallery-ai-chip gallery-user-chip" data-tag-filter="${_esc(t)}" title="${window.t('Filter to photos tagged "{tag}"', { tag: _esc(t) })}">${_esc(t)}<span class="gallery-tag-x" title="${window.t('Remove tag')}" aria-label="${window.t('Remove tag')}">×</span></button>`).join('')}</div>
           <div class="gallery-tag-input-wrap">
             <input type="text" class="gallery-tag-input" id="gallery-tag-input"
-              value="" placeholder="Add a tag" title="Type a tag and press Enter to add it" />
+              value="" placeholder="${window.t('Add a tag')}" title="${window.t('Type a tag and press Enter to add it')}" />
             <span class="gallery-tag-enter-hint" aria-hidden="true">↵</span>
           </div>
         </div>
         <div class="gallery-detail-section">
-          <label>Album</label>
+          <label>${window.t('Album')}</label>
           <select id="gallery-detail-album" class="gallery-tag-input" style="padding:4px 6px;">
-            <option value="">None</option>
+            <option value="">${window.t('None')}</option>
             ${_albums.map(a => `<option value="${a.id}" ${img.album_id === a.id ? 'selected' : ''}>${_esc(a.name)}</option>`).join('')}
           </select>
         </div>
         <div class="gallery-detail-section" id="gallery-detail-people-section" style="display:none">
-          <label>People in this photo</label>
+          <label>${window.t('People in this photo')}</label>
           <div id="gallery-detail-people-list" class="gallery-detail-people"></div>
         </div>
       </div>
