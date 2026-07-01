@@ -158,4 +158,16 @@ registerMessages('pt-BR', {
   'Failed to reach backend: {msg}': 'Falha ao acessar o backend: {msg}',
   'Session create failed ({status}) {detail}': 'Falha ao criar sessão ({status}) {detail}',
   'Generating response...': 'Gerando resposta...',
+
+  // --- sessions.js: archive browser ---
+  '(archived)': '(arquivada)',
+  'Failed to open archived session': 'Falha ao abrir sessão arquivada',
+  'Session restored': 'Sessão restaurada',
+  'Failed to restore session': 'Falha ao restaurar sessão',
+  'Delete this session permanently?': 'Excluir esta sessão permanentemente?',
+  'Session deleted': 'Sessão excluída',
+  'Failed to delete session': 'Falha ao excluir sessão',
+  '{n} session(s) restored': '{n} sessão(ões) restaurada(s)',
+  'Delete {n} session(s) permanently?': 'Excluir {n} sessão(ões) permanentemente?',
+  '{n} selected': '{n} selecionada(s)',
 });

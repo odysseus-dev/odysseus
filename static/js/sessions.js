@@ -2368,7 +2368,7 @@ async function _arcPeekOpen(sid) {
     // Find the archived session metadata
     const meta = _arc.data.find(s => s.id === sid);
     const metaEl = document.getElementById('current-meta');
-    if (metaEl) metaEl.textContent = (meta?.name || 'Archived') + ' (archived)';
+    if (metaEl) metaEl.textContent = (meta?.name || window.t('Archived')) + ' ' + window.t('(archived)');
 
     // Render the chat history
     const chatBox = document.getElementById('chat-history');
@@ -2388,7 +2388,7 @@ async function _arcPeekOpen(sid) {
     if (window.uiModule) window.uiModule.scrollHistory();
   } catch (e) {
     console.error('Peek open failed:', e);
-    uiModule.showError('Failed to open archived session');
+    uiModule.showError(window.t('Failed to open archived session'));
   }
 }
 
@@ -2405,21 +2405,21 @@ async function _arcRestore(sid) {
     if (!res.ok) throw new Error('Failed');
     _arcRemove(sid);
     _arcRefreshUI();
-    uiModule.showToast('Session restored');
+    uiModule.showToast(window.t('Session restored'));
     loadSessions();
-  } catch { uiModule.showError('Failed to restore session'); }
+  } catch { uiModule.showError(window.t('Failed to restore session')); }
 }
 
 async function _arcDelete(sid) {
-  if (!await window.styledConfirm('Delete this session permanently?', { confirmText: 'Delete', danger: true })) return;
+  if (!await window.styledConfirm(window.t('Delete this session permanently?'), { confirmText: window.t('Delete'), danger: true })) return;
   try {
     const res = await fetch(`${API_BASE}/api/session/${sid}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('Failed');
     await _animateSessionRowsRemoving([sid], '#archive-grid .archive-row[data-session-id]');
     _arcRemove(sid);
     _arcRefreshUI();
-    uiModule.showToast('Session deleted');
-  } catch { uiModule.showError('Failed to delete session'); }
+    uiModule.showToast(window.t('Session deleted'));
+  } catch { uiModule.showError(window.t('Failed to delete session')); }
 }
 
 function _arcRemove(sid) {
@@ -2439,14 +2439,14 @@ async function _arcBulkRestore() {
   }
   _arc.selected.clear();
   _arcRefreshUI();
-  uiModule.showToast(`${ids.length} session${ids.length > 1 ? 's' : ''} restored`);
+  uiModule.showToast(window.t('{n} session(s) restored', { n: ids.length }));
   loadSessions();
 }
 
 async function _arcBulkDelete() {
   const ids = [..._arc.selected];
   if (!ids.length) return;
-  const ok = await uiModule.styledConfirm(`Delete ${ids.length} session${ids.length > 1 ? 's' : ''} permanently?`, { confirmText: 'Delete', danger: true });
+  const ok = await uiModule.styledConfirm(window.t('Delete {n} session(s) permanently?', { n: ids.length }), { confirmText: window.t('Delete'), danger: true });
   if (!ok) return;
   const deletedIds = [];
   for (const sid of ids) {
@@ -2461,7 +2461,7 @@ async function _arcBulkDelete() {
   await _animateSessionRowsRemoving(deletedIds, '#archive-grid .archive-row[data-session-id]');
   _arc.selected.clear();
   _arcRefreshUI();
-  uiModule.showToast(`${deletedIds.length} session${deletedIds.length > 1 ? 's' : ''} deleted`);
+  uiModule.showToast(window.t('{n} session(s) deleted', { n: deletedIds.length }));
 }
 
 function _arcToggleSelectMode() {
@@ -2475,9 +2475,9 @@ function _arcUpdateBulkBar() {
   const count = document.getElementById('archive-selected-count');
   const selectBtn = document.getElementById('archive-select-btn');
   if (bar) bar.classList.toggle('hidden', !_arc.selectMode);
-  if (count) count.textContent = `${_arc.selected.size} selected`;
+  if (count) count.textContent = window.t('{n} selected', { n: _arc.selected.size });
   if (selectBtn) {
-    selectBtn.textContent = _arc.selectMode ? 'Cancel' : 'Select';
+    selectBtn.textContent = _arc.selectMode ? window.t('Cancel') : window.t('Select');
     selectBtn.classList.toggle('active', _arc.selectMode);
   }
 }
