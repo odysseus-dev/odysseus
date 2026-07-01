@@ -775,7 +775,7 @@ function _ggufDeleteChoice(repo, files) {
         .map(input => safeFiles[Number(input.value)])
         .filter(Boolean);
       if (!selected.length) {
-        uiModule.showToast?.('Select at least one GGUF file.');
+        uiModule.showToast?.(window.t('Select at least one GGUF file.'));
         return;
       }
       cleanup({ mode: 'files', files: selected });
@@ -867,7 +867,7 @@ function _rerenderCachedModels() {
       metaParts.push(`<span style="opacity:0.7;">${esc(m.path)}</span>`);
     }
     const ggufCount = _runnableGgufFiles(m).length;
-    if (ggufCount > 1) metaParts.push(`${ggufCount} GGUFs`);
+    if (ggufCount > 1) metaParts.push(window.t('{n} GGUFs', { n: ggufCount }));
     // "downloading" status now renders as a title-row pill instead of
     // a meta-row text label, matching the "running" pill style and
     // living on the same line as the model name.
@@ -880,12 +880,12 @@ function _rerenderCachedModels() {
     html += `<div style="flex:1;min-width:0;">`;
     const _mc = modelColor(m.repo_id) || '';
     const _runningPill = _isActivelyServing(m.repo_id)
-      ? ` <span class="cookbook-serve-running-pill is-clickable" title="This model is currently being served — click to open in Running" data-repo="${esc(m.repo_id)}" role="button" tabindex="0">running</span>`
+      ? ` <span class="cookbook-serve-running-pill is-clickable" title="${window.t('This model is currently being served — click to open in Running')}" data-repo="${esc(m.repo_id)}" role="button" tabindex="0">${window.t('running')}</span>`
       : '';
     const _downloadingPill = _isDownloading
-      ? ` <span class="cookbook-serve-downloading-pill${_isDlActive ? '' : ' is-stalled'}" title="${_isDlActive ? 'Download in progress' : 'Download stalled — retry to resume'}">${_isDlActive ? 'downloading' : 'stalled'}</span>`
+      ? ` <span class="cookbook-serve-downloading-pill${_isDlActive ? '' : ' is-stalled'}" title="${_isDlActive ? window.t('Download in progress') : window.t('Download stalled — retry to resume')}">${_isDlActive ? window.t('downloading') : window.t('stalled')}</span>`
       : '';
-    const _favoritePill = _isFavorite ? ' <span class="memory-cat-badge memory-cat-pinned cookbook-serve-fav-badge">pinned</span>' : '';
+    const _favoritePill = _isFavorite ? ` <span class="memory-cat-badge memory-cat-pinned cookbook-serve-fav-badge">${window.t('pinned (model)')}</span>` : '';
     html += `<div class="memory-item-title cookbook-serve-title"${_mc ? ` style="color:${_mc}"` : ''}><span class="cookbook-serve-title-name">${modelLogo(m.repo_id)}${esc(shortName)}</span>${_favoritePill}${hfLink ? ` <a href="${esc(hfLink)}" target="_blank" rel="noopener" class="cookbook-hf-link">HF ↗</a>` : ''}${_runningPill}${_downloadingPill}</div>`;
     html += `<div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">${metaParts.join(' \u00b7 ')}</div>`;
     html += `</div>`;
@@ -894,10 +894,10 @@ function _rerenderCachedModels() {
       : _bk === 'diffusers' ? '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm0 3c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zM6 9c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm0 6c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm6 4c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm4-8c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z" fill="currentColor"/></svg>'
       : '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 4l8 16 8-16h-4l-4 8-4-8z" fill="currentColor"/></svg>';
     html += `<span class="cookbook-card-backend" data-detected="${_bk}">${_bkIco}</span>`;
-    html += `<div class="memory-item-actions"><button type="button" class="memory-item-btn hwfit-cached-menu-btn" title="Actions" aria-label="Model actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button></div>`;
+    html += `<div class="memory-item-actions"><button type="button" class="memory-item-btn hwfit-cached-menu-btn" title="${window.t('Actions')}" aria-label="${window.t('Model actions')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button></div>`;
     html += `</div>`;
   }
-  if (!visibleCount) html += '<div class="hwfit-loading">No matching models</div>';
+  if (!visibleCount) html += `<div class="hwfit-loading">${window.t('No matching models')}</div>`;
   list.innerHTML = html;
 
   // Wire tag chips
