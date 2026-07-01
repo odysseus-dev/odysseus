@@ -251,8 +251,8 @@ function _initModelPickerDropdown() {
           ].filter(Boolean).join(' '),
           stale: isLocalDead || epOffline,
           staleReason: epOffline
-            ? (item.ping_error || 'endpoint offline')
-            : (isLocalDead ? (probeResult.error || 'not responding') : ''),
+            ? (item.ping_error || window.t('endpoint offline'))
+            : (isLocalDead ? (probeResult.error || window.t('not responding')) : ''),
           offline: epOffline,
         });
       });
@@ -316,7 +316,7 @@ function _initModelPickerDropdown() {
     listEl.classList.toggle('is-empty', !hasAnyModel);
     menu.classList.toggle('no-models', !hasAnyModel);
     if (search) {
-      search.placeholder = hasAnyModel ? 'Search models…' : 'No models connected';
+      search.placeholder = hasAnyModel ? window.t('Search models…') : window.t('No models connected');
     }
     if (searchRow) {
       searchRow.classList.toggle('searching', !!q);
@@ -349,7 +349,7 @@ function _initModelPickerDropdown() {
       if (m.stale) {
         row.classList.add('model-switch-stale');
         row.style.opacity = '0.45';
-        row.title = `Local server appears offline: ${m.staleReason}. Click to try anyway, or relaunch in Cookbook.`;
+        row.title = window.t('Local server appears offline: {reason}. Click to try anyway, or relaunch in Cookbook.', { reason: m.staleReason });
       }
       const _mlogo = providerLogo(m.mid);
       if (_mlogo) {
@@ -384,8 +384,8 @@ function _initModelPickerDropdown() {
       favDot.textContent = '●';
       const _setFavState = (on) => {
         favDot.classList.toggle('active', on);
-        favDot.title = on ? 'Remove from favorites' : 'Add to favorites';
-        favDot.setAttribute('aria-label', on ? 'Remove from favorites' : 'Add to favorites');
+        favDot.title = on ? window.t('Remove from favorites') : window.t('Add to favorites');
+        favDot.setAttribute('aria-label', on ? window.t('Remove from favorites') : window.t('Add to favorites'));
         favDot.setAttribute('aria-pressed', on ? 'true' : 'false');
       };
       _setFavState(favs.includes(m.mid));
@@ -400,7 +400,7 @@ function _initModelPickerDropdown() {
         const idx = favs.indexOf(m.mid);
         if (nowFav && idx < 0) favs.push(m.mid);
         else if (!nowFav && idx >= 0) favs.splice(idx, 1);
-        if (uiModule && uiModule.showToast) uiModule.showToast(nowFav ? 'Favorited' : 'Unfavorited');
+        if (uiModule && uiModule.showToast) uiModule.showToast(nowFav ? window.t('Favorited') : window.t('Unfavorited'));
         // In browse mode the Favorites section membership changed — rebuild
         // (cheap: Recent + Favorites). In search mode the row stays put, so
         // the in-place favorite update above is enough.
@@ -423,7 +423,7 @@ function _initModelPickerDropdown() {
         return [m.mid, m.display, m.epName, m.providerText, provName]
           .filter(Boolean).join(' ').toLowerCase().includes(q);
       });
-      if (matches.length === 0) _addEmpty('No matching models');
+      if (matches.length === 0) _addEmpty(window.t('No matching models'));
       else matches.forEach(_addRow);
       return;
     }
@@ -440,7 +440,7 @@ function _initModelPickerDropdown() {
     const shown = new Set();
     const favModels = favs.map(id => byId.get(id)).filter(Boolean);
     if (favModels.length) {
-      _addSection('Favorites');
+      _addSection(window.t('Favorites'));
       favModels.forEach(m => { shown.add(m.mid); _addRow(m); });
     }
     // Recent: only render when the catalog is big enough that surfacing
@@ -453,7 +453,7 @@ function _initModelPickerDropdown() {
         .filter(m => !shown.has(m.mid))
         .slice(0, RECENT_MAX);
       if (recentModels.length) {
-        _addSection('Recent');
+        _addSection(window.t('Recent'));
         recentModels.forEach(m => { shown.add(m.mid); _addRow(m); });
       }
     }
@@ -462,7 +462,7 @@ function _initModelPickerDropdown() {
     if (all.length <= BROWSE_ALL_LIMIT) {
       const rest = all.filter(m => !shown.has(m.mid));
       if (rest.length) {
-        if (shown.size) _addSection('All models');
+        if (shown.size) _addSection(window.t('All models'));
         rest.forEach(_addRow);
       }
     } else {
@@ -541,7 +541,7 @@ function _initModelPickerDropdown() {
       _deps.setPendingChat({ url: m.url, modelId: m.mid, endpointId: m.endpointId });
       // Header stays as session name — model switch only updates picker
       updateModelPicker();
-      uiModule.showToast(`Using ${m.display}`);
+      uiModule.showToast(window.t('Using {name}', { name: m.display }));
       return;
     } else if (!currentSessionId) {
       // No session yet — create one with this model
@@ -555,7 +555,7 @@ function _initModelPickerDropdown() {
       try {
         const res = await fetch(`${API_BASE}/api/session/${currentSessionId}`, { method: 'PATCH', body: fd });
         if (!res.ok) {
-          uiModule.showError('Failed to set model');
+          uiModule.showError(window.t('Failed to set model'));
           return;
         }
         const sessions = _deps.getSessions();
@@ -563,13 +563,13 @@ function _initModelPickerDropdown() {
         if (s) { s.model = m.mid; s.endpoint_url = m.url; }
         // Header stays as session name — model info shown in picker only
       } catch (e) {
-        uiModule.showError('Failed to set model: ' + e);
+        uiModule.showError(window.t('Failed to set model: {error}', { error: e }));
         return;
       }
     }
     // Update picker visibility — model is now set
     updateModelPicker();
-    uiModule.showToast(`Using ${m.display}`);
+    uiModule.showToast(window.t('Using {name}', { name: m.display }));
   }
 
   document.addEventListener('odysseus:auto-select-model', async (e) => {
@@ -660,7 +660,7 @@ function _initModelPickerDropdown() {
         if (!menu.classList.contains('hidden')) _populate(search.value || '');
         updateModelPicker();
       } catch (_) {
-        uiModule.showToast('Model refresh failed');
+        uiModule.showToast(window.t('Model refresh failed'));
       } finally {
         refreshBtn.disabled = false;
         refreshBtn.classList.remove('spinning');
@@ -751,7 +751,7 @@ export function updateModelPicker() {
     _ensureDefaultPendingChat();
   }
 
-  const displayName = modelId ? modelId.split('/').pop() : 'Select model';
+  const displayName = modelId ? modelId.split('/').pop() : window.t('Select model');
   // The header indicator clips long names with ellipsis; show the full model
   // identifier on hover (#1982). No tooltip on the "Select model" placeholder.
   label.title = modelId || '';
