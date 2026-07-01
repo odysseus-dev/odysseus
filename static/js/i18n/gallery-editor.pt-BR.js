@@ -152,4 +152,17 @@ registerMessages('pt-BR', {
   '{n} year{s} ago': 'ha {n} ano{s}',
   'Unknown': 'Desconhecido',
   'Edited': 'Editado',
+
+  // gallery.js — round 5 (detail header/menu)
+  'Back': 'Voltar',
+  'Edit (E)': 'Editar (E)',
+  'Edit photo': 'Editar foto',
+  'Edit': 'Editar',
+  'Unfavorite': 'Desfavoritar',
+  'Actions': 'Acoes',
+  'Photo actions': 'Acoes da foto',
+  'Favorited': 'Favoritada',
+  'Clear AI tags': 'Limpar marcacoes de IA',
+  'AI Tag': 'Marcar com IA',
+  'Set as album cover': 'Definir como capa do album',
 });
