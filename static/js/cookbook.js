@@ -1471,14 +1471,14 @@ async function _fetchDependencies() {
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok || !data.ok) {
-            uiModule.showToast('Run failed: ' + String(data.detail || data.error || `HTTP ${res.status}`).slice(0, 200));
+            uiModule.showToast(window.t('Run failed: ') + String(data.detail || data.error || `HTTP ${res.status}`).slice(0, 200));
             return;
           }
           const payload = { repo_id: `${backend} setup`, _cmd: cmd, remote_host: _envState.remoteHost || '', _dep: true };
           _addTask(data.session_id, `${backend} setup`, 'download', payload);
-          uiModule.showToast(`Running ${backend} setup on ${targetHost}…`);
+          uiModule.showToast(window.t('Running {backend} setup on {target}…', { backend, target: targetHost }));
         } catch (err) {
-          uiModule.showToast('Run failed: ' + err.message);
+          uiModule.showToast(window.t('Run failed: ') + err.message);
         }
       });
     });
@@ -1488,16 +1488,16 @@ async function _fetchDependencies() {
       const sel = document.getElementById('hwfit-deps-server');
       if (sel) _applyServerSelection(sel.value);
       const host = _envState.remoteHost || '';
-      const where = host || 'this server';
-      const action = updateSource ? 'Update llama.cpp source and rebuild' : 'Rebuild llama.cpp engine';
+      const where = host || window.t('this server');
+      const action = updateSource ? window.t('Update llama.cpp source and rebuild') : window.t('Rebuild llama.cpp engine');
       const detail = updateSource
-        ? 'This fast-forwards the Cookbook-managed ~/llama.cpp checkout when possible, then clears the cached llama-server build. The next launch recompiles or installs the latest matching prebuilt.'
-        : 'This clears the cached llama-server build. The next launch recompiles or installs a matching prebuilt.';
-      if (!confirm(`${action} on ${where}?\n\n${detail}`)) return;
+        ? window.t('This fast-forwards the Cookbook-managed ~/llama.cpp checkout when possible, then clears the cached llama-server build. The next launch recompiles or installs the latest matching prebuilt.')
+        : window.t('This clears the cached llama-server build. The next launch recompiles or installs a matching prebuilt.');
+      if (!confirm(`${action} ${window.t('on {target}?', { target: where })}\n\n${detail}`)) return;
       const oldText = statusEl?.textContent;
       if (statusEl) {
         statusEl.disabled = true;
-        statusEl.textContent = updateSource ? 'Updating...' : 'Clearing...';
+        statusEl.textContent = updateSource ? window.t('Updating...') : window.t('Clearing...');
       }
       try {
         const res = await fetch('/api/cookbook/rebuild-engine', {
@@ -1513,14 +1513,14 @@ async function _fetchDependencies() {
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.ok) {
           const reason = data.detail || data.error || `HTTP ${res.status}`;
-          uiModule.showToast(`${updateSource ? 'Update' : 'Rebuild'} failed: ` + String(reason).slice(0, 300), {
-            duration: 20000, action: 'OK', onAction: () => {},
+          uiModule.showToast(`${updateSource ? window.t('Update') : window.t('Rebuild')} ${window.t('failed: ')}` + String(reason).slice(0, 300), {
+            duration: 20000, action: window.t('OK'), onAction: () => {},
           });
         } else {
-          uiModule.showToast(`${updateSource ? 'Updated source and cleared' : 'Cleared'} llama.cpp build on ${where}. Re-launch the serve task to rebuild.`);
+          uiModule.showToast(window.t('{action} llama.cpp build on {target}. Re-launch the serve task to rebuild.', { action: updateSource ? window.t('Updated source and cleared') : window.t('Cleared'), target: where }));
         }
       } catch (err) {
-        uiModule.showToast(`${updateSource ? 'Update' : 'Rebuild'} failed: ` + err.message);
+        uiModule.showToast(`${updateSource ? window.t('Update') : window.t('Rebuild')} ${window.t('failed: ')}` + err.message);
       } finally {
         if (statusEl) {
           statusEl.disabled = false;
@@ -1549,8 +1549,8 @@ async function _fetchDependencies() {
       const upIco = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>';
       const it = document.createElement('div');
       it.className = 'dropdown-item-compact';
-      it.innerHTML = `<span class="dropdown-icon">${upIco}</span><span>Update</span>`;
-      it.title = `Update ${pkgName} to the latest version (pip install -U)`;
+      it.innerHTML = `<span class="dropdown-icon">${upIco}</span><span>${window.t('Update')}</span>`;
+      it.title = window.t('Update {pkg} to the latest version (pip install -U)', { pkg: pkgName });
       it.addEventListener('click', async (e) => {
         e.stopPropagation();
         close();
@@ -1561,8 +1561,8 @@ async function _fetchDependencies() {
         const rebuildIco = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>';
         const rebuild = document.createElement('div');
         rebuild.className = 'dropdown-item-compact';
-        rebuild.innerHTML = `<span class="dropdown-icon">${rebuildIco}</span><span>Rebuild</span>`;
-        rebuild.title = 'Clear the cached llama-server build so the next launch rebuilds it.';
+        rebuild.innerHTML = `<span class="dropdown-icon">${rebuildIco}</span><span>${window.t('Rebuild')}</span>`;
+        rebuild.title = window.t('Clear the cached llama-server build so the next launch rebuilds it.');
         rebuild.addEventListener('click', async (e) => {
           e.stopPropagation();
           dropdown.remove();
@@ -1571,8 +1571,8 @@ async function _fetchDependencies() {
         dropdown.appendChild(rebuild);
         const source = document.createElement('div');
         source.className = 'dropdown-item-compact';
-        source.innerHTML = `<span class="dropdown-icon">${upIco}</span><span>Update source + rebuild</span>`;
-        source.title = 'Fast-forward ~/llama.cpp when possible, then clear the cached build.';
+        source.innerHTML = `<span class="dropdown-icon">${upIco}</span><span>${window.t('Update source + rebuild')}</span>`;
+        source.title = window.t('Fast-forward ~/llama.cpp when possible, then clear the cached build.');
         source.addEventListener('click', async (e) => {
           e.stopPropagation();
           dropdown.remove();
@@ -1595,7 +1595,7 @@ async function _fetchDependencies() {
       });
     });
   } catch (err) {
-    list.innerHTML = `<div class="hwfit-loading">Error loading packages: ${esc(err.message)}</div>`;
+    list.innerHTML = `<div class="hwfit-loading">${window.t('Error loading packages: {msg}', { msg: esc(err.message) })}</div>`;
   }
 }
 
