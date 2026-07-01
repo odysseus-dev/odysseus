@@ -152,4 +152,13 @@ registerMessages('pt-BR', {
   'Copy diagnostics': 'Copiar diagnóstico',
   'Useful checks:': 'Verificações úteis:',
   'Odysseus Cookbook hardware diagnostics': 'Diagnóstico de hardware do Odysseus Cookbook',
+  'Click to toggle off (X to hide)': 'Clique para desativar (X para ocultar)',
+  'Remove this chip': 'Remover este chip',
+  'Remove': 'Remover',
+  'GPU driver error': 'Erro no driver da GPU',
+  'No GPU': 'Sem GPU',
+  'Using manual hardware': 'Usando hardware manual',
+  'Manual hardware': 'Hardware manual',
+  'Clear manual hardware': 'Limpar hardware manual',
+  'Clear': 'Limpar',
 });

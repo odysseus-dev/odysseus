@@ -909,13 +909,13 @@ export function _hwfitRenderHw(el, sys) {
   // separate × button (fully remove from view + treat as dismissed for
   // ranking). The body's "off" state is just visually dimmed — the
   // chip stays visible so you can flip it back on without re-scanning.
-  const chip = (key, label, title = 'Click to toggle off (X to hide)') => {
+  const chip = (key, label, title = window.t('Click to toggle off (X to hide)')) => {
     if (_removedHwChips.has(key)) return '';
     const dim = _dismissedHwChips.has(key) ? ' hwfit-hw-chip-off' : '';
     return (
       `<span class="hwfit-hw-chip hwfit-hw-chip-row${dim}" data-hw-chip="${esc(key)}">`
       + `<button type="button" class="hwfit-hw-chip-toggle" data-hw-chip="${esc(key)}" title="${esc(title)}">${label}</button>`
-      + `<button type="button" class="hwfit-hw-chip-x" data-hw-chip="${esc(key)}" title="Remove this chip" aria-label="Remove">×</button>`
+      + `<button type="button" class="hwfit-hw-chip-x" data-hw-chip="${esc(key)}" title="${esc(window.t('Remove this chip'))}" aria-label="${esc(window.t('Remove'))}">×</button>`
       + `</span>`
     );
   };
@@ -949,7 +949,7 @@ export function _hwfitRenderHw(el, sys) {
     const gpus = Array.isArray(sys.gpus) ? sys.gpus : [];
     const tip = gpus.length
       ? gpus.map(g => `GPU ${g.index}: ${g.name} · ${(+g.vram_gb).toFixed(1)} GB`).join('\n')
-      : 'Click to toggle off (X to hide)';
+      : window.t('Click to toggle off (X to hide)');
     gpuChip = chip('gpu', label, tip);
   } else if (sys.gpu_error) {
     gpuChip = _removedHwChips.has('gpu')
@@ -958,13 +958,13 @@ export function _hwfitRenderHw(el, sys) {
           const dim = _dismissedHwChips.has('gpu') ? ' hwfit-hw-chip-off' : '';
           return (
             `<span class="hwfit-hw-chip hwfit-hw-chip-row hwfit-hw-chip-error${dim}" data-hw-chip="gpu">`
-            + `<button type="button" class="hwfit-hw-chip-toggle" data-hw-chip="gpu" title="${esc(sys.gpu_error)}">GPU driver error</button>`
-            + `<button type="button" class="hwfit-hw-chip-x" data-hw-chip="gpu" title="Remove this chip" aria-label="Remove">×</button>`
+            + `<button type="button" class="hwfit-hw-chip-toggle" data-hw-chip="gpu" title="${esc(sys.gpu_error)}">${esc(window.t('GPU driver error'))}</button>`
+            + `<button type="button" class="hwfit-hw-chip-x" data-hw-chip="gpu" title="${esc(window.t('Remove this chip'))}" aria-label="${esc(window.t('Remove'))}">×</button>`
             + `</span>`
           );
         })();
   } else {
-    gpuChip = chip('gpu', 'No GPU');
+    gpuChip = chip('gpu', window.t('No GPU'));
   }
   const vram = sys.gpu_vram_gb ? `${sys.gpu_vram_gb.toFixed(1)} GB VRAM` : '';
   const ram = `${sys.available_ram_gb?.toFixed(1) || '?'} / ${sys.total_ram_gb?.toFixed(1) || '?'} GB RAM`;
@@ -972,8 +972,8 @@ export function _hwfitRenderHw(el, sys) {
   const manual = _manualHwState();
   const manualChip = (sys.manual_hardware || manual)
     ? `<span class="hwfit-hw-chip hwfit-hw-chip-row hwfit-hw-chip-manual" data-hw-chip="manual">`
-      + `<button type="button" class="hwfit-hw-chip-toggle" data-hw-chip="manual" title="Using manual hardware">${esc(_manualHwLabel(manual) || 'Manual hardware')}</button>`
-      + `<button type="button" class="hwfit-hw-chip-x" data-hw-chip="manual" title="Clear manual hardware" aria-label="Clear">×</button>`
+      + `<button type="button" class="hwfit-hw-chip-toggle" data-hw-chip="manual" title="${esc(window.t('Using manual hardware'))}">${esc(_manualHwLabel(manual) || window.t('Manual hardware'))}</button>`
+      + `<button type="button" class="hwfit-hw-chip-x" data-hw-chip="manual" title="${esc(window.t('Clear manual hardware'))}" aria-label="${esc(window.t('Clear'))}">×</button>`
       + `</span>`
     : '';
   el.innerHTML = gpuChip
