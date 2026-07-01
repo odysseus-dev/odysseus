@@ -214,4 +214,10 @@ registerMessages('pt-BR', {
   'Failed': 'Falhou',
   'Renamed': 'Renomeado',
   'Failed to rename': 'Falha ao renomear',
+
+  // gallery.js — round 9 (tag input / album select)
+  'Failed to save tags': 'Falha ao salvar marcacoes',
+  'Failed to update album': 'Falha ao atualizar album',
+  'Added to album': 'Adicionado ao album',
+  'Removed from album': 'Removido do album',
 });

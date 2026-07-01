@@ -1832,7 +1832,7 @@ function _openDetail(img) {
       if (!added.length) return;
       const cleaned = merged.join(', ');
       const ok = await _patchImage(img.id, { tags: cleaned });
-      if (!ok) { if (uiModule) uiModule.showError('Failed to save tags'); return; }
+      if (!ok) { if (uiModule) uiModule.showError(window.t('Failed to save tags')); return; }
       img.tags = cleaned;
       img.user_tags = cleaned;
       const chips = document.getElementById('gallery-user-tag-chips');
@@ -1841,12 +1841,12 @@ function _openDetail(img) {
           const b = document.createElement('button');
           b.className = 'gallery-ai-chip gallery-user-chip';
           b.dataset.tagFilter = t;
-          b.title = `Filter to photos tagged “${t}”`;
+          b.title = window.t('Filter to photos tagged "{tag}"', { tag: t });
           b.textContent = t;
           const x = document.createElement('span');
           x.className = 'gallery-tag-x';
-          x.title = 'Remove tag';
-          x.setAttribute('aria-label', 'Remove tag');
+          x.title = window.t('Remove tag');
+          x.setAttribute('aria-label', window.t('Remove tag'));
           x.textContent = '×';
           b.appendChild(x);
           chips.appendChild(b);
@@ -1864,9 +1864,9 @@ function _openDetail(img) {
   document.getElementById('gallery-detail-album').addEventListener('change', async (e) => {
     const albumId = e.target.value;
     const ok = await _patchImage(img.id, { album_id: albumId || '' });
-    if (!ok) { uiModule.showError('Failed to update album'); return; }
+    if (!ok) { uiModule.showError(window.t('Failed to update album')); return; }
     img.album_id = albumId || null;
-    uiModule.showToast(albumId ? 'Added to album' : 'Removed from album');
+    uiModule.showToast(albumId ? window.t('Added to album') : window.t('Removed from album'));
   });
 }
 
