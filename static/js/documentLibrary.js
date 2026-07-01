@@ -1849,7 +1849,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       if (totalCount <= currentLimit) return;
       const btn = document.createElement('button');
       btn.className = 'doclib-load-more doclib-inline-load-more';
-      btn.textContent = `Load more (${currentLimit} of ${totalCount})`;
+      btn.textContent = window.t('Load more ({a} of {b})', { a: currentLimit, b: totalCount });
       btn.addEventListener('click', onClick);
       grid.parentElement.appendChild(btn);
     }
@@ -1858,19 +1858,19 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     // in sync with whichever sub-tab the user is on.
     const _TAB_HEADERS = {
       chats: {
-        label: 'Chats',
+        get label() { return window.t('Chats'); },
         svg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
       },
       documents: {
-        label: 'Documents',
+        get label() { return window.t('Documents'); },
         svg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>',
       },
       research: {
-        label: 'Research',
+        get label() { return window.t('Research'); },
         svg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>',
       },
       archive: {
-        label: 'Archive',
+        get label() { return window.t('Archive'); },
         svg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>',
       },
     };
@@ -1914,13 +1914,13 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const grid = document.getElementById('doclib-chats-grid');
       if (!grid) return;
       grid.innerHTML = '';
-      grid.appendChild(spinnerModule.createLoadingRow('Loading…'));
+      grid.appendChild(spinnerModule.createLoadingRow(window.t('Loading…')));
       fetch(API_BASE + '/api/sessions', { credentials: 'same-origin' }).then(r => r.json()).then(data => {
         const raw = Array.isArray(data) ? data : (data.sessions || []);
         _chatsSessions = raw.filter(s => !s.archived);
         _renderChatsGrid();
         _renderChatsChips();
-      }).catch(() => { grid.innerHTML = '<div class="doclib-empty">Failed to load</div>'; });
+      }).catch(() => { grid.innerHTML = '<div class="doclib-empty">' + window.t('Failed to load') + '</div>'; });
     }
 
     // Tap a chat row to expand inline: fetches the recent messages and
@@ -1949,7 +1949,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       }
       card.classList.add('doclib-card-expanded');
       preview.style.display = 'block';
-      preview.innerHTML = '<div style="opacity:0.4;font-size:11px;padding:8px 4px;">Loading…</div>';
+      preview.innerHTML = '<div style="opacity:0.4;font-size:11px;padding:8px 4px;">' + window.t('Loading…') + '</div>';
       try {
         const res = await fetch(`${API_BASE}/api/history/${session.id}`, { credentials: 'same-origin' });
         if (!res.ok) throw new Error('Failed');
@@ -1985,18 +1985,18 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
                 </div>
               </div>`;
             }).join('')
-          : '<div style="opacity:0.4;font-size:11px;padding:6px 4px;">No messages yet</div>';
+          : '<div style="opacity:0.4;font-size:11px;padding:6px 4px;">' + window.t('No messages yet') + '</div>';
         const isArchive = !!session.archived;
         // Archived chats get a Restore button (unarchive); active chats get the
         // Archive button. Matches the research + document archive previews.
         const archiveHtml = isArchive
           ? '<button class="doclib-chat-restore-btn">' +
               '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M4 9h11a5 5 0 0 1 5 5v0a5 5 0 0 1-5 5H9"/></svg>' +
-              'Restore' +
+              window.t('Restore') +
             '</button>'
           : '<button class="doclib-chat-archive-btn">' +
               '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>' +
-              'Archive' +
+              window.t('Archive') +
             '</button>';
         // Copy sits next to Archive on the left side of the action row.
         // Uses the same border-only secondary-action style — distinct from
@@ -2005,11 +2005,11 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         // Open there). It still shows for active chats.
         const copyHtml = isArchive ? '' : '<button class="doclib-chat-copy-btn">' +
               '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>' +
-              'Copy' +
+              window.t('Copy') +
             '</button>';
         const deleteHtml = '<button class="doclib-chat-delete-btn">' +
               '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>' +
-              'Delete' +
+              window.t('Delete') +
             '</button>';
         preview.innerHTML =
           '<div class="doclib-chat-preview-messages">' + msgsHtml + '</div>' +
@@ -2019,7 +2019,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             copyHtml +
             '<button class="doclib-chat-open-btn">' +
               '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>' +
-              'Open' +
+              window.t('Open') +
             '</button>' +
           '</div>';
         const openBtn = preview.querySelector('.doclib-chat-open-btn');
@@ -2380,7 +2380,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       }
       card.classList.add('doclib-card-expanded');
       preview.style.display = 'block';
-      preview.innerHTML = '<div style="opacity:0.4;font-size:11px;padding:8px 4px;">Loading…</div>';
+      preview.innerHTML = '<div style="opacity:0.4;font-size:11px;padding:8px 4px;">' + window.t('Loading…') + '</div>';
       try {
         const res = await fetch(`${API_BASE}/api/document/${d.id}`, { credentials: 'same-origin' });
         if (!res.ok) throw new Error('failed');
@@ -2741,7 +2741,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       }
       card.classList.add('doclib-card-expanded');
       preview.style.display = 'block';
-      preview.innerHTML = '<div style="opacity:0.4;font-size:11px;padding:8px 4px;">Loading…</div>';
+      preview.innerHTML = '<div style="opacity:0.4;font-size:11px;padding:8px 4px;">' + window.t('Loading…') + '</div>';
       let detail = item;
       try {
         // Hit the per-research detail endpoint to pull sources + summary.

@@ -122,4 +122,9 @@ registerMessages('pt-BR', {
   'Tidy: remove empty / junk / duplicate documents': 'Organizar: remove documentos vazios / descartaveis / duplicados',
   'Search titles & content…': 'Buscar titulos e conteudo…',
   'Load more': 'Carregar mais',
+
+  // --- tabs loading / chats preview ---
+  'Loading…': 'Carregando…',
+  'No messages yet': 'Ainda sem mensagens',
+  'Copy': 'Copiar',
 });
