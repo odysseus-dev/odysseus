@@ -28,6 +28,12 @@ def _sys(vram, family="rdna"):
     return {"backend": "rocm", "gpu_vram_gb": vram, "gpu_family": family}
 
 
+def test_compute_serve_profiles_ignores_invalid_inputs():
+    assert compute_serve_profiles(None, _DENSE_8B) == []
+    assert compute_serve_profiles(_sys(8), None) == []
+    assert compute_serve_profiles(["bad"], _DENSE_8B) == []
+
+
 def test_big_moe_on_small_card_offloads_not_fails():
     """A 35B MoE can't hold its weights on 16 GB, so the Quality profile must
     offload experts to CPU (n_cpu_moe > 0) rather than be dropped."""
