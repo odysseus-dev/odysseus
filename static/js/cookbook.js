@@ -2656,8 +2656,8 @@ function _renderRecipes() {
   } else {
     html += `<input type="hidden" id="hwfit-dl-server" value="local" />`;
   }
-  html += `<input type="text" class="cookbook-dl-repo" id="cookbook-dl-repo" placeholder="org/model-name, qwen2.5:14b, or HF URL" style="flex:1;min-width:0;" />`;
-  html += `<button class="cookbook-btn cookbook-dl-btn" id="cookbook-dl-btn">Download</button>`;
+  html += `<input type="text" class="cookbook-dl-repo" id="cookbook-dl-repo" placeholder="${window.t('org/model-name, qwen2.5:14b, or HF URL')}" style="flex:1;min-width:0;" />`;
+  html += `<button class="cookbook-btn cookbook-dl-btn" id="cookbook-dl-btn">${window.t('Download')}</button>`;
   html += `</div>`;
   html += `<div id="cookbook-dl-gguf-row" class="cookbook-dl-gguf-row" style="display:none;">`;
   html += `<span class="cookbook-dl-gguf-label">GGUF</span>`;
@@ -2674,7 +2674,7 @@ function _renderRecipes() {
   html += `<button type="button" class="memory-toolbar-btn" id="cookbook-hf-latest-toggle" style="flex:1;text-align:left;height:28px;font-size:11px;display:flex;align-items:center;gap:6px;border-radius:5px;">`;
   // Trending-up icon (accent) so the section reads as "what's hot".
   html += `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent, var(--red))" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink:0;pointer-events:none;"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>`;
-  html += `<span style="pointer-events:none;flex:1;">Trending models that fit your hardware</span>`;
+  html += `<span style="pointer-events:none;flex:1;">${window.t('Trending models that fit your hardware')}</span>`;
   // Chevron moved to the RIGHT \u2014 collapsed = pointing right, expanded
   // = rotated 90deg into a down chevron (handled by existing toggle CSS).
   html += `<span id="cookbook-hf-latest-arrow" style="display:inline-block;transition:transform 0.15s;pointer-events:none;opacity:0.6;font-size:11px;">\u25B8</span>`;
@@ -2689,46 +2689,46 @@ function _renderRecipes() {
   html += '<div class="cookbook-group" data-backend-group="Search">';
   html += '<div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">';
   html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">';
-  html += '<h2 style="margin:0;padding:0;line-height:1;">Scan / Download</h2>';
+  html += `<h2 style="margin:0;padding:0;line-height:1;">${window.t('Scan / Download')}</h2>`;
   html += '</div>';
-  html += '<p class="memory-desc doclib-desc" style="margin-top:6px;">Scans your hardware for what models you can run. Hardware is cached; hit the scan button to re-probe after changing GPUs.</p>';
+  html += `<p class="memory-desc doclib-desc" style="margin-top:6px;">${window.t('Scans your hardware for what models you can run. Hardware is cached; hit the scan button to re-probe after changing GPUs.')}</p>`;
   html += '<div class="hwfit-toolbar" style="margin-top:9px;">';
   html += '<select class="cookbook-field-input hwfit-usecase" id="hwfit-usecase" style="height:28px;">';
-  html += '<option value="general" selected>Standard</option><option value="coding">Coding</option>';
-  html += '<option value="reasoning">Reasoning</option><option value="chat">Chat</option>';
+  html += `<option value="general" selected>${window.t('Standard')}</option><option value="coding">${window.t('Coding')}</option>`;
+  html += `<option value="reasoning">${window.t('Reasoning')}</option><option value="chat">${window.t('Chat')}</option>`;
   // Image tab removed — text→image gen is gone from this build (only inpaint
    // remains, which uses its own settings panel). Vision (multimodal) stays.
-  html += '<option value="multimodal">Vision</option></select>';
+  html += `<option value="multimodal">${window.t('Vision')}</option></select>`;
   // Search moved next to the Type filter so the two primary picks
   // (what category + free text) sit together; the more advanced
   // levers (Engine / Quant / Context) live to the right.
-  html += '<input type="text" class="cookbook-field-input hwfit-search" id="hwfit-search" placeholder="Search models..." style="flex:1;" />';
+  html += `<input type="text" class="cookbook-field-input hwfit-search" id="hwfit-search" placeholder="${window.t('Search models...')}" style="flex:1;" />`;
   html += '<span class="hwfit-engine-wrap">';
-  html += '<select class="cookbook-field-input hwfit-engine" id="hwfit-engine" style="height:28px;" title="Filter by serving engine">';
-  html += '<option value="">Engine</option>';
+  html += `<select class="cookbook-field-input hwfit-engine" id="hwfit-engine" style="height:28px;" title="${window.t('Filter by serving engine')}">`;
+  html += `<option value="">${window.t('Engine')}</option>`;
   html += '<option value="llamacpp">llama.cpp</option>';
   html += '<option value="ollama">Ollama</option>';
   html += '<option value="vllm">vLLM</option>';
   html += '<option value="sglang">SGLang</option>';
   html += '</select>';
-  html += '<span class="hwfit-help-chip hwfit-help-chip-inline hwfit-engine-help" title="Rule of thumb: GGUF on single GPU / CPU+RAM → llama.cpp (or Ollama). Safetensors on multi-GPU NVIDIA → vLLM. SGLang is a vLLM-class alternative, sometimes faster on big-MoE / long-context.">?</span>';
+  html += `<span class="hwfit-help-chip hwfit-help-chip-inline hwfit-engine-help" title="${window.t('Rule of thumb: GGUF on single GPU / CPU+RAM → llama.cpp (or Ollama). Safetensors on multi-GPU NVIDIA → vLLM. SGLang is a vLLM-class alternative, sometimes faster on big-MoE / long-context.')}">?</span>`;
   html += '</span>';
   // Quant (Q4/Q8/…). Default is "All" so the list shows the best-scoring
   // quant for every model instead of silently filtering to Q4.
   html += '<span class="hwfit-quant-wrap">';
   html += '<select class="cookbook-field-input hwfit-quant" id="hwfit-quant" style="height:28px;">';
-  html += '<option value="" selected>Quant</option>';
+  html += `<option value="" selected>${window.t('Quant')}</option>`;
   html += '<option value="Q4_K_M">Q4</option><option value="Q8_0">Q8</option>';
   html += '<option value="Q6_K">Q6</option><option value="Q5_K_M">Q5</option>';
   html += '<option value="Q3_K_M">Q3</option><option value="Q2_K">Q2</option>';
   html += '<option value="AWQ-4bit">AWQ</option><option value="FP8">FP8</option><option value="FP4">FP4</option><option value="NVFP4">NVFP4</option></select>';
-  html += '<span class="hwfit-help-chip hwfit-help-chip-inline hwfit-quant-help" title="Lower quant tiers (Q2/Q3/Q4 / AWQ-4bit) are smaller, faster, and cheaper to run, at some quality loss. Higher tiers (Q8 / FP8 / FP16 / BF16) preserve more quality but need more VRAM. “All” shows the best-scoring quant per model — pick a specific one to filter.">?</span>';
+  html += `<span class="hwfit-help-chip hwfit-help-chip-inline hwfit-quant-help" title="${window.t('Lower quant tiers (Q2/Q3/Q4 / AWQ-4bit) are smaller, faster, and cheaper to run, at some quality loss. Higher tiers (Q8 / FP8 / FP16 / BF16) preserve more quality but need more VRAM. "All" shows the best-scoring quant per model — pick a specific one to filter.')}">?</span>`;
   html += '</span>';
   // Ctx slider — lets you target a context length for fit estimates; the
   // hwfit ranking uses _ctxValue() to factor that into VRAM math, so
   // dragging this re-sorts the list toward models that fit your chosen ctx.
-  html += '<label class="hwfit-ctx-control" title="Context length for fit estimates. Lower it to find more models that could fit your hardware.">';
-  html += '<span>Context</span><span class="hwfit-help-chip hwfit-help-chip-inline" title="Context length. Lower it to find more models that could fit your hardware; raise it when you need longer chats or documents.">?</span><input type="range" id="hwfit-context" min="0" max="5" step="1" value="3" />';
+  html += `<label class="hwfit-ctx-control" title="${window.t('Context length for fit estimates. Lower it to find more models that could fit your hardware.')}">`;
+  html += `<span>${window.t('Context')}</span><span class="hwfit-help-chip hwfit-help-chip-inline" title="${window.t('Context length. Lower it to find more models that could fit your hardware; raise it when you need longer chats or documents.')}">?</span><input type="range" id="hwfit-context" min="0" max="5" step="1" value="3" />`;
   html += '<output id="hwfit-context-label">50k</output></label>';
   html += '</div>';
   html += '<div class="hwfit-toolbar" style="margin-top:7px;">';
@@ -2738,34 +2738,34 @@ function _renderRecipes() {
   html += '<div class="hwfit-gpu-toggles" id="hwfit-gpu-toggles"></div>';
   // (Rescan button removed — Edit handles manual hardware updates;
   // automatic re-probe runs on container restart.)
-  html += '<button type="button" class="hwfit-gpu-btn hwfit-hw-manual-btn" id="hwfit-hw-manual-btn" title="Set hardware manually" style="flex-shrink:0;position:relative;top:-3px;left:-1px;display:inline-flex;align-items:center;gap:3px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>EDIT</button>';
+  html += `<button type="button" class="hwfit-gpu-btn hwfit-hw-manual-btn" id="hwfit-hw-manual-btn" title="${window.t('Set hardware manually')}" style="flex-shrink:0;position:relative;top:-3px;left:-1px;display:inline-flex;align-items:center;gap:3px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>${window.t('EDIT')}</button>`;
   // Sort state — the clickable column headers read/write this (pewds' original
   // sort paradigm). Newest is reachable by clicking the Model column header.
   html += '<select class="cookbook-field-input hwfit-sort" id="hwfit-sort" style="display:none">';
-  html += '<option value="newest" selected>Latest</option>';
-  html += '<option value="fit">Fit</option><option value="score">Score</option><option value="vram">VRAM</option>';
-  html += '<option value="speed">Speed</option><option value="params">Params</option>';
-  html += '<option value="context">Context</option></select>';
+  html += `<option value="newest" selected>${window.t('Latest')}</option>`;
+  html += `<option value="fit">${window.t('Fit')}</option><option value="score">${window.t('Score')}</option><option value="vram">VRAM</option>`;
+  html += `<option value="speed">${window.t('Speed')}</option><option value="params">${window.t('Params')}</option>`;
+  html += `<option value="context">${window.t('Context')}</option></select>`;
   html += '</div>';
   html += '<div class="hwfit-manual-panel hidden" id="hwfit-manual-panel">';
-  html += '<span class="hwfit-manual-note" style="font-size:10px;opacity:0.6;width:100%;margin-bottom:2px;">Simulator — these values REPLACE detected hardware.</span>';
-  html += '<select class="hwfit-manual-mode"><option value="gpu">GPU</option><option value="ram">RAM</option></select>';
-  html += '<label>GPUs<input class="hwfit-manual-gpus" type="text" inputmode="numeric" placeholder="1"></label>';
-  html += '<label>VRAM per GPU<input class="hwfit-manual-vram" type="text" inputmode="decimal" placeholder="8 GB"></label>';
-  html += '<label>Total RAM<input class="hwfit-manual-ram" type="text" inputmode="decimal" placeholder="32 GB"></label>';
+  html += `<span class="hwfit-manual-note" style="font-size:10px;opacity:0.6;width:100%;margin-bottom:2px;">${window.t('Simulator — these values REPLACE detected hardware.')}</span>`;
+  html += `<select class="hwfit-manual-mode"><option value="gpu">${window.t('GPU')}</option><option value="ram">${window.t('RAM')}</option></select>`;
+  html += `<label>${window.t('GPUs')}<input class="hwfit-manual-gpus" type="text" inputmode="numeric" placeholder="1"></label>`;
+  html += `<label>${window.t('VRAM per GPU')}<input class="hwfit-manual-vram" type="text" inputmode="decimal" placeholder="8 GB"></label>`;
+  html += `<label>${window.t('Total RAM')}<input class="hwfit-manual-ram" type="text" inputmode="decimal" placeholder="32 GB"></label>`;
   html += '<select class="hwfit-manual-backend"><option value="cuda">CUDA</option><option value="rocm">ROCm</option></select>';
-  html += '<button type="button" class="hwfit-hw-manual-save">✓ Apply</button>';
-  html += '<button type="button" class="hwfit-hw-manual-clear">× Clear</button>';
+  html += `<button type="button" class="hwfit-hw-manual-save">✓ ${window.t('Apply')}</button>`;
+  html += `<button type="button" class="hwfit-hw-manual-clear">× ${window.t('Clear')}</button>`;
   html += '</div>';
-  html += '<div id="hwfit-hw-row" style="display:none;align-items:center;gap:4px;margin-top:3px;padding-top:2px;"><span style="font-size:10px;padding:2px 8px;border-radius:10px;background:color-mix(in srgb, var(--fg) 8%, transparent);color:var(--fg);opacity:0.7;white-space:nowrap;flex-shrink:0;position:relative;top:-1px;">Detected hardware</span><div class="hwfit-hw" id="hwfit-hw" style="flex:1;"></div></div>';
+  html += `<div id="hwfit-hw-row" style="display:none;align-items:center;gap:4px;margin-top:3px;padding-top:2px;"><span style="font-size:10px;padding:2px 8px;border-radius:10px;background:color-mix(in srgb, var(--fg) 8%, transparent);color:var(--fg);opacity:0.7;white-space:nowrap;flex-shrink:0;position:relative;top:-1px;">${window.t('Detected hardware')}</span><div class="hwfit-hw" id="hwfit-hw" style="flex:1;"></div></div>`;
   html += '<div class="hwfit-list" id="hwfit-list"></div>';
   // Footer: link to the public discussion where users can request additions
   // to the curated model list. Sits below the list so it reads as a callout
   // after browsing, not a header.
   html += '<div class="hwfit-list-footer" style="display:none;">'
-       + 'Don\'t see a model? '
+       + window.t("Don't see a model? ")
        + '<a href="https://github.com/pewdiepie-archdaemon/odysseus/discussions/1962" target="_blank" rel="noopener" style="color:var(--accent,var(--red));text-decoration:none;display:inline-flex;align-items:center;gap:4px;vertical-align:middle;position:relative;top:-1px;">'
-       + 'Request it →'
+       + window.t('Request it →')
        + '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="flex-shrink:0;"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>'
        + '</a>'
        + '</div>';
@@ -2776,7 +2776,7 @@ function _renderRecipes() {
   html += '<div class="cookbook-group hidden" data-backend-group="Serve">';
   html += '<div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">';
   html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">';
-  html += '<h2 style="margin:0;padding:0;line-height:1;">Serve <span id="serve-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>';
+  html += `<h2 style="margin:0;padding:0;line-height:1;">${window.t('Serve')} <span id="serve-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>`;
   html += '</div>';
   const _selSrv = _es.servers.find(s => s.host === _es.remoteHost) || _es.servers[0] || {};
   const _srvDirs = (Array.isArray(_selSrv.modelDirs) ? _selSrv.modelDirs : [_selSrv.modelDir || '~/.cache/huggingface/hub']).map(d => d.replaceAll('✕', '').replaceAll('✖', '').trim()).filter(Boolean);
@@ -2787,22 +2787,22 @@ function _renderRecipes() {
   html += '<div style="display:flex;gap:4px;align-items:center;margin-top:4px;">';
   html += '<select class="memory-sort-select" id="hwfit-cache-server" style="height:24px;">' + _buildServerOpts(true) + '</select>';
   html += '<select class="memory-sort-select" id="serve-sort" style="height:24px;">';
-  html += '<option value="name">Name</option><option value="size-desc">Size \u2193</option><option value="size-asc">Size \u2191</option><option value="recent">Recent</option>';
+  html += `<option value="name">${window.t('Name')}</option><option value="size-desc">${window.t('Size')} \u2193</option><option value="size-asc">${window.t('Size')} \u2191</option><option value="recent">${window.t('Recent')}</option>`;
   html += '</select>';
   html += '</div>';
   html += '<div class="memory-toolbar" style="margin-top:8px;">';
   html += '<div class="memory-category-filters">';
-  html += '<input type="text" class="memory-search-input" id="serve-search" placeholder="Search cached models\u2026" style="flex:1;min-width:120px;" />';
-  html += '<button class="memory-toolbar-btn" id="hwfit-cache-select">Select</button>';
+  html += `<input type="text" class="memory-search-input" id="serve-search" placeholder="${window.t('Search cached models\u2026')}" style="flex:1;min-width:120px;" />`;
+  html += `<button class="memory-toolbar-btn" id="hwfit-cache-select">${window.t('Select')}</button>`;
   html += '</div>';
   html += '<div class="doclib-lang-chips" id="serve-tags"></div>';
   html += '</div>';
 
   html += '<div class="memory-bulk-bar hidden" id="serve-bulk-bar">';
-  html += '<label class="memory-bulk-check-all"><input type="checkbox" id="serve-select-all"> All</label>';
-  html += '<span id="serve-bulk-count" style="font-size:10px;opacity:0.5;">0 selected</span>';
-  html += '<button class="memory-toolbar-btn danger" id="serve-bulk-delete" style="position:relative;top:-3px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Delete</button>';
-  html += '<button class="memory-toolbar-btn" id="serve-bulk-cancel" title="Cancel (Esc)" style="margin-left:4px;padding:3px 6px;position:relative;top:-7px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
+  html += `<label class="memory-bulk-check-all"><input type="checkbox" id="serve-select-all"> ${window.t('All')}</label>`;
+  html += `<span id="serve-bulk-count" style="font-size:10px;opacity:0.5;">${window.t('0 selected')}</span>`;
+  html += `<button class="memory-toolbar-btn danger" id="serve-bulk-delete" style="position:relative;top:-3px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>${window.t('Delete')}</button>`;
+  html += `<button class="memory-toolbar-btn" id="serve-bulk-cancel" title="${window.t('Cancel (Esc)')}" style="margin-left:4px;padding:3px 6px;position:relative;top:-7px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>`;
   html += '</div>';
 
   html += '<div class="doclib-grid hwfit-cached-list" id="hwfit-cached-list"></div>';
