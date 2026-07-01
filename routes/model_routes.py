@@ -2237,10 +2237,8 @@ def setup_model_routes(model_discovery):
                 # Honor the same owner-scope rule as /api/models — a per-user
                 # default that points at an endpoint owned by a different user
                 # mustn't silently resolve. Admins are exempt (they manage the
-                # global pool). However, when share_defaults_with_users is enabled
-                # and the user is falling back to global defaults, we should allow
-                # admin-owned endpoints since that's the whole point of sharing.
-                if _user and not _is_admin and not _using_global_defaults:
+                # global pool).
+                if _user and not _is_admin:
                     ep_q = owner_filter(ep_q, ModelEndpoint, _user)
                 ep = ep_q.first()
             # Configured fallback chain — when the chosen default endpoint is
@@ -2259,7 +2257,7 @@ def setup_model_routes(model_discovery):
                     cand_q = db.query(ModelEndpoint).filter(
                         ModelEndpoint.id == fid, ModelEndpoint.is_enabled == True
                     )
-                    if _user and not _is_admin and not _using_global_defaults:
+                    if _user and not _is_admin:
                         cand_q = owner_filter(cand_q, ModelEndpoint, _user)
                     cand = cand_q.first()
                     if cand:
