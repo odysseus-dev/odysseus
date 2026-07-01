@@ -81,4 +81,45 @@ registerMessages('pt-BR', {
   'Failed to create zip': 'Falha ao criar o zip',
   'Exported {n} documents': 'Exportados {n} documentos',
   'Exported {n} document': 'Exportado {n} documento',
+
+  // --- modal header / tabs ---
+  'Library': 'Biblioteca',
+  'Chats': 'Conversas',
+  'Documents': 'Documentos',
+  'Research': 'Pesquisa',
+  'Archive': 'Arquivo',
+
+  // --- Chats panel ---
+  'All active chat sessions. Click to open.': 'Todas as sessoes de conversa ativas. Clique para abrir.',
+  'Recent': 'Recentes',
+  'Oldest': 'Mais antigos',
+  'Most messages': 'Mais mensagens',
+  'A–Z': 'A–Z',
+  'AI tidy: delete junk sessions and organize into folders': 'Organizacao com IA: exclui sessoes descartaveis e organiza em pastas',
+  'Tidy': 'Organizar',
+  'Search chats…': 'Buscar conversas…',
+  'All': 'Todos',
+  '0 Selected': '0 selecionado(s)',
+  'Cancel (Esc)': 'Cancelar (Esc)',
+
+  // --- Archive panel ---
+  'Archived sessions. Restore to make active again.': 'Sessoes arquivadas. Restaure para tornar ativas novamente.',
+  'Search archive…': 'Buscar no arquivo…',
+
+  // --- Research panel ---
+  'Completed deep research reports. Click to view.': 'Relatorios de pesquisa profunda concluidos. Clique para ver.',
+  'Most sources': 'Mais fontes',
+  'Tidy: delete research with no sources or empty reports': 'Organizar: exclui pesquisas sem fontes ou relatorios vazios',
+  'Search research…': 'Buscar pesquisas…',
+
+  // --- Documents panel ---
+  'Import files from disk': 'Importar arquivos do disco',
+  'Create new blank document': 'Criar novo documento em branco',
+  'Create': 'Criar',
+  'Open documents in a session, clone to a new or import new files.': 'Abra documentos em uma sessao, clone para uma nova ou importe novos arquivos.',
+  'Most edits': 'Mais edicoes',
+  'Select documents': 'Selecionar documentos',
+  'Tidy: remove empty / junk / duplicate documents': 'Organizar: remove documentos vazios / descartaveis / duplicados',
+  'Search titles & content…': 'Buscar titulos e conteudo…',
+  'Load more': 'Carregar mais',
 });
