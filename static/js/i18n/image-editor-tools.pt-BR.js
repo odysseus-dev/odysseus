@@ -287,4 +287,16 @@ registerMessages('pt-BR', {
   's': 's',
   'm': 'm',
   'h': 'h',
+
+  // history-panel.js
+  'Current': 'Atual',
+
+  // keyboard-shortcuts.js
+  'Cut to clipboard': 'Recortado para a area de transferencia',
+  'Copied to clipboard': 'Copiado para a area de transferencia',
+  'Cut (editor only)': 'Recortado (somente no editor)',
+  'Copied (editor only)': 'Copiado (somente no editor)',
+  'Layer copied to clipboard': 'Camada copiada para a area de transferencia',
+  'Copy failed (clipboard permission denied?)': 'Falha ao copiar (permissao da area de transferencia negada?)',
+  'All selected — Ctrl+C to copy, Del to delete': 'Tudo selecionado — Ctrl+C para copiar, Del para excluir',
 });
