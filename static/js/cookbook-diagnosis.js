@@ -163,100 +163,100 @@ function _inferBaseRepo(text) {
 export const ERROR_PATTERNS = [
   {
     pattern: /No available memory for the cache blocks|Available KV cache memory:.*-/i,
-    message: 'No GPU memory left for KV cache after loading model.',
+    message: window.t('No GPU memory left for KV cache after loading model.'),
     fixes: [
-      { label: 'Retry with GPU mem 0.95', action: (panel) => _serveAutoRetryReplace(panel, '--gpu-memory-utilization', '0.95') },
-      { label: 'Retry with context 2048', action: (panel) => _serveAutoRetryReplace(panel, '--max-model-len', '2048') },
-      { label: 'Retry with more GPUs (TP=8)', action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '8') },
+      { label: window.t('Retry with GPU mem 0.95'), action: (panel) => _serveAutoRetryReplace(panel, '--gpu-memory-utilization', '0.95') },
+      { label: window.t('Retry with context 2048'), action: (panel) => _serveAutoRetryReplace(panel, '--max-model-len', '2048') },
+      { label: window.t('Retry with more GPUs (TP=8)'), action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '8') },
     ],
   },
   {
     pattern: /warming up sampler|max_num_seqs.*gpu_memory_utilization/i,
-    message: 'OOM during warmup. Lower GPU memory or max sequences.',
+    message: window.t('OOM during warmup. Lower GPU memory or max sequences.'),
     fixes: [
-      { label: 'Retry with GPU mem 0.80', action: (panel) => _serveAutoRetryReplace(panel, '--gpu-memory-utilization', '0.80') },
-      { label: 'Retry with --max-num-seqs 64', action: (panel) => _serveAutoRetry(panel, '--max-num-seqs 64') },
-      { label: 'Retry with --max-num-seqs 32', action: (panel) => _serveAutoRetry(panel, '--max-num-seqs 32') },
+      { label: window.t('Retry with GPU mem 0.80'), action: (panel) => _serveAutoRetryReplace(panel, '--gpu-memory-utilization', '0.80') },
+      { label: window.t('Retry with --max-num-seqs 64'), action: (panel) => _serveAutoRetry(panel, '--max-num-seqs 64') },
+      { label: window.t('Retry with --max-num-seqs 32'), action: (panel) => _serveAutoRetry(panel, '--max-num-seqs 32') },
     ],
   },
   {
     pattern: /CUDA out of memory|torch\.cuda\.OutOfMemoryError|CUDA error: out of memory/i,
-    message: 'GPU ran out of memory. Try more GPUs (higher TP) or lower context.',
+    message: window.t('GPU ran out of memory. Try more GPUs (higher TP) or lower context.'),
     fixes: [
-      { label: 'Retry with TP=2', action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '2') },
-      { label: 'Retry with TP=4', action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '4') },
-      { label: 'Retry with GPU mem 0.80', action: (panel) => _serveAutoRetryReplace(panel, '--gpu-memory-utilization', '0.80') },
-      { label: 'Retry with context 4096', action: (panel) => _serveAutoRetryReplace(panel, '--max-model-len', '4096') },
-      { label: 'Retry with --enforce-eager', action: (panel) => _serveAutoRetry(panel, '--enforce-eager') },
+      { label: window.t('Retry with TP=2'), action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '2') },
+      { label: window.t('Retry with TP=4'), action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '4') },
+      { label: window.t('Retry with GPU mem 0.80'), action: (panel) => _serveAutoRetryReplace(panel, '--gpu-memory-utilization', '0.80') },
+      { label: window.t('Retry with context 4096'), action: (panel) => _serveAutoRetryReplace(panel, '--max-model-len', '4096') },
+      { label: window.t('Retry with --enforce-eager'), action: (panel) => _serveAutoRetry(panel, '--enforce-eager') },
     ],
   },
   {
     pattern: /not divisible by weight quantization|quantization block/i,
-    message: 'FP8 MoE quantization is incompatible with this tensor-parallel split.',
-    suggestion: 'Suggested action: retry with a lower tensor-parallel size, such as TP=4 or TP=2. If it still fails, use a non-FP8/GGUF version of the model.',
+    message: window.t('FP8 MoE quantization is incompatible with this tensor-parallel split.'),
+    suggestion: window.t('Suggested action: retry with a lower tensor-parallel size, such as TP=4 or TP=2. If it still fails, use a non-FP8/GGUF version of the model.'),
     fixes: [
-      { label: 'Retry with TP=4', action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '4') },
-      { label: 'Retry with TP=2', action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '2') },
-      { label: 'Edit serve', action: (panel) => _openServeEditFromDiagnosis(panel) },
+      { label: window.t('Retry with TP=4'), action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '4') },
+      { label: window.t('Retry with TP=2'), action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '2') },
+      { label: window.t('Edit serve'), action: (panel) => _openServeEditFromDiagnosis(panel) },
     ],
   },
   {
     pattern: /There is no module or parameter named ['"]lm_head\.input_scale['"]|lm_head\.input_scale|weight_scale_2/i,
-    message: 'vLLM cannot load this ModelOpt LM-head quantized checkpoint with the current runtime.',
-    suggestion: 'Suggested action: upgrade vLLM through the environment that provides this CLI (package manager, venv, Docker image, or source checkout), or choose a compatible checkpoint.',
+    message: window.t('vLLM cannot load this ModelOpt LM-head quantized checkpoint with the current runtime.'),
+    suggestion: window.t('Suggested action: upgrade vLLM through the environment that provides this CLI (package manager, venv, Docker image, or source checkout), or choose a compatible checkpoint.'),
     fixes: [
-      { label: 'Open Dependencies', action: () => _openCookbookDependencies('vllm') },
+      { label: window.t('Open Dependencies'), action: () => _openCookbookDependencies('vllm') },
       {
-        label: 'Copy upgrade hint',
+        label: window.t('Copy upgrade hint'),
         action: () => _copyText('Upgrade the vLLM environment that provides the selected vllm CLI, or use a compatible checkpoint. Do not assume Odysseus owns PATH/system/source/Docker installs.'),
       },
     ],
   },
   {
     pattern: /not divisib|must be divisible|attention heads.*divisible/i,
-    message: 'Tensor parallel size incompatible with model dimensions.',
+    message: window.t('Tensor parallel size incompatible with model dimensions.'),
     fixes: [
-      { label: 'Retry with TP=1', action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '1') },
-      { label: 'Retry with TP=2', action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '2') },
-      { label: 'Retry with TP=4', action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '4') },
+      { label: window.t('Retry with TP=1'), action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '1') },
+      { label: window.t('Retry with TP=2'), action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '2') },
+      { label: window.t('Retry with TP=4'), action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '4') },
     ],
   },
   {
     pattern: /Too large swap space|swap space.*total CPU memory/i,
-    message: 'Swap space too large for available CPU memory.',
+    message: window.t('Swap space too large for available CPU memory.'),
     fixes: [
-      { label: 'Retry without swap', action: (panel) => _serveAutoRetryRemove(panel, '--swap-space') },
-      { label: 'Retry with swap 1', action: (panel) => _serveAutoRetryReplace(panel, '--swap-space', '1') },
+      { label: window.t('Retry without swap'), action: (panel) => _serveAutoRetryRemove(panel, '--swap-space') },
+      { label: window.t('Retry with swap 1'), action: (panel) => _serveAutoRetryReplace(panel, '--swap-space', '1') },
     ],
   },
   {
     pattern: /swap space|not enough.*memory.*cpu|Cannot allocate memory/i,
-    message: 'Not enough CPU RAM or swap space.',
+    message: window.t('Not enough CPU RAM or swap space.'),
     fixes: [
-      { label: 'Retry without swap', action: (panel) => _serveAutoRetryRemove(panel, '--swap-space') },
-      { label: 'Lower max context to 4096', action: (panel) => _setPanelField(panel, 'ctx', '4096') },
+      { label: window.t('Retry without swap'), action: (panel) => _serveAutoRetryRemove(panel, '--swap-space') },
+      { label: window.t('Lower max context to 4096'), action: (panel) => _setPanelField(panel, 'ctx', '4096') },
     ],
   },
   {
     pattern: /unrecognized arguments:\s*--swap-space/i,
-    message: '--swap-space was removed in newer vLLM versions. Remove it from the command.',
+    message: window.t('--swap-space was removed in newer vLLM versions. Remove it from the command.'),
     fixes: [
-      { label: 'Retry without swap', action: (panel) => _serveAutoRetryRemove(panel, '--swap-space') },
+      { label: window.t('Retry without swap'), action: (panel) => _serveAutoRetryRemove(panel, '--swap-space') },
     ],
   },
   {
     pattern: /Address already in use|bind.*address.*in use/i,
-    message: 'Port is already in use. Another server may be running.',
+    message: window.t('Port is already in use. Another server may be running.'),
     fixes: [
-      { label: 'Kill existing vLLM', action: (panel) => _runQuickCmd(panel, 'pkill -f vllm') },
-      { label: 'Use port 8001', action: (panel) => _setPanelField(panel, 'port', '8001') },
+      { label: window.t('Kill existing vLLM'), action: (panel) => _runQuickCmd(panel, 'pkill -f vllm') },
+      { label: window.t('Use port 8001'), action: (panel) => _setPanelField(panel, 'port', '8001') },
     ],
   },
   {
     pattern: /No CUDA GPUs are available|no GPU.*found|CUDA_VISIBLE_DEVICES.*invalid/i,
-    message: 'No GPUs visible. Check your GPU selection or driver.',
+    message: window.t('No GPUs visible. Check your GPU selection or driver.'),
     fixes: [
-      { label: 'Clear GPU selection (use all)', action: (panel) => {
+      { label: window.t('Clear GPU selection (use all)'), action: (panel) => {
         _setPanelField(panel, 'gpus', '');
         _envState.gpus = '';
         _persistEnvState();
