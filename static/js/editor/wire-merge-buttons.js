@@ -44,8 +44,8 @@ export function wireMergeButtons({ saveState, createLayer, renderLayerPanel, com
   // Flatten Copy.
   document.getElementById('ge-flatten')?.addEventListener('click', () => {
     if (state.layers.length < 2) return;
-    saveState('Flatten copy');
-    const merged = createLayer('Flattened', state.imgWidth, state.imgHeight);
+    saveState(window.t('Flatten copy'));
+    const merged = createLayer(window.t('Flattened'), state.imgWidth, state.imgHeight);
     const ctx = merged.ctx;
     for (const l of state.layers) {
       if (!l.visible) continue;
@@ -58,17 +58,17 @@ export function wireMergeButtons({ saveState, createLayer, renderLayerPanel, com
     state.activeLayerId = merged.id;
     renderLayerPanel();
     composite();
-    uiModule.showToast('Flattened copy created');
+    uiModule.showToast(window.t('Flattened copy created'));
   });
 
   // Merge All — drop hidden layers; base = lowest visible.
   document.getElementById('ge-merge-all')?.addEventListener('click', () => {
     const visibleLayers = state.layers.filter(l => l.visible);
     if (visibleLayers.length < 2) {
-      if (uiModule) uiModule.showToast('Need at least two visible layers to merge');
+      if (uiModule) uiModule.showToast(window.t('Need at least two visible layers to merge'));
       return;
     }
-    saveState('Merge all');
+    saveState(window.t('Merge all'));
     const base = visibleLayers[0];
     const baseCtx = base.ctx;
     for (let i = 1; i < visibleLayers.length; i++) {
@@ -87,17 +87,17 @@ export function wireMergeButtons({ saveState, createLayer, renderLayerPanel, com
     state.activeLayerId = base.id;
     renderLayerPanel();
     composite();
-    uiModule.showToast('Visible layers merged');
+    uiModule.showToast(window.t('Visible layers merged'));
   });
 
   // Merge Down.
   document.getElementById('ge-merge-down')?.addEventListener('click', () => {
     const idx = state.layers.findIndex(l => l.id === state.activeLayerId);
     if (idx < 1) return; // can't merge the bottom layer
-    saveState('Merge down');
+    saveState(window.t('Merge down'));
     mergeLayerDownAtIndex(idx);
     renderLayerPanel();
     composite();
-    uiModule.showToast('Layer merged down');
+    uiModule.showToast(window.t('Layer merged down'));
   });
 }

@@ -42,7 +42,7 @@ export function createTransformSession({
 }) {
   function startTransform() {
     const layer = activeLayer();
-    if (!layer || layer.locked) { uiModule.showToast('Select an unlocked layer'); return; }
+    if (!layer || layer.locked) { uiModule.showToast(window.t('Select an unlocked layer')); return; }
     if (state.transformActive) { cancelTransform(); return; } // toggle off
     state.transformActive = true;
     state.transformLayer = layer;
@@ -203,7 +203,7 @@ export function createTransformSession({
       // Big images: rotation pass blocks UI ~0.5–2 s. Show a spinner
       // so the user sees something happen. rAF defers the heavy work
       // past the current frame so the overlay paints first.
-      showCanvasLoading('Rotating…');
+      showCanvasLoading(window.t('Rotating…'));
       requestAnimationFrame(() => {
         try { rIn.dispatchEvent(new Event('input', { bubbles: true })); }
         finally { hideCanvasLoading(); }
@@ -360,7 +360,7 @@ export function createTransformSession({
     state.transformLayer = null;
     state.transformHandle = null;
     composite();
-    uiModule.showToast('Transform applied');
+    uiModule.showToast(window.t('Transform applied'));
   }
 
   function cancelTransform() {

@@ -68,10 +68,10 @@ export function defaultAdjParams(type) {
 /** Human-readable name for an adjustment type. */
 export function adjLayerLabel(type) {
   return {
-    'brightness-contrast': 'Brightness/Contrast',
-    'hue-saturation': 'Hue/Saturation',
-    'levels': 'Levels',
-    'color-balance': 'Color Balance',
+    'brightness-contrast': window.t('Brightness/Contrast'),
+    'hue-saturation': window.t('Hue/Saturation'),
+    'levels': window.t('Levels'),
+    'color-balance': window.t('Color Balance'),
   }[type] || type;
 }
 
@@ -124,8 +124,8 @@ export function isLayerEmpty(layer) {
 export function relTime(ts) {
   if (!ts) return '';
   const dt = (Date.now() - ts) / 1000;
-  if (dt < 5) return 'now';
-  if (dt < 60) return Math.round(dt) + 's';
-  if (dt < 3600) return Math.round(dt / 60) + 'm';
-  return Math.round(dt / 3600) + 'h';
+  if (dt < 5) return window.t('now');
+  if (dt < 60) return Math.round(dt) + window.t('s');
+  if (dt < 3600) return Math.round(dt / 60) + window.t('m');
+  return Math.round(dt / 3600) + window.t('h');
 }

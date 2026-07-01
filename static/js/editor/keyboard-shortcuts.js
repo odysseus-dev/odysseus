@@ -154,8 +154,8 @@ export function wireKeyboardShortcuts(deps) {
           tmp.toBlob(blob => {
             if (blob && navigator.clipboard?.write) {
               navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]).then(() => {
-                uiModule.showToast(isCut ? 'Cut to clipboard' : 'Copied to clipboard');
-              }).catch(() => uiModule.showToast(isCut ? 'Cut (editor only)' : 'Copied (editor only)'));
+                uiModule.showToast(isCut ? window.t('Cut to clipboard') : window.t('Copied to clipboard'));
+              }).catch(() => uiModule.showToast(isCut ? window.t('Cut (editor only)') : window.t('Copied (editor only)')));
             }
           }, 'image/png');
           if (isCut) {
@@ -222,8 +222,8 @@ export function wireKeyboardShortcuts(deps) {
           layer.canvas.toBlob(blob => {
             if (blob && navigator.clipboard?.write) {
               navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
-                .then(() => uiModule.showToast('Layer copied to clipboard'))
-                .catch(() => uiModule.showToast('Copy failed (clipboard permission denied?)'));
+                .then(() => uiModule.showToast(window.t('Layer copied to clipboard')))
+                .catch(() => uiModule.showToast(window.t('Copy failed (clipboard permission denied?)')));
             }
           }, 'image/png');
           return;
@@ -239,7 +239,7 @@ export function wireKeyboardShortcuts(deps) {
         state.lassoActive = false;
         composite();
         drawLassoOverlay();
-        uiModule.showToast('All selected — Ctrl+C to copy, Del to delete');
+        uiModule.showToast(window.t('All selected — Ctrl+C to copy, Del to delete'));
       }
       // Ctrl+V handled by the paste event listener.
       if (e.key === 'v') { /* no-op here */ }

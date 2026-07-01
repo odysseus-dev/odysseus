@@ -56,7 +56,7 @@ export function createHistoryPanel({ undo, redo }) {
     const modalId = panel._modalId || 'ge-history-panel-min';
     panel._modalId = modalId;
     modalManager.register(modalId, {
-      label: 'History',
+      label: window.t('History'),
       icon: HISTORY_ICON,
       restoreFn: () => {
         panel.style.left = panel._stashLeft + 'px';
@@ -147,12 +147,12 @@ export function createHistoryPanel({ undo, redo }) {
     const rows = [];
     for (let i = 0; i < state.undoStack.length; i++) {
       const s = state.undoStack[i];
-      rows.push({ offset: -(state.undoStack.length - i), label: s._label || 'Edit', ts: s._ts });
+      rows.push({ offset: -(state.undoStack.length - i), label: s._label || window.t('Edit'), ts: s._ts });
     }
-    rows.push({ offset: 0, label: 'Current', ts: Date.now(), current: true });
+    rows.push({ offset: 0, label: window.t('Current'), ts: Date.now(), current: true });
     for (let i = state.redoStack.length - 1; i >= 0; i--) {
       const s = state.redoStack[i];
-      rows.push({ offset: (state.redoStack.length - i), label: s._label || 'Edit', ts: s._ts, future: true });
+      rows.push({ offset: (state.redoStack.length - i), label: s._label || window.t('Edit'), ts: s._ts, future: true });
     }
     list.innerHTML = rows.map(r => `
     <button class="ge-history-row${r.current ? ' current' : ''}${r.future ? ' future' : ''}" data-offset="${r.offset}">

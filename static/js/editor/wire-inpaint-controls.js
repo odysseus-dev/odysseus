@@ -101,8 +101,8 @@ export function wireInpaintControls({
     state.maskVisible = !state.maskVisible;
     const btn = document.getElementById('ge-mask-vis');
     if (!btn) { composite(); return; }
-    btn.innerHTML = `${state.maskVisible ? EYE_OPEN_SM : EYE_OFF_SM}<span id="ge-mask-vis-label">${state.maskVisible ? 'Hide' : 'Show'}</span>`;
-    btn.title = state.maskVisible ? 'Hide mask' : 'Show mask';
+    btn.innerHTML = `${state.maskVisible ? EYE_OPEN_SM : EYE_OFF_SM}<span id="ge-mask-vis-label">${state.maskVisible ? window.t('Hide') : window.t('Show')}</span>`;
+    btn.title = state.maskVisible ? window.t('Hide mask') : window.t('Show mask');
     btn.classList.toggle('visible', state.maskVisible);
     composite();
   });
@@ -121,7 +121,7 @@ export function wireInpaintControls({
     state.maskCtx.putImageData(imgData, 0, 0);
     composite();
     syncToolClearIndicators();
-    uiModule.showToast('Mask inverted');
+    uiModule.showToast(window.t('Mask inverted'));
   });
   document.getElementById('ge-inpaint-clear')?.addEventListener('click', () => {
     if (state.maskCtx) { state.maskCtx.clearRect(0, 0, state.maskCanvas.width, state.maskCanvas.height); composite(); }
