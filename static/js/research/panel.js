@@ -1032,7 +1032,7 @@ function _buildJobCard(job) {
     card.querySelector('[data-action="delete"]').addEventListener('click', async (e) => {
       e.stopPropagation();
       if (window.styledConfirm) {
-        const ok = await window.styledConfirm('Delete this research? This permanently removes it from disk.', { confirmText: 'Delete', danger: true });
+        const ok = await window.styledConfirm(window.t('Delete this research? This permanently removes it from disk.'), { confirmText: window.t('Delete'), danger: true });
         if (!ok) return;
       }
       try { await fetch(`${_apiBase}/api/research/${job.id}`, { method: 'DELETE', credentials: 'same-origin' }); } catch {}
@@ -1048,13 +1048,13 @@ function _buildJobCard(job) {
     card.innerHTML = `
       <div class="research-job-header">
         <span class="research-job-query">${_esc(job.query)}</span>${job.category ? `<span class="research-cat-badge">${_esc(job.category)}</span>` : ""}
-        <span class="research-job-status">${job.status}</span>
+        <span class="research-job-status">${window.t(job.status === 'cancelled' ? 'cancelled' : 'error')}</span>
       </div>
       ${errMsg}
       <div class="research-job-actions">
-        <button class="research-job-action" data-action="retry" title="Retry">${_retryIcon} Retry</button>
-        <button class="research-job-action" data-action="edit" title="Edit and retry">${_editIcon} Edit</button>
-        <button class="research-job-action research-job-action-dim" data-action="dismiss" title="Dismiss">${_cancelIcon}</button>
+        <button class="research-job-action" data-action="retry" title="${window.t('Retry')}">${_retryIcon} ${window.t('Retry')}</button>
+        <button class="research-job-action" data-action="edit" title="${window.t('Edit and retry')}">${_editIcon} ${window.t('Edit')}</button>
+        <button class="research-job-action research-job-action-dim" data-action="dismiss" title="${window.t('Dismiss')}">${_cancelIcon}</button>
       </div>
     `;
     card.querySelector('[data-action="retry"]').addEventListener('click', (e) => {
@@ -1088,10 +1088,10 @@ const _CAT_LABELS = {
 };
 
 function _renderResult(job) {
-  if (!job.result) return '<div class="research-job-loading">Loading result...</div>';
+  if (!job.result) return `<div class="research-job-loading">${window.t('Loading result...')}</div>`;
   const cat = job.category || '';
   const catIcon = _CAT_ICONS[cat] || '';
-  const catLabel = _CAT_LABELS[cat] || '';
+  const catLabel = _CAT_LABELS[cat] ? window.t(_CAT_LABELS[cat]) : '';
 
   let html = '';
 
@@ -1117,7 +1117,7 @@ function _renderResult(job) {
         ? `<a href="${url}" target="_blank" rel="noopener" class="research-source-link">${title}</a>`
         : `<span class="research-source-link">${title}</span>`;
     }
-    if (job.sources.length > 10) html += `<span class="research-source-more">+${job.sources.length - 10} more</span>`;
+    if (job.sources.length > 10) html += `<span class="research-source-more">${window.t('+{n} more', { n: job.sources.length - 10 })}</span>`;
     html += '</div>';
   }
 
@@ -1148,14 +1148,14 @@ async function _copyResult(job, btn) {
   if (!job.result) return;
   let text = `# ${job.query}\n\n${job.result}`;
   if (job.findings?.length) {
-    text += '\n\n---\n## Raw Findings\n';
+    text += `\n\n---\n## ${window.t('Raw Findings')}\n`;
     for (const f of job.findings) {
-      text += `\n### ${f.title || 'Untitled'}\nSource: ${f.url || ''}\n${f.summary || ''}\n`;
+      text += `\n### ${f.title || window.t('Untitled')}\n${window.t('Source:')} ${f.url || ''}\n${f.summary || ''}\n`;
     }
   }
   if (job.sources?.length) {
     const srcList = job.sources.map(s => `- [${s.title || s.url}](${s.url})`).join('\n');
-    text += `\n\n---\n## Sources\n${srcList}`;
+    text += `\n\n---\n## ${window.t('Sources')}\n${srcList}`;
   }
   let ok = false;
   try {
@@ -1197,7 +1197,7 @@ async function _copyResult(job, btn) {
       btn.classList.add('research-job-action-copied');
       setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('research-job-action-copied'); }, 2000);
     } else {
-      btn.innerHTML = `${_cancelIcon} Failed`;
+      btn.innerHTML = `${_cancelIcon} ${window.t('Failed')}`;
       setTimeout(() => { btn.innerHTML = orig; }, 2000);
     }
   }
@@ -1208,7 +1208,7 @@ async function _copyResult(job, btn) {
 async function _chatAboutResearch(researchId, btn) {
   if (!researchId) return;
   const origLabel = btn ? btn.innerHTML : '';
-  if (btn) { btn.disabled = true; btn.innerHTML = `${_chatIcon} Creating…`; }
+  if (btn) { btn.disabled = true; btn.innerHTML = `${_chatIcon} ${window.t('Creating…')}`; }
   try {
     const res = await fetch(`${_apiBase}/api/research/spinoff/${researchId}`, {
       method: 'POST', credentials: 'same-origin',
@@ -1229,11 +1229,11 @@ async function _chatAboutResearch(researchId, btn) {
     } else {
       // 200 OK but no session_id — server contract violation. Don't leave
       // the button stuck on 'Creating…'; surface the failure instead.
-      throw new Error('Server returned no session id');
+      throw new Error(window.t('Server returned no session id'));
     }
   } catch (e) {
     if (btn) { btn.disabled = false; btn.innerHTML = origLabel; }
-    alert('Could not start follow-up chat: ' + e.message);
+    alert(window.t('Could not start follow-up chat: {msg}', { msg: e.message }));
   }
 }
 

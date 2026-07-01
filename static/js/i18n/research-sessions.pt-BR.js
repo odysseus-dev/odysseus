@@ -91,4 +91,20 @@ registerMessages('pt-BR', {
   'Copy report to clipboard': 'Copiar relatório para a área de transferência',
   'Clear from list': 'Remover da lista',
   'Delete from disk': 'Excluir do disco',
+
+  // --- research/panel.js: error card, result rendering, copy/chat ---
+  'cancelled': 'cancelada',
+  'Edit and retry': 'Editar e tentar novamente',
+  'Product': 'Produto',
+  'Comparison': 'Comparação',
+  'How-to Guide': 'Guia de Como Fazer',
+  'Landscape': 'Panorama',
+  'Loading result...': 'Carregando resultado...',
+  '+{n} more': '+{n} mais',
+  'Raw Findings': 'Achados Brutos',
+  'Source:': 'Fonte:',
+  'Delete this research? This permanently removes it from disk.': 'Excluir esta pesquisa? Isso a remove permanentemente do disco.',
+  'Creating…': 'Criando…',
+  'Server returned no session id': 'O servidor não retornou um id de sessão',
+  'Could not start follow-up chat: {msg}': 'Não foi possível iniciar o chat de acompanhamento: {msg}',
 });
