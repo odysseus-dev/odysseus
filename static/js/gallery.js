@@ -1315,18 +1315,18 @@ function _openDetail(img) {
     if (!d || isNaN(d.getTime())) return '';
     const secs = (Date.now() - d.getTime()) / 1000;
     if (secs < 0) return '';
-    if (secs < 60) return 'just now';
-    if (secs < 3600) { const m = Math.floor(secs / 60); return `${m} minute${m !== 1 ? 's' : ''} ago`; }
-    if (secs < 86400) { const h = Math.floor(secs / 3600); return `${h} hour${h !== 1 ? 's' : ''} ago`; }
-    if (secs < 86400 * 7) { const d2 = Math.floor(secs / 86400); return `${d2} day${d2 !== 1 ? 's' : ''} ago`; }
-    if (secs < 86400 * 30) { const w = Math.floor(secs / (86400 * 7)); return `${w} week${w !== 1 ? 's' : ''} ago`; }
-    if (secs < 86400 * 365) { const mo = Math.floor(secs / (86400 * 30)); return `${mo} month${mo !== 1 ? 's' : ''} ago`; }
+    if (secs < 60) return window.t('just now');
+    if (secs < 3600) { const m = Math.floor(secs / 60); return window.t('{n} minute{s} ago', { n: m, s: m !== 1 ? 's' : '' }); }
+    if (secs < 86400) { const h = Math.floor(secs / 3600); return window.t('{n} hour{s} ago', { n: h, s: h !== 1 ? 's' : '' }); }
+    if (secs < 86400 * 7) { const d2 = Math.floor(secs / 86400); return window.t('{n} day{s} ago', { n: d2, s: d2 !== 1 ? 's' : '' }); }
+    if (secs < 86400 * 30) { const w = Math.floor(secs / (86400 * 7)); return window.t('{n} week{s} ago', { n: w, s: w !== 1 ? 's' : '' }); }
+    if (secs < 86400 * 365) { const mo = Math.floor(secs / (86400 * 30)); return window.t('{n} month{s} ago', { n: mo, s: mo !== 1 ? 's' : '' }); }
     const y = Math.floor(secs / (86400 * 365));
-    return `${y} year${y !== 1 ? 's' : ''} ago`;
+    return window.t('{n} year{s} ago', { n: y, s: y !== 1 ? 's' : '' });
   };
   const date = _dateObj
     ? `${_dateObj.toLocaleString()}<span class="gallery-date-rel"> (${_relAgo(_dateObj)})</span>`
-    : 'Unknown';
+    : window.t('Unknown');
   const userTags = img.user_tags || img.tags || '';
   const aiTags = img.ai_tags || '';
   const dims = img.width && img.height ? `${img.width} x ${img.height}` : (img.size || 'Unknown');
@@ -1339,7 +1339,7 @@ function _openDetail(img) {
     const u = new Date(img.updated_at);
     const c = new Date(img.created_at);
     if (!isNaN(u) && !isNaN(c) && (u.getTime() - c.getTime() > 10000)) {
-      editedHtml = `<div class="gallery-detail-section"><label>Edited</label><div>${u.toLocaleString()}<span class="gallery-date-rel"> (${_relAgo(u)})</span></div></div>`;
+      editedHtml = `<div class="gallery-detail-section"><label>${window.t('Edited')}</label><div>${u.toLocaleString()}<span class="gallery-date-rel"> (${_relAgo(u)})</span></div></div>`;
     }
   }
 

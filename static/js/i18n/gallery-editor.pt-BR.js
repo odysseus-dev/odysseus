@@ -142,4 +142,14 @@ registerMessages('pt-BR', {
   'Photo': 'Foto',
   'Favorite': 'Favoritar',
   'Download': 'Baixar',
+
+  // gallery.js — round 4 (detail overlay dates)
+  '{n} minute{s} ago': 'ha {n} minuto{s}',
+  '{n} hour{s} ago': 'ha {n} hora{s}',
+  '{n} day{s} ago': 'ha {n} dia{s}',
+  '{n} week{s} ago': 'ha {n} semana{s}',
+  '{n} month{s} ago': 'ha {n} mes{s}',
+  '{n} year{s} ago': 'ha {n} ano{s}',
+  'Unknown': 'Desconhecido',
+  'Edited': 'Editado',
 });
