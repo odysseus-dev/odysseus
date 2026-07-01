@@ -1112,15 +1112,15 @@ function _modeLabel(model) {
 }
 
 export const _hwfitColumns = [
-  { key: 'fit', label: 'Fit',    cls: 'hwfit-fit' },
-  { key: 'newest', label: 'Model (latest)',  cls: 'hwfit-name' },
-  { key: 'params',label: 'Param', cls: 'hwfit-c-params' },
+  { key: 'fit', get label() { return window.t('Fit'); },    cls: 'hwfit-fit' },
+  { key: 'newest', get label() { return window.t('Model (latest)'); },  cls: 'hwfit-name' },
+  { key: 'params', get label() { return window.t('Param'); }, cls: 'hwfit-c-params' },
   { key: null,    label: 'Quant',  cls: 'hwfit-c-quant' },
   { key: 'vram',  label: 'VRAM',   cls: 'hwfit-c-vram' },
-  { key: 'context',label: 'Ctx',   cls: 'hwfit-c-ctx' },
-  { key: 'speed', label: 'Speed',  cls: 'hwfit-c-speed' },
-  { key: 'score', label: 'Score',  cls: 'hwfit-c-score' },
-  { key: null,    label: 'Mode',   cls: 'hwfit-c-mode' },
+  { key: 'context', get label() { return window.t('Ctx'); },   cls: 'hwfit-c-ctx' },
+  { key: 'speed', get label() { return window.t('Speed'); },  cls: 'hwfit-c-speed' },
+  { key: 'score', get label() { return window.t('Score'); },  cls: 'hwfit-c-score' },
+  { key: null,    get label() { return window.t('Mode'); },   cls: 'hwfit-c-mode' },
 ];
 
 export function _hwfitRenderList(el, models) {
@@ -1136,9 +1136,9 @@ export function _hwfitRenderList(el, models) {
       || document.getElementById('hwfit-quant')?.value
       || document.getElementById('hwfit-engine')?.value);
     let msg;
-    if (hasFilters) msg = 'No models match these filters — try clearing the search, use-case, quant, or engine.';
-    else if (hasHw) msg = 'No models fit — the hardware probe may have under-reported. Try Rescan.';
-    else msg = 'No models fit your hardware';
+    if (hasFilters) msg = window.t('No models match these filters — try clearing the search, use-case, quant, or engine.');
+    else if (hasHw) msg = window.t('No models fit — the hardware probe may have under-reported. Try Rescan.');
+    else msg = window.t('No models fit your hardware');
     el.innerHTML = `<div class="hwfit-loading">${msg}</div>`;
     return;
   }
@@ -1168,16 +1168,16 @@ export function _hwfitRenderList(el, models) {
     let label = col.label;
     if (col.cls === 'hwfit-fit') {
       const _fitOnly = (() => { try { return localStorage.getItem('hwfit_fit_only_v1') === '1'; } catch { return false; } })();
-      label = `<span class="hwfit-fit-dot${_fitOnly ? ' active' : ''}" title="${_fitOnly ? 'Showing only models that fit. Click to also show too-tight rows.' : 'Click to show only models that fit your hardware.'}" data-fit-dot>●</span>${col.label}`;
+      label = `<span class="hwfit-fit-dot${_fitOnly ? ' active' : ''}" title="${esc(_fitOnly ? window.t('Showing only models that fit. Click to also show too-tight rows.') : window.t('Click to show only models that fit your hardware.'))}" data-fit-dot>●</span>${col.label}`;
       // (Budget tag removed — the GPU/RAM/N-GPU suffix next to "Fit" was noise;
       // the toggle row already shows which budget is active.)
     }
     // The Model column's "(newest)" / "(oldest)" suffix flips with the sort
     // direction so the user can see at a glance which way they're sorted.
     if (col.key === 'newest' && col.key === currentSort) {
-      label = isReversed ? 'Model (oldest)' : 'Model (latest)';
+      label = isReversed ? window.t('Model (oldest)') : window.t('Model (latest)');
     } else if (col.key === 'newest') {
-      label = 'Model (latest)';
+      label = window.t('Model (latest)');
     }
     html += `<span class="hwfit-col ${col.cls}${sortable}${active}"${dataAttr}>${label}${arrow}</span>`;
   }
