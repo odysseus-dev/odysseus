@@ -212,4 +212,13 @@ registerMessages('pt-BR', {
   'teal': 'azul-petroleo',
   'pink': 'rosa',
   'custom': 'personalizado',
+
+  // Event form save/delete
+  'Title required': 'Titulo obrigatorio',
+  'End time must be after start time': 'O horario de termino deve ser depois do horario de inicio',
+  'Failed to save': 'Falha ao salvar',
+  'Failed to delete': 'Falha ao excluir',
+
+  // Misc helpers
+  'Open in OpenStreetMap': 'Abrir no OpenStreetMap',
 });

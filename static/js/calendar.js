@@ -3068,7 +3068,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
   document.getElementById('cal-form-mobile-cancel')?.addEventListener('click', _cancelEventForm);
   document.getElementById('cal-f-save')?.addEventListener('click', async () => {
     const summary = document.getElementById('cal-f-sum').value.trim();
-    if (!summary) { uiModule.showToast('Title required'); return; }
+    if (!summary) { uiModule.showToast(window.t('Title required')); return; }
     const dv = document.getElementById('cal-f-date').value;
     const dvEnd = document.getElementById('cal-f-date-end').value || dv;
     const isAD = document.getElementById('cal-f-allday').checked;
@@ -3104,7 +3104,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
       const endDt = new Date(`${dvEnd}T${endVal}:00`);
 
       if (endDt <= startDt) {
-        uiModule.showToast('End time must be after start time');
+        uiModule.showToast(window.t('End time must be after start time'));
         return;
       }
     }
@@ -3139,14 +3139,14 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
         }
       }
       _selectedDay = dv; _render();
-    } catch (e) { uiModule.showToast('Failed to save'); }
+    } catch (e) { uiModule.showToast(window.t('Failed to save')); }
   });
   document.getElementById('cal-f-del')?.addEventListener('click', async () => {
-    const name = existing && existing.summary ? `"${existing.summary}"` : 'this event';
-    const ok = await uiModule.styledConfirm(`Delete ${name}?`, { confirmText: 'Delete', danger: true });
+    const name = existing && existing.summary ? `"${existing.summary}"` : window.t('this event');
+    const ok = await uiModule.styledConfirm(window.t('Delete {name}?', { name }), { confirmText: window.t('Delete'), danger: true });
     if (!ok) return;
     try { await _deleteEvent(existing.uid); _render(); }
-    catch (e) { uiModule.showToast('Failed to delete'); }
+    catch (e) { uiModule.showToast(window.t('Failed to delete')); }
   });
   // ── Bespoke-form behavior ──────────────────────────────────────────
   const formEl = body.querySelector('.cal-form');
@@ -3262,7 +3262,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
     const clockEl = document.getElementById('cal-hero-clock');
     const ampmEl = document.getElementById('cal-hero-ampm');
     const dateEl = document.getElementById('cal-hero-date');
-    if (clockEl) clockEl.innerHTML = allday ? '<span class="cal-hero-clock-allday">All day</span>' : _clockFace(startVal);
+    if (clockEl) clockEl.innerHTML = allday ? `<span class="cal-hero-clock-allday">${window.t('All day')}</span>` : _clockFace(startVal);
     if (ampmEl) ampmEl.textContent = allday ? '' : _clockAmpm(startVal);
     if (dateEl) dateEl.textContent = _clockDate(dateVal);
   };
@@ -3385,7 +3385,7 @@ function _locHTML(loc) {
   }
   // No URL — link the whole thing to OpenStreetMap.
   const mapUrl = 'https://www.openstreetmap.org/search?query=' + encodeURIComponent(loc);
-  return `<a href="${mapUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation();" title="Open in OpenStreetMap">${_e(loc)}</a>`;
+  return `<a href="${mapUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation();" title="${window.t('Open in OpenStreetMap')}">${_e(loc)}</a>`;
 }
 
 // ── Open / Close ──
