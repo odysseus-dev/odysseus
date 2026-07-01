@@ -280,4 +280,10 @@ registerMessages('pt-BR', {
   'Schedule…': 'Agendar…',
   'Favorited — pinned to top': 'Favoritado — fixado no topo',
   'Unfavorited': 'Desfavoritado',
+  '{n} selected': '{n} selecionado(s)',
+  '{n} saved launch config(s) for {repo} — click ▾ to load or delete': '{n} configuração(ões) de execução salva(s) para {repo} — clique em ▾ para carregar ou excluir',
+  'No saved launch configs for {repo} yet — click Save to add one': 'Nenhuma configuração de execução salva para {repo} ainda — clique em Salvar para adicionar uma',
+  'Saved launch configurations for this model — click ▾ to load or delete': 'Configurações de execução salvas para este modelo — clique em ▾ para carregar ou excluir',
+  'Save current preset': 'Salvar predefinição atual',
+  'Preset': 'Predefinição',
 });
