@@ -1028,8 +1028,8 @@ function _draftsWireOnce() {
   document.getElementById('gallery-editor-drafts-bulk-delete')?.addEventListener('click', async () => {
     if (!_draftsSelected.size) return;
     const n = _draftsSelected.size;
-    const ok = await uiModule.styledConfirm(`Delete ${n} project${n === 1 ? '' : 's'}?`, {
-      confirmText: 'Delete', cancelText: 'Cancel', danger: true,
+    const ok = await uiModule.styledConfirm(window.t('Delete {n} project{s}?', { n, s: n === 1 ? '' : 's' }), {
+      confirmText: window.t('Delete'), cancelText: window.t('Cancel'), danger: true,
     });
     if (!ok) return;
     const ids = [..._draftsSelected];
@@ -1051,10 +1051,10 @@ function _draftsWireOnce() {
 // Human-readable "x minutes ago" / "y days ago" for the drafts list.
 function _humanRelativeDate(when) {
   const diff = (Date.now() - when.getTime()) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
-  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
-  if (diff < 86400 * 30) return Math.floor(diff / 86400) + 'd ago';
+  if (diff < 60) return window.t('just now');
+  if (diff < 3600) return window.t('{n}m ago', { n: Math.floor(diff / 60) });
+  if (diff < 86400) return window.t('{n}h ago', { n: Math.floor(diff / 3600) });
+  if (diff < 86400 * 30) return window.t('{n}d ago', { n: Math.floor(diff / 86400) });
   return when.toLocaleDateString();
 }
 
@@ -1070,14 +1070,14 @@ function _renderEditorLanding() {
   // and styling natively — no custom flex grid, no clipping, no empty boxes.
   // Picking an option fires `change` and goes straight into the editor.
   const presets = [
-    { w: 1024, h: 1024, label: 'Square HD — 1024 × 1024' },
-    { w: 1920, h: 1080, label: 'Widescreen — 1920 × 1080' },
-    { w: 1080, h: 1920, label: 'Portrait — 1080 × 1920' },
-    { w: 1080, h: 1080, label: 'Instagram — 1080 × 1080' },
-    { w: 1500, h: 1050, label: 'Postcard — 1500 × 1050' },
-    { w: 2480, h: 3508, label: 'A4 (300dpi) — 2480 × 3508' },
-    { w: 2550, h: 3300, label: 'Letter (300dpi) — 2550 × 3300' },
-    { w: 3840, h: 2160, label: '4K — 3840 × 2160' },
+    { w: 1024, h: 1024, label: window.t('Square HD — 1024 × 1024') },
+    { w: 1920, h: 1080, label: window.t('Widescreen — 1920 × 1080') },
+    { w: 1080, h: 1920, label: window.t('Portrait — 1080 × 1920') },
+    { w: 1080, h: 1080, label: window.t('Instagram — 1080 × 1080') },
+    { w: 1500, h: 1050, label: window.t('Postcard — 1500 × 1050') },
+    { w: 2480, h: 3508, label: window.t('A4 (300dpi) — 2480 × 3508') },
+    { w: 2550, h: 3300, label: window.t('Letter (300dpi) — 2550 × 3300') },
+    { w: 3840, h: 2160, label: window.t('4K — 3840 × 2160') },
   ];
   const optionsHtml = presets
     .map((p, i) => `<option value="${i}">${p.label}</option>`)
@@ -1085,30 +1085,30 @@ function _renderEditorLanding() {
   container.innerHTML = `
     <div class="gallery-editor-landing">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.6"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-      <h3>Image Editor <span class="ge-alpha-tag">Alpha</span></h3>
-      <p>Start a blank canvas, or open a photo from your gallery to edit it.</p>
+      <h3>${window.t('Image Editor')} <span class="ge-alpha-tag">${window.t('Alpha')}</span></h3>
+      <p>${window.t('Start a blank canvas, or open a photo from your gallery to edit it.')}</p>
       <div class="gallery-editor-landing-actions">
-        <button class="gallery-select-btn" id="gallery-editor-new">New canvas...</button>
-        <button class="gallery-select-btn" id="gallery-editor-pick">Browse photos</button>
+        <button class="gallery-select-btn" id="gallery-editor-new">${window.t('New canvas...')}</button>
+        <button class="gallery-select-btn" id="gallery-editor-pick">${window.t('Browse photos')}</button>
       </div>
       <label class="gallery-editor-template-label">
-        Or pick a template
+        ${window.t('Or pick a template')}
         <select class="gallery-editor-template-select" id="gallery-editor-template">
-          <option value="">Select a size…</option>
+          <option value="">${window.t('Select a size…')}</option>
           ${optionsHtml}
         </select>
       </label>
       <div class="gallery-editor-drafts" id="gallery-editor-drafts" hidden>
         <div class="gallery-editor-drafts-header">
-          <h4 class="gallery-editor-drafts-title">Saved projects</h4>
-          <input type="search" class="gallery-editor-drafts-search" id="gallery-editor-drafts-search" placeholder="Search projects…" autocomplete="off" />
-          <button class="gallery-select-btn" id="gallery-editor-drafts-select" title="Toggle multi-select">Select</button>
+          <h4 class="gallery-editor-drafts-title">${window.t('Saved projects')}</h4>
+          <input type="search" class="gallery-editor-drafts-search" id="gallery-editor-drafts-search" placeholder="${window.t('Search projects…')}" autocomplete="off" />
+          <button class="gallery-select-btn" id="gallery-editor-drafts-select" title="${window.t('Toggle multi-select')}">${window.t('Select')}</button>
         </div>
         <div class="gallery-bulk-bar hidden" id="gallery-editor-drafts-bulk">
-          <label class="memory-bulk-check-all"><input type="checkbox" id="gallery-editor-drafts-select-all"> All</label>
-          <span class="gallery-bulk-count" id="gallery-editor-drafts-bulk-count">0 selected</span>
-          <button class="gallery-bulk-delete" id="gallery-editor-drafts-bulk-delete"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Delete selected</button>
-          <button class="memory-toolbar-btn" id="gallery-editor-drafts-bulk-cancel" title="Cancel (Esc)" style="margin-left:4px;padding:3px 6px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          <label class="memory-bulk-check-all"><input type="checkbox" id="gallery-editor-drafts-select-all"> ${window.t('All')}</label>
+          <span class="gallery-bulk-count" id="gallery-editor-drafts-bulk-count">${window.t('0 selected')}</span>
+          <button class="gallery-bulk-delete" id="gallery-editor-drafts-bulk-delete"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>${window.t('Delete selected')}</button>
+          <button class="memory-toolbar-btn" id="gallery-editor-drafts-bulk-cancel" title="${window.t('Cancel (Esc)')}" style="margin-left:4px;padding:3px 6px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
         <div class="gallery-editor-drafts-grid" id="gallery-editor-drafts-grid"></div>
       </div>
@@ -1127,7 +1127,7 @@ function _renderEditorLanding() {
     // openEditor() now returns a Promise — it's async because the size
     // prompt is a styled modal. Await it before checking whether the
     // editor actually opened (the user may have cancelled).
-    await openEditor(null, null, null, 'New canvas');
+    await openEditor(null, null, null, window.t('New canvas'));
     if (!isEditorOpen()) _renderEditorLanding();
   });
   document.getElementById('gallery-editor-pick')?.addEventListener('click', () => {
@@ -1175,15 +1175,15 @@ function _renderGrid() {
   // tile in the Albums tab so the upload entry point is consistent across
   // both grids.
   const uploadTile = `
-    <div class="gallery-card gallery-card-upload" id="gallery-upload-tile" title="Upload photos or videos">
+    <div class="gallery-card gallery-card-upload" id="gallery-upload-tile" title="${window.t('Upload photos or videos')}">
       <div class="gallery-card-upload-inner">
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-        <div class="gallery-card-upload-label">Upload</div>
+        <div class="gallery-card-upload-label">${window.t('Upload')}</div>
       </div>
     </div>`;
 
   if (_items.length === 0) {
-    grid.innerHTML = uploadTile + '<div class="gallery-empty">No photos yet. Click Upload or drag-and-drop to get started!</div>';
+    grid.innerHTML = uploadTile + `<div class="gallery-empty">${window.t('No photos yet. Click Upload or drag-and-drop to get started!')}</div>`;
     _wireUploadTile();
     if (loadMore) loadMore.style.display = 'none';
     return;
@@ -1203,14 +1203,14 @@ function _renderGrid() {
       .replace(/\.[^.]+$/, '')       // drop extension
       .replace(/[_-]+/g, ' ')
       .trim();
-    const labelText = (img.prompt || '').trim() || fallbackName || 'Photo';
+    const labelText = (img.prompt || '').trim() || fallbackName || window.t('Photo');
     const promptPreview = labelText.length > 60 ? labelText.substring(0, 58) + '...' : labelText;
     const favCls = img.favorite ? ' gallery-fav-active' : '';
     html += `
       <div class="gallery-card" data-id="${_esc(img.id)}">
         <span class="gallery-select-dot" style="display:none;"></span>
-        <button class="gallery-fav-btn${favCls}" data-id="${_esc(img.id)}" title="Favorite">&#9829;</button>
-        <button class="gallery-dl-btn" data-id="${_esc(img.id)}" data-url="${_esc(img.url)}" data-filename="${_esc(img.filename || '')}" title="Download">
+        <button class="gallery-fav-btn${favCls}" data-id="${_esc(img.id)}" title="${window.t('Favorite')}">&#9829;</button>
+        <button class="gallery-dl-btn" data-id="${_esc(img.id)}" data-url="${_esc(img.url)}" data-filename="${_esc(img.filename || '')}" title="${window.t('Download')}">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </button>
         ${_isVideoUrl(img.url)
