@@ -2200,6 +2200,7 @@ def setup_model_routes(model_discovery):
         # admin's pick into every new account's composer.
         settings = _load_settings()
         _is_admin = False
+        _using_global_defaults = settings.get("share_defaults_with_users", False)
         try:
             auth_mgr = getattr(request.app.state, "auth_manager", None)
             if _user and auth_mgr is not None and getattr(auth_mgr, "is_admin", None):
@@ -2215,7 +2216,7 @@ def setup_model_routes(model_discovery):
             # If user has no personal default, fall back to global default
             # But only based on the "share_defaults_with_users" flag
             # (only if share_defaults_with_users is enabled)
-            if settings.get("share_defaults_with_users", False):
+            if _using_global_defaults:
                 if not ep_id:
                     ep_id = settings.get("default_endpoint_id", "")
                 if not model:
@@ -2236,8 +2237,10 @@ def setup_model_routes(model_discovery):
                 # Honor the same owner-scope rule as /api/models — a per-user
                 # default that points at an endpoint owned by a different user
                 # mustn't silently resolve. Admins are exempt (they manage the
-                # global pool).
-                if _user and not _is_admin:
+                # global pool). However, when share_defaults_with_users is enabled
+                # and the user is falling back to global defaults, we should allow
+                # admin-owned endpoints since that's the whole point of sharing.
+                if _user and not _is_admin and not _using_global_defaults:
                     ep_q = owner_filter(ep_q, ModelEndpoint, _user)
                 ep = ep_q.first()
             # Configured fallback chain — when the chosen default endpoint is
@@ -2256,7 +2259,7 @@ def setup_model_routes(model_discovery):
                     cand_q = db.query(ModelEndpoint).filter(
                         ModelEndpoint.id == fid, ModelEndpoint.is_enabled == True
                     )
-                    if _user and not _is_admin:
+                    if _user and not _is_admin and not _using_global_defaults:
                         cand_q = owner_filter(cand_q, ModelEndpoint, _user)
                     cand = cand_q.first()
                     if cand:
