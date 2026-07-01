@@ -165,4 +165,16 @@ registerMessages('pt-BR', {
   'Clear AI tags': 'Limpar marcacoes de IA',
   'AI Tag': 'Marcar com IA',
   'Set as album cover': 'Definir como capa do album',
+
+  // gallery.js — round 6 (detail body: rotate/nav/name)
+  'Rotate 90° counter-clockwise': 'Girar 90° sentido anti-horario',
+  'Rotate left': 'Girar para a esquerda',
+  'Rotate 90° clockwise': 'Girar 90° sentido horario',
+  'Rotate right': 'Girar para a direita',
+  'Previous (←)': 'Anterior (←)',
+  'Previous': 'Anterior',
+  'Next (→)': 'Proximo (→)',
+  'Next': 'Proximo',
+  'Name': 'Nome',
+  'Untitled photo (press Enter to save)': 'Foto sem titulo (pressione Enter para salvar)',
 });

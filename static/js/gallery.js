@@ -1384,13 +1384,13 @@ function _openDetail(img) {
     </div>
     <div class="gallery-detail-body">
       <div class="gallery-detail-image" id="gallery-detail-image-wrap" style="position:relative">
-        <button class="gallery-detail-rotate gallery-detail-rotate-ccw" id="gallery-rotate-ccw-btn" title="Rotate 90° counter-clockwise" aria-label="Rotate left">
+        <button class="gallery-detail-rotate gallery-detail-rotate-ccw" id="gallery-rotate-ccw-btn" title="${window.t('Rotate 90° counter-clockwise')}" aria-label="${window.t('Rotate left')}">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
         </button>
-        <button class="gallery-detail-rotate gallery-detail-rotate-cw" id="gallery-rotate-btn" title="Rotate 90° clockwise" aria-label="Rotate right">
+        <button class="gallery-detail-rotate gallery-detail-rotate-cw" id="gallery-rotate-btn" title="${window.t('Rotate 90° clockwise')}" aria-label="${window.t('Rotate right')}">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
         </button>
-        <button class="gallery-detail-nav gallery-detail-nav-prev" id="gallery-detail-prev" title="Previous (←)" aria-label="Previous">
+        <button class="gallery-detail-nav gallery-detail-nav-prev" id="gallery-detail-prev" title="${window.t('Previous (←)')}" aria-label="${window.t('Previous')}">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
         <div class="gallery-detail-img-frame">
@@ -1399,16 +1399,16 @@ function _openDetail(img) {
             : `<img id="gallery-detail-img" src="${_esc(img.url)}" alt="${_esc(img.prompt)}" />`}
           <div id="gallery-detail-face-overlay" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none"></div>
         </div>
-        <button class="gallery-detail-nav gallery-detail-nav-next" id="gallery-detail-next" title="Next (→)" aria-label="Next">
+        <button class="gallery-detail-nav gallery-detail-nav-next" id="gallery-detail-next" title="${window.t('Next (→)')}" aria-label="${window.t('Next')}">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
         </button>
       </div>
       <div class="gallery-detail-sidebar">
         <div class="gallery-detail-section">
-          <label>Name</label>
+          <label>${window.t('Name')}</label>
           <div class="gallery-name-wrap">
             <input type="text" class="gallery-detail-name-input" id="gallery-detail-name-input"
-              value="${_esc(img.prompt || '')}" placeholder="Untitled photo (press Enter to save)" />
+              value="${_esc(img.prompt || '')}" placeholder="${window.t('Untitled photo (press Enter to save)')}" />
             <svg class="gallery-name-enter" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
           </div>
         </div>
