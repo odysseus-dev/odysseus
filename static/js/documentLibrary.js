@@ -2062,7 +2062,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         const deleteBtn = preview.querySelector('.doclib-chat-delete-btn');
         if (deleteBtn) deleteBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
-          if (!await window.styledConfirm('Delete this chat?', { confirmText: 'Delete', danger: true })) return;
+          if (!await window.styledConfirm(window.t('Delete this chat?'), { confirmText: window.t('Delete'), danger: true })) return;
           await fetch(API_BASE + '/api/session/' + session.id, { method: 'DELETE' });
           card.style.maxHeight = `${Math.max(card.getBoundingClientRect().height, card.scrollHeight)}px`;
           card.classList.add('memory-tidy-removing');
@@ -2070,7 +2070,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           if (isArchive) _renderLibArchive(); else _renderLibChats();
         });
       } catch (e) {
-        preview.innerHTML = '<div style="opacity:0.5;font-size:11px;padding:6px 4px;color:var(--color-error);">Failed to load preview</div>';
+        preview.innerHTML = '<div style="opacity:0.5;font-size:11px;padding:6px 4px;color:var(--color-error);">' + window.t('Failed to load preview') + '</div>';
       }
     }
 
@@ -2078,7 +2078,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const grid = document.getElementById('doclib-chats-grid');
       if (!grid) return;
       const _csb = document.getElementById('doclib-chats-select-btn');
-      if (_csb) { _csb.classList.toggle('active', _chatsSelectMode); _csb.textContent = _chatsSelectMode ? 'Cancel' : 'Select'; }
+      if (_csb) { _csb.classList.toggle('active', _chatsSelectMode); _csb.textContent = _chatsSelectMode ? window.t('Cancel') : window.t('Select'); }
       let filtered = _chatsSessions.slice();
       if (_chatsSearch) {
         const q = _chatsSearch.toLowerCase();
@@ -2091,12 +2091,14 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       else filtered.sort((a, b) => (b.updated_at || '') > (a.updated_at || '') ? 1 : -1);
 
       const stats = document.getElementById('doclib-chats-stats');
-      if (stats) stats.textContent = filtered.length + ' chat' + (filtered.length !== 1 ? 's' : '');
+      if (stats) stats.textContent = filtered.length !== 1
+        ? window.t('{n} chats', { n: filtered.length })
+        : window.t('{n} chat', { n: filtered.length });
 
       if (!filtered.length) {
         // Sad-mouth smiley (downturn curve) for "nothing here yet".
         const _sadIco = '<span style="vertical-align:-3px;margin-left:6px;">' + uiModule.emptyStateIcon('sad') + '</span>';
-        grid.innerHTML = '<div class="doclib-empty">No chats' + _sadIco + '</div>';
+        grid.innerHTML = '<div class="doclib-empty">' + window.t('No chats') + _sadIco + '</div>';
         _appendInlineLoadMore(grid, 0, _chatsVisibleLimit, () => {});
         return;
       }
@@ -2118,7 +2120,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         // brand-new "New Chat" rows don't show "\u00b7 0 msgs".
         const _chatMsgs = s.message_count || 0;
         const msgCountHtml = _chatMsgs > 0
-          ? '<span style="opacity:0.45;font-weight:normal;font-size:0.9em;margin-left:6px;">\u00b7 ' + _chatMsgs + ' msg' + (_chatMsgs === 1 ? '' : 's') + '</span>'
+          ? '<span style="opacity:0.45;font-weight:normal;font-size:0.9em;margin-left:6px;">\u00b7 ' + (_chatMsgs === 1 ? window.t('{n} msg', { n: _chatMsgs }) : window.t('{n} msgs', { n: _chatMsgs })) + '</span>'
           : '';
         card.innerHTML =
           '<div class="doclib-chat-header" style="display:flex;align-items:center;width:100%;gap:6px;">' +
@@ -2128,17 +2130,17 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
               '<div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">' + [model, _relTime(s.updated_at)].filter(Boolean).join(' \u00b7 ') + '</div>' +
             '</div>' +
             chevronSvg +
-            '<div class="memory-item-actions"><button class="memory-item-btn _chat-menu" title="Actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button></div>' +
+            '<div class="memory-item-actions"><button class="memory-item-btn _chat-menu" title="' + window.t('Actions') + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button></div>' +
           '</div>' +
           '<div class="doclib-chat-preview" style="display:none;"></div>';
         const cb = card.querySelector('.memory-select-cb');
         if (cb) { cb.addEventListener('click', e => e.stopPropagation()); cb.addEventListener('change', () => { if (cb.checked) _chatsSelected.add(s.id); else _chatsSelected.delete(s.id); _updateChatsCount(); }); }
         card.querySelector('._chat-menu').addEventListener('click', (e) => { e.stopPropagation(); _showLibDropdown(e.currentTarget, [
-          { label: 'Open', action: () => { if (window.sessionModule) window.sessionModule.selectSession(s.id); } },
-          { label: 'Copy', action: () => _copyChatById(s.id) },
-          { label: 'Archive', action: async () => { await fetch(API_BASE + '/api/session/' + s.id + '/archive', { method: 'POST', headers: {'Content-Type':'application/json'} }); _renderLibChats(); } },
-          { label: 'Delete', action: async () => {
-            if (!await window.styledConfirm('Delete this chat?', { confirmText: 'Delete', danger: true })) return;
+          { label: window.t('Open'), action: () => { if (window.sessionModule) window.sessionModule.selectSession(s.id); } },
+          { label: window.t('Copy'), action: () => _copyChatById(s.id) },
+          { label: window.t('Archive'), action: async () => { await fetch(API_BASE + '/api/session/' + s.id + '/archive', { method: 'POST', headers: {'Content-Type':'application/json'} }); _renderLibChats(); } },
+          { label: window.t('Delete'), action: async () => {
+            if (!await window.styledConfirm(window.t('Delete this chat?'), { confirmText: window.t('Delete'), danger: true })) return;
             await fetch(API_BASE + '/api/session/' + s.id, { method: 'DELETE' });
             card.style.maxHeight = `${Math.max(card.getBoundingClientRect().height, card.scrollHeight)}px`;
             card.classList.add('memory-tidy-removing');
@@ -2175,11 +2177,11 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       if (folders.length < 1) { el.innerHTML = ''; return; }
       el.innerHTML = '';
       const mk = (label, val, count) => { const c = document.createElement('button'); c.className = 'memory-cat-chip' + (_chatsModelFilter === val ? ' active' : ''); c.textContent = label + ' (' + count + ')'; c.addEventListener('click', () => { _chatsModelFilter = _chatsModelFilter === val ? '' : val; _renderChatsGrid(); _renderChatsChips(); }); el.appendChild(c); };
-      mk('all', '', _chatsSessions.length);
+      mk(window.t('all'), '', _chatsSessions.length);
       folders.forEach(f => mk(f, f, counts[f]));
     }
 
-    function _updateChatsCount() { const el = document.getElementById('doclib-chats-selected-count'); if (el) el.textContent = _chatsSelected.size + ' Selected'; }
+    function _updateChatsCount() { const el = document.getElementById('doclib-chats-selected-count'); if (el) el.textContent = window.t('{n} Selected', { n: _chatsSelected.size }); }
 
     // Chats event listeners
     document.getElementById('doclib-chats-sort').addEventListener('change', (e) => { _chatsSort = e.target.value; _renderChatsGrid(); });
@@ -2234,7 +2236,9 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             card.style.transform = '';
           }
         });
-        if (window.uiModule) window.uiModule.showError(`Failed to archive ${failed.length} of ${ids.length} chat${ids.length > 1 ? 's' : ''}`);
+        if (window.uiModule) window.uiModule.showError(ids.length > 1
+          ? window.t('Failed to archive {a} of {b} chats', { a: failed.length, b: ids.length })
+          : window.t('Failed to archive {a} of {b} chat', { a: failed.length, b: ids.length }));
       }
       _chatsSelected.clear();
       _chatsSelectMode = false;
@@ -2244,7 +2248,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     document.getElementById('doclib-chats-bulk-delete').addEventListener('click', async () => {
       const count = _chatsSelected.size;
       if (!count) return;
-      if (!await window.styledConfirm(`Delete ${count} chat${count > 1 ? 's' : ''}? This cannot be undone.`, { confirmText: 'Delete', danger: true })) return;
+      const confirmMsg = count > 1
+        ? window.t('Delete {n} chats? This cannot be undone.', { n: count })
+        : window.t('Delete {n} chat? This cannot be undone.', { n: count });
+      if (!await window.styledConfirm(confirmMsg, { confirmText: window.t('Delete'), danger: true })) return;
       // Fade out selected cards
       const grid = document.getElementById('doclib-chats-grid');
       if (grid) {
@@ -2279,7 +2286,9 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             card.style.transform = '';
           }
         });
-        if (window.uiModule) window.uiModule.showError(`Failed to delete ${failed.length} of ${ids.length} chat${ids.length > 1 ? 's' : ''}`);
+        if (window.uiModule) window.uiModule.showError(ids.length > 1
+          ? window.t('Failed to delete {a} of {b} chats', { a: failed.length, b: ids.length })
+          : window.t('Failed to delete {a} of {b} chat', { a: failed.length, b: ids.length }));
       }
       _chatsSelected.clear();
       _chatsSelectMode = false;
@@ -2307,16 +2316,16 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       try {
         const res = await fetch(API_BASE + '/api/sessions/auto-sort', { method: 'POST', credentials: 'same-origin' });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Tidy failed');
+        if (!res.ok) throw new Error(data.detail || window.t('Tidy failed'));
         if (data.status === 'ok') {
-          if (window.uiModule) window.uiModule.showToast('Sorted ' + data.updated + ' sessions into ' + data.folders.length + ' folders');
+          if (window.uiModule) window.uiModule.showToast(window.t('Sorted {a} sessions into {b} folders', { a: data.updated, b: data.folders.length }));
           if (window.sessionModule) await window.sessionModule.loadSessions();
           _renderLibChats();
         } else {
-          if (window.uiModule) window.uiModule.showToast(data.reason || 'Nothing to tidy');
+          if (window.uiModule) window.uiModule.showToast(data.reason || window.t('Nothing to tidy'));
         }
       } catch (e) {
-        if (window.uiModule) window.uiModule.showError('Tidy: ' + e.message);
+        if (window.uiModule) window.uiModule.showError(window.t('Tidy: {msg}', { msg: e.message }));
       } finally {
         tidyBtn.disabled = false;
         tidyBtn.classList.remove('spinning');
@@ -2339,7 +2348,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const grid = document.getElementById('doclib-arc-grid');
       if (!grid) return;
       grid.innerHTML = '';
-      grid.appendChild(spinnerModule.createLoadingRow('Loading…'));
+      grid.appendChild(spinnerModule.createLoadingRow(window.t('Loading…')));
       // Archive tab is the home for ALL archived items — chats, documents, and
       // research — each rendered with its own icon. Load the three in parallel.
       Promise.all([
@@ -2354,7 +2363,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         _arcResearch = (r.research || []).map(x => ({ ...x, archived: true }));
         _renderArcGrid();
         _renderArcChips();
-      }).catch(() => { grid.innerHTML = '<div class="doclib-empty">Failed to load</div>'; });
+      }).catch(() => { grid.innerHTML = '<div class="doclib-empty">' + window.t('Failed to load') + '</div>'; });
     }
 
     // Inline expand/collapse for an archived DOCUMENT card (chat-style). Loads
