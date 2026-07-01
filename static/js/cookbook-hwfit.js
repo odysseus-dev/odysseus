@@ -61,9 +61,9 @@ async function _ensureBackendInstalled(runBackend, host, port, envPath, modelNam
     // surface a clearer error anyway.
     return true;
   }
-  const targetLabel = host || 'this server';
+  const targetLabel = host || window.t('this server');
   uiModule.showToast(
-    `${pkgName} not installed on ${targetLabel}. Opening Dependencies — pick your model and click Run.`,
+    window.t('{pkg} not installed on {target}. Opening Dependencies — pick your model and click Run.', { pkg: pkgName, target: targetLabel }),
     6000
   );
   openCookbookDependencies(pkgName, { expandRecipe: pkgName, model: modelName });
@@ -189,7 +189,7 @@ export function _renderGpuToggles(system) {
 
   let html = '';
   if (heterogeneous) {
-    html += `<select class="hwfit-gpu-group" id="hwfit-gpu-group" title="Which GPU pool to serve from — vLLM can only tensor-parallel across identical GPUs">`;
+    html += `<select class="hwfit-gpu-group" id="hwfit-gpu-group" title="${esc(window.t('Which GPU pool to serve from — vLLM can only tensor-parallel across identical GPUs'))}">`;
     groups.forEach((g, i) => {
       const lbl = `${g.count}× ${_shortGpuName(g.name)} (${Math.round(g.vram_total)} GB)`;
       html += `<option value="${i}"${i === container._activeGroup ? ' selected' : ''}>${esc(lbl)}</option>`;
@@ -214,7 +214,7 @@ export function _renderGpuToggles(system) {
       container._activeCount = maxGpu;
     }
   }
-  html += '<button class="hwfit-gpu-btn" data-count="0" title="CPU / RAM only">RAM</button>';
+  html += `<button class="hwfit-gpu-btn" data-count="0" title="${esc(window.t('CPU / RAM only'))}">RAM</button>`;
   const hasExplicitCount = typeof container._activeCount === 'number';
   for (const n of validCounts) {
     const text = n === 1 ? 'GPU' : n + ' GPU';
@@ -367,9 +367,9 @@ function _manualHwLabel(s) {
   // phrased as plain "X GB" instead of additive "+X GB" so the user
   // sees the simulated TOTAL, not an addition.
   const ram = s.ramGb ? ` · ${s.ramGb} GB RAM` : '';
-  if (s.mode === 'ram') return `Manual: ${s.ramGb || 0} GB RAM only`;
+  if (s.mode === 'ram') return window.t('Manual: {gb} GB RAM only', { gb: s.ramGb || 0 });
   const gpus = `${s.gpuCount || 1} GPU${Number(s.gpuCount || 1) === 1 ? '' : 's'}`;
-  return `Manual: ${gpus} · ${s.vramGb || 8} GB VRAM each${ram}`;
+  return window.t('Manual: {gpus} · {gb} GB VRAM each{ram}', { gpus, gb: s.vramGb || 8, ram });
 }
 
 function _manualDisplaySystem(sys, manual) {
@@ -397,7 +397,7 @@ function _manualDisplaySystem(sys, manual) {
     const count = Number(manual.gpuCount || 1);
     const vram = Number(manual.vramGb || 8);
     const backend = (manual.backend || 'cuda').toUpperCase();
-    base.gpu_name = `Simulated ${backend} GPU` + (count > 1 ? ` × ${count}` : '');
+    base.gpu_name = window.t('Simulated {backend} GPU', { backend }) + (count > 1 ? ` × ${count}` : '');
     base.gpu_vram_gb = Math.round(vram * count * 10) / 10;
     base.gpu_count = count;
     base.backend = manual.backend || 'cuda';
@@ -454,14 +454,14 @@ function _writeScanCache(sig, data) {
 // instead of dumping a raw one-line message.
 function _hwfitShowError(list, host, detail) {
   if (!list) return;
-  const where = host ? esc(host) : 'this machine';
+  const where = host || window.t('this machine');
   const div = document.createElement('div');
   div.className = 'hwfit-loading';
   div.style.cssText = 'flex-direction:column;gap:8px;text-align:center;';
   div.innerHTML =
-    `<div style="color:var(--red);font-weight:600;">Couldn't scan ${where}</div>`
+    `<div style="color:var(--red);font-weight:600;">${esc(window.t("Couldn't scan {where}", { where }))}</div>`
     + (detail ? `<div style="opacity:0.6;font-size:11px;max-width:340px;line-height:1.4;">${esc(detail)}</div>` : '')
-    + `<button type="button" class="hwfit-gpu-btn" id="hwfit-retry" style="margin-top:2px;height:26px;">↻ Retry</button>`;
+    + `<button type="button" class="hwfit-gpu-btn" id="hwfit-retry" style="margin-top:2px;height:26px;">↻ ${esc(window.t('Retry'))}</button>`;
   list.innerHTML = '';
   list.appendChild(div);
   const rb = div.querySelector('#hwfit-retry');

@@ -131,4 +131,16 @@ registerMessages('pt-BR', {
   'Done: {cmd}': 'Concluído: {cmd}',
   'Failed (HTTP {status})': 'Falha (HTTP {status})',
   'Error: {msg}': 'Erro: {msg}',
+
+  // ── cookbook-hwfit.js ──
+  'this server': 'este servidor',
+  '{pkg} not installed on {target}. Opening Dependencies — pick your model and click Run.': '{pkg} não instalado em {target}. Abrindo Dependências — escolha seu modelo e clique em Executar.',
+  'Which GPU pool to serve from — vLLM can only tensor-parallel across identical GPUs': 'Qual pool de GPU usar para servir — o vLLM só consegue fazer tensor-parallel entre GPUs idênticas',
+  'CPU / RAM only': 'Somente CPU / RAM',
+  'Manual: {gb} GB RAM only': 'Manual: apenas {gb} GB de RAM',
+  'Manual: {gpus} · {gb} GB VRAM each{ram}': 'Manual: {gpus} · {gb} GB de VRAM cada{ram}',
+  'Simulated {backend} GPU': 'GPU {backend} simulada',
+  'this machine': 'esta máquina',
+  "Couldn't scan {where}": 'Não foi possível escanear {where}',
+  'Retry': 'Tentar novamente',
 });
