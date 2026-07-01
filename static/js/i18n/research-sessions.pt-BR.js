@@ -138,4 +138,14 @@ registerMessages('pt-BR', {
   'Delete folder "{folderName}" and all {count} session(s) inside it?': 'Excluir a pasta "{folderName}" e todas as {count} sessão(ões) dentro dela?',
   'Rename folder:': 'Renomear pasta:',
   'Rename folder': 'Renomear pasta',
+  'Unsorted': 'Sem pasta',
+  'Delete all unsorted sessions': 'Excluir todas as sessões sem pasta',
+  'Delete all {n} unsorted session(s)?': 'Excluir todas as {n} sessão(ões) sem pasta?',
+  'swipe to delete': 'deslize para excluir',
+
+  // --- sessions.js: bulk select actions ---
+  'Archive {n} session(s)?': 'Arquivar {n} sessão(ões)?',
+  '{n} session(s) archived': '{n} sessão(ões) arquivada(s)',
+  'Delete {n} session(s)? This cannot be undone.': 'Excluir {n} sessão(ões)? Isso não pode ser desfeito.',
+  '{n} session(s) deleted': '{n} sessão(ões) excluída(s)',
 });

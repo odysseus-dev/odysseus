@@ -1018,7 +1018,7 @@ function _renderSessionListImpl() {
     unsortedHeader.appendChild(toggle);
     const nameSpan = document.createElement('span');
     nameSpan.className = 'folder-name';
-    nameSpan.textContent = 'Unsorted';
+    nameSpan.textContent = window.t('Unsorted');
     unsortedHeader.appendChild(nameSpan);
     const countSpan = document.createElement('span');
     countSpan.className = 'folder-count';
@@ -1028,10 +1028,10 @@ function _renderSessionListImpl() {
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'folder-delete-btn';
     deleteBtn.textContent = '\u00d7';
-    deleteBtn.title = 'Delete all unsorted sessions';
+    deleteBtn.title = window.t('Delete all unsorted sessions');
     deleteBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (!await uiModule.styledConfirm(`Delete all ${unfiled.length} unsorted session(s)?`, { confirmText: 'Delete', danger: true })) return;
+      if (!await uiModule.styledConfirm(window.t('Delete all {n} unsorted session(s)?', { n: unfiled.length }), { confirmText: window.t('Delete'), danger: true })) return;
       for (const s of unfiled) {
         try {
           await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' });
@@ -1075,7 +1075,7 @@ function _renderSessionListImpl() {
     const remaining = unfiled.length - SIDEBAR_MAX_VISIBLE;
     const toggleBtn = document.createElement('button');
     toggleBtn.className = 'session-show-more-btn';
-    toggleBtn.textContent = _showAllSessions ? 'Show less' : `Show ${remaining} more`;
+    toggleBtn.textContent = _showAllSessions ? window.t('Show less') : window.t('Show {n} more', { n: remaining });
     toggleBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       _showAllSessions = !_showAllSessions;
@@ -1129,7 +1129,7 @@ function _showSwipeHint(list) {
       localStorage.setItem('ody-swipe-hint-shown', '1');
       const hint = document.createElement('div');
       hint.className = 'swipe-hint';
-      hint.innerHTML = '<span class="swipe-hint-arrow">\u2190</span> swipe to delete';
+      hint.innerHTML = '<span class="swipe-hint-arrow">\u2190</span> ' + window.t('swipe to delete');
       firstItem.style.position = 'relative';
       firstItem.appendChild(hint);
       setTimeout(() => { hint.style.opacity = '0'; }, 3000);
@@ -1293,7 +1293,7 @@ function _initBulkSelect() {
     archiveBtn.addEventListener('click', async () => {
       if (_selectedIds.size === 0) return;
       const count = _selectedIds.size;
-      if (!await uiModule.styledConfirm(`Archive ${count} session(s)?`, { confirmText: 'Archive' })) return;
+      if (!await uiModule.styledConfirm(window.t('Archive {n} session(s)?', { n: count }), { confirmText: window.t('Archive') })) return;
       for (const sid of _selectedIds) {
         try {
           await fetch(`${API_BASE}/api/session/${sid}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
@@ -1302,7 +1302,7 @@ function _initBulkSelect() {
       _exitSelectMode();
       if (window._suppressSidebarClose !== undefined) { window._suppressSidebarClose = true; setTimeout(() => { window._suppressSidebarClose = false; }, 1500); }
       await loadSessions();
-      uiModule.showToast(`${count} session(s) archived`);
+      uiModule.showToast(window.t('{n} session(s) archived', { n: count }));
     });
   }
 
@@ -1311,7 +1311,7 @@ function _initBulkSelect() {
     deleteBtn.addEventListener('click', async () => {
       if (_selectedIds.size === 0) return;
       const count = _selectedIds.size;
-      if (!await uiModule.styledConfirm(`Delete ${count} session(s)? This cannot be undone.`, { confirmText: 'Delete', danger: true })) return;
+      if (!await uiModule.styledConfirm(window.t('Delete {n} session(s)? This cannot be undone.', { n: count }), { confirmText: window.t('Delete'), danger: true })) return;
       const deletedIds = [];
       for (const sid of _selectedIds) {
         try {
@@ -1323,7 +1323,7 @@ function _initBulkSelect() {
       _exitSelectMode();
       if (window._suppressSidebarClose !== undefined) { window._suppressSidebarClose = true; setTimeout(() => { window._suppressSidebarClose = false; }, 1500); }
       await loadSessions();
-      uiModule.showToast(`${deletedIds.length} session(s) deleted`);
+      uiModule.showToast(window.t('{n} session(s) deleted', { n: deletedIds.length }));
     });
   }
 }
