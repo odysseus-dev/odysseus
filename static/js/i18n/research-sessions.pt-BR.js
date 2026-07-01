@@ -107,4 +107,11 @@ registerMessages('pt-BR', {
   'Creating…': 'Criando…',
   'Server returned no session id': 'O servidor não retornou um id de sessão',
   'Could not start follow-up chat: {msg}': 'Não foi possível iniciar o chat de acompanhamento: {msg}',
+
+  // --- sessions.js: folder submenu ---
+  'Move to folder': 'Mover para pasta',
+  '(No folder)': '(Sem pasta)',
+  '+ New Folder': '+ Nova pasta',
+  'Name this folder:': 'Nomeie esta pasta:',
+  'e.g. Work, Research, Drafts': 'ex.: Trabalho, Pesquisa, Rascunhos',
 });
