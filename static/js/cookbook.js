@@ -2024,14 +2024,14 @@ function _wireTabEvents(body) {
         return false;
       }
       dlGgufRow.style.display = 'flex';
-      dlGgufQuant.innerHTML = '<option value="">Scanning...</option>';
+      dlGgufQuant.innerHTML = `<option value="">${window.t('Scanning...')}</option>`;
       dlGgufQuant.dataset.repo = repo;
       dlGgufNote.textContent = '';
       try {
         const res = await fetch(`/api/cookbook/hf-gguf-files?repo_id=${encodeURIComponent(repo)}`, { credentials: 'same-origin' });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        if (!data.ok) throw new Error(data.error || 'scan failed');
+        if (!data.ok) throw new Error(data.error || window.t('scan failed'));
         if (dlGgufQuant.dataset.repo !== repo) return false;
         const files = (data.files || [])
           .map(s => String(s || ''))
@@ -2044,7 +2044,7 @@ function _wireTabEvents(body) {
           byQuant.get(quant).push(name);
         });
         if (!byQuant.size) {
-          _hideGgufPicker('No GGUF quants found');
+          _hideGgufPicker(window.t('No GGUF quants found'));
           return false;
         }
         const quantRank = q => {
@@ -2061,7 +2061,7 @@ function _wireTabEvents(body) {
         dlGgufNote.textContent = first ? first.value : '';
         return !!(first && first.value);
       } catch (err) {
-        _hideGgufPicker(`GGUF scan failed: ${err.message || err}`);
+        _hideGgufPicker(window.t('GGUF scan failed: {err}', { err: err.message || err }));
         return false;
       }
     }
@@ -2119,7 +2119,7 @@ function _wireTabEvents(body) {
       // Ollama names (single-segment with a tag) skip this check — they go
       // through `ollama pull` server-side, not snapshot_download.
       if (!ollamaName && !/^[^\s/]+\/[^\s/]+$/.test(repo)) {
-        uiModule.showToast('Enter a full HuggingFace repo ID like "org/model-name", or an Ollama name like "qwen2.5:14b".');
+        uiModule.showToast(window.t('Enter a full HuggingFace repo ID like "org/model-name", or an Ollama name like "qwen2.5:14b".'));
         dlInput.focus();
         return;
       }
@@ -2127,7 +2127,7 @@ function _wireTabEvents(body) {
       if (looksGgufRepo && !pickerInclude) {
         const oldText = dlBtn.textContent;
         dlBtn.disabled = true;
-        dlBtn.textContent = 'Scanning...';
+        dlBtn.textContent = window.t('Scanning...');
         try {
           const found = await _scanGgufRepo(rawRepo);
           pickerInclude = (found && dlGgufQuant?.dataset.repo === repo) ? (dlGgufQuant.value || '') : '';
@@ -2136,10 +2136,10 @@ function _wireTabEvents(body) {
           dlBtn.textContent = oldText;
         }
         if (!pickerInclude) {
-          uiModule.showToast('Pick a GGUF quant first. Odysseus will not download the whole GGUF repo without an include pattern.');
+          uiModule.showToast(window.t('Pick a GGUF quant first. Odysseus will not download the whole GGUF repo without an include pattern.'));
           return;
         }
-        uiModule.showToast('Pick the GGUF quant, then press Download again.');
+        uiModule.showToast(window.t('Pick the GGUF quant, then press Download again.'));
         return;
       }
       // Resolve the host straight from THIS window's server dropdown, by index
