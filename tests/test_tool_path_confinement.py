@@ -57,6 +57,27 @@ def test_non_sensitive_path():
     assert not _is_sensitive_path("/home/user/projects/file.py")
 
 
+def test_sensitive_dir_case_insensitive():
+    from src.tool_execution import _is_sensitive_path
+    assert _is_sensitive_path("/home/user/.SSH/authorized_keys")
+    assert _is_sensitive_path("/home/user/.Env")
+    assert _is_sensitive_path("/home/user/.GnuPG/pubring.kbx")
+
+
+def test_sensitive_filename_case_insensitive():
+    from src.tool_execution import _is_sensitive_path
+    assert _is_sensitive_path("/tmp/AUTHORIZED_KEYS")
+    assert _is_sensitive_path("/tmp/Id_Rsa")
+    assert _is_sensitive_path("/tmp/ID_ED25519")
+    assert _is_sensitive_path("/tmp/Known_Hosts")
+
+
+def test_sensitive_shell_rc_case_insensitive():
+    from src.tool_execution import _is_sensitive_path
+    assert _is_sensitive_path("/home/user/.BASHRC")
+    assert _is_sensitive_path("/home/user/.ZSHRC")
+
+
 # ── Unit tests on _resolve_tool_path ─────────────────────────────────
 
 def test_blocks_etc_shadow():

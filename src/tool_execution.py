@@ -70,13 +70,19 @@ _SENSITIVE_FILE_PATTERNS: tuple[str, ...] = (
 def _is_sensitive_path(resolved: str) -> bool:
     """Return True if *resolved* falls under a sensitive directory or
     matches a sensitive filename — regardless of what root it sits under.
+
+    Comparisons are casefolded: Windows and default macOS filesystems are
+    case-insensitive, so `.ENV` / `AUTHORIZED_KEYS` / `Id_Rsa` resolve to the
+    same on-disk file as their lowercase form and must be blocked too. Use
+    `casefold`, not `os.path.normcase` — normcase is a no-op on macOS/POSIX,
+    exactly where the read-exfil half of this check runs.
     """
     parts = resolved.split(os.sep)
-    filenames: set[str] = {parts[-1]} if parts else set()
+    filenames: set[str] = {parts[-1].casefold()} if parts else set()
 
     # Check if any path component is a sensitive directory.
     for part in parts:
-        if part in _SENSITIVE_BASENAMES:
+        if part.casefold() in _SENSITIVE_BASENAMES:
             return True
 
     # Check filename against known sensitive files.
