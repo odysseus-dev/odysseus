@@ -60,6 +60,10 @@ def _parse_tool_args(content):
         args = content
     else:
         args = {}
+    if not isinstance(args, dict):
+        raise ValueError(
+            f"tool args must be a JSON object, got {type(args).__name__}: {content!r}"
+        )
     # Unwrap {"body": {...}} envelope, but only if `body` is the sole key
     # and points at a dict. We don't want to clobber a legitimate `body`
     # field on tools where it's a real arg (e.g. send_email body text).
