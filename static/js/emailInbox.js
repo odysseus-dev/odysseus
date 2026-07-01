@@ -14,6 +14,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
 const API_BASE = window.location.origin;
 const _acct = () => emailAccountQuery('&');
+const _acctStart = () => emailAccountQuery('?');
 
 const _emailSetupHint = () => '<div style="margin-top:6px;opacity:0.72;font-size:11px;">Setup: <span style="color:var(--accent,var(--red));">Settings &rsaquo; Integrations</span></div>';
 
@@ -454,7 +455,7 @@ export function sortedFolders(folders) {
     if (f.includes('sent')) return 'sent';
     if (f.includes('starred') || f.includes('flagged')) return 'starred';
     if (f.includes('draft')) return 'drafts';
-    if (f.includes('all mail') || f.includes('archive')) return 'archive';
+    if (isArchiveFolder(f)) return 'archive';
     if (f.includes('spam') || f.includes('junk')) return 'junk';
     if (f.includes('trash') || f.includes('bin') || f.includes('deleted')) return 'trash';
     return '';
@@ -468,6 +469,11 @@ export function sortedFolders(folders) {
     else others.push(f);
   }
   return { priority: roleOrder.map(role => found.get(role)).filter(Boolean), others };
+}
+
+export function isArchiveFolder(folder) {
+  const f = String(folder || '').toLowerCase();
+  return f.includes('all mail') || f.includes('archive');
 }
 
 export function folderDisplayName(folder) {
@@ -688,7 +694,7 @@ function _createEmailItem(em) {
   });
 
   // Swipe left to archive (mobile). Mirrors sidebar-layout.js swipe pattern.
-  if ('ontouchstart' in window) {
+  if ('ontouchstart' in window && !isArchiveFolder(_currentFolder)) {
     let startX = 0, startY = 0, dx = 0, dy = 0, swiping = false, swiped = false;
     const HORIZ_THRESHOLD = 70; // px to trigger archive
     const VERT_CANCEL = 30;     // px vertical motion cancels swipe (treat as scroll)
@@ -730,7 +736,7 @@ function _createEmailItem(em) {
         item.style.transform = 'translateX(-100%)';
         item.style.opacity = '0';
         setTimeout(() => {
-          _archiveEmail(em);
+          _archiveEmail(em, item);
           delete item.dataset.swipeBlock;
         }, 200);
       } else {
@@ -1070,9 +1076,11 @@ function _showEmailMenu(em, anchor, itemEl) {
   const actions = [
     { label: 'Open', icon: _replyIcon, action: () => _openEmail(em, itemEl) },
     { label: 'Remind to reply', icon: _bellIcon, submenu: 'remind' },
-    { label: 'Archive', icon: _archiveIcon, action: () => _archiveEmail(em) },
-    { label: 'Delete', icon: _deleteIcon, danger: true, action: () => _deleteEmail(em) },
   ];
+  if (!isArchiveFolder(_currentFolder)) {
+    actions.push({ label: 'Archive', icon: _archiveIcon, action: () => _archiveEmail(em, itemEl) });
+  }
+  actions.push({ label: 'Delete', icon: _deleteIcon, danger: true, action: () => _deleteEmail(em) });
 
   for (const a of actions) {
     const menuItem = document.createElement('div');
@@ -1210,13 +1218,96 @@ async function _createReplyReminder(em, dueDate) {
   }
 }
 
-async function _archiveEmail(em) {
+let _archiveSetupPromptPromise = null;
+
+async function _ensureArchiveFolderForSidebar(suggestedFolder = 'Archive') {
+  if (_archiveSetupPromptPromise) return _archiveSetupPromptPromise;
+  _archiveSetupPromptPromise = (async () => {
+    const { styledConfirm, showToast } = await import('./ui.js');
+    const folderName = String(suggestedFolder || 'Archive').trim() || 'Archive';
+    const ok = await styledConfirm(
+      `No Archive folder was found for this account. Create one named ${folderName}?`,
+      { confirmText: 'Create Archive', cancelText: 'Cancel' },
+    );
+    if (!ok) return false;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/email/archive-folder${_acctStart()}`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: folderName }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) {
+        showToast(data.error || 'Failed to create Archive folder');
+        return false;
+      }
+      await _loadFolders();
+      showToast(data.created ? 'Created Archive folder' : 'Archive folder is ready');
+      return true;
+    } catch (err) {
+      console.error('Create Archive folder failed:', err);
+      showToast('Failed to create Archive folder');
+      return false;
+    }
+  })();
   try {
-    await fetch(`${API_BASE}/api/email/archive/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}`, { method: 'POST' });
+    return await _archiveSetupPromptPromise;
+  } finally {
+    _archiveSetupPromptPromise = null;
+  }
+}
+
+async function _archiveEmailWithFallback(em) {
+  const archiveOnce = async () => {
+    const res = await fetch(`${API_BASE}/api/email/archive/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) return { success: false, ...data };
+    return { success: true, ...data };
+  };
+
+  const first = await archiveOnce();
+  if (first.success) return first;
+
+  if (first.needs_archive_folder) {
+    const ready = await _ensureArchiveFolderForSidebar(first.suggested_folder || 'Archive');
+    if (!ready) return { success: false, canceled: true };
+    const retry = await archiveOnce();
+    if (retry.success) return retry;
+    const { showToast } = await import('./ui.js');
+    showToast(retry.error || 'Failed to archive email');
+    return retry;
+  }
+
+  const { showToast } = await import('./ui.js');
+  showToast(first.error || 'Failed to archive email');
+  return first;
+}
+
+function _restoreArchiveSwipeItem(itemEl) {
+  if (!itemEl) return;
+  itemEl.style.transition = 'transform 0.2s ease, opacity 0.2s ease';
+  itemEl.style.transform = '';
+  itemEl.style.opacity = '';
+  itemEl.style.background = '';
+  delete itemEl.dataset.swipeBlock;
+}
+
+async function _archiveEmail(em, itemEl = null) {
+  try {
+    const result = await _archiveEmailWithFallback(em);
+    if (!result.success) {
+      _restoreArchiveSwipeItem(itemEl);
+      return false;
+    }
     _emails = _emails.filter(e => e.uid !== em.uid);
     _renderList();
+    return true;
   } catch (e) {
     console.error('Failed to archive:', e);
+    _restoreArchiveSwipeItem(itemEl);
+    return false;
   }
 }
 
