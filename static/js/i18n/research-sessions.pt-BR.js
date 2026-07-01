@@ -63,4 +63,15 @@ registerMessages('pt-BR', {
   'Fact-check': 'Verificação de fatos',
   'Search engine': 'Mecanismo de busca',
   'Queue': 'Enfileirar',
+
+  // --- research/panel.js: start handler, job sections, run-mode popover ---
+  'Starting': 'Iniciando',
+  'Failed to start research': 'Falha ao iniciar pesquisa',
+  'Start All ({n})': 'Iniciar tudo ({n})',
+  'Clear all research': 'Limpar toda a pesquisa',
+  'Clear all': 'Limpar tudo',
+  'Active': 'Ativas',
+  'Past research': 'Pesquisas anteriores',
+  'Parallel': 'Paralelo',
+  'Sequential': 'Sequencial',
 });

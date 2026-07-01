@@ -566,7 +566,7 @@ async function _handleStart() {
         _wp.element.style.cssText += ';vertical-align:middle;margin-right:5px;position:relative;top:-1px;';
         startBtn.appendChild(_wp.element);
       } catch {}
-      startBtn.appendChild(document.createTextNode('Starting'));
+      startBtn.appendChild(document.createTextNode(window.t('Starting')));
       startBtn.classList.add('research-start-busy');
     } else {
       startBtn.disabled = false;
@@ -597,7 +597,7 @@ async function _handleStart() {
   if (_mobile) _dismissKeyboard(queryEl); else queryEl.focus();
   _resetCategoryToAuto();
   jobs.startJob(query, settings).catch((e) => {
-    if (typeof uiModule !== 'undefined' && uiModule?.showError) uiModule.showError('Failed to start research');
+    if (typeof uiModule !== 'undefined' && uiModule?.showError) uiModule.showError(window.t('Failed to start research'));
     queryEl.value = query; // restore so user can retry
   });
 }
@@ -702,7 +702,7 @@ function _renderJobs() {
   const statsEl = document.getElementById('research-stats');
   if (statsEl) {
     const n = recentDone.length + past.length;
-    statsEl.textContent = n + ' research';
+    statsEl.textContent = n + ' ' + window.t('research');
   }
 
   // The main Start button doubles as "Start All (N)" when more than one job
@@ -712,8 +712,8 @@ function _renderJobs() {
   const startBtn = document.getElementById('research-start-btn');
   if (startBtn && !startBtn.classList.contains('research-start-busy')) {
     startBtn.innerHTML = queued.length > 1
-      ? `${_playIcon} Start All (${queued.length})`
-      : `${_playIcon} Start`;
+      ? `${_playIcon} ${window.t('Start All ({n})', { n: queued.length })}`
+      : `${_playIcon} ${window.t('Start')}`;
     startBtn.dataset._origHTML = startBtn.innerHTML;
   }
 
@@ -771,10 +771,10 @@ function _renderJobs() {
     }
     // Both sections carry a "Clear all" button in the header (cookbook-running
     // section style); it clears all research and must not toggle the fold.
-    const clearAllHtml = '<button class="research-section-clear" title="Clear all research">' + _cancelIcon + ' Clear all</button>';
+    const clearAllHtml = '<button class="research-section-clear" title="' + window.t('Clear all research') + '">' + _cancelIcon + ' ' + window.t('Clear all') + '</button>';
     header.innerHTML =
       '<span class="research-section-title">' + title + '</span>'
-      + '<span class="research-section-count memory-count">' + arr.length + ' research</span>'
+      + '<span class="research-section-count memory-count">' + arr.length + ' ' + window.t('research') + '</span>'
       + '<span class="research-section-right">'
       +   clearAllHtml
       +   '<span class="research-section-dot' + (dotPulse ? ' pulsing' : '') + '" style="background:' + dotColor + ';"></span>'
@@ -783,7 +783,7 @@ function _renderJobs() {
     if (key === 'past') {
       const hint = document.createElement('span');
       hint.className = 'research-library-hint';
-      hint.innerHTML = '<span>Multi-step web research with an LLM-in-the-loop agent</span> <button type="button" class="research-library-link">Library, Research</button>';
+      hint.innerHTML = '<span>' + window.t('Multi-step web research with an LLM-in-the-loop agent') + '</span> <button type="button" class="research-library-link">' + window.t('Library, Research') + '</button>';
       hint.querySelector('.research-library-link').addEventListener('click', (e) => {
         e.stopPropagation();
         // Close the research panel first so the Library opens ABOVE it on mobile
@@ -819,8 +819,8 @@ function _renderJobs() {
 
   // ("Clear all" lives inside the Past research section header — see _addSection.)
 
-  _addSection('active', 'Active', active);
-  _addSection('past', 'Past research', recentDone.concat(past));
+  _addSection('active', window.t('Active'), active);
+  _addSection('past', window.t('Past research'), recentDone.concat(past));
 }
 
 /** Pick parallel vs sequential as a small popover anchored to the
@@ -840,8 +840,8 @@ function _promptParallelOrSequential(count, anchorBtn) {
   const ICON_PARALLEL = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>';
   const ICON_SEQUENTIAL = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="8" y1="18" x2="20" y2="18"/><circle cx="4" cy="6" r="1.5" fill="currentColor"/><circle cx="4" cy="12" r="1.5" fill="currentColor"/><circle cx="4" cy="18" r="1.5" fill="currentColor"/></svg>';
   pop.innerHTML =
-    '<button class="research-run-mode-row" data-mode="parallel">' + ICON_PARALLEL + '<span class="rrm-title">Parallel</span></button>'
-    + '<button class="research-run-mode-row" data-mode="sequential">' + ICON_SEQUENTIAL + '<span class="rrm-title">Sequential</span></button>';
+    '<button class="research-run-mode-row" data-mode="parallel">' + ICON_PARALLEL + '<span class="rrm-title">' + window.t('Parallel') + '</span></button>'
+    + '<button class="research-run-mode-row" data-mode="sequential">' + ICON_SEQUENTIAL + '<span class="rrm-title">' + window.t('Sequential') + '</span></button>';
   document.body.appendChild(pop);
 
   // Position: prefer dropping down from the button's bottom-right corner.
