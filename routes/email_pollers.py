@@ -1068,6 +1068,28 @@ def _scheduled_poll_once() -> dict:
         for r in rows:
             sid = r[0]
             try:
+                # Atomically claim this row before doing any work. Two
+                # pollers can race here (the in-process asyncio task and an
+                # externally cron-driven `odysseus-mail poll-scheduled`, or
+                # an admin running the CLI manually alongside the in-process
+                # one despite the ODYSSEUS_INPROCESS_POLLERS=0 guidance) -
+                # both can SELECT the same 'pending' row before either has
+                # updated its status. The UPDATE...WHERE status='pending' is
+                # the atomicity boundary: only the poller whose UPDATE
+                # actually changes a row (rowcount == 1) proceeds to send;
+                # a loser sees rowcount == 0 and skips it instead of sending
+                # a duplicate.
+                claim_conn = sqlite3.connect(SCHEDULED_DB)
+                claim_cur = claim_conn.execute(
+                    "UPDATE scheduled_emails SET status='sending' WHERE id=? AND status='pending'",
+                    (sid,),
+                )
+                claim_conn.commit()
+                claimed = claim_cur.rowcount == 1
+                claim_conn.close()
+                if not claimed:
+                    continue
+
                 attachments = json.loads(r[8] or "[]")
                 row_account_id = r[9] if len(r) > 9 else None
                 odysseus_kind = r[10] if len(r) > 10 else "scheduled"
