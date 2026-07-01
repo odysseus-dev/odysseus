@@ -101,6 +101,7 @@ def test_get_default_chat_user_no_prefs_share_enabled_resolves_global_defaults_f
     """
     Non-admin user without personal preferences should resolve to global
     defaults for ep_id, model, and fallbacks when share_defaults_with_users is enabled.
+    It should then go into fallback model resolution since the global default endpoint is disabled.
     """
 
     test_data = _run_get_default_chat_test(monkeypatch, share_defaults_enabled=True, testing_fallback=True)
