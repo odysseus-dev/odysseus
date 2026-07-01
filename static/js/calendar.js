@@ -2759,30 +2759,30 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
   const _expandedAtStart = isEdit && _hasDetails;
 
   body.innerHTML = `<div class="cal-form cal-form-bespoke${_expandedAtStart ? ' is-expanded' : ''}">
-    <button type="button" class="cal-form-mobile-cancel" id="cal-form-mobile-cancel" title="Cancel" aria-label="Cancel event">
+    <button type="button" class="cal-form-mobile-cancel" id="cal-form-mobile-cancel" title="${window.t('Cancel')}" aria-label="${window.t('Cancel event')}">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     </button>
-    <div class="cal-form-today" id="cal-form-today">Today is <span id="cal-form-today-text">${_clockDate(_today())} · ${_nowClock()}</span></div>
+    <div class="cal-form-today" id="cal-form-today">${window.t('Today is')} <span id="cal-form-today-text">${_clockDate(_today())} · ${_nowClock()}</span></div>
     <div class="cal-hero">
-      <button type="button" class="cal-hero-time" id="cal-hero-time" title="Change time">
+      <button type="button" class="cal-hero-time" id="cal-hero-time" title="${window.t('Change time')}">
         <span class="cal-hero-clock" id="cal-hero-clock">${_clockFace(ad ? '' : st)}</span>
         <span class="cal-hero-ampm" id="cal-hero-ampm">${_clockAmpm(ad ? '' : st)}</span>
       </button>
-      <button type="button" class="cal-hero-date" id="cal-hero-date" title="Change date">${_clockDate(ds)}</button>
+      <button type="button" class="cal-hero-date" id="cal-hero-date" title="${window.t('Change date')}">${_clockDate(ds)}</button>
     </div>
 
     <div class="cal-title-wrap">
       <input type="text" id="cal-f-sum" placeholder=" " value="${_e(existing?.summary || '')}" class="cal-input cal-hero-title" autocomplete="off" />
-      <span class="cal-title-hint" aria-hidden="true">${isEdit ? 'Event title' : 'What’s happening?'}<svg class="cal-title-enter-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg></span>
+      <span class="cal-title-hint" aria-hidden="true">${isEdit ? window.t('Event title') : window.t("What's happening?")}<svg class="cal-title-enter-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg></span>
     </div>
 
     <div class="cal-form-details" id="cal-form-details" aria-hidden="${_expandedAtStart ? 'false' : 'true'}">
       <div class="cal-form-row">
         <input type="date" id="cal-f-date" value="${ds}" class="cal-input" />
-        <span style="opacity:0.3">to</span>
+        <span style="opacity:0.3">${window.t('to')}</span>
         <input type="date" id="cal-f-date-end" value="${de}" class="cal-input" />
         <div class="cal-allday-ctrl">
-          <span class="cal-allday-label">All day</span>
+          <span class="cal-allday-label">${window.t('All day')}</span>
           <label class="admin-switch cal-allday-switch"><input type="checkbox" id="cal-f-allday" ${ad ? 'checked' : ''} /><span class="admin-slider"></span></label>
         </div>
       </div>
@@ -2792,20 +2792,20 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
         <input type="time" id="cal-f-end" value="${et}" class="cal-input cal-input-time" />
       </div>
       <div class="cal-loc-row">
-        <input type="text" id="cal-f-loc" placeholder="Location" value="${_e(existing?.location || '')}" class="cal-input" />
-        <a id="cal-f-loc-map" class="cal-loc-map" href="#" target="_blank" rel="noopener noreferrer" title="Open in Maps" aria-label="Open in Apple Maps" tabindex="-1">
+        <input type="text" id="cal-f-loc" placeholder="${window.t('Location')}" value="${_e(existing?.location || '')}" class="cal-input" />
+        <a id="cal-f-loc-map" class="cal-loc-map" href="#" target="_blank" rel="noopener noreferrer" title="${window.t('Open in Maps')}" aria-label="${window.t('Open in Apple Maps')}" tabindex="-1">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 1 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
         </a>
       </div>
       <select id="cal-f-rrule" class="cal-input">
-        <option value="" ${!existing?.rrule ? 'selected' : ''}>Does not repeat</option>
-        <option value="FREQ=DAILY" ${existing?.rrule === 'FREQ=DAILY' ? 'selected' : ''}>Daily</option>
-        <option value="FREQ=WEEKLY" ${existing?.rrule === 'FREQ=WEEKLY' ? 'selected' : ''}>Weekly</option>
-        <option value="FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR" ${existing?.rrule === 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR' ? 'selected' : ''}>Weekdays</option>
-        <option value="FREQ=MONTHLY" ${existing?.rrule === 'FREQ=MONTHLY' ? 'selected' : ''}>Monthly</option>
-        <option value="FREQ=YEARLY" ${existing?.rrule === 'FREQ=YEARLY' ? 'selected' : ''}>Yearly</option>
+        <option value="" ${!existing?.rrule ? 'selected' : ''}>${window.t('Does not repeat')}</option>
+        <option value="FREQ=DAILY" ${existing?.rrule === 'FREQ=DAILY' ? 'selected' : ''}>${window.t('Daily')}</option>
+        <option value="FREQ=WEEKLY" ${existing?.rrule === 'FREQ=WEEKLY' ? 'selected' : ''}>${window.t('Weekly')}</option>
+        <option value="FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR" ${existing?.rrule === 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR' ? 'selected' : ''}>${window.t('Weekdays')}</option>
+        <option value="FREQ=MONTHLY" ${existing?.rrule === 'FREQ=MONTHLY' ? 'selected' : ''}>${window.t('Monthly')}</option>
+        <option value="FREQ=YEARLY" ${existing?.rrule === 'FREQ=YEARLY' ? 'selected' : ''}>${window.t('Yearly')}</option>
       </select>
-      <textarea id="cal-f-desc" placeholder="Description" class="cal-input" rows="2">${_e(existing?.description || '')}</textarea>
+      <textarea id="cal-f-desc" placeholder="${window.t('Description')}" class="cal-input" rows="2">${_e(existing?.description || '')}</textarea>
       ${(() => {
         // Cookbook-task back-link. When the description carries a
         // "cookbook_task_id: <id>" marker (set by cookbookSchedule.js
@@ -2823,29 +2823,29 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
               <path d="M9 11l3 3L22 4"/>
               <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
             </svg>
-            <span>Open in Tasks</span>
+            <span>${window.t('Open in Tasks')}</span>
           </button>
-          <span style="font-size:11px;opacity:0.5;">Linked to a Cookbook scheduled task</span>
+          <span style="font-size:11px;opacity:0.5;">${window.t('Linked to a Cookbook scheduled task')}</span>
         </div>`;
       })()}
       <div class="cal-form-row" style="align-items:center;gap:8px;">
-        <label style="font-size:11px;display:flex;align-items:center;gap:4px;"><svg class="cal-remind-bell" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--accent, var(--red))" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span style="opacity:0.5;">Reminder</span></label>
+        <label style="font-size:11px;display:flex;align-items:center;gap:4px;"><svg class="cal-remind-bell" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--accent, var(--red))" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span style="opacity:0.5;">${window.t('Reminder')}</span></label>
         <select id="cal-f-remind" class="cal-input" style="flex:1;">
-          <option value="" ${isEdit ? 'selected' : ''}>No reminder</option>
-          <option value="0">At event time</option>
-          <option value="5">5 minutes before</option>
-          <option value="10">10 minutes before</option>
-          <option value="15" ${!isEdit ? 'selected' : ''}>15 minutes before</option>
-          <option value="30">30 minutes before</option>
-          <option value="60">1 hour before</option>
-          <option value="120">2 hours before</option>
-          <option value="1440">1 day before</option>
-          <option value="custom">Exact time...</option>
+          <option value="" ${isEdit ? 'selected' : ''}>${window.t('No reminder')}</option>
+          <option value="0">${window.t('At event time')}</option>
+          <option value="5">${window.t('5 minutes before')}</option>
+          <option value="10">${window.t('10 minutes before')}</option>
+          <option value="15" ${!isEdit ? 'selected' : ''}>${window.t('15 minutes before')}</option>
+          <option value="30">${window.t('30 minutes before')}</option>
+          <option value="60">${window.t('1 hour before')}</option>
+          <option value="120">${window.t('2 hours before')}</option>
+          <option value="1440">${window.t('1 day before')}</option>
+          <option value="custom">${window.t('Exact time...')}</option>
         </select>
         <input type="datetime-local" id="cal-f-remind-custom" class="cal-input" style="flex:1;display:none;" />
       </div>
       <div class="cal-form-row" style="align-items:center;gap:8px;">
-        <label style="font-size:11px;opacity:0.5;">Color</label>
+        <label style="font-size:11px;opacity:0.5;">${window.t('Color')}</label>
         <div class="note-color-picker" id="cal-f-colors">
           ${CAL_COLORS.map(c => {
             const cur = existing?.color || '';
@@ -2858,7 +2858,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
             } else {
               bg = c.hex || 'var(--border)';
             }
-            return `<span class="note-color-dot${isActive ? ' active' : ''}" data-color="${c.hex}" style="background:${bg}" title="${c.name}"></span>`;
+            return `<span class="note-color-dot${isActive ? ' active' : ''}" data-color="${c.hex}" style="background:${bg}" title="${window.t(c.name)}"></span>`;
           }).join('')}
         </div>
       </div>
@@ -2866,11 +2866,11 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
     </div>
 
     <div class="cal-form-actions">
-      ${isEdit ? `<button id="cal-f-del" class="cal-btn cal-btn-danger" style="display:inline-flex;align-items:center;gap:5px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>Delete</button>` : ''}
-      <button id="cal-f-cancel" class="cal-btn" style="display:inline-flex;align-items:center;gap:5px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Cancel</button>
+      ${isEdit ? `<button id="cal-f-del" class="cal-btn cal-btn-danger" style="display:inline-flex;align-items:center;gap:5px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>${window.t('Delete')}</button>` : ''}
+      <button id="cal-f-cancel" class="cal-btn" style="display:inline-flex;align-items:center;gap:5px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>${window.t('Cancel')}</button>
       <button id="cal-f-save" class="cal-btn cal-btn-primary" style="display:inline-flex;align-items:center;gap:5px;">${isEdit
-        ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>Save'
-        : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Create'}</button>
+        ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>' + window.t('Save')
+        : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>' + window.t('Create')}</button>
     </div>
   </div>`;
 
