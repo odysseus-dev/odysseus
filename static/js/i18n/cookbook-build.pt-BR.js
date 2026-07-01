@@ -181,4 +181,11 @@ registerMessages('pt-BR', {
   'All': 'Todos',
   '0 selected': '0 selecionado(s)',
   'Cancel (Esc)': 'Cancelar (Esc)',
+  'Optional packages that extend Odysseus capabilities.': 'Pacotes opcionais que estendem as capacidades do Odysseus.',
+  'HuggingFace Token': 'Token do HuggingFace',
+  'Personal access token for downloading gated and private models.': 'Token de acesso pessoal para baixar modelos restritos e privados.',
+  'configured': 'configurado',
+  'Servers': 'Servidores',
+  'Add server': 'Adicionar servidor',
+  'Configure SSH servers, install Odysseus keys, choose model directories, and set the default server. Local is this machine.': 'Configure servidores SSH, instale chaves do Odysseus, escolha diretórios de modelos e defina o servidor padrão. Local é esta máquina.',
 });

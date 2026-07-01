@@ -2812,15 +2812,15 @@ function _renderRecipes() {
   html += '<div class="cookbook-group hidden" data-backend-group="Dependencies">';
   html += '<div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">';
   html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">';
-  html += '<h2 style="margin:0;padding:0;line-height:1;">Dependencies</h2>';
+  html += `<h2 style="margin:0;padding:0;line-height:1;">${window.t('Dependencies')}</h2>`;
   // Rebuild llama.cpp button moved into the llama_cpp dep row (see _depRow);
   // having it in the title polluted the section header.
-  html += '<span style="font-size:10px;opacity:0.5;margin-left:auto;">Server</span>';
+  html += `<span style="font-size:10px;opacity:0.5;margin-left:auto;">${window.t('Server')}</span>`;
   html += '<select class="cookbook-field-input" id="hwfit-deps-server" style="height:28px;min-width:70px;">';
   html += _buildServerOpts(false);
   html += '</select>';
   html += '</div>';
-  html += '<p class="memory-desc doclib-desc">Optional packages that extend Odysseus capabilities.</p>';
+  html += `<p class="memory-desc doclib-desc">${window.t('Optional packages that extend Odysseus capabilities.')}</p>`;
   html += '<div class="doclib-grid" id="cookbook-deps-list"></div>';
   html += '</div></div>';
 
@@ -2833,18 +2833,18 @@ function _renderRecipes() {
   // ── HuggingFace Token block ─────────────────────────────────────────
   html += '<div class="admin-card" style="flex:0 0 auto;display:flex;flex-direction:column;">';
   html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">';
-  html += '<h2 style="margin:0;padding:0;line-height:1;">HuggingFace Token</h2>';
+  html += `<h2 style="margin:0;padding:0;line-height:1;">${window.t('HuggingFace Token')}</h2>`;
   html += '</div>';
-  html += '<p class="memory-desc doclib-desc">Personal access token for downloading gated and private models.</p>';
+  html += `<p class="memory-desc doclib-desc">${window.t('Personal access token for downloading gated and private models.')}</p>`;
   html += '<div class="memory-toolbar">';
   html += `<div style="display:flex;gap:4px;align-items:center;">`;
   // Bold green check shown when a token is stored (a placeholder can't style a
   // single glyph, so it's its own element next to the input).
   if (_es.hfTokenConfigured) {
-    html += `<span class="hwfit-hf-check" title="Token stored" style="font-weight:800;color:var(--green,#50fa7b);font-size:15px;line-height:1;flex-shrink:0;position:relative;top:2px;">✓</span>`;
+    html += `<span class="hwfit-hf-check" title="${window.t('Token stored')}" style="font-weight:800;color:var(--green,#50fa7b);font-size:15px;line-height:1;flex-shrink:0;position:relative;top:2px;">✓</span>`;
   }
   const hfPlaceholder = _es.hfTokenConfigured
-    ? `Stored (${esc(_es.hfTokenMasked || 'configured')}) - enter a new token to replace`
+    ? window.t('Stored ({masked}) - enter a new token to replace', { masked: esc(_es.hfTokenMasked || window.t('configured')) })
     : 'hf_...';
   html += `<input type="password" class="memory-search-input" id="hwfit-hftoken" value="${esc(_es.hfToken || '')}" placeholder="${hfPlaceholder}" style="flex:1;" />`;
   html += `</div>`;
@@ -2854,12 +2854,12 @@ function _renderRecipes() {
   // ── Servers block ───────────────────────────────────────────────────
   html += '<div class="admin-card" style="flex:0 0 auto;display:flex;flex-direction:column;">';
   html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;margin-top:-4px;">';
-  html += '<h2 style="margin:0;padding:0;line-height:1;">Servers</h2>';
+  html += `<h2 style="margin:0;padding:0;line-height:1;">${window.t('Servers')}</h2>`;
   // Reuse the calendar +New pill: spinning plus, label fades in idea uses
    // the same `.cal-add-btn-text` rules, so styling stays consistent.
-  html += '<button class="cal-add-btn cal-add-btn-text" id="cookbook-server-add" title="Add server" style="margin-left:auto;"><span class="cal-add-plus">+</span><span class="cal-add-label">Add</span></button>';
+  html += `<button class="cal-add-btn cal-add-btn-text" id="cookbook-server-add" title="${window.t('Add server')}" style="margin-left:auto;"><span class="cal-add-plus">+</span><span class="cal-add-label">${window.t('Add')}</span></button>`;
   html += '</div>';
-  html += '<p class="memory-desc doclib-desc">Configure SSH servers, install Odysseus keys, choose model directories, and set the default server. Local is this machine.</p>';
+  html += `<p class="memory-desc doclib-desc">${window.t('Configure SSH servers, install Odysseus keys, choose model directories, and set the default server. Local is this machine.')}</p>`;
   html += '<div class="memory-toolbar cookbook-servers-toolbar" style="margin-top:4px;">';
   html += `<div id="cookbook-servers-list">`;
   for (let i = 0; i < _es.servers.length; i++) {
