@@ -254,6 +254,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                     "calendar_href": ev.calendar_id,
                     "event_type": ev.event_type or "",
                     "importance": ev.importance or "normal",
+                    "rrule": ev.rrule or "",
                 })
             if not events:
                 response_text = f"No events between {start_dt.date().isoformat()} and {end_dt.date().isoformat()}."
@@ -268,6 +269,8 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                         line += f" #{ev['event_type']}"
                     if ev.get("importance") and ev["importance"] != "normal":
                         line += f" !{ev['importance']}"
+                    if ev.get("rrule"):
+                        line += f" repeats({ev['rrule']})"
                     if ev.get("location"):
                         line += f" @ {ev['location']}"
                     if ev.get("calendar"):
@@ -480,6 +483,10 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 ev.event_type = _tag or None
             if args.get("importance") is not None:
                 ev.importance = args["importance"]
+            if args.get("rrule") is not None:
+                ev.rrule = args.get("rrule") or ""
+            elif str(args.get("repeat") or "").strip().lower() in {"none", "no", "off", "false", "single"}:
+                ev.rrule = ""
             is_caldav = ev.calendar and ev.calendar.source == "caldav"
             if is_caldav:
                 ev.caldav_sync_pending = "update"

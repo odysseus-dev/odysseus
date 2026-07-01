@@ -239,6 +239,7 @@ HOUSEKEEPING_DEFAULTS = {
     "tidy_research":        {"name": "Research Tidy",            "trigger_type": "event", "trigger_event": "research_completed", "trigger_count": 5, "schedule": None, "scheduled_time": None, "cron_expression": None, "legacy_names": ["Tidy Research"]},
     "summarize_emails":     {"name": "Email (Summary)",          "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */2 * * *", "ship_paused": True, "legacy_names": ["Tidy Email (Summary)"]},
     "draft_email_replies":  {"name": "Email AI Auto Reply",      "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */2 * * *", "ship_paused": True, "legacy_names": ["Tidy Email (Replies)", "AI Auto Reply"]},
+    "email_auto_translate": {"name": "Email Auto Translate",     "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */2 * * *", "ship_paused": True, "legacy_names": ["Auto-translate Emails", "Auto Translate Email"]},
     "extract_email_events": {"name": "Email Calendar Events",    "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */1 * * *", "ship_paused": True, "legacy_names": ["Email → Calendar Events"]},
     "classify_events":      {"name": "Calendar Classify Events", "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 6,18 * * *", "ship_paused": True, "legacy_names": ["Classify Calendar Events"]},
     "check_email_urgency":   {"name": "Email Tags",               "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 * * * *", "ship_paused": True, "old_cron_expressions": ["*/15 * * * *"], "legacy_names": ["Email Triage", "Urgent Email"]},
@@ -686,6 +687,12 @@ class TaskScheduler:
         db = SessionLocal()
         try:
             now = _utcnow()
+            foreground_active = False
+            try:
+                from src.interactive_gate import has_foreground_activity
+                foreground_active = has_foreground_activity()
+            except Exception:
+                foreground_active = False
             async with self._executing_lock:
                 # Snapshot under the lock so we don't race with mid-iteration adds.
                 executing_snapshot = set(self._executing)
@@ -699,8 +706,13 @@ class TaskScheduler:
                 for task in due:
                     if task.id in self._executing:
                         continue
+                    if foreground_active:
+                        task.next_run = now + timedelta(minutes=15)
+                        continue
                     self._executing.add(task.id)
                     to_dispatch.append(task.id)
+                if foreground_active and due:
+                    db.commit()
             for task_id in to_dispatch:
                 asyncio.create_task(self._execute_task(task_id))
         finally:
@@ -734,15 +746,26 @@ class TaskScheduler:
 
         try:
             if bypass_model_slot or not self._task_needs_model_slot(task_id):
-                await self._execute_task_locked(task_id, run_id, release_executing=release_executing)
+                await self._execute_task_locked(
+                    task_id,
+                    run_id,
+                    release_executing=release_executing,
+                    gate_foreground=not bypass_model_slot,
+                )
                 return
 
             async with self._run_semaphore:
-                await self._execute_task_locked(task_id, run_id, release_executing=release_executing)
+                await self._execute_task_locked(
+                    task_id,
+                    run_id,
+                    release_executing=release_executing,
+                    gate_foreground=True,
+                )
         except asyncio.CancelledError:
             # If cancellation happens while queued behind the semaphore,
             # _execute_task_locked never runs and cannot update the Activity row.
             self._mark_run_aborted(task_id, run_id)
+            self._defer_immediately_due_task(task_id, delay=timedelta(minutes=15))
             raise
         finally:
             handle = self._task_handles.get(task_id)
@@ -752,7 +775,36 @@ class TaskScheduler:
                 async with self._executing_lock:
                     self._executing.discard(task_id)
 
-    async def _execute_task_locked(self, task_id: str, run_id: str, *, release_executing: bool = True):
+    def _defer_immediately_due_task(self, task_id: str, *, delay: timedelta):
+        """A queued task can be cancelled before _execute_task_locked gets a DB
+        handle. If its next_run stays in the past, the scheduler dispatches it
+        again on the next tick and spams aborted Activity rows."""
+        try:
+            from core.database import SessionLocal, ScheduledTask
+            db = SessionLocal()
+            try:
+                task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+                if (
+                    task
+                    and task.status == "active"
+                    and task.next_run is not None
+                    and task.next_run <= _utcnow()
+                ):
+                    task.next_run = _utcnow() + delay
+                    db.commit()
+            finally:
+                db.close()
+        except Exception:
+            logger.debug("Failed to defer cancelled queued task %s", task_id, exc_info=True)
+
+    async def _execute_task_locked(
+        self,
+        task_id: str,
+        run_id: str,
+        *,
+        release_executing: bool = True,
+        gate_foreground: bool = True,
+    ):
         from core.database import SessionLocal, ScheduledTask, TaskRun
 
         db = SessionLocal()
@@ -768,6 +820,14 @@ class TaskScheduler:
                     stale.error = f"Task no longer active (status={task.status if task else 'deleted'})"
                     db.commit()
                 return
+
+            if gate_foreground:
+                waiting = db.query(TaskRun).filter(TaskRun.id == run_id).first()
+                if waiting and waiting.status == "queued":
+                    waiting.result = "Queued — waiting for Odysseus to be idle…"
+                    db.commit()
+                from src.interactive_gate import wait_for_interactive_quiet
+                await wait_for_interactive_quiet(f"scheduled task {task.name}")
 
             # Flip the run from queued → running. Reset started_at to the
             # actual execution start so queue wait time is visible from
@@ -799,6 +859,27 @@ class TaskScheduler:
             # previous llm/research run's model. The executors set it once the
             # model is resolved.
             self._last_run_model = None
+            foreground_cancel = {"hit": False}
+            foreground_monitor = None
+            if gate_foreground:
+                current_task = asyncio.current_task()
+
+                async def _cancel_if_foreground_active():
+                    # Give the just-finished quiet gate a tiny grace window,
+                    # then keep enforcing "background means background" while
+                    # a long email/LLM action is already running.
+                    await asyncio.sleep(1.0)
+                    from src.interactive_gate import has_foreground_activity
+                    while True:
+                        await asyncio.sleep(1.0)
+                        if has_foreground_activity():
+                            foreground_cancel["hit"] = True
+                            logger.info("Task '%s' interrupted because Odysseus became active", task.name)
+                            if current_task:
+                                current_task.cancel()
+                            return
+
+                foreground_monitor = asyncio.create_task(_cancel_if_foreground_active())
             try:
                 if task_type == "action":
                     result, success = await self._execute_action(task, run_id=run_id)
@@ -838,15 +919,22 @@ class TaskScheduler:
                 db.commit()
                 return
             except asyncio.CancelledError:
-                logger.info("Task '%s' stopped by user", task.name)
+                msg = (
+                    "Paused because Odysseus became active"
+                    if foreground_cancel.get("hit")
+                    else "Stopped by user"
+                )
+                logger.info("Task '%s' %s", task.name, msg)
                 run_obj = db.query(TaskRun).filter(TaskRun.id == run_id).first()
                 if run_obj:
                     run_obj.status = "aborted"
-                    run_obj.error = "Stopped by user"
-                    run_obj.result = run_obj.result or "Stopped by user"
+                    run_obj.error = msg
+                    run_obj.result = run_obj.result or msg
                     run_obj.finished_at = _utcnow()
                 task.last_run = _utcnow()
-                if (task.trigger_type or "schedule") == "schedule":
+                if foreground_cancel.get("hit"):
+                    task.next_run = _utcnow() + timedelta(minutes=15)
+                elif (task.trigger_type or "schedule") == "schedule":
                     task.next_run = compute_next_run(
                         task.schedule, task.scheduled_time,
                         task.scheduled_day, task.scheduled_date,
@@ -881,6 +969,13 @@ class TaskScheduler:
                     task.next_run = None
                 db.commit()
                 return
+            finally:
+                if foreground_monitor and not foreground_monitor.done():
+                    foreground_monitor.cancel()
+                    try:
+                        await foreground_monitor
+                    except asyncio.CancelledError:
+                        pass
 
             run.finished_at = _utcnow()
 
@@ -1050,6 +1145,7 @@ class TaskScheduler:
         "learn_sender_signatures",
         "summarize_emails",
         "draft_email_replies",
+        "email_auto_translate",
         "extract_email_events",
         "classify_events",
         "tidy_sessions",
@@ -1063,6 +1159,7 @@ class TaskScheduler:
     _MODEL_BACKED_ACTIONS = frozenset({
         "summarize_emails",
         "draft_email_replies",
+        "email_auto_translate",
         "extract_email_events",
         "classify_events",
         "learn_sender_signatures",
@@ -1119,6 +1216,8 @@ class TaskScheduler:
                 self._set_run_progress(run_id, message)
 
             kwargs = {"owner": task.owner, "task_name": task.name, "progress_cb": _progress}
+            if task.prompt:
+                kwargs["prompt"] = task.prompt
             if task.action in ("run_script", "run_local", "ssh_command") and task.prompt:
                 kwargs["script" if task.action in ("run_script", "run_local") else "command"] = task.prompt
             # cookbook_serve carries its JSON config in task.prompt — feed it
@@ -1682,8 +1781,15 @@ class TaskScheduler:
 
         target = (output or "").strip()
         explicit = ""
+        account_id = ""
         if target.startswith("email:"):
             explicit = target.split(":", 1)[1].strip()
+            if "|account=" in explicit:
+                explicit, account_id = explicit.split("|account=", 1)
+                explicit = explicit.strip()
+                account_id = account_id.strip()
+            if explicit == "self":
+                explicit = ""
         elif "@" in target:
             explicit = target
 
@@ -1691,7 +1797,7 @@ class TaskScheduler:
             from routes.email_routes import _resolve_send_config
             from routes.email_helpers import _send_smtp_message
 
-            cfg = _resolve_send_config(owner=task.owner or "")
+            cfg = _resolve_send_config(account_id=account_id or None, owner=task.owner or "")
             to_addr = explicit or cfg.get("from_address") or cfg.get("smtp_user") or ""
             if not to_addr:
                 raise RuntimeError("No email recipient resolved for task output")
@@ -1759,6 +1865,8 @@ class TaskScheduler:
         # behind the primary endpoint so a downed primary won't silently yield
         # `(no output)`.
         try:
+            from src.interactive_gate import wait_for_interactive_quiet
+            await wait_for_interactive_quiet(f"agent task {task.name}")
             from src.task_endpoint import resolve_task_candidates
             _task_fallbacks = resolve_task_candidates(
                 fallback_url=endpoint_url,

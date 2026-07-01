@@ -25,6 +25,7 @@ Design notes:
 import asyncio
 import hashlib
 import ipaddress
+import json
 import logging
 import os
 import socket
@@ -500,6 +501,7 @@ def _event_payload(ev) -> dict:
         "all_day": ev.all_day,
         "is_utc": ev.is_utc,
         "rrule": ev.rrule or "",
+        "recurrence_exdates": json.loads(ev.recurrence_exdates or "[]") if getattr(ev, "recurrence_exdates", "") else [],
     }
 
 

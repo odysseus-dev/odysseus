@@ -57,6 +57,7 @@ def _make_event(**overrides):
         "all_day": False,
         "is_utc": False,
         "rrule": "",
+        "recurrence_exdates": "",
         "calendar": _MOCK_CAL.name,
         "calendar_id": "cal-001",
         "color": None,
@@ -82,6 +83,23 @@ def test_expand_non_recurring_returns_single():
     assert r["uid"] == "evt-test-001"
     assert r["series_uid"] == "evt-test-001"
     assert r["is_recurrence"] is False
+
+
+def test_expand_rrule_skips_deleted_occurrence_exdate():
+    cal = import_calendar_routes()
+    ev = _make_event(
+        dtstart=datetime(2026, 7, 1, 14, 0),
+        dtend=datetime(2026, 7, 1, 15, 0),
+        rrule="FREQ=WEEKLY;BYDAY=WE",
+        recurrence_exdates='["2026-07-08T14:00"]',
+    )
+
+    results = cal._expand_rrule(ev, datetime(2026, 7, 1), datetime(2026, 7, 22))
+    uids = [r["uid"] for r in results]
+
+    assert "evt-test-001::2026-07-01T14:00" in uids
+    assert "evt-test-001::2026-07-08T14:00" not in uids
+    assert "evt-test-001::2026-07-15T14:00" in uids
 
 
 def test_expand_yearly_old_dtstart_later_year_single_occurrence():
