@@ -148,4 +148,12 @@ registerMessages('pt-BR', {
   '{n} session(s) archived': '{n} sessão(ões) arquivada(s)',
   'Delete {n} session(s)? This cannot be undone.': 'Excluir {n} sessão(ões)? Isso não pode ser desfeito.',
   '{n} session(s) deleted': '{n} sessão(ões) excluída(s)',
+
+  // --- sessions.js: loadSessions / selectSession / createDirectChat ---
+  'Failed to load sessions: {msg}': 'Falha ao carregar sessões: {msg}',
+  'OpenClaw Agent Connected': 'Agente OpenClaw conectado',
+  'Messages will be routed through your OpenClaw agent. The agent has access to tools, memory, and skills configured in your OpenClaw workspace.':
+    'As mensagens serão roteadas através do seu agente OpenClaw. O agente tem acesso a ferramentas, memória e habilidades configuradas no seu workspace OpenClaw.',
+  'Failed to load session: {msg}': 'Falha ao carregar sessão: {msg}',
+  'Failed to reach backend: {msg}': 'Falha ao acessar o backend: {msg}',
 });

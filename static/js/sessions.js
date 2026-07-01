@@ -1484,7 +1484,7 @@ export async function loadSessions() {
     }
   } catch (error) {
     console.error('Error in loadSessions:', error);
-    uiModule.showError('Failed to load sessions: ' + error.message);
+    uiModule.showError(window.t('Failed to load sessions: {msg}', { msg: error.message }));
   }
 }
 
@@ -1546,7 +1546,7 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     if (sendBtn && sendBtn.dataset.mode === 'streaming') {
       sendBtn.dataset.mode = '';
       sendBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
-      sendBtn.title = 'Send message';
+      sendBtn.title = window.t('Send message');
     }
     // Deactivate compare mode on session switch
     if (window.compareModule) {
@@ -1573,7 +1573,7 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
 
     const currentMetaEl = uiModule.el('current-meta');
     if (currentMetaEl) {
-      currentMetaEl.textContent = meta ? meta.name : 'Odysseus Chat';
+      currentMetaEl.textContent = meta ? meta.name : window.t('Odysseus Chat');
     }
     // Update model picker visibility
     updateModelPicker();
@@ -1639,8 +1639,8 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     if (isOC) {
       if (window.chatModule && window.chatModule.showWelcomeScreen) window.chatModule.showWelcomeScreen();
       window.chatModule.addMessage('assistant',
-        `<p>\uD83E\uDD9E <strong>OpenClaw Agent Connected</strong></p>
-         <p>Messages will be routed through your OpenClaw agent. The agent has access to tools, memory, and skills configured in your OpenClaw workspace.</p>`,
+        `<p>\uD83E\uDD9E <strong>${window.t('OpenClaw Agent Connected')}</strong></p>
+         <p>${window.t('Messages will be routed through your OpenClaw agent. The agent has access to tools, memory, and skills configured in your OpenClaw workspace.')}</p>`,
         'OpenClaw');
     } else if (msgHistory.length) {
       for (const msg of msgHistory) {
@@ -1740,7 +1740,7 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
 
   } catch (error) {
     console.error('Error in selectSession:', error);
-    uiModule.showError('Failed to load session: ' + error.message);
+    uiModule.showError(window.t('Failed to load session: {msg}', { msg: error.message }));
   } finally {
     // Ensure memories are loaded after session selection
     if (window.memoryModule && window.memoryModule.loadMemories) {
@@ -1809,7 +1809,7 @@ export function createDirectChat(url, modelId, endpointId) {
   // Update current-meta header
   const metaEl = document.getElementById('current-meta');
   if (metaEl) {
-    metaEl.textContent = 'New Chat';
+    metaEl.textContent = window.t('New Chat');
   }
 
   // Enable input
@@ -1843,7 +1843,7 @@ export async function materializePendingSession() {
   try {
     res = await fetch(`${API_BASE}/api/session`, { method: 'POST', body: fd });
   } catch (e) {
-    uiModule.showError('Failed to reach backend: ' + e);
+    uiModule.showError(window.t('Failed to reach backend: {msg}', { msg: e }));
     return false;
   }
 
