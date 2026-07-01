@@ -948,6 +948,88 @@ def test_reprobe_preserves_pinned_models(monkeypatch):
     assert json.loads(ep.cached_models) == ["m1"]
 
 
+def test_reprobe_skips_user_hidden_models_and_unions_failures(monkeypatch):
+    ep = _make_endpoint(hidden_models=json.dumps(["hide-me"]))
+    db = _PinnedFakeDb([ep])
+    probed = []
+
+    def fake_probe_single(_base, _api_key, model_id, **_kwargs):
+        probed.append(model_id)
+        return {"status": "fail" if model_id == "fail-me" else "ok"}
+
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
+    monkeypatch.setattr(model_routes, "_probe_endpoint", lambda *a, **k: ["keep-me", "hide-me", "fail-me"])
+    monkeypatch.setattr(model_routes, "_is_chat_model", lambda m: True)
+    monkeypatch.setattr(model_routes, "_probe_single_model", fake_probe_single)
+    endpoint = _get_route("/api/model-endpoints/{ep_id}/probe", "GET")
+
+    response = endpoint("ep1", _PinnedFakeRequest())
+    chunks = []
+
+    async def _drain():
+        async for chunk in response.body_iterator:
+            chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+
+    asyncio.run(_drain())
+
+    events = []
+    for chunk in chunks:
+        for line in chunk.splitlines():
+            if line.startswith("data: "):
+                events.append(json.loads(line[len("data: "):]))
+
+    start = next(e for e in events if e.get("type") == "probe_start")
+    done = next(e for e in events if e.get("type") == "probe_done")
+
+    assert probed == ["keep-me", "fail-me"]
+    assert start["model_count"] == 2
+    assert start["skipped"] == 1
+    assert done["hidden"] == 1
+    assert json.loads(ep.hidden_models) == ["hide-me", "fail-me"]
+    assert json.loads(ep.cached_models) == ["keep-me", "hide-me", "fail-me"]
+
+
+def test_reprobe_remote_endpoint_skips_completion_probe(monkeypatch):
+    ep = _make_endpoint(base_url="https://api.openai.com/v1", api_key="key")
+    db = _PinnedFakeDb([ep])
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
+    monkeypatch.setattr(model_routes, "_probe_endpoint", lambda *a, **k: ["gpt-4o"])
+    monkeypatch.setattr(model_routes, "_is_chat_model", lambda m: True)
+    monkeypatch.setattr(
+        model_routes,
+        "_probe_single_model",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("remote completion probe should not run")),
+    )
+    endpoint = _get_route("/api/model-endpoints/{ep_id}/probe", "GET")
+
+    response = endpoint("ep1", _PinnedFakeRequest())
+    chunks = []
+
+    async def _drain():
+        async for chunk in response.body_iterator:
+            chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+
+    asyncio.run(_drain())
+
+    events = []
+    for chunk in chunks:
+        for line in chunk.splitlines():
+            if line.startswith("data: "):
+                events.append(json.loads(line[len("data: "):]))
+
+    done = next(e for e in events if e.get("type") == "probe_done")
+    results = [e for e in events if e.get("type") == "probe_result"]
+
+    assert done["hidden"] == 0
+    assert done["ok"] == len(results) == 1
+    assert results[0]["status"] == "ok"
+    assert results[0]["skipped"] is True
+    assert ep.hidden_models is None
+    assert json.loads(ep.cached_models) == ["gpt-4o"]
+
+
 def test_reprobe_chatgpt_subscription_does_not_hide_models(monkeypatch):
     # The whole point of the _probe_single_model short-circuit is that re-probing
     # a chatgpt-subscription endpoint must NOT mark every (un-probeable) model as
@@ -993,8 +1075,9 @@ def test_reprobe_chatgpt_subscription_does_not_hide_models(monkeypatch):
     assert done["hidden"] == 0
     assert done["ok"] == len(results) == 2
     assert all(r["status"] == "ok" and r.get("skipped") is True for r in results)
-    # The stale hidden_models is cleared, not repopulated with every model.
-    assert ep.hidden_models is None
+    # User-hidden models remain hidden; probe results are unioned instead of
+    # overwriting explicit choices.
+    assert json.loads(ep.hidden_models) == ["stale-hidden"]
 
 
 def test_visible_models_handles_malformed_strings():

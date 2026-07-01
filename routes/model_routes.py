@@ -1986,13 +1986,24 @@ def setup_model_routes(model_discovery):
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
             if not ep:
                 raise HTTPException(404, "Endpoint not found")
-            ep_data = {"id": ep.id, "name": ep.name, "base_url": ep.base_url, "api_key": ep.api_key}
+            base = _normalize_base(ep.base_url)
+            kind = _effective_endpoint_kind(ep, base)
+            ep_data = {
+                "id": ep.id,
+                "name": ep.name,
+                "base_url": ep.base_url,
+                "api_key": ep.api_key,
+                "endpoint_kind": kind,
+                "hidden_models": _normalize_model_ids(ep.hidden_models),
+            }
         finally:
             db.close()
 
         base = _normalize_base(ep_data["base_url"])
+        category = _classify_endpoint(base, ep_data["endpoint_kind"])
+        hidden_models = set(ep_data["hidden_models"])
         all_models = _probe_endpoint(base, ep_data["api_key"])
-        chat_models = [m for m in all_models if _is_chat_model(m)]
+        chat_models = [m for m in all_models if _is_chat_model(m) and m not in hidden_models]
         skipped = len(all_models) - len(chat_models)
 
         def _stream():
@@ -2000,7 +2011,10 @@ def setup_model_routes(model_discovery):
             failed = []
             ok_count = 0
             for mid in chat_models:
-                result = _probe_single_model(base, ep_data["api_key"], mid, timeout=8)
+                if category == "local":
+                    result = _probe_single_model(base, ep_data["api_key"], mid, timeout=8)
+                else:
+                    result = {"status": "ok", "latency_ms": 0, "skipped": True}
                 result["model"] = mid
                 result["type"] = "probe_result"
                 result["endpoint"] = ep_data["name"]
@@ -2015,7 +2029,8 @@ def setup_model_routes(model_discovery):
             try:
                 ep_obj = db2.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
                 if ep_obj:
-                    ep_obj.hidden_models = json.dumps(failed) if failed else None
+                    hidden = _merge_model_ids(_normalize_model_ids(ep_obj.hidden_models), failed)
+                    ep_obj.hidden_models = json.dumps(hidden) if hidden else None
                     if all_models:
                         ep_obj.cached_models = json.dumps(all_models)
                     db2.commit()
