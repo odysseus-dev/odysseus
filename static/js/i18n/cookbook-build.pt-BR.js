@@ -318,4 +318,13 @@ registerMessages('pt-BR', {
   'Argument passed after `vllm serve`. MiniMax M3 auto-fills the cached snapshot path because the nightly runtime needs the local repo files.': 'Argumento passado após `vllm serve`. O MiniMax M3 preenche automaticamente o caminho do snapshot em cache porque o runtime nightly precisa dos arquivos locais do repositório.',
   'KV Cache': 'Cache KV',
   'vLLM --kv-cache-dtype. auto uses the model/runtime default; fp8 reduces KV memory for long context.': 'vLLM --kv-cache-dtype. auto usa o padrão do modelo/runtime; fp8 reduz a memória do KV para contexto longo.',
+  'Attention': 'Atenção',
+  'vLLM VLLM_ATTENTION_BACKEND. auto = vLLM picks (often FLASHINFER, which JITs and can fail on old nvcc). FLASH_ATTN skips the JIT entirely.': 'vLLM VLLM_ATTENTION_BACKEND. auto = o vLLM escolhe (geralmente FLASHINFER, que compila via JIT e pode falhar em nvcc antigos). FLASH_ATTN evita o JIT completamente.',
+  'Block Size': 'Tamanho do bloco',
+  'vLLM --block-size. Controls KV-cache block granularity. Leave blank for runtime default; some sparse-attention or custom runtimes need a specific value.': 'vLLM --block-size. Controla a granularidade do bloco do cache KV. Deixe em branco para o padrão do runtime; alguns runtimes de atenção esparsa ou personalizados precisam de um valor específico.',
+  'Swap': 'Swap',
+  'vLLM CPU swap space in GB. Blank/off omits the flag; enter a positive number only for older vLLM runtimes that support --swap-space.': 'Espaço de swap de CPU do vLLM em GB. Em branco/off omite a flag; informe um número positivo apenas para runtimes vLLM mais antigos que suportam --swap-space.',
+  'CUDA native sampler': 'Amostrador nativo CUDA',
+  'Env Preset': 'Predefinição de ambiente',
+  'Adds known-good environment variables without typing them. CUDA native sampler adds VLLM_TARGET_DEVICE=cuda and disables FlashInfer sampler JIT; useful when system nvcc cannot compile the sampler for the GPU architecture.': 'Adiciona variáveis de ambiente conhecidas por funcionar sem precisar digitá-las. O amostrador nativo CUDA adiciona VLLM_TARGET_DEVICE=cuda e desativa o JIT do amostrador FlashInfer; útil quando o nvcc do sistema não consegue compilar o amostrador para a arquitetura da GPU.',
 });

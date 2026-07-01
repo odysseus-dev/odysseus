@@ -1332,17 +1332,17 @@ function _rerenderCachedModels() {
         : svm('vllm_attn_backend', _attnDefault);
       const vllmAttnBackendOpts = ['auto', 'TRITON_ATTN', 'FLASH_ATTN', 'XFORMERS', 'FLASHINFER', 'TORCH_SDPA']
         .map(b => `<option value="${b === 'auto' ? '' : b}"${(_attnSelected === (b === 'auto' ? '' : b)) ? ' selected' : ''}>${b}</option>`).join('');
-      panelHtml += `<label class="hwfit-backend-vllm">${_l('Attention','vLLM VLLM_ATTENTION_BACKEND. auto = vLLM picks (often FLASHINFER, which JITs and can fail on old nvcc). FLASH_ATTN skips the JIT entirely.')}<select class="hwfit-sf" data-field="vllm_attn_backend" style="height:32px;">${vllmAttnBackendOpts}</select></label>`;
-      panelHtml += `<label class="hwfit-backend-vllm">${_l('Block Size','vLLM --block-size. Controls KV-cache block granularity. Leave blank for runtime default; some sparse-attention or custom runtimes need a specific value.')}<input type="text" class="hwfit-sf" data-field="vllm_block_size" value="${esc(svm('vllm_block_size', _isMiniMaxM3 ? '128' : ''))}" placeholder="auto" /></label>`;
-      panelHtml += `<label class="hwfit-backend-vllm">${_l('Swap','vLLM CPU swap space in GB. Blank/off omits the flag; enter a positive number only for older vLLM runtimes that support --swap-space.')}<input type="text" class="hwfit-sf" data-field="swap" value="${esc(sv('swap', ''))}" placeholder="off" /></label>`;
+      panelHtml += `<label class="hwfit-backend-vllm">${_l(window.t('Attention'), window.t('vLLM VLLM_ATTENTION_BACKEND. auto = vLLM picks (often FLASHINFER, which JITs and can fail on old nvcc). FLASH_ATTN skips the JIT entirely.'))}<select class="hwfit-sf" data-field="vllm_attn_backend" style="height:32px;">${vllmAttnBackendOpts}</select></label>`;
+      panelHtml += `<label class="hwfit-backend-vllm">${_l(window.t('Block Size'), window.t('vLLM --block-size. Controls KV-cache block granularity. Leave blank for runtime default; some sparse-attention or custom runtimes need a specific value.'))}<input type="text" class="hwfit-sf" data-field="vllm_block_size" value="${esc(svm('vllm_block_size', _isMiniMaxM3 ? '128' : ''))}" placeholder="auto" /></label>`;
+      panelHtml += `<label class="hwfit-backend-vllm">${_l(window.t('Swap'), window.t('vLLM CPU swap space in GB. Blank/off omits the flag; enter a positive number only for older vLLM runtimes that support --swap-space.'))}<input type="text" class="hwfit-sf" data-field="swap" value="${esc(sv('swap', ''))}" placeholder="off" /></label>`;
       {
         const _envPresetDefault = _isMiniMaxM3 ? 'minimax_m3_cuda' : '';
         const _envPresetVal = svm('vllm_env_preset', _envPresetDefault);
         const _envPresetOpts = [
-          ['', 'None'],
-          ['minimax_m3_cuda', 'CUDA native sampler'],
+          ['', window.t('None')],
+          ['minimax_m3_cuda', window.t('CUDA native sampler')],
         ].map(([v, label]) => `<option value="${v}"${_envPresetVal === v ? ' selected' : ''}>${label}</option>`).join('');
-        panelHtml += `<label class="hwfit-backend-vllm" style="grid-column:1 / 2;">${_l('Env Preset','Adds known-good environment variables without typing them. CUDA native sampler adds VLLM_TARGET_DEVICE=cuda and disables FlashInfer sampler JIT; useful when system nvcc cannot compile the sampler for the GPU architecture.')}<select class="hwfit-sf" data-field="vllm_env_preset" style="height:32px;">${_envPresetOpts}</select></label>`;
+        panelHtml += `<label class="hwfit-backend-vllm" style="grid-column:1 / 2;">${_l(window.t('Env Preset'), window.t('Adds known-good environment variables without typing them. CUDA native sampler adds VLLM_TARGET_DEVICE=cuda and disables FlashInfer sampler JIT; useful when system nvcc cannot compile the sampler for the GPU architecture.'))}<select class="hwfit-sf" data-field="vllm_env_preset" style="height:32px;">${_envPresetOpts}</select></label>`;
       }
       // Free-text env-vars field. Anything pasted here is prepended to the
       // launch command verbatim. Use for CUDACXX, PATH overrides, NCCL_*
