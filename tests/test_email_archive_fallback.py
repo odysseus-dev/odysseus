@@ -179,6 +179,60 @@ async def test_create_archive_folder_route_returns_updated_folders(monkeypatch):
     assert result["folders"] == ["INBOX", "Archive"]
 
 
+@pytest.mark.asyncio
+async def test_create_archive_folder_invalidates_stale_folder_cache(monkeypatch):
+    import routes.email_routes as email_routes
+
+    conn = FakeArchiveConn()
+
+    @contextmanager
+    def fake_imap(account_id=None, owner=""):
+        yield conn
+
+    monkeypatch.setattr(email_routes, "_imap", fake_imap)
+    router = email_routes.setup_email_routes()
+    list_folders = _route_endpoint(router, "/api/email/folders", "GET")
+    create_archive_folder = _route_endpoint(router, "/api/email/archive-folder", "POST")
+
+    before = await list_folders(account_id="acct-alice", owner="alice")
+    assert before["folders"] == ["INBOX"]
+
+    result = await create_archive_folder({"name": "Archive"}, account_id="acct-alice", owner="alice")
+    assert result["success"] is True
+
+    after = await list_folders(account_id="acct-alice", owner="alice")
+    assert after["sync"]["source"] == "imap"
+    assert after["folders"] == ["INBOX", "Archive"]
+
+
+@pytest.mark.asyncio
+async def test_list_folders_refresh_bypasses_stale_folder_cache(monkeypatch):
+    import routes.email_routes as email_routes
+
+    conn = FakeArchiveConn()
+
+    @contextmanager
+    def fake_imap(account_id=None, owner=""):
+        yield conn
+
+    monkeypatch.setattr(email_routes, "_imap", fake_imap)
+    router = email_routes.setup_email_routes()
+    list_folders = _route_endpoint(router, "/api/email/folders", "GET")
+
+    before = await list_folders(account_id="acct-alice", refresh=False, owner="alice")
+    assert before["folders"] == ["INBOX"]
+
+    conn.folders.append('(\\HasNoChildren) "/" "Archive"')
+
+    cached = await list_folders(account_id="acct-alice", refresh=False, owner="alice")
+    assert cached["sync"]["source"] == "folder_cache"
+    assert cached["folders"] == ["INBOX"]
+
+    refreshed = await list_folders(account_id="acct-alice", refresh=True, owner="alice")
+    assert refreshed["sync"]["source"] == "imap"
+    assert refreshed["folders"] == ["INBOX", "Archive"]
+
+
 def test_email_library_handles_archive_folder_setup_flow():
     src = Path("static/js/emailLibrary.js").read_text(encoding="utf-8")
 
@@ -191,6 +245,9 @@ def test_email_library_handles_archive_folder_setup_flow():
     assert "const result = await _archiveEmailWithFallback(em.uid)" in src
     assert "actions.findIndex(a => a.label === 'Move to Archive')" in src
     assert "const isArchiveCurrentFolder = isArchiveFolder(state._libFolder)" in src
+    assert "emailApiUrl('/api/email/folders', { refresh: refresh ? 1 : undefined })" in src
+    assert "_loadFolders({ refresh: true })" in src
+    assert "_loadFolders({ resetMissing: true, refresh: true })" in src
 
 
 def test_sidebar_inbox_archive_uses_fallback_before_local_removal():
