@@ -759,13 +759,6 @@ export function updateModelPicker() {
   // same safe fallback visible in the picker immediately. The send path can
   // already resolve a usable model; the UI should not sit on "Select model"
   // and make it look broken.
-  if (!modelId && !currentSessionId && window.modelsModule && window.modelsModule.getCachedItems) {
-    const fallback = _firstAvailableModel();
-    if (fallback) {
-      _deps.setPendingChat(fallback);
-      modelId = fallback.modelId;
-    }
-  }
 
   // Check if selected model is still available — fall back ONLY for pending chats with no user selection
   // Never override an existing session's model — the user explicitly chose it
@@ -787,6 +780,13 @@ export function updateModelPicker() {
   }
   if (!modelId && !_autoSelectingDefault && window.modelsModule && window.modelsModule.getCachedItems) {
     _ensureDefaultPendingChat();
+  }
+  if (!modelId && !currentSessionId && window.modelsModule && window.modelsModule.getCachedItems) {
+    const fallback = _firstAvailableModel();
+    if (fallback) {
+      _deps.setPendingChat(fallback);
+      modelId = fallback.modelId;
+    }
   }
 
   const displayName = modelId ? modelId.split('/').pop() : 'Select model';
