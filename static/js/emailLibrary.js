@@ -5,7 +5,7 @@
 
 import spinnerModule from './spinner.js';
 import { styledConfirm, showToast, emptyStateIcon } from './ui.js';
-import { folderDisplayName, sortedFolders } from './emailInbox.js';
+import { folderDisplayName, isArchiveFolder, sortedFolders } from './emailInbox.js';
 import settingsModule from './settings.js';
 import * as Modals from './modalManager.js';
 import { topPortalZ } from './toolWindowZOrder.js';
@@ -845,6 +845,10 @@ function _wireEmailSetupHint(root) {
 
 function _acct() {
   return state._libAccountId ? `&account_id=${encodeURIComponent(state._libAccountId)}` : '';
+}
+
+function _acctStart() {
+  return state._libAccountId ? `?account_id=${encodeURIComponent(state._libAccountId)}` : '';
 }
 
 // Per-(account, folder, filter, attachments) cache of the most recent
@@ -2059,6 +2063,71 @@ async function _loadFolders({ resetMissing = false } = {}) {
     sel.appendChild(schedOpt);
     sel.value = state._libFolder;
   } catch (e) {}
+}
+
+let _archiveSetupPromptPromise = null;
+
+async function _ensureArchiveFolderForAccount(suggestedFolder = 'Archive') {
+  if (_archiveSetupPromptPromise) return _archiveSetupPromptPromise;
+  _archiveSetupPromptPromise = (async () => {
+    const folderName = String(suggestedFolder || 'Archive').trim() || 'Archive';
+    const ok = await styledConfirm(
+      `No Archive folder was found for this account. Create one named ${folderName}?`,
+      { confirmText: 'Create Archive', cancelText: 'Cancel' },
+    );
+    if (!ok) return false;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/email/archive-folder${_acctStart()}`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: folderName }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) {
+        showToast(data.error || 'Failed to create Archive folder');
+        return false;
+      }
+      if (Array.isArray(data.folders)) state._libFolders = data.folders;
+      await _loadFolders();
+      showToast(data.created ? 'Created Archive folder' : 'Archive folder is ready');
+      return true;
+    } catch (err) {
+      console.error('Create Archive folder failed:', err);
+      showToast('Failed to create Archive folder');
+      return false;
+    }
+  })();
+  try {
+    return await _archiveSetupPromptPromise;
+  } finally {
+    _archiveSetupPromptPromise = null;
+  }
+}
+
+async function _archiveEmailWithFallback(uid, folder = state._libFolder) {
+  const archiveOnce = async () => {
+    const res = await fetch(`${API_BASE}/api/email/archive/${uid}?folder=${encodeURIComponent(folder)}${_acct()}`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) return { success: false, ...data };
+    return { success: true, ...data };
+  };
+
+  const first = await archiveOnce();
+  if (first.success) return first;
+
+  if (first.needs_archive_folder) {
+    const ready = await _ensureArchiveFolderForAccount(first.suggested_folder || 'Archive');
+    if (!ready) return { success: false, canceled: true };
+    const retry = await archiveOnce();
+    if (retry.success) return retry;
+    showToast(retry.error || 'Failed to archive email');
+    return retry;
+  }
+
+  showToast(first.error || 'Failed to archive email');
+  return first;
 }
 
 function _crossFolderCandidates() {
@@ -6546,9 +6615,9 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       icon: _archIcon,
       action: async () => {
         try {
-          await fetch(`${API_BASE}/api/email/archive/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
+          const result = await _archiveEmailWithFallback(em.uid);
+          if (result.success) await closeAndRemove();
         } catch (e) { console.error(e); }
-        await closeAndRemove();
       },
     },
     {
@@ -6636,6 +6705,10 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       },
     },
   ];
+  if (isArchiveFolder(state._libFolder)) {
+    const archiveIdx = actions.findIndex(a => a.label === 'Move to Archive');
+    if (archiveIdx !== -1) actions.splice(archiveIdx, 1);
+  }
 
   for (const a of actions) {
     if (a.separator) {
@@ -6700,6 +6773,7 @@ function _showCardMenu(em, anchor) {
   const _cardBellIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>';
 
   const isSentFolder = /sent/i.test(state._libFolder);
+  const isArchiveCurrentFolder = isArchiveFolder(state._libFolder);
 
   const _newTabIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
   const actions = [
@@ -6773,17 +6847,20 @@ function _showCardMenu(em, anchor) {
         }
       },
     });
-    actions.push({
-      label: 'Archive',
-      icon: _archIcon,
-      action: async () => {
-        await fetch(`${API_BASE}/api/email/archive/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
-        await _animateEmailCardRemoval([em.uid]);
-        state._libEmails = state._libEmails.filter(e => String(e.uid) !== String(em.uid));
-        _renderGrid();
-        _libCacheWriteBack();
-      },
-    });
+    if (!isArchiveCurrentFolder) {
+      actions.push({
+        label: 'Archive',
+        icon: _archIcon,
+        action: async () => {
+          const result = await _archiveEmailWithFallback(em.uid);
+          if (!result.success) return;
+          await _animateEmailCardRemoval([em.uid]);
+          state._libEmails = state._libEmails.filter(e => String(e.uid) !== String(em.uid));
+          _renderGrid();
+          _libCacheWriteBack();
+        },
+      });
+    }
   } else {
     actions.push({
       label: em.is_flagged ? 'Unfavorite' : 'Favorite (pin to top)',
@@ -6801,17 +6878,20 @@ function _showCardMenu(em, anchor) {
         }
       },
     });
-    actions.push({
-      label: 'Archive',
-      icon: _archIcon,
-      action: async () => {
-        await fetch(`${API_BASE}/api/email/archive/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
-        await _animateEmailCardRemoval([em.uid]);
-        state._libEmails = state._libEmails.filter(e => String(e.uid) !== String(em.uid));
-        _renderGrid();
-        _libCacheWriteBack();
-      },
-    });
+    if (!isArchiveCurrentFolder) {
+      actions.push({
+        label: 'Archive',
+        icon: _archIcon,
+        action: async () => {
+          const result = await _archiveEmailWithFallback(em.uid);
+          if (!result.success) return;
+          await _animateEmailCardRemoval([em.uid]);
+          state._libEmails = state._libEmails.filter(e => String(e.uid) !== String(em.uid));
+          _renderGrid();
+          _libCacheWriteBack();
+        },
+      });
+    }
   }
 
   // "Select" — switch to multi-select mode with THIS email pre-selected so
@@ -6959,6 +7039,8 @@ async function _bulkAction(action) {
   const uids = Array.from(state._selectedUids);
   if (uids.length === 0) return;
   let failedReadSync = 0;
+  let archiveCanceled = false;
+  const successfulArchiveUids = new Set();
   if (action === 'delete') {
     const ok = await styledConfirm(
       `Delete ${uids.length} selected email${uids.length === 1 ? '' : 's'}?`,
@@ -7019,7 +7101,15 @@ async function _bulkAction(action) {
   const handleOne = async (uid) => {
     try {
       if (action === 'archive') {
-        await fetch(`${API_BASE}/api/email/archive/${uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
+        if (archiveCanceled) return;
+        const result = await _archiveEmailWithFallback(uid);
+        if (result.success) {
+          successfulArchiveUids.add(String(uid));
+        } else if (result.canceled) {
+          archiveCanceled = true;
+        } else {
+          throw new Error(result.error || 'Archive failed');
+        }
       } else if (action === 'delete') {
         await fetch(`${API_BASE}/api/email/delete/${uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'DELETE' });
       } else if (action === 'done') {
@@ -7079,10 +7169,13 @@ async function _bulkAction(action) {
       launch();
     });
 
-    if (action === 'archive' || action === 'delete') {
-      if (action === 'delete') {
-        deleteOverlays.forEach(busy => busy.remove?.());
-      }
+    if (action === 'archive') {
+      const archived = uids.filter(uid => successfulArchiveUids.has(String(uid)));
+      if (archived.length > 0) await _animateEmailCardRemoval(archived);
+      const removed = new Set(archived.map(uid => String(uid)));
+      state._libEmails = state._libEmails.filter(e => !removed.has(String(e.uid)));
+    } else if (action === 'delete') {
+      deleteOverlays.forEach(busy => busy.remove?.());
       await _animateEmailCardRemoval(uids);
       const removed = new Set(uids.map(uid => String(uid)));
       state._libEmails = state._libEmails.filter(e => !removed.has(String(e.uid)));
