@@ -6,5 +6,15 @@
 import { registerMessages } from '../i18n.js';
 
 registerMessages('pt-BR', {
-  // entries added by the work unit
+  // --- research/jobs.js: formatPhase / notifications ---
+  'Starting...': 'Iniciando...',
+  'Round {round}/{maxRounds}: ': 'Rodada {round}/{maxRounds}: ',
+  'Round {round}: ': 'Rodada {round}: ',
+  'Probing model...': 'Sondando modelo...',
+  'Planning research strategy...': 'Planejando estratégia de pesquisa...',
+  'Searching ({queries} queries)': 'Buscando ({queries} consultas)',
+  'Reading {n} sources': 'Lendo {n} fontes',
+  'Analyzing {n} findings': 'Analisando {n} achados',
+  'Writing report -- {n} sources': 'Escrevendo relatório -- {n} fontes',
+  'Research Complete': 'Pesquisa concluída',
 });
