@@ -51,23 +51,19 @@ class _Db:
         self.closed = True
 
 
-def _resolver_spy(monkeypatch, utility_result=("", "", {}), default_result=("http://llm", "model", {})):
-    from src import endpoint_resolver
+def _resolver_spy(monkeypatch, candidates=None):
+    from src import task_endpoint
 
     calls = []
-    fallback_calls = []
 
-    def fake_resolve(kind, *args, **kwargs):
-        calls.append((kind, kwargs.get("owner")))
-        return utility_result if kind == "utility" else default_result
+    def fake_candidates(*args, **kwargs):
+        calls.append(kwargs.get("owner"))
+        if candidates is None:
+            return [("http://llm", "model", {})]
+        return list(candidates)
 
-    def fake_fallbacks(*args, **kwargs):
-        fallback_calls.append(kwargs.get("owner"))
-        return []
-
-    monkeypatch.setattr(endpoint_resolver, "resolve_endpoint", fake_resolve)
-    monkeypatch.setattr(endpoint_resolver, "resolve_utility_fallback_candidates", fake_fallbacks)
-    return calls, fallback_calls
+    monkeypatch.setattr(task_endpoint, "resolve_task_candidates", fake_candidates)
+    return calls
 
 
 @pytest.mark.asyncio
@@ -88,7 +84,7 @@ async def test_classify_events_resolves_llm_for_task_owner(monkeypatch):
         location="",
     )
     db = _Db({FakeCalendarEvent: [event]})
-    calls, _fallback_calls = _resolver_spy(monkeypatch, utility_result=("http://llm", "model", {}))
+    calls = _resolver_spy(monkeypatch)
 
     monkeypatch.setattr(database, "CalendarEvent", FakeCalendarEvent)
     monkeypatch.setattr(database, "SessionLocal", lambda: db)
@@ -97,7 +93,7 @@ async def test_classify_events_resolves_llm_for_task_owner(monkeypatch):
 
     assert ok is True
     assert "Scanned 1 upcoming event" in message
-    assert calls == [("utility", "alice")]
+    assert calls == ["alice"]
     assert db.closed is True
 
 
@@ -122,7 +118,7 @@ async def test_learn_sender_signatures_resolves_llm_for_task_owner(monkeypatch):
         def logout(self):
             return None
 
-    calls, _fallback_calls = _resolver_spy(monkeypatch, utility_result=("", "", {}), default_result=("", "", {}))
+    calls = _resolver_spy(monkeypatch, candidates=[])
     imap_owners = []
 
     def fake_imap_connect(_account_id=None, owner=""):
@@ -135,14 +131,14 @@ async def test_learn_sender_signatures_resolves_llm_for_task_owner(monkeypatch):
 
     assert ok is False
     assert message == "No LLM endpoint available"
-    assert calls == [("utility", "alice"), ("default", "alice")]
+    assert calls == ["alice"]
     assert imap_owners == ["alice"]
 
 
 @pytest.mark.asyncio
 async def test_learn_sender_signatures_writes_owner_scoped_cache(monkeypatch, tmp_path):
     from routes import email_helpers
-    from src import endpoint_resolver, llm_core
+    from src import llm_core, task_endpoint
     from src.builtin_actions import action_learn_sender_signatures
 
     db_path = tmp_path / "scheduled_emails.db"
@@ -205,15 +201,15 @@ async def test_learn_sender_signatures_writes_owner_scoped_cache(monkeypatch, tm
 
     monkeypatch.setattr(email_helpers, "_imap_connect", fake_imap_connect)
     monkeypatch.setattr(
-        endpoint_resolver,
-        "resolve_endpoint",
-        lambda kind, *args, **kwargs: ("http://llm", "alice-model", {}),
+        task_endpoint,
+        "resolve_task_candidates",
+        lambda *args, **kwargs: [("http://llm", "alice-model", {})],
     )
 
-    async def fake_llm_call_async(**_kwargs):
+    async def fake_llm_call_async(_candidates, **_kwargs):
         return "Writer Example\nExample Co.\nwriter@example.com"
 
-    monkeypatch.setattr(llm_core, "llm_call_async", fake_llm_call_async)
+    monkeypatch.setattr(llm_core, "llm_call_async_with_fallback", fake_llm_call_async)
 
     message, ok = await action_learn_sender_signatures("alice")
 
@@ -253,7 +249,7 @@ async def test_check_email_urgency_resolves_llm_candidates_for_task_owner(monkey
         from_address = _Column()
 
     db = _Db({FakeEmailAccount: []})
-    calls, fallback_calls = _resolver_spy(monkeypatch, utility_result=("http://llm", "model", {}))
+    calls = _resolver_spy(monkeypatch)
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(database, "EmailAccount", FakeEmailAccount)
@@ -262,6 +258,5 @@ async def test_check_email_urgency_resolves_llm_candidates_for_task_owner(monkey
     with pytest.raises(TaskNoop, match="no email accounts configured"):
         await action_check_email_urgency("alice")
 
-    assert calls == [("utility", "alice")]
-    assert fallback_calls == ["alice"]
+    assert calls == ["alice"]
     assert db.closed is True

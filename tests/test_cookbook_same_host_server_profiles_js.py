@@ -50,14 +50,14 @@ def test_serve_launch_preflights_use_selected_target_and_port():
     assert "if (launchTarget.port) _probeParams.set('ssh_port', launchTarget.port);" in SERVE
     assert "const _portHost = (launchTarget.host || '').trim();" in SERVE
     assert "StrictHostKeyChecking=no ${_sshPrefix(launchTarget.port)}${_portHost}" in SERVE
-    assert "let serveHost = launchTarget.host || '';" in SERVE
+    assert "const serveHost = launchTarget.host || '';" in SERVE
     assert SERVE.index(launch_target) < SERVE.index("const _runningMod = await import('./cookbookRunning.js');")
 
 
 def test_running_tab_resolves_profile_key_not_first_host():
-    assert "_serverByVal(_envState.remoteServerKey || _tHost)" in RUNNING
+    assert "_serverByVal(_targetKey)" in RUNNING
     assert "_serverByVal(_envState.remoteServerKey || _host)" in RUNNING
-    assert "_serverByVal(_envState.remoteServerKey || host)" in RUNNING
+    assert "_serverByVal(savedKey)" in RUNNING
     assert "_serverByVal = shared._serverByVal;" in RUNNING
     assert "_selectedServer = shared._selectedServer;" in RUNNING
 

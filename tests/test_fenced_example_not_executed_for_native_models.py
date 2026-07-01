@@ -178,14 +178,14 @@ def test_issue_3222_repro_guide_only_response_resolves_no_tool_actions(monkeypat
 # ---------------------------------------------------------------------------
 def test_resolve_tool_blocks_skips_textual_fallback_for_native_models_with_no_native_calls():
     guide_only = "```bash\nnpm run plan:articles\n```\n```json\n{\"a\": 1}\n```"
-    blocks, used_native = al._resolve_tool_blocks(guide_only, [], round_num=1, is_api_model=True)
+    blocks, used_native, _ = al._resolve_tool_blocks(guide_only, [], round_num=1, is_api_model=True)
     assert blocks == []
     assert used_native is False
 
 
 def test_resolve_tool_blocks_keeps_textual_fallback_for_non_native_models():
     text = "```bash\necho hi\n```"
-    blocks, used_native = al._resolve_tool_blocks(text, [], round_num=1, is_api_model=False)
+    blocks, used_native, _ = al._resolve_tool_blocks(text, [], round_num=1, is_api_model=False)
     assert len(blocks) == 1
     assert blocks[0].tool_type == "bash"
     assert used_native is False
@@ -193,7 +193,7 @@ def test_resolve_tool_blocks_keeps_textual_fallback_for_non_native_models():
 
 def test_resolve_tool_blocks_native_path_untouched_when_native_calls_present():
     native_calls = [{"name": "bash", "arguments": json.dumps({"command": "echo hi"})}]
-    blocks, used_native = al._resolve_tool_blocks("some prose", native_calls, round_num=1, is_api_model=True)
+    blocks, used_native, _ = al._resolve_tool_blocks("some prose", native_calls, round_num=1, is_api_model=True)
     assert used_native is True
     assert len(blocks) == 1
     assert blocks[0].tool_type == "bash"
@@ -219,6 +219,60 @@ def test_skip_fenced_still_recovers_xml_invoke_markup():
     assert len(blocks) == 1
     assert blocks[0].tool_type == "web_search"
     assert "latest python release" in blocks[0].content
+
+
+def test_stepfun_native_tool_tokens_are_executed_even_when_fenced_fallback_is_skipped():
+    leaked = (
+        "<｜tool▁calls▁begin｜>"
+        "<｜tool▁call▁begin｜>web_search<｜tool▁sep｜>"
+        '{"query":"Sweden news today"}'
+        "<｜tool▁call▁end｜>"
+        "<｜tool▁calls▁end｜>"
+    )
+    blocks = parse_tool_blocks(leaked, skip_fenced=True)
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "web_search"
+    assert "Sweden news today" in blocks[0].content
+    assert strip_tool_blocks(leaked, skip_fenced=True) == ""
+
+
+def test_stepfun_native_tool_tokens_accept_plain_web_query():
+    leaked = (
+        "<｜tool▁call▁begin｜>web_search<｜tool▁sep｜>"
+        "Sweden news today"
+        "<｜tool▁call▁end｜>"
+    )
+    blocks = parse_tool_blocks(leaked, skip_fenced=True)
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "web_search"
+    assert "Sweden news today" in blocks[0].content
+
+
+def test_skip_fenced_still_recovers_direct_xml_tool_markup():
+    leaked = (
+        "I'll search now.\n"
+        "<tool_call><web_search>News in Sweden today 2026-06-22</web_search></tool_call>"
+    )
+    blocks = parse_tool_blocks(leaked, skip_fenced=True)
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "web_search"
+    assert "News in Sweden today 2026-06-22" in blocks[0].content
+    assert strip_tool_blocks(leaked, skip_fenced=True) == "I'll search now."
+
+
+def test_skip_fenced_recovers_direct_xml_tool_markup_with_unclosed_wrapper():
+    leaked = (
+        "I'll search now.\n"
+        "<tool_call>\n"
+        "<web_search>\n"
+        "Sweden news today 2026-06-22\n"
+        "</web_search>"
+    )
+    blocks = parse_tool_blocks(leaked, skip_fenced=True)
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "web_search"
+    assert "Sweden news today 2026-06-22" in blocks[0].content
+    assert strip_tool_blocks(leaked, skip_fenced=True) == "I'll search now."
 
 
 def test_skip_fenced_still_recovers_dsml_markup():
@@ -251,7 +305,7 @@ def test_resolve_tool_blocks_recovers_invoke_markup_for_native_model_with_no_nat
         "I'll search for that now.\n"
         '<invoke name="web_search"><parameter name="query">odysseus changelog</parameter></invoke>'
     )
-    blocks, used_native = al._resolve_tool_blocks(leaked, [], round_num=1, is_api_model=True)
+    blocks, used_native, _ = al._resolve_tool_blocks(leaked, [], round_num=1, is_api_model=True)
     assert used_native is False
     assert len(blocks) == 1
     assert blocks[0].tool_type == "web_search"

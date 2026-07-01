@@ -1,8 +1,13 @@
+import json
+import os
 import re
+import shlex
+import subprocess
 from copy import deepcopy
 
 from fastapi import APIRouter, HTTPException
 
+from core.platform_compat import run_ssh_command
 from routes._validators import validate_remote_host, validate_ssh_port
 
 
@@ -105,6 +110,73 @@ def _apply_manual_hardware(system, manual_mode="", manual_gpu_count="", manual_v
     else:
         system.pop("unified_memory", None)
     return system
+
+
+def _run_model_probe(host: str, ssh_port: str, cmd: str) -> str:
+    try:
+        if host:
+            r = run_ssh_command(
+                host,
+                ssh_port or None,
+                cmd,
+                timeout=15,
+                connect_timeout=5,
+                strict_host_key_checking=False,
+                text=True,
+            )
+        else:
+            r = subprocess.run(["bash", "-lc", cmd], capture_output=True, text=True, timeout=15)
+        if r.returncode == 0:
+            return (r.stdout or "").strip()
+    except Exception:
+        return ""
+    return ""
+
+
+def _inspect_model_path(model_path: str, host: str = "", ssh_port: str = "") -> dict:
+    """Read lightweight metadata from a local or SSH-visible HF model folder."""
+    path = (model_path or "").strip()
+    if not path or path.startswith(("http://", "https://")):
+        return {}
+    if not (path.startswith("/") or path.startswith("~")):
+        return {}
+
+    qpath = shlex.quote(path)
+    qconfig = shlex.quote(os.path.join(path, "config.json"))
+    out = {}
+    exists = _run_model_probe(host, ssh_port, f"test -d {qpath} && printf found || printf missing")
+    if exists != "found":
+        target = host or "local container"
+        out["model_probe_error"] = f"Model path is not visible on {target}: {path}"
+        return out
+    raw_config = _run_model_probe(host, ssh_port, f"test -f {qconfig} && sed -n '1,240p' {qconfig}")
+    if raw_config:
+        try:
+            cfg = json.loads(raw_config)
+        except Exception:
+            cfg = {}
+        for key in ("context_length", "max_position_embeddings", "n_ctx_train", "model_max_length", "max_seq_len"):
+            value = cfg.get(key)
+            if isinstance(value, (int, float)) and value > 0:
+                out["model_ctx_max"] = int(value)
+                break
+    else:
+        out["model_probe_error"] = f"config.json not found in model path: {path}"
+
+    size_cmd = (
+        f"find {qpath} -type f \\( -name '*.safetensors' -o -name '*.bin' -o -name '*.gguf' \\) "
+        "-printf '%s\\n' 2>/dev/null | awk '{s+=$1} END {if (s>0) printf \"%.6f\", s/1073741824}'"
+    )
+    weights = _run_model_probe(host, ssh_port, size_cmd)
+    try:
+        weights_gb = float(weights)
+    except Exception:
+        weights_gb = 0.0
+    if weights_gb > 0:
+        out["model_weights_gb"] = round(weights_gb, 3)
+    elif "model_probe_error" not in out:
+        out["model_probe_error"] = f"No model weight files found in: {path}"
+    return out
 
 
 def setup_hwfit_routes():
@@ -235,7 +307,7 @@ def setup_hwfit_routes():
         return {"system": system, "models": results}
 
     @router.get("/profiles")
-    def get_serve_profiles(model: str = "", host: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, serve_weights_gb: float = 0.0, serve_quant: str = ""):
+    def get_serve_profiles(model: str = "", model_path: str = "", host: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, serve_weights_gb: float = 0.0, serve_quant: str = ""):
         """Compute llama.cpp serve profiles (Quality/Balanced/Speed) for `model`
         against the detected hardware on `host` (or local). Returns concrete
         flags (n_gpu_layers, n_cpu_moe, cache_type, ctx) the serve UI can apply.
@@ -260,8 +332,23 @@ def setup_hwfit_routes():
             # "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct".
             s = (s or "").lower().strip()
             s = s.split("/")[-1]                     # drop org prefix
-            s = re.sub(r"[-_.]?gguf$", "", s)        # drop trailing gguf marker
-            s = re.sub(r"[-_.](q\d[^/]*|iq\d[^/]*|fp8|bf16|f16|awq[^/]*|gptq[^/]*)$", "", s)
+            for suffix in ("-gguf", "_gguf", ".gguf", "gguf"):
+                if s.endswith(suffix):
+                    s = s[: -len(suffix)]
+                    break
+            cut_at = None
+            for idx, ch in enumerate(s):
+                if ch not in "-_." or idx + 1 >= len(s):
+                    continue
+                suffix = s[idx + 1:]
+                if (
+                    suffix in {"fp8", "bf16", "f16"}
+                    or suffix.startswith(("awq", "gptq", "iq"))
+                    or (suffix.startswith("q") and len(suffix) > 1 and suffix[1].isdigit())
+                ):
+                    cut_at = idx
+            if cut_at is not None:
+                s = s[:cut_at]
             return s
 
         m = catalog.get(model)
@@ -272,8 +359,16 @@ def setup_hwfit_routes():
                 if nn and (nn == want or want.endswith(nn) or nn.endswith(want)):
                     m = entry
                     break
+        path_meta = _inspect_model_path(model_path or model, host=host, ssh_port=ssh_port)
         if m is None:
-            return {"system": system, "profiles": [], "error": "model not in catalog"}
+            return {
+                "system": system,
+                "profiles": [],
+                "error": "model not in catalog",
+                "model_ctx_max": int(path_meta.get("model_ctx_max") or 0),
+                "model_weights_gb": float(path_meta.get("model_weights_gb") or 0),
+                "model_probe_error": path_meta.get("model_probe_error") or "",
+            }
         # Surface the model's trained context limit so the serve UI can clamp a
         # user-typed context down to it (asking for ctx > n_ctx_train overflows
         # and, with a quantized KV cache, can crash the GPU).
@@ -283,6 +378,16 @@ def setup_hwfit_routes():
             if isinstance(v, (int, float)) and v > 0:
                 model_ctx_max = int(v)
                 break
+        path_ctx_max = int(path_meta.get("model_ctx_max") or 0)
+        if path_ctx_max > 0:
+            model_ctx_max = max(model_ctx_max, path_ctx_max)
+        model_weights_gb = float(path_meta.get("model_weights_gb") or 0)
+        if model_weights_gb <= 0:
+            for k in ("min_vram_gb", "required_gb", "size_gb", "recommended_ram_gb", "min_ram_gb"):
+                v = m.get(k)
+                if isinstance(v, (int, float)) and v > 0:
+                    model_weights_gb = float(v)
+                    break
         return {
             "system": system,
             "profiles": compute_serve_profiles(
@@ -291,6 +396,8 @@ def setup_hwfit_routes():
                 serve_quant=(serve_quant or None),
             ),
             "model_ctx_max": model_ctx_max,
+            "model_weights_gb": model_weights_gb,
+            "model_probe_error": path_meta.get("model_probe_error") or "",
         }
 
     @router.get("/image-models")
