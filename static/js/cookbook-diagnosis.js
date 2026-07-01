@@ -163,100 +163,100 @@ function _inferBaseRepo(text) {
 export const ERROR_PATTERNS = [
   {
     pattern: /No available memory for the cache blocks|Available KV cache memory:.*-/i,
-    message: 'No GPU memory left for KV cache after loading model.',
+    message: window.t('No GPU memory left for KV cache after loading model.'),
     fixes: [
-      { label: 'Retry with GPU mem 0.95', action: (panel) => _serveAutoRetryReplace(panel, '--gpu-memory-utilization', '0.95') },
-      { label: 'Retry with context 2048', action: (panel) => _serveAutoRetryReplace(panel, '--max-model-len', '2048') },
-      { label: 'Retry with more GPUs (TP=8)', action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '8') },
+      { label: window.t('Retry with GPU mem 0.95'), action: (panel) => _serveAutoRetryReplace(panel, '--gpu-memory-utilization', '0.95') },
+      { label: window.t('Retry with context 2048'), action: (panel) => _serveAutoRetryReplace(panel, '--max-model-len', '2048') },
+      { label: window.t('Retry with more GPUs (TP=8)'), action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '8') },
     ],
   },
   {
     pattern: /warming up sampler|max_num_seqs.*gpu_memory_utilization/i,
-    message: 'OOM during warmup. Lower GPU memory or max sequences.',
+    message: window.t('OOM during warmup. Lower GPU memory or max sequences.'),
     fixes: [
-      { label: 'Retry with GPU mem 0.80', action: (panel) => _serveAutoRetryReplace(panel, '--gpu-memory-utilization', '0.80') },
-      { label: 'Retry with --max-num-seqs 64', action: (panel) => _serveAutoRetry(panel, '--max-num-seqs 64') },
-      { label: 'Retry with --max-num-seqs 32', action: (panel) => _serveAutoRetry(panel, '--max-num-seqs 32') },
+      { label: window.t('Retry with GPU mem 0.80'), action: (panel) => _serveAutoRetryReplace(panel, '--gpu-memory-utilization', '0.80') },
+      { label: window.t('Retry with --max-num-seqs 64'), action: (panel) => _serveAutoRetry(panel, '--max-num-seqs 64') },
+      { label: window.t('Retry with --max-num-seqs 32'), action: (panel) => _serveAutoRetry(panel, '--max-num-seqs 32') },
     ],
   },
   {
     pattern: /CUDA out of memory|torch\.cuda\.OutOfMemoryError|CUDA error: out of memory/i,
-    message: 'GPU ran out of memory. Try more GPUs (higher TP) or lower context.',
+    message: window.t('GPU ran out of memory. Try more GPUs (higher TP) or lower context.'),
     fixes: [
-      { label: 'Retry with TP=2', action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '2') },
-      { label: 'Retry with TP=4', action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '4') },
-      { label: 'Retry with GPU mem 0.80', action: (panel) => _serveAutoRetryReplace(panel, '--gpu-memory-utilization', '0.80') },
-      { label: 'Retry with context 4096', action: (panel) => _serveAutoRetryReplace(panel, '--max-model-len', '4096') },
-      { label: 'Retry with --enforce-eager', action: (panel) => _serveAutoRetry(panel, '--enforce-eager') },
+      { label: window.t('Retry with TP=2'), action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '2') },
+      { label: window.t('Retry with TP=4'), action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '4') },
+      { label: window.t('Retry with GPU mem 0.80'), action: (panel) => _serveAutoRetryReplace(panel, '--gpu-memory-utilization', '0.80') },
+      { label: window.t('Retry with context 4096'), action: (panel) => _serveAutoRetryReplace(panel, '--max-model-len', '4096') },
+      { label: window.t('Retry with --enforce-eager'), action: (panel) => _serveAutoRetry(panel, '--enforce-eager') },
     ],
   },
   {
     pattern: /not divisible by weight quantization|quantization block/i,
-    message: 'FP8 MoE quantization is incompatible with this tensor-parallel split.',
-    suggestion: 'Suggested action: retry with a lower tensor-parallel size, such as TP=4 or TP=2. If it still fails, use a non-FP8/GGUF version of the model.',
+    message: window.t('FP8 MoE quantization is incompatible with this tensor-parallel split.'),
+    suggestion: window.t('Suggested action: retry with a lower tensor-parallel size, such as TP=4 or TP=2. If it still fails, use a non-FP8/GGUF version of the model.'),
     fixes: [
-      { label: 'Retry with TP=4', action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '4') },
-      { label: 'Retry with TP=2', action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '2') },
-      { label: 'Edit serve', action: (panel) => _openServeEditFromDiagnosis(panel) },
+      { label: window.t('Retry with TP=4'), action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '4') },
+      { label: window.t('Retry with TP=2'), action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '2') },
+      { label: window.t('Edit serve'), action: (panel) => _openServeEditFromDiagnosis(panel) },
     ],
   },
   {
     pattern: /There is no module or parameter named ['"]lm_head\.input_scale['"]|lm_head\.input_scale|weight_scale_2/i,
-    message: 'vLLM cannot load this ModelOpt LM-head quantized checkpoint with the current runtime.',
-    suggestion: 'Suggested action: upgrade vLLM through the environment that provides this CLI (package manager, venv, Docker image, or source checkout), or choose a compatible checkpoint.',
+    message: window.t('vLLM cannot load this ModelOpt LM-head quantized checkpoint with the current runtime.'),
+    suggestion: window.t('Suggested action: upgrade vLLM through the environment that provides this CLI (package manager, venv, Docker image, or source checkout), or choose a compatible checkpoint.'),
     fixes: [
-      { label: 'Open Dependencies', action: () => _openCookbookDependencies('vllm') },
+      { label: window.t('Open Dependencies'), action: () => _openCookbookDependencies('vllm') },
       {
-        label: 'Copy upgrade hint',
+        label: window.t('Copy upgrade hint'),
         action: () => _copyText('Upgrade the vLLM environment that provides the selected vllm CLI, or use a compatible checkpoint. Do not assume Odysseus owns PATH/system/source/Docker installs.'),
       },
     ],
   },
   {
     pattern: /not divisib|must be divisible|attention heads.*divisible/i,
-    message: 'Tensor parallel size incompatible with model dimensions.',
+    message: window.t('Tensor parallel size incompatible with model dimensions.'),
     fixes: [
-      { label: 'Retry with TP=1', action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '1') },
-      { label: 'Retry with TP=2', action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '2') },
-      { label: 'Retry with TP=4', action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '4') },
+      { label: window.t('Retry with TP=1'), action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '1') },
+      { label: window.t('Retry with TP=2'), action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '2') },
+      { label: window.t('Retry with TP=4'), action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '4') },
     ],
   },
   {
     pattern: /Too large swap space|swap space.*total CPU memory/i,
-    message: 'Swap space too large for available CPU memory.',
+    message: window.t('Swap space too large for available CPU memory.'),
     fixes: [
-      { label: 'Retry without swap', action: (panel) => _serveAutoRetryRemove(panel, '--swap-space') },
-      { label: 'Retry with swap 1', action: (panel) => _serveAutoRetryReplace(panel, '--swap-space', '1') },
+      { label: window.t('Retry without swap'), action: (panel) => _serveAutoRetryRemove(panel, '--swap-space') },
+      { label: window.t('Retry with swap 1'), action: (panel) => _serveAutoRetryReplace(panel, '--swap-space', '1') },
     ],
   },
   {
     pattern: /swap space|not enough.*memory.*cpu|Cannot allocate memory/i,
-    message: 'Not enough CPU RAM or swap space.',
+    message: window.t('Not enough CPU RAM or swap space.'),
     fixes: [
-      { label: 'Retry without swap', action: (panel) => _serveAutoRetryRemove(panel, '--swap-space') },
-      { label: 'Lower max context to 4096', action: (panel) => _setPanelField(panel, 'ctx', '4096') },
+      { label: window.t('Retry without swap'), action: (panel) => _serveAutoRetryRemove(panel, '--swap-space') },
+      { label: window.t('Lower max context to 4096'), action: (panel) => _setPanelField(panel, 'ctx', '4096') },
     ],
   },
   {
     pattern: /unrecognized arguments:\s*--swap-space/i,
-    message: '--swap-space was removed in newer vLLM versions. Remove it from the command.',
+    message: window.t('--swap-space was removed in newer vLLM versions. Remove it from the command.'),
     fixes: [
-      { label: 'Retry without swap', action: (panel) => _serveAutoRetryRemove(panel, '--swap-space') },
+      { label: window.t('Retry without swap'), action: (panel) => _serveAutoRetryRemove(panel, '--swap-space') },
     ],
   },
   {
     pattern: /Address already in use|bind.*address.*in use/i,
-    message: 'Port is already in use. Another server may be running.',
+    message: window.t('Port is already in use. Another server may be running.'),
     fixes: [
-      { label: 'Kill existing vLLM', action: (panel) => _runQuickCmd(panel, 'pkill -f vllm') },
-      { label: 'Use port 8001', action: (panel) => _setPanelField(panel, 'port', '8001') },
+      { label: window.t('Kill existing vLLM'), action: (panel) => _runQuickCmd(panel, 'pkill -f vllm') },
+      { label: window.t('Use port 8001'), action: (panel) => _setPanelField(panel, 'port', '8001') },
     ],
   },
   {
     pattern: /No CUDA GPUs are available|no GPU.*found|CUDA_VISIBLE_DEVICES.*invalid/i,
-    message: 'No GPUs visible. Check your GPU selection or driver.',
+    message: window.t('No GPUs visible. Check your GPU selection or driver.'),
     fixes: [
-      { label: 'Clear GPU selection (use all)', action: (panel) => {
+      { label: window.t('Clear GPU selection (use all)'), action: (panel) => {
         _setPanelField(panel, 'gpus', '');
         _envState.gpus = '';
         _persistEnvState();
@@ -265,17 +265,17 @@ export const ERROR_PATTERNS = [
   },
   {
     pattern: /403 Forbidden|401 Unauthorized|Access to model.*is restricted|gated repo|not in the authorized list|awaiting a review/i,
-    message: 'Gated model. Your HF token IS being sent — but its account must be granted access first: open the model page, accept the license, and wait for approval (Meta models can take a while).',
+    message: window.t('Gated model. Your HF token IS being sent — but its account must be granted access first: open the model page, accept the license, and wait for approval (Meta models can take a while).'),
     // Extract repo name from error text to build HF link
     _repoPattern: /Access to model\s+(\S+)\s+is restricted|gated repo.*?huggingface\.co\/([^\s/]+\/[^\s/]+)/i,
     fixes: [
-      { label: 'Request access on HF', action: (panel, _text) => {
+      { label: window.t('Request access on HF'), action: (panel, _text) => {
         const m = _text && (_text.match(/Access to model\s+(\S+)\s+is restricted/i) || _text.match(/huggingface\.co\/([^\s/]+\/[^\s/]+)/i));
         const repo = m && (m[1] || m[2]);
         if (repo) window.open('https://huggingface.co/' + repo, '_blank');
         else window.open('https://huggingface.co/settings/gated-repos', '_blank');
       }},
-      { label: 'Check HF Token', action: (panel) => {
+      { label: window.t('Check HF Token'), action: (panel) => {
         const el = panel.querySelector('[data-field="hf_token"]');
         if (el) { el.focus(); el.style.borderColor = 'var(--red)'; }
       }},
@@ -283,9 +283,9 @@ export const ERROR_PATTERNS = [
   },
   {
     pattern: /Weights for this component appear to be missing|load the component before passing/i,
-    message: 'Single-file checkpoint needs a base model for missing components (text encoder, VAE). The base model may be gated — accept the license and set your HF token.',
+    message: window.t('Single-file checkpoint needs a base model for missing components (text encoder, VAE). The base model may be gated — accept the license and set your HF token.'),
     fixes: [
-      { label: 'Request access to base model', action: (panel, _text) => {
+      { label: window.t('Request access to base model'), action: (panel, _text) => {
         // Extract gated repo from error, or infer from model name
         const gated = _text && _text.match(/Access to model\s+(\S+)\s+is restricted/i);
         const base = _text && _text.match(/config=([^\s,)]+)/i);
@@ -294,7 +294,7 @@ export const ERROR_PATTERNS = [
         if (repo) window.open('https://huggingface.co/' + repo, '_blank');
         else if (model && model[1]) window.open('https://huggingface.co/' + model[1].replace(/[.]$/, ''), '_blank');
       }},
-      { label: 'Check HF Token', action: (panel) => {
+      { label: window.t('Check HF Token'), action: (panel) => {
         const el = panel.querySelector('[data-field="hf_token"]');
         if (el) { el.focus(); el.style.borderColor = 'var(--red)'; }
       }},
@@ -302,15 +302,15 @@ export const ERROR_PATTERNS = [
   },
   {
     pattern: /Entry Not Found.*model_index\.json|Could not load model.*Check diffusers/i,
-    message: 'Single-file model — needs base config from a gated repo. Accept the license and set your HF token.',
+    message: window.t('Single-file model — needs base config from a gated repo. Accept the license and set your HF token.'),
     fixes: [
-      { label: 'Request access to base model', action: (panel, _text) => {
+      { label: window.t('Request access to base model'), action: (panel, _text) => {
         const gated = _text && _text.match(/Access to model\s+(\S+)\s+is restricted/i);
         const repo = (gated && gated[1]) || _inferBaseRepo(_text);
         if (repo) window.open('https://huggingface.co/' + repo, '_blank');
         else window.open('https://huggingface.co/settings/gated-repos', '_blank');
       }},
-      { label: 'Check HF Token', action: (panel) => {
+      { label: window.t('Check HF Token'), action: (panel) => {
         const el = panel.querySelector('[data-field="hf_token"]');
         if (el) { el.focus(); el.style.borderColor = 'var(--red)'; }
       }},
@@ -318,9 +318,9 @@ export const ERROR_PATTERNS = [
   },
   {
     pattern: /does not appear to have a file named|not a valid model|No such file or directory.*model/i,
-    message: 'Model path or ID not found.',
+    message: window.t('Model path or ID not found.'),
     fixes: [
-      { label: 'Check model name', action: (panel) => {
+      { label: window.t('Check model name'), action: (panel) => {
         const header = panel.querySelector('.hwfit-panel-model');
         if (header) header.style.color = 'var(--red)';
       }},
@@ -328,27 +328,27 @@ export const ERROR_PATTERNS = [
   },
   {
     pattern: /NCCL error|ncclSystemError|ncclInternalError/i,
-    message: 'Multi-GPU communication (NCCL) failed.',
+    message: window.t('Multi-GPU communication (NCCL) failed.'),
     fixes: [
-      { label: 'Set TP to 1 (single GPU)', action: (panel) => _setPanelField(panel, 'tp', '1') },
-      { label: 'Enable enforce eager', action: (panel) => _setPanelCheckbox(panel, 'enforce_eager', true) },
+      { label: window.t('Set TP to 1 (single GPU)'), action: (panel) => _setPanelField(panel, 'tp', '1') },
+      { label: window.t('Enable enforce eager'), action: (panel) => _setPanelCheckbox(panel, 'enforce_eager', true) },
     ],
   },
   {
     pattern: /KV cache.*too (small|large)|max_model_len.*exceeds|maximum.*context/i,
-    message: 'Context length too large for available GPU memory.',
+    message: window.t('Context length too large for available GPU memory.'),
     fixes: [
-      { label: 'Lower to 8192', action: (panel) => _setPanelField(panel, 'ctx', '8192') },
-      { label: 'Lower to 4096', action: (panel) => _setPanelField(panel, 'ctx', '4096') },
-      { label: 'Lower to 2048', action: (panel) => _setPanelField(panel, 'ctx', '2048') },
+      { label: window.t('Lower to 8192'), action: (panel) => _setPanelField(panel, 'ctx', '8192') },
+      { label: window.t('Lower to 4096'), action: (panel) => _setPanelField(panel, 'ctx', '4096') },
+      { label: window.t('Lower to 2048'), action: (panel) => _setPanelField(panel, 'ctx', '2048') },
     ],
   },
   {
     pattern: /vllm.*command not found|No module named vllm/i,
-    message: 'vLLM is not installed or not in PATH.',
+    message: window.t('vLLM is not installed or not in PATH.'),
     fixes: [
-      { label: 'Open Dependencies', action: () => _openCookbookDependencies('vllm') },
-      { label: 'Check environment is set', action: (panel) => {
+      { label: window.t('Open Dependencies'), action: () => _openCookbookDependencies('vllm') },
+      { label: window.t('Check environment is set'), action: (panel) => {
         const el = panel.querySelector('[data-field="env_type"]');
         if (el) { el.focus(); el.style.borderColor = 'var(--red)'; }
       }},
@@ -356,84 +356,84 @@ export const ERROR_PATTERNS = [
   },
   {
     pattern: /sgl_kernel[\s\S]*(Python\.h|libnuma\.so\.1|common_ops)|(Python\.h|libnuma\.so\.1|common_ops)[\s\S]*sgl_kernel|Please ensure sgl_kernel is properly installed/i,
-    message: 'SGLang native dependencies are missing on this server.',
+    message: window.t('SGLang native dependencies are missing on this server.'),
     fixes: [
-      { label: 'Copy OS package command', action: () => _copyText('sudo apt-get install -y libnuma-dev python3.12-dev build-essential') },
-      { label: 'Copy kernel upgrade', action: () => _copyText('python3 -m pip install --upgrade sglang-kernel') },
-      { label: 'Open Dependencies', action: () => _openCookbookDependencies('sglang') },
+      { label: window.t('Copy OS package command'), action: () => _copyText('sudo apt-get install -y libnuma-dev python3.12-dev build-essential') },
+      { label: window.t('Copy kernel upgrade'), action: () => _copyText('python3 -m pip install --upgrade sglang-kernel') },
+      { label: window.t('Open Dependencies'), action: () => _openCookbookDependencies('sglang') },
     ],
   },
   {
     pattern: /sglang.*command not found|No module named sglang|SGLang is not installed/i,
-    message: 'SGLang is not installed or not in PATH.',
+    message: window.t('SGLang is not installed or not in PATH.'),
     fixes: [
-      { label: 'Open Dependencies', action: () => _openCookbookDependencies('sglang') },
-      { label: 'Copy install command', action: () => _copyText('python3 -m pip install "sglang[all]"') },
+      { label: window.t('Open Dependencies'), action: () => _openCookbookDependencies('sglang') },
+      { label: window.t('Copy install command'), action: () => _copyText('python3 -m pip install "sglang[all]"') },
     ],
   },
   {
     pattern: /No accelerator \(CUDA, XPU, HPU, NPU, MUSA, MPS\) is available|Triton is not supported on current platform/i,
-    message: 'SGLang needs a visible GPU/accelerator on this server.',
-    suggestion: 'Suggested action: switch this serve config to llama.cpp for CPU/local serving, or choose a GPU server.',
+    message: window.t('SGLang needs a visible GPU/accelerator on this server.'),
+    suggestion: window.t('Suggested action: switch this serve config to llama.cpp for CPU/local serving, or choose a GPU server.'),
     fixes: [
-      { label: 'Switch to llama.cpp', action: (panel) => _openCpuServeEdit(panel) },
-      { label: 'Choose GPU server', action: (panel) => _openServeEditFromDiagnosis(panel) },
+      { label: window.t('Switch to llama.cpp'), action: (panel) => _openCpuServeEdit(panel) },
+      { label: window.t('Choose GPU server'), action: (panel) => _openServeEditFromDiagnosis(panel) },
     ],
   },
   {
     pattern: /flashinfer.*version.*does not match|flashinfer-cubin version/i,
-    message: 'FlashInfer version mismatch.',
+    message: window.t('FlashInfer version mismatch.'),
     fixes: [
-      { label: 'Auto-fix: bypass version check', action: (panel) => _serveAutoFix(panel, 'FLASHINFER_DISABLE_VERSION_CHECK=1'), autofix: true },
-      { label: 'Fix properly: pip install matching version', action: () => {} },
+      { label: window.t('Auto-fix: bypass version check'), action: (panel) => _serveAutoFix(panel, 'FLASHINFER_DISABLE_VERSION_CHECK=1'), autofix: true },
+      { label: window.t('Fix properly: pip install matching version'), action: () => {} },
     ],
   },
   {
     pattern: /torch\.cuda\.is_available\(\).*False|No CUDA runtime/i,
-    message: 'vLLM needs a visible CUDA/ROCm GPU.',
-    suggestion: 'Suggested action: switch this serve config to llama.cpp for CPU/local serving, or choose a GPU server.',
+    message: window.t('vLLM needs a visible CUDA/ROCm GPU.'),
+    suggestion: window.t('Suggested action: switch this serve config to llama.cpp for CPU/local serving, or choose a GPU server.'),
     fixes: [
-      { label: 'Switch to llama.cpp', action: (panel) => _openCpuServeEdit(panel) },
-      { label: 'Choose GPU server', action: (panel) => _openServeEditFromDiagnosis(panel) },
+      { label: window.t('Switch to llama.cpp'), action: (panel) => _openCpuServeEdit(panel) },
+      { label: window.t('Choose GPU server'), action: (panel) => _openServeEditFromDiagnosis(panel) },
     ],
   },
   {
     pattern: /Engine core initialization failed/i,
-    message: 'vLLM engine failed to start. Check the error above.',
+    message: window.t('vLLM engine failed to start. Check the error above.'),
     fixes: [
-      { label: 'Retry with --enforce-eager', action: (panel) => _serveAutoRetry(panel, '--enforce-eager'), autofix: true },
-      { label: 'Retry with context 4096', action: (panel) => _serveAutoRetry(panel, '--max-model-len 4096'), autofix: true },
-      { label: 'Lower context to 4096', action: (panel) => _setPanelField(panel, 'ctx', '4096') },
-      { label: 'Lower GPU mem to 0.80', action: (panel) => _setPanelField(panel, 'gpu_mem', '0.80') },
+      { label: window.t('Retry with --enforce-eager'), action: (panel) => _serveAutoRetry(panel, '--enforce-eager'), autofix: true },
+      { label: window.t('Retry with context 4096'), action: (panel) => _serveAutoRetry(panel, '--max-model-len 4096'), autofix: true },
+      { label: window.t('Lower context to 4096'), action: (panel) => _setPanelField(panel, 'ctx', '4096') },
+      { label: window.t('Lower GPU mem to 0.80'), action: (panel) => _setPanelField(panel, 'gpu_mem', '0.80') },
     ],
   },
   {
     pattern: /weight_loader.*unexpected keyword|Unexpected key.*state_dict/i,
-    message: 'Model format incompatible with this vLLM version.',
+    message: window.t('Model format incompatible with this vLLM version.'),
     fixes: [
-      { label: 'Try trust remote code', action: (panel) => _setPanelCheckbox(panel, 'trust_remote', true) },
+      { label: window.t('Try trust remote code'), action: (panel) => _setPanelCheckbox(panel, 'trust_remote', true) },
     ],
   },
   {
     pattern: /enable-auto-tool-choice requires --tool-call-parser/i,
-    message: 'Auto tool choice needs a tool call parser.',
+    message: window.t('Auto tool choice needs a tool call parser.'),
     fixes: [
-      { label: 'Retry with --tool-call-parser hermes', action: (panel) => _serveAutoRetry(panel, '--tool-call-parser hermes'), autofix: true },
+      { label: window.t('Retry with --tool-call-parser hermes'), action: (panel) => _serveAutoRetry(panel, '--tool-call-parser hermes'), autofix: true },
     ],
   },
   {
     pattern: /Please pass.*trust.remote.code=True|contains custom code which must be executed to correctly load/i,
-    message: 'Model requires custom code. Enable --trust-remote-code.',
+    message: window.t('Model requires custom code. Enable --trust-remote-code.'),
     fixes: [
-      { label: 'Retry with --trust-remote-code', action: (panel) => _serveAutoRetry(panel, '--trust-remote-code'), autofix: true },
+      { label: window.t('Retry with --trust-remote-code'), action: (panel) => _serveAutoRetry(panel, '--trust-remote-code'), autofix: true },
     ],
   },
   {
     pattern: /does not recognize this architecture|model type.*but Transformers does not/i,
-    message: 'Model architecture too new for installed vLLM/transformers.',
+    message: window.t('Model architecture too new for installed vLLM/transformers.'),
     fixes: [
-      { label: 'Try --trust-remote-code', action: (panel) => _serveAutoRetry(panel, '--trust-remote-code'), autofix: true },
-      { label: 'Update vLLM on server', action: () => {
+      { label: window.t('Try --trust-remote-code'), action: (panel) => _serveAutoRetry(panel, '--trust-remote-code'), autofix: true },
+      { label: window.t('Update vLLM on server'), action: () => {
         // Use the venv's python3 by absolute path when configured (SSH non-
         // interactive sessions often pick user-site Python over the venv).
         const _vp = (_envState.env === 'venv' && _envState.envPath)
@@ -444,21 +444,21 @@ export const ERROR_PATTERNS = [
   },
   {
     pattern: /Either a revision or a version must be specified|transformers\.integrations\.hub_kernels|kernels\/layer/i,
-    message: 'Transformers/kernels package mismatch.',
+    message: window.t('Transformers/kernels package mismatch.'),
     fixes: [
-      { label: 'Repair kernel package', action: () => {
+      { label: window.t('Repair kernel package'), action: () => {
         const _vp = (_envState.env === 'venv' && _envState.envPath)
           ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
         _launchServeTask('repair-kernels', 'pip-update', `${_vp} -m pip install --user --break-system-packages "kernels<0.15"`);
       }},
-      { label: 'Open Dependencies', action: () => _openCookbookDependencies('sglang') },
+      { label: window.t('Open Dependencies'), action: () => _openCookbookDependencies('sglang') },
     ],
   },
   {
     pattern: /ollama.*command not found/i,
-    message: 'Ollama is not installed on this server. Run: curl -fsSL https://ollama.com/install.sh | sh',
+    message: window.t('Ollama is not installed on this server. Run: curl -fsSL https://ollama.com/install.sh | sh'),
     fixes: [
-      { label: 'Copy install command', action: () => _copyText('curl -fsSL https://ollama.com/install.sh | sh') },
+      { label: window.t('Copy install command'), action: () => _copyText('curl -fsSL https://ollama.com/install.sh | sh') },
     ],
   },
   // System build deps must be checked BEFORE the llama-server catch-all:
@@ -470,70 +470,70 @@ export const ERROR_PATTERNS = [
   // missing OS-package toolchain that pip can't ship.
   {
     pattern: /cmake: command not found|cmake.*not found.*Could not/i,
-    message: 'cmake is required to compile llama.cpp from source, but it is not installed on this server.',
-    suggestion: 'Suggested action: install cmake via the OS package manager — apt: cmake build-essential / pacman: cmake base-devel / dnf: cmake gcc-c++ make / brew: cmake. Cookbook can do this automatically on the next launch if your user has passwordless sudo for apt/pacman/dnf.',
+    message: window.t('cmake is required to compile llama.cpp from source, but it is not installed on this server.'),
+    suggestion: window.t('Suggested action: install cmake via the OS package manager — apt: cmake build-essential / pacman: cmake base-devel / dnf: cmake gcc-c++ make / brew: cmake. Cookbook can do this automatically on the next launch if your user has passwordless sudo for apt/pacman/dnf.'),
     fixes: [
-      { label: 'Open Dependencies', action: () => _openCookbookDependencies('llama_cpp') },
-      { label: 'Copy apt install', action: () => _copyText('sudo apt install -y cmake build-essential git') },
-      { label: 'Copy pacman install', action: () => _copyText('sudo pacman -Sy --needed cmake base-devel git') },
-      { label: 'Copy dnf install', action: () => _copyText('sudo dnf install -y cmake gcc gcc-c++ make git') },
+      { label: window.t('Open Dependencies'), action: () => _openCookbookDependencies('llama_cpp') },
+      { label: window.t('Copy apt install'), action: () => _copyText('sudo apt install -y cmake build-essential git') },
+      { label: window.t('Copy pacman install'), action: () => _copyText('sudo pacman -Sy --needed cmake base-devel git') },
+      { label: window.t('Copy dnf install'), action: () => _copyText('sudo dnf install -y cmake gcc gcc-c++ make git') },
     ],
   },
   {
     pattern: /^(make|g\+\+|gcc): command not found|Could not find C\+\+ compiler/i,
-    message: 'A C/C++ compiler (build-essential / base-devel) is required to compile llama.cpp.',
+    message: window.t('A C/C++ compiler (build-essential / base-devel) is required to compile llama.cpp.'),
     fixes: [
-      { label: 'Open Dependencies', action: () => _openCookbookDependencies('llama_cpp') },
-      { label: 'Copy apt install', action: () => _copyText('sudo apt install -y build-essential') },
+      { label: window.t('Open Dependencies'), action: () => _openCookbookDependencies('llama_cpp') },
+      { label: window.t('Copy apt install'), action: () => _copyText('sudo apt install -y build-essential') },
     ],
   },
   {
     pattern: /^git: command not found/i,
-    message: 'git is required to clone the llama.cpp source tree.',
+    message: window.t('git is required to clone the llama.cpp source tree.'),
     fixes: [
-      { label: 'Open Dependencies', action: () => _openCookbookDependencies('llama_cpp') },
-      { label: 'Copy apt install', action: () => _copyText('sudo apt install -y git') },
+      { label: window.t('Open Dependencies'), action: () => _openCookbookDependencies('llama_cpp') },
+      { label: window.t('Copy apt install'), action: () => _copyText('sudo apt install -y git') },
     ],
   },
   {
     pattern: /llama-server.*command not found|llama\.cpp.*not found|No module named.*llama_cpp|No module named 'starlette_context'/i,
-    message: 'llama-cpp-python server is not installed. Run: pip install "llama-cpp-python[server]"',
+    message: window.t('llama-cpp-python server is not installed. Run: pip install "llama-cpp-python[server]"'),
     fixes: [
-      { label: 'Open Dependencies', action: () => _openCookbookDependencies('llama_cpp') },
-      { label: 'Copy install command', action: () => _copyText('pip install "llama-cpp-python[server]"') },
+      { label: window.t('Open Dependencies'), action: () => _openCookbookDependencies('llama_cpp') },
+      { label: window.t('Copy install command'), action: () => _copyText('pip install "llama-cpp-python[server]"') },
     ],
   },
   {
     pattern: /Windows Error 0xc000001d|Illegal instruction|0xc000001d/i,
-    message: 'AVX2 Instruction Set Mismatch: the precompiled llama-cpp-python wheel requires CPU features (AVX2/FMA) that your processor or virtual machine lacks.',
-    suggestion: 'Suggested action: switch this serve config to Ollama (highly recommended, has dynamic CPU fallbacks), or choose a remote Linux GPU server.',
+    message: window.t('AVX2 Instruction Set Mismatch: the precompiled llama-cpp-python wheel requires CPU features (AVX2/FMA) that your processor or virtual machine lacks.'),
+    suggestion: window.t('Suggested action: switch this serve config to Ollama (highly recommended, has dynamic CPU fallbacks), or choose a remote Linux GPU server.'),
     fixes: [
-      { label: 'Switch to Ollama', action: (panel) => _openServeEditFromDiagnosis(panel, { backend: 'ollama' }) },
-      { label: 'Choose remote server', action: (panel) => _openServeEditFromDiagnosis(panel) },
+      { label: window.t('Switch to Ollama'), action: (panel) => _openServeEditFromDiagnosis(panel, { backend: 'ollama' }) },
+      { label: window.t('Choose remote server'), action: (panel) => _openServeEditFromDiagnosis(panel) },
     ],
   },
   {
     pattern: /CUDA Toolkit not found|Unable to find cudart library|missing:\s*CUDA_CUDART/i,
-    message: 'llama.cpp found nvcc, but the CUDA runtime library is missing.',
-    suggestion: 'Suggested action: relaunch with the updated runner so llama.cpp builds CPU-only, or install a complete CUDA toolkit/runtime on this server for GPU llama.cpp.',
+    message: window.t('llama.cpp found nvcc, but the CUDA runtime library is missing.'),
+    suggestion: window.t('Suggested action: relaunch with the updated runner so llama.cpp builds CPU-only, or install a complete CUDA toolkit/runtime on this server for GPU llama.cpp.'),
     fixes: [
-      { label: 'Edit serve', action: (panel) => _openServeEditFromDiagnosis(panel) },
-      { label: 'Open Dependencies', action: () => _openCookbookDependencies('llama_cpp') },
+      { label: window.t('Edit serve'), action: (panel) => _openServeEditFromDiagnosis(panel) },
+      { label: window.t('Open Dependencies'), action: () => _openCookbookDependencies('llama_cpp') },
     ],
   },
   {
     pattern: /No module named ['"]?torch|No module named ['"]?diffusers|diffusers.*command not found/i,
-    message: 'Diffusion serving needs PyTorch and diffusers. Install diffusers from Cookbook → Dependencies.',
+    message: window.t('Diffusion serving needs PyTorch and diffusers. Install diffusers from Cookbook → Dependencies.'),
     fixes: [
-      { label: 'Open Dependencies', action: () => _openCookbookDependencies('diffusers') },
-      { label: 'Copy install command', action: () => _copyText('python3 -m pip install "diffusers[torch]"') },
+      { label: window.t('Open Dependencies'), action: () => _openCookbookDependencies('diffusers') },
+      { label: window.t('Copy install command'), action: () => _copyText('python3 -m pip install "diffusers[torch]"') },
     ],
   },
   {
     pattern: /Triton kernels.*Failed to import|cannot import name '\w+' from 'triton_kernels/i,
-    message: 'Triton kernels version mismatch. Non-fatal warning — model will still run, just without optimized MoE kernels.',
+    message: window.t('Triton kernels version mismatch. Non-fatal warning — model will still run, just without optimized MoE kernels.'),
     fixes: [
-      { label: 'Update triton on server', action: () => {
+      { label: window.t('Update triton on server'), action: () => {
         const _vp = (_envState.env === 'venv' && _envState.envPath)
           ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
         _launchServeTask('update-triton', 'pip-update', `${_vp} -m pip install -U triton triton-kernels`);
@@ -542,23 +542,23 @@ export const ERROR_PATTERNS = [
   },
   {
     pattern: /No space left on device|Disk quota exceeded|ENOSPC/i,
-    message: 'Disk full on the server. Free up space before retrying.',
+    message: window.t('Disk full on the server. Free up space before retrying.'),
     fixes: [
-      { label: 'Check HF cache size', action: (panel) => _runQuickCmd(panel, 'du -sh ~/.cache/huggingface 2>/dev/null') },
+      { label: window.t('Check HF cache size'), action: (panel) => _runQuickCmd(panel, 'du -sh ~/.cache/huggingface 2>/dev/null') },
     ],
   },
   {
     pattern: /Connection refused|Could not connect|Connection reset by peer/i,
-    message: 'Network connection failed. Server may be unreachable or HuggingFace is down.',
+    message: window.t('Network connection failed. Server may be unreachable or HuggingFace is down.'),
     fixes: [
-      { label: 'Test HF connectivity', action: (panel) => _runQuickCmd(panel, 'curl -sI https://huggingface.co 2>&1 | head -3') },
+      { label: window.t('Test HF connectivity'), action: (panel) => _runQuickCmd(panel, 'curl -sI https://huggingface.co 2>&1 | head -3') },
     ],
   },
   {
     pattern: /attention_sink|sliding.window.*not supported|sliding_window.*incompatible/i,
-    message: 'Model uses attention features unsupported in this vLLM version.',
+    message: window.t('Model uses attention features unsupported in this vLLM version.'),
     fixes: [
-      { label: 'Update vLLM on server', action: () => {
+      { label: window.t('Update vLLM on server'), action: () => {
         const _vp = (_envState.env === 'venv' && _envState.envPath)
           ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
         _launchServeTask('update-vllm', 'pip-update', `${_vp} -m pip install -U vllm`);
@@ -573,11 +573,11 @@ export const ERROR_PATTERNS = [
     // non-flashinfer attention backend, or set CUDACXX to a newer nvcc
     // (vLLM installs nvidia-cuda-nvcc into the venv — point at that).
     pattern: /nvcc fatal\s+:\s+Unsupported gpu architecture 'compute_\d+'/i,
-    message: 'FlashInfer is JIT-compiling sampling kernels with an nvcc too old for this GPU (no sm_89 / sm_90 support — pre-CUDA 11.8). Changing the attention backend does not help — flashinfer JITs the SAMPLER too. The clean fix is to set VLLM_USE_FLASHINFER_SAMPLER=0 so vLLM uses its native sampler instead.',
-    suggestion: 'Suggested action: relaunch with VLLM_USE_FLASHINFER_SAMPLER=0 prepended. (Confirmed on the QuantTrio/Qwen3.5 model card as the canonical workaround.)',
+    message: window.t('FlashInfer is JIT-compiling sampling kernels with an nvcc too old for this GPU (no sm_89 / sm_90 support — pre-CUDA 11.8). Changing the attention backend does not help — flashinfer JITs the SAMPLER too. The clean fix is to set VLLM_USE_FLASHINFER_SAMPLER=0 so vLLM uses its native sampler instead.'),
+    suggestion: window.t('Suggested action: relaunch with VLLM_USE_FLASHINFER_SAMPLER=0 prepended. (Confirmed on the QuantTrio/Qwen3.5 model card as the canonical workaround.)'),
     fixes: [
-      { label: 'Retry with VLLM_USE_FLASHINFER_SAMPLER=0', action: (panel) => _serveAutoRetryReplace(panel, '', 'VLLM_USE_FLASHINFER_SAMPLER=0 ', { prepend: true }) },
-      { label: 'Uninstall flashinfer-python', action: () => {
+      { label: window.t('Retry with VLLM_USE_FLASHINFER_SAMPLER=0'), action: (panel) => _serveAutoRetryReplace(panel, '', 'VLLM_USE_FLASHINFER_SAMPLER=0 ', { prepend: true }) },
+      { label: window.t('Uninstall flashinfer-python'), action: () => {
         // Hard fallback: vLLM 0.22 reaches into flashinfer for sampling kernels
         // even with VLLM_USE_FLASHINFER_SAMPLER=0 in some configs. Removing
         // the package forces it onto the native sampler.
@@ -585,7 +585,7 @@ export const ERROR_PATTERNS = [
           ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
         _launchServeTask('uninstall-flashinfer', 'pip-update', `${_vp} -m pip uninstall flashinfer-python -y`);
       }},
-      { label: 'Edit serve', action: (panel) => _openServeEditFromDiagnosis(panel) },
+      { label: window.t('Edit serve'), action: (panel) => _openServeEditFromDiagnosis(panel) },
     ],
   },
   {
@@ -595,16 +595,16 @@ export const ERROR_PATTERNS = [
     // any server code runs. Fix is to reinstall vllm (which pulls a matching
     // torch) or upgrade torch directly.
     pattern: /ImportError: cannot import name '[^']+' from 'torch(\.\w+)+'/i,
-    message: 'vLLM was built against a newer torch than what is installed. Reinstall vLLM so pip pulls a compatible torch (or upgrade torch directly).',
+    message: window.t('vLLM was built against a newer torch than what is installed. Reinstall vLLM so pip pulls a compatible torch (or upgrade torch directly).'),
     fixes: [
-      { label: 'Reinstall vLLM (pulls matching torch)', action: () => {
+      { label: window.t('Reinstall vLLM (pulls matching torch)'), action: () => {
         // Absolute path to the venv's python3 — bare `python3` lands in the
         // wrong site-packages over SSH when ~/.local/bin precedes the venv.
         const _vp = (_envState.env === 'venv' && _envState.envPath)
           ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
         _launchServeTask('reinstall-vllm', 'pip-reinstall', `${_vp} -m pip install --force-reinstall vllm`);
       }},
-      { label: 'Upgrade torch only', action: () => {
+      { label: window.t('Upgrade torch only'), action: () => {
         const _vp = (_envState.env === 'venv' && _envState.envPath)
           ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
         _launchServeTask('upgrade-torch', 'pip-update', `${_vp} -m pip install -U torch`);
@@ -623,8 +623,8 @@ export const ERROR_PATTERNS = [
       if (/Application startup complete|"(?:GET|POST)\s+\/v1\/[^"]+ HTTP\/[\d.]+"\s*2\d\d|Uvicorn running on|server is listening on https?:\/\//i.test(TAIL)) return false;
       return /Failed to build\b|subprocess-exited-with-error|Could not build wheels|metadata-generation-failed/i.test(TAIL);
     },
-    message: 'A dependency failed to build during install — usually an older package whose build breaks on this Python version, not a server problem. The install did not finish.',
-    suggestion: 'Suggested action: check the captured output for the package that failed to build; it may need a newer release or a patch to install on this Python version.',
+    message: window.t('A dependency failed to build during install — usually an older package whose build breaks on this Python version, not a server problem. The install did not finish.'),
+    suggestion: window.t('Suggested action: check the captured output for the package that failed to build; it may need a newer release or a patch to install on this Python version.'),
     fixes: [],
   },
   {
@@ -638,9 +638,9 @@ export const ERROR_PATTERNS = [
       if (/Application startup complete|"GET \/v1\/[^"]+ HTTP\/[\d.]+" 2\d\d|Uvicorn running on/i.test(TAIL)) return false;
       return /vllm/i.test(TAIL);
     },
-    message: 'A vLLM process hit a Python traceback and may be wedged.',
+    message: window.t('A vLLM process hit a Python traceback and may be wedged.'),
     fixes: [
-      { label: 'Kill vLLM processes', action: (panel) => _runQuickCmd(panel, 'pkill -f vllm') },
+      { label: window.t('Kill vLLM processes'), action: (panel) => _runQuickCmd(panel, 'pkill -f vllm') },
     ],
   },
   {
@@ -652,8 +652,8 @@ export const ERROR_PATTERNS = [
       if (/Application startup complete|"GET \/v1\/[^"]+ HTTP\/[\d.]+" 2\d\d|Uvicorn running on/i.test(TAIL)) return false;
       return true;
     },
-    message: 'Python traceback detected — check the captured output below for the underlying error.',
-    suggestion: 'Suggested action: read the captured output for the failing step; copy the troubleshooting bundle if you need help.',
+    message: window.t('Python traceback detected — check the captured output below for the underlying error.'),
+    suggestion: window.t('Suggested action: read the captured output for the failing step; copy the troubleshooting bundle if you need help.'),
     fixes: [],
   },
 ];
@@ -672,15 +672,15 @@ function _diagnosisCopyBundle(task, diagnosis, sourceText, suggestionText) {
     lines.push(
       '',
       '### Task',
-      `- ID: ${task.sessionId || task.id || 'unknown'}`,
-      `- Type: ${task.type || 'unknown'}`,
-      `- Status: ${task.status || 'unknown'}`,
-      `- Model: ${task.payload?.repo_id || task.name || 'unknown'}`,
-      `- Host: ${task.remoteHost || 'local'}${task.sshPort ? `:${task.sshPort}` : ''}`,
+      `- ID: ${task.sessionId || task.id || window.t('unknown')}`,
+      `- Type: ${task.type || window.t('unknown')}`,
+      `- Status: ${task.status || window.t('unknown')}`,
+      `- Model: ${task.payload?.repo_id || task.name || window.t('unknown')}`,
+      `- Host: ${task.remoteHost || window.t('local')}${task.sshPort ? `:${task.sshPort}` : ''}`,
     );
   }
-  lines.push('', '### Diagnosis', diagnosis?.message || '(none)');
-  if (suggestionText) lines.push('', '### Suggested action', suggestionText.replace(/^Suggested action:\s*/i, ''));
+  lines.push('', '### Diagnosis', diagnosis?.message || window.t('(none)'));
+  if (suggestionText) lines.push('', '### Suggested action', suggestionText.replace(/^(Suggested action|Ação sugerida):\s*/i, ''));
   const cmd = task?.payload?._cmd || '';
   if (cmd) lines.push('', '### Launch command', '```bash', cmd, '```');
   if (sourceText) lines.push('', '### Captured output', '```text', String(sourceText).trim(), '```');
@@ -706,12 +706,12 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
   const taskEl = panel?.closest?.('.cookbook-task');
   const task = taskEl ? _loadTasks().find(t => t.sessionId === taskEl.dataset.taskId) : null;
   const fixes = [...(diagnosis.fixes || [])];
-  if (task?.type === 'serve' && task.payload?._cmd && !fixes.some(f => f.label === 'Edit serve')) {
-    fixes.push({ label: 'Edit serve', action: (p) => _openServeEditFromDiagnosis(p) });
+  if (task?.type === 'serve' && task.payload?._cmd && !fixes.some(f => f.label === window.t('Edit serve'))) {
+    fixes.push({ label: window.t('Edit serve'), action: (p) => _openServeEditFromDiagnosis(p) });
   }
   const suggestionText = diagnosis.suggestion || (fixes.length
-    ? `Suggested action: ${fixes[0].label}.`
-    : 'Suggested action: copy the error and adjust the serve settings.');
+    ? window.t('Suggested action: {label}.', { label: fixes[0].label })
+    : window.t('Suggested action: copy the error and adjust the serve settings.'));
 
   panel._diagCollapsed = false;
 
@@ -742,8 +742,8 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
   const copyBtn = document.createElement('button');
   copyBtn.type = 'button';
   copyBtn.className = 'cookbook-diag-copy';
-  copyBtn.title = 'Copy diagnosis details';
-  copyBtn.setAttribute('aria-label', 'Copy diagnosis');
+  copyBtn.title = window.t('Copy diagnosis details');
+  copyBtn.setAttribute('aria-label', window.t('Copy diagnosis'));
   copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
   copyBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
@@ -762,8 +762,8 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
   const dismissBtn = document.createElement('button');
   dismissBtn.type = 'button';
   dismissBtn.className = 'cookbook-diag-dismiss';
-  dismissBtn.title = 'Dismiss diagnosis';
-  dismissBtn.setAttribute('aria-label', 'Dismiss');
+  dismissBtn.title = window.t('Dismiss diagnosis');
+  dismissBtn.setAttribute('aria-label', window.t('Dismiss'));
   dismissBtn.textContent = '×';
   dismissBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -839,7 +839,7 @@ export async function _runQuickCmd(panel, cmd) {
     fullCmd = _sshCmd(_envState.remoteHost, cmd);
   }
   const diag = panel.querySelector('.cookbook-diagnosis');
-  if (diag) { diag.classList.remove('hidden'); diag.textContent = `Running: ${fullCmd}...`; }
+  if (diag) { diag.classList.remove('hidden'); diag.textContent = window.t('Running: {cmd}...', { cmd: fullCmd }); }
 
   try {
     const res = await fetch('/api/shell/stream', {
@@ -848,8 +848,8 @@ export async function _runQuickCmd(panel, cmd) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ command: fullCmd }),
     });
-    if (diag) diag.textContent = res.ok ? `Done: ${cmd}` : `Failed (HTTP ${res.status})`;
+    if (diag) diag.textContent = res.ok ? window.t('Done: {cmd}', { cmd }) : window.t('Failed (HTTP {status})', { status: res.status });
   } catch (e) {
-    if (diag) diag.textContent = `Error: ${e.message}`;
+    if (diag) diag.textContent = window.t('Error: {msg}', { msg: e.message });
   }
 }

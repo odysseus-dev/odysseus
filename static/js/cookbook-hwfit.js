@@ -61,9 +61,9 @@ async function _ensureBackendInstalled(runBackend, host, port, envPath, modelNam
     // surface a clearer error anyway.
     return true;
   }
-  const targetLabel = host || 'this server';
+  const targetLabel = host || window.t('this server');
   uiModule.showToast(
-    `${pkgName} not installed on ${targetLabel}. Opening Dependencies — pick your model and click Run.`,
+    window.t('{pkg} not installed on {target}. Opening Dependencies — pick your model and click Run.', { pkg: pkgName, target: targetLabel }),
     6000
   );
   openCookbookDependencies(pkgName, { expandRecipe: pkgName, model: modelName });
@@ -189,7 +189,7 @@ export function _renderGpuToggles(system) {
 
   let html = '';
   if (heterogeneous) {
-    html += `<select class="hwfit-gpu-group" id="hwfit-gpu-group" title="Which GPU pool to serve from — vLLM can only tensor-parallel across identical GPUs">`;
+    html += `<select class="hwfit-gpu-group" id="hwfit-gpu-group" title="${esc(window.t('Which GPU pool to serve from — vLLM can only tensor-parallel across identical GPUs'))}">`;
     groups.forEach((g, i) => {
       const lbl = `${g.count}× ${_shortGpuName(g.name)} (${Math.round(g.vram_total)} GB)`;
       html += `<option value="${i}"${i === container._activeGroup ? ' selected' : ''}>${esc(lbl)}</option>`;
@@ -214,7 +214,7 @@ export function _renderGpuToggles(system) {
       container._activeCount = maxGpu;
     }
   }
-  html += '<button class="hwfit-gpu-btn" data-count="0" title="CPU / RAM only">RAM</button>';
+  html += `<button class="hwfit-gpu-btn" data-count="0" title="${esc(window.t('CPU / RAM only'))}">RAM</button>`;
   const hasExplicitCount = typeof container._activeCount === 'number';
   for (const n of validCounts) {
     const text = n === 1 ? 'GPU' : n + ' GPU';
@@ -367,9 +367,9 @@ function _manualHwLabel(s) {
   // phrased as plain "X GB" instead of additive "+X GB" so the user
   // sees the simulated TOTAL, not an addition.
   const ram = s.ramGb ? ` · ${s.ramGb} GB RAM` : '';
-  if (s.mode === 'ram') return `Manual: ${s.ramGb || 0} GB RAM only`;
+  if (s.mode === 'ram') return window.t('Manual: {gb} GB RAM only', { gb: s.ramGb || 0 });
   const gpus = `${s.gpuCount || 1} GPU${Number(s.gpuCount || 1) === 1 ? '' : 's'}`;
-  return `Manual: ${gpus} · ${s.vramGb || 8} GB VRAM each${ram}`;
+  return window.t('Manual: {gpus} · {gb} GB VRAM each{ram}', { gpus, gb: s.vramGb || 8, ram });
 }
 
 function _manualDisplaySystem(sys, manual) {
@@ -397,7 +397,7 @@ function _manualDisplaySystem(sys, manual) {
     const count = Number(manual.gpuCount || 1);
     const vram = Number(manual.vramGb || 8);
     const backend = (manual.backend || 'cuda').toUpperCase();
-    base.gpu_name = `Simulated ${backend} GPU` + (count > 1 ? ` × ${count}` : '');
+    base.gpu_name = window.t('Simulated {backend} GPU', { backend }) + (count > 1 ? ` × ${count}` : '');
     base.gpu_vram_gb = Math.round(vram * count * 10) / 10;
     base.gpu_count = count;
     base.backend = manual.backend || 'cuda';
@@ -454,14 +454,14 @@ function _writeScanCache(sig, data) {
 // instead of dumping a raw one-line message.
 function _hwfitShowError(list, host, detail) {
   if (!list) return;
-  const where = host ? esc(host) : 'this machine';
+  const where = host || window.t('this machine');
   const div = document.createElement('div');
   div.className = 'hwfit-loading';
   div.style.cssText = 'flex-direction:column;gap:8px;text-align:center;';
   div.innerHTML =
-    `<div style="color:var(--red);font-weight:600;">Couldn't scan ${where}</div>`
+    `<div style="color:var(--red);font-weight:600;">${esc(window.t("Couldn't scan {where}", { where }))}</div>`
     + (detail ? `<div style="opacity:0.6;font-size:11px;max-width:340px;line-height:1.4;">${esc(detail)}</div>` : '')
-    + `<button type="button" class="hwfit-gpu-btn" id="hwfit-retry" style="margin-top:2px;height:26px;">↻ Retry</button>`;
+    + `<button type="button" class="hwfit-gpu-btn" id="hwfit-retry" style="margin-top:2px;height:26px;">↻ ${esc(window.t('Retry'))}</button>`;
   list.innerHTML = '';
   list.appendChild(div);
   const rb = div.querySelector('#hwfit-retry');
@@ -597,10 +597,10 @@ export async function _hwfitFetch(fresh = false) {
     // Text label like the other cookbook tabs: "Loading…", then if the scan runs
     // long (remote SSH hardware probe), switch to "Scanning hardware…".
     const loadingLbl = document.createElement('div');
-    loadingLbl.textContent = 'Loading…';
+    loadingLbl.textContent = window.t('Loading…');
     loadingLbl.style.cssText = 'text-align:center;opacity:0.5;font-size:11px;';
     loadingDiv.appendChild(loadingLbl);
-    setTimeout(() => { if (loadingLbl.isConnected) loadingLbl.textContent = 'Scanning hardware…'; }, 2000);
+    setTimeout(() => { if (loadingLbl.isConnected) loadingLbl.textContent = window.t('Scanning hardware…'); }, 2000);
     list.innerHTML = '';
     list.appendChild(loadingDiv);
     _hwfitCache = null;   // no instant paint — clear until the fetch returns
@@ -629,7 +629,7 @@ export async function _hwfitFetch(fresh = false) {
           if (_cachedModelIds.has(name) || [..._cachedModelIds].some(id => id.endsWith('/' + name?.split('/').pop()))) {
             const nameEl = row.querySelector('.hwfit-name');
             if (nameEl && !nameEl.querySelector('.hwfit-dl-dot')) {
-              nameEl.insertAdjacentHTML('beforeend', '<span class="hwfit-dl-dot" title="Downloaded">\u25CF</span>');
+              nameEl.insertAdjacentHTML('beforeend', `<span class="hwfit-dl-dot" title="${esc(window.t('Downloaded'))}">\u25CF</span>`);
             }
           }
         });
@@ -845,12 +845,12 @@ function _renderHwVisibilityWarning(sys) {
   }
 
   box.innerHTML = `
-    <div class="hwfit-hw-visibility-warning-title">${esc(warning.title || 'Hardware visibility note')}</div>
+    <div class="hwfit-hw-visibility-warning-title">${esc(warning.title || window.t('Hardware visibility note'))}</div>
     <div class="hwfit-hw-visibility-warning-body">${esc(warning.message || '')}</div>
     <div class="hwfit-hw-visibility-warning-actions">
-      <button type="button" class="hwfit-gpu-btn" data-hw-action="manual">Edit manual hardware</button>
-      <button type="button" class="hwfit-gpu-btn" data-hw-action="rescan">Rescan</button>
-      <button type="button" class="hwfit-gpu-btn" data-hw-action="copy">Copy diagnostics</button>
+      <button type="button" class="hwfit-gpu-btn" data-hw-action="manual">${esc(window.t('Edit manual hardware'))}</button>
+      <button type="button" class="hwfit-gpu-btn" data-hw-action="rescan">${esc(window.t('Rescan'))}</button>
+      <button type="button" class="hwfit-gpu-btn" data-hw-action="copy">${esc(window.t('Copy diagnostics'))}</button>
     </div>
   `;
 
@@ -872,7 +872,7 @@ function _renderHwVisibilityWarning(sys) {
   box.querySelector('[data-hw-action="copy"]')?.addEventListener('click', () => {
     // Keep diagnostics copy/paste friendly for GitHub issues and Docker support.
     const text = [
-      'Odysseus Cookbook hardware diagnostics',
+      window.t('Odysseus Cookbook hardware diagnostics'),
       `probe_scope=${sys?.probe_scope || ''}`,
       `containerized=${sys?.containerized === true}`,
       `backend=${sys?.backend || ''}`,
@@ -884,7 +884,7 @@ function _renderHwVisibilityWarning(sys) {
       `cpu_cores=${sys?.cpu_cores || ''}`,
       `cpu_name=${sys?.cpu_name || ''}`,
       '',
-      'Useful checks:',
+      window.t('Useful checks:'),
       'docker compose exec odysseus nvidia-smi -L',
       'docker compose exec odysseus cat /proc/meminfo | head',
       'docker compose exec odysseus python -c "from services.hwfit.hardware import detect_system; import json; print(json.dumps(detect_system(fresh=True), indent=2))"',
@@ -909,13 +909,13 @@ export function _hwfitRenderHw(el, sys) {
   // separate × button (fully remove from view + treat as dismissed for
   // ranking). The body's "off" state is just visually dimmed — the
   // chip stays visible so you can flip it back on without re-scanning.
-  const chip = (key, label, title = 'Click to toggle off (X to hide)') => {
+  const chip = (key, label, title = window.t('Click to toggle off (X to hide)')) => {
     if (_removedHwChips.has(key)) return '';
     const dim = _dismissedHwChips.has(key) ? ' hwfit-hw-chip-off' : '';
     return (
       `<span class="hwfit-hw-chip hwfit-hw-chip-row${dim}" data-hw-chip="${esc(key)}">`
       + `<button type="button" class="hwfit-hw-chip-toggle" data-hw-chip="${esc(key)}" title="${esc(title)}">${label}</button>`
-      + `<button type="button" class="hwfit-hw-chip-x" data-hw-chip="${esc(key)}" title="Remove this chip" aria-label="Remove">×</button>`
+      + `<button type="button" class="hwfit-hw-chip-x" data-hw-chip="${esc(key)}" title="${esc(window.t('Remove this chip'))}" aria-label="${esc(window.t('Remove'))}">×</button>`
       + `</span>`
     );
   };
@@ -949,7 +949,7 @@ export function _hwfitRenderHw(el, sys) {
     const gpus = Array.isArray(sys.gpus) ? sys.gpus : [];
     const tip = gpus.length
       ? gpus.map(g => `GPU ${g.index}: ${g.name} · ${(+g.vram_gb).toFixed(1)} GB`).join('\n')
-      : 'Click to toggle off (X to hide)';
+      : window.t('Click to toggle off (X to hide)');
     gpuChip = chip('gpu', label, tip);
   } else if (sys.gpu_error) {
     gpuChip = _removedHwChips.has('gpu')
@@ -958,13 +958,13 @@ export function _hwfitRenderHw(el, sys) {
           const dim = _dismissedHwChips.has('gpu') ? ' hwfit-hw-chip-off' : '';
           return (
             `<span class="hwfit-hw-chip hwfit-hw-chip-row hwfit-hw-chip-error${dim}" data-hw-chip="gpu">`
-            + `<button type="button" class="hwfit-hw-chip-toggle" data-hw-chip="gpu" title="${esc(sys.gpu_error)}">GPU driver error</button>`
-            + `<button type="button" class="hwfit-hw-chip-x" data-hw-chip="gpu" title="Remove this chip" aria-label="Remove">×</button>`
+            + `<button type="button" class="hwfit-hw-chip-toggle" data-hw-chip="gpu" title="${esc(sys.gpu_error)}">${esc(window.t('GPU driver error'))}</button>`
+            + `<button type="button" class="hwfit-hw-chip-x" data-hw-chip="gpu" title="${esc(window.t('Remove this chip'))}" aria-label="${esc(window.t('Remove'))}">×</button>`
             + `</span>`
           );
         })();
   } else {
-    gpuChip = chip('gpu', 'No GPU');
+    gpuChip = chip('gpu', window.t('No GPU'));
   }
   const vram = sys.gpu_vram_gb ? `${sys.gpu_vram_gb.toFixed(1)} GB VRAM` : '';
   const ram = `${sys.available_ram_gb?.toFixed(1) || '?'} / ${sys.total_ram_gb?.toFixed(1) || '?'} GB RAM`;
@@ -972,8 +972,8 @@ export function _hwfitRenderHw(el, sys) {
   const manual = _manualHwState();
   const manualChip = (sys.manual_hardware || manual)
     ? `<span class="hwfit-hw-chip hwfit-hw-chip-row hwfit-hw-chip-manual" data-hw-chip="manual">`
-      + `<button type="button" class="hwfit-hw-chip-toggle" data-hw-chip="manual" title="Using manual hardware">${esc(_manualHwLabel(manual) || 'Manual hardware')}</button>`
-      + `<button type="button" class="hwfit-hw-chip-x" data-hw-chip="manual" title="Clear manual hardware" aria-label="Clear">×</button>`
+      + `<button type="button" class="hwfit-hw-chip-toggle" data-hw-chip="manual" title="${esc(window.t('Using manual hardware'))}">${esc(_manualHwLabel(manual) || window.t('Manual hardware'))}</button>`
+      + `<button type="button" class="hwfit-hw-chip-x" data-hw-chip="manual" title="${esc(window.t('Clear manual hardware'))}" aria-label="${esc(window.t('Clear'))}">×</button>`
       + `</span>`
     : '';
   el.innerHTML = gpuChip
@@ -1112,15 +1112,15 @@ function _modeLabel(model) {
 }
 
 export const _hwfitColumns = [
-  { key: 'fit', label: 'Fit',    cls: 'hwfit-fit' },
-  { key: 'newest', label: 'Model (latest)',  cls: 'hwfit-name' },
-  { key: 'params',label: 'Param', cls: 'hwfit-c-params' },
+  { key: 'fit', get label() { return window.t('Fit'); },    cls: 'hwfit-fit' },
+  { key: 'newest', get label() { return window.t('Model (latest)'); },  cls: 'hwfit-name' },
+  { key: 'params', get label() { return window.t('Param'); }, cls: 'hwfit-c-params' },
   { key: null,    label: 'Quant',  cls: 'hwfit-c-quant' },
   { key: 'vram',  label: 'VRAM',   cls: 'hwfit-c-vram' },
-  { key: 'context',label: 'Ctx',   cls: 'hwfit-c-ctx' },
-  { key: 'speed', label: 'Speed',  cls: 'hwfit-c-speed' },
-  { key: 'score', label: 'Score',  cls: 'hwfit-c-score' },
-  { key: null,    label: 'Mode',   cls: 'hwfit-c-mode' },
+  { key: 'context', get label() { return window.t('Ctx'); },   cls: 'hwfit-c-ctx' },
+  { key: 'speed', get label() { return window.t('Speed'); },  cls: 'hwfit-c-speed' },
+  { key: 'score', get label() { return window.t('Score'); },  cls: 'hwfit-c-score' },
+  { key: null,    get label() { return window.t('Mode'); },   cls: 'hwfit-c-mode' },
 ];
 
 export function _hwfitRenderList(el, models) {
@@ -1136,9 +1136,9 @@ export function _hwfitRenderList(el, models) {
       || document.getElementById('hwfit-quant')?.value
       || document.getElementById('hwfit-engine')?.value);
     let msg;
-    if (hasFilters) msg = 'No models match these filters — try clearing the search, use-case, quant, or engine.';
-    else if (hasHw) msg = 'No models fit — the hardware probe may have under-reported. Try Rescan.';
-    else msg = 'No models fit your hardware';
+    if (hasFilters) msg = window.t('No models match these filters — try clearing the search, use-case, quant, or engine.');
+    else if (hasHw) msg = window.t('No models fit — the hardware probe may have under-reported. Try Rescan.');
+    else msg = window.t('No models fit your hardware');
     el.innerHTML = `<div class="hwfit-loading">${msg}</div>`;
     return;
   }
@@ -1168,16 +1168,16 @@ export function _hwfitRenderList(el, models) {
     let label = col.label;
     if (col.cls === 'hwfit-fit') {
       const _fitOnly = (() => { try { return localStorage.getItem('hwfit_fit_only_v1') === '1'; } catch { return false; } })();
-      label = `<span class="hwfit-fit-dot${_fitOnly ? ' active' : ''}" title="${_fitOnly ? 'Showing only models that fit. Click to also show too-tight rows.' : 'Click to show only models that fit your hardware.'}" data-fit-dot>●</span>${col.label}`;
+      label = `<span class="hwfit-fit-dot${_fitOnly ? ' active' : ''}" title="${esc(_fitOnly ? window.t('Showing only models that fit. Click to also show too-tight rows.') : window.t('Click to show only models that fit your hardware.'))}" data-fit-dot>●</span>${col.label}`;
       // (Budget tag removed — the GPU/RAM/N-GPU suffix next to "Fit" was noise;
       // the toggle row already shows which budget is active.)
     }
     // The Model column's "(newest)" / "(oldest)" suffix flips with the sort
     // direction so the user can see at a glance which way they're sorted.
     if (col.key === 'newest' && col.key === currentSort) {
-      label = isReversed ? 'Model (oldest)' : 'Model (latest)';
+      label = isReversed ? window.t('Model (oldest)') : window.t('Model (latest)');
     } else if (col.key === 'newest') {
-      label = 'Model (latest)';
+      label = window.t('Model (latest)');
     }
     html += `<span class="hwfit-col ${col.cls}${sortable}${active}"${dataAttr}>${label}${arrow}</span>`;
   }
@@ -1213,7 +1213,7 @@ export function _hwfitRenderList(el, models) {
       if (_remaining.length && _remaining.length < _parts.length + 1) {  // at least one part is new
         let _display = _remaining.join('-');
         if (_display.length > 9) _display = _display.slice(0, 9) + '…';
-        _quantSuffix = ` <span class="hwfit-name-quant" title="${esc(_quantTag)} — full storage format">(${esc(_display)})</span>`;
+        _quantSuffix = ` <span class="hwfit-name-quant" title="${esc(window.t('{quant} — full storage format', { quant: _quantTag }))}">(${esc(_display)})</span>`;
       }
     }
     html += `<span class="hwfit-col hwfit-name">${modelLogo(m.name)}${esc(_short)}${_quantSuffix}${moeBadge}${imgBadge}${dlDot}</span>`;
@@ -1227,7 +1227,7 @@ export function _hwfitRenderList(el, models) {
     html += `<span class="hwfit-col hwfit-c-ctx">${m.is_image_gen ? '\u2014' : ctx}</span>`;
     html += `<span class="hwfit-col hwfit-c-speed">${m.is_image_gen ? '\u2014' : tps + ' t/s'}</span>`;
     html += `<span class="hwfit-col hwfit-c-score">${score}</span>`;
-    html += `<span class="hwfit-col hwfit-c-mode" title="${_requiresAcceleratorBackend(m) ? 'Requires vLLM or SGLang with a visible CUDA/ROCm accelerator. llama.cpp and Ollama need GGUF files.' : ''}">${esc(modeLabel)}</span>`;
+    html += `<span class="hwfit-col hwfit-c-mode" title="${_requiresAcceleratorBackend(m) ? esc(window.t('Requires vLLM or SGLang with a visible CUDA/ROCm accelerator. llama.cpp and Ollama need GGUF files.')) : ''}">${esc(modeLabel)}</span>`;
     html += `</div>`;
   }
   el.innerHTML = html;
@@ -1425,13 +1425,13 @@ export function _expandModelRow(row, modelData) {
   html += `<div class="hwfit-panel-header">`;
   html += `<span class="hwfit-panel-model">${esc(modelData.name)}${dlSource.kind ? ` <span style="opacity:0.5;font-size:10px;">(${esc(dlSource.kind)} ${esc(modelData.quant || '')})</span>` : (modelData.quant_repo ? ` <span style="opacity:0.5;font-size:10px;">(${esc(modelData.quant)})</span>` : '')}</span>`;
   html += `<span class="hwfit-panel-badge">${esc(label)}</span>`;
-  html += `<a href="${esc(hfUrl)}" target="_blank" rel="noopener" class="hwfit-panel-hf-link" title="View download source on HuggingFace">HF \u2197</a>`;
+  html += `<a href="${esc(hfUrl)}" target="_blank" rel="noopener" class="hwfit-panel-hf-link" title="${esc(window.t('View download source on HuggingFace'))}">HF \u2197</a>`;
   html += `</div>`;
   html += `<div class="hwfit-panel-actions">`;
-  html += `<button class="cookbook-btn hwfit-dl-btn">Download</button>`;
+  html += `<button class="cookbook-btn hwfit-dl-btn">${esc(window.t('Download'))}</button>`;
   if (!modelData.is_image_gen) {
-    html += `<button class="cookbook-btn cookbook-run-btn hwfit-quickrun-btn" title="Download + launch with smart defaults">Run</button>`;
-    html += `<button class="cookbook-btn hwfit-serve-expand-btn" title="Configure & serve">Configure</button>`;
+    html += `<button class="cookbook-btn cookbook-run-btn hwfit-quickrun-btn" title="${esc(window.t('Download + launch with smart defaults'))}">${esc(window.t('Run'))}</button>`;
+    html += `<button class="cookbook-btn hwfit-serve-expand-btn" title="${esc(window.t('Configure & serve'))}">${esc(window.t('Configure'))}</button>`;
   }
   html += `</div>`;
   if (modelData.is_image_gen) {
@@ -1445,7 +1445,7 @@ export function _expandModelRow(row, modelData) {
     const _backend = (_sys.backend || '').toLowerCase();
     const _hasGpuAccel = !!_sys.has_gpu && (_backend === 'cuda' || _backend === 'rocm');
     if (!_hasGpuAccel) {
-      html += `<div class="hwfit-panel-note">This is a safetensors GPU-serving format. Use vLLM/SGLang with a visible CUDA/ROCm accelerator, or pick a GGUF download for llama.cpp/Ollama.</div>`;
+      html += `<div class="hwfit-panel-note">${esc(window.t('This is a safetensors GPU-serving format. Use vLLM/SGLang with a visible CUDA/ROCm accelerator, or pick a GGUF download for llama.cpp/Ollama.'))}</div>`;
     }
   }
   html += `</div>`;
@@ -1485,7 +1485,7 @@ export function _expandModelRow(row, modelData) {
         || [..._cachedModelIds].some(id => id === modelData.name || id.endsWith('/' + _short))
       );
       if (_cachedModelIds && !_downloaded) {
-        uiModule.showToast('Model not downloaded yet — starting download. Run again to serve once it finishes.');
+        uiModule.showToast(window.t('Model not downloaded yet — starting download. Run again to serve once it finishes.'));
         if (backend === 'ollama') {
           _runPanelCmd(panel, _buildDownloadCmd(modelData, backend), { timeout: 0 });
         } else {
@@ -1513,12 +1513,17 @@ export function _expandModelRow(row, modelData) {
         if (_clashing.length) {
           const _names = _clashing.map(t => t.payload?.repo_id || t.repo || t.name || '?').filter(Boolean);
           const _ok = await window.styledConfirm?.(
-            `${_clashing.length} model${_clashing.length === 1 ? '' : 's'} on port ${_qrPort} (${_names.join(', ')}). Stop it and launch this one?`,
-            { confirmText: 'Stop & launch', cancelText: 'Cancel' }
+            window.t('{count} model{plural} on port {port} ({names}). Stop it and launch this one?', {
+              count: _clashing.length,
+              plural: _clashing.length === 1 ? '' : 's',
+              port: _qrPort,
+              names: _names.join(', '),
+            }),
+            { confirmText: window.t('Stop & launch'), cancelText: window.t('Cancel') }
           );
           if (!_ok) return;
           quickRunBtn.disabled = true;
-          quickRunBtn.textContent = 'Stopping…';
+          quickRunBtn.textContent = window.t('Stopping…');
           for (const t of _clashing) {
             try {
               const _taskEl = document.querySelector(`.cookbook-task[data-task-id="${t.sessionId}"]`);
@@ -1552,11 +1557,11 @@ export function _expandModelRow(row, modelData) {
       if (_qrRunBackend === 'vllm' || _qrRunBackend === 'sglang') {
         const _sys = _hwfitCache?.system || {};
         if (_sys.gpu_error) {
-          uiModule.showError(`Can't launch: GPU driver error — ${_sys.gpu_error}. Reinstall or repair the NVIDIA driver, then re-scan.`);
+          uiModule.showError(window.t("Can't launch: GPU driver error — {error}. Reinstall or repair the NVIDIA driver, then re-scan.", { error: _sys.gpu_error }));
           return;
         }
         if (!_sys.has_gpu || !(_sys.gpu_count > 0)) {
-          uiModule.showError(`Can't launch: no GPU detected by nvidia-smi. ${_qrRunBackend === 'vllm' ? 'vLLM' : 'SGLang'} needs a working CUDA or ROCm device.`);
+          uiModule.showError(window.t("Can't launch: no GPU detected by nvidia-smi. {backend} needs a working CUDA or ROCm device.", { backend: _qrRunBackend === 'vllm' ? 'vLLM' : 'SGLang' }));
           return;
         }
       }
@@ -1595,7 +1600,7 @@ export function _expandModelRow(row, modelData) {
               const _hint = _qrRunBackend === 'vllm'
                 ? 'uv pip install -U vllm --torch-backend auto'
                 : "pip install -U 'sglang[all]'";
-              uiModule.showError(`Can't launch: ${_pkg} isn't installed${_qrHostStr ? ' on ' + _qrHostStr : ''}. Install it first:\n${_hint}`);
+              uiModule.showError(window.t("Can't launch: {pkg} isn't installed{onHost}. Install it first:\n{hint}", { pkg: _pkg, onHost: _qrHostStr ? ' on ' + _qrHostStr : '', hint: _hint }));
               return;
             }
             // Version-floor check. _minBackendVersion returns null when this
@@ -1609,7 +1614,7 @@ export function _expandModelRow(row, modelData) {
               const _hint = _qrRunBackend === 'vllm'
                 ? 'uv pip install -U vllm --torch-backend auto'
                 : "pip install -U 'sglang[all]'";
-              uiModule.showError(`Can't launch: ${modelData.name} needs ${_pkg} ≥ ${_minVer}, but ${_curVer} is installed${_qrHostStr ? ' on ' + _qrHostStr : ''}. Upgrade:\n${_hint}`);
+              uiModule.showError(window.t("Can't launch: {model} needs {pkg} ≥ {minVer}, but {curVer} is installed{onHost}. Upgrade:\n{hint}", { model: modelData.name, pkg: _pkg, minVer: _minVer, curVer: _curVer, onHost: _qrHostStr ? ' on ' + _qrHostStr : '', hint: _hint }));
               return;
             }
           }
@@ -1619,7 +1624,7 @@ export function _expandModelRow(row, modelData) {
       }
 
       quickRunBtn.disabled = true;
-      quickRunBtn.textContent = 'Starting...';
+      quickRunBtn.textContent = window.t('Starting...');
 
       // Smart defaults based on hardware and model
       const system = _hwfitCache?.system || {};
@@ -1708,7 +1713,7 @@ export function _expandModelRow(row, modelData) {
       );
       if (!_ok) {
         quickRunBtn.disabled = false;
-        quickRunBtn.textContent = 'Run';
+        quickRunBtn.textContent = window.t('Run');
         return;
       }
 
@@ -1734,18 +1739,18 @@ export function _expandModelRow(row, modelData) {
           const shortName = modelData.name.split('/').pop();
           _addTask(data.session_id, shortName, 'serve', { _cmd: cmd, model: modelData.name, backend: runBackend, remote_host: host });
           _renderRunningTab();
-          uiModule.showToast(`Launching ${shortName}...`);
+          uiModule.showToast(window.t('Launching {name}...', { name: shortName }));
           // Switch to Running tab
           const runTab = document.querySelector('.cookbook-tab[data-backend="Running"]');
           if (runTab) runTab.click();
         } else {
-          uiModule.showError('Launch failed: ' + (data.error || ''));
+          uiModule.showError(window.t('Launch failed: ') + (data.error || ''));
         }
       } catch (e) {
-        uiModule.showError('Launch failed: ' + e.message);
+        uiModule.showError(window.t('Launch failed: ') + e.message);
       }
       quickRunBtn.disabled = false;
-      quickRunBtn.textContent = 'Run';
+      quickRunBtn.textContent = window.t('Run');
     });
   }
 
@@ -1764,7 +1769,7 @@ export function _expandModelRow(row, modelData) {
         || [..._cachedModelIds].some(id => id === repo || id.endsWith('/' + short))
       );
       if (_cachedModelIds && !downloaded) {
-        uiModule.showToast('Download the model first, then configure from Serve tab');
+        uiModule.showToast(window.t('Download the model first, then configure from Serve tab'));
         return;
       }
       // Downloaded (or cache state unknown) — open the Serve panel, which switches
@@ -1773,7 +1778,7 @@ export function _expandModelRow(row, modelData) {
         const { openServePanelForRepo } = await import('./cookbookServe.js');
         await openServePanelForRepo(repo);
       } catch (e) {
-        uiModule.showToast('Could not open Serve: ' + (e && e.message ? e.message : e));
+        uiModule.showToast(window.t('Could not open Serve: ') + (e && e.message ? e.message : e));
       }
     });
   }
@@ -1879,10 +1884,10 @@ export function _hwfitInit() {
     for (const sel of selectors) {
       if (!sel) continue;
       const currentVal = sel.value;
-      let html = `<option value="local">Local</option>`;
+      let html = `<option value="local">${uiModule.esc(window.t('Local'))}</option>`;
       _envState.servers.forEach((s, i) => {
         if (!s.host) return;
-        const label = s.name || s.host || `Server ${i + 1}`;
+        const label = s.name || s.host || window.t('Server {n}', { n: i + 1 });
         html += `<option value="${i}">${uiModule.esc(label)}</option>`;
       });
       sel.innerHTML = html;
@@ -1948,13 +1953,13 @@ export function _hwfitInit() {
     if (!dot) return;
     if (!host) {
       dot.className = 'cookbook-srv-status';
-      dot.title = 'Enter user@host to test';
+      dot.title = window.t('Enter user@host to test');
       setMsg('');
       return;
     }
     dot.className = 'cookbook-srv-status testing';
-    dot.title = 'Testing SSH…';
-    setMsg('Testing SSH...');
+    dot.title = window.t('Testing SSH…');
+    setMsg(window.t('Testing SSH...'));
     const pf = port && port !== '22' ? `-p ${port} ` : '';
     const cmd = `ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new ${pf}${host} "echo ok"`;
     const t0 = Date.now();
@@ -1969,18 +1974,18 @@ export function _hwfitInit() {
       const out = (data.stdout || '').trim();
       if (data.exit_code === 0 && out.startsWith('ok')) {
         dot.className = 'cookbook-srv-status ok';
-        dot.title = `Reachable · ${ms} ms · use Dependencies to check tmux/HF setup`;
-        setMsg(`Connected · ${ms} ms`, 'var(--green,#50fa7b)');
+        dot.title = window.t('Reachable · {ms} ms · use Dependencies to check tmux/HF setup', { ms });
+        setMsg(window.t('Connected · {ms} ms', { ms }), 'var(--green,#50fa7b)');
       } else {
         dot.className = 'cookbook-srv-status fail';
         const err = (data.stderr || data.stdout || `exit ${data.exit_code}`).toString().trim().slice(0, 240);
-        dot.title = `SSH failed: ${err}`;
-        setMsg(`Failed · ${err}`, 'var(--red,#e06c75)');
+        dot.title = window.t('SSH failed: {err}', { err });
+        setMsg(window.t('Failed · {err}', { err }), 'var(--red,#e06c75)');
       }
     } catch (e) {
       dot.className = 'cookbook-srv-status fail';
-      dot.title = `Test failed: ${e.message || e}`;
-      setMsg(`Failed · ${e.message || e}`, 'var(--red,#e06c75)');
+      dot.title = window.t('Test failed: {err}', { err: e.message || e });
+      setMsg(window.t('Failed · {err}', { err: e.message || e }), 'var(--red,#e06c75)');
     }
   }
 
