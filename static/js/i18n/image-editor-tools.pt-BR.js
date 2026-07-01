@@ -226,4 +226,21 @@ registerMessages('pt-BR', {
   'Apply': 'Aplicar',
   'Type': 'Digite',
   'before W / H to flip.': 'antes de L / A para inverter.',
+
+  // tools/clone.js
+  'Clone source set': 'Fonte de clone definida',
+  'Double-tap first to set a clone source': 'Toque duas vezes primeiro para definir uma fonte de clone',
+  'Alt-click first to set a clone source': 'Alt+clique primeiro para definir uma fonte de clone',
+
+  // tools/transform-session.js
+  'Select an unlocked layer': 'Selecione uma camada desbloqueada',
+  'Rotating…': 'Girando…',
+  'Transform applied': 'Transformacao aplicada',
+
+  // tools/stroke.js
+  'Brush stroke': 'Traco de pincel',
+  'Eraser stroke': 'Traco de borracha',
+  'Erase mask': 'Apagar mascara',
+  'Paint mask': 'Pintar mascara',
+  'Stroke': 'Traco',
 });

@@ -35,10 +35,10 @@ import { canvasCoords } from '../canvas-coords.js';
 const STROKE_TOOLS = new Set(['brush', 'eraser', 'inpaint']);
 
 function strokeLabel(tool) {
-  if (tool === 'brush') return 'Brush stroke';
-  if (tool === 'eraser') return 'Eraser stroke';
-  if (tool === 'inpaint') return state.inpaintEraseStroke ? 'Erase mask' : 'Paint mask';
-  return 'Stroke';
+  if (tool === 'brush') return window.t('Brush stroke');
+  if (tool === 'eraser') return window.t('Eraser stroke');
+  if (tool === 'inpaint') return state.inpaintEraseStroke ? window.t('Erase mask') : window.t('Paint mask');
+  return window.t('Stroke');
 }
 
 export function createStrokeTool({

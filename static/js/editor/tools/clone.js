@@ -50,13 +50,13 @@ export function createCloneTool({ activeLayer, saveState, strokeTo, showToast })
         state.cloneSourceY = coords.y;
         state.cloneSourceLayerId = (layer && layer.id) || state.activeLayerId;
         state.cloneSourceSnapshot = null; // captured at first stroke
-        showToast('Clone source set');
+        showToast(window.t('Clone source set'));
         return;
       }
       if (state.cloneSourceX === null || state.cloneSourceY === null) {
         showToast(isTouchEvt
-          ? 'Double-tap first to set a clone source'
-          : 'Alt-click first to set a clone source');
+          ? window.t('Double-tap first to set a clone source')
+          : window.t('Alt-click first to set a clone source'));
         return;
       }
       if (!layer || layer.locked) return;
