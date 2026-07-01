@@ -118,26 +118,26 @@ function _serveBackendWarning(model, repo, backend, fields = {}) {
   const ggufLike = _repoLooksGgufLike(model, repo);
   if (awqLike && (backend === 'llamacpp' || backend === 'ollama')) {
     return {
-      title: 'AWQ needs vLLM or SGLang',
-      body: 'This model looks like AWQ/GPTQ/FP8 safetensors. llama.cpp and Ollama need GGUF files, so this backend cannot serve it. Choose vLLM/SGLang on a CUDA/ROCm GPU server, or download a GGUF version for llama.cpp/Ollama.',
+      title: window.t('AWQ needs vLLM or SGLang'),
+      body: window.t('This model looks like AWQ/GPTQ/FP8 safetensors. llama.cpp and Ollama need GGUF files, so this backend cannot serve it. Choose vLLM/SGLang on a CUDA/ROCm GPU server, or download a GGUF version for llama.cpp/Ollama.'),
     };
   }
   if (awqLike && _isMetal() && (backend === 'vllm' || backend === 'sglang')) {
     return {
-      title: 'AWQ is not a unified-memory path',
-      body: 'This model looks like AWQ/GPTQ/FP8 safetensors. AWQ is for vLLM/SGLang on CUDA/ROCm-style GPU servers, not local unified-memory llama.cpp/Ollama serving. For unified memory, download a GGUF model and use llama.cpp/Ollama.',
+      title: window.t('AWQ is not a unified-memory path'),
+      body: window.t('This model looks like AWQ/GPTQ/FP8 safetensors. AWQ is for vLLM/SGLang on CUDA/ROCm-style GPU servers, not local unified-memory llama.cpp/Ollama serving. For unified memory, download a GGUF model and use llama.cpp/Ollama.'),
     };
   }
   if (awqLike && fields.unified_mem) {
     return {
-      title: 'AWQ is not a unified-memory path',
-      body: 'This model looks like AWQ/GPTQ/FP8 safetensors, but unified-memory local serving expects GGUF. Use vLLM/SGLang on a compatible GPU server, or download a GGUF version for llama.cpp/Ollama.',
+      title: window.t('AWQ is not a unified-memory path'),
+      body: window.t('This model looks like AWQ/GPTQ/FP8 safetensors, but unified-memory local serving expects GGUF. Use vLLM/SGLang on a compatible GPU server, or download a GGUF version for llama.cpp/Ollama.'),
     };
   }
   if (ggufLike && (backend === 'vllm' || backend === 'sglang')) {
     return {
-      title: 'GGUF needs llama.cpp or Ollama',
-      body: 'This model looks like GGUF. vLLM/SGLang expect HuggingFace safetensors-style repos. Choose llama.cpp/Ollama for GGUF, or download a safetensors model for vLLM/SGLang.',
+      title: window.t('GGUF needs llama.cpp or Ollama'),
+      body: window.t('This model looks like GGUF. vLLM/SGLang expect HuggingFace safetensors-style repos. Choose llama.cpp/Ollama for GGUF, or download a safetensors model for vLLM/SGLang.'),
     };
   }
   return null;
@@ -337,13 +337,13 @@ function _estimateVllmContextFit(model, fields, modelCtxMax, modelWeightsGb = 0,
     || (Number(sys.gpu_vram_gb) / Math.max(1, Number(sys.gpu_count) || selectedCount))
     || 0;
   if (!perGpuGb) {
-    return { needsHardwareScan: true, reason: 'scan hardware first to estimate context from VRAM' };
+    return { needsHardwareScan: true, reason: window.t('scan hardware first to estimate context from VRAM') };
   }
 
   const gpuUtil = Math.min(0.99, Math.max(0.1, parseFloat(fields.gpu_mem) || 0.90));
   const budgetGb = perGpuGb * selectedCount * gpuUtil;
   const modelGb = _modelSizeGb(model, modelWeightsGb);
-  if (!modelGb) return { needsModelSize: true, reason: 'model weight size unknown; scan model files or enter context manually' };
+  if (!modelGb) return { needsModelSize: true, reason: window.t('model weight size unknown; scan model files or enter context manually') };
   const modelMax = Math.max(1024, _modelContextMaxForServe(model, modelCtxMax));
 
   if (isMiniMaxM3) {
@@ -358,7 +358,7 @@ function _estimateVllmContextFit(model, fields, modelCtxMax, modelWeightsGb = 0,
         budgetGb,
         modelGb,
         kvGbPerToken,
-        reason: `model shard ${modelShardGb.toFixed(1)}G exceeds per-GPU usable ${perGpuBudgetGb.toFixed(1)}G before KV`,
+        reason: window.t('model shard {shard}G exceeds per-GPU usable {budget}G before KV', { shard: modelShardGb.toFixed(1), budget: perGpuBudgetGb.toFixed(1) }),
       };
     }
     const raw = Math.floor((freeForKv / kvGbPerToken) * 0.99);
@@ -369,7 +369,7 @@ function _estimateVllmContextFit(model, fields, modelCtxMax, modelWeightsGb = 0,
       budgetGb,
       modelGb,
       kvGbPerToken,
-      reason: `~${ctx.toLocaleString()} tokens fits per-GPU KV (${freeForKv.toFixed(1)}G free)`,
+      reason: window.t('~{ctx} tokens fits per-GPU KV ({free}G free)', { ctx: ctx.toLocaleString(), free: freeForKv.toFixed(1) }),
     };
   }
 
@@ -397,7 +397,7 @@ function _estimateVllmContextFit(model, fields, modelCtxMax, modelWeightsGb = 0,
       budgetGb,
       modelGb,
       kvGbPerToken,
-      reason: `model shard ${modelShardGb.toFixed(1)}G exceeds per-GPU usable ${perGpuBudgetGb.toFixed(1)}G before KV`,
+      reason: window.t('model shard {shard}G exceeds per-GPU usable {budget}G before KV', { shard: modelShardGb.toFixed(1), budget: perGpuBudgetGb.toFixed(1) }),
     };
   }
   const raw = Math.floor(freeForKv / kvGbPerToken);
@@ -408,7 +408,7 @@ function _estimateVllmContextFit(model, fields, modelCtxMax, modelWeightsGb = 0,
     budgetGb,
     modelGb,
     kvGbPerToken,
-    reason: `~${ctx.toLocaleString()} tokens fits per-GPU KV (${freeForKv.toFixed(1)}G free)`,
+    reason: window.t('~{ctx} tokens fits per-GPU KV ({free}G free)', { ctx: ctx.toLocaleString(), free: freeForKv.toFixed(1) }),
   };
 }
 
@@ -422,7 +422,7 @@ function _estimateLlamaContextFit(model, fields, modelCtxMax, modelWeightsGb = 0
     const ctx = Math.min(modelMax, Number(preferred.ctx));
     return {
       ctx,
-      reason: `profile ${preferred.label || preferred.key || 'fit'} fits scanned hardware`,
+      reason: window.t('profile {profile} fits scanned hardware', { profile: preferred.label || preferred.key || 'fit' }),
     };
   }
 
@@ -436,7 +436,7 @@ function _estimateLlamaContextFit(model, fields, modelCtxMax, modelWeightsGb = 0
     return {
       ctx: Math.min(modelMax, 32768),
       needsModelSize: true,
-      reason: 'model weight size unknown; using model limit fallback',
+      reason: window.t('model weight size unknown; using model limit fallback'),
     };
   }
 
@@ -444,7 +444,7 @@ function _estimateLlamaContextFit(model, fields, modelCtxMax, modelWeightsGb = 0
     return {
       ctx: Math.min(modelMax, 131072),
       modelGb,
-      reason: 'CPU mode uses system RAM; capped to trained limit',
+      reason: window.t('CPU mode uses system RAM; capped to trained limit'),
     };
   }
 
@@ -460,7 +460,7 @@ function _estimateLlamaContextFit(model, fields, modelCtxMax, modelWeightsGb = 0
       ctx: Math.min(modelMax, 32768),
       modelGb,
       needsHardwareScan: true,
-      reason: 'scan hardware first; using model limit fallback',
+      reason: window.t('scan hardware first; using model limit fallback'),
     };
   }
 
@@ -485,7 +485,9 @@ function _estimateLlamaContextFit(model, fields, modelCtxMax, modelWeightsGb = 0
       ctx: Math.min(modelMax, 8192),
       modelGb,
       kvGbPerToken,
-      reason: `model ${modelGb.toFixed(1)}G exceeds usable ${isUnifiedMode ? 'unified memory' : 'VRAM'} ${usableGb.toFixed(1)}G before KV`,
+      reason: isUnifiedMode
+        ? window.t('model {model}G exceeds usable unified memory {usable}G before KV', { model: modelGb.toFixed(1), usable: usableGb.toFixed(1) })
+        : window.t('model {model}G exceeds usable VRAM {usable}G before KV', { model: modelGb.toFixed(1), usable: usableGb.toFixed(1) }),
     };
   }
   const raw = Math.floor(freeForKv / kvGbPerToken);
@@ -495,7 +497,9 @@ function _estimateLlamaContextFit(model, fields, modelCtxMax, modelWeightsGb = 0
     ctx,
     modelGb,
     kvGbPerToken,
-    reason: `~${ctx.toLocaleString()} tokens fits llama.cpp KV (${freeForKv.toFixed(1)}G free ${isUnifiedMode ? 'unified' : 'VRAM'})`,
+    reason: isUnifiedMode
+      ? window.t('~{ctx} tokens fits llama.cpp KV ({free}G free unified)', { ctx: ctx.toLocaleString(), free: freeForKv.toFixed(1) })
+      : window.t('~{ctx} tokens fits llama.cpp KV ({free}G free VRAM)', { ctx: ctx.toLocaleString(), free: freeForKv.toFixed(1) }),
   };
 }
 
