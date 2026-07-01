@@ -125,4 +125,17 @@ registerMessages('pt-BR', {
   'AI': 'IA',
   'Chat copied to clipboard': 'Conversa copiada para a área de transferência',
   'Failed to copy chat': 'Falha ao copiar conversa',
+  'Unfavorite before deleting': 'Desfavorite antes de excluir',
+  'Delete this session?': 'Excluir esta sessão?',
+  'Session archived': 'Sessão arquivada',
+  'Failed to archive session': 'Falha ao arquivar sessão',
+
+  // --- sessions.js: session list render (sort/folders) ---
+  'Show less': 'Mostrar menos',
+  'Show {n} more': 'Mostrar mais {n}',
+  'Drag to reorder folder': 'Arraste para reordenar pasta',
+  'Delete folder and all sessions': 'Excluir pasta e todas as sessões',
+  'Delete folder "{folderName}" and all {count} session(s) inside it?': 'Excluir a pasta "{folderName}" e todas as {count} sessão(ões) dentro dela?',
+  'Rename folder:': 'Renomear pasta:',
+  'Rename folder': 'Renomear pasta',
 });

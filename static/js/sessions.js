@@ -574,7 +574,7 @@ function createSessionItem(s) {
   const _cancelIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
   const cancelItem = document.createElement('div');
   cancelItem.className = 'dropdown-item-compact dropdown-cancel-mobile';
-  cancelItem.innerHTML = _icon(_cancelIcon) + '<span>Cancel</span>';
+  cancelItem.innerHTML = _icon(_cancelIcon) + '<span>' + window.t('Cancel') + '</span>';
   cancelItem.addEventListener('click', (e) => {
     e.stopPropagation();
     dropdown.style.display = 'none';
@@ -632,7 +632,7 @@ function createSessionItem(s) {
         fd.append('name', newName);
         await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'PATCH', body: fd });
         s.name = newName;
-        uiModule.showToast('Renamed');
+        uiModule.showToast(window.t('Renamed'));
       }
       _forceSidebarOpen();
       renderSessionList();
@@ -647,12 +647,12 @@ function createSessionItem(s) {
 
   deleteItem.addEventListener('click', async () => {
     if (s.is_important) {
-      uiModule.showToast('Unfavorite before deleting');
+      uiModule.showToast(window.t('Unfavorite before deleting'));
       dropdown.style.display = 'none';
       return;
     }
     dropdown.style.display = 'none';
-    if (!await uiModule.styledConfirm('Delete this session?', { confirmText: 'Delete', danger: true })) {
+    if (!await uiModule.styledConfirm(window.t('Delete this session?'), { confirmText: window.t('Delete'), danger: true })) {
       _forceSidebarOpen();
       return;
     }
@@ -697,13 +697,13 @@ function createSessionItem(s) {
         _forceSidebarOpen();
         await loadSessions();
         dropdown.style.display = 'none';
-        uiModule.showToast('Session archived');
+        uiModule.showToast(window.t('Session archived'));
       } else {
         throw new Error('Failed to archive session');
       }
     } catch (error) {
       console.error('Error archiving session:', error);
-      uiModule.showError('Failed to archive session');
+      uiModule.showError(window.t('Failed to archive session'));
     }
   });
 
@@ -816,7 +816,7 @@ function _renderSessionListImpl() {
       const remaining = allFlat.length - SIDEBAR_MAX_VISIBLE;
       const toggleBtn = document.createElement('button');
       toggleBtn.className = 'session-show-more-btn';
-      toggleBtn.textContent = _showAllSessions ? 'Show less' : `Show ${remaining} more`;
+      toggleBtn.textContent = _showAllSessions ? window.t('Show less') : window.t('Show {n} more', { n: remaining });
       toggleBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         _showAllSessions = !_showAllSessions;
@@ -880,7 +880,7 @@ function _renderSessionListImpl() {
     const dragHandle = document.createElement('span');
     dragHandle.className = 'folder-drag-handle';
     dragHandle.textContent = '\u2630';
-    dragHandle.title = 'Drag to reorder folder';
+    dragHandle.title = window.t('Drag to reorder folder');
     header.appendChild(dragHandle);
 
     const toggle = document.createElement('span');
@@ -902,11 +902,11 @@ function _renderSessionListImpl() {
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'folder-delete-btn';
     deleteBtn.textContent = '\u00d7';
-    deleteBtn.title = 'Delete folder and all sessions';
+    deleteBtn.title = window.t('Delete folder and all sessions');
     deleteBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const count = folders[folderName].length;
-      if (!await uiModule.styledConfirm(`Delete folder "${folderName}" and all ${count} session(s) inside it?`, { confirmText: 'Delete', danger: true })) return;
+      if (!await uiModule.styledConfirm(window.t('Delete folder "{folderName}" and all {count} session(s) inside it?', { folderName, count }), { confirmText: window.t('Delete'), danger: true })) return;
       for (const s of folders[folderName]) {
         try {
           await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' });
@@ -937,10 +937,10 @@ function _renderSessionListImpl() {
     header.addEventListener('dblclick', async (e) => {
       e.stopPropagation();
       if (e.target.closest('.folder-delete-btn')) return;
-      const newName = await styledPrompt('Rename folder:', {
-        title: 'Rename folder',
+      const newName = await styledPrompt(window.t('Rename folder:'), {
+        title: window.t('Rename folder'),
         defaultValue: folderName,
-        confirmText: 'Rename',
+        confirmText: window.t('Rename'),
       });
       if (!newName || !newName.trim() || newName.trim() === folderName) return;
       const promises = folders[folderName].map(s => moveToFolder(s.id, newName.trim()));
@@ -971,7 +971,7 @@ function _renderSessionListImpl() {
         const rem = folderSessions.length - FOLDER_MAX_VISIBLE;
         const moreBtn = document.createElement('button');
         moreBtn.className = 'session-show-more-btn';
-        moreBtn.textContent = folderExpanded ? 'Show less' : `Show ${rem} more`;
+        moreBtn.textContent = folderExpanded ? window.t('Show less') : window.t('Show {n} more', { n: rem });
         moreBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           _expandedFolders[folderName] = !folderExpanded;
@@ -1009,7 +1009,7 @@ function _renderSessionListImpl() {
     const dragHandle = document.createElement('span');
     dragHandle.className = 'folder-drag-handle';
     dragHandle.textContent = '\u2630';
-    dragHandle.title = 'Drag to reorder folder';
+    dragHandle.title = window.t('Drag to reorder folder');
     unsortedHeader.appendChild(dragHandle);
 
     const toggle = document.createElement('span');
