@@ -181,7 +181,7 @@ function _showSetupUserBubble(input, isUrl) {
     if (lastBubble) {
       lastBubble.style.filter = 'blur(4px)';
       lastBubble.style.userSelect = 'none';
-      lastBubble.title = 'API key (hidden)';
+      lastBubble.title = window.t('API key (hidden)');
       lastBubble.style.cursor = 'pointer';
       lastBubble.addEventListener('click', () => {
         lastBubble.style.filter = lastBubble.style.filter ? '' : 'blur(4px)';
@@ -200,23 +200,23 @@ function _showSetupEndpointChoices() {
   return slashReply(
     '<div class="setup-guide-no-censor" style="display:grid;gap:10px;">' +
       '<div>' +
-        '<div>Quick start: add your first AI endpoint by pasting it in chat.</div>' +
+        '<div>' + window.t('Quick start: add your first AI endpoint by pasting it in chat.') + '</div>' +
       '</div>' +
       '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:color-mix(in srgb,var(--bg) 88%,var(--fg) 12%);">' +
-        '<div style="font-weight:700;margin-bottom:6px;">' + SETUP_LOCAL_ICON + 'Local setup</div>' +
-        '<div>Paste endpoint URL in chat (example):</div>' +
+        '<div style="font-weight:700;margin-bottom:6px;">' + SETUP_LOCAL_ICON + window.t('Local setup') + '</div>' +
+        '<div>' + window.t('Paste endpoint URL in chat (example):') + '</div>' +
         '<pre style="margin:4px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">http://localhost:11434/v1</code></pre>' +
-        '<div style="margin-top:4px;">or</div>' +
+        '<div style="margin-top:4px;">' + window.t('or') + '</div>' +
         '<pre style="margin:2px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">http://llm-host.local:8000/v1</code></pre>' +
-        '<div style="margin-top:4px;">or llama.cpp (llama-server):</div>' +
+        '<div style="margin-top:4px;">' + window.t('or llama.cpp (llama-server):') + '</div>' +
         '<pre style="margin:2px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">http://localhost:8080/v1</code></pre>' +
       '</div>' +
       '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:color-mix(in srgb,var(--bg) 88%,var(--fg) 12%);">' +
-        '<div style="font-weight:700;margin-bottom:6px;">' + SETUP_API_ICON + 'API setup</div>' +
-        '<div>Paste provider name then API key (example):</div>' +
+        '<div style="font-weight:700;margin-bottom:6px;">' + SETUP_API_ICON + window.t('API setup') + '</div>' +
+        '<div>' + window.t('Paste provider name then API key (example):') + '</div>' +
         '<pre style="margin:4px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">deepseek sk-...</code></pre>' +
-        '<div style="margin-top:8px;font-size:1em;"><span>Supported providers:</span><br>' + providers + '</div>' +
-        '<div style="margin-top:8px;font-size:1em;"><span>Account sign-in:</span><br>' + deviceAuthProviders + '</div>' +
+        '<div style="margin-top:8px;font-size:1em;"><span>' + window.t('Supported providers:') + '</span><br>' + providers + '</div>' +
+        '<div style="margin-top:8px;font-size:1em;"><span>' + window.t('Account sign-in:') + '</span><br>' + deviceAuthProviders + '</div>' +
       '</div>' +
     '</div>'
   );
@@ -225,36 +225,36 @@ function _showSetupEndpointChoices() {
 function _showSetupEndpointChoicesStreamed(options = {}) {
   const blocks = [
     options.simple
-      ? { kind: 'p', text: 'Paste in chat below either' }
-      : { kind: 'p', html: '<strong>Quick start:</strong> add your first AI endpoint by pasting it in chat.' },
-    { kind: 'heading', html: SETUP_LOCAL_ICON + 'Local setup' },
-    { kind: 'p', text: 'Paste endpoint URL in chat (example):' },
+      ? { kind: 'p', text: window.t('Paste in chat below either') }
+      : { kind: 'p', html: '<strong>' + window.t('Quick start:') + '</strong> ' + window.t('add your first AI endpoint by pasting it in chat.') },
+    { kind: 'heading', html: SETUP_LOCAL_ICON + window.t('Local setup') },
+    { kind: 'p', text: window.t('Paste endpoint URL in chat (example):') },
     {
       kind: 'code',
       text: 'http://localhost:11434/v1',
       copyText: 'http://localhost:11434/v1',
     },
-    { kind: 'p', text: 'or' },
+    { kind: 'p', text: window.t('or') },
     {
       kind: 'code',
       text: 'http://llm-host.local:8000/v1',
       copyText: 'http://llm-host.local:8000/v1',
     },
-    { kind: 'p', text: 'or llama.cpp (llama-server):' },
+    { kind: 'p', text: window.t('or llama.cpp (llama-server):') },
     {
       kind: 'code',
       text: 'http://localhost:8080/v1',
       copyText: 'http://localhost:8080/v1',
     },
-    { kind: 'heading', html: SETUP_API_ICON + 'API setup' },
-    { kind: 'p', text: 'Paste provider name then API key (example):' },
+    { kind: 'heading', html: SETUP_API_ICON + window.t('API setup') },
+    { kind: 'p', text: window.t('Paste provider name then API key (example):') },
     {
       kind: 'code',
       text: 'deepseek sk-...',
       copyText: 'deepseek sk-...',
     },
-    { kind: 'p', html: '<strong>Supported providers:</strong><br>' + _setupApiProviderChips() },
-    { kind: 'p', html: '<strong>Account sign-in:</strong><br>' + _setupDeviceAuthProviderChips() },
+    { kind: 'p', html: '<strong>' + window.t('Supported providers:') + '</strong><br>' + _setupApiProviderChips() },
+    { kind: 'p', html: '<strong>' + window.t('Account sign-in:') + '</strong><br>' + _setupDeviceAuthProviderChips() },
   ];
   return typewriterBlocksReply(blocks, { gap: '4px', bodyClass: 'setup-guide-no-censor', interval: 3 });
 }
@@ -278,7 +278,7 @@ function _setupProviderPrompt() {
   const chips = SETUP_PROVIDER_HINT_NAMES.map(name =>
     '<span style="font-weight:650;">' + name + '</span>'
   ).join('  ');
-  slashReply('<b>Supported providers:</b><br>' + chips);
+  slashReply('<b>' + window.t('Supported providers:') + '</b><br>' + chips);
   return Promise.resolve();
 }
 
@@ -661,7 +661,7 @@ async function connectDetectedSetupEndpoint(detected) {
   spinnerBody.className = 'body';
   spinnerDiv.appendChild(spinnerBody);
   chatBox.appendChild(spinnerDiv);
-  const setupSpinner = spinnerModule.create(`Detected ${providerLabel}. Connecting`, 'right', 'wave');
+  const setupSpinner = spinnerModule.create(window.t('Detected {provider}. Connecting').replace('{provider}', providerLabel), 'right', 'wave');
   spinnerBody.appendChild(setupSpinner.createElement());
   setupSpinner.start(150);
   uiModule.scrollHistory();
@@ -685,7 +685,7 @@ async function connectDetectedSetupEndpoint(detected) {
       setupSpinner.destroy();
       spinnerDiv.remove();
       setupMode = 'endpoint-provider-first';
-      await typewriterReply(`Endpoint was not saved: ${data.detail || 'connection failed'}`);
+      await typewriterReply(window.t('Endpoint was not saved: {detail}').replace('{detail}', data.detail || window.t('connection failed')));
       return;
     }
 
@@ -700,7 +700,7 @@ async function connectDetectedSetupEndpoint(detected) {
       if (sessionModule) {
         await sessionModule.createDirectChat(chatUrl, firstModel, data.id);
       }
-      await typewriterReply("You're all set. Type /tour for a walkthrough, or /setup endpoint to add another endpoint or key.");
+      await typewriterReply(window.t("You're all set. Type /tour for a walkthrough, or /setup endpoint to add another endpoint or key."));
       _clearSetupGuideMessages();
       return;
     }
@@ -708,13 +708,13 @@ async function connectDetectedSetupEndpoint(detected) {
     setupSpinner.destroy();
     spinnerDiv.remove();
     setupMode = 'endpoint-provider-first';
-    await typewriterReply("Endpoint saved, but no models were found. Check the provider, key, or service status, then try /setup endpoint again.");
+    await typewriterReply(window.t("Endpoint saved, but no models were found. Check the provider, key, or service status, then try /setup endpoint again."));
     if (modelsModule) modelsModule.refreshModels(true);
   } catch {
     setupSpinner.destroy();
     spinnerDiv.remove();
     setupMode = 'endpoint-provider-first';
-    await typewriterReply("Endpoint setup failed before it could finish. Check the provider, key, or service status, then try /setup endpoint again.");
+    await typewriterReply(window.t("Endpoint setup failed before it could finish. Check the provider, key, or service status, then try /setup endpoint again."));
   }
 }
 
@@ -737,7 +737,7 @@ async function handleSetupInput(input) {
     } else {
       pendingSetupProvider = paired.provider;
       setupMode = 'endpoint-key-for-provider';
-      await _setupReply(`Paste your ${paired.provider.name} API key now.`);
+      await _setupReply(window.t('Paste your {provider} API key now.').replace('{provider}', paired.provider.name));
     }
     return;
   }
@@ -745,7 +745,7 @@ async function handleSetupInput(input) {
   const detected = detectProvider(input);
   if (!detected) {
     setupMode = false;
-    await typewriterReply("Unrecognised format. Type /setup endpoint to try again.");
+    await typewriterReply(window.t("Unrecognised format. Type /setup endpoint to try again."));
     return;
   }
   if (detected.ambiguous) {
@@ -787,7 +787,7 @@ async function handleSetupWizard(mode, input) {
     if (!provider) {
       _addMessage('user', input);
       setupMode = false;
-      await _setupReply('Provider not recognised. Try ' + SETUP_PROVIDER_HINT + '. Type /setup endpoint to try again.');
+      await _setupReply(window.t('Provider not recognised. Try {hint}. Type /setup endpoint to try again.').replace('{hint}', SETUP_PROVIDER_HINT));
       return;
     }
     if (paired?.credential) {
@@ -798,7 +798,7 @@ async function handleSetupWizard(mode, input) {
     _addMessage('user', provider.name);
     pendingSetupProvider = provider;
     setupMode = 'endpoint-key-for-provider';
-    await _setupReply(`Paste your ${provider.name} API key.`);
+    await _setupReply(window.t('Paste your {provider} API key.').replace('{provider}', provider.name));
     return;
   }
 
@@ -806,7 +806,7 @@ async function handleSetupWizard(mode, input) {
     const provider = pendingSetupProvider;
     pendingSetupProvider = null;
     if (!provider) {
-      await _setupReply('No provider selected. Type /setup endpoint and choose a provider again.');
+      await _setupReply(window.t('No provider selected. Type /setup endpoint and choose a provider again.'));
       return;
     }
     _showSetupUserBubble(input, /^https?:\/\//i.test(input));
@@ -830,7 +830,7 @@ async function handleSetupWizard(mode, input) {
     if (paired?.provider) {
       const credential = paired.credential || key;
       if (!credential) {
-        await typewriterReply('No API key found. Type /setup endpoint and paste the key again.');
+        await typewriterReply(window.t('No API key found. Type /setup endpoint and paste the key again.'));
         return;
       }
       await connectDetectedSetupEndpoint({ base_url: paired.provider.url, api_key: credential, name: paired.provider.name });
@@ -838,7 +838,7 @@ async function handleSetupWizard(mode, input) {
     }
 
     if (!key) {
-      await typewriterReply('No pending API key. Type /setup endpoint and paste the key again.');
+      await typewriterReply(window.t('No pending API key. Type /setup endpoint and paste the key again.'));
       return;
     }
     let provider = _setupProviderFromInput(raw);
@@ -848,7 +848,7 @@ async function handleSetupWizard(mode, input) {
     if (!provider) {
       pendingSetupApiKey = '';
       setupMode = false;
-      await typewriterReply('Provider not recognised. Try ' + SETUP_PROVIDER_HINT + '. Type /setup endpoint to try again.');
+      await typewriterReply(window.t('Provider not recognised. Try {hint}. Type /setup endpoint to try again.').replace('{hint}', SETUP_PROVIDER_HINT));
       return;
     }
     await connectDetectedSetupEndpoint({ base_url: provider.url, api_key: key, name: provider.name });
@@ -895,7 +895,7 @@ async function handleSetupWizard(mode, input) {
     return;
   }
 
-  await typewriterReply("I didn't understand that. Try /setup to see options.");
+  await typewriterReply(window.t("I didn't understand that. Try /setup to see options."));
 }
 
 function _syncToggleUI(name, state) {
@@ -989,7 +989,7 @@ async function _cmdSessionNew(args, ctx) {
     } catch (e) { /* ignore */ }
   }
   if (!endpointUrl || !model) {
-    slashReply('No model available — open the model picker and use the <code>+</code> button to add a model endpoint.');
+    slashReply(window.t('No model available — open the model picker and use the {plus} button to add a model endpoint.').replace('{plus}', '<code>+</code>'));
     return true;
   }
 
@@ -1007,7 +1007,7 @@ async function _cmdSessionNew(args, ctx) {
     _hideWelcomeScreen();
     const shortModel = (model || '').split('/').pop();
     await typewriterReply(`New session — ${shortModel || 'ready'}.`);
-  } else { const err = await res.json().catch(() => null); slashReply('Failed to create session' + (err?.detail ? ': ' + ctx.esc(err.detail) : '')); }
+  } else { const err = await res.json().catch(() => null); slashReply(window.t('Failed to create session') + (err?.detail ? ': ' + ctx.esc(err.detail) : '')); }
   return true;
 }
 
@@ -1021,7 +1021,7 @@ async function _cmdSessionDelete(args, ctx) {
     const sessions = sessionModule.getSessions().filter(s => !s.archived);
     const targets = force ? sessions : sessions.filter(s => !s.important);
     const skipped = sessions.length - targets.length;
-    if (!targets.length) { slashReply('Nothing to delete' + (skipped ? ` (${skipped} starred)` : '')); return true; }
+    if (!targets.length) { slashReply(window.t('Nothing to delete') + (skipped ? ` (${skipped} starred)` : '')); return true; }
     let deleted = 0, failed = 0;
     for (const s of targets) {
       const res = await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE', credentials: 'same-origin' });
@@ -1037,7 +1037,7 @@ async function _cmdSessionDelete(args, ctx) {
 
   // Single session delete
   const target = _resolveSession(cleanArg) || ctx.sid;
-  if (!target) { slashReply('No session to delete'); return true; }
+  if (!target) { slashReply(window.t('No session to delete')); return true; }
   const sessions = sessionModule.getSessions();
   const sess = sessions.find(s => s.id === target);
   const label = sess ? `"${ctx.esc(sess.name || target.slice(0,8))}"` : target.slice(0,8);
@@ -1046,50 +1046,50 @@ async function _cmdSessionDelete(args, ctx) {
     await typewriterReply(`Deleted ${label}`);
     await sessionModule.loadSessions();
   } else if (res.status === 403) {
-    slashReply('Cannot delete a starred session — unstar it first, or use <code>/s rm -rf</code>');
-  } else { const err = await res.json().catch(() => null); slashReply('Delete failed' + (err?.detail ? ': ' + ctx.esc(err.detail) : '')); }
+    slashReply(window.t('Cannot delete a starred session — unstar it first, or use {cmd}').replace('{cmd}', '<code>/s rm -rf</code>'));
+  } else { const err = await res.json().catch(() => null); slashReply(window.t('Delete failed') + (err?.detail ? ': ' + ctx.esc(err.detail) : '')); }
   return true;
 }
 
 async function _cmdSessionArchive(args, ctx) {
   const target = _resolveSession(args[0]) || ctx.sid;
-  if (!target) { slashReply('No session to archive'); return true; }
+  if (!target) { slashReply(window.t('No session to archive')); return true; }
   const sessions = sessionModule.getSessions();
   const sess = sessions.find(s => s.id === target);
   const label = sess ? `"${ctx.esc(sess.name || target.slice(0,8))}"` : target.slice(0,8);
   if (sess && sess.archived) { await typewriterReply(`${label} is already archived`); return true; }
   const res = await fetch(`${API_BASE}/api/session/${target}/archive`, { method: 'POST', credentials: 'same-origin' });
   if (res.ok) { await typewriterReply(`Archived ${label}`); await sessionModule.loadSessions(); }
-  else { slashReply('Archive failed'); }
+  else { slashReply(window.t('Archive failed')); }
   return true;
 }
 
 async function _cmdSessionRename(args, ctx) {
   const newName = args.join(' ');
-  if (!newName) { slashReply('Usage: /rename New Name'); return true; }
+  if (!newName) { slashReply(window.t('Usage: /rename New Name')); return true; }
   const fd = new FormData(); fd.append('name', newName);
   const res = await fetch(`${API_BASE}/api/session/${ctx.sid}`, { method: 'PATCH', body: fd, credentials: 'same-origin' });
   if (res.ok) { await typewriterReply(`Renamed to "${ctx.esc(newName)}"`); await sessionModule.loadSessions(); }
-  else { slashReply('Rename failed'); }
+  else { slashReply(window.t('Rename failed')); }
   return true;
 }
 
 async function _cmdSessionImportant(args, ctx) {
   const fd = new FormData(); fd.append('important', 'true');
   await fetch(`${API_BASE}/api/session/${ctx.sid}/important`, { method: 'POST', body: fd, credentials: 'same-origin' });
-  await typewriterReply('Session marked as important');
+  await typewriterReply(window.t('Session marked as important'));
   return true;
 }
 
 async function _cmdSessionUnimportant(args, ctx) {
   const fd = new FormData(); fd.append('important', 'false');
   await fetch(`${API_BASE}/api/session/${ctx.sid}/important`, { method: 'POST', body: fd, credentials: 'same-origin' });
-  await typewriterReply('Session unmarked');
+  await typewriterReply(window.t('Session unmarked'));
   return true;
 }
 
 async function _cmdSessionFork(args, ctx) {
-  if (!ctx.sid) { slashReply('No active session'); return true; }
+  if (!ctx.sid) { slashReply(window.t('No active session')); return true; }
   const keepCount = parseInt(args[0]) || 0;
   const res = await fetch(`${API_BASE}/api/session/${ctx.sid}/fork`, {
     method: 'POST', credentials: 'same-origin',
@@ -1101,28 +1101,28 @@ async function _cmdSessionFork(args, ctx) {
     await sessionModule.loadSessions();
     await sessionModule.selectSession(data.id);
     await typewriterReply(`Forked session (${data.kept || 0} messages)`);
-  } else { slashReply('Fork failed'); }
+  } else { slashReply(window.t('Fork failed')); }
   return true;
 }
 
 async function _cmdSessionTruncate(args, ctx) {
-  if (!ctx.sid) { slashReply('No active session'); return true; }
+  if (!ctx.sid) { slashReply(window.t('No active session')); return true; }
   const keep = parseInt(args[0]);
-  if (!keep || keep < 1) { slashReply('Usage: /truncate N — deletes older messages, keeps the last N'); return true; }
+  if (!keep || keep < 1) { slashReply(window.t('Usage: /truncate N — deletes older messages, keeps the last N')); return true; }
   const res = await fetch(`${API_BASE}/api/session/${ctx.sid}/truncate`, {
     method: 'POST', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keep_count: keep })
   });
   if (res.ok) { await typewriterReply(`Truncated to ${keep} messages`); }
-  else { slashReply('Truncate failed'); }
+  else { slashReply(window.t('Truncate failed')); }
   return true;
 }
 
 async function _cmdSessionList(args, ctx) {
   const sessions = sessionModule.getSessions();
   const active = sessions.filter(s => !s.archived);
-  if (!active.length) { slashReply('No active sessions'); return true; }
+  if (!active.length) { slashReply(window.t('No active sessions')); return true; }
   const lines = active.slice(0, 40).map(s => {
     const current = s.id === ctx.sid ? ' <b>(current)</b>' : '';
     return `${ctx.esc(s.name || 'Untitled')} <span style="opacity:0.5">${s.id.slice(0,8)}</span>${current}`;
@@ -1134,7 +1134,7 @@ async function _cmdSessionList(args, ctx) {
 
 async function _cmdSessionSwitch(args, ctx) {
   const query = args.join(' ').toLowerCase();
-  if (!query) { slashReply('Usage: /switch &lt;name or id&gt;'); return true; }
+  if (!query) { slashReply(window.t('Usage: /switch <name or id>')); return true; }
   const sessions = sessionModule.getSessions();
   const match = sessions.find(s => !s.archived && (
     s.id.startsWith(query) || (s.name || '').toLowerCase().includes(query)
@@ -1147,7 +1147,7 @@ async function _cmdSessionSwitch(args, ctx) {
 }
 
 async function _cmdSessionSort(args, ctx) {
-  slashReply('Auto-sorting sessions...');
+  slashReply(window.t('Auto-sorting sessions...'));
   const res = await fetch(`${API_BASE}/api/sessions/auto-sort`, { method: 'POST', credentials: 'same-origin' });
   if (res.ok) {
     const data = await res.json();
@@ -1159,15 +1159,15 @@ async function _cmdSessionSort(args, ctx) {
       const del_msg = data.deleted_empty ? ` (${data.deleted_empty} empty deleted)` : '';
       await typewriterReply(`Sorted ${data.updated || 0} sessions into ${data.folders?.length || 0} folders${del_msg}`);
     }
-  } else { slashReply('Auto-sort failed'); }
+  } else { slashReply(window.t('Auto-sort failed')); }
   return true;
 }
 
 async function _cmdSessionInfo(args, ctx) {
-  if (!ctx.sid) { slashReply('No active session'); return true; }
+  if (!ctx.sid) { slashReply(window.t('No active session')); return true; }
   const sessions = sessionModule.getSessions();
   const s = sessions.find(ss => ss.id === ctx.sid);
-  if (!s) { slashReply('Session not found'); return true; }
+  if (!s) { slashReply(window.t('Session not found')); return true; }
   slashReply(`<pre>Session: ${ctx.esc(s.name || 'Untitled')}
 ID:      ${s.id}
 Model:   ${ctx.esc(s.model || '?')}
@@ -1179,12 +1179,12 @@ Created: ${s.created_at || '?'}</pre>`);
 
 async function _cmdSessionClear(args, ctx) {
   document.getElementById('chat-history').innerHTML = '';
-  slashReply('Chat display cleared');
+  slashReply(window.t('Chat display cleared'));
   return true;
 }
 
 async function _cmdSessionExport(args, ctx) {
-  if (!ctx.sid) { slashReply('No active session'); return true; }
+  if (!ctx.sid) { slashReply(window.t('No active session')); return true; }
   // Parse linux-style: cat > file.json, cat > notes.txt, cat > chat.html
   let filename = '';
   let fmt = 'md';
