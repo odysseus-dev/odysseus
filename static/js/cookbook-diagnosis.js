@@ -672,15 +672,15 @@ function _diagnosisCopyBundle(task, diagnosis, sourceText, suggestionText) {
     lines.push(
       '',
       '### Task',
-      `- ID: ${task.sessionId || task.id || 'unknown'}`,
-      `- Type: ${task.type || 'unknown'}`,
-      `- Status: ${task.status || 'unknown'}`,
-      `- Model: ${task.payload?.repo_id || task.name || 'unknown'}`,
-      `- Host: ${task.remoteHost || 'local'}${task.sshPort ? `:${task.sshPort}` : ''}`,
+      `- ID: ${task.sessionId || task.id || window.t('unknown')}`,
+      `- Type: ${task.type || window.t('unknown')}`,
+      `- Status: ${task.status || window.t('unknown')}`,
+      `- Model: ${task.payload?.repo_id || task.name || window.t('unknown')}`,
+      `- Host: ${task.remoteHost || window.t('local')}${task.sshPort ? `:${task.sshPort}` : ''}`,
     );
   }
-  lines.push('', '### Diagnosis', diagnosis?.message || '(none)');
-  if (suggestionText) lines.push('', '### Suggested action', suggestionText.replace(/^Suggested action:\s*/i, ''));
+  lines.push('', '### Diagnosis', diagnosis?.message || window.t('(none)'));
+  if (suggestionText) lines.push('', '### Suggested action', suggestionText.replace(/^(Suggested action|Ação sugerida):\s*/i, ''));
   const cmd = task?.payload?._cmd || '';
   if (cmd) lines.push('', '### Launch command', '```bash', cmd, '```');
   if (sourceText) lines.push('', '### Captured output', '```text', String(sourceText).trim(), '```');
@@ -706,12 +706,12 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
   const taskEl = panel?.closest?.('.cookbook-task');
   const task = taskEl ? _loadTasks().find(t => t.sessionId === taskEl.dataset.taskId) : null;
   const fixes = [...(diagnosis.fixes || [])];
-  if (task?.type === 'serve' && task.payload?._cmd && !fixes.some(f => f.label === 'Edit serve')) {
-    fixes.push({ label: 'Edit serve', action: (p) => _openServeEditFromDiagnosis(p) });
+  if (task?.type === 'serve' && task.payload?._cmd && !fixes.some(f => f.label === window.t('Edit serve'))) {
+    fixes.push({ label: window.t('Edit serve'), action: (p) => _openServeEditFromDiagnosis(p) });
   }
   const suggestionText = diagnosis.suggestion || (fixes.length
-    ? `Suggested action: ${fixes[0].label}.`
-    : 'Suggested action: copy the error and adjust the serve settings.');
+    ? window.t('Suggested action: {label}.', { label: fixes[0].label })
+    : window.t('Suggested action: copy the error and adjust the serve settings.'));
 
   panel._diagCollapsed = false;
 
@@ -742,8 +742,8 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
   const copyBtn = document.createElement('button');
   copyBtn.type = 'button';
   copyBtn.className = 'cookbook-diag-copy';
-  copyBtn.title = 'Copy diagnosis details';
-  copyBtn.setAttribute('aria-label', 'Copy diagnosis');
+  copyBtn.title = window.t('Copy diagnosis details');
+  copyBtn.setAttribute('aria-label', window.t('Copy diagnosis'));
   copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
   copyBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
@@ -762,8 +762,8 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
   const dismissBtn = document.createElement('button');
   dismissBtn.type = 'button';
   dismissBtn.className = 'cookbook-diag-dismiss';
-  dismissBtn.title = 'Dismiss diagnosis';
-  dismissBtn.setAttribute('aria-label', 'Dismiss');
+  dismissBtn.title = window.t('Dismiss diagnosis');
+  dismissBtn.setAttribute('aria-label', window.t('Dismiss'));
   dismissBtn.textContent = '×';
   dismissBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -839,7 +839,7 @@ export async function _runQuickCmd(panel, cmd) {
     fullCmd = _sshCmd(_envState.remoteHost, cmd);
   }
   const diag = panel.querySelector('.cookbook-diagnosis');
-  if (diag) { diag.classList.remove('hidden'); diag.textContent = `Running: ${fullCmd}...`; }
+  if (diag) { diag.classList.remove('hidden'); diag.textContent = window.t('Running: {cmd}...', { cmd: fullCmd }); }
 
   try {
     const res = await fetch('/api/shell/stream', {
@@ -848,8 +848,8 @@ export async function _runQuickCmd(panel, cmd) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ command: fullCmd }),
     });
-    if (diag) diag.textContent = res.ok ? `Done: ${cmd}` : `Failed (HTTP ${res.status})`;
+    if (diag) diag.textContent = res.ok ? window.t('Done: {cmd}', { cmd }) : window.t('Failed (HTTP {status})', { status: res.status });
   } catch (e) {
-    if (diag) diag.textContent = `Error: ${e.message}`;
+    if (diag) diag.textContent = window.t('Error: {msg}', { msg: e.message });
   }
 }
