@@ -88,7 +88,7 @@ class ChatProcessor:
         self.skills_manager = skills_manager
 
     # Minimum similarity score for RAG results to be injected
-    RAG_SIMILARITY_THRESHOLD = 0.20
+    RAG_SIMILARITY_THRESHOLD = 0.35
 
     def _hybrid_retrieve(self, message: str, mem_entries: list, k: int = 5) -> list:
         """Retrieve memories relevant to the message.
