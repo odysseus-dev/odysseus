@@ -982,7 +982,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     } catch (e) {
       // On error, keep existing preview if available
       if (!existingPre) {
-        preview.innerHTML = '<div style="padding:8px;color:var(--color-error);font-size:10px;">Failed to load</div>';
+        preview.innerHTML = '<div style="padding:8px;color:var(--color-error);font-size:10px;">' + window.t('Failed to load') + '</div>';
       }
       if (actionsBar && !preview.contains(actionsBar)) preview.appendChild(actionsBar);
     }
@@ -1064,7 +1064,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         }
       }
       if (!sessionId) {
-        if (uiModule) uiModule.showError('Could not create a session');
+        if (uiModule) uiModule.showError(window.t('Could not create a session'));
         return;
       }
     }
@@ -1110,10 +1110,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
 
       _switchToDoc(created.id);
       _syncDocIndicator();
-      if (uiModule) uiModule.showToast('Document cloned to session');
+      if (uiModule) uiModule.showToast(window.t('Document cloned to session'));
     } catch (e) {
       console.error('Failed to import document:', e);
-      if (uiModule) uiModule.showError('Failed to import document');
+      if (uiModule) uiModule.showError(window.t('Failed to import document'));
     }
   }
 
@@ -1125,7 +1125,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     const bulkBar = document.getElementById('doclib-bulk-bar');
     const selectBtn = document.getElementById('doclib-select-btn');
     if (bulkBar) bulkBar.classList.remove('hidden');
-    if (selectBtn) { selectBtn.classList.add('active'); selectBtn.textContent = 'Cancel'; }
+    if (selectBtn) { selectBtn.classList.add('active'); selectBtn.textContent = window.t('Cancel'); }
     libraryUpdateBulkCount();
     libraryRenderGrid();
   }
@@ -1137,7 +1137,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     const selectBtn = document.getElementById('doclib-select-btn');
     const selectAll = document.getElementById('doclib-select-all');
     if (bulkBar) bulkBar.classList.add('hidden');
-    if (selectBtn) { selectBtn.classList.remove('active'); selectBtn.textContent = 'Select'; }
+    if (selectBtn) { selectBtn.classList.remove('active'); selectBtn.textContent = window.t('Select'); }
     if (selectAll) selectAll.checked = false;
     libraryRenderGrid();
   }
@@ -1166,7 +1166,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
   function libraryUpdateBulkCount() {
     const countEl = document.getElementById('doclib-selected-count');
     const actionsBtn = document.getElementById('doclib-bulk-actions');
-    if (countEl) countEl.textContent = `${_librarySelectedIds.size} Selected`;
+    if (countEl) countEl.textContent = window.t('{n} Selected', { n: _librarySelectedIds.size });
     if (actionsBtn) actionsBtn.style.color = _librarySelectedIds.size > 0 ? 'var(--fg)' : '';
     // Legacy per-action buttons no longer rendered — guard so the rest of the
     // function (if anything still references them) doesn't crash.
@@ -1179,15 +1179,15 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     if (cloneBtn) cloneBtn.disabled = _librarySelectedIds.size === 0;
     if (archiveBtn) {
       archiveBtn.disabled = _librarySelectedIds.size === 0;
-      archiveBtn.textContent = _libraryArchivedView ? 'Restore' : 'Archive';
+      archiveBtn.textContent = _libraryArchivedView ? window.t('Restore') : window.t('Archive');
     }
   }
 
   async function libraryDeleteSingle(docId, card) {
     if (uiModule && uiModule.styledConfirm) {
-      const ok = await uiModule.styledConfirm('Delete this document?', { confirmText: 'Delete', danger: true });
+      const ok = await uiModule.styledConfirm(window.t('Delete this document?'), { confirmText: window.t('Delete'), danger: true });
       if (!ok) return;
-    } else if (!confirm('Delete this document?')) {
+    } else if (!confirm(window.t('Delete this document?'))) {
       return;
     }
     try {
@@ -1203,22 +1203,25 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         setTimeout(() => { if (card.parentElement) card.remove(); }, 400);
       }
       libraryRemoveDocumentFromState(docId);
-      if (uiModule) uiModule.showToast('Document deleted');
+      if (uiModule) uiModule.showToast(window.t('Document deleted'));
     } catch (e) {
-      if (uiModule) uiModule.showError(`Failed to delete document: ${e.message || e}`);
+      if (uiModule) uiModule.showError(window.t('Failed to delete document: {msg}', { msg: e.message || e }));
     }
   }
 
   async function libraryBulkDelete() {
     if (_librarySelectedIds.size === 0) return;
     const count = _librarySelectedIds.size;
+    const confirmMsg = count !== 1
+      ? window.t('Delete {n} documents?', { n: count })
+      : window.t('Delete {n} document?', { n: count });
     if (uiModule && uiModule.styledConfirm) {
       const ok = await uiModule.styledConfirm(
-        `Delete ${count} document${count !== 1 ? 's' : ''}?`,
-        { confirmText: 'Delete', danger: true }
+        confirmMsg,
+        { confirmText: window.t('Delete'), danger: true }
       );
       if (!ok) return;
-    } else if (!confirm(`Delete ${count} document${count !== 1 ? 's' : ''}?`)) {
+    } else if (!confirm(confirmMsg)) {
       return;
     }
 
@@ -1248,8 +1251,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     await libraryFetch(false);
     if (uiModule) {
       const msg = failed > 0
-        ? `Deleted ${deleted} · ${failed} failed`
-        : `Deleted ${deleted} document${deleted !== 1 ? 's' : ''}`;
+        ? window.t('Deleted {a} · {b} failed', { a: deleted, b: failed })
+        : (deleted !== 1
+            ? window.t('Deleted {n} documents', { n: deleted })
+            : window.t('Deleted {n} document', { n: deleted }));
       (failed > 0 ? uiModule.showError : uiModule.showToast)(msg);
     }
   }
@@ -1268,8 +1273,16 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     libraryExitSelectMode();
     await libraryFetch(false);
     if (uiModule) {
-      const verb = toArchived ? 'Archived' : 'Restored';
-      const msg = failed > 0 ? `${verb} ${done} · ${failed} failed` : `${verb} ${done} document${done !== 1 ? 's' : ''}`;
+      let msg;
+      if (failed > 0) {
+        msg = toArchived
+          ? window.t('Archived {a} · {b} failed', { a: done, b: failed })
+          : window.t('Restored {a} · {b} failed', { a: done, b: failed });
+      } else if (toArchived) {
+        msg = done !== 1 ? window.t('Archived {n} documents', { n: done }) : window.t('Archived {n} document', { n: done });
+      } else {
+        msg = done !== 1 ? window.t('Restored {n} documents', { n: done }) : window.t('Restored {n} document', { n: done });
+      }
       (failed > 0 ? uiModule.showError : uiModule.showToast)(msg);
     }
   }
@@ -1292,8 +1305,8 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     libraryExitSelectMode();
     if (uiModule) {
       const msg = failed > 0
-        ? `Cloned ${done} · ${failed} failed`
-        : `Cloned ${done} document${done !== 1 ? 's' : ''}`;
+        ? window.t('Cloned {a} · {b} failed', { a: done, b: failed })
+        : (done !== 1 ? window.t('Cloned {n} documents', { n: done }) : window.t('Cloned {n} document', { n: done }));
       (failed > 0 ? uiModule.showError : uiModule.showToast)(msg);
     }
   }
@@ -1305,7 +1318,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     if (_librarySelectedIds.size > 5) {
       const ids = [..._librarySelectedIds];
       try {
-        if (uiModule) uiModule.showToast(`Zipping ${ids.length} documents…`);
+        if (uiModule) uiModule.showToast(window.t('Zipping {n} documents…', { n: ids.length }));
         const res = await fetch(`${API_BASE}/api/documents/export-zip`, {
           method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
@@ -1321,9 +1334,9 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         a.click();
         a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 2000);
-        if (uiModule) uiModule.showToast(`Exported ${ids.length} documents (zip)`);
+        if (uiModule) uiModule.showToast(window.t('Exported {n} documents (zip)', { n: ids.length }));
       } catch (e) {
-        if (uiModule) uiModule.showError('Failed to create zip');
+        if (uiModule) uiModule.showError(window.t('Failed to create zip'));
       }
       return;
     }
@@ -1357,7 +1370,9 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       a.click();
       URL.revokeObjectURL(url);
     }
-    if (uiModule) uiModule.showToast(`Exported ${_librarySelectedIds.size} document${_librarySelectedIds.size !== 1 ? 's' : ''}`);
+    if (uiModule) uiModule.showToast(_librarySelectedIds.size !== 1
+      ? window.t('Exported {n} documents', { n: _librarySelectedIds.size })
+      : window.t('Exported {n} document', { n: _librarySelectedIds.size }));
   }
 
   /** Lazy-load SheetJS for spreadsheet parsing */
