@@ -162,7 +162,7 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
   // cramped LAYER ROWS are about width, not height.)
   const panelResize = document.createElement('div');
   panelResize.className = 'ge-panel-resize';
-  panelResize.title = 'Drag to resize panel';
+  panelResize.title = window.t('Drag to resize panel');
   rightPanel.appendChild(panelResize);
   try {
     const savedW = parseInt(localStorage.getItem('ge-right-panel-width') || '', 10);
