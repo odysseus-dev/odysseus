@@ -338,4 +338,29 @@ registerMessages('pt-BR', {
   'Merge mask "{maskName}" into "{aboveName}"': 'Mesclar mascara "{maskName}" em "{aboveName}"',
   'Delete mask': 'Excluir mascara',
   'Delete mask "{name}"': 'Excluir mascara "{name}"',
+
+  // wire-import.js
+  'Import image': 'Importar imagem',
+  'Imported': 'Importada',
+  'Image imported — drag to position': 'Imagem importada — arraste para posicionar',
+  'No image found in clipboard': 'Nenhuma imagem encontrada na area de transferencia',
+  'Failed to load clipboard image': 'Falha ao carregar imagem da area de transferencia',
+  'Clipboard access denied or no image available': 'Acesso a area de transferencia negado ou nenhuma imagem disponivel',
+  'No images in gallery': 'Nenhuma imagem na galeria',
+  'Pick from Gallery': 'Escolher da galeria',
+  'Failed to load gallery image': 'Falha ao carregar imagem da galeria',
+  'Failed to load gallery:': 'Falha ao carregar galeria:',
+
+  // wire-inpaint-controls.js
+  'Show': 'Mostrar',
+  'Mask inverted': 'Mascara invertida',
+
+  // wire-merge-buttons.js
+  'Flatten copy': 'Achatar copia',
+  'Flattened': 'Achatada',
+  'Flattened copy created': 'Copia achatada criada',
+  'Need at least two visible layers to merge': 'Sao necessarias pelo menos duas camadas visiveis para mesclar',
+  'Merge all': 'Mesclar tudo',
+  'Visible layers merged': 'Camadas visiveis mescladas',
+  'Merge down': 'Mesclar para baixo',
 });
