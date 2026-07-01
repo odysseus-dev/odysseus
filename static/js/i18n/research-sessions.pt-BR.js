@@ -74,4 +74,21 @@ registerMessages('pt-BR', {
   'Past research': 'Pesquisas anteriores',
   'Parallel': 'Paralelo',
   'Sequential': 'Sequencial',
+
+  // --- research/panel.js: job card states ---
+  'Auto rounds': 'Rodadas automáticas',
+  '{n} rounds': '{n} rodadas',
+  'Edit query': 'Editar consulta',
+  'Cancel research': 'Cancelar pesquisa',
+  'no results': 'sem resultados',
+  'standard': 'padrão',
+  "Couldn't extract anything — try rephrasing the question, or switch the search engine in Settings.":
+    'Não foi possível extrair nada — tente reformular a pergunta ou trocar o mecanismo de busca em Configurações.',
+  '{n} sources': '{n} fontes',
+  'Visual report': 'Relatório visual',
+  'Visual Report': 'Relatório Visual',
+  'Open follow-up chat with this research as context': 'Abrir chat de acompanhamento com esta pesquisa como contexto',
+  'Copy report to clipboard': 'Copiar relatório para a área de transferência',
+  'Clear from list': 'Remover da lista',
+  'Delete from disk': 'Excluir do disco',
 });

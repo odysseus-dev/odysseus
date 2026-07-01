@@ -897,7 +897,7 @@ function _buildJobCard(job) {
 
   if (job.status === 'queued') {
     const rounds = job.settings?.max_rounds;
-    const roundsLabel = !rounds ? 'Auto rounds' : `${rounds} rounds`;
+    const roundsLabel = !rounds ? window.t('Auto rounds') : window.t('{n} rounds', { n: rounds });
     const epName = job.settings?._endpointName || '';
     const mName = job.settings?._modelName || '';
     const meta = [mName, epName, roundsLabel].filter(Boolean).join(' -- ');
@@ -907,9 +907,9 @@ function _buildJobCard(job) {
       </div>
       <div class="research-job-queued-meta">${_esc(meta)}</div>
       <div class="research-job-actions">
-        <button class="research-job-action" data-action="start" title="Start">${_playIcon} Start</button>
-        <button class="research-job-action" data-action="edit" title="Edit query">${_editIcon} Edit</button>
-        <button class="research-job-action research-job-action-dim" data-action="remove" title="Remove">${_cancelIcon}</button>
+        <button class="research-job-action" data-action="start" title="${window.t('Start')}">${_playIcon} ${window.t('Start')}</button>
+        <button class="research-job-action" data-action="edit" title="${window.t('Edit query')}">${_editIcon} ${window.t('Edit')}</button>
+        <button class="research-job-action research-job-action-dim" data-action="remove" title="${window.t('Remove')}">${_cancelIcon}</button>
       </div>
     `;
     card.querySelector('[data-action="start"]').addEventListener('click', (e) => {
@@ -936,8 +936,8 @@ function _buildJobCard(job) {
         <span class="research-job-query">${_esc(job.query)}</span>${job.category ? `<span class="research-cat-badge">${_esc(job.category)}</span>` : ""}
         ${modelTag}
         <span class="research-job-time">${elapsed}</span>
-        <button class="research-synapse-toggle${_synapseMinimized ? ' active' : ''}" title="${_synapseMinimized ? 'Show visualization' : 'Minimize visualization'}">${_synapseMinimized ? _vizExpandIcon : _vizCollapseIcon}</button>
-        <button class="research-job-cancel" title="Cancel research">${_cancelIcon}</button>
+        <button class="research-synapse-toggle${_synapseMinimized ? ' active' : ''}" title="${_synapseMinimized ? window.t('Show visualization') : window.t('Minimize visualization')}">${_synapseMinimized ? _vizExpandIcon : _vizCollapseIcon}</button>
+        <button class="research-job-cancel" title="${window.t('Cancel research')}">${_cancelIcon}</button>
       </div>
       <div class="research-job-phase">${phase}</div>
       <div class="research-job-synapse-host${_synapseMinimized ? ' synapse-collapsed' : ''}" data-synapse-host="${job.id}"></div>
@@ -988,24 +988,24 @@ function _buildJobCard(job) {
     const failed = srcCount === 0;
     if (failed) card.classList.add('research-job-failed');
     const doneBadge = failed
-      ? `<span class="research-cat-badge research-cat-failed">${_cancelIcon} no results</span>`
-      : (job.category ? `<span class="research-cat-badge">${_esc(job.category)}</span>` : `<span class="research-cat-badge research-cat-standard">standard</span>`);
+      ? `<span class="research-cat-badge research-cat-failed">${_cancelIcon} ${window.t('no results')}</span>`
+      : (job.category ? `<span class="research-cat-badge">${_esc(job.category)}</span>` : `<span class="research-cat-badge research-cat-standard">${window.t('standard')}</span>`);
     const failNote = failed
-      ? `<div class="research-job-failnote">Couldn't extract anything — try rephrasing the question, or switch the search engine in Settings.</div>`
+      ? `<div class="research-job-failnote">${window.t("Couldn't extract anything — try rephrasing the question, or switch the search engine in Settings.")}</div>`
       : '';
     card.innerHTML = `
       <div class="research-job-header">
         <span class="research-job-query">${_esc(job.query)}</span>${doneBadge}
         ${modelTag}
-        <span class="research-job-meta">${elapsed} -- ${srcCount} sources</span>
+        <span class="research-job-meta">${elapsed} -- ${window.t('{n} sources', { n: srcCount })}</span>
       </div>
       ${failNote}
       <div class="research-job-actions">
-        <button class="research-job-action research-job-action-report" data-action="report" title="Visual report">${_externalIcon} Visual Report</button>
-        <button class="research-job-action" data-action="chat" title="Open follow-up chat with this research as context">${_chatIcon} Discuss</button>
-        <button class="research-job-action research-job-action-dim" data-action="copy" title="Copy report to clipboard">${_copyIcon}</button>
-        <button class="research-job-action research-job-action-dim" data-action="dismiss" title="Clear from list">${_cancelIcon}</button>
-        <button class="research-job-action research-job-action-dim" data-action="delete" title="Delete from disk">${_trashIcon} Delete</button>
+        <button class="research-job-action research-job-action-report" data-action="report" title="${window.t('Visual report')}">${_externalIcon} ${window.t('Visual Report')}</button>
+        <button class="research-job-action" data-action="chat" title="${window.t('Open follow-up chat with this research as context')}">${_chatIcon} ${window.t('Discuss')}</button>
+        <button class="research-job-action research-job-action-dim" data-action="copy" title="${window.t('Copy report to clipboard')}">${_copyIcon}</button>
+        <button class="research-job-action research-job-action-dim" data-action="dismiss" title="${window.t('Clear from list')}">${_cancelIcon}</button>
+        <button class="research-job-action research-job-action-dim" data-action="delete" title="${window.t('Delete from disk')}">${_trashIcon} ${window.t('Delete')}</button>
       </div>
       ${isExpanded ? `<div class="research-job-result">${_renderResult(job)}</div>` : ''}
     `;
