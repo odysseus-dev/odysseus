@@ -1213,7 +1213,7 @@ export function _hwfitRenderList(el, models) {
       if (_remaining.length && _remaining.length < _parts.length + 1) {  // at least one part is new
         let _display = _remaining.join('-');
         if (_display.length > 9) _display = _display.slice(0, 9) + '…';
-        _quantSuffix = ` <span class="hwfit-name-quant" title="${esc(_quantTag)} — full storage format">(${esc(_display)})</span>`;
+        _quantSuffix = ` <span class="hwfit-name-quant" title="${esc(window.t('{quant} — full storage format', { quant: _quantTag }))}">(${esc(_display)})</span>`;
       }
     }
     html += `<span class="hwfit-col hwfit-name">${modelLogo(m.name)}${esc(_short)}${_quantSuffix}${moeBadge}${imgBadge}${dlDot}</span>`;
@@ -1227,7 +1227,7 @@ export function _hwfitRenderList(el, models) {
     html += `<span class="hwfit-col hwfit-c-ctx">${m.is_image_gen ? '\u2014' : ctx}</span>`;
     html += `<span class="hwfit-col hwfit-c-speed">${m.is_image_gen ? '\u2014' : tps + ' t/s'}</span>`;
     html += `<span class="hwfit-col hwfit-c-score">${score}</span>`;
-    html += `<span class="hwfit-col hwfit-c-mode" title="${_requiresAcceleratorBackend(m) ? 'Requires vLLM or SGLang with a visible CUDA/ROCm accelerator. llama.cpp and Ollama need GGUF files.' : ''}">${esc(modeLabel)}</span>`;
+    html += `<span class="hwfit-col hwfit-c-mode" title="${_requiresAcceleratorBackend(m) ? esc(window.t('Requires vLLM or SGLang with a visible CUDA/ROCm accelerator. llama.cpp and Ollama need GGUF files.')) : ''}">${esc(modeLabel)}</span>`;
     html += `</div>`;
   }
   el.innerHTML = html;
@@ -1425,13 +1425,13 @@ export function _expandModelRow(row, modelData) {
   html += `<div class="hwfit-panel-header">`;
   html += `<span class="hwfit-panel-model">${esc(modelData.name)}${dlSource.kind ? ` <span style="opacity:0.5;font-size:10px;">(${esc(dlSource.kind)} ${esc(modelData.quant || '')})</span>` : (modelData.quant_repo ? ` <span style="opacity:0.5;font-size:10px;">(${esc(modelData.quant)})</span>` : '')}</span>`;
   html += `<span class="hwfit-panel-badge">${esc(label)}</span>`;
-  html += `<a href="${esc(hfUrl)}" target="_blank" rel="noopener" class="hwfit-panel-hf-link" title="View download source on HuggingFace">HF \u2197</a>`;
+  html += `<a href="${esc(hfUrl)}" target="_blank" rel="noopener" class="hwfit-panel-hf-link" title="${esc(window.t('View download source on HuggingFace'))}">HF \u2197</a>`;
   html += `</div>`;
   html += `<div class="hwfit-panel-actions">`;
-  html += `<button class="cookbook-btn hwfit-dl-btn">Download</button>`;
+  html += `<button class="cookbook-btn hwfit-dl-btn">${esc(window.t('Download'))}</button>`;
   if (!modelData.is_image_gen) {
-    html += `<button class="cookbook-btn cookbook-run-btn hwfit-quickrun-btn" title="Download + launch with smart defaults">Run</button>`;
-    html += `<button class="cookbook-btn hwfit-serve-expand-btn" title="Configure & serve">Configure</button>`;
+    html += `<button class="cookbook-btn cookbook-run-btn hwfit-quickrun-btn" title="${esc(window.t('Download + launch with smart defaults'))}">${esc(window.t('Run'))}</button>`;
+    html += `<button class="cookbook-btn hwfit-serve-expand-btn" title="${esc(window.t('Configure & serve'))}">${esc(window.t('Configure'))}</button>`;
   }
   html += `</div>`;
   if (modelData.is_image_gen) {
@@ -1445,7 +1445,7 @@ export function _expandModelRow(row, modelData) {
     const _backend = (_sys.backend || '').toLowerCase();
     const _hasGpuAccel = !!_sys.has_gpu && (_backend === 'cuda' || _backend === 'rocm');
     if (!_hasGpuAccel) {
-      html += `<div class="hwfit-panel-note">This is a safetensors GPU-serving format. Use vLLM/SGLang with a visible CUDA/ROCm accelerator, or pick a GGUF download for llama.cpp/Ollama.</div>`;
+      html += `<div class="hwfit-panel-note">${esc(window.t('This is a safetensors GPU-serving format. Use vLLM/SGLang with a visible CUDA/ROCm accelerator, or pick a GGUF download for llama.cpp/Ollama.'))}</div>`;
     }
   }
   html += `</div>`;

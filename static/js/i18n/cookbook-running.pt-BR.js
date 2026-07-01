@@ -174,4 +174,13 @@ registerMessages('pt-BR', {
   'Showing only models that fit. Click to also show too-tight rows.': 'Mostrando apenas modelos que cabem. Clique para também mostrar linhas apertadas.',
   'Click to show only models that fit your hardware.': 'Clique para mostrar apenas modelos que cabem no seu hardware.',
   'Model (oldest)': 'Modelo (mais antigo)',
+  '{quant} — full storage format': '{quant} — formato de armazenamento completo',
+  'Requires vLLM or SGLang with a visible CUDA/ROCm accelerator. llama.cpp and Ollama need GGUF files.': 'Requer vLLM ou SGLang com um acelerador CUDA/ROCm visível. llama.cpp e Ollama precisam de arquivos GGUF.',
+  'View download source on HuggingFace': 'Ver fonte de download no HuggingFace',
+  'Download': 'Baixar',
+  'Download + launch with smart defaults': 'Baixar + iniciar com padrões inteligentes',
+  'Run': 'Executar',
+  'Configure & serve': 'Configurar e servir',
+  'Configure': 'Configurar',
+  'This is a safetensors GPU-serving format. Use vLLM/SGLang with a visible CUDA/ROCm accelerator, or pick a GGUF download for llama.cpp/Ollama.': 'Este é um formato safetensors para servir em GPU. Use vLLM/SGLang com um acelerador CUDA/ROCm visível, ou escolha um download GGUF para llama.cpp/Ollama.',
 });
