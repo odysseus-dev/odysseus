@@ -1076,7 +1076,7 @@ async function _fetchDependencies() {
         : '';
       // "Other" entry: user types/pastes an id, OR uses the generic fallback
       // when no models have been downloaded yet.
-      const otherOpt = `<option value="">Other (generic ${esc(backend)} install)</option>`;
+      const otherOpt = `<option value="">${window.t('Other (generic {backend} install)', { backend: esc(backend) })}</option>`;
       const opts = modelOptions + otherOpt;
       // Initial recipe: the generic fallback (matches first time, no model id).
       const initial = pickRecipe(backend, '') || candidates[0];
@@ -1085,19 +1085,19 @@ async function _fetchDependencies() {
       const rightActive = initialVariant === 'docker' ? ' mode-right' : '';
       return `<div class="cookbook-dep-recipe-panel" data-dep-recipe-panel="${esc(backend)}" data-dep-recipe-active-variant="${esc(initialVariant)}" style="display:none;margin:-4px 0 8px;padding:8px 12px 10px;background:rgba(0,0,0,0.04);border:1px solid var(--border);border-top:none;border-radius:0 0 6px 6px;">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-            <span style="font-size:11px;opacity:0.75;flex-shrink:0;">Serving which model?</span>
+            <span style="font-size:11px;opacity:0.75;flex-shrink:0;">${window.t('Serving which model?')}</span>
             <select class="settings-select cookbook-dep-recipe-pick" data-dep-recipe-pick="${esc(backend)}" style="flex:1;font-size:11px;padding:3px 6px;">${opts}</select>
             <div class="mode-toggle${rightActive}" data-dep-recipe-variants="${esc(backend)}" style="flex-shrink:0;">
-              <button type="button" class="mode-toggle-btn${initialVariant === 'pip' ? ' active' : ''}" data-dep-recipe-variant="${esc(backend)}" data-variant="pip" aria-pressed="${initialVariant === 'pip'}">Pip/uv</button>
-              <button type="button" class="mode-toggle-btn${initialVariant === 'docker' ? ' active' : ''}" data-dep-recipe-variant="${esc(backend)}" data-variant="docker" aria-pressed="${initialVariant === 'docker'}">Docker</button>
+              <button type="button" class="mode-toggle-btn${initialVariant === 'pip' ? ' active' : ''}" data-dep-recipe-variant="${esc(backend)}" data-variant="pip" aria-pressed="${initialVariant === 'pip'}">${window.t('Pip/uv')}</button>
+              <button type="button" class="mode-toggle-btn${initialVariant === 'docker' ? ' active' : ''}" data-dep-recipe-variant="${esc(backend)}" data-variant="docker" aria-pressed="${initialVariant === 'docker'}">${window.t('Docker')}</button>
             </div>
           </div>
           <div style="position:relative;">
             <pre class="cookbook-dep-recipe-cmds" data-dep-recipe-cmds="${esc(backend)}" data-dep-recipe-install="${esc(initialCmds.join('\n'))}" style="margin:0;padding:8px 36px 8px 10px;background:rgba(0,0,0,0.08);border-radius:4px;font-size:11px;line-height:1.5;overflow-x:auto;white-space:pre;">${esc(_recipeDisplayText(initialCmds, initialVariant))}</pre>
-            <button type="button" id="recipe-copy-${esc(backend)}" class="cookbook-dep-recipe-copy" data-dep-recipe-copy="${esc(backend)}" title="Copy" aria-label="Copy" style="position:absolute;top:6px;right:6px;padding:3px 5px;background:none;border:none;color:inherit;opacity:0.7;cursor:pointer;display:inline-flex;align-items:center;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+            <button type="button" id="recipe-copy-${esc(backend)}" class="cookbook-dep-recipe-copy" data-dep-recipe-copy="${esc(backend)}" title="${window.t('Copy')}" aria-label="${window.t('Copy')}" style="position:absolute;top:6px;right:6px;padding:3px 5px;background:none;border:none;color:inherit;opacity:0.7;cursor:pointer;display:inline-flex;align-items:center;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
           </div>
           <div style="display:flex;gap:6px;justify-content:flex-end;margin-top:6px;">
-            <button type="button" class="cookbook-dep-tag cookbook-dep-install cookbook-dep-recipe-run" data-dep-recipe-run="${esc(backend)}" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>Run</button>
+            <button type="button" class="cookbook-dep-tag cookbook-dep-install cookbook-dep-recipe-run" data-dep-recipe-run="${esc(backend)}" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>${window.t('Run')}</button>
           </div>
         </div>`;
     }
@@ -1112,8 +1112,8 @@ async function _fetchDependencies() {
     const _serverDeps = pkgs.filter(p => p.target !== 'local');
 
     list.innerHTML = [
-      _viewingRemote ? '' : _section('Odysseus app', 'Run inside the Odysseus app itself.', _appDeps),
-      _section('Server', 'Run on the server chosen above (Local, or a remote box over SSH).', _serverDeps),
+      _viewingRemote ? '' : _section(window.t('Odysseus app'), window.t('Run inside the Odysseus app itself.'), _appDeps),
+      _section(window.t('Server'), window.t('Run on the server chosen above (Local, or a remote box over SSH).'), _serverDeps),
     ].join('');
 
     // Shared install/update routine — used by the Install button and the
@@ -1128,7 +1128,7 @@ async function _fetchDependencies() {
         const depsServerSel = document.getElementById('hwfit-deps-server');
         if (depsServerSel) _applyServerSelection(depsServerSel.value);
       }
-      const targetHost = isLocalOnly ? 'this server' : (_envState.remoteHost || 'local');
+      const targetHost = isLocalOnly ? window.t('this server') : (_envState.remoteHost || 'local');
       // Always go through `python -m pip` so the leading token is `python`
       // — matches the /api/model/serve allow-list (bare `pip` is blocked).
       // Inside a venv/conda env, `--user` is invalid (pip refuses), so we
@@ -1186,9 +1186,9 @@ async function _fetchDependencies() {
           // disappearing before the user could read multi-clause errors
           // like "tmux missing on remote".
           const reason = data.detail || data.error || `HTTP ${res.status}`;
-          uiModule.showToast('Install failed: ' + String(reason).slice(0, 400), {
+          uiModule.showToast(window.t('Install failed: ') + String(reason).slice(0, 400), {
             duration: 20000,
-            action: 'OK',
+            action: window.t('OK'),
             onAction: () => {},
           });
           return;
@@ -1197,12 +1197,12 @@ async function _fetchDependencies() {
         // model) so the running-task card doesn't offer a "Serve →" button.
         const payload = { repo_id: pipName, _cmd: cmd, remote_host: _envState.remoteHost || '', _dep: true, env_path: _envState.envPath || '' };
         _addTask(data.session_id, 'pip ' + pkgName, 'download', payload);
-        if (statusEl) { statusEl.textContent = upgrade ? 'Updating...' : 'Installing...'; statusEl.disabled = true; }
-        uiModule.showToast(`${upgrade ? 'Updating' : 'Installing'} ${pkgName} on ${targetHost}...`);
+        if (statusEl) { statusEl.textContent = upgrade ? window.t('Updating...') : window.t('Installing...'); statusEl.disabled = true; }
+        uiModule.showToast(`${upgrade ? window.t('Updating') : window.t('Installing')} ${pkgName} ${window.t('on {host}...', { host: targetHost })}`);
       } catch (err) {
-        uiModule.showToast('Install failed: ' + err.message, {
+        uiModule.showToast(window.t('Install failed: ') + err.message, {
           duration: 20000,
-          action: 'OK',
+          action: window.t('OK'),
           onAction: () => {},
         });
       }
@@ -1239,7 +1239,7 @@ async function _fetchDependencies() {
           const depsServerSel = document.getElementById('hwfit-deps-server');
           if (depsServerSel) _applyServerSelection(depsServerSel.value);
         }
-        const targetLabel = isLocal ? 'this server' : (_envState.remoteHost || 'remote');
+        const targetLabel = isLocal ? window.t('this server') : (_envState.remoteHost || 'remote');
         const cmd = 'CMAKE_ARGS="-DGGML_CUDA=on" python3 -m pip install --user --break-system-packages --force-reinstall --no-cache-dir "llama-cpp-python[server]" --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124';
         try {
           const reqBody = {
@@ -1258,14 +1258,14 @@ async function _fetchDependencies() {
           if (res.ok && data.ok) {
             const payload = { repo_id: 'pip llama-cpp-python[CUDA]', _cmd: cmd, remote_host: _envState.remoteHost || '', _dep: true };
             _addTask(data.session_id, 'pip llama-cpp-python[CUDA]', 'download', payload);
-            uiModule.showToast(`Reinstalling llama-cpp-python with CUDA wheels on ${targetLabel} (~1-3 min)…`, 4000);
+            uiModule.showToast(window.t('Reinstalling llama-cpp-python with CUDA wheels on {target} (~1-3 min)…', { target: targetLabel }), 4000);
           } else {
-            uiModule.showToast('Upgrade failed: ' + String(data.detail || data.error || `HTTP ${res.status}`).slice(0, 300), {
-              duration: 20000, action: 'OK', onAction: () => {},
+            uiModule.showToast(window.t('Upgrade failed: ') + String(data.detail || data.error || `HTTP ${res.status}`).slice(0, 300), {
+              duration: 20000, action: window.t('OK'), onAction: () => {},
             });
           }
         } catch (err) {
-          uiModule.showToast('Upgrade request failed: ' + err.message, { duration: 20000, action: 'OK', onAction: () => {} });
+          uiModule.showToast(window.t('Upgrade request failed: ') + err.message, { duration: 20000, action: window.t('OK'), onAction: () => {} });
         }
       });
     });
@@ -1281,7 +1281,7 @@ async function _fetchDependencies() {
         try { await navigator.clipboard.writeText(cmd); }
         catch { /* fall through */ }
         const orig = btn.textContent;
-        btn.textContent = 'Copied';
+        btn.textContent = window.t('Copied');
         setTimeout(() => { if (btn.isConnected) btn.textContent = orig; }, 1200);
       });
     });
@@ -1306,9 +1306,9 @@ async function _fetchDependencies() {
           const depsServerSel = document.getElementById('hwfit-deps-server');
           if (depsServerSel) _applyServerSelection(depsServerSel.value);
         }
-        const targetLabel = isLocal ? 'this server' : (_envState.remoteHost || 'remote');
+        const targetLabel = isLocal ? window.t('this server') : (_envState.remoteHost || 'remote');
         const origText = btn.textContent;
-        btn.textContent = 'Installing…';
+        btn.textContent = window.t('Installing…');
         btn.disabled = true;
         try {
           const body = { packages: names };
@@ -1324,7 +1324,7 @@ async function _fetchDependencies() {
           });
           const data = await res.json().catch(() => ({}));
           if (res.ok && data.ok) {
-            uiModule.showToast(`Installed ${names.join(', ')} on ${targetLabel}. Refreshing…`, 4000);
+            uiModule.showToast(window.t('Installed {names} on {target}. Refreshing…', { names: names.join(', '), target: targetLabel }), 4000);
             // Refresh the deps panel so the row updates (prereqs now present).
             try { await _fetchDependencies(); } catch {}
           } else {
@@ -1332,10 +1332,10 @@ async function _fetchDependencies() {
             // Append the per-target install command (if we already know it
             // from the row) so the user can copy-paste it without leaving
             // the toast. Otherwise just surface the error.
-            const _suffix = _resolvedCmd ? `\n\nRun on ${targetLabel}: ${_resolvedCmd}` : '';
-            uiModule.showToast('Build-deps install failed: ' + String(reason).slice(0, 300) + _suffix, {
+            const _suffix = _resolvedCmd ? `\n\n${window.t('Run on {target}: {cmd}', { target: targetLabel, cmd: _resolvedCmd })}` : '';
+            uiModule.showToast(window.t('Build-deps install failed: ') + String(reason).slice(0, 300) + _suffix, {
               duration: 25000,
-              action: _resolvedCmd ? 'Copy command' : 'OK',
+              action: _resolvedCmd ? window.t('Copy command') : window.t('OK'),
               onAction: async () => {
                 if (_resolvedCmd) {
                   try { await navigator.clipboard.writeText(_resolvedCmd); } catch {}
@@ -1346,8 +1346,8 @@ async function _fetchDependencies() {
             btn.disabled = false;
           }
         } catch (err) {
-          uiModule.showToast('Install request failed: ' + err.message, {
-            duration: 20000, action: 'OK', onAction: () => {},
+          uiModule.showToast(window.t('Install request failed: ') + err.message, {
+            duration: 20000, action: window.t('OK'), onAction: () => {},
           });
           btn.textContent = origText;
           btn.disabled = false;
@@ -1420,7 +1420,7 @@ async function _fetchDependencies() {
         if (!pre) return;
         try {
           await navigator.clipboard.writeText(pre.textContent);
-          uiModule.showToast('Copied');
+          uiModule.showToast(window.t('Copied'));
         } catch {
           // Fallback for non-secure contexts: select the pre's text so
           // the user can Ctrl+C themselves.
