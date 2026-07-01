@@ -128,14 +128,14 @@ export function createLayerPanelRenderer(deps) {
       // drag-init to this handle so row body clicks still activate.
       const handle = document.createElement('span');
       handle.className = 'ge-layer-drag';
-      handle.title = 'Drag to reorder';
+      handle.title = window.t('Drag to reorder');
       handle.innerHTML = '<svg width="8" height="14" viewBox="0 0 8 14" fill="currentColor"><circle cx="2" cy="2" r="1"/><circle cx="6" cy="2" r="1"/><circle cx="2" cy="7" r="1"/><circle cx="6" cy="7" r="1"/><circle cx="2" cy="12" r="1"/><circle cx="6" cy="12" r="1"/></svg>';
       item.appendChild(handle);
 
       const visBtn = document.createElement('button');
       visBtn.className = 'ge-layer-vis' + (layer.visible ? ' visible' : '');
       visBtn.innerHTML = layer.visible ? EYE_OPEN : EYE_OFF;
-      visBtn.title = layer.visible ? 'Hide layer' : 'Show layer';
+      visBtn.title = layer.visible ? window.t('Hide layer') : window.t('Show layer');
       visBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         layer.visible = !layer.visible;
@@ -145,7 +145,7 @@ export function createLayerPanelRenderer(deps) {
 
       const nameEl = document.createElement('span');
       nameEl.className = 'ge-layer-name';
-      nameEl.textContent = layer.name + (isLayerEmpty(layer) ? ' (empty)' : '');
+      nameEl.textContent = layer.name + (isLayerEmpty(layer) ? ' ' + window.t('(empty)') : '');
       nameEl.addEventListener('dblclick', () => {
         const input = document.createElement('input');
         input.type = 'text';
@@ -164,7 +164,7 @@ export function createLayerPanelRenderer(deps) {
       opSlider.max = '100';
       opSlider.value = String(Math.round(layer.opacity * 100));
       opSlider.className = 'ge-layer-opacity';
-      opSlider.title = 'Opacity';
+      opSlider.title = window.t('Opacity');
       opSlider.addEventListener('input', (e) => {
         e.stopPropagation();
         layer.opacity = parseInt(e.target.value) / 100;
@@ -190,7 +190,7 @@ export function createLayerPanelRenderer(deps) {
       const fxBtn = document.createElement('button');
       fxBtn.className = 'ge-layer-btn ge-layer-fx-btn' + (layerHasAdjustments(layer) ? ' active' : '');
       fxBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor"/></svg>';
-      fxBtn.title = 'Adjust layer (Brightness, Contrast, Saturation, Hue, Levels, Color Balance)';
+      fxBtn.title = window.t('Adjust layer (Brightness, Contrast, Saturation, Hue, Levels, Color Balance)');
       fxBtn.style.touchAction = 'manipulation';
       let lastFxPointerOpenAt = 0;
       let fxOpenTimer = null;
@@ -227,12 +227,12 @@ export function createLayerPanelRenderer(deps) {
       // active.
       const dupBtn = document.createElement('button');
       dupBtn.className = 'ge-layer-btn';
-      dupBtn.title = 'Duplicate layer';
+      dupBtn.title = window.t('Duplicate layer');
       dupBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
       dupBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        saveState(`Duplicate "${layer.name}"`);
-        const copy = createLayer(layer.name + ' copy', layer.canvas.width, layer.canvas.height);
+        saveState(window.t('Duplicate "{name}"', { name: layer.name }));
+        const copy = createLayer(layer.name + ' ' + window.t('copy'), layer.canvas.width, layer.canvas.height);
         copy.ctx.drawImage(layer.canvas, 0, 0);
         copy.opacity = layer.opacity;
         copy.visible = layer.visible;
@@ -268,7 +268,7 @@ export function createLayerPanelRenderer(deps) {
         state.activeLayerId = copy.id;
         composite();
         render();
-        if (uiModule) uiModule.showToast('Layer duplicated');
+        if (uiModule) uiModule.showToast(window.t('Layer duplicated'));
       });
       controls.appendChild(dupBtn);
 
@@ -282,8 +282,8 @@ export function createLayerPanelRenderer(deps) {
         ((hasLassoSelInitial || hasWandSelInitial) ? ' from-selection' : '');
       maskBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 12c4 0 4-4 8-4s4 4 8 4-4 4-8 4-4-4-8-4z" fill="currentColor"/></svg>';
       maskBtn.title = (hasLassoSelInitial || hasWandSelInitial)
-        ? 'Make mask from current selection'
-        : 'Add empty mask (paint with Brush)';
+        ? window.t('Make mask from current selection')
+        : window.t('Add empty mask (paint with Brush)');
       maskBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         // Activate this layer first so the new mask attaches here.
@@ -293,25 +293,25 @@ export function createLayerPanelRenderer(deps) {
         const hasLassoSel = state.lassoPoints.length >= 3 && !state.lassoActive;
         const hasWandSel = !!state.wandMask;
         if (hasLassoSel) {
-          saveState(`Mask from lasso on "${layer.name}"`);
+          saveState(window.t('Mask from lasso on "{name}"', { name: layer.name }));
           // Force a fresh mask sub-layer for this conversion so each
           // selection becomes its own mask instead of merging into the
           // previously active one.
           layer.activeMaskId = null;
           lassoToMask();
         } else if (hasWandSel) {
-          saveState(`Mask from wand on "${layer.name}"`);
+          saveState(window.t('Mask from wand on "{name}"', { name: layer.name }));
           layer.activeMaskId = null;
           wandToMask();
         } else {
-          saveState(`Add mask to "${layer.name}"`);
+          saveState(window.t('Add mask to "{name}"', { name: layer.name }));
           const c = document.createElement('canvas');
           c.width = state.imgWidth;
           c.height = state.imgHeight;
           if (!layer.masks) layer.masks = [];
           const mask = {
             id: 'mask-' + (state.nextLayerId++),
-            name: 'Mask ' + (layer.masks.length + 1),
+            name: window.t('Mask {n}', { n: layer.masks.length + 1 }),
             canvas: c,
             ctx: c.getContext('2d'),
             visible: true,
@@ -331,15 +331,15 @@ export function createLayerPanelRenderer(deps) {
       if (i > 0) {
         const mergeDownBtn = document.createElement('button');
         mergeDownBtn.className = 'ge-layer-btn';
-        mergeDownBtn.title = 'Merge down into layer below';
+        mergeDownBtn.title = window.t('Merge down into layer below');
         mergeDownBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="6 13 12 19 18 13"/></svg>';
         mergeDownBtn.addEventListener('click', (e) => {
           e.stopPropagation();
-          saveState(`Merge "${layer.name}" down`);
+          saveState(window.t('Merge "{name}" down', { name: layer.name }));
           mergeLayerDownAtIndex(i);
           composite();
           render();
-          uiModule.showToast('Layer merged down');
+          uiModule.showToast(window.t('Layer merged down'));
         });
         controls.appendChild(mergeDownBtn);
       }
@@ -351,18 +351,18 @@ export function createLayerPanelRenderer(deps) {
         const delBtn = document.createElement('button');
         delBtn.className = 'ge-layer-btn danger';
         delBtn.textContent = '×';
-        delBtn.title = layer.isBase ? 'Delete original layer (Ctrl+Z to undo)' : 'Delete layer';
+        delBtn.title = layer.isBase ? window.t('Delete original layer (Ctrl+Z to undo)') : window.t('Delete layer');
         delBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
           if (layer.isBase && uiModule?.styledConfirm) {
             const ok = await uiModule.styledConfirm(
-              'Delete the original photo layer? Ctrl+Z brings it back.',
-              { confirmText: 'Delete', cancelText: 'Cancel', danger: true }
+              window.t('Delete the original photo layer? Ctrl+Z brings it back.'),
+              { confirmText: window.t('Delete'), cancelText: window.t('Cancel'), danger: true }
             );
             if (!ok) return;
           }
           // Snapshot BEFORE removing so Ctrl+Z can bring it back.
-          saveState(`Delete layer "${layer.name}"`);
+          saveState(window.t('Delete layer "{name}"', { name: layer.name }));
           state.layers.splice(i, 1);
           state.layerOffsets.delete(layer.id);
           if (state.activeLayerId === layer.id) {
@@ -403,7 +403,7 @@ export function createLayerPanelRenderer(deps) {
           const sVis = document.createElement('button');
           sVis.className = 'ge-layer-vis' + (adj.visible ? ' visible' : '');
           sVis.innerHTML = adj.visible ? EYE_OPEN_SM : EYE_OFF_SM;
-          sVis.title = adj.visible ? 'Hide adjustment' : 'Show adjustment';
+          sVis.title = adj.visible ? window.t('Hide adjustment') : window.t('Show adjustment');
           sVis.addEventListener('click', (e) => {
             e.stopPropagation();
             adj.visible = !adj.visible;
@@ -419,7 +419,7 @@ export function createLayerPanelRenderer(deps) {
           sOp.min = '0'; sOp.max = '100';
           sOp.value = Math.round(adj.opacity * 100);
           sOp.className = 'ge-layer-opacity';
-          sOp.title = 'Adjustment opacity';
+          sOp.title = window.t('Adjustment opacity');
           sOp.addEventListener('input', () => {
             adj.opacity = parseInt(sOp.value, 10) / 100;
             layer._adjFinalKey = null;
@@ -429,12 +429,12 @@ export function createLayerPanelRenderer(deps) {
           sControls.className = 'ge-layer-controls';
           const mergeBtn = document.createElement('button');
           mergeBtn.className = 'ge-layer-btn';
-          mergeBtn.title = 'Merge into layer (bake)';
+          mergeBtn.title = window.t('Merge into layer (bake)');
           mergeBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
           mergeBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             // Bake just this adjustment into layer.canvas, then drop it.
-            saveState(`Merge ${adjLayerLabel(adj.type)}`);
+            saveState(window.t('Merge {label}', { label: adjLayerLabel(adj.type) }));
             const baked = applyAdjustment(layer.canvas, adj);
             layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
             layer.ctx.drawImage(baked, 0, 0);
@@ -447,10 +447,10 @@ export function createLayerPanelRenderer(deps) {
           const delBtn = document.createElement('button');
           delBtn.className = 'ge-layer-btn danger';
           delBtn.textContent = '×';
-          delBtn.title = 'Delete adjustment';
+          delBtn.title = window.t('Delete adjustment');
           delBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            saveState(`Delete ${adjLayerLabel(adj.type)}`);
+            saveState(window.t('Delete {label}', { label: adjLayerLabel(adj.type) }));
             layer.adjLayers = layer.adjLayers.filter(x => x.id !== adj.id);
             layer._adjFinalKey = null;
             composite();
@@ -490,7 +490,7 @@ export function createLayerPanelRenderer(deps) {
           const sVis = document.createElement('button');
           sVis.className = 'ge-layer-vis' + (mk.visible ? ' visible' : '');
           sVis.innerHTML = mk.visible ? EYE_OPEN_SM : EYE_OFF_SM;
-          sVis.title = mk.visible ? 'Hide mask' : 'Show mask';
+          sVis.title = mk.visible ? window.t('Hide mask') : window.t('Show mask');
           sVis.addEventListener('click', (e) => {
             e.stopPropagation();
             mk.visible = !mk.visible;
@@ -500,8 +500,8 @@ export function createLayerPanelRenderer(deps) {
           const sName = document.createElement('span');
           sName.className = 'ge-layer-name ge-adj-sub-name';
           const maskIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 12c4 0 4-4 8-4s4 4 8 4-4 4-8 4-4-4-8-4z" fill="currentColor"/></svg>';
-          const mkName = String(mk.name || 'Mask').replace(/[<>&]/g, '');
-          const mkEmpty = isMaskCanvasEmpty(mk.canvas) ? ' <span style="opacity:0.55;">(empty)</span>' : '';
+          const mkName = String(mk.name || window.t('Mask')).replace(/[<>&]/g, '');
+          const mkEmpty = isMaskCanvasEmpty(mk.canvas) ? ` <span style="opacity:0.55;">(${window.t('empty')})</span>` : '';
           sName.innerHTML = `<span class="ge-adj-sub-icon">${maskIcon}</span><span>${mkName}${mkEmpty}</span>`;
           const sControls = document.createElement('div');
           sControls.className = 'ge-layer-controls';
@@ -509,13 +509,13 @@ export function createLayerPanelRenderer(deps) {
           if (mi > 0) {
             const mergeBtn = document.createElement('button');
             mergeBtn.className = 'ge-layer-btn';
-            mergeBtn.title = 'Merge into mask above';
+            mergeBtn.title = window.t('Merge into mask above');
             mergeBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="6 11 12 5 18 11"/></svg>';
             mergeBtn.addEventListener('click', (e) => {
               e.stopPropagation();
               const above = layer.masks[mi - 1];
               if (!above) return;
-              saveState(`Merge mask "${mk.name}" into "${above.name}"`);
+              saveState(window.t('Merge mask "{maskName}" into "{aboveName}"', { maskName: mk.name, aboveName: above.name }));
               // Union of alpha — `source-over` already does max for
               // fully opaque white masks; this also handles partial alpha.
               above.ctx.save();
@@ -535,10 +535,10 @@ export function createLayerPanelRenderer(deps) {
           const delBtn = document.createElement('button');
           delBtn.className = 'ge-layer-btn danger';
           delBtn.textContent = '×';
-          delBtn.title = 'Delete mask';
+          delBtn.title = window.t('Delete mask');
           delBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            saveState(`Delete mask "${mk.name}"`);
+            saveState(window.t('Delete mask "{name}"', { name: mk.name }));
             layer.masks = layer.masks.filter(x => x.id !== mk.id);
             if (layer.activeMaskId === mk.id) {
               layer.activeMaskId = layer.masks[layer.masks.length - 1]?.id || null;
