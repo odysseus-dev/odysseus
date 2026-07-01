@@ -101,4 +101,30 @@ registerMessages('pt-BR', {
   '{n} results for "{q}"': '{n} resultados para "{q}"',
   '{n} result for "{q}"': '{n} resultado para "{q}"',
   'No events match your search': 'Nenhum evento corresponde a busca',
+
+  // Year view
+  'Jan': 'Jan',
+  'Feb': 'Fev',
+  'Mar': 'Mar',
+  'Apr': 'Abr',
+  'Jun': 'Jun',
+  'Jul': 'Jul',
+  'Aug': 'Ago',
+  'Sep': 'Set',
+  'Oct': 'Out',
+  'Nov': 'Nov',
+  'Dec': 'Dez',
+  'S': 'D',
+  'M': 'S',
+  'T': 'T',
+  'W': 'Q',
+  'F': 'S',
+  '{n} events': '{n} eventos',
+  '{n} event': '{n} evento',
+
+  // Day-detail panel
+  'Search all events…': 'Buscar todos os eventos…',
+  '{n} results': '{n} resultados',
+  '{n} result': '{n} resultado',
+  'No events match': 'Nenhum evento corresponde',
 });

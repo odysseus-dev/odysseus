@@ -1747,9 +1747,9 @@ async function _renderYear() {
 
   let h = _headerHTML() + _filtersRowHTML() + '<div class="cal-year">';
   for (let m = 0; m < 12; m++) {
-    h += `<div class="cal-year-month" data-month="${m}"><div class="cal-year-month-title">${MON_SHORT[m]}</div>`;
+    h += `<div class="cal-year-month" data-month="${m}"><div class="cal-year-month-title">${window.t(MON_SHORT[m])}</div>`;
     h += '<div class="cal-year-grid">';
-    for (const wd of (_weekStartSun ? ['S','M','T','W','T','F','S'] : ['M','T','W','T','F','S','S'])) h += `<div class="cal-year-wd">${wd}</div>`;
+    for (const wd of (_weekStartSun ? ['S','M','T','W','T','F','S'] : ['M','T','W','T','F','S','S'])) h += `<div class="cal-year-wd">${window.t(wd)}</div>`;
     const first = new Date(y, m, 1);
     const dow = _weekStartSun ? first.getDay() : (first.getDay() + 6) % 7;
     const daysInMonth = new Date(y, m + 1, 0).getDate();
@@ -1761,7 +1761,7 @@ async function _renderYear() {
       let cls = 'cal-year-cell cal-year-day';
       if (isToday) cls += ' cal-year-today';
       if (evs.length) cls += ' cal-year-has';
-      h += `<div class="${cls}" data-date="${ds}" title="${evs.length ? evs.length + ' event' + (evs.length > 1 ? 's' : '') : ''}">${d}</div>`;
+      h += `<div class="${cls}" data-date="${ds}" title="${evs.length ? window.t(evs.length > 1 ? '{n} events' : '{n} event', { n: evs.length }) : ''}">${d}</div>`;
     }
     h += '</div></div>';
   }
@@ -1803,14 +1803,14 @@ function _dayDetailHTML(dateStr) {
   // Magnifying-glass icon inside the search field via a wrapper + padding-left.
   const searchInput = `<div class="cal-search-wrap">
     <svg class="cal-search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
-    <input type="search" class="cal-search-input cal-day-search" id="cal-search" placeholder="Search all events…" value="${_e(_searchQuery)}" />
+    <input type="search" class="cal-search-input cal-day-search" id="cal-search" placeholder="${window.t('Search all events…')}" value="${_e(_searchQuery)}" />
   </div>`;
-  let h = `<div class="cal-splitter" role="separator" aria-orientation="horizontal" tabindex="0" title="Drag to resize"><div class="cal-splitter-grip"></div></div>
+  let h = `<div class="cal-splitter" role="separator" aria-orientation="horizontal" tabindex="0" title="${window.t('Drag to resize')}"><div class="cal-splitter-grip"></div></div>
     <div class="cal-day-detail">
     ${searchInput}
     <div class="cal-detail-header">
-      <span>${_fmtDate(dateStr)}${isToday ? ' <span style="color:var(--accent, var(--red));font-weight:600;">(Today)</span>' : ''}</span>
-      <button class="cal-add-btn cal-add-btn-text cal-add-btn-sm" id="cal-add-day" title="New event"><span class="cal-add-plus">+</span><span class="cal-add-label">New</span></button>
+      <span>${_fmtDate(dateStr)}${isToday ? ` <span style="color:var(--accent, var(--red));font-weight:600;">(${window.t('Today')})</span>` : ''}</span>
+      <button class="cal-add-btn cal-add-btn-text cal-add-btn-sm" id="cal-add-day" title="${window.t('New event')}"><span class="cal-add-plus">+</span><span class="cal-add-label">${window.t('New')}</span></button>
     </div>`;
   if (_searchQuery) {
     const q = _searchQuery.toLowerCase();
@@ -1822,13 +1822,13 @@ function _dayDetailHTML(dateStr) {
         (e.location || '').toLowerCase().includes(q)
       )
       .sort((a, b) => (a.dtstart || '').localeCompare(b.dtstart || ''));
-    h += `<div class="cal-day-search-meta">${results.length} result${results.length !== 1 ? 's' : ''}</div>`;
+    h += `<div class="cal-day-search-meta">${window.t(results.length !== 1 ? '{n} results' : '{n} result', { n: results.length })}</div>`;
     if (!results.length) {
-      h += '<div class="cal-empty">No events match</div>';
+      h += `<div class="cal-empty">${window.t('No events match')}</div>`;
     } else {
       results.forEach(ev => {
         const date = ev.all_day ? ev.dtstart : _localDateOf(ev.dtstart);
-        const t = ev.all_day ? 'All day' : _fmtTime(ev.dtstart) + ' – ' + _fmtTime(ev.dtend);
+        const t = ev.all_day ? window.t('All day') : _fmtTime(ev.dtstart) + ' – ' + _fmtTime(ev.dtend);
         const bgStyle = _calItemBgStyle(ev);
         h += `<div class="cal-event-item${bgStyle ? ' cal-event-item-bg' : ''}" data-uid="${_e(ev.uid)}"${bgStyle ? ` style="${bgStyle}"` : ''}>
           <div class="cal-event-dot" style="background:${_calColor(ev)}"></div>
@@ -1837,18 +1837,18 @@ function _dayDetailHTML(dateStr) {
             <div class="cal-event-time">${_fmtDate(date)} · ${t}</div>
             ${ev.location ? `<div class="cal-event-loc">${_locHTML(ev.location)}</div>` : ''}
           </div>
-          <button class="cal-event-more" data-uid="${_e(ev.uid)}" title="More">${_moreIcon}</button>
+          <button class="cal-event-more" data-uid="${_e(ev.uid)}" title="${window.t('More')}">${_moreIcon}</button>
         </div>`;
       });
     }
     return h + '</div>';
   }
   const evs = _eventsForDay(dateStr);
-  if (!evs.length) h += '<div class="cal-empty">No events</div>';
+  if (!evs.length) h += `<div class="cal-empty">${window.t('No events')}</div>`;
   else evs.forEach(ev => {
-    const t = ev.all_day ? 'All day' : _fmtTime(ev.dtstart) + ' – ' + _fmtTime(ev.dtend);
+    const t = ev.all_day ? window.t('All day') : _fmtTime(ev.dtstart) + ' – ' + _fmtTime(ev.dtend);
     const _bgStyle = _calItemBgStyle(ev);
-    h += `<div class="cal-event-item${_bgStyle ? ' cal-event-item-bg' : ''}" data-uid="${_e(ev.uid)}"${_bgStyle ? ` style="${_bgStyle}"` : ''}><div class="cal-event-dot" style="background:${_calColor(ev)}"></div><div class="cal-event-info"><div class="cal-event-name">${_e(ev.summary)}</div><div class="cal-event-time">${t}</div>${ev.location ? `<div class="cal-event-loc">${_locHTML(ev.location)}</div>` : ''}</div><button class="cal-event-more" data-uid="${_e(ev.uid)}" title="More">${_moreIcon}</button></div>`;
+    h += `<div class="cal-event-item${_bgStyle ? ' cal-event-item-bg' : ''}" data-uid="${_e(ev.uid)}"${_bgStyle ? ` style="${_bgStyle}"` : ''}><div class="cal-event-dot" style="background:${_calColor(ev)}"></div><div class="cal-event-info"><div class="cal-event-name">${_e(ev.summary)}</div><div class="cal-event-time">${t}</div>${ev.location ? `<div class="cal-event-loc">${_locHTML(ev.location)}</div>` : ''}</div><button class="cal-event-more" data-uid="${_e(ev.uid)}" title="${window.t('More')}">${_moreIcon}</button></div>`;
   });
   return h + '</div>';
 }
