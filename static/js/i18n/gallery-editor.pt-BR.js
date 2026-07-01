@@ -96,4 +96,15 @@ registerMessages('pt-BR', {
   'e.g. Vacation 2026': 'ex.: Ferias 2026',
   'Create': 'Criar',
   'Album name:': 'Nome do album:',
+
+  // gallery.js — round 2
+  'Delete {n} album{s}? Photos inside will stay in your library.': 'Excluir {n} album{s}? As fotos dentro deles permanecerao na sua biblioteca.',
+  'Failed to delete {failed} of {total} albums': 'Falha ao excluir {failed} de {total} albuns',
+  'Deleted {n} album{s}': '{n} album{s} excluido{s}',
+  'Loading…': 'Carregando…',
+  'Resume {name}': 'Retomar {name}',
+  'project': 'projeto',
+  'Untitled': 'Sem titulo',
+  'Delete project': 'Excluir projeto',
+  'Delete this project?': 'Excluir este projeto?',
 });
