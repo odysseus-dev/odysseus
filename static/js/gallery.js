@@ -24,7 +24,7 @@ let _totalTagged = 0;
 // Update the "X/Y tagged" badge in the AI-tagging settings header.
 function _updateTagCount() {
   const el = document.getElementById('gallery-tag-count');
-  if (el) el.textContent = _total ? `${_totalTagged}/${_total} tagged` : '';
+  if (el) el.textContent = _total ? window.t('{tagged}/{total} tagged', { tagged: _totalTagged, total: _total }) : '';
 }
 let _search = '';
 // Stack of active tag filters. Multiple tags AND together — the user
@@ -214,14 +214,14 @@ async function _bulkUpload(filesOrItems, fallbackAlbumId) {
       } catch (e) { errors++; }
       done++;
       if (progress) progress.style.width = `${(done / total) * 100}%`;
-      if (status) status.textContent = `${done}/${total}${dupes ? ` (${dupes} duplicates)` : ''}`;
+      if (status) status.textContent = `${done}/${total}` + (dupes ? ' ' + window.t('({dupes} duplicates)', { dupes }) : '');
     }
   }
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, total) }, worker));
 
-  const msg = `${done - dupes - errors} imported` +
-    (dupes ? `, ${dupes} duplicates skipped` : '') +
-    (errors ? `, ${errors} errors` : '');
+  const msg = window.t('{n} imported', { n: done - dupes - errors }) +
+    (dupes ? ', ' + window.t('{n} duplicates skipped', { n: dupes }) : '') +
+    (errors ? ', ' + window.t('{n} errors', { n: errors }) : '');
   if (status) status.textContent = msg;
   uiModule.showToast(msg);
   setTimeout(() => { bar.style.display = 'none'; }, 3000);
@@ -335,9 +335,9 @@ async function _handleGalleryDrop(e) {
     dtItems.some(it => it.kind === 'string')
   );
   if (looksLikeFolderUri) {
-    uiModule.showError('Browsers can’t read folders dropped from native file managers (Thunar/Nautilus). Use the "Upload album" tile in the Albums tab instead.');
+    uiModule.showError(window.t("Browsers can't read folders dropped from native file managers (Thunar/Nautilus). Use the \"Upload album\" tile in the Albums tab instead."));
   } else if (entries.length || dtItems.length) {
-    uiModule.showToast('No images found in that drop');
+    uiModule.showToast(window.t('No images found in that drop'));
   }
 }
 
@@ -491,7 +491,7 @@ function _ensureAlbumsToolbar(container) {
   });
   container.querySelector('#gallery-albums-bulk-delete').addEventListener('click', (e) => {
     e.stopPropagation();
-    if (!_albumSelected.size) { uiModule.showToast('Select albums first'); return; }
+    if (!_albumSelected.size) { uiModule.showToast(window.t('Select albums first')); return; }
     _bulkDeleteAlbums([..._albumSelected]);
   });
 }
@@ -500,7 +500,7 @@ function _setAlbumSelectMode(on) {
   _albumSelectMode = on;
   if (!on) _albumSelected.clear();
   const container = document.getElementById('gallery-albums-container');
-  container.querySelector('#gallery-albums-select-btn span').textContent = on ? 'Cancel' : 'Select';
+  container.querySelector('#gallery-albums-select-btn span').textContent = on ? window.t('Cancel') : window.t('Select');
   container.querySelector('#gallery-albums-select-btn').classList.toggle('active', on);
   container.querySelector('#gallery-albums-bulk-bar').classList.toggle('hidden', !on);
   _renderAlbumsGrid();
@@ -511,7 +511,7 @@ function _updateAlbumBulkCount() {
   if (!container) return;
   const sel = _albumSelected.size;
   const cnt = container.querySelector('#gallery-albums-bulk-count');
-  if (cnt) cnt.textContent = sel + ' selected';
+  if (cnt) cnt.textContent = window.t('{n} selected', { n: sel });
   const all = container.querySelector('#gallery-albums-bulk-all');
   const total = _filteredAlbums().length;
   if (all) { all.checked = total > 0 && sel === total; all.indeterminate = sel > 0 && sel < total; }
@@ -529,14 +529,14 @@ function _renderAlbumsGrid() {
   if (!_albums.length) {
     wrap.innerHTML = `
       <div class="gallery-albums-empty">
-        <p>No albums yet.</p>
-        <button class="gallery-select-btn" id="gallery-albums-new">+ New album</button>
+        <p>${window.t('No albums yet.')}</p>
+        <button class="gallery-select-btn" id="gallery-albums-new">${window.t('+ New album')}</button>
       </div>`;
     _wireAlbumsEvents(wrap);
     return;
   }
   if (!albums.length) {
-    wrap.innerHTML = `<div class="gallery-albums-empty"><p>No albums match "${_esc(_albumSearch)}".</p></div>`;
+    wrap.innerHTML = `<div class="gallery-albums-empty"><p>${window.t('No albums match "{query}".', { query: _esc(_albumSearch) })}</p></div>`;
     return;
   }
 
@@ -551,7 +551,7 @@ function _renderAlbumsGrid() {
           <div class="gallery-album-placeholder">+</div>
         </div>
         <div class="gallery-album-info">
-          <div class="gallery-album-name">New album</div>
+          <div class="gallery-album-name">${window.t('New album')}</div>
         </div>
       </div>
       <div class="gallery-album-card gallery-album-card-add" id="gallery-albums-upload">
@@ -561,8 +561,8 @@ function _renderAlbumsGrid() {
           </div>
         </div>
         <div class="gallery-album-info">
-          <div class="gallery-album-name">Upload album</div>
-          <div class="gallery-album-count">Pick a folder</div>
+          <div class="gallery-album-name">${window.t('Upload album')}</div>
+          <div class="gallery-album-count">${window.t('Pick a folder')}</div>
         </div>
       </div>`;
   }
@@ -583,27 +583,27 @@ function _renderAlbumsGrid() {
     html += `
       <div class="${cls}" data-album="${_esc(a.id)}">
         ${dot}
-        <button class="gallery-album-menu-btn" data-album="${_esc(a.id)}" title="Options" aria-label="Album options"${_albumSelectMode ? ' style="display:none"' : ''}>
+        <button class="gallery-album-menu-btn" data-album="${_esc(a.id)}" title="${window.t('Options')}" aria-label="${window.t('Album options')}"${_albumSelectMode ? ' style="display:none"' : ''}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="position:relative;top:2px;"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
         </button>
         <div class="gallery-album-menu-pop dropdown" data-album="${_esc(a.id)}" hidden>
           <div class="dropdown-item-compact" data-action="upload">
             <span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>
-            <span>Upload here</span>
+            <span>${window.t('Upload here')}</span>
           </div>
           <div class="dropdown-item-compact" data-action="rename">
             <span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span>
-            <span>Rename</span>
+            <span>${window.t('Rename')}</span>
           </div>
           <div class="dropdown-item-compact dropdown-item-danger" data-action="delete">
             <span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></span>
-            <span>Delete</span>
+            <span>${window.t('Delete')}</span>
           </div>
         </div>
         <div class="gallery-album-cover">${cover}</div>
         <div class="gallery-album-info">
           <div class="gallery-album-name">${_esc(a.name)}</div>
-          <div class="gallery-album-count">${a.count} photo${a.count === 1 ? '' : 's'}</div>
+          <div class="gallery-album-count">${window.t('{n} photo{s}', { n: a.count, s: a.count === 1 ? '' : 's' })}</div>
         </div>
       </div>`;
   });
@@ -697,7 +697,7 @@ function _wireAlbumsEvents(scope) {
       e.stopPropagation();
       pop.hidden = true;
       const album = _albums.find(a => a.id === id);
-      const newName = prompt('Rename album:', album?.name || '');
+      const newName = prompt(window.t('Rename album:'), album?.name || '');
       if (!newName || !newName.trim() || newName.trim() === album?.name) return;
       const r = await fetch(`${API_BASE}/api/gallery/albums/${id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -706,9 +706,9 @@ function _wireAlbumsEvents(scope) {
       if (r.ok) {
         await _fetchAlbums();
         _renderAlbumsTab();
-        if (uiModule) uiModule.showToast('Album renamed');
+        if (uiModule) uiModule.showToast(window.t('Album renamed'));
       } else if (uiModule) {
-        uiModule.showError('Rename failed');
+        uiModule.showError(window.t('Rename failed'));
       }
     });
     pop.querySelector('[data-action="delete"]')?.addEventListener('click', async (e) => {
@@ -716,8 +716,8 @@ function _wireAlbumsEvents(scope) {
       pop.hidden = true;
       const album = _albums.find(a => a.id === id);
       const ok = await uiModule.styledConfirm(
-        `Delete album "${album?.name || ''}"? Photos inside will stay in your library.`,
-        { confirmText: 'Delete', danger: true },
+        window.t('Delete album "{name}"? Photos inside will stay in your library.', { name: album?.name || '' }),
+        { confirmText: window.t('Delete'), danger: true },
       );
       if (!ok) return;
       const r = await fetch(`${API_BASE}/api/gallery/albums/${id}`, {
@@ -728,17 +728,17 @@ function _wireAlbumsEvents(scope) {
         await _fetchAlbums();
         _renderAlbumsTab();
         _renderAlbums();
-        if (uiModule) uiModule.showToast('Album deleted');
+        if (uiModule) uiModule.showToast(window.t('Album deleted'));
       } else if (uiModule) {
-        uiModule.showError('Delete failed');
+        uiModule.showError(window.t('Delete failed'));
       }
     });
   });
 
   document.getElementById('gallery-albums-new')?.addEventListener('click', async () => {
     const name = (uiModule.styledPrompt
-      ? await uiModule.styledPrompt('Name your new album.', { title: 'New album', placeholder: 'e.g. Vacation 2026', confirmText: 'Create' })
-      : prompt('Album name:'));
+      ? await uiModule.styledPrompt(window.t('Name your new album.'), { title: window.t('New album'), placeholder: window.t('e.g. Vacation 2026'), confirmText: window.t('Create') })
+      : prompt(window.t('Album name:')));
     if (!name?.trim()) return;
     await fetch(`${API_BASE}/api/gallery/albums`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -801,8 +801,8 @@ function _wireAlbumsEvents(scope) {
 async function _bulkDeleteAlbums(ids) {
   if (!ids.length) return;
   const ok = await uiModule.styledConfirm(
-    `Delete ${ids.length} album${ids.length > 1 ? 's' : ''}? Photos inside will stay in your library.`,
-    { confirmText: 'Delete', danger: true },
+    window.t('Delete {n} album{s}? Photos inside will stay in your library.', { n: ids.length, s: ids.length > 1 ? 's' : '' }),
+    { confirmText: window.t('Delete'), danger: true },
   );
   if (!ok) return;
   let failed = 0;
@@ -813,8 +813,8 @@ async function _bulkDeleteAlbums(ids) {
     if (!r.ok) failed++;
     else if (_activeAlbum === id) _activeAlbum = null;
   }
-  if (failed) uiModule.showError(`Failed to delete ${failed} of ${ids.length} albums`);
-  else if (uiModule) uiModule.showToast(`Deleted ${ids.length} album${ids.length > 1 ? 's' : ''}`);
+  if (failed) uiModule.showError(window.t('Failed to delete {failed} of {total} albums', { failed, total: ids.length }));
+  else if (uiModule) uiModule.showToast(window.t('Deleted {n} album{s}', { n: ids.length, s: ids.length > 1 ? 's' : '' }));
   _setAlbumSelectMode(false);
   await _fetchAlbums();
   _renderAlbumsTab();
@@ -838,7 +838,7 @@ function _draftsShowLoading(section) {
       _draftsSpinner.element.style.cssText = 'width:28px;height:28px;margin:0;';
       ov.appendChild(_draftsSpinner.element);
     } catch (_) {
-      ov.textContent = 'Loading…';
+      ov.textContent = window.t('Loading…');
     }
     section.appendChild(ov);
   }
@@ -920,14 +920,14 @@ function _draftsPaint() {
       ? `<span class="gallery-select-dot${checked ? ' selected' : ''}" data-draft-id="${_esc(d.id)}"></span>`
       : '';
     return `
-      <div class="gallery-editor-draft-card${checked ? ' selected' : ''}${_draftsSelectMode ? ' select-mode' : ''}" data-draft-id="${_esc(d.id)}" tabindex="0" title="Resume ${_esc(d.name || 'project')}">
+      <div class="gallery-editor-draft-card${checked ? ' selected' : ''}${_draftsSelectMode ? ' select-mode' : ''}" data-draft-id="${_esc(d.id)}" tabindex="0" title="${window.t('Resume {name}', { name: _esc(d.name || window.t('project')) })}">
         ${checkbox}
         ${thumb}
         <div class="gallery-editor-draft-info">
-          <div class="gallery-editor-draft-name">${_esc(d.name || 'Untitled')}</div>
+          <div class="gallery-editor-draft-name">${_esc(d.name || window.t('Untitled'))}</div>
           <div class="gallery-editor-draft-meta">${_esc([dims, updated].filter(Boolean).join(' · '))}</div>
         </div>
-        <button class="gallery-editor-draft-delete" data-draft-id="${_esc(d.id)}" title="Delete project" aria-label="Delete project">×</button>
+        <button class="gallery-editor-draft-delete" data-draft-id="${_esc(d.id)}" title="${window.t('Delete project')}" aria-label="${window.t('Delete project')}">×</button>
       </div>`;
   }).join('');
   grid.querySelectorAll('.gallery-editor-draft-card').forEach(card => {
@@ -956,8 +956,8 @@ function _draftsPaint() {
       e.stopPropagation();
       const id = btn.dataset.draftId;
       if (!id) return;
-      const ok = await uiModule.styledConfirm('Delete this project?', {
-        confirmText: 'Delete', cancelText: 'Cancel', danger: true,
+      const ok = await uiModule.styledConfirm(window.t('Delete this project?'), {
+        confirmText: window.t('Delete'), cancelText: window.t('Cancel'), danger: true,
       });
       if (!ok) return;
       // Graceful exit: fade + shrink the card before the grid re-renders.
@@ -981,9 +981,9 @@ function _draftsSyncBulkBar() {
   const countEl = document.getElementById('gallery-editor-drafts-bulk-count');
   const selectBtn = document.getElementById('gallery-editor-drafts-select');
   if (bar) bar.classList.toggle('hidden', !_draftsSelectMode);
-  if (countEl) countEl.textContent = `${_draftsSelected.size} selected`;
+  if (countEl) countEl.textContent = window.t('{n} selected', { n: _draftsSelected.size });
   if (selectBtn) {
-    selectBtn.textContent = _draftsSelectMode ? 'Cancel' : 'Select';
+    selectBtn.textContent = _draftsSelectMode ? window.t('Cancel') : window.t('Select');
     selectBtn.classList.toggle('active', _draftsSelectMode);
   }
   // "All" checkbox state — checked when all visible drafts are selected,
@@ -1028,8 +1028,8 @@ function _draftsWireOnce() {
   document.getElementById('gallery-editor-drafts-bulk-delete')?.addEventListener('click', async () => {
     if (!_draftsSelected.size) return;
     const n = _draftsSelected.size;
-    const ok = await uiModule.styledConfirm(`Delete ${n} project${n === 1 ? '' : 's'}?`, {
-      confirmText: 'Delete', cancelText: 'Cancel', danger: true,
+    const ok = await uiModule.styledConfirm(window.t('Delete {n} project{s}?', { n, s: n === 1 ? '' : 's' }), {
+      confirmText: window.t('Delete'), cancelText: window.t('Cancel'), danger: true,
     });
     if (!ok) return;
     const ids = [..._draftsSelected];
@@ -1051,10 +1051,10 @@ function _draftsWireOnce() {
 // Human-readable "x minutes ago" / "y days ago" for the drafts list.
 function _humanRelativeDate(when) {
   const diff = (Date.now() - when.getTime()) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
-  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
-  if (diff < 86400 * 30) return Math.floor(diff / 86400) + 'd ago';
+  if (diff < 60) return window.t('just now');
+  if (diff < 3600) return window.t('{n}m ago', { n: Math.floor(diff / 60) });
+  if (diff < 86400) return window.t('{n}h ago', { n: Math.floor(diff / 3600) });
+  if (diff < 86400 * 30) return window.t('{n}d ago', { n: Math.floor(diff / 86400) });
   return when.toLocaleDateString();
 }
 
@@ -1070,14 +1070,14 @@ function _renderEditorLanding() {
   // and styling natively — no custom flex grid, no clipping, no empty boxes.
   // Picking an option fires `change` and goes straight into the editor.
   const presets = [
-    { w: 1024, h: 1024, label: 'Square HD — 1024 × 1024' },
-    { w: 1920, h: 1080, label: 'Widescreen — 1920 × 1080' },
-    { w: 1080, h: 1920, label: 'Portrait — 1080 × 1920' },
-    { w: 1080, h: 1080, label: 'Instagram — 1080 × 1080' },
-    { w: 1500, h: 1050, label: 'Postcard — 1500 × 1050' },
-    { w: 2480, h: 3508, label: 'A4 (300dpi) — 2480 × 3508' },
-    { w: 2550, h: 3300, label: 'Letter (300dpi) — 2550 × 3300' },
-    { w: 3840, h: 2160, label: '4K — 3840 × 2160' },
+    { w: 1024, h: 1024, label: window.t('Square HD — 1024 × 1024') },
+    { w: 1920, h: 1080, label: window.t('Widescreen — 1920 × 1080') },
+    { w: 1080, h: 1920, label: window.t('Portrait — 1080 × 1920') },
+    { w: 1080, h: 1080, label: window.t('Instagram — 1080 × 1080') },
+    { w: 1500, h: 1050, label: window.t('Postcard — 1500 × 1050') },
+    { w: 2480, h: 3508, label: window.t('A4 (300dpi) — 2480 × 3508') },
+    { w: 2550, h: 3300, label: window.t('Letter (300dpi) — 2550 × 3300') },
+    { w: 3840, h: 2160, label: window.t('4K — 3840 × 2160') },
   ];
   const optionsHtml = presets
     .map((p, i) => `<option value="${i}">${p.label}</option>`)
@@ -1085,30 +1085,30 @@ function _renderEditorLanding() {
   container.innerHTML = `
     <div class="gallery-editor-landing">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.6"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-      <h3>Image Editor <span class="ge-alpha-tag">Alpha</span></h3>
-      <p>Start a blank canvas, or open a photo from your gallery to edit it.</p>
+      <h3>${window.t('Image Editor')} <span class="ge-alpha-tag">${window.t('Alpha')}</span></h3>
+      <p>${window.t('Start a blank canvas, or open a photo from your gallery to edit it.')}</p>
       <div class="gallery-editor-landing-actions">
-        <button class="gallery-select-btn" id="gallery-editor-new">New canvas...</button>
-        <button class="gallery-select-btn" id="gallery-editor-pick">Browse photos</button>
+        <button class="gallery-select-btn" id="gallery-editor-new">${window.t('New canvas...')}</button>
+        <button class="gallery-select-btn" id="gallery-editor-pick">${window.t('Browse photos')}</button>
       </div>
       <label class="gallery-editor-template-label">
-        Or pick a template
+        ${window.t('Or pick a template')}
         <select class="gallery-editor-template-select" id="gallery-editor-template">
-          <option value="">Select a size…</option>
+          <option value="">${window.t('Select a size…')}</option>
           ${optionsHtml}
         </select>
       </label>
       <div class="gallery-editor-drafts" id="gallery-editor-drafts" hidden>
         <div class="gallery-editor-drafts-header">
-          <h4 class="gallery-editor-drafts-title">Saved projects</h4>
-          <input type="search" class="gallery-editor-drafts-search" id="gallery-editor-drafts-search" placeholder="Search projects…" autocomplete="off" />
-          <button class="gallery-select-btn" id="gallery-editor-drafts-select" title="Toggle multi-select">Select</button>
+          <h4 class="gallery-editor-drafts-title">${window.t('Saved projects')}</h4>
+          <input type="search" class="gallery-editor-drafts-search" id="gallery-editor-drafts-search" placeholder="${window.t('Search projects…')}" autocomplete="off" />
+          <button class="gallery-select-btn" id="gallery-editor-drafts-select" title="${window.t('Toggle multi-select')}">${window.t('Select')}</button>
         </div>
         <div class="gallery-bulk-bar hidden" id="gallery-editor-drafts-bulk">
-          <label class="memory-bulk-check-all"><input type="checkbox" id="gallery-editor-drafts-select-all"> All</label>
-          <span class="gallery-bulk-count" id="gallery-editor-drafts-bulk-count">0 selected</span>
-          <button class="gallery-bulk-delete" id="gallery-editor-drafts-bulk-delete"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Delete selected</button>
-          <button class="memory-toolbar-btn" id="gallery-editor-drafts-bulk-cancel" title="Cancel (Esc)" style="margin-left:4px;padding:3px 6px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          <label class="memory-bulk-check-all"><input type="checkbox" id="gallery-editor-drafts-select-all"> ${window.t('All')}</label>
+          <span class="gallery-bulk-count" id="gallery-editor-drafts-bulk-count">${window.t('0 selected')}</span>
+          <button class="gallery-bulk-delete" id="gallery-editor-drafts-bulk-delete"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>${window.t('Delete selected')}</button>
+          <button class="memory-toolbar-btn" id="gallery-editor-drafts-bulk-cancel" title="${window.t('Cancel (Esc)')}" style="margin-left:4px;padding:3px 6px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
         <div class="gallery-editor-drafts-grid" id="gallery-editor-drafts-grid"></div>
       </div>
@@ -1127,7 +1127,7 @@ function _renderEditorLanding() {
     // openEditor() now returns a Promise — it's async because the size
     // prompt is a styled modal. Await it before checking whether the
     // editor actually opened (the user may have cancelled).
-    await openEditor(null, null, null, 'New canvas');
+    await openEditor(null, null, null, window.t('New canvas'));
     if (!isEditorOpen()) _renderEditorLanding();
   });
   document.getElementById('gallery-editor-pick')?.addEventListener('click', () => {
@@ -1175,15 +1175,15 @@ function _renderGrid() {
   // tile in the Albums tab so the upload entry point is consistent across
   // both grids.
   const uploadTile = `
-    <div class="gallery-card gallery-card-upload" id="gallery-upload-tile" title="Upload photos or videos">
+    <div class="gallery-card gallery-card-upload" id="gallery-upload-tile" title="${window.t('Upload photos or videos')}">
       <div class="gallery-card-upload-inner">
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-        <div class="gallery-card-upload-label">Upload</div>
+        <div class="gallery-card-upload-label">${window.t('Upload')}</div>
       </div>
     </div>`;
 
   if (_items.length === 0) {
-    grid.innerHTML = uploadTile + '<div class="gallery-empty">No photos yet. Click Upload or drag-and-drop to get started!</div>';
+    grid.innerHTML = uploadTile + `<div class="gallery-empty">${window.t('No photos yet. Click Upload or drag-and-drop to get started!')}</div>`;
     _wireUploadTile();
     if (loadMore) loadMore.style.display = 'none';
     return;
@@ -1203,14 +1203,14 @@ function _renderGrid() {
       .replace(/\.[^.]+$/, '')       // drop extension
       .replace(/[_-]+/g, ' ')
       .trim();
-    const labelText = (img.prompt || '').trim() || fallbackName || 'Photo';
+    const labelText = (img.prompt || '').trim() || fallbackName || window.t('Photo');
     const promptPreview = labelText.length > 60 ? labelText.substring(0, 58) + '...' : labelText;
     const favCls = img.favorite ? ' gallery-fav-active' : '';
     html += `
       <div class="gallery-card" data-id="${_esc(img.id)}">
         <span class="gallery-select-dot" style="display:none;"></span>
-        <button class="gallery-fav-btn${favCls}" data-id="${_esc(img.id)}" title="Favorite">&#9829;</button>
-        <button class="gallery-dl-btn" data-id="${_esc(img.id)}" data-url="${_esc(img.url)}" data-filename="${_esc(img.filename || '')}" title="Download">
+        <button class="gallery-fav-btn${favCls}" data-id="${_esc(img.id)}" title="${window.t('Favorite')}">&#9829;</button>
+        <button class="gallery-dl-btn" data-id="${_esc(img.id)}" data-url="${_esc(img.url)}" data-filename="${_esc(img.filename || '')}" title="${window.t('Download')}">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </button>
         ${_isVideoUrl(img.url)
@@ -1315,18 +1315,18 @@ function _openDetail(img) {
     if (!d || isNaN(d.getTime())) return '';
     const secs = (Date.now() - d.getTime()) / 1000;
     if (secs < 0) return '';
-    if (secs < 60) return 'just now';
-    if (secs < 3600) { const m = Math.floor(secs / 60); return `${m} minute${m !== 1 ? 's' : ''} ago`; }
-    if (secs < 86400) { const h = Math.floor(secs / 3600); return `${h} hour${h !== 1 ? 's' : ''} ago`; }
-    if (secs < 86400 * 7) { const d2 = Math.floor(secs / 86400); return `${d2} day${d2 !== 1 ? 's' : ''} ago`; }
-    if (secs < 86400 * 30) { const w = Math.floor(secs / (86400 * 7)); return `${w} week${w !== 1 ? 's' : ''} ago`; }
-    if (secs < 86400 * 365) { const mo = Math.floor(secs / (86400 * 30)); return `${mo} month${mo !== 1 ? 's' : ''} ago`; }
+    if (secs < 60) return window.t('just now');
+    if (secs < 3600) { const m = Math.floor(secs / 60); return window.t('{n} minute{s} ago', { n: m, s: m !== 1 ? 's' : '' }); }
+    if (secs < 86400) { const h = Math.floor(secs / 3600); return window.t('{n} hour{s} ago', { n: h, s: h !== 1 ? 's' : '' }); }
+    if (secs < 86400 * 7) { const d2 = Math.floor(secs / 86400); return window.t('{n} day{s} ago', { n: d2, s: d2 !== 1 ? 's' : '' }); }
+    if (secs < 86400 * 30) { const w = Math.floor(secs / (86400 * 7)); return window.t('{n} week{s} ago', { n: w, s: w !== 1 ? 's' : '' }); }
+    if (secs < 86400 * 365) { const mo = Math.floor(secs / (86400 * 30)); return window.t('{n} month{s} ago', { n: mo, s: mo !== 1 ? 's' : '' }); }
     const y = Math.floor(secs / (86400 * 365));
-    return `${y} year${y !== 1 ? 's' : ''} ago`;
+    return window.t('{n} year{s} ago', { n: y, s: y !== 1 ? 's' : '' });
   };
   const date = _dateObj
     ? `${_dateObj.toLocaleString()}<span class="gallery-date-rel"> (${_relAgo(_dateObj)})</span>`
-    : 'Unknown';
+    : window.t('Unknown');
   const userTags = img.user_tags || img.tags || '';
   const aiTags = img.ai_tags || '';
   const dims = img.width && img.height ? `${img.width} x ${img.height}` : (img.size || 'Unknown');
@@ -1339,58 +1339,58 @@ function _openDetail(img) {
     const u = new Date(img.updated_at);
     const c = new Date(img.created_at);
     if (!isNaN(u) && !isNaN(c) && (u.getTime() - c.getTime() > 10000)) {
-      editedHtml = `<div class="gallery-detail-section"><label>Edited</label><div>${u.toLocaleString()}<span class="gallery-date-rel"> (${_relAgo(u)})</span></div></div>`;
+      editedHtml = `<div class="gallery-detail-section"><label>${window.t('Edited')}</label><div>${u.toLocaleString()}<span class="gallery-date-rel"> (${_relAgo(u)})</span></div></div>`;
     }
   }
 
   detail.innerHTML = `
     <div class="gallery-detail-header">
-      <button class="gallery-detail-back" id="gallery-detail-back">&larr; Back</button>
+      <button class="gallery-detail-back" id="gallery-detail-back">&larr; ${window.t('Back')}</button>
       <div style="flex:1"></div>
-      <button class="gallery-detail-back" id="gallery-edit-direct-btn" title="Edit (E)" aria-label="Edit photo" style="display:inline-flex;align-items:center;gap:4px;">
+      <button class="gallery-detail-back" id="gallery-edit-direct-btn" title="${window.t('Edit (E)')}" aria-label="${window.t('Edit photo')}" style="display:inline-flex;align-items:center;gap:4px;">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
-        Edit
+        ${window.t('Edit')}
       </button>
-      <button class="gallery-detail-back gallery-detail-fav-header${img.favorite ? ' active' : ''}" id="gallery-detail-fav-header" title="${img.favorite ? 'Unfavorite' : 'Favorite'}" aria-label="Favorite" aria-pressed="${img.favorite ? 'true' : 'false'}" style="display:inline-flex;align-items:center;justify-content:center;padding:4px 8px;">
+      <button class="gallery-detail-back gallery-detail-fav-header${img.favorite ? ' active' : ''}" id="gallery-detail-fav-header" title="${img.favorite ? window.t('Unfavorite') : window.t('Favorite')}" aria-label="${window.t('Favorite')}" aria-pressed="${img.favorite ? 'true' : 'false'}" style="display:inline-flex;align-items:center;justify-content:center;padding:4px 8px;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="${img.favorite ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
       </button>
       <div class="gallery-detail-menu-wrap">
-        <button class="gallery-detail-action gallery-detail-menu-btn" id="gallery-detail-menu-btn" title="Actions" aria-label="Photo actions">
+        <button class="gallery-detail-action gallery-detail-menu-btn" id="gallery-detail-menu-btn" title="${window.t('Actions')}" aria-label="${window.t('Photo actions')}">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
         </button>
         <div class="gallery-detail-menu dropdown" id="gallery-detail-menu" hidden>
           <button class="dropdown-item-compact" id="gallery-fav-detail">
             <span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="${img.favorite ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg></span>
-            ${img.favorite ? 'Favorited' : 'Favorite'}
+            ${img.favorite ? window.t('Favorited') : window.t('Favorite')}
           </button>
           <button class="dropdown-item-compact" id="gallery-ai-tag-btn" data-mode="${aiTags ? 'clear' : 'tag'}">
             <span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg></span>
-            ${aiTags ? 'Clear AI tags' : 'AI Tag'}
+            ${aiTags ? window.t('Clear AI tags') : window.t('AI Tag')}
           </button>
           <button class="dropdown-item-compact" id="gallery-download-btn">
             <span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
-            Download
+            ${window.t('Download')}
           </button>
           ${img.album_id ? `<button class="dropdown-item-compact" id="gallery-set-cover-btn">
             <span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></span>
-            Set as album cover
+            ${window.t('Set as album cover')}
           </button>` : ''}
           <button class="dropdown-item-compact dropdown-item-danger" id="gallery-delete-btn">
             <span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></span>
-            Delete
+            ${window.t('Delete')}
           </button>
         </div>
       </div>
     </div>
     <div class="gallery-detail-body">
       <div class="gallery-detail-image" id="gallery-detail-image-wrap" style="position:relative">
-        <button class="gallery-detail-rotate gallery-detail-rotate-ccw" id="gallery-rotate-ccw-btn" title="Rotate 90° counter-clockwise" aria-label="Rotate left">
+        <button class="gallery-detail-rotate gallery-detail-rotate-ccw" id="gallery-rotate-ccw-btn" title="${window.t('Rotate 90° counter-clockwise')}" aria-label="${window.t('Rotate left')}">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
         </button>
-        <button class="gallery-detail-rotate gallery-detail-rotate-cw" id="gallery-rotate-btn" title="Rotate 90° clockwise" aria-label="Rotate right">
+        <button class="gallery-detail-rotate gallery-detail-rotate-cw" id="gallery-rotate-btn" title="${window.t('Rotate 90° clockwise')}" aria-label="${window.t('Rotate right')}">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
         </button>
-        <button class="gallery-detail-nav gallery-detail-nav-prev" id="gallery-detail-prev" title="Previous (←)" aria-label="Previous">
+        <button class="gallery-detail-nav gallery-detail-nav-prev" id="gallery-detail-prev" title="${window.t('Previous (←)')}" aria-label="${window.t('Previous')}">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
         <div class="gallery-detail-img-frame">
@@ -1399,52 +1399,52 @@ function _openDetail(img) {
             : `<img id="gallery-detail-img" src="${_esc(img.url)}" alt="${_esc(img.prompt)}" />`}
           <div id="gallery-detail-face-overlay" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none"></div>
         </div>
-        <button class="gallery-detail-nav gallery-detail-nav-next" id="gallery-detail-next" title="Next (→)" aria-label="Next">
+        <button class="gallery-detail-nav gallery-detail-nav-next" id="gallery-detail-next" title="${window.t('Next (→)')}" aria-label="${window.t('Next')}">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
         </button>
       </div>
       <div class="gallery-detail-sidebar">
         <div class="gallery-detail-section">
-          <label>Name</label>
+          <label>${window.t('Name')}</label>
           <div class="gallery-name-wrap">
             <input type="text" class="gallery-detail-name-input" id="gallery-detail-name-input"
-              value="${_esc(img.prompt || '')}" placeholder="Untitled photo (press Enter to save)" />
+              value="${_esc(img.prompt || '')}" placeholder="${window.t('Untitled photo (press Enter to save)')}" />
             <svg class="gallery-name-enter" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
           </div>
         </div>
-        ${img.prompt && img.model !== 'imported' ? `<div class="gallery-detail-section"><label>Prompt</label><div class="gallery-detail-prompt">${_esc(img.prompt)}</div></div>` : ''}
+        ${img.prompt && img.model !== 'imported' ? `<div class="gallery-detail-section"><label>${window.t('Prompt')}</label><div class="gallery-detail-prompt">${_esc(img.prompt)}</div></div>` : ''}
         <div class="gallery-detail-section gallery-detail-section-date">
-          <label>Date</label>
+          <label>${window.t('Date')}</label>
           <div>${date}</div>
         </div>
         ${editedHtml}
         <div class="gallery-detail-section">
-          <label>Dimensions</label>
+          <label>${window.t('Dimensions')}</label>
           <div>${dims}${fileSize ? ` (${fileSize})` : ''}</div>
         </div>
-        ${img.camera ? `<div class="gallery-detail-section"><label>Camera</label><div>${_esc(img.camera)}</div></div>` : ''}
-        ${img.gps ? `<div class="gallery-detail-section"><label>Location</label><div>${img.gps.lat}, ${img.gps.lng}</div></div>` : ''}
-        ${img.model ? `<div class="gallery-detail-section"><label>Source</label><div>${_esc(img.model)}</div></div>` : ''}
-        ${img.session_name ? `<div class="gallery-detail-section"><label>Session</label><div>${_esc(img.session_name)}</div></div>` : ''}
-        ${aiTags ? `<div class="gallery-detail-section"><label>AI Tags</label><div class="gallery-ai-tags">${aiTags.split(',').map(t => t.trim()).filter(Boolean).map(t => `<button class="gallery-ai-chip gallery-aitag-chip" data-tag-filter="${_esc(t)}" title="AI-generated tag — click to filter to photos tagged “${_esc(t)}”"><span class="gallery-aitag-mark" aria-hidden="true">✦</span>${_esc(t)}</button>`).join('')}</div></div>` : ''}
+        ${img.camera ? `<div class="gallery-detail-section"><label>${window.t('Camera')}</label><div>${_esc(img.camera)}</div></div>` : ''}
+        ${img.gps ? `<div class="gallery-detail-section"><label>${window.t('Location')}</label><div>${img.gps.lat}, ${img.gps.lng}</div></div>` : ''}
+        ${img.model ? `<div class="gallery-detail-section"><label>${window.t('Source')}</label><div>${_esc(img.model)}</div></div>` : ''}
+        ${img.session_name ? `<div class="gallery-detail-section"><label>${window.t('Session')}</label><div>${_esc(img.session_name)}</div></div>` : ''}
+        ${aiTags ? `<div class="gallery-detail-section"><label>${window.t('AI Tags')}</label><div class="gallery-ai-tags">${aiTags.split(',').map(t => t.trim()).filter(Boolean).map(t => `<button class="gallery-ai-chip gallery-aitag-chip" data-tag-filter="${_esc(t)}" title="${window.t('AI-generated tag — click to filter to photos tagged "{tag}"', { tag: _esc(t) })}"><span class="gallery-aitag-mark" aria-hidden="true">✦</span>${_esc(t)}</button>`).join('')}</div></div>` : ''}
         <div class="gallery-detail-section">
-          <label>Tags</label>
-          <div class="gallery-ai-tags" id="gallery-user-tag-chips">${userTags.split(',').map(t => t.trim()).filter(Boolean).map(t => `<button class="gallery-ai-chip gallery-user-chip" data-tag-filter="${_esc(t)}" title="Filter to photos tagged “${_esc(t)}”">${_esc(t)}<span class="gallery-tag-x" title="Remove tag" aria-label="Remove tag">×</span></button>`).join('')}</div>
+          <label>${window.t('Tags')}</label>
+          <div class="gallery-ai-tags" id="gallery-user-tag-chips">${userTags.split(',').map(t => t.trim()).filter(Boolean).map(t => `<button class="gallery-ai-chip gallery-user-chip" data-tag-filter="${_esc(t)}" title="${window.t('Filter to photos tagged "{tag}"', { tag: _esc(t) })}">${_esc(t)}<span class="gallery-tag-x" title="${window.t('Remove tag')}" aria-label="${window.t('Remove tag')}">×</span></button>`).join('')}</div>
           <div class="gallery-tag-input-wrap">
             <input type="text" class="gallery-tag-input" id="gallery-tag-input"
-              value="" placeholder="Add a tag" title="Type a tag and press Enter to add it" />
+              value="" placeholder="${window.t('Add a tag')}" title="${window.t('Type a tag and press Enter to add it')}" />
             <span class="gallery-tag-enter-hint" aria-hidden="true">↵</span>
           </div>
         </div>
         <div class="gallery-detail-section">
-          <label>Album</label>
+          <label>${window.t('Album')}</label>
           <select id="gallery-detail-album" class="gallery-tag-input" style="padding:4px 6px;">
-            <option value="">None</option>
+            <option value="">${window.t('None')}</option>
             ${_albums.map(a => `<option value="${a.id}" ${img.album_id === a.id ? 'selected' : ''}>${_esc(a.name)}</option>`).join('')}
           </select>
         </div>
         <div class="gallery-detail-section" id="gallery-detail-people-section" style="display:none">
-          <label>People in this photo</label>
+          <label>${window.t('People in this photo')}</label>
           <div id="gallery-detail-people-list" class="gallery-detail-people"></div>
         </div>
       </div>
@@ -1560,14 +1560,14 @@ function _openDetail(img) {
       cleanup();
       if (data.ok) {
         img.ai_tags = clearMode ? '' : data.ai_tags;
-        uiModule.showToast(clearMode ? 'AI tags cleared' : 'AI tags added');
+        uiModule.showToast(clearMode ? window.t('AI tags cleared') : window.t('AI tags added'));
         _openDetail(img); // re-render detail
       } else {
-        uiModule.showError(data.error || (clearMode ? 'Clear failed' : 'AI tagging failed'));
+        uiModule.showError(data.error || (clearMode ? window.t('Clear failed') : window.t('AI tagging failed')));
       }
     } catch (e2) {
       cleanup();
-      uiModule.showError(clearMode ? 'Clear failed' : 'AI tagging failed');
+      uiModule.showError(clearMode ? window.t('Clear failed') : window.t('AI tagging failed'));
     }
   });
 
@@ -1669,11 +1669,11 @@ function _openDetail(img) {
       const editorContainer = document.getElementById('gallery-editor-container');
       if (editorContainer) editorContainer.style.display = 'flex';
       const baseFilename = (img.filename || '').replace(/\.[^.]+$/, '');
-      const label = img.prompt?.trim() || baseFilename || 'Photo';
+      const label = img.prompt?.trim() || baseFilename || window.t('Photo');
       openEditor(img.url, img.id, null, label);
     } catch (e) {
       console.error('[edit] failed:', e);
-      if (uiModule) uiModule.showError('Failed to open editor: ' + (e?.message || 'unknown'));
+      if (uiModule) uiModule.showError(window.t('Failed to open editor:') + ' ' + (e?.message || window.t('unknown')));
     }
   };
   document.getElementById('gallery-edit-btn')?.addEventListener('click', _openInEditor);
@@ -1695,7 +1695,7 @@ function _openDetail(img) {
         spinner = spinnerModule.createWhirlpool(36);
         spinner.element.style.cssText = 'width:36px;height:36px;margin:0;';
         overlay.appendChild(spinner.element);
-      } catch (_) { overlay.textContent = 'Rotating…'; }
+      } catch (_) { overlay.textContent = window.t('Rotating…'); }
       if (getComputedStyle(stage).position === 'static') stage.style.position = 'relative';
       stage.appendChild(overlay);
     }
@@ -1710,7 +1710,7 @@ function _openDetail(img) {
         credentials: 'same-origin',
         body: JSON.stringify({ angle }),
       });
-      if (!r.ok) { cleanup(); uiModule.showError('Rotate failed'); return; }
+      if (!r.ok) { cleanup(); uiModule.showError(window.t('Rotate failed')); return; }
       // Cache-bust the image in the detail view, then wait for the new
       // image to actually load before clearing the spinner so the user
       // doesn't see a flash of the old/blank image.
@@ -1723,11 +1723,11 @@ function _openDetail(img) {
         });
       }
       cleanup();
-      uiModule.showToast('Rotated');
+      uiModule.showToast(window.t('Rotated'));
       _fetchLibrary(false);
     } catch (e) {
       cleanup();
-      uiModule.showError('Rotate failed');
+      uiModule.showError(window.t('Rotate failed'));
     }
   };
   document.getElementById('gallery-rotate-btn')?.addEventListener('click', () => _rotate(90));
@@ -1744,21 +1744,21 @@ function _openDetail(img) {
         body: JSON.stringify({ cover_id: img.id }),
       });
       if (r.ok) {
-        uiModule.showToast('Album cover updated');
+        uiModule.showToast(window.t('Album cover updated'));
         await _fetchAlbums();
       } else {
-        uiModule.showError('Failed to set cover');
+        uiModule.showError(window.t('Failed to set cover'));
       }
     } catch (e) {
-      uiModule.showError('Failed to set cover');
+      uiModule.showError(window.t('Failed to set cover'));
     }
   });
 
   document.getElementById('gallery-delete-btn').addEventListener('click', async () => {
-    if (!await uiModule.styledConfirm('Delete this photo? This cannot be undone.', { confirmText: 'Delete', danger: true })) return;
+    if (!await uiModule.styledConfirm(window.t('Delete this photo? This cannot be undone.'), { confirmText: window.t('Delete'), danger: true })) return;
     const ok = await _deleteImage(img.id);
     if (!ok) {
-      uiModule.showError('Failed to delete photo');
+      uiModule.showError(window.t('Failed to delete photo'));
       return;
     }
     detail.style.display = 'none';
@@ -1766,7 +1766,7 @@ function _openDetail(img) {
     _total = Math.max(0, _total - 1);
     _renderGrid();
     _renderStats();
-    if (uiModule) uiModule.showToast('Photo deleted');
+    if (uiModule) uiModule.showToast(window.t('Photo deleted'));
   });
 
   // Tag input — Enter saves; also strips a leading '#' from each tag so
@@ -1785,12 +1785,12 @@ function _openDetail(img) {
           credentials: 'same-origin',
           body: JSON.stringify({ name: newName }),
         });
-        if (!r.ok) throw new Error('Failed');
+        if (!r.ok) throw new Error(window.t('Failed'));
         img.prompt = newName;
-        if (uiModule) uiModule.showToast('Renamed');
+        if (uiModule) uiModule.showToast(window.t('Renamed'));
         window.dispatchEvent(new CustomEvent('gallery-refresh'));
       } catch {
-        if (uiModule) uiModule.showError('Failed to rename');
+        if (uiModule) uiModule.showError(window.t('Failed to rename'));
       }
     };
     _nameInput.addEventListener('keydown', (e) => {
@@ -1832,7 +1832,7 @@ function _openDetail(img) {
       if (!added.length) return;
       const cleaned = merged.join(', ');
       const ok = await _patchImage(img.id, { tags: cleaned });
-      if (!ok) { if (uiModule) uiModule.showError('Failed to save tags'); return; }
+      if (!ok) { if (uiModule) uiModule.showError(window.t('Failed to save tags')); return; }
       img.tags = cleaned;
       img.user_tags = cleaned;
       const chips = document.getElementById('gallery-user-tag-chips');
@@ -1841,12 +1841,12 @@ function _openDetail(img) {
           const b = document.createElement('button');
           b.className = 'gallery-ai-chip gallery-user-chip';
           b.dataset.tagFilter = t;
-          b.title = `Filter to photos tagged “${t}”`;
+          b.title = window.t('Filter to photos tagged "{tag}"', { tag: t });
           b.textContent = t;
           const x = document.createElement('span');
           x.className = 'gallery-tag-x';
-          x.title = 'Remove tag';
-          x.setAttribute('aria-label', 'Remove tag');
+          x.title = window.t('Remove tag');
+          x.setAttribute('aria-label', window.t('Remove tag'));
           x.textContent = '×';
           b.appendChild(x);
           chips.appendChild(b);
@@ -1864,9 +1864,9 @@ function _openDetail(img) {
   document.getElementById('gallery-detail-album').addEventListener('change', async (e) => {
     const albumId = e.target.value;
     const ok = await _patchImage(img.id, { album_id: albumId || '' });
-    if (!ok) { uiModule.showError('Failed to update album'); return; }
+    if (!ok) { uiModule.showError(window.t('Failed to update album')); return; }
     img.album_id = albumId || null;
-    uiModule.showToast(albumId ? 'Added to album' : 'Removed from album');
+    uiModule.showToast(albumId ? window.t('Added to album') : window.t('Removed from album'));
   });
 }
 
@@ -1912,26 +1912,26 @@ export function openGallery() {
   modal.innerHTML = `
     <div class="modal-content gallery-modal-content">
       <div class="modal-header">
-        <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>Gallery <span id="gallery-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal;margin-left:8px"></span></h4>
+        <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>${window.t('Gallery')} <span id="gallery-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal;margin-left:8px"></span></h4>
         <button class="modal-close" id="gallery-close">&times;</button>
       </div>
       <div class="gallery-tabs">
         <button class="gallery-tab active" data-tab="images">
           <span class="gallery-tab-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></span>
-          <span class="gallery-tab-label">Photos</span>
+          <span class="gallery-tab-label">${window.t('Photos')}</span>
         </button>
         <button class="gallery-tab" data-tab="albums">
           <span class="gallery-tab-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
-          <span class="gallery-tab-label">Albums</span>
+          <span class="gallery-tab-label">${window.t('Albums')}</span>
         </button>
         <button class="gallery-tab" data-tab="editor" id="gallery-editor-tab">
           <span class="gallery-tab-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span>
-          <span class="gallery-tab-label">Edit</span>
-          <span class="gallery-tab-close" id="gallery-editor-tab-close" title="Close edit" aria-label="Close edit">×</span>
+          <span class="gallery-tab-label">${window.t('Edit')}</span>
+          <span class="gallery-tab-close" id="gallery-editor-tab-close" title="${window.t('Close edit')}" aria-label="${window.t('Close edit')}">×</span>
         </button>
         <button class="gallery-tab" data-tab="settings">
           <span class="gallery-tab-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
-          <span class="gallery-tab-label">Settings</span>
+          <span class="gallery-tab-label">${window.t('Settings')}</span>
         </button>
       </div>
       <div class="modal-body">

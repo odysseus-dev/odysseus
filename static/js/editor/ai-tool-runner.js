@@ -90,7 +90,7 @@ export function createApplyImageTool({
       }
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      if (!data.image) throw new Error('No image returned');
+      if (!data.image) throw new Error(window.t('No image returned'));
       const img = new Image();
       img.onload = () => {
         if (!state.editorOpen) return; // user closed mid-decode (v2 review HIGH-4)
@@ -101,9 +101,9 @@ export function createApplyImageTool({
         state.activeLayerId = layer.id;
         composite();
         renderLayerPanel();
-        if (uiModule) uiModule.showToast(layerName + ' complete', 4500);
+        if (uiModule) uiModule.showToast(layerName + ' ' + window.t('complete'), 4500);
       };
-      img.onerror = () => { if (uiModule) uiModule.showToast('Failed to load result', 6000); };
+      img.onerror = () => { if (uiModule) uiModule.showToast(window.t('Failed to load result'), 6000); };
       img.src = 'data:image/png;base64,' + data.image;
     } catch (e) {
       // Detect known failure modes and surface an action-toast.
@@ -121,19 +121,19 @@ export function createApplyImageTool({
       }
       if (uiModule) {
         if (depMatch && uiModule.showToast.length >= 2) {
-          uiModule.showToast(layerName + ' failed: ' + depMatch + ' is not installed on the server.', {
+          uiModule.showToast(layerName + ' ' + window.t('failed: {pkg} is not installed on the server.', { pkg: depMatch }), {
             duration: 9000,
-            action: `Install ${depMatch}`,
+            action: window.t('Install {pkg}', { pkg: depMatch }),
             onAction: () => openCookbookForDependency(depMatch),
           });
         } else if (needsImg2Img && uiModule.showToast.length >= 2) {
-          uiModule.showToast(layerName + ' failed: ' + e.message, {
+          uiModule.showToast(layerName + ' ' + window.t('failed:') + ' ' + e.message, {
             duration: 9000,
-            action: 'Open Cookbook',
+            action: window.t('Open Cookbook'),
             onAction: () => openCookbookForImg2img(),
           });
         } else {
-          uiModule.showToast(layerName + ' failed: ' + e.message, 6000);
+          uiModule.showToast(layerName + ' ' + window.t('failed:') + ' ' + e.message, 6000);
         }
       }
     } finally {

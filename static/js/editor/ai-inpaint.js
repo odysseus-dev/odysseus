@@ -53,12 +53,12 @@ export function wireInpaintButtons({
     // Pre-check: build the union mask the AI will receive and verify
     // at least one pixel is painted.
     const preMerged = buildMergedMaskCanvas();
-    if (!preMerged) { if (uiModule) uiModule.showToast('Draw the area you want to inpaint first'); return; }
+    if (!preMerged) { if (uiModule) uiModule.showToast(window.t('Draw the area you want to inpaint first')); return; }
     const pmCtx = preMerged.getContext('2d');
     const maskData = pmCtx.getImageData(0, 0, preMerged.width, preMerged.height).data;
     let hasMask = false;
     for (let i = 3; i < maskData.length; i += 4) { if (maskData[i] > 0) { hasMask = true; break; } }
-    if (!hasMask) { if (uiModule) uiModule.showToast('Draw the area you want to inpaint first'); return; }
+    if (!hasMask) { if (uiModule) uiModule.showToast(window.t('Draw the area you want to inpaint first')); return; }
     const btn = document.getElementById(btnId);
     const btnLabel = labelId ? document.getElementById(labelId) : null;
     btn.disabled = true;
@@ -151,7 +151,7 @@ export function wireInpaintButtons({
       }
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      if (!data.image) throw new Error('No image returned from inpaint endpoint');
+      if (!data.image) throw new Error(window.t('No image returned from inpaint endpoint'));
       // Load result as a new layer and clip with the user-drawn mask
       // so only the inpainted region is visible. Cache the
       // unfeathered (AI image + hard mask) on the layer so the live
@@ -167,7 +167,7 @@ export function wireInpaintButtons({
           // canvas. Scale to canvas size with smoothing so the
           // inpaint blends in regardless of source dims.
           const shortPrompt = (prompt || '').trim().replace(/\s+/g, ' ').slice(0, 40);
-          const layerName = shortPrompt ? `Inpaint: ${shortPrompt}` : 'Inpaint Result';
+          const layerName = shortPrompt ? window.t('Inpaint: {prompt}', { prompt: shortPrompt }) : window.t('Inpaint Result');
           const resultLayer = createLayer(layerName, state.imgWidth, state.imgHeight);
           resultLayer.ctx.imageSmoothingEnabled = true;
           resultLayer.ctx.imageSmoothingQuality = 'high';
@@ -223,19 +223,19 @@ export function wireInpaintButtons({
             eSlider.value = '0';
           }
           if (eLabel) eLabel.textContent = '0px';
-          if (uiModule) uiModule.showToast('Inpaint complete — drag Edge feather / Edge stroke to blend', 5000);
+          if (uiModule) uiModule.showToast(window.t('Inpaint complete — drag Edge feather / Edge stroke to blend'), 5000);
         } catch (renderErr) {
           console.error('[inpaint] render error', renderErr);
-          if (uiModule) uiModule.showToast('Inpaint render failed: ' + (renderErr.message || renderErr), 6000);
+          if (uiModule) uiModule.showToast(window.t('Inpaint render failed:') + ' ' + (renderErr.message || renderErr), 6000);
         }
       };
       resultImg.onerror = (e) => {
         console.error('[inpaint] base64 decode failed', e);
-        if (uiModule) uiModule.showToast('Inpaint result failed to decode', 6000);
+        if (uiModule) uiModule.showToast(window.t('Inpaint result failed to decode'), 6000);
       };
       resultImg.src = 'data:image/png;base64,' + data.image;
     } catch (e) {
-      if (uiModule) uiModule.showToast('Inpaint failed: ' + e.message, 6000);
+      if (uiModule) uiModule.showToast(window.t('Inpaint failed:') + ' ' + e.message, 6000);
     } finally {
       btn.disabled = false;
       if (btnLabel) btnLabel.textContent = idleLabel;
@@ -249,13 +249,13 @@ export function wireInpaintButtons({
   // Generate.
   document.getElementById('ge-inpaint-run').addEventListener('click', async () => {
     const prompt = document.getElementById('ge-inpaint-prompt')?.value?.trim();
-    if (!prompt) { if (uiModule) uiModule.showToast('Enter a prompt for inpainting'); return; }
+    if (!prompt) { if (uiModule) uiModule.showToast(window.t('Enter a prompt for inpainting')); return; }
     const strength = (parseInt(document.getElementById('ge-strength-slider')?.value || '75')) / 100;
     await runInpaint({
       prompt, strength,
       btnId: 'ge-inpaint-run',
       labelId: 'ge-inpaint-run-label',
-      idleLabel: 'Generate', busyLabel: 'Generating',
+      idleLabel: window.t('Generate'), busyLabel: window.t('Generating'),
     });
   });
 
@@ -286,7 +286,7 @@ export function wireInpaintButtons({
       prompt, strength,
       btnId: 'ge-inpaint-remove',
       labelId: 'ge-inpaint-remove-label',
-      idleLabel: 'Remove', busyLabel: 'Removing',
+      idleLabel: window.t('Remove'), busyLabel: window.t('Removing'),
     });
   });
 
@@ -323,7 +323,7 @@ export function wireInpaintButtons({
       }
     }
     if (emptyCount === 0) {
-      if (uiModule) uiModule.showToast('No empty areas to outpaint — canvas is fully covered.');
+      if (uiModule) uiModule.showToast(window.t('No empty areas to outpaint — canvas is fully covered.'));
       return;
     }
     mrCtx.putImageData(mrImg, 0, 0);
@@ -348,7 +348,7 @@ export function wireInpaintButtons({
     // 4) Temporarily replace the active mask sub-layer with the
     //    outpaint mask. Snapshot the previous so we can restore.
     const mask = ensureActiveMaskLayer();
-    if (!mask) { if (uiModule) uiModule.showToast('No active layer for outpaint'); return; }
+    if (!mask) { if (uiModule) uiModule.showToast(window.t('No active layer for outpaint')); return; }
     const savedMask = mask.ctx.getImageData(0, 0, mask.canvas.width, mask.canvas.height);
     mask.ctx.clearRect(0, 0, mask.canvas.width, mask.canvas.height);
     mask.ctx.drawImage(expanded, 0, 0);
@@ -361,7 +361,7 @@ export function wireInpaintButtons({
         prompt, strength,
         btnId: 'ge-inpaint-outpaint',
         labelId: 'ge-inpaint-outpaint-label',
-        idleLabel: 'Outpaint', busyLabel: 'Outpainting',
+        idleLabel: window.t('Outpaint'), busyLabel: window.t('Outpainting'),
       });
     } finally {
       // Restore the user's previous mask drawing so subsequent

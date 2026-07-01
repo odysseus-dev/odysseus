@@ -50,7 +50,7 @@ export function wireRembgAndSharpen({
   });
   document.getElementById('ge-sharpen-run')?.addEventListener('click', () => {
     const amount = parseInt(document.getElementById('ge-sharpen-amount')?.value || '50');
-    applyImageTool('/api/image/sharpen', { amount }, 'Sharpened', document.getElementById('ge-sharpen-run'));
+    applyImageTool('/api/image/sharpen', { amount }, window.t('Sharpened'), document.getElementById('ge-sharpen-run'));
   });
 
   // ── Bg Remove ──
@@ -68,7 +68,7 @@ export function wireRembgAndSharpen({
     // Snapshot which layers were visible BEFORE the run so we know
     // which to hide after a successful cutout.
     const prevVisible = state.layers.filter(l => l.visible).map(l => l.id);
-    await applyImageTool('/api/image/remove-bg', payload, 'BG Removed', btn);
+    await applyImageTool('/api/image/remove-bg', payload, window.t('BG Removed'), btn);
     // applyImageTool finishes after fetch but the new layer is added
     // inside img.onload (one tick later). Poll for up to 60 frames
     // (~1s) for the new layer to appear before we auto-hide.
