@@ -1624,7 +1624,7 @@ export function _expandModelRow(row, modelData) {
       }
 
       quickRunBtn.disabled = true;
-      quickRunBtn.textContent = 'Starting...';
+      quickRunBtn.textContent = window.t('Starting...');
 
       // Smart defaults based on hardware and model
       const system = _hwfitCache?.system || {};
@@ -1713,7 +1713,7 @@ export function _expandModelRow(row, modelData) {
       );
       if (!_ok) {
         quickRunBtn.disabled = false;
-        quickRunBtn.textContent = 'Run';
+        quickRunBtn.textContent = window.t('Run');
         return;
       }
 
@@ -1739,18 +1739,18 @@ export function _expandModelRow(row, modelData) {
           const shortName = modelData.name.split('/').pop();
           _addTask(data.session_id, shortName, 'serve', { _cmd: cmd, model: modelData.name, backend: runBackend, remote_host: host });
           _renderRunningTab();
-          uiModule.showToast(`Launching ${shortName}...`);
+          uiModule.showToast(window.t('Launching {name}...', { name: shortName }));
           // Switch to Running tab
           const runTab = document.querySelector('.cookbook-tab[data-backend="Running"]');
           if (runTab) runTab.click();
         } else {
-          uiModule.showError('Launch failed: ' + (data.error || ''));
+          uiModule.showError(window.t('Launch failed: ') + (data.error || ''));
         }
       } catch (e) {
-        uiModule.showError('Launch failed: ' + e.message);
+        uiModule.showError(window.t('Launch failed: ') + e.message);
       }
       quickRunBtn.disabled = false;
-      quickRunBtn.textContent = 'Run';
+      quickRunBtn.textContent = window.t('Run');
     });
   }
 
@@ -1769,7 +1769,7 @@ export function _expandModelRow(row, modelData) {
         || [..._cachedModelIds].some(id => id === repo || id.endsWith('/' + short))
       );
       if (_cachedModelIds && !downloaded) {
-        uiModule.showToast('Download the model first, then configure from Serve tab');
+        uiModule.showToast(window.t('Download the model first, then configure from Serve tab'));
         return;
       }
       // Downloaded (or cache state unknown) — open the Serve panel, which switches
@@ -1778,7 +1778,7 @@ export function _expandModelRow(row, modelData) {
         const { openServePanelForRepo } = await import('./cookbookServe.js');
         await openServePanelForRepo(repo);
       } catch (e) {
-        uiModule.showToast('Could not open Serve: ' + (e && e.message ? e.message : e));
+        uiModule.showToast(window.t('Could not open Serve: ') + (e && e.message ? e.message : e));
       }
     });
   }

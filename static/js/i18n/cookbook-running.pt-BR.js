@@ -192,4 +192,9 @@ registerMessages('pt-BR', {
   "Can't launch: no GPU detected by nvidia-smi. {backend} needs a working CUDA or ROCm device.": 'Não é possível iniciar: nenhuma GPU detectada pelo nvidia-smi. {backend} precisa de um dispositivo CUDA ou ROCm funcional.',
   "Can't launch: {pkg} isn't installed{onHost}. Install it first:\n{hint}": 'Não é possível iniciar: {pkg} não está instalado{onHost}. Instale-o primeiro:\n{hint}',
   "Can't launch: {model} needs {pkg} ≥ {minVer}, but {curVer} is installed{onHost}. Upgrade:\n{hint}": 'Não é possível iniciar: {model} precisa de {pkg} ≥ {minVer}, mas {curVer} está instalado{onHost}. Atualize:\n{hint}',
+  'Starting...': 'Iniciando...',
+  'Launching {name}...': 'Iniciando {name}...',
+  'Launch failed: ': 'Falha ao iniciar: ',
+  'Download the model first, then configure from Serve tab': 'Baixe o modelo primeiro, depois configure na aba Servir',
+  'Could not open Serve: ': 'Não foi possível abrir Servir: ',
 });
