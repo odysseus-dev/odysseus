@@ -286,4 +286,8 @@ registerMessages('pt-BR', {
   'Saved launch configurations for this model — click ▾ to load or delete': 'Configurações de execução salvas para este modelo — clique em ▾ para carregar ou excluir',
   'Save current preset': 'Salvar predefinição atual',
   'Preset': 'Predefinição',
+  'Dismiss': 'Fechar',
+  "This model looks like a stale download shell ({size}). The weights aren't on disk — the serve will fail to load. Re-download first, or pick another model.": 'Este modelo parece ser um download interrompido ({size}). Os pesos não estão em disco — o serviço falhará ao carregar. Baixe novamente primeiro, ou escolha outro modelo.',
+  "This model's download isn't complete yet ({size}). The serve will start but is likely to crash on a missing shard. Wait for the download to finish, or relaunch after it's done.": 'O download deste modelo ainda não está completo ({size}). O serviço iniciará mas provavelmente falhará por um fragmento ausente. Aguarde o download terminar, ou reinicie depois que ele concluir.',
+  'Vision is enabled, but no mmproj GGUF projector was found in the cached model scan. Download an mmproj-*.gguf for this model, then refresh the cached model list before launching.': 'A Visão está ativada, mas nenhum projetor GGUF mmproj foi encontrado na varredura de modelos em cache. Baixe um mmproj-*.gguf para este modelo, depois atualize a lista de modelos em cache antes de iniciar.',
 });
