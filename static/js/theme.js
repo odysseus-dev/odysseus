@@ -918,7 +918,7 @@ export function initThemeUI() {
       uiModule.showToast?.(window.t('Theme saved'));
       const prevHtml = newGoBtn.innerHTML;
       newGoBtn.disabled = true;
-      newGoBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Saved</span>';
+      newGoBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>' + window.t('Saved') + '</span>';
       setTimeout(() => {
         newGoBtn.disabled = false;
         newGoBtn.innerHTML = prevHtml;

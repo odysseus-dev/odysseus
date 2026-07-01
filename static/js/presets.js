@@ -319,7 +319,7 @@ function _populateCharSelect() {
   const savedNames = new Set(userTemplates.map(t => t.name));
   if (userTemplates.length) {
     const group = document.createElement('optgroup');
-    group.label = window.t('Saved');
+    group.label = window.t('Saved personas');
     userTemplates.forEach(t => {
       const opt = document.createElement('option');
       opt.value = t.name;
