@@ -8,6 +8,7 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, Tuple
+from .prompts import get_task_scheduler_prompt
 
 from core.auth import RESERVED_USERNAMES
 
@@ -1439,7 +1440,7 @@ class TaskScheduler:
         system_prompt = (
             (crew.personality or "").strip()
             if crew and crew.personality
-            else "You are a helpful assistant executing a scheduled task. Use available tools to complete the task thoroughly."
+            else get_task_scheduler_prompt()
         )
         char_id = (getattr(task, "character_id", None) or "").strip()
         if char_id:
@@ -1720,7 +1721,7 @@ class TaskScheduler:
         """Run the full agent loop with tool access, collecting the final text."""
         from src.agent_loop import stream_agent_loop
 
-        system_content = system_prompt or "You are a helpful assistant executing a scheduled task. Use available tools to complete the task thoroughly."
+        system_content = system_prompt or get_task_scheduler_prompt()
         user_content = override_user_message or task.prompt
         # Build the message list. The datetime context message (user-role) is
         # inserted immediately before the task prompt so the system prefix stays

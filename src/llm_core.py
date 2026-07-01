@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from typing import Optional, Dict, List, Tuple
 from src.model_context import get_context_length, DEFAULT_CONTEXT
 from urllib.parse import urlparse
+from .prompts import get_default_llm_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -843,7 +844,7 @@ def _chatgpt_subscription_instructions(messages: List[Dict]) -> str:
     instructions = [part for part in instructions if part]
     if instructions:
         return "\n\n".join(instructions)
-    return "You are a helpful AI assistant."
+    return get_default_llm_prompt()
 
 
 def _build_chatgpt_responses_payload(
