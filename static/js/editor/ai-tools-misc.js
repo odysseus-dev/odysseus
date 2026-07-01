@@ -64,17 +64,17 @@ export function wireAIToolsMisc({
     // whole-image img2img — i.e. regenerate the whole photo. Block
     // that and tell the user what's missing.
     if (!body_mask) {
-      if (uiModule) uiModule.showToast('Harmonize needs a second layer pasted/imported over the base photo — nothing to color-match against.', 6000);
+      if (uiModule) uiModule.showToast(window.t('Harmonize needs a second layer pasted/imported over the base photo — nothing to color-match against.'), 6000);
       return;
     }
     const payload = { prompt, color_match, seam_fix, body_mask };
     if (seam_mask) payload.seam_mask = seam_mask;
-    applyImageTool('/api/image/harmonize', payload, 'Harmonized', document.getElementById('ge-harmonize-run'));
+    applyImageTool('/api/image/harmonize', payload, window.t('Harmonized'), document.getElementById('ge-harmonize-run'));
   });
 
   // ── Canvas upscale (bicubic) ──
   function canvasUpscale(factor) {
-    saveState(`Upscale ${factor}×`);
+    saveState(window.t('Upscale {factor}×', { factor }));
     const newW = state.imgWidth * factor;
     const newH = state.imgHeight * factor;
     state.layers.forEach(l => {
@@ -94,7 +94,7 @@ export function wireAIToolsMisc({
     if (sizeLabel) sizeLabel.textContent = `${newW}×${newH}`;
     fitZoom();
     composite();
-    uiModule.showToast(`Upscaled ${factor}× to ${newW}×${newH}`);
+    uiModule.showToast(window.t('Upscaled {factor}× to {newW}×{newH}', { factor, newW, newH }));
   }
   document.getElementById('ge-upscale-2x')?.addEventListener('click', () => canvasUpscale(2));
   document.getElementById('ge-upscale-4x')?.addEventListener('click', () => canvasUpscale(4));
@@ -111,9 +111,9 @@ export function wireAIToolsMisc({
       btn.innerHTML = '';
       btn.appendChild(upWp.element);
       const lbl = document.createElement('span');
-      lbl.textContent = 'Upscaling…';
+      lbl.textContent = window.t('Upscaling…');
       btn.appendChild(lbl);
-    } catch (_) { btn.textContent = 'Upscaling…'; }
+    } catch (_) { btn.textContent = window.t('Upscaling…'); }
     try {
       const flat = flatten();
       const imageB64 = flat.toDataURL('image/png').split(',')[1];
@@ -122,7 +122,7 @@ export function wireAIToolsMisc({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image: imageB64, scale: 2 }),
       });
-      if (!res.ok) throw new Error('Server returned ' + res.status);
+      if (!res.ok) throw new Error(window.t('Server returned {status}', { status: res.status }));
       const data = await res.json();
       if (data.image) {
         const img = new Image();
@@ -130,7 +130,7 @@ export function wireAIToolsMisc({
           if (!state.editorOpen) return;
           saveState();
           const newW = img.width, newH = img.height;
-          const layer = createLayer('AI Upscaled', newW, newH);
+          const layer = createLayer(window.t('AI Upscaled'), newW, newH);
           layer.ctx.drawImage(img, 0, 0);
           state.layers.push(layer);
           state.activeLayerId = layer.id;
@@ -142,14 +142,14 @@ export function wireAIToolsMisc({
           fitZoom();
           composite();
           renderLayerPanel();
-          uiModule.showToast(`AI upscaled to ${newW}×${newH}`);
+          uiModule.showToast(window.t('AI upscaled to {newW}×{newH}', { newW, newH }));
         };
         img.src = 'data:image/png;base64,' + data.image;
       } else {
-        throw new Error(data.error || 'No image returned');
+        throw new Error(data.error || window.t('No image returned'));
       }
     } catch (e) {
-      uiModule.showToast('AI upscale failed: ' + e.message);
+      uiModule.showToast(window.t('AI upscale failed:') + ' ' + e.message);
     }
     try { upWp?.destroy(); } catch (_) {}
     btn.disabled = false;
@@ -163,9 +163,9 @@ export function wireAIToolsMisc({
   document.getElementById('ge-style-run')?.addEventListener('click', async () => {
     const btn = document.getElementById('ge-style-run');
     const prompt = document.getElementById('ge-style-prompt').value.trim();
-    if (!prompt) { uiModule.showToast('Enter a style prompt'); return; }
+    if (!prompt) { uiModule.showToast(window.t('Enter a style prompt')); return; }
     const strength = parseInt(document.getElementById('ge-style-strength').value) / 100;
-    btn.disabled = true; btn.textContent = 'Applying...';
+    btn.disabled = true; btn.textContent = window.t('Applying...');
     try {
       const flat = flatten();
       const blob = await new Promise(r => flat.toBlob(r, 'image/png'));
@@ -174,37 +174,37 @@ export function wireAIToolsMisc({
       fd.append('prompt', prompt);
       fd.append('strength', String(strength));
       const res = await fetch(`${apiBase}/api/gallery/style-transfer`, { method: 'POST', credentials: 'same-origin', body: fd });
-      if (!res.ok) throw new Error('Server returned ' + res.status);
+      if (!res.ok) throw new Error(window.t('Server returned {status}', { status: res.status }));
       const data = await res.json();
       if (data.image) {
         const img = new Image();
         img.onload = () => {
           if (!state.editorOpen) return;
           saveState();
-          const layer = createLayer('Styled: ' + prompt.substring(0, 20), state.imgWidth, state.imgHeight);
+          const layer = createLayer(window.t('Styled: {prompt}', { prompt: prompt.substring(0, 20) }), state.imgWidth, state.imgHeight);
           layer.ctx.drawImage(img, 0, 0, state.imgWidth, state.imgHeight);
           state.layers.push(layer);
           state.activeLayerId = layer.id;
           composite();
           renderLayerPanel();
-          uiModule.showToast('Style applied');
+          uiModule.showToast(window.t('Style applied'));
         };
         img.src = 'data:image/png;base64,' + data.image;
       } else {
-        throw new Error(data.error || 'No image returned');
+        throw new Error(data.error || window.t('No image returned'));
       }
     } catch (e) {
-      uiModule.showToast('Style transfer failed: ' + e.message);
+      uiModule.showToast(window.t('Style transfer failed:') + ' ' + e.message);
     }
-    btn.disabled = false; btn.textContent = 'Apply Style';
+    btn.disabled = false; btn.textContent = window.t('Apply Style');
   });
 
   // ── Add empty layer (used by the layer-panel header button + the
   // Ctrl+Alt+J keyboard shortcut). Returned so keyboard-shortcuts.js
   // can call it through the same path. ──
   function addEmptyLayer() {
-    saveState('Add layer');
-    const layer = createLayer('Layer ' + state.layers.length, state.imgWidth, state.imgHeight);
+    saveState(window.t('Add layer'));
+    const layer = createLayer(window.t('Layer {n}', { n: state.layers.length }), state.imgWidth, state.imgHeight);
     state.layers.push(layer);
     state.activeLayerId = layer.id;
     renderLayerPanel();

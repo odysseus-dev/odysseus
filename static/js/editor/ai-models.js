@@ -96,10 +96,10 @@ export function wireAIModelSelectors({ container, apiBase, openCookbookForImg2im
       const prevInpaintValue = aiInpaintSelect?.value || '';
       const res = await fetch(`${apiBase}/api/model-endpoints`);
       const endpoints = await res.json();
-      if (aiGenSelect) aiGenSelect.innerHTML = '<option value="">None</option>';
-      if (aiInpaintSelect) aiInpaintSelect.innerHTML = '<option value="">Auto</option>';
+      if (aiGenSelect) aiGenSelect.innerHTML = `<option value="">${window.t('None')}</option>`;
+      if (aiInpaintSelect) aiInpaintSelect.innerHTML = `<option value="">${window.t('Auto')}</option>`;
       const perToolSelects = Array.from(document.querySelectorAll('select.ge-tool-model'));
-      for (const ts of perToolSelects) ts.innerHTML = '<option value="">Auto</option>';
+      for (const ts of perToolSelects) ts.innerHTML = `<option value="">${window.t('Auto')}</option>`;
       let firstGen = null;
       let firstInpaint = null;
       let selectedGen = null;
@@ -176,7 +176,7 @@ export function wireAIModelSelectors({ container, apiBase, openCookbookForImg2im
         sel.appendChild(sep);
         const serveOpt = document.createElement('option');
         serveOpt.value = '__serve_cookbook__';
-        serveOpt.textContent = '+ Serve a model in Cookbook…';
+        serveOpt.textContent = window.t('+ Serve a model in Cookbook…');
         sel.appendChild(serveOpt);
       };
       for (const ts of perToolSelects) appendServeSentinel(ts);
@@ -221,7 +221,7 @@ export function wireAIModelSelectors({ container, apiBase, openCookbookForImg2im
       // Fetch failed — still give the user the affordance to set up
       // a model. Otherwise the dropdown shows only "Auto" with no
       // hint about what to do next.
-      const fallback = '<option value="">Auto</option><option value="" disabled>──────────</option><option value="__serve_cookbook__">+ Serve a model in Cookbook…</option>';
+      const fallback = `<option value="">${window.t('Auto')}</option><option value="" disabled>──────────</option><option value="__serve_cookbook__">${window.t('+ Serve a model in Cookbook…')}</option>`;
       if (aiGenSelect) aiGenSelect.innerHTML = fallback;
       if (aiInpaintSelect) aiInpaintSelect.innerHTML = fallback;
       document.querySelectorAll('select.ge-tool-model').forEach(ts => { ts.innerHTML = fallback; });
