@@ -86,11 +86,11 @@ function addRecent(hex) {
 function computeSuggestions() {
   // Complement, analogous ±30°, split-complement (+150), tone shift
   return [
-    { hex: hsvToHex(_h + 180, _s, _v),                                   label: 'Complement' },
-    { hex: hsvToHex(_h + 30, _s, _v),                                    label: 'Analogous +30°' },
-    { hex: hsvToHex(_h - 30, _s, _v),                                    label: 'Analogous -30°' },
-    { hex: hsvToHex(_h + 150, _s, _v),                                   label: 'Split-complement' },
-    { hex: hsvToHex(_h, _s, clamp(_v > 50 ? _v - 30 : _v + 30, 10, 95)), label: 'Tone shift' },
+    { hex: hsvToHex(_h + 180, _s, _v),                                   label: window.t('Complement') },
+    { hex: hsvToHex(_h + 30, _s, _v),                                    label: window.t('Analogous +30°') },
+    { hex: hsvToHex(_h - 30, _s, _v),                                    label: window.t('Analogous -30°') },
+    { hex: hsvToHex(_h + 150, _s, _v),                                   label: window.t('Split-complement') },
+    { hex: hsvToHex(_h, _s, clamp(_v > 50 ? _v - 30 : _v + 30, 10, 95)), label: window.t('Tone shift') },
   ];
 }
 
@@ -110,16 +110,16 @@ function buildPopover() {
     <div class="cp-row">
       <div class="cp-preview"></div>
       <input type="text" class="cp-hex" maxlength="7" spellcheck="false" autocomplete="off">
-      <button class="cp-eyedropper" title="Eyedropper" type="button">
+      <button class="cp-eyedropper" title="${window.t('Eyedropper')}" type="button">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M2 22l4-4m0 0l3-3 5 5-3 3a2 2 0 01-2.8 0l-2.2-2.2a2 2 0 010-2.8z"/>
           <path d="M14 8l3-3a3 3 0 014.2 4.2l-3 3-4.2-4.2z"/>
         </svg>
       </button>
     </div>
-    <div class="cp-section-label">Suggestions</div>
+    <div class="cp-section-label">${window.t('Suggestions')}</div>
     <div class="cp-swatches cp-suggestions"></div>
-    <div class="cp-section-label">Recent</div>
+    <div class="cp-section-label">${window.t('Recent')}</div>
     <div class="cp-swatches cp-recent"></div>
   `;
   document.body.appendChild(p);
@@ -161,7 +161,7 @@ function syncUI() {
   const recs = getRecents();
   rContainer.innerHTML = recs.length
     ? recs.map(h => `<button class="cp-swatch" title="${h}" data-hex="${h}" style="background:${h}"></button>`).join('')
-    : '<div class="cp-recent-empty">(none yet)</div>';
+    : `<div class="cp-recent-empty">${window.t('(none yet)')}</div>`;
 }
 
 function applyToInput(pushChange) {
@@ -261,7 +261,7 @@ function wireHandlers(p) {
   } else {
     eye.disabled = true;
     eye.style.opacity = '0.3';
-    eye.title = 'Eyedropper not supported in this browser';
+    eye.title = window.t('Eyedropper not supported in this browser');
   }
 }
 
