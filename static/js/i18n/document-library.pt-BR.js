@@ -98,7 +98,7 @@ registerMessages('pt-BR', {
   'Tidy': 'Organizar',
   'Search chats…': 'Buscar conversas…',
   'All': 'Todos',
-  '0 Selected': '0 selecionado(s)',
+  '0 Selected': '0 itens selecionados',
   'Cancel (Esc)': 'Cancelar (Esc)',
 
   // --- Archive panel ---

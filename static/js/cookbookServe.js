@@ -730,7 +730,7 @@ function _ggufDeleteChoice(repo, files) {
           '<div class="modal-footer cookbook-gguf-delete-actions">' +
             `<button type="button" id="cookbook-gguf-delete-cancel" class="confirm-btn confirm-btn-secondary">${window.t('Cancel')}</button>` +
             `<button type="button" id="cookbook-gguf-delete-repo" class="confirm-btn confirm-btn-secondary">${window.t('Whole repo')}</button>` +
-            `<button type="button" id="cookbook-gguf-delete-selected" class="confirm-btn confirm-btn-danger">${window.t('Delete selected')}</button>` +
+            `<button type="button" id="cookbook-gguf-delete-selected" class="confirm-btn confirm-btn-danger">${window.t('Delete selected GGUFs')}</button>` +
           '</div>' +
         '</div>';
       document.body.appendChild(overlay);

@@ -408,7 +408,7 @@ registerMessages('pt-BR', {
   "Pick provider": "Escolher provedor",
   "Precise / Code": "Preciso / Código",
   "Prefix": "Prefixo",
-  "Preview": "Pré-visualizar",
+  "Preview": "Visualizar",
   "Probe": "Testar",
   "Provider": "Provedor",
   "Providers tried in order when the primary fails or hits a rate limit": "Provedores tentados em ordem quando o principal falha ou atinge o limite de requisições",

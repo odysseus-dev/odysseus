@@ -55,7 +55,7 @@ export function controlsHTML({ color, brushSize, wandTolerance }) {
     </div>
     <div class="ge-wand-section" id="ge-wand-section" style="display:none;">
       <div class="ge-control-row" style="display:flex;gap:4px;margin-bottom:4px;" title="${window.t('How the next click combines with the current selection. Shift / Alt held during a click override this for one click.')}">
-        <button type="button" class="ge-btn ge-btn-sm ge-wand-mode-btn active" data-wand-mode="replace" title="${window.t('Replace selection on each click')}">${window.t('New')}</button>
+        <button type="button" class="ge-btn ge-btn-sm ge-wand-mode-btn active" data-wand-mode="replace" title="${window.t('Replace selection on each click')}">${window.t('New (replace)')}</button>
         <button type="button" class="ge-btn ge-btn-sm ge-wand-mode-btn" data-wand-mode="add" title="${window.t('Add to selection (Shift)')}">${window.t('+ Add')}</button>
         <button type="button" class="ge-btn ge-btn-sm ge-wand-mode-btn" data-wand-mode="subtract" title="${window.t('Subtract from selection (Alt)')}">${window.t('− Subtract')}</button>
       </div>

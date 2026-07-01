@@ -190,7 +190,7 @@ registerMessages('pt-BR', {
   // --- running rows ---
   'Queued': 'Na fila',
   'Still running': 'Ainda em execução',
-  'Running': 'Em execução',
+  'Running': 'Executando',
   'Start now in parallel, bypassing the queue': 'Iniciar agora em paralelo, ignorando a fila',
   'Start now': 'Iniciar agora',
   'Stop this task': 'Parar esta tarefa',
@@ -211,7 +211,7 @@ registerMessages('pt-BR', {
 
   // --- form extra labels ---
   'Name': 'Nome',
-  'Type': 'Tipo',
+  'Task type': 'Tipo',
   'Trigger': 'Gatilho',
   'Output': 'Saída',
   'Session': 'Sessão',

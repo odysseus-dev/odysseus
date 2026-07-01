@@ -21,7 +21,7 @@ registerMessages('pt-BR', {
 
   // ai-models.js
   'None': 'Nenhum',
-  'Auto': 'Automatico',
+  'Auto': 'Automático',
   '+ Serve a model in Cookbook…': '+ Servir um modelo no Cookbook…',
 
   // ai-tools-misc.js
@@ -73,7 +73,6 @@ registerMessages('pt-BR', {
   'Select albums first': 'Selecione albuns primeiro',
   'Cancel': 'Cancelar',
   'Select': 'Selecionar',
-  '{n} selected': '{n} selecionadas',
   'No albums yet.': 'Nenhum album ainda.',
   '+ New album': '+ Novo album',
   'No albums match "{query}".': 'Nenhum album corresponde a "{query}".',
