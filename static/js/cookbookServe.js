@@ -523,7 +523,7 @@ function _selectedServeTarget(panel) {
   const venv = panel?.querySelector('[data-field="venv"]')?.value?.trim() || server?.envPath || _envState.envPath || '';
   const label = host
     ? (server?.name ? `${server.name} (${host})` : host)
-    : (server?.name || 'local server');
+    : (server?.name || window.t('local server'));
   return {
     host,
     serverKey: server ? (_serverKey?.(server) || '') : (select?.value || ''),
@@ -576,15 +576,21 @@ async function _fetchServeRuntimePackage(panel, backend) {
 function _runtimeNoteText(backend, pkg, target) {
   const labels = { vllm: 'vLLM', sglang: 'SGLang', llamacpp: 'llama.cpp', diffusers: 'Diffusers' };
   const label = labels[backend] || backend;
-  if (!pkg) return `${label} readiness unavailable for ${target.label}.`;
+  if (!pkg) return window.t('{label} readiness unavailable for {target}.', { label, target: target.label });
   const note = pkg.status_note || pkg.update_note || '';
   if (pkg.installed === null || pkg.probe_error) {
-    return note ? `${label} readiness unavailable for ${target.label}: ${note}` : `${label} readiness unavailable for ${target.label}.`;
+    return note
+      ? window.t('{label} readiness unavailable for {target}: {note}', { label, target: target.label, note })
+      : window.t('{label} readiness unavailable for {target}.', { label, target: target.label });
   }
   if (pkg.installed) {
-    return note ? `${label} ready on ${target.label}: ${note}` : `${label} ready on ${target.label}.`;
+    return note
+      ? window.t('{label} ready on {target}: {note}', { label, target: target.label, note })
+      : window.t('{label} ready on {target}.', { label, target: target.label });
   }
-  return note ? `${label} missing on ${target.label}: ${note}` : `${label} missing on ${target.label}.`;
+  return note
+    ? window.t('{label} missing on {target}: {note}', { label, target: target.label, note })
+    : window.t('{label} missing on {target}.', { label, target: target.label });
 }
 
 // ── Filter/sort cached model list ──
@@ -673,7 +679,7 @@ function _ggufFileLabel(file) {
   const size = _formatGgufSize(file.size_bytes);
   const quant = file.quant ? `${file.quant} ` : '';
   const parts = Number(file.parts || 0);
-  const split = parts > 1 ? `, ${parts} parts` : '';
+  const split = parts > 1 ? `, ${window.t('{n} parts', { n: parts })}` : '';
   const role = file.role && file.role !== 'model' ? ` ${file.role}` : '';
   return `${quant}${base}${size || split ? ` (${[size, split.replace(/^, /, '')].filter(Boolean).join(', ')})` : ''}${role}`;
 }
@@ -716,15 +722,15 @@ function _ggufDeleteChoice(repo, files) {
       overlay.className = 'modal hidden';
       overlay.innerHTML =
         '<div class="modal-content styled-confirm-box cookbook-gguf-delete-box" role="dialog" aria-modal="true" aria-labelledby="cookbook-gguf-delete-title">' +
-          '<div class="modal-header"><h4 id="cookbook-gguf-delete-title">Delete GGUF files</h4></div>' +
+          `<div class="modal-header"><h4 id="cookbook-gguf-delete-title">${window.t('Delete GGUF files')}</h4></div>` +
           '<div class="modal-body">' +
             '<p id="cookbook-gguf-delete-msg"></p>' +
             '<div id="cookbook-gguf-delete-list" class="cookbook-gguf-delete-list"></div>' +
           '</div>' +
           '<div class="modal-footer cookbook-gguf-delete-actions">' +
-            '<button type="button" id="cookbook-gguf-delete-cancel" class="confirm-btn confirm-btn-secondary">Cancel</button>' +
-            '<button type="button" id="cookbook-gguf-delete-repo" class="confirm-btn confirm-btn-secondary">Whole repo</button>' +
-            '<button type="button" id="cookbook-gguf-delete-selected" class="confirm-btn confirm-btn-danger">Delete selected</button>' +
+            `<button type="button" id="cookbook-gguf-delete-cancel" class="confirm-btn confirm-btn-secondary">${window.t('Cancel')}</button>` +
+            `<button type="button" id="cookbook-gguf-delete-repo" class="confirm-btn confirm-btn-secondary">${window.t('Whole repo')}</button>` +
+            `<button type="button" id="cookbook-gguf-delete-selected" class="confirm-btn confirm-btn-danger">${window.t('Delete selected')}</button>` +
           '</div>' +
         '</div>';
       document.body.appendChild(overlay);
@@ -740,7 +746,7 @@ function _ggufDeleteChoice(repo, files) {
     const selectedBtn = overlay.querySelector('#cookbook-gguf-delete-selected');
     const prevFocus = document.activeElement;
 
-    msg.textContent = `${repo} has multiple GGUF files. Pick what to delete.`;
+    msg.textContent = window.t('{repo} has multiple GGUF files. Pick what to delete.', { repo });
     list.innerHTML = safeFiles.map((file, idx) => {
       const label = esc ? esc(_ggufFileLabel(file)) : _ggufFileLabel(file);
       const rel = esc ? esc(file.rel_path) : file.rel_path;
