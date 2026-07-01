@@ -1855,7 +1855,7 @@ export async function materializePendingSession() {
   }
 
   if (!res.ok) {
-    uiModule.showError(`Session create failed (${res.status}) ${payload.detail || JSON.stringify(payload)}`);
+    uiModule.showError(window.t('Session create failed ({status}) {detail}', { status: res.status, detail: payload.detail || JSON.stringify(payload) }));
     return false;
   }
 
@@ -1944,10 +1944,10 @@ async function _onSessionListKeydown(e) {
     const s = sessions.find(x => x.id === sid);
     if (!s) return;
     if (s.is_important) {
-      uiModule.showToast('Unfavorite before deleting');
+      uiModule.showToast(window.t('Unfavorite before deleting'));
       return;
     }
-    const ok = await uiModule.styledConfirm('Delete this session?', { confirmText: 'Delete', danger: true });
+    const ok = await uiModule.styledConfirm(window.t('Delete this session?'), { confirmText: window.t('Delete'), danger: true });
     if (!ok) return;
     _sessionListFocused = true;
     (async () => {
@@ -2179,7 +2179,7 @@ async function _checkServerStream(sessionId) {
     const bodyDiv = holder.querySelector('.body');
 
     const spinnerMod = await import('./spinner.js');
-    const spinner = spinnerMod.default.create('Generating response...', 'right');
+    const spinner = spinnerMod.default.create(window.t('Generating response...'), 'right');
     bodyDiv.appendChild(spinner.createElement());
     spinner.start();
     box.appendChild(holder);

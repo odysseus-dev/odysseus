@@ -156,4 +156,6 @@ registerMessages('pt-BR', {
     'As mensagens serão roteadas através do seu agente OpenClaw. O agente tem acesso a ferramentas, memória e habilidades configuradas no seu workspace OpenClaw.',
   'Failed to load session: {msg}': 'Falha ao carregar sessão: {msg}',
   'Failed to reach backend: {msg}': 'Falha ao acessar o backend: {msg}',
+  'Session create failed ({status}) {detail}': 'Falha ao criar sessão ({status}) {detail}',
+  'Generating response...': 'Gerando resposta...',
 });
