@@ -143,4 +143,13 @@ registerMessages('pt-BR', {
   'this machine': 'esta máquina',
   "Couldn't scan {where}": 'Não foi possível escanear {where}',
   'Retry': 'Tentar novamente',
+  'Loading…': 'Carregando…',
+  'Scanning hardware…': 'Escaneando hardware…',
+  'Downloaded': 'Baixado',
+  'Hardware visibility note': 'Nota sobre visibilidade de hardware',
+  'Edit manual hardware': 'Editar hardware manual',
+  'Rescan': 'Reescanear',
+  'Copy diagnostics': 'Copiar diagnóstico',
+  'Useful checks:': 'Verificações úteis:',
+  'Odysseus Cookbook hardware diagnostics': 'Diagnóstico de hardware do Odysseus Cookbook',
 });

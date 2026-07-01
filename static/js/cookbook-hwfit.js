@@ -597,10 +597,10 @@ export async function _hwfitFetch(fresh = false) {
     // Text label like the other cookbook tabs: "Loading…", then if the scan runs
     // long (remote SSH hardware probe), switch to "Scanning hardware…".
     const loadingLbl = document.createElement('div');
-    loadingLbl.textContent = 'Loading…';
+    loadingLbl.textContent = window.t('Loading…');
     loadingLbl.style.cssText = 'text-align:center;opacity:0.5;font-size:11px;';
     loadingDiv.appendChild(loadingLbl);
-    setTimeout(() => { if (loadingLbl.isConnected) loadingLbl.textContent = 'Scanning hardware…'; }, 2000);
+    setTimeout(() => { if (loadingLbl.isConnected) loadingLbl.textContent = window.t('Scanning hardware…'); }, 2000);
     list.innerHTML = '';
     list.appendChild(loadingDiv);
     _hwfitCache = null;   // no instant paint — clear until the fetch returns
@@ -629,7 +629,7 @@ export async function _hwfitFetch(fresh = false) {
           if (_cachedModelIds.has(name) || [..._cachedModelIds].some(id => id.endsWith('/' + name?.split('/').pop()))) {
             const nameEl = row.querySelector('.hwfit-name');
             if (nameEl && !nameEl.querySelector('.hwfit-dl-dot')) {
-              nameEl.insertAdjacentHTML('beforeend', '<span class="hwfit-dl-dot" title="Downloaded">\u25CF</span>');
+              nameEl.insertAdjacentHTML('beforeend', `<span class="hwfit-dl-dot" title="${esc(window.t('Downloaded'))}">\u25CF</span>`);
             }
           }
         });
@@ -845,12 +845,12 @@ function _renderHwVisibilityWarning(sys) {
   }
 
   box.innerHTML = `
-    <div class="hwfit-hw-visibility-warning-title">${esc(warning.title || 'Hardware visibility note')}</div>
+    <div class="hwfit-hw-visibility-warning-title">${esc(warning.title || window.t('Hardware visibility note'))}</div>
     <div class="hwfit-hw-visibility-warning-body">${esc(warning.message || '')}</div>
     <div class="hwfit-hw-visibility-warning-actions">
-      <button type="button" class="hwfit-gpu-btn" data-hw-action="manual">Edit manual hardware</button>
-      <button type="button" class="hwfit-gpu-btn" data-hw-action="rescan">Rescan</button>
-      <button type="button" class="hwfit-gpu-btn" data-hw-action="copy">Copy diagnostics</button>
+      <button type="button" class="hwfit-gpu-btn" data-hw-action="manual">${esc(window.t('Edit manual hardware'))}</button>
+      <button type="button" class="hwfit-gpu-btn" data-hw-action="rescan">${esc(window.t('Rescan'))}</button>
+      <button type="button" class="hwfit-gpu-btn" data-hw-action="copy">${esc(window.t('Copy diagnostics'))}</button>
     </div>
   `;
 
@@ -872,7 +872,7 @@ function _renderHwVisibilityWarning(sys) {
   box.querySelector('[data-hw-action="copy"]')?.addEventListener('click', () => {
     // Keep diagnostics copy/paste friendly for GitHub issues and Docker support.
     const text = [
-      'Odysseus Cookbook hardware diagnostics',
+      window.t('Odysseus Cookbook hardware diagnostics'),
       `probe_scope=${sys?.probe_scope || ''}`,
       `containerized=${sys?.containerized === true}`,
       `backend=${sys?.backend || ''}`,
@@ -884,7 +884,7 @@ function _renderHwVisibilityWarning(sys) {
       `cpu_cores=${sys?.cpu_cores || ''}`,
       `cpu_name=${sys?.cpu_name || ''}`,
       '',
-      'Useful checks:',
+      window.t('Useful checks:'),
       'docker compose exec odysseus nvidia-smi -L',
       'docker compose exec odysseus cat /proc/meminfo | head',
       'docker compose exec odysseus python -c "from services.hwfit.hardware import detect_system; import json; print(json.dumps(detect_system(fresh=True), indent=2))"',
