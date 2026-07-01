@@ -211,4 +211,22 @@ registerMessages('pt-BR', {
   'Schedule save failed: {msg}': 'Falha ao salvar agendamento: {msg}',
   'Created task: Serve: {name}': 'Tarefa criada: Servir: {name}',
   'Open': 'Abrir',
+
+  // ── cookbookDownload.js ──
+  'this model': 'este modelo',
+  '{name} is an NVIDIA NVFP4 checkpoint, not a GGUF download. Pick the base model row with an Unsloth GGUF source, or paste the GGUF repo directly.': '{name} é um checkpoint NVIDIA NVFP4, não um download GGUF. Escolha a linha do modelo base com uma fonte GGUF da Unsloth, ou cole o repositório GGUF diretamente.',
+  'No GGUF source is configured for {name}. Pick a model with a GGUF source, or paste the GGUF repo in Download.': 'Nenhuma fonte GGUF configurada para {name}. Escolha um modelo com fonte GGUF, ou cole o repositório GGUF em Baixar.',
+  'Preset name:': 'Nome da predefinição:',
+  'Preset saved': 'Predefinição salva',
+  'HTTP {status}: {body}': 'HTTP {status}: {body}',
+  '(no output)': '(sem saída)',
+  '(stopped)': '(interrompido)',
+  'Request failed: {msg}': 'Falha na requisição: {msg}',
+  '{name} is already queued': '{name} já está na fila',
+  '{name} is already downloading': '{name} já está baixando',
+  '{name} is still downloading (was marked finished after a restart — revived)': '{name} ainda está baixando (foi marcado como concluído após um reinício — reativado)',
+  'Queued {name} — waiting for current download': '{name} enfileirado — aguardando o download atual',
+  'Download failed: HTTP {status}': 'Falha no download: HTTP {status}',
+  'Download failed: {msg}': 'Falha no download: {msg}',
+  'Downloading {name}...': 'Baixando {name}...',
 });
