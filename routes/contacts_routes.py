@@ -150,6 +150,14 @@ def _vunesc(value: str) -> str:
 
 def _parse_vcards(text: str) -> List[Dict]:
     """Parse a stream of vCards into dicts with name, email, phone."""
+    # Unfold RFC 6350 3.2 line folding first: a CRLF/LF followed by a single
+    # space or tab is a continuation of the previous logical line. Real
+    # CardDAV servers (Radicale, iCloud, Apple/Google) fold long EMAIL / FN /
+    # PHOTO lines, and splitting on raw newlines without unfolding dropped the
+    # continuation (e.g. "...@example\n .com" lost the ".com"), truncating the
+    # email/name.
+    text = re.sub(r"\r\n[ \t]", "", text or "")
+    text = re.sub(r"\n[ \t]", "", text)
     contacts = []
     for block in re.split(r"BEGIN:VCARD", text):
         if not block.strip():

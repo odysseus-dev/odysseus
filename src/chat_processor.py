@@ -12,6 +12,45 @@ from src.prompt_security import UNTRUSTED_CONTEXT_POLICY, untrusted_context_mess
 
 logger = logging.getLogger(__name__)
 
+
+def _clean_search_query(query: str, max_len: int = 200) -> str:
+    """Strip fenced code blocks from a search query while preserving inline
+    code text.
+
+    This is a focused, defensive cleanup for the *final* web-search query
+    selected in ``build_context_preface`` (issue #4547): regardless of whether
+    the query came from the LLM-generated path (#4557) or the first-line
+    fallback, residual fenced / inline markdown should not leak into the search
+    call. Rather than using regex (which is brittle and strips inline code
+    text like ``git reset`` from the query), we render the query to HTML via
+    ``markdown`` and parse it with ``BeautifulSoup`` so that:
+
+    * ``<pre>`` blocks (fenced / indented code) are removed entirely.
+    * ``<code>`` elements (inline code) are preserved as plain text.
+
+    Both libraries are already project dependencies. The result is whitespace
+    collapsed and truncated to ``max_len``; an all-code input collapses to an
+    empty string, which the caller treats as "no query".
+    """
+    import markdown as _md
+    from bs4 import BeautifulSoup as _BS
+
+    html = _md.markdown(query, extensions=["fenced_code"])
+    soup = _BS(html, "html.parser")
+
+    # Remove fenced / indented code blocks.
+    for pre in soup.find_all("pre"):
+        pre.decompose()
+
+    # Preserve inline code by unwrapping <code> to text.
+    for code in soup.find_all("code"):
+        code.replace_with(code.get_text())
+
+    text = soup.get_text(" ", strip=True)
+    text = re.sub(r"\s+", " ", text)
+    return text[:max_len]
+
+
 # ── Stopwords & tokenizer ──
 
 _STOPWORDS = frozenset(
@@ -280,10 +319,61 @@ class ChatProcessor:
         web_sources = []
         if use_web:
             try:
-                web_context, web_sources = comprehensive_web_search(
-                    message, time_filter=time_filter, return_sources=True
-                )
-                preface.append(untrusted_context_message("web search results", web_context))
+                from src.llm_core import llm_call
+
+                t_url, t_model, t_headers = session.endpoint_url, session.model, session.headers
+
+                # Default fallback is the first non-empty line of the original user message
+                fallback_query = next((line.strip() for line in message.split("\n") if line.strip()), "")
+                search_query = fallback_query
+
+                try:
+                    generated_query = llm_call(
+                        t_url,
+                        t_model,
+                        [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "Extract a concise search query from the user's message. "
+                                    "Reply ONLY with the query."
+                                ),
+                            },
+                            {"role": "user", "content": message},
+                        ],
+                        headers=t_headers,
+                        temperature=0.1,
+                        max_tokens=50,
+                        timeout=15,
+                    ).strip()
+
+                    if generated_query:
+                        # LLM successfully generated a non-empty query -> use the generated query
+                        search_query = generated_query
+                    else:
+                        # LLM returned an empty or whitespace-only query -> fall back to original query
+                        logger.warning("LLM generated an empty search query, using fallback.")
+                except Exception as e:
+                    # LLM failed (exception/error) -> fall back to original user query
+                    logger.warning(f"Failed to generate search query via LLM, using fallback: {e}")
+
+                search_query = " ".join(search_query.split())
+                if len(search_query) > 150:
+                    search_query = search_query[:150].strip()
+
+                # Defensive cleanup of the final selected query (interim fix
+                # for #4547): strip any residual fenced/inline markdown so that
+                # neither the generated query nor the first-line fallback leaks
+                # fences or backticks into the search call. No-op on clean
+                # generated queries; collapses to "" when the query is all code.
+                search_query = _clean_search_query(search_query, max_len=150)
+
+                if search_query:
+                    # Execute web search using the final selected query
+                    web_context, web_sources = comprehensive_web_search(
+                        search_query, time_filter=time_filter, return_sources=True
+                    )
+                    preface.append(untrusted_context_message("web search results", web_context))
             except Exception as e:
                 logger.error(f"Web search failed: {e}")
                 preface.append({"role": "system", "content": "Web search encountered an error and could not retrieve results."})

@@ -58,12 +58,17 @@ def test_owner_adapter_defaults_owner_to_none():
 
 
 def test_parse_tool_args_lives_in_tool_utils_single_source():
-    # The helper was de-duplicated into tool_utils; admin_tools imports it
-    # from there rather than carrying its own copy.
+    # The helper was de-duplicated into tool_utils; every consumer imports it
+    # from there rather than carrying its own copy. After the tool_implementations
+    # split, _common and the facade must also re-export the same object.
     from src.tool_utils import _parse_tool_args
     from src.agent_tools import admin_tools, document_tools
+    from src.tools import _common
+    import src.tool_implementations as ti
     assert admin_tools._parse_tool_args is _parse_tool_args
     assert document_tools._parse_tool_args is _parse_tool_args
+    assert _common._parse_tool_args is _parse_tool_args
+    assert ti._parse_tool_args is _parse_tool_args
     assert _parse_tool_args('{"action":"add"}') == {"action": "add"}
     # body-envelope unwrap still works
     assert _parse_tool_args('{"body":{"action":"x"}}') == {"action": "x"}

@@ -138,6 +138,10 @@ DEFAULT_SETTINGS = {
     "default_model": "",
     "default_reasoning_effort": "",
     "default_verbosity": "",
+    # Optional prose style used only for normal document writing/editing.
+    # Email replies use email_writing_style instead because greetings,
+    # signatures, and mailbox identity rules are medium-specific.
+    "document_writing_style": "",
     # Ordered fallback chain for the default chat model. Each entry is
     # {"endpoint_id": "...", "model": "..."}. If the primary model fails
     # before producing output (endpoint offline / errors), the chat
@@ -154,6 +158,7 @@ DEFAULT_SETTINGS = {
     "utility_model_fallbacks": [],
     "teacher_model": "",
     "teacher_enabled": False,
+    "teacher_tier2_enabled": False,
     # Skills: minimum self-reported confidence for an auto-written (LLM-authored)
     # DRAFT skill to be injected into the agent prompt. Published skills always
     # qualify. Keeps low-confidence auto-skills out of context until they're

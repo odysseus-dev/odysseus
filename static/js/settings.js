@@ -1782,24 +1782,6 @@ async function initAgentSettings() {
     (curR != null ? ' · ' + curR + ' steps/message' : '') +
     (supInput && supInput.checked ? ' · supervisor on' : '');
 
-  // Standalone Email Safety toggle (separate card on the AI Defaults tab).
-  // Default to ON if the setting isn't present so a fresh install is safe.
-  var emailConfirm = el('set-agentEmailConfirm');
-  if (emailConfirm) {
-    try {
-      var s = await fetch('/api/auth/settings', { credentials: 'same-origin' }).then(r => r.json());
-      emailConfirm.checked = s.agent_email_confirm !== false;
-    } catch (_) {}
-    emailConfirm.addEventListener('change', async () => {
-      try {
-        await fetch('/api/auth/settings', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ agent_email_confirm: !!emailConfirm.checked }),
-        });
-      } catch (_) {}
-    });
-  }
 }
 
 /* ═══════════════════════════════════════════
@@ -3196,6 +3178,8 @@ async function initEmailSettings() {
     if (el('set-email-smtp-user')) el('set-email-smtp-user').value = cfg.smtp_user || '';
     if (el('set-email-smtp-pass')) el('set-email-smtp-pass').value = '';
     if (el('set-email-from')) el('set-email-from').value = cfg.from_address || '';
+    if (el('set-email-auto-translate')) el('set-email-auto-translate').checked = !!cfg.email_auto_translate;
+    if (el('set-email-translate-language')) el('set-email-translate-language').value = cfg.email_translate_language || 'English';
   } catch (_) {}
 
   // Load contacts config
@@ -3226,6 +3210,8 @@ async function initEmailSettings() {
       smtp_port: parseInt(el('set-email-smtp-port').value) || 0,
       smtp_user: el('set-email-smtp-user').value,
       email_from: el('set-email-from').value,
+      email_auto_translate: !!el('set-email-auto-translate')?.checked,
+      email_translate_language: (el('set-email-translate-language')?.value || 'English').trim() || 'English',
     };
     const imapPass = el('set-email-imap-pass').value;
     const smtpPass = el('set-email-smtp-pass').value;
@@ -3239,7 +3225,10 @@ async function initEmailSettings() {
       });
       const result = await res.json();
       if (msg) msg.textContent = result.success ? '✓ Saved' : (result.error || 'Failed');
+      const translateMsg = el('set-email-translate-msg');
+      if (translateMsg) translateMsg.textContent = result.success ? '✓ Saved' : (result.error || 'Failed');
       setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
+      setTimeout(() => { const translateMsg = el('set-email-translate-msg'); if (translateMsg) translateMsg.textContent = ''; }, 3000);
     } catch (e) {
       if (msg) msg.textContent = 'Failed';
     }

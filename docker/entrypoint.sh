@@ -29,12 +29,12 @@ fi
 ODY_USER="$(getent passwd "$PUID" | cut -d: -f1)"
 [ -z "$ODY_USER" ] && ODY_USER=odysseus
 
-# Docker-socket group plumbing. When /var/run/docker.sock is bind-mounted
-# (Cookbook uses docker exec to reach sibling containers), the socket is
-# owned by root:<host docker gid>. Add the app user to that group and later
-# call gosu by username so supplementary groups are retained.
+# Docker-socket group plumbing for the explicit host-Docker overlay. When
+# opted in, the socket is owned by root:<host docker gid>. Add the app user
+# to that group and later call gosu by username so supplementary groups are
+# retained.
 DOCKER_SOCK="${DOCKER_SOCK:-/var/run/docker.sock}"
-if [ -S "$DOCKER_SOCK" ]; then
+if [ "${ODYSSEUS_ENABLE_HOST_DOCKER:-}" = "true" ] && [ -S "$DOCKER_SOCK" ]; then
     SOCK_GID="$(stat -c '%g' "$DOCKER_SOCK" 2>/dev/null || echo '')"
     if [ -n "$SOCK_GID" ] && [ "$SOCK_GID" != "0" ]; then
         if ! getent group "$SOCK_GID" >/dev/null 2>&1; then

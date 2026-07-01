@@ -187,8 +187,10 @@ class ModelDiscovery:
             r = httpx.get(f"{base}/models", timeout=3)
             if not r.is_success:
                 return None
-            data = r.json() or {}
-            ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+            data = r.json()
+            # Some OpenAI-compatible servers return a bare list, not {"data": [...]}.
+            items = data if isinstance(data, list) else ((data or {}).get("data") or [])
+            ids = [m.get("id") for m in items if isinstance(m, dict) and m.get("id")]
             if ids:
                 return {
                     "host": host,

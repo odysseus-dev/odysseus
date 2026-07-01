@@ -6,7 +6,7 @@ Reusable document actions callable from both REST routes and the task scheduler.
 
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -77,10 +77,28 @@ async def run_document_tidy(owner: str) -> str:
         deleted = 0
         kept = 0
         survivors = []  # docs that pass the junk rules, considered for dedup
+        now = datetime.now(timezone.utc)
 
         for doc in docs:
+            created = doc.created_at
+            if created and created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+
+            # Skip freshly created documents to avoid deleting them while the user is actively editing
+            if created and (now - created).total_seconds() < 900:  # 15 minutes
+                survivors.append(doc)
+                continue
+
             content = (doc.current_content or "").strip()
             title = (doc.title or "").strip().lower()
+            is_fresh_empty = (
+                not content
+                and created is not None
+                and (now - created).total_seconds() < 1800
+            )
+            if is_fresh_empty:
+                survivors.append(doc)
+                continue
 
             # Strip markdown noise to get "real" character count
             stripped = re.sub(r"^#{1,6}\s+", "", content, flags=re.MULTILINE)  # headers

@@ -6,6 +6,7 @@ from src.endpoint_resolver import (
     resolve_utility_fallback_candidates,
 )
 from src.llm_core import llm_call_async_with_fallback
+from src.interactive_gate import wait_for_interactive_quiet
 
 
 def resolve_task_endpoint(fallback_url=None, fallback_model=None, fallback_headers=None, owner=None):
@@ -72,4 +73,5 @@ async def task_llm_call_async(
     )
     if not candidates:
         raise RuntimeError("No LLM endpoint available for background task")
+    await wait_for_interactive_quiet("background task LLM")
     return await llm_call_async_with_fallback(candidates, messages=messages, **kwargs)

@@ -40,7 +40,18 @@ def _parse_msg_content(raw):
     if isinstance(raw, str) and raw.startswith('[{') and '"type"' in raw:
         try:
             parsed = json.loads(raw)
-            if isinstance(parsed, list) and all(isinstance(p, dict) for p in parsed):
+            # Only treat as serialized multimodal content when EVERY element is
+            # a dict whose "type" is a recognized content-block kind. Otherwise a
+            # plain text message that merely *looks* like a JSON array of objects
+            # (e.g. a user pasting an API schema/sample with a "type" field) was
+            # silently parsed back into a list, destroying the original string.
+            _BLOCK_TYPES = {
+                "text", "image", "image_url", "audio", "input_audio",
+                "input_image", "document", "file",
+            }
+            if (isinstance(parsed, list) and parsed
+                    and all(isinstance(p, dict) and p.get("type") in _BLOCK_TYPES
+                            for p in parsed)):
                 return parsed
         except (json.JSONDecodeError, ValueError):
             pass
