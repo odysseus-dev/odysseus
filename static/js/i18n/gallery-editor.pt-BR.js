@@ -195,4 +195,23 @@ registerMessages('pt-BR', {
   'Type a tag and press Enter to add it': 'Digite uma marcacao e pressione Enter para adiciona-la',
   'Album': 'Album',
   'People in this photo': 'Pessoas nesta foto',
+
+  // gallery.js — round 8 (AI tag / rotate / delete / rename actions)
+  'AI tags cleared': 'Marcacoes de IA removidas',
+  'AI tags added': 'Marcacoes de IA adicionadas',
+  'Clear failed': 'Falha ao limpar',
+  'AI tagging failed': 'Falha ao marcar com IA',
+  'Failed to open editor:': 'Falha ao abrir o editor:',
+  'unknown': 'desconhecido',
+  'Rotating…': 'Girando…',
+  'Rotate failed': 'Falha ao girar',
+  'Rotated': 'Girado',
+  'Album cover updated': 'Capa do album atualizada',
+  'Failed to set cover': 'Falha ao definir a capa',
+  'Delete this photo? This cannot be undone.': 'Excluir esta foto? Essa acao nao pode ser desfeita.',
+  'Failed to delete photo': 'Falha ao excluir a foto',
+  'Photo deleted': 'Foto excluida',
+  'Failed': 'Falhou',
+  'Renamed': 'Renomeado',
+  'Failed to rename': 'Falha ao renomear',
 });
