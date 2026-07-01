@@ -78,7 +78,14 @@ async def run_document_tidy(owner: str) -> str:
         kept = 0
         survivors = []  # docs that pass the junk rules, considered for dedup
 
+        now = datetime.utcnow()
+
         for doc in docs:
+            # Skip freshly created documents to avoid deleting them while the user is actively editing
+            if doc.created_at and (now - doc.created_at).total_seconds() < 900:  # 15 minutes
+                survivors.append(doc)
+                continue
+
             content = (doc.current_content or "").strip()
             title = (doc.title or "").strip().lower()
 

@@ -10,9 +10,10 @@ import bisect
 import json
 import logging
 import re
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from src.agent_tools import ToolBlock, TOOL_TAGS
+from src.tool_security import BUILTIN_EMAIL_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +21,62 @@ logger = logging.getLogger(__name__)
 # Regex patterns
 # ---------------------------------------------------------------------------
 
-# Pattern 1: ```bash ... ``` fenced code blocks
+# Pattern 1: ```bash ... ``` fenced code blocks. The tag may be followed by a
+# newline (classic form) or by inline JSON args on the same line
+# (```list_email_accounts {}). The same-line part is captured separately
+# (group 2) and judged by _fenced_tool_call below — the regex alone only
+# requires it to start with { or [; anything else after the tag is a Markdown
+# info string (```python title="example.py") and the fence never matches.
+# (?![\w-]) keeps the alternation from prefix-matching longer fence tags:
+# without it, ```python3 would match as tool "python" with content "3\n..."
+# and execute as code.
 _TOOL_BLOCK_RE = re.compile(
-    r"```(" + "|".join(TOOL_TAGS) + r")\s*\n([\s\S]*?)```",
+    r"```(" + "|".join(TOOL_TAGS) + r")(?![\w-])"
+    r"[ \t]*([{\[][^\n]*?)?[ \t]*(?=\r?\n|```)\r?\n?([\s\S]*?)```",
     re.IGNORECASE,
 )
+
+# Tags whose fenced content is raw code, not JSON args. Same-line text after
+# these tags is Markdown fence metadata on a real language (```bash {title=
+# "setup"}), never inline tool args — only the classic tag-then-newline form
+# executes for them.
+_CODE_FENCE_TAGS = frozenset({"bash", "python"})
+
+
+def _fenced_tool_call(m) -> Optional[Tuple[str, str]]:
+    """Classify a Pattern-1 fence match: (tag, content) when it is an
+    executable tool call, None when the fence must stay display text.
+
+    Shared by parse_tool_blocks and strip_tool_blocks so the execute and
+    display decisions can never disagree: a fence that doesn't execute is
+    never stripped, and vice versa.
+
+    Same-line text after the tag only counts as inline tool args when the
+    tag's tool takes JSON args (not a code tag) AND the text is valid
+    standalone JSON. ```bash {title="setup"} and ```python {"x": 1} are
+    fence attributes on real languages, and {title="x"} on any tag is
+    metadata, not arguments — all of those stay visible and inert.
+    """
+    tag = m.group(1).lower()
+    inline = (m.group(2) or "").strip()
+    body = (m.group(3) or "").strip()
+    if not inline:
+        return tag, body
+    if tag in _CODE_FENCE_TAGS:
+        return None
+    # Inline args may continue onto following lines (a JSON object opened on
+    # the tag line); the combined text must parse as JSON or nothing runs.
+    content = f"{inline}\n{body}" if body else inline
+    try:
+        json.loads(content)
+    except (ValueError, TypeError):
+        return None
+    return tag, content
+
+
+def _strip_executed_fence(m) -> str:
+    """re.sub callback: remove only fences that parse as tool calls."""
+    return "" if _fenced_tool_call(m) is not None else m.group(0)
 
 # Pattern 2: [TOOL_CALL] ... [/TOOL_CALL] blocks (some models use this format)
 # Matches: {tool => "shell", args => {--command "ls -la"}} etc.
@@ -113,6 +165,13 @@ _TOOL_CODE_RE = re.compile(
 # _TOOL_CODE_RE's delimiters, split for _iter_delimited's forward-only scan.
 _TOOL_CODE_OPEN_RE = re.compile(r"<tool_code>\s*\{", re.IGNORECASE)
 _TOOL_CODE_CLOSE_RE = re.compile(r"\}\s*</tool_code>", re.IGNORECASE)
+
+# Pattern 4b: Gemma-style <|tool_call|> call:tool_name{args} <tool_call|>
+_GEMMA_TOOL_CALL_RE = re.compile(
+    r"<\|?tool_call\|?>\s*call:([\w\d_-]+)\s*(\{[\s\S]*?\})\s*<\|?tool_call\|?>",
+    re.IGNORECASE,
+)
+
 
 # Pattern 5: DeepSeek DSML markup leaking into content. When deepseek
 # models can't emit structured tool_calls (e.g. we sent no tool schemas
@@ -780,6 +839,40 @@ def _parse_tool_code_block(raw: str) -> Optional[ToolBlock]:
         return ToolBlock(tool_name, content.strip())
     return None
 
+def _parse_gemma_tool_call(tool_name: str, body: str) -> Optional[ToolBlock]:
+    """Parse a Gemma-style call:tool_name{...} block into a ToolBlock."""
+    tool_name = tool_name.strip().lower().replace("-", "_")
+    body = body.strip()
+    if not body:
+        return None
+
+    # Replace custom Gemma string delimiters with standard quotes
+    body = body.replace('<|"|>', '"').replace('<|"', '"').replace('"|>', '"')
+
+    # Try standard JSON parsing
+    params = {}
+    try:
+        params = json.loads(body)
+        if not isinstance(params, dict):
+            params = {}
+    except json.JSONDecodeError:
+        # Try unquoted keys repair: e.g. {query: "..."} -> {"query": "..."}
+        try:
+            repaired = re.sub(r'([{,]\s*)(\w+)\s*:', r'\1"\2":', body)
+            params = json.loads(repaired)
+            if not isinstance(params, dict):
+                params = {}
+        except Exception:
+            # Simple regex key-value extraction fallback
+            params = {}
+            for m in re.finditer(r'(\w+)\s*:\s*["\']?(.*?)["\']?(?=\s*,\s*\w+\s*:|\s*\})', body):
+                k = m.group(1)
+                v = m.group(2).strip()
+                params[k] = v
+
+    from src.tool_schemas import function_call_to_tool_block
+    return function_call_to_tool_block(tool_name, json.dumps(params))
+
 
 def _iter_delimited(text, open_re, close_re):
     """Yield ``(match_start, inner_start, inner_end, match_end)`` for each
@@ -923,9 +1016,20 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
     # Pattern 1: fenced code blocks (skipped when `skip_fenced` — see docstring).
     if not skip_fenced:
         for m in _TOOL_BLOCK_RE.finditer(text):
-            tag = m.group(1).lower()
-            content = m.group(2).strip()
+            call = _fenced_tool_call(m)
+            if call is None:
+                continue
+            tag, content = call
             if not content:
+                # An empty fence is still an unambiguous call for the email
+                # tools — ```list_email_accounts``` with no body is a shape
+                # local models really emit for no-arg tools. Dispatch with
+                # empty args and let the tool's own validation answer;
+                # silently dropping the call left models concluding email was
+                # broken. Other tags (bash, python, ...) keep skipping: empty
+                # content is nothing to run.
+                if tag in BUILTIN_EMAIL_TOOLS:
+                    blocks.append(ToolBlock(tag, ""))
                 continue
             # If a code block's content is an <invoke> XML call (some models wrap
             # tool calls in ```python or ```xml fences), parse the invoke instead.
@@ -1012,6 +1116,15 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
             if block:
                 blocks.append(block)
 
+    # Pattern 4b: Gemma-style <|tool_call|> blocks
+    if not blocks:
+        for m in _GEMMA_TOOL_CALL_RE.finditer(text):
+            tool_name = m.group(1)
+            body = m.group(2)
+            block = _parse_gemma_tool_call(tool_name, body)
+            if block:
+                blocks.append(block)
+
     # Pattern 6: local text-model web_search call leaked as prose + bare JSON.
     if not blocks and not skip_fenced:
         raw_web_json = _parse_raw_web_json_lookup(text)
@@ -1037,7 +1150,10 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
     # Normalize DSML first so its markup gets stripped by the <invoke>
     # / <tool_call> removers below instead of leaking to the user.
     text = _normalize_dsml(text)
-    cleaned = text if skip_fenced else _TOOL_BLOCK_RE.sub('', text)
+    # Keep the executed-vs-illustrative fence distinction (only strip fences
+    # that actually dispatched; leave example fences from native models inert
+    # but visible), then remove [TOOL_CALL]{...}[/TOOL_CALL] markup.
+    cleaned = text if skip_fenced else _TOOL_BLOCK_RE.sub(_strip_executed_fence, text)
     # Forward-only removal mirrors parse_tool_blocks: _strip_delimited pairs each
     # opener with a later closer and stops when none is reachable, so untrusted
     # output can't drive the O(n^2) lazy-rescan (ReDoS); see _iter_delimited.
@@ -1046,6 +1162,7 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
     cleaned = _strip_delimited(cleaned, _XML_TOOL_CALL_OPEN_RE, _XML_TOOL_CALL_CLOSE_RE)
     cleaned = _XML_OPEN_TOOL_CALL_RE.sub('', cleaned)
     cleaned = _strip_delimited(cleaned, _TOOL_CODE_OPEN_RE, _TOOL_CODE_CLOSE_RE)
+    cleaned = _GEMMA_TOOL_CALL_RE.sub('', cleaned)
     if not skip_fenced:
         raw_web_json = _parse_raw_web_json_lookup(cleaned)
         if raw_web_json:

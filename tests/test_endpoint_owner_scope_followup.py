@@ -402,7 +402,7 @@ def test_gallery_image_endpoint_lookups_are_owner_scoped():
 
 
 def test_research_endpoint_resolution_passes_owner():
-    body = Path("routes/research_routes.py").read_text(encoding="utf-8")
+    body = Path("routes/research/research_routes.py").read_text(encoding="utf-8")
 
     assert "def _resolve_research_endpoint(sess, owner:" in body
     assert 'resolve_endpoint("research", owner=user)' in body
