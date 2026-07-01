@@ -220,7 +220,7 @@ async function _syncCaldav(interactive) {
       _render();
     }
   } catch (e) {
-    if (interactive) return { errors: [e.message || 'Sync failed'] };
+    if (interactive) return { errors: [e.message || window.t('Sync failed')] };
   }
 }
 

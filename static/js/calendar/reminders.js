@@ -30,14 +30,14 @@ function _formatReminderBody(note) {
       let when2 = '';
       const sameDay = start.toDateString() === now.toDateString();
       if (!sameDay) when2 = ' ' + start.toLocaleDateString([], { month: 'short', day: 'numeric' });
-      if (mins >= 1 && mins <= 60) return `Starts in ${mins} min (${when}${when2})`;
-      if (mins === 0) return `Starting now (${when}${when2})`;
+      if (mins >= 1 && mins <= 60) return window.t('Starts in {mins} min ({when}{when2})', { mins, when, when2 });
+      if (mins === 0) return window.t('Starting now ({when}{when2})', { when, when2 });
       if (mins > 60) {
         const h = Math.round(mins / 60);
-        return `Starts in ${h} hour${h === 1 ? '' : 's'} (${when}${when2})`;
+        return window.t(h === 1 ? 'Starts in {h} hour ({when}{when2})' : 'Starts in {h} hours ({when}{when2})', { h, when, when2 });
       }
-      if (mins >= -60) return `Started ${Math.abs(mins)} min ago (${when}${when2})`;
-      return `Was scheduled for ${when}${when2}`;
+      if (mins >= -60) return window.t('Started {mins} min ago ({when}{when2})', { mins: Math.abs(mins), when, when2 });
+      return window.t('Was scheduled for {when}{when2}', { when, when2 });
     }
   }
   // Legacy notes (no event_dtstart). Scrub stale relative-time strings.
@@ -80,18 +80,18 @@ async function _pollReminders() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           note_id: note.id,
-          title: note.title || 'Calendar Reminder',
+          title: note.title || window.t('Calendar Reminder'),
           body,
         }),
       }).catch(() => {});
       if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification(note.title || 'Calendar Reminder', {
+        new Notification(note.title || window.t('Calendar Reminder'), {
           body,
           icon: '/static/favicon.png',
           tag: `cal-remind-${note.id}`,
         });
       }
-      if (uiModule.showToast) uiModule.showToast((note.title || 'Calendar Reminder') + (body ? ' — ' + body : ''));
+      if (uiModule.showToast) uiModule.showToast((note.title || window.t('Calendar Reminder')) + (body ? ' — ' + body : ''));
     }
     // Persist fired set (keep last 200)
     const arr = [..._notifFired].slice(-200);

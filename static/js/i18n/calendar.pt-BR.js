@@ -221,4 +221,14 @@ registerMessages('pt-BR', {
 
   // Misc helpers
   'Open in OpenStreetMap': 'Abrir no OpenStreetMap',
+  'Sync failed': 'Falha na sincronizacao',
+
+  // Reminders poller (static/js/calendar/reminders.js)
+  'Starts in {mins} min ({when}{when2})': 'Comeca em {mins} min ({when}{when2})',
+  'Starting now ({when}{when2})': 'Comecando agora ({when}{when2})',
+  'Starts in {h} hour ({when}{when2})': 'Comeca em {h} hora ({when}{when2})',
+  'Starts in {h} hours ({when}{when2})': 'Comeca em {h} horas ({when}{when2})',
+  'Started {mins} min ago ({when}{when2})': 'Comecou ha {mins} min ({when}{when2})',
+  'Was scheduled for {when}{when2}': 'Estava agendado para {when}{when2}',
+  'Calendar Reminder': 'Lembrete do Calendario',
 });
