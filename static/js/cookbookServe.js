@@ -974,12 +974,12 @@ function _rerenderCachedModels() {
         ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>'
         : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
       const items = [];
-      items.push({ label: _favNow ? 'Unfavorite' : 'Favorite', icon: _favIco, action: 'favorite' });
-      if (m && m.status === 'ready') items.push({ label: 'Serve', icon: _serveIco, action: 'serve' });
-      if (m && m.status === 'downloading') items.push({ label: 'Retry', icon: _retryIco, action: 'retry' });
-      if (m && m.status === 'ready') items.push({ label: 'Schedule…', icon: _schedIco, action: 'schedule' });
-      items.push({ label: 'Select', icon: _selectIco, action: 'select' });
-      items.push({ label: 'Delete', icon: _deleteIco, action: 'delete', danger: true });
+      items.push({ label: _favNow ? window.t('Unfavorite') : window.t('Favorite'), icon: _favIco, action: 'favorite' });
+      if (m && m.status === 'ready') items.push({ label: window.t('Serve'), icon: _serveIco, action: 'serve' });
+      if (m && m.status === 'downloading') items.push({ label: window.t('Retry'), icon: _retryIco, action: 'retry' });
+      if (m && m.status === 'ready') items.push({ label: window.t('Schedule…'), icon: _schedIco, action: 'schedule' });
+      items.push({ label: window.t('Select'), icon: _selectIco, action: 'select' });
+      items.push({ label: window.t('Delete'), icon: _deleteIco, action: 'delete', danger: true });
       for (const opt of items) {
         const div = document.createElement('div');
         div.className = 'dropdown-item-compact' + (opt.danger ? ' dropdown-item-danger' : '');
@@ -989,7 +989,7 @@ function _rerenderCachedModels() {
           if (opt.action === 'serve') item.click();
           else if (opt.action === 'favorite') {
             const favored = _toggleServeFavorite(repo);
-            uiModule.showToast(favored ? 'Favorited — pinned to top' : 'Unfavorited');
+            uiModule.showToast(favored ? window.t('Favorited — pinned to top') : window.t('Unfavorited'));
             _rerenderCachedModels();
           }
           else if (opt.action === 'delete') _deleteCachedModel(repo, item, false, m);

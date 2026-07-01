@@ -274,4 +274,10 @@ registerMessages('pt-BR', {
   'Actions': 'Ações',
   'Model actions': 'Ações do modelo',
   'No matching models': 'Nenhum modelo correspondente',
+  'Unfavorite': 'Desfavoritar',
+  'Favorite': 'Favoritar',
+  'Retry': 'Tentar novamente',
+  'Schedule…': 'Agendar…',
+  'Favorited — pinned to top': 'Favoritado — fixado no topo',
+  'Unfavorited': 'Desfavoritado',
 });
