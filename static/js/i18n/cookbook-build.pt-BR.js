@@ -311,4 +311,11 @@ registerMessages('pt-BR', {
   'Maximum concurrent requests. Lower = less memory. Default 4 — prosumer GPUs often OOM on vLLM default 256 during CUDA graph capture.': 'Máximo de requisições simultâneas. Menor = menos memória. Padrão 4 — GPUs prosumer costumam estourar memória no padrão 256 do vLLM durante a captura do CUDA graph.',
   'GPU Mem': 'Mem. GPU',
   'Fraction of GPU memory (0.0–1.0). Lower if OOM': 'Fração da memória da GPU (0,0–1,0). Diminua em caso de estouro de memória',
+  'Advanced': 'Avançado',
+  'Served Name': 'Nome servido',
+  'vLLM --served-model-name. Keeps the OpenAI model id stable when serving from a local snapshot path.': 'vLLM --served-model-name. Mantém o id do modelo OpenAI estável ao servir a partir de um caminho de snapshot local.',
+  'Model Path': 'Caminho do modelo',
+  'Argument passed after `vllm serve`. MiniMax M3 auto-fills the cached snapshot path because the nightly runtime needs the local repo files.': 'Argumento passado após `vllm serve`. O MiniMax M3 preenche automaticamente o caminho do snapshot em cache porque o runtime nightly precisa dos arquivos locais do repositório.',
+  'KV Cache': 'Cache KV',
+  'vLLM --kv-cache-dtype. auto uses the model/runtime default; fp8 reduces KV memory for long context.': 'vLLM --kv-cache-dtype. auto usa o padrão do modelo/runtime; fp8 reduz a memória do KV para contexto longo.',
 });

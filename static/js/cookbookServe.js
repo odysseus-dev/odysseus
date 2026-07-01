@@ -1315,12 +1315,12 @@ function _rerenderCachedModels() {
       // re-renders cheaply and a closed fold doesn't trigger any layout
       // work for the dozens of nested inputs.
       panelHtml += `<details class="hwfit-serve-advanced"${_isMiniMaxM3 ? ' open' : ''}>`;
-      panelHtml += `<summary class="hwfit-serve-advanced-summary">Advanced</summary>`;
+      panelHtml += `<summary class="hwfit-serve-advanced-summary">${window.t('Advanced')}</summary>`;
       // Advanced vLLM/SGLang row (KV Cache, Attention, Swap, Env)
       panelHtml += `<div class="hwfit-serve-row hwfit-backend-vllm hwfit-backend-sglang">`;
-      panelHtml += `<label class="hwfit-backend-vllm" style="grid-column:1 / -1;">${_l('Served Name','vLLM --served-model-name. Keeps the OpenAI model id stable when serving from a local snapshot path.')}<input type="text" class="hwfit-sf" data-field="served_model_name" value="${esc(svm('served_model_name', _defaultServedModelName))}" placeholder="${esc(repo)}" style="width:100%;" /></label>`;
-      panelHtml += `<label class="hwfit-backend-vllm" style="grid-column:1 / -1;">${_l('Model Path','Argument passed after `vllm serve`. MiniMax M3 auto-fills the cached snapshot path because the nightly runtime needs the local repo files.')}<input type="text" class="hwfit-sf" data-field="model_path" value="${esc(_modelPathValue)}" placeholder="${esc(repo)}" style="width:100%;" /></label>`;
-      panelHtml += `<label class="hwfit-backend-vllm">${_l('KV Cache','vLLM --kv-cache-dtype. auto uses the model/runtime default; fp8 reduces KV memory for long context.')}<select class="hwfit-sf" data-field="vllm_kv_cache_dtype" style="height:32px;">${vllmKvCacheOpts}</select></label>`;
+      panelHtml += `<label class="hwfit-backend-vllm" style="grid-column:1 / -1;">${_l(window.t('Served Name'), window.t('vLLM --served-model-name. Keeps the OpenAI model id stable when serving from a local snapshot path.'))}<input type="text" class="hwfit-sf" data-field="served_model_name" value="${esc(svm('served_model_name', _defaultServedModelName))}" placeholder="${esc(repo)}" style="width:100%;" /></label>`;
+      panelHtml += `<label class="hwfit-backend-vllm" style="grid-column:1 / -1;">${_l(window.t('Model Path'), window.t('Argument passed after `vllm serve`. MiniMax M3 auto-fills the cached snapshot path because the nightly runtime needs the local repo files.'))}<input type="text" class="hwfit-sf" data-field="model_path" value="${esc(_modelPathValue)}" placeholder="${esc(repo)}" style="width:100%;" /></label>`;
+      panelHtml += `<label class="hwfit-backend-vllm">${_l(window.t('KV Cache'), window.t('vLLM --kv-cache-dtype. auto uses the model/runtime default; fp8 reduces KV memory for long context.'))}<select class="hwfit-sf" data-field="vllm_kv_cache_dtype" style="height:32px;">${vllmKvCacheOpts}</select></label>`;
       // Attention backend selector — pin the kernel impl. Default `auto` lets
       // vLLM pick FlashInfer (which JITs on first use and breaks on older
       // system nvcc) → FlashAttention → xformers. Forcing FLASH_ATTN skips
