@@ -67,4 +67,38 @@ registerMessages('pt-BR', {
   'Hide filters': 'Ocultar filtros',
   '+ tags': '+ etiquetas',
   '− tags': '− etiquetas',
+
+  // Weekdays (short)
+  'Mon': 'Seg',
+  'Tue': 'Ter',
+  'Wed': 'Qua',
+  'Thu': 'Qui',
+  'Fri': 'Sex',
+  'Sat': 'Sab',
+  'Sun': 'Dom',
+
+  // Month/week view
+  '+{n} more': '+{n} mais',
+  'Zoom out (–)': 'Diminuir zoom (–)',
+  'Zoom out': 'Diminuir zoom',
+  'Zoom in (+)': 'Aumentar zoom (+)',
+  'Zoom in': 'Aumentar zoom',
+  'Drag to resize': 'Arraste para redimensionar',
+  'Moved event': 'Evento movido',
+  'Resized event': 'Evento redimensionado',
+
+  // Agenda view
+  'No upcoming events': 'Nenhum evento futuro',
+  'Settings &rsaquo; Integrations': 'Configuracoes &rsaquo; Integracoes',
+  'Create event': 'Criar evento',
+  'No events': 'Nenhum evento',
+  'All day': 'Dia todo',
+  'critical': 'critico',
+  'high': 'alto',
+  'More': 'Mais',
+
+  // Search view
+  '{n} results for "{q}"': '{n} resultados para "{q}"',
+  '{n} result for "{q}"': '{n} resultado para "{q}"',
+  'No events match your search': 'Nenhum evento corresponde a busca',
 });

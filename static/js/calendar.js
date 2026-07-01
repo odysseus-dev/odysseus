@@ -953,7 +953,7 @@ async function _renderMonth() {
   _slideDir = 0;
   let h = _headerHTML() + _filtersRowHTML() + `<div class="cal-grid${slideClass}">`;
   h += '<div class="cal-week-headers">';
-  for (const wd of (_weekStartSun ? WEEKDAYS_SUN : WEEKDAYS)) h += `<div class="cal-weekday">${wd}</div>`;
+  for (const wd of (_weekStartSun ? WEEKDAYS_SUN : WEEKDAYS)) h += `<div class="cal-weekday">${window.t(wd)}</div>`;
   h += '</div>';
 
   const first = new Date(y, m, 1);
@@ -1014,7 +1014,7 @@ async function _renderMonth() {
             <span class="cal-event-row-name">${_impMark}${_e(ev.summary)}</span>
           </div>`;
         }
-        if (singles.length > maxInline) h += `<div class="cal-event-more">+${singles.length - maxInline} more</div>`;
+        if (singles.length > maxInline) h += `<div class="cal-event-more">${window.t('+{n} more', { n: singles.length - maxInline })}</div>`;
       }
       h += '</div>';
     }
@@ -1213,8 +1213,8 @@ async function _renderWeek() {
   // (toolbar is already crowded — this empty 56-px corner is a free home).
   let railHtml = `<div class="cal-wk-rail">
     <div class="cal-wk-rail-spacer">
-      <button class="cal-wk-zoom" id="cal-wk-zoom-out" title="Zoom out (–)" aria-label="Zoom out">−</button>
-      <button class="cal-wk-zoom" id="cal-wk-zoom-in" title="Zoom in (+)" aria-label="Zoom in">+</button>
+      <button class="cal-wk-zoom" id="cal-wk-zoom-out" title="${window.t('Zoom out (–)')}" aria-label="${window.t('Zoom out')}">−</button>
+      <button class="cal-wk-zoom" id="cal-wk-zoom-in" title="${window.t('Zoom in (+)')}" aria-label="${window.t('Zoom in')}">+</button>
     </div>`;
   for (let h = WEEK_HOUR_START; h < WEEK_HOUR_END; h++) {
     railHtml += `<div class="cal-wk-rail-cell" style="height:${WEEK_HOUR_PX}px;"><span>${_wkFormatHourLabel(h)}</span></div>`;
@@ -1230,7 +1230,7 @@ async function _renderWeek() {
 
     const isSun = d.getDay() === 0;
     colsHtml += `<div class="cal-wk-col${isToday ? ' cal-wk-today' : ''}${isSun && !_weekStartSun ? ' cal-wk-sun' : ''}" data-date="${ds}">`;
-    colsHtml += `<div class="cal-wk-col-head"><span class="cal-wk-dn">${(_weekStartSun ? WEEKDAYS_SUN : WEEKDAYS)[idx]}</span><span class="cal-wk-dt">${d.getDate()}</span></div>`;
+    colsHtml += `<div class="cal-wk-col-head"><span class="cal-wk-dn">${window.t((_weekStartSun ? WEEKDAYS_SUN : WEEKDAYS)[idx])}</span><span class="cal-wk-dt">${d.getDate()}</span></div>`;
     // All-day strip
     colsHtml += `<div class="cal-wk-allday">`;
     for (const ev of allDayEvents) {
@@ -1269,7 +1269,7 @@ async function _renderWeek() {
       colsHtml += `<div class="cal-wk-block" data-uid="${_e(ev.uid)}" style="top:${top}px;height:${height}px;border-left-color:${_calColor(ev)};${bgDecl}">`;
       colsHtml += `<div class="cal-wk-block-name">${_e(ev.summary)}</div>`;
       colsHtml += `<div class="cal-wk-block-time">${t}</div>`;
-      colsHtml += `<div class="cal-wk-block-resize" title="Drag to resize"></div>`;
+      colsHtml += `<div class="cal-wk-block-resize" title="${window.t('Drag to resize')}"></div>`;
       colsHtml += `</div>`;
     }
     colsHtml += `</div></div>`;  // /cal-wk-grid /cal-wk-col
@@ -1411,7 +1411,7 @@ async function _renderWeek() {
         try {
           await _updateEvent(uid, { dtstart: newDtstart, dtend: newDtend });
           _render();
-          _showCalUndoToast('Moved event', async () => {
+          _showCalUndoToast(window.t('Moved event'), async () => {
             try {
               await _updateEvent(uid, { dtstart: prevDtstart, dtend: prevDtend });
               _render();
@@ -1469,7 +1469,7 @@ async function _renderWeek() {
         try {
           await _updateEvent(uid, { dtend: newDtend });
           _render();
-          _showCalUndoToast('Resized event', async () => {
+          _showCalUndoToast(window.t('Resized event'), async () => {
             try {
               await _updateEvent(uid, { dtend: prevDtend });
               _render();
@@ -1616,35 +1616,35 @@ async function _renderAgenda() {
     // Empty-state mirrors the email panel: short message + a Settings ›
     // Integrations link to set up CalDAV, OR a quick "Create event" action.
     h += '<div class="cal-empty" style="display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;">' +
-      '<span>No upcoming events</span>' +
+      `<span>${window.t('No upcoming events')}</span>` +
       '<span style="opacity:0.7;font-size:11px;">' +
-        '<a href="#" data-cal-open-settings="integrations" style="color:var(--accent,var(--red));text-decoration:underline;">Settings &rsaquo; Integrations</a>' +
+        `<a href="#" data-cal-open-settings="integrations" style="color:var(--accent,var(--red));text-decoration:underline;">${window.t('Settings &rsaquo; Integrations')}</a>` +
         ' &middot; ' +
-        '<a href="#" data-cal-create-event="1" style="color:var(--accent,var(--red));text-decoration:underline;">Create event</a>' +
+        `<a href="#" data-cal-create-event="1" style="color:var(--accent,var(--red));text-decoration:underline;">${window.t('Create event')}</a>` +
       '</span>' +
     '</div>';
   } else {
     for (const date of dates) {
       const evs = byDate.get(date);
-      const todayBadge = (date === today) ? ' <span class="cal-agenda-today-badge">Today</span>' : '';
+      const todayBadge = (date === today) ? ` <span class="cal-agenda-today-badge">${window.t('Today')}</span>` : '';
       h += `<div class="cal-agenda-day${date === today ? ' is-today' : ''}"><div class="cal-agenda-date">${_fmtDate(date)}${todayBadge}</div>`;
       if (!evs.length) {
-        h += '<div class="cal-agenda-empty">No events</div>';
+        h += `<div class="cal-agenda-empty">${window.t('No events')}</div>`;
       }
       for (const ev of evs) {
-        const t = ev.all_day ? 'All day' : _fmtTime(ev.dtstart) + ' – ' + _fmtTime(ev.dtend);
+        const t = ev.all_day ? window.t('All day') : _fmtTime(ev.dtstart) + ' – ' + _fmtTime(ev.dtend);
         const _typeTag = ev.event_type
           ? `<span class="cal-event-tag" style="color:${_TYPE_PALETTE[ev.event_type] || _TYPE_PALETTE.other};border-color:${_TYPE_PALETTE[ev.event_type] || _TYPE_PALETTE.other}">#${_e(ev.event_type)}</span>`
           : '';
-        const _impMark = ev.importance === 'critical' ? '<span style="color:var(--red);margin-right:4px" title="critical">!!</span>'
-                       : ev.importance === 'high' ? '<span style="color:var(--orange,#e5a33a);margin-right:4px" title="high">!</span>' : '';
+        const _impMark = ev.importance === 'critical' ? `<span style="color:var(--red);margin-right:4px" title="${window.t('critical')}">!!</span>`
+                       : ev.importance === 'high' ? `<span style="color:var(--orange,#e5a33a);margin-right:4px" title="${window.t('high')}">!</span>` : '';
         h += `<div class="cal-agenda-event" data-uid="${_e(ev.uid)}">
           <div class="cal-event-dot" style="background:${_calColor(ev)}"></div>
           <div class="cal-event-info">
             <div class="cal-event-name">${_impMark}${_e(ev.summary)} ${_typeTag}</div>
             <div class="cal-event-time">${t}${ev.location ? ' · ' + _locHTML(ev.location) : ''}</div>
           </div>
-          <button class="cal-event-more" data-uid="${_e(ev.uid)}" title="More">${_moreIcon}</button>
+          <button class="cal-event-more" data-uid="${_e(ev.uid)}" title="${window.t('More')}">${_moreIcon}</button>
         </div>`;
       }
       h += '</div>';
@@ -1697,20 +1697,20 @@ async function _renderSearch() {
     .sort((a, b) => a.dtstart < b.dtstart ? -1 : 1);
 
   let h = _headerHTML() + _filtersRowHTML() + '<div class="cal-search-results">';
-  h += `<div class="cal-search-count">${results.length} result${results.length !== 1 ? 's' : ''} for "${_e(_searchQuery)}"</div>`;
+  h += `<div class="cal-search-count">${window.t(results.length !== 1 ? '{n} results for "{q}"' : '{n} result for "{q}"', { n: results.length, q: _e(_searchQuery) })}</div>`;
   if (!results.length) {
-    h += '<div class="cal-empty">No events match your search</div>';
+    h += `<div class="cal-empty">${window.t('No events match your search')}</div>`;
   } else {
     for (const ev of results) {
       const evDate = _localDateOf(ev.dtstart);
-      const t = ev.all_day ? 'All day' : _fmtTime(ev.dtstart) + ' – ' + _fmtTime(ev.dtend);
+      const t = ev.all_day ? window.t('All day') : _fmtTime(ev.dtstart) + ' – ' + _fmtTime(ev.dtend);
       h += `<div class="cal-agenda-event" data-uid="${_e(ev.uid)}">
         <div class="cal-event-dot" style="background:${_calColor(ev)}"></div>
         <div class="cal-event-info">
           <div class="cal-event-name">${_e(ev.summary)}</div>
           <div class="cal-event-time">${_fmtDate(evDate)} · ${t}${ev.location ? ' · ' + _locHTML(ev.location) : ''}</div>
         </div>
-        <button class="cal-event-more" data-uid="${_e(ev.uid)}" title="More">${_moreIcon}</button>
+        <button class="cal-event-more" data-uid="${_e(ev.uid)}" title="${window.t('More')}">${_moreIcon}</button>
       </div>`;
     }
   }
