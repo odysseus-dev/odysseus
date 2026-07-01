@@ -77,4 +77,12 @@ registerMessages('pt-BR', {
   'Update source + rebuild': 'Atualizar código-fonte + recompilar',
   'Fast-forward ~/llama.cpp when possible, then clear the cached build.': 'Avança ~/llama.cpp quando possível, depois limpa o build em cache.',
   'Error loading packages: {msg}': 'Erro ao carregar pacotes: {msg}',
+  'Edit in Settings': 'Editar em Configurações',
+  'edit': 'editar',
+  'Reinstall {pkg} on {target}?\n\nRuns "pip install --force-reinstall --no-deps {pkg}" as a tmux task. Watch progress in the Running tab.': 'Reinstalar {pkg} em {target}?\n\nExecuta "pip install --force-reinstall --no-deps {pkg}" como tarefa tmux. Acompanhe o progresso na aba Em execução.',
+  'Cancel': 'Cancelar',
+  'Select': 'Selecionar',
+  '{count} selected': '{count} selecionado(s)',
+  'Delete {count} model(s)? This removes cached files.': 'Excluir {count} modelo(s)? Isso remove os arquivos em cache.',
+  'Delete': 'Excluir',
 });

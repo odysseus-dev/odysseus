@@ -1789,7 +1789,7 @@ function _wireTabEvents(body) {
       if (dirsEl) {
         const dirs = (Array.isArray(srv.modelDirs) ? srv.modelDirs : [srv.modelDir || '~/.cache/huggingface/hub']).map(d => d.replaceAll('✕', '').replaceAll('✖', '').trim()).filter(Boolean);
         dirsEl.innerHTML = dirs.map(d => `<span class="cookbook-serve-dir-pill">${esc(d)}</span>`).join('') +
-          '<span class="cookbook-serve-dir-edit" title="Edit in Settings">edit</span>';
+          `<span class="cookbook-serve-dir-edit" title="${window.t('Edit in Settings')}">${window.t('edit')}</span>`;
         dirsEl.querySelector('.cookbook-serve-dir-edit')?.addEventListener('click', () => {
           const settingsTab = body.querySelector('.cookbook-tab[data-backend="Settings"]');
           if (settingsTab) settingsTab.click();
@@ -1836,7 +1836,7 @@ function _wireTabEvents(body) {
       const sel = document.getElementById('hwfit-deps-server');
       if (sel) _applyServerSelection(sel.value);
       const host = _envState.remoteHost || '';
-      const where = host || 'this server';
+      const where = host || window.t('this server');
       if (window._cookbookRebuildLlamaCpp) await window._cookbookRebuildLlamaCpp(false, rebuildBtn);
     });
   }
@@ -1858,8 +1858,8 @@ function _wireTabEvents(body) {
       const sel = document.getElementById('hwfit-deps-server');
       if (sel) _applyServerSelection(sel.value);
       const host = _envState.remoteHost || '';
-      const where = host || 'this server';
-      if (!confirm(`Reinstall ${pkg} on ${where}?\n\nRuns "pip install --force-reinstall --no-deps ${pkg}" as a tmux task. Watch progress in the Running tab.`)) return;
+      const where = host || window.t('this server');
+      if (!confirm(window.t('Reinstall {pkg} on {target}?\n\nRuns "pip install --force-reinstall --no-deps {pkg}" as a tmux task. Watch progress in the Running tab.', { pkg, target: where }))) return;
       const _venvPy = (_envState.env === 'venv' && _envState.envPath)
         ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3`
         : 'python3';
@@ -1891,7 +1891,7 @@ function _wireTabEvents(body) {
   if (selectBtn && bulkBar) {
     selectBtn.addEventListener('click', () => {
       const active = selectBtn.classList.toggle('active');
-      selectBtn.textContent = active ? 'Cancel' : 'Select';
+      selectBtn.textContent = active ? window.t('Cancel') : window.t('Select');
       bulkBar.classList.toggle('hidden', !active);
       document.querySelectorAll('.serve-select-cb').forEach(dot => {
         dot.style.display = active ? '' : 'none';
@@ -1915,12 +1915,12 @@ function _wireTabEvents(body) {
     function _updateBulkCount() {
       const count = document.querySelectorAll('.serve-select-cb.selected').length;
       const countEl = document.getElementById('serve-bulk-count');
-      if (countEl) countEl.textContent = count + ' selected';
+      if (countEl) countEl.textContent = window.t('{count} selected', { count });
     }
 
     document.getElementById('serve-bulk-cancel')?.addEventListener('click', () => {
       selectBtn.classList.remove('active');
-      selectBtn.textContent = 'Select';  // reset label so the button doesn't stay reading "Cancel" after exit
+      selectBtn.textContent = window.t('Select');  // reset label so the button doesn't stay reading "Cancel" after exit
       bulkBar.classList.add('hidden');
       document.querySelectorAll('.serve-select-cb').forEach(dot => { dot.style.display = 'none'; dot.classList.remove('selected'); });
     });
@@ -1933,13 +1933,13 @@ function _wireTabEvents(body) {
         const item = dot.closest('.memory-item[data-repo]');
         if (item?.dataset.repo) repos.push(item.dataset.repo);
       });
-      if (!(await uiModule.styledConfirm(`Delete ${repos.length} model(s)? This removes cached files.`, { confirmText: 'Delete', danger: true }))) return;
+      if (!(await uiModule.styledConfirm(window.t('Delete {count} model(s)? This removes cached files.', { count: repos.length }), { confirmText: window.t('Delete'), danger: true }))) return;
       for (const repo of repos) {
         const item = document.querySelector(`.memory-item[data-repo="${repo}"]`);
         if (item) await _deleteCachedModel(repo, item, true);
       }
       selectBtn.classList.remove('active');
-      selectBtn.textContent = 'Select';  // same reset as bulk-cancel
+      selectBtn.textContent = window.t('Select');  // same reset as bulk-cancel
       bulkBar.classList.add('hidden');
       document.querySelectorAll('.serve-select-cb').forEach(dot => { dot.style.display = 'none'; dot.classList.remove('selected'); });
     });
@@ -2782,7 +2782,7 @@ function _renderRecipes() {
   const _srvDirs = (Array.isArray(_selSrv.modelDirs) ? _selSrv.modelDirs : [_selSrv.modelDir || '~/.cache/huggingface/hub']).map(d => d.replaceAll('✕', '').replaceAll('✖', '').trim()).filter(Boolean);
   html += '<div class="cookbook-serve-dirs" style="margin-top:6px;">';
   html += _srvDirs.map(d => `<span class="cookbook-serve-dir-pill">${esc(d)}</span>`).join('');
-  html += '<span class="cookbook-serve-dir-edit" title="Edit in Settings">edit</span>';
+  html += `<span class="cookbook-serve-dir-edit" title="${window.t('Edit in Settings')}">${window.t('edit')}</span>`;
   html += '</div>';
   html += '<div style="display:flex;gap:4px;align-items:center;margin-top:4px;">';
   html += '<select class="memory-sort-select" id="hwfit-cache-server" style="height:24px;">' + _buildServerOpts(true) + '</select>';
