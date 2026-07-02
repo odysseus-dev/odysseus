@@ -18,7 +18,7 @@ class AskUserTool:
             parsed = json.loads(raw) if raw else {}
         except (ValueError, TypeError):
             parsed = {}
-            
+
         if isinstance(parsed, dict):
             question = str(parsed.get("question", "")).strip()
             multi = bool(parsed.get("multi") or parsed.get("multiSelect"))
@@ -34,7 +34,7 @@ class AskUserTool:
                     options.append({"label": label, "description": descr})
         else:
             question = raw
-            
+
         if not question or len(options) < 2:
             return "ask_user: invalid", {
                 "error": (
@@ -43,7 +43,7 @@ class AskUserTool:
                 ),
                 "exit_code": 1,
             }
-            
+
         options = options[:6]  # keep the choice list sane
         desc = f"ask_user: {question[:80]}"
         labels = ", ".join(o["label"] for o in options)
@@ -70,18 +70,18 @@ class UpdatePlanTool:
             parsed = json.loads(raw) if raw else {}
         except (ValueError, TypeError):
             parsed = {}
-            
+
         if isinstance(parsed, dict) and parsed.get("plan"):
             plan = str(parsed.get("plan", "")).strip()
         else:
             plan = raw
-            
+
         if not plan:
             return "update_plan: invalid", {
                 "error": "update_plan needs a non-empty `plan` (the full updated checklist as markdown).",
                 "exit_code": 1,
             }
-            
+
         plan = plan[:8192]
         done = plan.count("- [x]") + plan.count("- [X]")
         total = done + plan.count("- [ ]")

@@ -99,6 +99,33 @@ Odysseus SSH key and add the public key to the remote server's
 ssh-copy-id -i data/ssh/id_ed25519.pub user@server
 ```
 
+**Host Docker access (explicit opt-in).** Default Docker Compose intentionally
+does not mount `/var/run/docker.sock`. You can still connect Odysseus to
+existing Ollama, vLLM, and other OpenAI-compatible endpoints without Docker
+socket access.
+
+Cookbook/local Docker-daemon management requires the opt-in overlay below. Raw
+Docker socket access is high-trust because it can effectively grant broad
+control over the host Docker daemon. Remote server Docker workflows over SSH
+remain preferred.
+
+Place these values in `.env`, or export them in the shell before running
+`docker compose`:
+
+```bash
+COMPOSE_FILE=docker-compose.yml:docker/host-docker.yml
+DOCKER_GID=<host docker group gid>
+```
+
+Combine host Docker access with a GPU overlay when both are intentionally
+required:
+
+```bash
+COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml:docker/host-docker.yml
+# or
+COMPOSE_FILE=docker-compose.yml:docker/gpu.amd.yml:docker/host-docker.yml
+```
+
 **Docker GPU overlays.** CPU-only users can skip this section. Cookbook can
 only detect GPUs that Docker exposes to the container — if the host runtime or
 device passthrough is not configured, Cookbook sees the iGPU, another card, or

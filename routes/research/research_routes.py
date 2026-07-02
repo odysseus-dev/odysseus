@@ -31,6 +31,54 @@ _NON_CHAT_MODEL = (
     "moderation", "rerank", "reranker", "clip", "stable-diffusion",
 )
 
+_RESEARCH_IMAGE_BLOCKLIST = {
+    "cdn.shopify.com/s/files/1/0179/4388/7926/files/icon.png",
+}
+
+
+def _is_research_icon_or_logo_url(url: str) -> bool:
+    path = url.lower().split("?")[0]
+    return any(token in path for token in (
+        "/logo", "logo_", "-logo", "favicon", "apple-touch-icon",
+        "sprite", "icon-", "_icon", "/icons/", "badge",
+    ))
+
+
+def _research_thumbnail(data: dict) -> str:
+    """Pick the same first visible image the visual report uses as hero."""
+    hidden = set(data.get("hidden_images") or [])
+    seen = set()
+
+    def usable(image: str) -> bool:
+        image = str(image or "").strip()
+        if not image or image in seen or image in hidden:
+            return False
+        if not image.startswith("https://"):
+            return False
+        if image.endswith((".svg", ".ico", ".gif")):
+            return False
+        if any(blocked in image for blocked in _RESEARCH_IMAGE_BLOCKLIST):
+            return False
+        if _is_research_icon_or_logo_url(image):
+            return False
+        return True
+
+    for source in data.get("sources") or []:
+        if not isinstance(source, dict):
+            continue
+        image = str(source.get("image") or source.get("og_image") or "").strip()
+        if usable(image):
+            seen.add(image)
+            return image
+    for finding in data.get("raw_findings") or data.get("findings") or []:
+        if not isinstance(finding, dict):
+            continue
+        image = str(finding.get("image") or finding.get("og_image") or "").strip()
+        if usable(image):
+            seen.add(image)
+            return image
+    return ""
+
 
 def _first_chat_model(models) -> str:
     """First model that isn't an embedding/tts/etc. — falls back to models[0]."""
@@ -290,6 +338,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     "started_at": d.get("started_at", 0),
                     "completed_at": d.get("completed_at", 0),
                     "archived": bool(d.get("archived")),
+                    "thumbnail": _research_thumbnail(d),
                 })
             except Exception:
                 continue
