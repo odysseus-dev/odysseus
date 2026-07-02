@@ -12,7 +12,7 @@ function _clearProbeWaves() {
 async function _checkUnprobed() {
   const unprobed = state._selectedModels.filter(m => !state._probed.has(m.model));
   if (unprobed.length === 0) {
-    if (uiModule) uiModule.showToast('All models verified');
+    if (uiModule) uiModule.showToast(window.t('All models verified'));
     return;
   }
 
@@ -54,15 +54,15 @@ async function _checkUnprobed() {
         ok++;
       } else {
         fail++;
-        const name = isBlind ? 'a model' : (m.name || m.model.split('/').pop());
-        if (uiModule) uiModule.showToast(`${name} failed: ${result?.error || 'unknown'}`, 5000);
+        const name = isBlind ? window.t('a model') : (m.name || m.model.split('/').pop());
+        if (uiModule) uiModule.showToast(window.t('{name} failed: {error}').replace('{name}', name).replace('{error}', result?.error || window.t('unknown')), 5000);
       }
     } catch (e) {
       fail++;
     }
   }
   if (fail === 0) {
-    if (uiModule) uiModule.showToast(`${ok} model${ok > 1 ? 's' : ''} verified`);
+    if (uiModule) uiModule.showToast(ok > 1 ? window.t('{count} models verified').replace('{count}', ok) : window.t('{count} model verified').replace('{count}', ok));
   }
   } finally {
     // Restore the Probe button (its label/visibility is refreshed below).

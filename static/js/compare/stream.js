@@ -53,7 +53,7 @@ function _renderSearchResults(data) {
       titleLink.rel = 'noopener noreferrer';
     }
     titleLink.className = 'search-result-title';
-    titleLink.textContent = r.title || 'Untitled';
+    titleLink.textContent = r.title || window.t('Untitled');
     card.appendChild(titleLink);
     if (r.snippet) {
       const s = document.createElement('div');
@@ -139,7 +139,7 @@ async function _runSynthForPane(modelToUse, synthPrompt, synthBody, spinner, his
     fetch(`${state.API_BASE}/api/session/${createData.id}`, { method: 'DELETE' }).catch(() => {});
   } catch (e) {
     if (spinner) spinner.stop();
-    synthBody.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;">Synthesis failed: ' + escapeHtml(e.message) + '</div>';
+    synthBody.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;">' + window.t('Synthesis failed: ') + escapeHtml(e.message) + '</div>';
   }
 }
 
@@ -288,17 +288,17 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
             const spinner = aiMsgEl._spinner;
             if (spinner) {
               if (rp.phase === 'searching') {
-                const q = rp.queries ? `${rp.queries} queries` : '';
-                const s = rp.total_sources ? ` · ${rp.total_sources} sources` : '';
-                spinner.updateMessage(`R${rp.round || '?'}: Searching${q ? ' (' + q + ')' : ''}${s}`);
+                const q = rp.queries ? `${rp.queries} ${window.t('queries')}` : '';
+                const s = rp.total_sources ? ` · ${rp.total_sources} ${window.t('sources')}` : '';
+                spinner.updateMessage(`R${rp.round || '?'}: ${window.t('Searching')}${q ? ' (' + q + ')' : ''}${s}`);
               } else if (rp.phase === 'reading') {
-                spinner.updateMessage(`R${rp.round || '?'}: Reading ${rp.new_sources || ''} pages`);
+                spinner.updateMessage(`R${rp.round || '?'}: ${window.t('Reading')} ${rp.new_sources || ''} ${window.t('pages')}`);
               } else if (rp.phase === 'analyzing') {
-                spinner.updateMessage(`R${rp.round || '?'}: Analyzing ${rp.total_findings || 0} findings`);
+                spinner.updateMessage(`R${rp.round || '?'}: ${window.t('Analyzing')} ${rp.total_findings || 0} ${window.t('findings')}`);
               } else if (rp.phase === 'writing') {
-                spinner.updateMessage(`Writing report · ${rp.total_sources || 0} sources`);
+                spinner.updateMessage(`${window.t('Writing report')} · ${rp.total_sources || 0} ${window.t('sources')}`);
               } else if (rp.phase === 'error') {
-                spinner.updateMessage(rp.message || 'Research error');
+                spinner.updateMessage(rp.message || window.t('Research error'));
               }
             }
 
@@ -306,16 +306,16 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
           } else if (json.type === 'research_sources' || json.type === 'web_sources') {
             const sources = json.data || [];
             if (sources.length > 0) {
-              const label = json.type === 'research_sources' ? 'Research' : 'Web';
+              const label = json.type === 'research_sources' ? window.t('Research') : window.t('Web');
               const box = document.createElement('div');
               box.className = 'compare-sources-box';
-              box.innerHTML = '<span class="sources-label">' + sources.length + ' ' + label + ' sources</span>';
+              box.innerHTML = '<span class="sources-label">' + sources.length + ' ' + label + ' ' + window.t('sources') + '</span>';
               box.title = sources.map(s => s.title || s.url).join('\n');
               // Replace spinner with sources + new spinner
               aiBody.innerHTML = '';
               aiBody.appendChild(box);
               if (spinnerModule) {
-                const newSpinner = spinnerModule.create('Generating response...', 'right');
+                const newSpinner = spinnerModule.create(window.t('Generating response...'), 'right');
                 aiBody.appendChild(newSpinner.createElement());
                 newSpinner.start();
                 aiMsgEl._spinner = newSpinner;
@@ -345,14 +345,14 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
             // Image generation: show ASCII spinner instead of compact tool block
             if (toolName === 'generate_image' && spinnerModule) {
               aiBody.innerHTML = '';
-              const imgSpinner = spinnerModule.create('Generating image...', 'right');
+              const imgSpinner = spinnerModule.create(window.t('Generating image...'), 'right');
               aiBody.appendChild(imgSpinner.createElement());
               imgSpinner.start();
               aiMsgEl._imgSpinner = imgSpinner;
               currentToolBlock = null;
             } else {
               // Agent thread node — matches main chat style
-              const _toolLabels = { bash: 'Terminal', python: 'Python', web_search: 'Web Search', read_file: 'Read File', write_file: 'Write File' };
+              const _toolLabels = { bash: window.t('Terminal'), python: window.t('Python'), web_search: window.t('Web Search'), read_file: window.t('Read File'), write_file: window.t('Write File') };
               const toolLabel = _toolLabels[toolName.toLowerCase()] || toolName;
               const cmdHtml = cmd ? `<pre class="agent-thread-cmd">${escapeHtml(cmd)}</pre>` : '';
               const node = document.createElement('div');
@@ -379,7 +379,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
               const safeImageUrl = safeDisplayImageSrc(json.image_url);
               aiBody.innerHTML = '';
               if (!safeImageUrl) {
-                aiBody.textContent = '[Image unavailable]';
+                aiBody.textContent = window.t('[Image unavailable]');
               } else {
                 const img = document.createElement('img');
                 img.className = 'compare-gen-image';
@@ -408,7 +408,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
               if (currentToolBlock._waveInterval) { clearInterval(currentToolBlock._waveInterval); currentToolBlock._waveInterval = null; }
               const ok = (json.exit_code === 0 || json.exit_code == null);
               const cmd = json.command || '';
-              const _toolLabels2 = { bash: 'Terminal', python: 'Python', web_search: 'Web Search', read_file: 'Read File', write_file: 'Write File' };
+              const _toolLabels2 = { bash: window.t('Terminal'), python: window.t('Python'), web_search: window.t('Web Search'), read_file: window.t('Read File'), write_file: window.t('Write File') };
               const tLabel = _toolLabels2[(json.tool || '').toLowerCase()] || json.tool || '';
               let outHtml = '';
               if (json.output && json.output.trim()) {
@@ -416,7 +416,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
               }
               const cmdHtml = cmd ? `<pre class="agent-thread-cmd">${escapeHtml(cmd)}</pre>` : '';
               currentToolBlock.className = 'agent-thread-node' + (ok ? '' : ' error');
-              currentToolBlock.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${escapeHtml(tLabel)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${cmdHtml}${outHtml}</div>`;
+              currentToolBlock.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${escapeHtml(tLabel)}</span><span class="agent-thread-status">${ok ? window.t('done') : window.t('failed')}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${cmdHtml}${outHtml}</div>`;
               currentToolBlock.querySelector('.agent-thread-header').addEventListener('click', () => currentToolBlock.classList.toggle('open'));
               currentToolBlock = null;
               // Reset text element so next deltas create a fresh container
@@ -490,7 +490,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
       const copyBtn = document.createElement('button');
       copyBtn.className = 'footer-copy-btn';
       copyBtn.type = 'button';
-      copyBtn.title = 'Copy prompt';
+      copyBtn.title = window.t('Copy prompt');
       copyBtn.textContent = '\u2398';
       copyBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -499,14 +499,14 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
         else { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
         copyBtn.textContent = '\u2713';
         setTimeout(() => { copyBtn.textContent = '\u2398'; }, 1500);
-        if (uiModule) uiModule.showToast('Prompt copied!');
+        if (uiModule) uiModule.showToast(window.t('Prompt copied!'));
       });
       actions.appendChild(copyBtn);
 
       const dlBtn = document.createElement('button');
       dlBtn.className = 'footer-copy-btn';
       dlBtn.type = 'button';
-      dlBtn.title = 'Download image';
+      dlBtn.title = window.t('Download image');
       dlBtn.textContent = '\u2913';
       dlBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -567,10 +567,10 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
         : null;
       const parts = [];
       if (outputTokens != null && outputTokens !== 'undefined') {
-        parts.push(outputTokens + ' tokens');
+        parts.push(outputTokens + window.t(' tokens'));
       }
       if (tpsLabel != null) {
-        parts.push(tpsLabel + ' tok/s');
+        parts.push(tpsLabel + window.t(' tok/s'));
       }
       if (responseTime != null && responseTime !== 'undefined' && parts.length === 0) {
         parts.push(responseTime + 's');
@@ -584,13 +584,13 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
         const _cost1k = _cost * 1000;
         const costSpan = document.createElement('span');
         costSpan.style.color = 'var(--color-success, #4caf50)';
-        costSpan.title = 'Estimated cost per 1,000 responses like this one';
+        costSpan.title = window.t('Estimated cost per 1,000 responses like this one');
         costSpan.textContent = (span.textContent ? ' | ' : '') + '$' + (_cost1k < 1 ? _cost1k.toFixed(2) : _cost1k.toFixed(0)) + '/1k';
         span.appendChild(costSpan);
       }
       if (metrics.context_percent > 0) {
         const ctx = document.createElement('span');
-        ctx.textContent = (span.textContent ? ' | ' : '') + metrics.context_percent + '% ctx';
+        ctx.textContent = (span.textContent ? ' | ' : '') + metrics.context_percent + window.t('% ctx');
         if (metrics.context_percent >= 85) ctx.style.color = 'var(--color-error)';
         else if (metrics.context_percent >= 70) ctx.style.color = '#ff9900';
         span.appendChild(ctx);
@@ -613,10 +613,10 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
         notice.style.cssText = 'color:#ff9800;font-size:0.8em;margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;';
         const text = document.createElement('span');
         text.style.fontStyle = 'italic';
-        text.textContent = 'Timed out after ' + effectiveTimeout + 's' + (accumulated.trim() ? ' \u2014 response may be incomplete' : '');
+        text.textContent = window.t('Timed out after {s}s').replace('{s}', effectiveTimeout) + (accumulated.trim() ? ' \u2014 ' + window.t('response may be incomplete') : '');
         notice.appendChild(text);
         const retryBtn = document.createElement('button');
-        retryBtn.textContent = 'Retry +' + effectiveTimeout + 's';
+        retryBtn.textContent = window.t('Retry +{s}s').replace('{s}', effectiveTimeout);
         retryBtn.style.cssText = 'background:rgba(255,152,0,0.15);border:1px solid #ff9800;color:#ff9800;border-radius:4px;cursor:pointer;padding:2px 8px;font-size:0.9em;white-space:nowrap;transition:all 0.15s;';
         retryBtn.addEventListener('mouseenter', () => { retryBtn.style.background = 'rgba(255,152,0,0.3)'; });
         retryBtn.addEventListener('mouseleave', () => { retryBtn.style.background = 'rgba(255,152,0,0.15)'; });
@@ -624,11 +624,11 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
         notice.appendChild(retryBtn);
         aiBody.appendChild(notice);
       } else {
-        if (!accumulated.trim()) aiBody.innerHTML = '<div style="color:#f0ad4e;font-size:0.9em;">Cancelled.</div>';
+        if (!accumulated.trim()) aiBody.innerHTML = '<div style="color:#f0ad4e;font-size:0.9em;">' + window.t('Cancelled.') + '</div>';
       }
     } else {
       console.error('Compare stream error:', error);
-      aiBody.innerHTML = '<span style="color:var(--color-error);">Error: ' + escapeHtml(error.message) + '</span>';
+      aiBody.innerHTML = '<span style="color:var(--color-error);">' + window.t('Error: ') + escapeHtml(error.message) + '</span>';
     }
   } finally {
     clearTimeout(timeoutId);
@@ -678,7 +678,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
       } else {
         // Timed out or errored — show failed badge
         const badge = document.getElementById('cmp-badge-' + paneIdx);
-        if (badge) { badge.textContent = timedOut ? 'Timeout' : 'Failed'; badge.style.color = 'var(--color-error)'; }
+        if (badge) { badge.textContent = timedOut ? window.t('Timeout') : window.t('Failed'); badge.style.color = 'var(--color-error)'; }
       }
     }
     // Auto-grade against expected answer — stamps ✓ or ✗ on the pane header.
@@ -725,7 +725,7 @@ function _stampGradeBadge(paneIdx, response, expected) {
   if (prev) prev.remove();
   const badge = document.createElement('span');
   badge.className = 'pane-grade-badge ' + (pass ? 'pass' : 'fail');
-  badge.title = pass ? 'Response contains the expected answer' : 'Expected answer not found in response';
+  badge.title = pass ? window.t('Response contains the expected answer') : window.t('Expected answer not found in response');
   badge.textContent = pass ? '✓' : '✗';
   // Insert just before the finish badge if present, else after the title
   const finBadge = header.querySelector('.pane-finish-badge');

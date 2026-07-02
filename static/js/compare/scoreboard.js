@@ -50,7 +50,7 @@ export function showScoreboard() {
   const header = document.createElement('div');
   header.className = 'modal-header';
   const title = document.createElement('h3');
-  title.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Scoreboard';
+  title.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>' + window.t('Scoreboard');
   title.style.margin = '0';
   const closeX = document.createElement('button');
   closeX.className = 'close-btn';
@@ -72,7 +72,7 @@ export function showScoreboard() {
 
   // Mode tabs
   const modes = ['chat', 'agent', 'search', 'research'];
-  const modeLabels = { chat: 'Chat', agent: 'Agent', search: 'Search', research: 'Research' };
+  const modeLabels = { chat: window.t('Chat'), agent: window.t('Agent'), search: window.t('Search'), research: window.t('Research') };
   const tabBar = document.createElement('div');
   tabBar.className = 'compare-mode-tabs';
   tabBar.style.marginBottom = '12px';
@@ -121,13 +121,13 @@ export function showScoreboard() {
     if (sorted.length === 0) {
       const empty = document.createElement('p');
       empty.style.cssText = 'color:color-mix(in srgb, var(--fg) 50%, transparent);text-align:center;padding:24px 0;';
-      empty.textContent = 'No ' + activeMode + ' votes yet. Run a comparison and vote!';
+      empty.textContent = window.t('No {mode} votes yet. Run a comparison and vote!').replace('{mode}', modeLabels[activeMode] || activeMode);
       wrap.appendChild(empty);
     } else {
       const table = document.createElement('table');
       table.className = 'scoreboard-table';
       const thead = document.createElement('thead');
-      thead.innerHTML = '<tr><th>Model</th><th>Win%</th><th>W</th><th>L</th><th>T</th><th>Games</th><th>$/1k</th></tr>';
+      thead.innerHTML = '<tr><th>' + window.t('Model') + '</th><th>' + window.t('Win%') + '</th><th>W</th><th>L</th><th>T</th><th>' + window.t('Games') + '</th><th>$/1k</th></tr>';
       table.appendChild(thead);
       const tbody = document.createElement('tbody');
       for (const [name, s] of sorted) {
@@ -149,7 +149,9 @@ export function showScoreboard() {
 
     const total = document.createElement('div');
     total.style.cssText = 'font-size:0.8em;color:color-mix(in srgb, var(--fg) 40%, transparent);margin-top:12px;text-align:center;';
-    total.textContent = filtered.length + ' vote' + (filtered.length !== 1 ? 's' : '') + ' recorded';
+    total.textContent = filtered.length !== 1
+      ? window.t('{count} votes recorded').replace('{count}', filtered.length)
+      : window.t('{count} vote recorded').replace('{count}', filtered.length);
     wrap.appendChild(total);
 
     // Move clear button into wrap so it stays at bottom
@@ -178,7 +180,7 @@ export function showScoreboard() {
   // Clear history button
   const clearBtn = document.createElement('button');
   clearBtn.className = 'scoreboard-clear-btn';
-  clearBtn.textContent = 'Clear History';
+  clearBtn.textContent = window.t('Clear History');
   clearBtn.style.cssText = 'display:block;margin:16px 0 4px auto;padding:4px 12px;background:none;border:1px solid var(--border);color:var(--fg);border-radius:4px;cursor:pointer;font-size:11px;opacity:0.4;transition:opacity 0.15s;';
   clearBtn.addEventListener('mouseenter', () => { clearBtn.style.opacity = '1'; });
   clearBtn.addEventListener('mouseleave', () => { clearBtn.style.opacity = '0.6'; });
@@ -188,9 +190,9 @@ export function showScoreboard() {
     confirmRow.style.cssText = 'display:flex;gap:8px;justify-content:center;align-items:center;margin-top:8px;padding:8px 12px;border:1px solid color-mix(in srgb, var(--red) 40%, var(--border));border-radius:6px;background:color-mix(in srgb, var(--red) 5%, transparent);';
     const confirmLabel = document.createElement('span');
     confirmLabel.style.cssText = 'font-size:12px;opacity:0.7;';
-    confirmLabel.textContent = 'Clear all vote history?';
+    confirmLabel.textContent = window.t('Clear all vote history?');
     const yesBtn = document.createElement('button');
-    yesBtn.textContent = 'Clear';
+    yesBtn.textContent = window.t('Clear');
     yesBtn.style.cssText = 'padding:4px 12px;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;';
     yesBtn.addEventListener('click', () => {
       Storage.setJSON(VOTES_STORAGE_KEY, []);
@@ -198,7 +200,7 @@ export function showScoreboard() {
       showScoreboard();
     });
     const noBtn = document.createElement('button');
-    noBtn.textContent = 'Cancel';
+    noBtn.textContent = window.t('Cancel');
     noBtn.className = 'cmp-btn-secondary';
     noBtn.style.cssText = 'padding:4px 12px;border-radius:4px;font-size:12px;';
     noBtn.addEventListener('click', () => confirmRow.remove());
