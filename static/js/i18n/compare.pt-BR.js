@@ -149,4 +149,11 @@ registerMessages('pt-BR', {
   'Type:': 'Tipo:',
   'Loading models': 'Carregando modelos',
   'Loading models…': 'Carregando modelos…',
+  'No matches': 'Nenhum resultado',
+  'Loading search providers…': 'Carregando provedores de busca…',
+  'Failed to load search providers': 'Falha ao carregar provedores de busca',
+  'No search providers configured': 'Nenhum provedor de busca configurado',
+  'No {type} models available': 'Nenhum modelo de {type} disponível',
+  'Hidden': 'Oculto',
+  'Search provider': 'Provedor de busca',
 });

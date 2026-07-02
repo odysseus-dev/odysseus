@@ -426,7 +426,7 @@ async function showModelSelector() {
 
       const input = document.createElement('input');
       input.type = 'text';
-      input.placeholder = 'Search models\u2026';
+      input.placeholder = window.t('Search models\u2026');
       input.className = 'cmp-form-control';
       input.style.cssText = 'width:100%;box-sizing:border-box;';
       // Mobile: suppress the on-screen keyboard so tapping the picker
@@ -465,7 +465,7 @@ async function showModelSelector() {
         if (matches.length === 0) {
           const empty = document.createElement('div');
           empty.style.cssText = 'padding:8px 12px;color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:0.82em;font-style:italic;';
-          empty.textContent = 'No matches';
+          empty.textContent = window.t('No matches');
           dropdown.appendChild(empty);
           return;
         }
@@ -569,18 +569,18 @@ async function showModelSelector() {
       if (state._compareMode === 'search') {
         listContainer.innerHTML = '';
         if (!state._cachedProviders) {
-          listContainer.innerHTML = '<div style="color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:0.85em;padding:12px 0;text-align:left;">Loading search providers\u2026</div>';
+          listContainer.innerHTML = '<div style="color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:0.85em;padding:12px 0;text-align:left;">' + window.t('Loading search providers\u2026') + '</div>';
           fetch(`${state.API_BASE}/api/search/providers`).then(r => r.json()).then(providers => {
             state._cachedProviders = providers;
             renderModelRows();
           }).catch(() => {
-            listContainer.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;padding:12px 0;">Failed to load search providers</div>';
+            listContainer.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;padding:12px 0;">' + window.t('Failed to load search providers') + '</div>';
           });
           return;
         }
         const available = state._cachedProviders.filter(p => p.available);
         if (available.length === 0) {
-          listContainer.innerHTML = '<div style="color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:0.85em;padding:12px 0;text-align:center;font-style:italic;">No search providers configured</div>';
+          listContainer.innerHTML = '<div style="color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:0.85em;padding:12px 0;text-align:center;font-style:italic;">' + window.t('No search providers configured') + '</div>';
           if (addBtn) addBtn.style.display = 'none';
           return;
         }
@@ -676,7 +676,7 @@ async function showModelSelector() {
       // Research mode needs search providers too — fetch if not cached
       const needsProviders = state._compareMode === 'research';
       if (needsProviders && !state._cachedProviders) {
-        listContainer.innerHTML = '<div style="color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:0.85em;padding:12px 0;">Loading search providers\u2026</div>';
+        listContainer.innerHTML = '<div style="color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:0.85em;padding:12px 0;">' + window.t('Loading search providers\u2026') + '</div>';
         fetch(`${state.API_BASE}/api/search/providers`).then(r => r.json()).then(providers => {
           state._cachedProviders = providers;
           renderModelRows();
@@ -690,7 +690,7 @@ async function showModelSelector() {
       if (filtered.length === 0) {
         const empty = document.createElement('div');
         empty.style.cssText = 'color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:0.85em;padding:12px 0;text-align:center;font-style:italic;';
-        empty.textContent = 'No ' + state._compareMode + ' models available';
+        empty.textContent = window.t('No {type} models available').replace('{type}', state._compareMode);
         listContainer.appendChild(empty);
         if (addBtn) addBtn.style.display = 'none';
         return;
@@ -721,7 +721,7 @@ async function showModelSelector() {
           const mask = document.createElement('div');
           mask.className = 'cmp-form-control';
           mask.style.cssText = 'flex:1;opacity:0.4;font-style:italic;';
-          mask.textContent = 'Hidden';
+          mask.textContent = window.t('Hidden');
           row.appendChild(mask);
         } else if (filtered.length >= 5) {
           const picker = _buildSearchablePicker(filtered, sel, idx, (chosen) => {
@@ -758,7 +758,7 @@ async function showModelSelector() {
         if (needsProviders && researchProviders.length > 0 && !_shuffled) {
           const provSelect = document.createElement('select');
           provSelect.className = 'cmp-form-control cmp-prov-select';
-          provSelect.title = 'Search provider';
+          provSelect.title = window.t('Search provider');
           researchProviders.forEach((p, pi) => {
             const optEl = document.createElement('option');
             optEl.value = p.id;
