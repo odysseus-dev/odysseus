@@ -433,13 +433,23 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
             return {"error": "Search needs line 2: query"}
         query = lines[1].strip()
         memories = _memory_manager.load(owner=owner)
+        query_lower = query.lower()
+        exact_results = [m for m in memories if query_lower in (m.get("text", "").lower())]
 
         if hasattr(_memory_manager, 'get_relevant_memories'):
-            results = _memory_manager.get_relevant_memories(query, memories, threshold=0.05, max_items=20)
+            vector_results = _memory_manager.get_relevant_memories(query, memories, threshold=0.05, max_items=20)
         else:
-            # Fallback: simple text search
-            query_lower = query.lower()
-            results = [m for m in memories if query_lower in m.get("text", "").lower()][:20]
+            vector_results = []
+        seen = set()
+        results = []
+        for m in [*exact_results, *vector_results]:
+            mid = m.get("id")
+            if mid in seen:
+                continue
+            seen.add(mid)
+            results.append(m)
+            if len(results) >= 20:
+                break
 
         if not results:
             return {"results": f"No memories found matching '{query}'."}

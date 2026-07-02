@@ -99,6 +99,7 @@ def _image_to_dict(img: GalleryImage, session_name: str = None) -> Dict[str, Any
         "filename": img.filename,
         "url": f"/api/generated-image/{img.filename}",
         "prompt": img.prompt,
+        "caption": img.caption or "",
         "model": img.model,
         "size": img.size,
         "quality": img.quality,

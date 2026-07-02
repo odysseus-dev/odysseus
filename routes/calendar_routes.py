@@ -1,6 +1,7 @@
 """Calendar routes — local SQLite-backed calendar CRUD."""
 
 import logging
+import json
 import re
 import uuid
 from datetime import datetime, date, timedelta
@@ -541,6 +542,7 @@ def _event_to_dict(ev: CalendarEvent) -> dict:
         "description": ev.description or "",
         "location": ev.location or "",
         "rrule": ev.rrule or "",
+        "recurrence_exdates": _recurrence_exdates(ev),
         "calendar": ev.calendar.name if ev.calendar else "",
         "calendar_href": ev.calendar_id,
         "color": ev.color or (ev.calendar.color if ev.calendar else ""),
@@ -552,6 +554,28 @@ def _event_to_dict(ev: CalendarEvent) -> dict:
 # ── Recurrence expansion ──
 
 _RRULE_EXPANSION_LIMIT = 1000
+
+
+def _recurrence_exdates(ev: CalendarEvent) -> list[str]:
+    raw = getattr(ev, "recurrence_exdates", "") or ""
+    if not raw:
+        return []
+    try:
+        values = json.loads(raw)
+    except Exception:
+        return []
+    if not isinstance(values, list):
+        return []
+    return [str(v) for v in values if isinstance(v, str) and v.strip()]
+
+
+def _occurrence_exdate_key(uid: str, ev: CalendarEvent) -> str:
+    if "::" not in uid:
+        return ""
+    suffix = uid.split("::", 1)[1]
+    if ev.all_day:
+        return suffix[:10]
+    return suffix[:16]
 
 
 def _expand_rrule(
@@ -618,6 +642,7 @@ def _expand_rrule(
     results = []
     truncated = False
     base = _event_to_dict(ev)
+    exdates = set(_recurrence_exdates(ev))
 
     for occ_start in rule.xafter(expand_start, inc=True):
         if occ_start >= end:
@@ -638,8 +663,13 @@ def _expand_rrule(
         # Build the compound uid: {base_uid}::{date} or ::{datetime}
         if ev.all_day:
             occ_uid = f"{ev.uid}::{occ_start.strftime('%Y-%m-%d')}"
+            exdate_key = occ_start.strftime("%Y-%m-%d")
         else:
             occ_uid = f"{ev.uid}::{occ_start.strftime('%Y-%m-%dT%H:%M')}"
+            exdate_key = occ_start.strftime("%Y-%m-%dT%H:%M")
+
+        if exdate_key in exdates:
+            continue
 
         d = dict(base)
         d["uid"] = occ_uid
@@ -1150,7 +1180,7 @@ def setup_calendar_routes() -> APIRouter:
             db.close()
 
     @router.delete("/events/{uid}")
-    async def delete_event(request: Request, uid: str):
+    async def delete_event(request: Request, uid: str, scope: str = "series"):
         owner = _require_user(request)
         try:
             base_uid = _resolve_base_uid(uid)
@@ -1159,7 +1189,22 @@ def setup_calendar_routes() -> APIRouter:
         db = SessionLocal()
         try:
             ev = _get_or_404_event(db, base_uid, owner)
+            is_occurrence_delete = scope in {"occurrence", "instance"} and "::" in uid and bool(ev.rrule)
             is_caldav = ev.calendar and ev.calendar.source == "caldav"
+            if is_occurrence_delete:
+                key = _occurrence_exdate_key(uid, ev)
+                if not key:
+                    raise HTTPException(400, "Invalid recurring occurrence uid")
+                exdates = _recurrence_exdates(ev)
+                if key not in exdates:
+                    exdates.append(key)
+                ev.recurrence_exdates = json.dumps(sorted(exdates))
+                if is_caldav:
+                    ev.caldav_sync_pending = "update"
+                db.commit()
+                if is_caldav:
+                    await _push_caldav_event_after_commit(owner, base_uid, "update")
+                return {"ok": True, "scope": "occurrence", "exdate": key}
             if is_caldav:
                 _record_caldav_delete_tombstone(db, ev, owner)
             db.delete(ev)

@@ -930,12 +930,12 @@ async def _execute_tool_block_impl(
             desc = f"mcp: {tool}"
             result = {"error": "MCP manager not available", "exit_code": 1}
 
-    
+
     elif tool in dynamic_handlers:
         first_line = content.split(chr(10))[0][:80]
         desc = f"registry: {tool} {first_line}".strip()
         res = await _direct_fallback(tool, content, progress_cb=progress_cb)
-        
+
         if isinstance(res, tuple):
             desc, result = res
         else:
