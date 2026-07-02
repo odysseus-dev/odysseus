@@ -6,6 +6,7 @@
 
 import uiModule from './ui.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
+import { _ggufIncludePattern, _ggufDisplayPartFromInclude } from './cookbookGguf.js';
 
 // Shared state/functions injected by init()
 let _envState;
@@ -77,22 +78,6 @@ function _ggufDownloadSource(model, backend) {
     if (repo) return { repo };
   }
   return null;
-}
-
-function _ggufIncludePattern(model, source) {
-  if (source?.file) return source.file;
-  if (model?.quant) return `*${model.quant}*`;
-  return '*.gguf';
-}
-
-function _ggufDisplayPartFromInclude(include) {
-  const clean = String(include || '').replace(/\*/g, '');
-  const parts = clean.split('/').filter(Boolean);
-  const file = parts[parts.length - 1] || clean;
-  const dir = parts.length > 1 ? parts[parts.length - 2] : '';
-  const quant = `${dir} ${file}`.match(/\b(?:UD-)?(?:IQ[1-8]_[A-Z0-9]+|Q[2-8]_K_[MLS]|Q[2-8]_[0-9A-Z]+|Q[2-8])\b/i);
-  if (quant) return quant[0].toUpperCase().replace(/^UD-/, '');
-  return file.replace(/\.gguf$/i, '').replace(/-\d{5}-of-\d{5}$/i, '');
 }
 
 function _downloadTaskName(shortName, payload) {
