@@ -6,6 +6,21 @@
 import { registerMessages } from '../i18n.js';
 
 registerMessages('pt-BR', {
+  // --- modal header / toolbar ---
+  'Email': 'E-mail',
+  'New (email)': 'Novo',
+  'Inbox': 'Caixa de entrada',
+  'Undone': 'Nao concluidos',
+  'Pending · 30d': 'Pendente · 30d',
+  'Stale · >30d': 'Parado · >30d',
+  'Reply soon': 'Responder logo',
+  'Permanently delete Odysseus reminder emails': 'Excluir permanentemente e-mails de lembrete do Odysseus',
+  'Search by name or text': 'Buscar por nome ou texto',
+  'Show only emails not marked as done (undone)': 'Mostrar apenas e-mails nao marcados como concluidos',
+  'Show Odysseus reminder emails': 'Mostrar e-mails de lembrete do Odysseus',
+  'Show only emails with attachments': 'Mostrar apenas e-mails com anexos',
+  'New email': 'Novo e-mail',
+
   // --- recipient chip ---
   'Copied': 'Copiado',
   'Email copied': 'E-mail copiado',
