@@ -17,18 +17,11 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-# ---------------------------------------------------------------------------
-# Stub heavy deps before importing routes (mirrors conftest pattern)
-# ---------------------------------------------------------------------------
-for mod in [
-    "sqlalchemy", "sqlalchemy.orm", "sqlalchemy.ext",
-    "sqlalchemy.ext.declarative", "sqlalchemy.ext.hybrid",
-    "sqlalchemy.sql", "sqlalchemy.sql.expression",
-    "src.database", "core.models", "core.database",
-    "caldav",
-]:
-    if mod not in sys.modules:
-        sys.modules[mod] = MagicMock()
+# No module-level sys.modules stubbing here: conftest pre-imports the real
+# sqlalchemy/core.database, and stubbing extras (e.g. caldav) at collection
+# time leaks MagicMocks into later tests in the same process — it made
+# test_caldav_redirect_hardening's real DAVClient a mock that never sent
+# the PROPFIND. The route's lazy imports are patched per-request instead.
 
 
 def _fake_response(status_code=207, headers=None):
