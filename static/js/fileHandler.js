@@ -205,7 +205,7 @@ export async function uploadPending() {
 export function addFiles(files) {
   for (const f of files) {
     if (pendingFiles.length >= MAX_FILES) {
-      _showToast(window.t('Max {n} files allowed').replace('{n}', MAX_FILES));
+      _showToast(window.t('Max {n} files allowed', { n: MAX_FILES }));
       break;
     }
     pendingFiles.push(f);

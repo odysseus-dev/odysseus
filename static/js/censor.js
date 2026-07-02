@@ -177,7 +177,7 @@ function _processElement(el) {
       const span = document.createElement('span');
       span.className = 'censored-item';
       span.dataset.type = match.label;
-      span.title = window.t('Click to reveal {label}').replace('{label}', match.label);
+      span.title = window.t('Click to reveal {label}', { label: match.label });
       span.textContent = match.text;
       frag.appendChild(span);
       lastIdx = match.end;
@@ -216,7 +216,7 @@ function _contextCensor(el) {
           const span = document.createElement('span');
           span.className = 'censored-item';
           span.dataset.type = 'credential';
-          span.title = window.t('Click to reveal {label}').replace('{label}', 'credential');
+          span.title = window.t('Click to reveal {label}', { label: 'credential' });
           span.textContent = sibling.textContent;
           sibling.parentNode.replaceChild(span, sibling);
           censored = true;
@@ -261,7 +261,7 @@ function _contextCensor(el) {
             const span = document.createElement('span');
             span.className = 'censored-item';
             span.dataset.type = 'credential';
-            span.title = window.t('Click to reveal {label}').replace('{label}', 'credential');
+            span.title = window.t('Click to reveal {label}', { label: 'credential' });
             span.textContent = child.textContent;
             child.parentNode.replaceChild(span, child);
             break;
@@ -300,7 +300,7 @@ function _censorValueInElement(el, value) {
     const span = document.createElement('span');
     span.className = 'censored-item';
     span.dataset.type = 'credential';
-    span.title = window.t('Click to reveal {label}').replace('{label}', 'credential');
+    span.title = window.t('Click to reveal {label}', { label: 'credential' });
     span.textContent = value;
     frag.appendChild(span);
     if (after) frag.appendChild(document.createTextNode(after));
@@ -324,7 +324,7 @@ function _censorAllText(el) {
     const span = document.createElement('span');
     span.className = 'censored-item';
     span.dataset.type = 'credential';
-    span.title = window.t('Click to reveal {label}').replace('{label}', 'credential');
+    span.title = window.t('Click to reveal {label}', { label: 'credential' });
     span.textContent = tn.textContent;
     tn.parentNode.replaceChild(span, tn);
   }
