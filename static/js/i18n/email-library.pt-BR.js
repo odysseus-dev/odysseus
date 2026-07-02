@@ -119,4 +119,18 @@ registerMessages('pt-BR', {
   'No body': 'Sem conteudo',
   'Me': 'Eu',
   'Earlier reply': 'Resposta anterior',
+
+  // --- from-sender panel ---
+  'No sender address available': 'Nenhum endereco de remetente disponivel',
+  'All senders': 'Todos os remetentes',
+  'Close sender panel': 'Fechar painel do remetente',
+  'Search {name}…': 'Buscar {name}…',
+  'Remove {name}': 'Remover {name}',
+  'No emails with attachments in this view.': 'Nenhum e-mail com anexos nesta visualizacao.',
+  'No emails involve all those people.': 'Nenhum e-mail envolve todas essas pessoas.',
+  'No other emails from this sender in {folder}.': 'Nenhum outro e-mail deste remetente em {folder}.',
+  'Add another person…': 'Adicionar outra pessoa…',
+  'Search people or emails…': 'Buscar pessoas ou e-mails…',
+  'No matches for "{q}".': 'Nenhum resultado para "{q}".',
+  'Search failed: {msg}': 'Falha na busca: {msg}',
 });

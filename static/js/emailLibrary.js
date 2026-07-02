@@ -4142,7 +4142,7 @@ async function _toggleFromSenderPanel(reader, data, btn) {
 
   const fromAddr = String(data.from_address || '').trim();
   if (!fromAddr) {
-    if (typeof showError === 'function') showError('No sender address available');
+    if (typeof showError === 'function') showError(window.t('No sender address available'));
     return;
   }
 
@@ -4153,14 +4153,14 @@ async function _toggleFromSenderPanel(reader, data, btn) {
   panel.innerHTML = `
     <div class="from-sender-header">
       <span class="from-sender-chips"></span>
-      <span class="from-sender-header-empty" hidden>All senders</span>
-      <button type="button" class="from-sender-toggle" data-toggle="attachments" title="Show only emails with attachments" aria-pressed="false">
+      <span class="from-sender-header-empty" hidden>${window.t('All senders')}</span>
+      <button type="button" class="from-sender-toggle" data-toggle="attachments" title="${window.t('Show only emails with attachments')}" aria-pressed="false">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
       </button>
-      <button type="button" class="from-sender-close" title="Close" aria-label="Close sender panel">&times;</button>
+      <button type="button" class="from-sender-close" title="${window.t('Close')}" aria-label="${window.t('Close sender panel')}">&times;</button>
     </div>
     <div class="from-sender-search-wrap">
-      <input type="text" class="from-sender-search" placeholder="Search ${_esc(firstName)}…" autocomplete="off" />
+      <input type="text" class="from-sender-search" placeholder="${window.t('Search {name}…').replace('{name}', _esc(firstName))}" autocomplete="off" />
       <div class="from-sender-suggest" hidden></div>
     </div>
     <div class="from-sender-list">
@@ -4203,7 +4203,7 @@ async function _toggleFromSenderPanel(reader, data, btn) {
     chipsContainer.innerHTML = panel._tags.map((t, i) => `
       <span class="from-sender-chip" title="${_esc(t.address)}" data-tag-index="${i}">
         <span class="from-sender-chip-name">${_esc(t.name || t.address)}</span>
-        <button class="from-sender-chip-x" type="button" title="Remove" aria-label="Remove ${_esc(t.name || t.address)}">&times;</button>
+        <button class="from-sender-chip-x" type="button" title="${window.t('Remove')}" aria-label="${window.t('Remove {name}').replace('{name}', _esc(t.name || t.address))}">&times;</button>
       </span>
     `).join('');
     if (emptyLabel) emptyLabel.hidden = panel._tags.length > 0;
@@ -4234,8 +4234,8 @@ async function _toggleFromSenderPanel(reader, data, btn) {
     if (panel._attachmentsOnly) view = view.filter(e => e.has_attachments);
     if (!view.length) {
       const why = panel._attachmentsOnly
-        ? 'No emails with attachments in this view.'
-        : (panel._tags.length > 1 ? 'No emails involve all those people.' : 'No matches.');
+        ? window.t('No emails with attachments in this view.')
+        : (panel._tags.length > 1 ? window.t('No emails involve all those people.') : window.t('No matches.'));
       listEl.innerHTML = `<div class="from-sender-empty">${why}</div>`;
     } else {
       _renderFromSenderRows(view, listEl, reader, { showFolder: !!panel._lastShowFolder });
@@ -4280,18 +4280,18 @@ async function _toggleFromSenderPanel(reader, data, btn) {
     emails = raw;
 
     if (!emails.length) {
-      listEl.innerHTML = `<div class="from-sender-empty">No other emails from this sender in ${_esc(state._libFolder || 'INBOX')}.</div>`;
+      listEl.innerHTML = `<div class="from-sender-empty">${window.t('No other emails from this sender in {folder}.').replace('{folder}', _esc(state._libFolder || 'INBOX'))}</div>`;
     } else {
       panel._setResults(emails, { showFolder: false });
     }
   } catch (err) {
-    listEl.innerHTML = `<div class="from-sender-empty" style="color:var(--red, #e55)">Failed to load: ${_esc(String(err))}</div>`;
+    listEl.innerHTML = `<div class="from-sender-empty" style="color:var(--red, #e55)">${window.t('Failed to load: {msg}').replace('{msg}', _esc(String(err)))}</div>`;
   }
   const updatePlaceholder = () => {
     if (!searchEl) return;
     searchEl.placeholder = panel._tags.length
-      ? 'Add another person…'
-      : 'Search people or emails…';
+      ? window.t('Add another person…')
+      : window.t('Search people or emails…');
   };
   updatePlaceholder();
   _renderChips();
@@ -4328,7 +4328,7 @@ async function _toggleFromSenderPanel(reader, data, btn) {
       updatePlaceholder();
     } catch (err) {
       if (myToken !== _recentToken) return;
-      listEl.innerHTML = `<div class="from-sender-empty" style="color:var(--red, #e55)">Failed to load: ${_esc(String(err))}</div>`;
+      listEl.innerHTML = `<div class="from-sender-empty" style="color:var(--red, #e55)">${window.t('Failed to load: {msg}').replace('{msg}', _esc(String(err)))}</div>`;
     }
   };
 
@@ -4376,13 +4376,13 @@ async function _toggleFromSenderPanel(reader, data, btn) {
           return db - da;
         });
         if (!merged.length) {
-          listEl.innerHTML = `<div class="from-sender-empty">No matches for "${_esc(q)}".</div>`;
+          listEl.innerHTML = `<div class="from-sender-empty">${window.t('No matches for "{q}".').replace('{q}', _esc(q))}</div>`;
           return;
         }
         panel._setResults(merged, { showFolder: true });
       } catch (err) {
         if (myToken !== searchToken) return;
-        listEl.innerHTML = `<div class="from-sender-empty" style="color:var(--red, #e55)">Search failed: ${_esc(String(err))}</div>`;
+        listEl.innerHTML = `<div class="from-sender-empty" style="color:var(--red, #e55)">${window.t('Search failed: {msg}').replace('{msg}', _esc(String(err)))}</div>`;
       }
     };
 
@@ -4506,12 +4506,12 @@ async function _toggleFromSenderPanel(reader, data, btn) {
   panel._originalEmails = (typeof emails !== 'undefined') ? emails : [];
 }
 
-const _ATT_ICON = '<svg class="from-sender-att" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Has attachments"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>';
+const _ATT_ICON = `<svg class="from-sender-att" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="${window.t('Has attachments')}"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>`;
 
 function _renderFromSenderRows(emails, listEl, reader, opts = {}) {
   const { showFolder = false } = opts;
   listEl.innerHTML = emails.map(em => {
-    const subj = em.subject || '(no subject)';
+    const subj = em.subject || window.t('(no subject)');
     const date = em.date ? new Date(em.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : (em.date_display || '');
     const unread = em.is_read ? '' : ' from-sender-unread';
     const att = em.has_attachments ? _ATT_ICON : '';
