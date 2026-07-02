@@ -1,3 +1,5 @@
+# Cursor OpenAI-compatible bridge (host-side helper service).
+cursor-sdk
 # Optional dependencies — install only if you use the corresponding feature.
 # The app handles their absence gracefully (clear error message on first use).
 #
