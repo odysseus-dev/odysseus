@@ -177,4 +177,13 @@ registerMessages('pt-BR', {
   'Done': 'Concluido',
   'Open': 'Abrir',
   'Archive': 'Arquivar',
+  'Mark Read': 'Marcar como lido',
+  'Mark Unread': 'Marcar como não lido',
+  'Delete {n} selected email{s}?': 'Excluir {n} e-mail{s} selecionado{s}?',
+  'Deleting': 'Excluindo',
+  'Archiving': 'Arquivando',
+  'Marking done': 'Marcando como concluido',
+  'Marking read': 'Marcando como lido',
+  'Marking unread': 'Marcando como nao lido',
+  'Updating': 'Atualizando',
 });

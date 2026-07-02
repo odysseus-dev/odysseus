@@ -5887,9 +5887,9 @@ function _showCardMenu(em, anchor) {
   });
 
   actions.push(
-    { label: 'Delete', icon: _delIcon, danger: true, action: async () => {
-      const subject = em.subject || '(no subject)';
-      const ok = await styledConfirm(`Delete "${subject}"?`, { confirmText: 'Delete', cancelText: 'Cancel', danger: true });
+    { label: window.t('Delete'), icon: _delIcon, danger: true, action: async () => {
+      const subject = em.subject || window.t('(no subject)');
+      const ok = await styledConfirm(window.t('Delete "{subject}"?').replace('{subject}', subject), { confirmText: window.t('Delete'), cancelText: window.t('Cancel'), danger: true });
       if (!ok) return;
       await fetch(`${API_BASE}/api/email/delete/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'DELETE' });
       await _animateEmailCardRemoval([em.uid]);
@@ -5946,9 +5946,9 @@ function _showBulkActionsMenu(anchor) {
   const _unreadIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>';
   const _doneIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
   const items = [
-    { label: 'Done', icon: _doneIco, action: () => _bulkAction('done') },
-    { label: 'Mark Read', icon: _readIco, action: () => _bulkAction('read') },
-    { label: 'Mark Unread', icon: _unreadIco, action: () => _bulkAction('unread') },
+    { label: window.t('Done'), icon: _doneIco, action: () => _bulkAction('done') },
+    { label: window.t('Mark Read'), icon: _readIco, action: () => _bulkAction('read') },
+    { label: window.t('Mark Unread'), icon: _unreadIco, action: () => _bulkAction('unread') },
   ];
   for (const a of items) {
     const it = document.createElement('div');
@@ -5961,7 +5961,7 @@ function _showBulkActionsMenu(anchor) {
   const _cancelIco2 = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
   const cancelIt = document.createElement('div');
   cancelIt.className = 'dropdown-item-compact dropdown-cancel-mobile';
-  cancelIt.innerHTML = `<span class="dropdown-icon">${_cancelIco2}</span><span>Cancel</span>`;
+  cancelIt.innerHTML = `<span class="dropdown-icon">${_cancelIco2}</span><span>${window.t('Cancel')}</span>`;
   cancelIt.addEventListener('click', (e) => {
     e.stopPropagation();
     close();
@@ -6006,8 +6006,8 @@ async function _bulkAction(action) {
   let failedReadSync = 0;
   if (action === 'delete') {
     const ok = await styledConfirm(
-      `Delete ${uids.length} selected email${uids.length === 1 ? '' : 's'}?`,
-      { confirmText: 'Delete', cancelText: 'Cancel', danger: true },
+      window.t('Delete {n} selected email{s}?').replace('{n}', uids.length).replace('{s}', uids.length === 1 ? '' : 's'),
+      { confirmText: window.t('Delete'), cancelText: window.t('Cancel'), danger: true },
     );
     if (!ok) return;
   }
@@ -6026,12 +6026,12 @@ async function _bulkAction(action) {
   // Actions button (or Delete button) shows a whirlpool + verb-ing
   // label, and the count surfaces progress.
   const verbing = {
-    delete: 'Deleting',
-    archive: 'Archiving',
-    done: 'Marking done',
-    read: 'Marking read',
-    unread: 'Marking unread',
-  }[action] || 'Updating';
+    delete: window.t('Deleting'),
+    archive: window.t('Archiving'),
+    done: window.t('Marking done'),
+    read: window.t('Marking read'),
+    unread: window.t('Marking unread'),
+  }[action] || window.t('Updating');
   const targetBtn = action === 'delete' ? deleteBtn : actionsBtn;
   let originalTargetHtml = '';
   if (targetBtn) {
