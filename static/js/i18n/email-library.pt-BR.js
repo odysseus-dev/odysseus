@@ -145,4 +145,7 @@ registerMessages('pt-BR', {
   'Thread attachments ({n})': 'Anexos da conversa ({n})',
   'Hidden inline attachments ({n})': 'Anexos embutidos ocultos ({n})',
   'Minimize': 'Minimizar',
+  'AI Reply': 'Resposta com IA',
+  'Search text in this thread': 'Buscar texto nesta conversa',
+  'Search': 'Buscar',
 });
