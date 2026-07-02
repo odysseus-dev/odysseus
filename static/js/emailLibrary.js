@@ -3574,13 +3574,13 @@ function _renderEmailBody(data) {
     let out = fmt(head);
     if (quoteSection) {
       out += '<details class="email-quote-fold">'
-           + _foldSummary('Earlier thread', _QUOTE_ICON, _extractQuoteMeta(quoteSection))
+           + _foldSummary(window.t('Earlier thread'), _QUOTE_ICON, _extractQuoteMeta(quoteSection))
            + fmt(quoteSection) + '</details>';
     }
     if (sigSection) {
       const sigHtml = fmt(sigSection);
       if (_isBloatedSig(sigHtml)) {
-        out += '<details class="email-sig-fold">' + _foldSummary('Signature', _SIG_ICON)
+        out += '<details class="email-sig-fold">' + _foldSummary(window.t('Signature'), _SIG_ICON)
              + sigHtml + '</details>';
       } else {
         // Short closing — leave inline; folding would just add chrome.
@@ -3613,7 +3613,7 @@ function _safeRenderEmailBody(data) {
     const plain = (typeof data?.body === 'string') ? data.body : '';
     if (plain) return _escLinkify(plain).replace(/\n/g, '<br>');
     if (data?.body_html) return _sanitizeHtml(data.body_html);
-    return '<span style="opacity:.65">No body</span>';
+    return '<span style="opacity:.65">' + window.t('No body') + '</span>';
   }
 }
 
@@ -3691,12 +3691,12 @@ function _renderTurnsAsBubbles(turns, data) {
     let isMine, author, date;
     if (t.level === 0) {
       isMine = lvl0Mine;
-      author = lvl0Author || 'Me';
+      author = lvl0Author || window.t('Me');
       date = lvl0Date;
     } else {
       const p = _parseTurnMeta(t.meta || '');
       isMine = !!p.email && mineSet.has(p.email);
-      author = p.author || (t.meta || 'Earlier reply');
+      author = p.author || (t.meta || window.t('Earlier reply'));
       date = p.date;
     }
     // No-self fallback: route by per-sender side mapping.
@@ -3738,7 +3738,7 @@ function _renderTurnsFromServer(turns) {
   const stack = []; // [{ level, html }]
   const wrap = (t) =>
     `<details class="email-thread-turn email-quote-fold" open>`
-    + _foldSummary('Earlier reply', _QUOTE_ICON, t.meta || '')
+    + _foldSummary(window.t('Earlier reply'), _QUOTE_ICON, t.meta || '')
     + `<div class="email-thread-turn-body">${t.html}</div>`
     + '</details>';
 
@@ -3844,7 +3844,7 @@ function _renderThreadStructure(html) {
     if (!meta && _looksLikeSignature(innerHtml)) {
       turnsHtml.push(
         '<details class="email-sig-fold">'
-        + _foldSummary('Signature', _SIG_ICON)
+        + _foldSummary(window.t('Signature'), _SIG_ICON)
         + `<div class="email-sig-body">${innerHtml}</div>`
         + '</details>'
       );
@@ -3859,7 +3859,7 @@ function _renderThreadStructure(html) {
     const isLast = i === tops.length - 1;
     turnsHtml.push(
       `<details class="email-thread-turn email-quote-fold${isLast ? ' last-fold' : ''}" ${i === 0 ? '' : 'open'}>`
-        + _foldSummary('Earlier reply', _QUOTE_ICON, meta || '')
+        + _foldSummary(window.t('Earlier reply'), _QUOTE_ICON, meta || '')
         + `<div class="email-thread-turn-body">${bodyHtml}</div>`
       + '</details>'
     );
@@ -3951,7 +3951,7 @@ function _renderPlaintextThread(text) {
   const stack = [];
   const wrapTurn = (t) =>
     `<details class="email-thread-turn email-quote-fold" open>`
-    + _foldSummary('Earlier reply', _QUOTE_ICON, t.meta || '')
+    + _foldSummary(window.t('Earlier reply'), _QUOTE_ICON, t.meta || '')
     + `<div class="email-thread-turn-body">${t.html}</div>`
     + '</details>';
 
@@ -4019,7 +4019,7 @@ function _foldQuotedReplies(html) {
           const det = doc.createElement('details');
           det.className = 'email-quote-fold';
           // Build the summary as raw HTML — easier than building DOM by hand.
-          const summary = _foldSummary('Earlier thread', _QUOTE_ICON, _extractQuoteMeta(bq.innerHTML));
+          const summary = _foldSummary(window.t('Earlier thread'), _QUOTE_ICON, _extractQuoteMeta(bq.innerHTML));
           det.innerHTML = summary;
           bq.parentNode.insertBefore(det, bq);
           det.appendChild(bq); // move the original blockquote (and any nested ones) into the details
@@ -4052,7 +4052,7 @@ function _foldQuotedReplies(html) {
     // Outlook fallback only ever produces ONE fold, so tag it as last.
     html = html.slice(0, idx) + m[1]
       + '<details class="email-quote-fold last-fold">'
-      + _foldSummary('Earlier thread', _QUOTE_ICON, _extractQuoteMeta(m[2]))
+      + _foldSummary(window.t('Earlier thread'), _QUOTE_ICON, _extractQuoteMeta(m[2]))
       + m[2] + '</details>';
   }
   return html;
@@ -4080,7 +4080,7 @@ function _showCachedSummary(reader, summary, btn) {
   panel.innerHTML =
     '<div class="email-summary-header email-summary-toggle" role="button" tabindex="0">'
     +   '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>'
-    +   '<span>Summary</span>'
+    +   '<span>' + window.t('Summary') + '</span>'
     +   '<svg class="email-summary-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:auto;transition:transform .15s ease;"><polyline points="6 9 12 15 18 9"/></svg>'
     + '</div>'
     + '<div class="email-summary-content"></div>';
@@ -4102,7 +4102,7 @@ function _showCachedSummary(reader, summary, btn) {
   if (btn) {
     btn.classList.add('active');
     const label = btn.querySelector('.btn-label');
-    if (label) label.textContent = 'Summary';
+    if (label) label.textContent = window.t('Summary');
   }
 }
 
@@ -5400,7 +5400,7 @@ async function _generateSummary(reader, data, btn) {
   panel.innerHTML =
     '<div class="email-summary-header email-summary-toggle" role="button" tabindex="0">'
     +   '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>'
-    +   '<span>Summary</span>'
+    +   '<span>' + window.t('Summary') + '</span>'
     +   '<svg class="email-summary-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:auto;transition:transform .15s ease;"><polyline points="6 9 12 15 18 9"/></svg>'
     + '</div>'
     + '<div class="email-summary-content"></div>';

@@ -112,4 +112,11 @@ registerMessages('pt-BR', {
   'More': 'Mais',
   'Error: {msg}': 'Erro: {msg}',
   'Failed to load email': 'Falha ao carregar o e-mail',
+
+  // --- body rendering (folds, thread turns) ---
+  'Earlier thread': 'Conversa anterior',
+  'Signature': 'Assinatura',
+  'No body': 'Sem conteudo',
+  'Me': 'Eu',
+  'Earlier reply': 'Resposta anterior',
 });
