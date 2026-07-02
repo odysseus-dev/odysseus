@@ -156,4 +156,8 @@ registerMessages('pt-BR', {
   'No {type} models available': 'Nenhum modelo de {type} disponível',
   'Hidden': 'Oculto',
   'Search provider': 'Provedor de busca',
+  '+ Add Model': '+ Adicionar Modelo',
+  'Timeout:': 'Tempo limite:',
+  'seconds': 'segundos',
+  'Start': 'Iniciar',
 });

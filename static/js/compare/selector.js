@@ -14,7 +14,7 @@ const escapeHtml = uiModule.esc;
 // Match the Deep Research "Start" button (play icon + "Start", styled by
 // .research-start-btn) so the two primary actions look identical.
 const _CMP_PLAY_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>';
-const _CMP_START_LABEL = _CMP_PLAY_ICON + ' Start';
+function _cmpStartLabel() { return _CMP_PLAY_ICON + ' ' + window.t('Start'); }
 
 /** Slot label: letters (A, B) in parallel, numbers (1, 2) in sequential */
 function _slotChar(i) { return state._parallel ? String.fromCharCode(65 + i) : String(i + 1); }
@@ -795,7 +795,7 @@ async function showModelSelector() {
     addBtn = document.createElement('button');
     addBtn.type = 'button';
     addBtn.style.cssText = 'display:none;align-items:center;gap:6px;background:none;border:1px dashed var(--border);color:var(--fg);border-radius:6px;cursor:pointer;padding:6px 12px;font-size:0.82em;opacity:0.6;transition:all 0.15s;margin-bottom:16px;width:100%;justify-content:center;';
-    addBtn.textContent = '+ Add Model';
+    addBtn.textContent = window.t('+ Add Model');
     addBtn.addEventListener('mouseenter', () => { addBtn.style.opacity = '1'; });
     addBtn.addEventListener('mouseleave', () => { addBtn.style.opacity = '0.6'; });
     addBtn.addEventListener('click', () => {
@@ -823,7 +823,7 @@ async function showModelSelector() {
     timeoutRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;';
     const timeoutLabel = document.createElement('span');
     timeoutLabel.style.cssText = 'color:color-mix(in srgb, var(--fg) 55%, transparent);font-size:0.82em;';
-    timeoutLabel.textContent = 'Timeout:';
+    timeoutLabel.textContent = window.t('Timeout:');
     const timeoutInput = document.createElement('input');
     timeoutInput.type = 'number';
     timeoutInput.min = '5';
@@ -832,7 +832,7 @@ async function showModelSelector() {
     timeoutInput.style.cssText = 'width:60px;padding:4px 8px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;font-size:0.82em;text-align:center;-moz-appearance:textfield;';
     const timeoutSuffix = document.createElement('span');
     timeoutSuffix.style.cssText = 'color:color-mix(in srgb, var(--fg) 55%, transparent);font-size:0.82em;';
-    timeoutSuffix.textContent = 'seconds';
+    timeoutSuffix.textContent = window.t('seconds');
     timeoutRow.appendChild(timeoutLabel);
     timeoutRow.appendChild(timeoutInput);
     timeoutRow.appendChild(timeoutSuffix);
@@ -840,7 +840,7 @@ async function showModelSelector() {
     // Scoreboard button
     const scoreBtn = document.createElement('button');
     scoreBtn.type = 'button';
-    scoreBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Scoreboard';
+    scoreBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>' + window.t('Scoreboard');
     scoreBtn.style.cssText = 'margin-left:auto;padding:4px 10px;background:transparent;color:var(--fg);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.82em;opacity:0.7;position:relative;top:-5px;';
     scoreBtn.addEventListener('mouseenter', () => { scoreBtn.style.opacity = '1'; });
     scoreBtn.addEventListener('mouseleave', () => { scoreBtn.style.opacity = '0.7'; });
@@ -858,7 +858,7 @@ async function showModelSelector() {
     // Cancel button removed — the overlay's X / outside-click / Esc all
     // dismiss the popup, so the footer Cancel was redundant.
     const startBtn = document.createElement('button');
-    startBtn.innerHTML = _CMP_START_LABEL;
+    startBtn.innerHTML = _cmpStartLabel();
     startBtn.className = 'research-start-btn';
     startBtn.disabled = true;
     // Pin to the same 30px box as Cancel so both buttons sit on the same line.
@@ -986,7 +986,7 @@ async function showModelSelector() {
           probeOverlay.remove();
           document.removeEventListener('keydown', _probeEsc, false);
           startBtn.disabled = false;
-          startBtn.innerHTML = _CMP_START_LABEL;
+          startBtn.innerHTML = _cmpStartLabel();
           startBtn.style.opacity = '1';
         }
       };
@@ -1091,7 +1091,7 @@ async function showModelSelector() {
             probeOverlay.remove();
             _probeSkipped = true;
             startBtn.disabled = false;
-            startBtn.innerHTML = _CMP_START_LABEL;
+            startBtn.innerHTML = _cmpStartLabel();
             startBtn.style.opacity = '1';
           });
           detail.appendChild(retryBtn);
@@ -1274,7 +1274,7 @@ async function showModelSelector() {
           goBackBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="15 18 9 12 15 6"/></svg>Go Back';
           goBackBtn.className = 'cmp-btn-secondary';
           goBackBtn.style.cssText = 'padding:5px 12px;font-size:12px;display:inline-flex;align-items:center;';
-          goBackBtn.addEventListener('click', () => { _clearProbeWaves(); probeOverlay.remove(); startBtn.disabled = false; startBtn.innerHTML = _CMP_START_LABEL; startBtn.style.opacity = '1'; });
+          goBackBtn.addEventListener('click', () => { _clearProbeWaves(); probeOverlay.remove(); startBtn.disabled = false; startBtn.innerHTML = _cmpStartLabel(); startBtn.style.opacity = '1'; });
           const startAnywayBtn = document.createElement('button');
           startAnywayBtn.textContent = 'Start Anyway';
           startAnywayBtn.className = 'cmp-btn-primary';
@@ -1290,7 +1290,7 @@ async function showModelSelector() {
         _clearProbeWaves();
         probeOverlay.remove();
         startBtn.disabled = false;
-        startBtn.innerHTML = _CMP_START_LABEL;
+        startBtn.innerHTML = _cmpStartLabel();
         startBtn.style.opacity = '1';
         cleanup(true);
       }
