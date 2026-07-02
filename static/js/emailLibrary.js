@@ -5284,11 +5284,11 @@ async function _swapReaderToUid(reader, uid, folder) {
       };
       const fromChip = _recipientChipHtml(`${data.from_name || ''} <${data.from_address || ''}>`, data.from_name || data.from_address, 'from-chip');
       headerMeta.innerHTML = `
-        <div class="email-reader-meta-row"><strong>Subject:</strong> ${_esc(subj)}</div>
-        <div class="email-reader-meta-row"><strong>From:</strong><span class="recipient-chips">${fromChip}</span></div>
-        ${data.to ? `<div class="email-reader-meta-row"><strong>To:</strong><span class="recipient-chips">${chipsFor(data.to)}</span></div>` : ''}
-        ${data.cc ? `<div class="email-reader-meta-row"><strong>Cc:</strong><span class="recipient-chips">${chipsFor(data.cc)}</span></div>` : ''}
-        ${date ? `<div class="email-reader-meta-row"><strong>Date:</strong> ${_esc(date)}</div>` : ''}
+        <div class="email-reader-meta-row"><strong>${window.t('Subject:')}</strong> ${_esc(subj)}</div>
+        <div class="email-reader-meta-row"><strong>${window.t('From:')}</strong><span class="recipient-chips">${fromChip}</span></div>
+        ${data.to ? `<div class="email-reader-meta-row"><strong>${window.t('To:')}</strong><span class="recipient-chips">${chipsFor(data.to)}</span></div>` : ''}
+        ${data.cc ? `<div class="email-reader-meta-row"><strong>${window.t('Cc:')}</strong><span class="recipient-chips">${chipsFor(data.cc)}</span></div>` : ''}
+        ${date ? `<div class="email-reader-meta-row"><strong>${window.t('Date:')}</strong> ${_esc(date)}</div>` : ''}
       `;
       _wireRecipientChips(reader);
     }
@@ -5347,13 +5347,13 @@ async function _summarizeEmail(reader, data, btn) {
       existing.style.display = '';
       if (btn) {
         btn.classList.add('active');
-        btn.querySelector('.btn-label').textContent = 'Summary';
+        btn.querySelector('.btn-label').textContent = window.t('Summary');
       }
     } else {
       existing.style.display = 'none';
       if (btn) {
         btn.classList.remove('active');
-        btn.querySelector('.btn-label').textContent = 'Summary';
+        btn.querySelector('.btn-label').textContent = window.t('Summary');
       }
     }
     return;
@@ -5368,14 +5368,14 @@ async function _summarizeEmail(reader, data, btn) {
     prompt.innerHTML = `
       <div class="email-summary-header">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>
-        <span>Summary</span>
+        <span>${window.t('Summary')}</span>
       </div>
-      <div class="email-summary-content" style="white-space:normal;display:flex;align-items:center;flex-wrap:wrap;gap:6px;"><span style="opacity:0.65">No AI summary generated.</span><button class="memory-toolbar-btn" data-act="summary-generate" style="font-size:10px;margin-left:auto;">Generate now</button></div>`;
+      <div class="email-summary-content" style="white-space:normal;display:flex;align-items:center;flex-wrap:wrap;gap:6px;"><span style="opacity:0.65">${window.t('No AI summary generated.')}</span><button class="memory-toolbar-btn" data-act="summary-generate" style="font-size:10px;margin-left:auto;">${window.t('Generate now')}</button></div>`;
     body.insertBefore(prompt, body.firstChild);
     if (btn) {
       btn.classList.add('active');
       const label = btn.querySelector('.btn-label');
-      if (label) label.textContent = 'Summary';
+      if (label) label.textContent = window.t('Summary');
     }
     // No Cancel button — toggling the Summary button again hides this panel
     // (handled by the existing-panel branch above), so it'd be redundant.
@@ -5447,16 +5447,16 @@ async function _generateSummary(reader, data, btn) {
       if (btn) {
         btn.classList.add('active');
         const label = btn.querySelector('.btn-label');
-        if (label) label.textContent = 'Summary';
+        if (label) label.textContent = window.t('Summary');
       }
     } else {
-      content.innerHTML = `<span style="color:var(--red)">${_esc(result.error || 'Failed to summarize')}</span>`;
+      content.innerHTML = `<span style="color:var(--red)">${_esc(result.error || window.t('Failed to summarize'))}</span>`;
       panel.remove();
     }
   } catch (e) {
     sp.destroy();
     panel.remove();
-    if (uiModule) uiModule.showError?.('Failed to summarize');
+    if (uiModule) uiModule.showError?.(window.t('Failed to summarize'));
   } finally {
     if (btn) btn.disabled = false;
   }

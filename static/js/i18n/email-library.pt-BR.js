@@ -148,4 +148,9 @@ registerMessages('pt-BR', {
   'AI Reply': 'Resposta com IA',
   'Search text in this thread': 'Buscar texto nesta conversa',
   'Search': 'Buscar',
+  'Subject:': 'Assunto:',
+  'Date:': 'Data:',
+  'No AI summary generated.': 'Nenhum resumo de IA gerado.',
+  'Generate now': 'Gerar agora',
+  'Failed to summarize': 'Falha ao resumir',
 });
