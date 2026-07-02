@@ -144,4 +144,9 @@ registerMessages('pt-BR', {
   'Save off': 'Salvar desativado',
   'sessions are discarded when you close Compare.': 'as sessões são descartadas ao fechar a Comparação.',
   'Reset — restore all defaults': 'Reiniciar — restaura todos os padrões',
+  'Select models to compare side-by-side. Send the same prompt to all.': 'Selecione os modelos para comparar lado a lado. Envie o mesmo prompt para todos.',
+  'Mode:': 'Modo:',
+  'Type:': 'Tipo:',
+  'Loading models': 'Carregando modelos',
+  'Loading models…': 'Carregando modelos…',
 });

@@ -267,7 +267,7 @@ async function showModelSelector() {
 
     const desc = document.createElement('p');
     desc.style.cssText = 'color:color-mix(in srgb, var(--fg) 55%, transparent);font-size:0.85em;margin:0 0 12px;';
-    desc.textContent = 'Select models to compare side-by-side. Send the same prompt to all.';
+    desc.textContent = window.t('Select models to compare side-by-side. Send the same prompt to all.');
     body.appendChild(desc);
 
     // Options row
@@ -278,7 +278,7 @@ async function showModelSelector() {
     modeLabel.className = 'compare-section-label';
     // The active modes (+colors) are appended in a span shown only on mobile,
     // where the toggle text labels are hidden so the icons alone are ambiguous.
-    modeLabel.innerHTML = 'Mode: <span class="compare-mode-current"></span>';
+    modeLabel.innerHTML = window.t('Mode:') + ' <span class="compare-mode-current"></span>';
     modeWrap.appendChild(modeLabel);
     modeWrap.appendChild(toggleRow);
     // Contextual one-liner describing the mode you just toggled.
@@ -293,12 +293,12 @@ async function showModelSelector() {
       const cur = modeLabel.querySelector('.compare-mode-current');
       if (!cur) return;
       const parts = [];
-      if (state._blindMode) parts.push('<span style="color:var(--color-blind-orange)">Blind</span>');
+      if (state._blindMode) parts.push('<span style="color:var(--color-blind-orange)">' + window.t('Blind') + '</span>');
       parts.push(state._parallel
-        ? '<span style="color:#5b8def">Parallel</span>'
-        : '<span style="color:#e0a050">Sequential</span>');
-      if (_shuffled) parts.push('<span style="color:var(--red)">Shuffle</span>');
-      if (state._saveOnClose) parts.push('<span style="color:var(--color-save-green)">Save</span>');
+        ? '<span style="color:#5b8def">' + window.t('Parallel') + '</span>'
+        : '<span style="color:#e0a050">' + window.t('Sequential') + '</span>');
+      if (_shuffled) parts.push('<span style="color:var(--red)">' + window.t('Shuffle') + '</span>');
+      if (state._saveOnClose) parts.push('<span style="color:var(--color-save-green)">' + window.t('Save') + '</span>');
       cur.innerHTML = parts.join(', ');
     }
 
@@ -310,7 +310,7 @@ async function showModelSelector() {
     typeLabel.className = 'compare-section-label';
     // The active type name (+icon) is appended in a span shown only on mobile,
     // where the tab text labels are hidden so the icons alone are ambiguous.
-    typeLabel.innerHTML = 'Type: <span class="compare-type-current"></span>';
+    typeLabel.innerHTML = window.t('Type:') + ' <span class="compare-type-current"></span>';
     typeWrap.appendChild(typeLabel);
     const tabBar = document.createElement('div');
     tabBar.className = 'compare-mode-tabs compare-type-tabs';
@@ -320,10 +320,10 @@ async function showModelSelector() {
     // Research — magnifying glass with `+` (matches the sidebar Deep Research icon)
     const _ICON_RESEARCH = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>';
     const _modes = [
-      { id: 'chat', label: 'Chat', icon: CHAT_ICON },
-      { id: 'agent', label: 'Agent', icon: _ICON_AGENT },
-      { id: 'search', label: 'Search', icon: _ICON_SEARCH },
-      { id: 'research', label: 'Research', icon: _ICON_RESEARCH },
+      { id: 'chat', label: window.t('Chat'), icon: CHAT_ICON },
+      { id: 'agent', label: window.t('Agent'), icon: _ICON_AGENT },
+      { id: 'search', label: window.t('Search'), icon: _ICON_SEARCH },
+      { id: 'research', label: window.t('Research'), icon: _ICON_RESEARCH },
     ];
     _modes.forEach(m => {
       const tab = document.createElement('button');
@@ -362,11 +362,11 @@ async function showModelSelector() {
       if (mode === 'search' || mode === 'research') {
         state._parallel = false;
         parallelBtn.classList.remove('active');
-        parallelBtn.innerHTML = ICON_SEQUENTIAL + _toggleLabel('Sequential');
+        parallelBtn.innerHTML = ICON_SEQUENTIAL + _toggleLabel(window.t('Sequential'));
       } else {
         state._parallel = true;
         parallelBtn.classList.add('active');
-        parallelBtn.innerHTML = ICON_PARALLEL + _toggleLabel('Parallel');
+        parallelBtn.innerHTML = ICON_PARALLEL + _toggleLabel(window.t('Parallel'));
       }
       // Restore saved selections for this tab, or default
       selections = _tabSelections[mode] ? _tabSelections[mode].slice() : [null, null];
@@ -384,11 +384,11 @@ async function showModelSelector() {
     const _loadingDiv = document.createElement('div');
     _loadingDiv.style.cssText = 'color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:0.85em;padding:12px 0;text-align:left;';
     if (spinnerModule) {
-      const _loadSpinner = spinnerModule.create('Loading models', 'right');
+      const _loadSpinner = spinnerModule.create(window.t('Loading models'), 'right');
       _loadingDiv.appendChild(_loadSpinner.createElement());
       _loadSpinner.start();
     } else {
-      _loadingDiv.textContent = 'Loading models\u2026';
+      _loadingDiv.textContent = window.t('Loading models\u2026');
     }
     listContainer.appendChild(_loadingDiv);
 
