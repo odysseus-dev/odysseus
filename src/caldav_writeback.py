@@ -192,11 +192,14 @@ def _writeback_blocking(local_cal_id, ev, delete, url, username, password,
     # Redirects disabled here too: the write-back path opens its own DAVClient,
     # so it needs the same SSRF-via-redirect protection as the pull path.
     client = _build_dav_client(url, username, password)
-    calendars = _discover_calendars(client)
-    if not calendars:
-        return {"ok": False, "error": "no remote calendars discovered"}
-    return push_event(calendars, local_cal_id, ev, delete=delete,
-                      owner=owner, account_id=account_id)
+    try:
+        calendars = _discover_calendars(client)
+        if not calendars:
+            return {"ok": False, "error": "no remote calendars discovered"}
+        return push_event(calendars, local_cal_id, ev, delete=delete,
+                          owner=owner, account_id=account_id)
+    finally:
+        client.close()
 
 
 def _persist_writeback_result(owner: str, calendar_id: str, uid: str, result: dict, *, delete: bool) -> None:
