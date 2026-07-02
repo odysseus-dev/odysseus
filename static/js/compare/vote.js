@@ -31,7 +31,7 @@ function addFinishBadge(paneIdx) {
   if (footer) {
     const badge = document.createElement('span');
     badge.className = 'pane-finish-badge';
-    badge.textContent = ' · Fastest';
+    badge.textContent = ' · ' + window.t('Fastest');
     footer.querySelector('.response-metrics')?.appendChild(badge);
   }
 }
@@ -58,14 +58,14 @@ function buildVoteBar(n) {
     paneBtn.disabled = noPrompt;
     paneBtn.style.opacity = noPrompt ? '0.4' : '';
     const label = state._blindMode
-      ? 'Vote ' + _slotChar(i)
-      : 'Vote ' + state._selectedModels[i].name;
+      ? window.t('Vote') + ' ' + _slotChar(i)
+      : window.t('Vote') + ' ' + state._selectedModels[i].name;
     paneBtn.querySelector('.pane-vote-label').textContent = label;
   }
 
   const tieBtn = document.createElement('button');
   tieBtn.className = 'compare-vote-btn compare-vote-tie';
-  tieBtn.textContent = 'Tie';
+  tieBtn.textContent = window.t('Tie');
   if (noPrompt) { tieBtn.disabled = true; tieBtn.style.opacity = '0.25'; }
   tieBtn.addEventListener('click', () => handleVote(-1));
   bar.appendChild(tieBtn);
@@ -74,8 +74,8 @@ function buildVoteBar(n) {
   // before a prompt) since viewing the scoreboard is always allowed.
   const scoreBtn = document.createElement('button');
   scoreBtn.className = 'compare-vote-btn compare-score-btn';
-  scoreBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Score';
-  scoreBtn.title = 'Scoreboard';
+  scoreBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>' + window.t('Score');
+  scoreBtn.title = window.t('Scoreboard');
   scoreBtn.addEventListener('click', () => showScoreboard());
   bar.insertBefore(scoreBtn, tieBtn); // furthest left, before Tie
 
@@ -83,7 +83,7 @@ function buildVoteBar(n) {
     const revealBtn = document.createElement('button');
     revealBtn.className = 'compare-vote-btn';
     revealBtn.style.opacity = noPrompt ? '0.25' : '0.5';
-    revealBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Reveal';
+    revealBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>' + window.t('Reveal');
     if (noPrompt) revealBtn.disabled = true;
     revealBtn.addEventListener('click', () => handleVote(-2));
     bar.appendChild(revealBtn);
@@ -94,7 +94,7 @@ function buildVoteBar(n) {
   // Reset button (always)
   const resetBtn = document.createElement('button');
   resetBtn.className = 'compare-vote-btn compare-rematch-btn';
-  resetBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:3px;"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Reset';
+  resetBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:3px;"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>' + window.t('Reset');
   resetBtn.addEventListener('click', () => { if (_resetCompare) _resetCompare(); });
   bar.appendChild(resetBtn);
 }
@@ -181,7 +181,7 @@ function handleVote(winnerIdx) {
 
     let html = '';
     const caret = ' <span class="pane-title-caret">&#x25BE;</span>';
-    if (isWinner) html = '<span style="color:var(--green, #50fa7b);margin-right:4px;">&#x2605;</span><strong>' + escapeHtml(name) + '</strong> <span style="color:var(--green, #50fa7b);font-size:0.82em;font-weight:800;text-transform:uppercase;letter-spacing:1px;position:relative;top:0;">Winner!</span>' + caret;
+    if (isWinner) html = '<span style="color:var(--green, #50fa7b);margin-right:4px;">&#x2605;</span><strong>' + escapeHtml(name) + '</strong> <span style="color:var(--green, #50fa7b);font-size:0.82em;font-weight:800;text-transform:uppercase;letter-spacing:1px;position:relative;top:0;">' + window.t('Winner!') + '</span>' + caret;
     else if (isTie) html = '<span style="opacity:0.5;margin-right:4px;">=</span><strong>' + escapeHtml(name) + '</strong>' + caret;
     else html = '<strong>' + escapeHtml(name) + '</strong>' + caret;
     el.innerHTML = html;

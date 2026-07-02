@@ -52,4 +52,21 @@ registerMessages('pt-BR', {
   'Chat Models': 'Modelos de Chat',
   'Image Models': 'Modelos de Imagem',
   'Shuffle Pool': 'Pool de Embaralhamento',
+
+  // ── vote.js ──
+  'Fastest': 'Mais rápido',
+  'Vote': 'Votar',
+  'Tie': 'Empate',
+  'Score': 'Pontuação',
+  'Scoreboard': 'Placar',
+  'Reveal': 'Revelar',
+  'Reset': 'Reiniciar',
+  'Winner!': 'Vencedor!',
+
+  // ── probe.js ──
+  'All models verified': 'Todos os modelos verificados',
+  'a model': 'um modelo',
+  '{name} failed: {error}': '{name} falhou: {error}',
+  '{count} models verified': '{count} modelos verificados',
+  '{count} model verified': '{count} modelo verificado',
 });
