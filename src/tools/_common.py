@@ -5,7 +5,7 @@ Domain modules under src/tools/ import from here.
 """
 from typing import Dict, Optional
 
-from core.constants import internal_api_base
+from src.constants import internal_api_base
 from src.tool_utils import _parse_tool_args  # noqa: F401 — single source of the tool-arg parser; tool_utils is a leaf module (imports nothing from src)
 
 

@@ -82,7 +82,7 @@ from starlette.responses import RedirectResponse
 
 # ========= LOGGING =========
 import logging.handlers
-from core.constants import DATA_DIR
+from src.constants import DATA_DIR
 
 _root_logger = logging.getLogger()
 _root_logger.setLevel(logging.INFO)
