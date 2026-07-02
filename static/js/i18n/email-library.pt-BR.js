@@ -83,4 +83,33 @@ registerMessages('pt-BR', {
   'Cancel scheduled email "{subject}"?': 'Cancelar e-mail agendado "{subject}"?',
   'Cancel Send': 'Cancelar Envio',
   'Keep': 'Manter',
+
+  // --- card menu / actions ---
+  'Mark not done': 'Marcar como nao concluido',
+  'Mark done': 'Marcar como concluido',
+  'Favorited': 'Favoritado',
+  'Actions': 'Ações',
+  'Previous email': 'E-mail anterior',
+  'Next email': 'Proximo e-mail',
+  'No emails': 'Nenhum e-mail',
+  'Set up at:': 'Configure em:',
+  'Settings &rsaquo; Integrations': 'Configuracoes &rsaquo; Integracoes',
+
+  // --- reader header ---
+  'From:': 'De:',
+  'Cc:': 'Cc:',
+  'Show recipients': 'Mostrar destinatarios',
+  'AI Reply (cached draft ready)': 'Resposta com IA (rascunho em cache pronto)',
+  'AI Reply (suggest a draft)': 'Resposta com IA (sugerir rascunho)',
+  'AI reply': 'Resposta com IA',
+  'Reply': 'Responder',
+  'Reply All': 'Responder a todos',
+  'Reply all': 'Responder a todos',
+  'Forward': 'Encaminhar',
+  'Summarize': 'Resumir',
+  'Summary': 'Resumo',
+  'More actions': 'Mais ações',
+  'More': 'Mais',
+  'Error: {msg}': 'Erro: {msg}',
+  'Failed to load email': 'Falha ao carregar o e-mail',
 });

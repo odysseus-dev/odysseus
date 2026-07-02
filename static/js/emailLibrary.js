@@ -2807,9 +2807,9 @@ function _renderGrid() {
     if (_isTrulyEmpty) {
       grid.innerHTML =
         '<div class="email-loading" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;text-align:center;">' +
-          '<span>No emails' + _smileyIco + '</span>' +
+          '<span>' + window.t('No emails') + _smileyIco + '</span>' +
           '<span style="opacity:0.7;font-size:11px;">' +
-            'Set up at: <a href="#" data-open-settings="integrations" style="color:var(--accent,var(--red));text-decoration:underline;">Settings &rsaquo; Integrations</a>' +
+            window.t('Set up at:') + ' <a href="#" data-open-settings="integrations" style="color:var(--accent,var(--red));text-decoration:underline;">' + window.t('Settings &rsaquo; Integrations') + '</a>' +
           '</span>' +
         '</div>';
       const _link = grid.querySelector('[data-open-settings]');
@@ -2820,7 +2820,7 @@ function _renderGrid() {
     } else {
       grid.innerHTML =
         '<div class="email-loading" style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;">' +
-          '<span>No emails' + _smileyIco + '</span>' +
+          '<span>' + window.t('No emails') + _smileyIco + '</span>' +
         '</div>';
     }
     return;
@@ -2888,7 +2888,7 @@ function _createCard(em) {
   let senderName;
   let senderAddress;
   if (isSentFolderEarly) {
-    senderName = _formatRecipients(em.to) || em.to || '(no recipient)';
+    senderName = _formatRecipients(em.to) || em.to || window.t('(no recipient)');
     // First address out of em.to for click-to-pill targeting.
     const _firstTo = String(em.to || '').split(',')[0] || '';
     const _m = _firstTo.match(/<([^>]+)>/);
@@ -2921,7 +2921,7 @@ function _createCard(em) {
 
   const titleEl = document.createElement('span');
   titleEl.className = 'memory-item-title';
-  titleEl.textContent = em.subject || '(no subject)';
+  titleEl.textContent = em.subject || window.t('(no subject)');
   // Hover preview: surface the cached AI summary directly on the title via
   // a native browser tooltip — no need to open the email to skim it.
   if (em.cached_summary) {
@@ -2932,7 +2932,7 @@ function _createCard(em) {
 
   if (em.has_attachments) {
     const att = document.createElement('span');
-    att.title = 'Has attachments';
+    att.title = window.t('Has attachments');
     att.style.cssText = 'opacity:0.6;flex-shrink:0;display:inline-flex;';
     att.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>';
     titleRow.appendChild(att);
@@ -2957,7 +2957,7 @@ function _createCard(em) {
   if (!isSentFolder) {
     const doneCheck = document.createElement('span');
     doneCheck.className = 'email-card-done' + (em.is_answered ? ' active' : '');
-    doneCheck.title = em.is_answered ? 'Mark not done' : 'Mark done';
+    doneCheck.title = em.is_answered ? window.t('Mark not done') : window.t('Mark done');
     doneCheck.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
     const _toggleDone = async (e) => {
       if (e) e.stopPropagation();
@@ -2968,7 +2968,7 @@ function _createCard(em) {
       const newState = !wasActive;
       em.is_answered = newState;
       doneCheck.classList.toggle('active', newState);
-      doneCheck.title = newState ? 'Mark not done' : 'Mark done';
+      doneCheck.title = newState ? window.t('Mark not done') : window.t('Mark done');
       // Animate in both directions so the user gets explicit feedback when
       // un-checking too — without this the hover state and the active state
       // look identical, so the click felt like a no-op.
@@ -3000,7 +3000,7 @@ function _createCard(em) {
 
   if (em.is_flagged) {
     const star = document.createElement('span');
-    star.title = 'Favorited';
+    star.title = window.t('Favorited');
     star.style.cssText = 'color:var(--accent, var(--red));opacity:0.85;flex-shrink:0;display:inline-flex;';
     star.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
     titleRow.appendChild(star);
@@ -3012,8 +3012,8 @@ function _createCard(em) {
   const navArrows = document.createElement('span');
   navArrows.className = 'email-card-nav-arrows';
   navArrows.innerHTML = `
-    <button type="button" class="email-card-nav-btn" data-nav-dir="-1" title="Previous email"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
-    <button type="button" class="email-card-nav-btn" data-nav-dir="1" title="Next email"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
+    <button type="button" class="email-card-nav-btn" data-nav-dir="-1" title="${window.t('Previous email')}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+    <button type="button" class="email-card-nav-btn" data-nav-dir="1" title="${window.t('Next email')}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
   `;
   navArrows.addEventListener('click', async (ev) => {
     const btn = ev.target.closest('.email-card-nav-btn');
@@ -3052,7 +3052,7 @@ function _createCard(em) {
     actionsWrap.className = 'memory-item-actions';
     const menuBtn = document.createElement('button');
     menuBtn.className = 'memory-item-btn';
-    menuBtn.title = 'Actions';
+    menuBtn.title = window.t('Actions');
     menuBtn.style.position = 'relative';
     menuBtn.style.top = '-1px';
     menuBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
@@ -3250,7 +3250,7 @@ async function _toggleCardPreview(card, em) {
       return;
     }
     if (data.error) {
-      reader.innerHTML = `<div style="padding:20px;color:var(--red,#e55)">Error: ${_esc(data.error)}</div>`;
+      reader.innerHTML = `<div style="padding:20px;color:var(--red,#e55)">${window.t('Error: {msg}').replace('{msg}', _esc(data.error))}</div>`;
       return;
     }
 
@@ -3297,21 +3297,21 @@ async function _toggleCardPreview(card, em) {
       <div class="email-reader-header">
         <div class="email-reader-meta">
           <div class="email-reader-meta-row email-reader-meta-from">
-            <strong>From:</strong>
-            <span class="recipient-chips">${fromChip}${(data.to || data.cc) ? `<button class="email-reader-meta-toggle" type="button" aria-expanded="false" title="Show recipients"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>` : ''}</span>
+            <strong>${window.t('From:')}</strong>
+            <span class="recipient-chips">${fromChip}${(data.to || data.cc) ? `<button class="email-reader-meta-toggle" type="button" aria-expanded="false" title="${window.t('Show recipients')}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>` : ''}</span>
           </div>
           ${(data.to || data.cc) ? `<div class="email-reader-meta-details" hidden>
-            ${data.to ? `<div class="email-reader-meta-row"><strong>To:</strong><span class="recipient-chips">${buildRecipients(data.to)}</span></div>` : ''}
-            ${data.cc ? `<div class="email-reader-meta-row"><strong>Cc:</strong><span class="recipient-chips">${buildRecipients(data.cc)}</span></div>` : ''}
+            ${data.to ? `<div class="email-reader-meta-row"><strong>${window.t('To:')}</strong><span class="recipient-chips">${buildRecipients(data.to)}</span></div>` : ''}
+            ${data.cc ? `<div class="email-reader-meta-row"><strong>${window.t('Cc:')}</strong><span class="recipient-chips">${buildRecipients(data.cc)}</span></div>` : ''}
           </div>` : ''}
           <div class="email-reader-actions-inline">
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? 'AI Reply (cached draft ready)' : 'AI Reply (suggest a draft)'}">${_aiReplyIcon(data)}<span class="reader-btn-label">AI reply</span></button>
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="reply" title="Reply"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg><span class="reader-btn-label">Reply</span></button>
-            ${_hasMultipleRecipients(data) ? `<button class="memory-toolbar-btn reader-icon-btn" data-act="reply-all" title="Reply All"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 17 2 12 7 7"/><polyline points="12 17 7 12 12 7"/><path d="M22 18v-2a4 4 0 0 0-4-4H7"/></svg><span class="reader-btn-label">Reply all</span></button>` : ''}
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="forward" title="Forward"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg><span class="reader-btn-label">Forward</span></button>
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="Summarize">${_summaryIcon(data)}<span class="reader-btn-label">Summary</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? window.t('AI Reply (cached draft ready)') : window.t('AI Reply (suggest a draft)')}">${_aiReplyIcon(data)}<span class="reader-btn-label">${window.t('AI reply')}</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="reply" title="${window.t('Reply')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg><span class="reader-btn-label">${window.t('Reply')}</span></button>
+            ${_hasMultipleRecipients(data) ? `<button class="memory-toolbar-btn reader-icon-btn" data-act="reply-all" title="${window.t('Reply All')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 17 2 12 7 7"/><polyline points="12 17 7 12 12 7"/><path d="M22 18v-2a4 4 0 0 0-4-4H7"/></svg><span class="reader-btn-label">${window.t('Reply all')}</span></button>` : ''}
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="forward" title="${window.t('Forward')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg><span class="reader-btn-label">${window.t('Forward')}</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="${window.t('Summarize')}">${_summaryIcon(data)}<span class="reader-btn-label">${window.t('Summary')}</span></button>
             <div class="email-reader-more-wrap" style="position:relative">
-              <button class="memory-toolbar-btn reader-icon-btn" data-act="more" title="More actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg><span class="reader-btn-label">More</span></button>
+              <button class="memory-toolbar-btn reader-icon-btn" data-act="more" title="${window.t('More actions')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg><span class="reader-btn-label">${window.t('More')}</span></button>
             </div>
           </div>
         </div>
@@ -3474,7 +3474,7 @@ async function _toggleCardPreview(card, em) {
     // Always stop bubbling so the card's click doesn't fire while reading.
     reader.addEventListener('click', (ev) => { ev.stopPropagation(); });
   } catch (e) {
-    reader.innerHTML = `<div style="padding:20px;color:var(--red,#e55)">Failed to load email</div>`;
+    reader.innerHTML = `<div style="padding:20px;color:var(--red,#e55)">${window.t('Failed to load email')}</div>`;
   }
 }
 
@@ -5003,7 +5003,7 @@ async function _openEmailAsTab(em, folder) {
     const res = await fetch(`${API_BASE}/api/email/read/${em.uid}?folder=${encodeURIComponent(useFolder)}${_acct()}`);
     const data = await res.json();
     if (data.error) {
-      reader.innerHTML = `<div style="padding:20px;color:var(--red,#e55)">Error: ${_esc(data.error)}</div>`;
+      reader.innerHTML = `<div style="padding:20px;color:var(--red,#e55)">${window.t('Error: {msg}').replace('{msg}', _esc(data.error))}</div>`;
       return;
     }
     _syncEmailReadState(em.uid, true);
