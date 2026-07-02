@@ -924,7 +924,7 @@ async function showModelSelector() {
       probeOverlay.className = 'compare-probe-overlay';
       const probeCard = document.createElement('div');
       probeCard.className = 'compare-probe-card';
-      probeCard.innerHTML = '<div class="compare-probe-title">Checking models...</div>';
+      probeCard.innerHTML = '<div class="compare-probe-title">' + window.t('Checking models...') + '</div>';
       let _probeSkipped = false;
       const probeList = document.createElement('div');
       probeList.className = 'compare-probe-list';
@@ -935,7 +935,7 @@ async function showModelSelector() {
         row.dataset.idx = i;
         // In blind mode, hide name until failure — only show slot letter
         const name = m.name || m.model.split('/').pop();
-        const displayName = isBlind ? `Model ${_slotChar(i)}` : escapeHtml(name);
+        const displayName = isBlind ? window.t('Model {slot}').replace('{slot}', _slotChar(i)) : escapeHtml(name);
         row._realName = name;
         row.innerHTML = `<span class="compare-probe-spinner">▁▂▃</span><span class="compare-probe-name">${displayName}</span><span class="compare-probe-status"></span>`;
         const waveEl = row.querySelector('.compare-probe-spinner');
@@ -951,7 +951,7 @@ async function showModelSelector() {
       });
       probeCard.appendChild(probeList);
       const skipBtn = document.createElement('button');
-      skipBtn.textContent = 'Skip';
+      skipBtn.textContent = window.t('Skip');
       skipBtn.className = 'cmp-btn-secondary';
       skipBtn.style.cssText = 'padding:4px 14px;font-size:11px;opacity:0.5;transition:opacity 0.15s;margin-top:8px;';
       skipBtn.addEventListener('mouseenter', () => { skipBtn.style.opacity = '1'; });
@@ -1000,11 +1000,11 @@ async function showModelSelector() {
       }
       async function _probeOne(m) {
         if (_isImageModel(m.model)) {
-          return { status: 'ok', model: m.model, skipped: true, skipReason: 'Image' };
+          return { status: 'ok', model: m.model, skipped: true, skipReason: window.t('Image') };
         }
         // Search mode — probe the LLM model normally (don't skip)
         if (state._compareMode === 'search' && !m.model) {
-          return { status: 'ok', model: m.model, skipped: true, skipReason: 'No model' };
+          return { status: 'ok', model: m.model, skipped: true, skipReason: window.t('No model') };
         }
         const res = await fetch(`${state.API_BASE}/api/probe-selected`, {
           method: 'POST', credentials: 'same-origin',
@@ -1012,7 +1012,7 @@ async function showModelSelector() {
           body: JSON.stringify({ models: [{ endpoint_id: m.endpointId || '', model: m.model, endpoint: m.endpoint || '', with_tools: state._compareMode === 'agent' }] }),
         });
         const data = await res.json();
-        return (data.results || [])[0] || { status: 'fail', error: 'No response' };
+        return (data.results || [])[0] || { status: 'fail', error: window.t('No response') };
       }
 
       // Helper: update a probe row's visual state
@@ -1027,7 +1027,7 @@ async function showModelSelector() {
           spinner.textContent = '\u2713';
           spinner.classList.remove('fail');
           spinner.classList.add('ok');
-          status.textContent = result.skipped ? (result.skipReason || 'Skipped') : (result.latency_ms ? `${result.latency_ms}ms` : 'OK');
+          status.textContent = result.skipped ? (result.skipReason || window.t('Skipped')) : (result.latency_ms ? `${result.latency_ms}ms` : window.t('OK'));
           status.classList.remove('fail');
           status.classList.add('ok');
           row.classList.remove('fail');
@@ -1054,7 +1054,7 @@ async function showModelSelector() {
           detail.style.cssText = 'grid-column:1/-1;display:flex;align-items:flex-start;gap:6px;padding:4px 10px 6px;font-size:10px;opacity:0.6;background:color-mix(in srgb, var(--color-error, #f44) 5%, transparent);border-radius:4px;margin-top:-2px;';
           const errSpan = document.createElement('span');
           // Truncate long error messages
-          const errText = (result.error || 'Failed');
+          const errText = (result.error || window.t('Failed'));
           errSpan.textContent = errText.length > 80 ? errText.slice(0, 80) + '...' : errText;
           errSpan.title = errText;
           errSpan.style.cssText = 'flex:1;line-height:1.4;';
@@ -1064,14 +1064,14 @@ async function showModelSelector() {
           if (result.error === 'Timeout') row._probeTimeout = Math.min(row._probeTimeout * 2, 120000);
           const retryBtn = document.createElement('button');
           retryBtn.className = 'compare-probe-action-btn';
-          const retryLabel = result.error === 'Timeout' ? `Retry ${Math.round(row._probeTimeout / 1000)}s` : 'Retry';
+          const retryLabel = result.error === 'Timeout' ? window.t('Retry {s}s').replace('{s}', Math.round(row._probeTimeout / 1000)) : window.t('Retry');
           retryBtn.textContent = retryLabel;
           retryBtn.addEventListener('click', async (e) => {
             e.stopPropagation();
             detail.remove();
             if (isBlind) {
               const nameEl = row.querySelector('.compare-probe-name');
-              if (nameEl) nameEl.textContent = `Model ${_slotChar(idx)}`;
+              if (nameEl) nameEl.textContent = window.t('Model {slot}').replace('{slot}', _slotChar(idx));
             }
             const waveFrames2 = WAVE_FRAMES;
             let w2 = 0;
@@ -1084,7 +1084,7 @@ async function showModelSelector() {
           });
           const swapBtn = document.createElement('button');
           swapBtn.className = 'compare-probe-action-btn';
-          swapBtn.textContent = 'Swap';
+          swapBtn.textContent = window.t('Swap');
           swapBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             _clearProbeWaves();

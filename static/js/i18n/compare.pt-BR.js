@@ -160,4 +160,11 @@ registerMessages('pt-BR', {
   'Timeout:': 'Tempo limite:',
   'seconds': 'segundos',
   'Start': 'Iniciar',
+  'Checking models...': 'Verificando modelos...',
+  'Model {slot}': 'Modelo {slot}',
+  'Skipped': 'Ignorado',
+  'Retry {s}s': 'Repetir {s}s',
+  'Swap': 'Trocar',
+  'No model': 'Nenhum modelo',
+  'No response': 'Sem resposta',
 });
