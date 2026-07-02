@@ -396,6 +396,9 @@ Odysseus serves plain HTTP on its app port. Docker Compose binds Odysseus and th
 4. Keep raw service and model ports internal-only.
 
 Cloudflare Access, Tailscale, Caddy, nginx, and Traefik can all fit this pattern; none are required by Odysseus. If your access layer reaches Odysseus on the same host, proxy to `http://127.0.0.1:7000` and keep `AUTH_ENABLED=true`, `LOCALHOST_BYPASS=false`, and `SECURE_COOKIES=true`.
+
+If you put Odysseus behind Cloudflare, disable **Rocket Loader** for the Odysseus hostname. Rocket Loader can re-inject the login page scripts without Odysseus's per-request CSP nonce; then the login form's JavaScript submit handler is blocked and the browser falls back to a native `GET /login?username=...&password=...` submit. If that happens, turn Rocket Loader off, purge Cloudflare's cache, and rotate any password that may have appeared in proxy or CDN access logs.
+
 `ALLOWED_ORIGINS` lists exact permitted origins for cross-origin browser/API clients; ordinary same-origin reverse-proxy access usually does not need a special CORS entry.
 
 Common internal-only ports from the default docs/compose setup:
