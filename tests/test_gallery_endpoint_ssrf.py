@@ -15,7 +15,7 @@ metadata range.
 import ast
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parent.parent / "routes" / "gallery_routes.py"
+SRC = Path(__file__).resolve().parent.parent / "routes" / "gallery" / "gallery_routes.py"
 
 
 def _function_source(src_text: str, func_name: str) -> str:

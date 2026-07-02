@@ -8,9 +8,11 @@ import { clearDockSide } from './modalSnap.js';
 import { sortModelIds } from './modelSort.js';
 import { providerLogo } from './providers.js';
 import { isAltGrEvent } from './platform.js';
+import { bindMenuDismiss } from './escMenuStack.js';
 
 let initialized = false;
 let modalEl = null;
+let _authPolicy = { password_min_length: 8 };
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
@@ -1720,24 +1722,6 @@ async function initAgentSettings() {
     (curR != null ? ' · ' + curR + ' steps/message' : '') +
     (supInput && supInput.checked ? ' · supervisor on' : '');
 
-  // Standalone Email Safety toggle (separate card on the AI Defaults tab).
-  // Default to ON if the setting isn't present so a fresh install is safe.
-  var emailConfirm = el('set-agentEmailConfirm');
-  if (emailConfirm) {
-    try {
-      var s = await fetch('/api/auth/settings', { credentials: 'same-origin' }).then(r => r.json());
-      emailConfirm.checked = s.agent_email_confirm !== false;
-    } catch (_) {}
-    emailConfirm.addEventListener('change', async () => {
-      try {
-        await fetch('/api/auth/settings', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ agent_email_confirm: !!emailConfirm.checked }),
-        });
-      } catch (_) {}
-    });
-  }
 }
 
 /* ═══════════════════════════════════════════
@@ -2160,6 +2144,16 @@ function initAccount() {
       }
     }).catch(() => {});
 
+  // Update password placeholder and policy from server
+  fetch('/api/auth/policy', { credentials: 'same-origin' })
+    .then(r => r.ok ? r.json() : null)
+    .then(policy => {
+      if (!policy) return;
+      _authPolicy = policy;
+      const pwNew = el('settings-pw-new');
+      if (pwNew) pwNew.placeholder = `New password (min ${policy.password_min_length})`;
+    }).catch(() => {});
+
   // Change password
   const saveBtn = el('settings-pw-save');
   const msgEl = el('settings-pw-msg');
@@ -2170,7 +2164,7 @@ function initAccount() {
       const conf = el('settings-pw-confirm').value;
       msgEl.style.color = '';
       if (!cur || !nw) { msgEl.textContent = 'Fill in all fields'; msgEl.style.color = 'var(--red)'; return; }
-      if (nw.length < 8) { msgEl.textContent = 'Min 8 characters'; msgEl.style.color = 'var(--red)'; return; }
+      if (nw.length < _authPolicy.password_min_length) { msgEl.textContent = `Min ${_authPolicy.password_min_length} characters`; msgEl.style.color = 'var(--red)'; return; }
       if (nw !== conf) { msgEl.textContent = 'Passwords don\'t match'; msgEl.style.color = 'var(--red)'; return; }
       saveBtn.disabled = true;
       try {
@@ -3124,6 +3118,8 @@ async function initEmailSettings() {
     if (el('set-email-smtp-user')) el('set-email-smtp-user').value = cfg.smtp_user || '';
     if (el('set-email-smtp-pass')) el('set-email-smtp-pass').value = '';
     if (el('set-email-from')) el('set-email-from').value = cfg.from_address || '';
+    if (el('set-email-auto-translate')) el('set-email-auto-translate').checked = !!cfg.email_auto_translate;
+    if (el('set-email-translate-language')) el('set-email-translate-language').value = cfg.email_translate_language || 'English';
   } catch (_) {}
 
   // Load contacts config
@@ -3154,6 +3150,8 @@ async function initEmailSettings() {
       smtp_port: parseInt(el('set-email-smtp-port').value) || 0,
       smtp_user: el('set-email-smtp-user').value,
       email_from: el('set-email-from').value,
+      email_auto_translate: !!el('set-email-auto-translate')?.checked,
+      email_translate_language: (el('set-email-translate-language')?.value || 'English').trim() || 'English',
     };
     const imapPass = el('set-email-imap-pass').value;
     const smtpPass = el('set-email-smtp-pass').value;
@@ -3167,7 +3165,10 @@ async function initEmailSettings() {
       });
       const result = await res.json();
       if (msg) msg.textContent = result.success ? '✓ Saved' : (result.error || 'Failed');
+      const translateMsg = el('set-email-translate-msg');
+      if (translateMsg) translateMsg.textContent = result.success ? '✓ Saved' : (result.error || 'Failed');
       setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
+      setTimeout(() => { const translateMsg = el('set-email-translate-msg'); if (translateMsg) translateMsg.textContent = ''; }, 3000);
     } catch (e) {
       if (msg) msg.textContent = 'Failed';
     }
@@ -3827,7 +3828,10 @@ async function initUnifiedIntegrations() {
         if (lbl) lbl.textContent = text;
         if (ico) ico.innerHTML = _apiIconFor(k);
       };
-      const _close = () => { menu.style.display = 'none'; };
+      // Menu is reused (hidden, not recreated). close() hides it and tears down
+      // its outside-click listener + Escape-stack entry; bindMenuDismiss is
+      // re-registered fresh on each open (see _open).
+      let _close = () => { menu.style.display = 'none'; };
       const _open = () => {
         menu.style.display = 'block';
         const tRect = trig.getBoundingClientRect();
@@ -3836,8 +3840,7 @@ async function initUnifiedIntegrations() {
         const above = tRect.top;
         if (mRect.height > below && above > below) { menu.style.top = 'auto'; menu.style.bottom = 'calc(100% + 2px)'; }
         else { menu.style.top = 'calc(100% + 2px)'; menu.style.bottom = 'auto'; }
-        const onDoc = (ev) => { if (!menu.contains(ev.target) && ev.target !== trig) { _close(); document.removeEventListener('click', onDoc, true); } };
-        setTimeout(() => document.addEventListener('click', onDoc, true), 0);
+        _close = bindMenuDismiss(menu, () => { menu.style.display = 'none'; }, (ev) => !menu.contains(ev.target) && ev.target !== trig);
       };
       trig.addEventListener('click', (e) => { e.stopPropagation(); menu.style.display === 'block' ? _close() : _open(); });
       menu.querySelectorAll('.ufapi-option').forEach(btn => {
@@ -4573,7 +4576,10 @@ async function initUnifiedIntegrations() {
         if (labelEl) labelEl.textContent = lbl;
         if (iconEl) iconEl.innerHTML = PROV_LOGO[k] || _customLogo;
       };
-      const _closeMenu = () => { menu.style.display = 'none'; };
+      // Menu is reused (hidden, not recreated). _closeMenu hides it and tears
+      // down its outside-click listener + Escape-stack entry; bindMenuDismiss is
+      // re-registered fresh on each open (see _openMenu).
+      let _closeMenu = () => { menu.style.display = 'none'; };
       const _openMenu = () => {
         menu.style.display = 'block';
         // Drop-up when there's not enough room below the trigger.
@@ -4586,8 +4592,7 @@ async function initUnifiedIntegrations() {
         } else {
           menu.style.top = 'calc(100% + 2px)'; menu.style.bottom = 'auto';
         }
-        const onDoc = (ev) => { if (!menu.contains(ev.target) && ev.target !== trigger) { _closeMenu(); document.removeEventListener('click', onDoc, true); } };
-        setTimeout(() => document.addEventListener('click', onDoc, true), 0);
+        _closeMenu = bindMenuDismiss(menu, () => { menu.style.display = 'none'; }, (ev) => !menu.contains(ev.target) && ev.target !== trigger);
       };
       trigger.addEventListener('click', (e) => { e.stopPropagation(); menu.style.display === 'block' ? _closeMenu() : _openMenu(); });
       menu.querySelectorAll('.ufp-option').forEach(btn => {
@@ -5639,8 +5644,11 @@ async function initUnifiedIntegrations() {
       addBtn.parentElement.style.position = 'relative';
       addBtn.parentElement.classList.add('uf-add-anchor');
     }
+    // Menu is created per open and removed on close. _closeMenu routes through
+    // the bindMenuDismiss close() bound when the menu opens, so the outside-click
+    // listener + Escape-stack entry are torn down alongside the node removal.
     let _menuEl = null;
-    const _closeMenu = () => { if (_menuEl) { _menuEl.remove(); _menuEl = null; } };
+    let _closeMenu = () => {};
     addBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       if (_menuEl) { _closeMenu(); return; }
@@ -5672,8 +5680,7 @@ async function initUnifiedIntegrations() {
           showForm(k, 'new');
         });
       });
-      const onDoc = (ev) => { if (!menu.contains(ev.target) && ev.target !== addBtn) { _closeMenu(); document.removeEventListener('click', onDoc, true); } };
-      setTimeout(() => document.addEventListener('click', onDoc, true), 0);
+      _closeMenu = bindMenuDismiss(menu, () => { menu.remove(); _menuEl = null; }, (ev) => !menu.contains(ev.target) && ev.target !== addBtn);
     });
   }
 

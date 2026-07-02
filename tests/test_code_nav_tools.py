@@ -24,6 +24,9 @@ def repo():
         os.mkdir(os.path.join(root, "sub"))
         with open(os.path.join(root, "sub", "b.txt"), "w") as f:
             f.write("nothing\nNEEDLE upper\n")
+        os.mkdir(os.path.join(root, "sub", "deep"))
+        with open(os.path.join(root, "sub", "deep", "c.py"), "w") as f:
+            f.write("# deep python\n")
         os.mkdir(os.path.join(root, "node_modules"))
         with open(os.path.join(root, "node_modules", "dep.py"), "w") as f:
             f.write("needle in dep\n")
@@ -105,6 +108,37 @@ def test_glob_recursive_skips_junk(repo):
 def test_glob_requires_pattern(repo):
     r = _run("glob", "{}")
     assert r["exit_code"] == 1
+
+
+def test_glob_literal_in_subdir(repo):
+    """Bare literal should match at any depth (like rglob), not only at root."""
+    r = _run("glob", f'{{"pattern": "b.txt", "path": "{repo}"}}')
+    assert r["exit_code"] == 0
+    assert "b.txt" in r["output"]
+
+
+def test_glob_multi_segment_single_star(repo):
+    """sub/*.txt matches sub/b.txt but NOT sub/deep/c.py (single * stays in one segment)."""
+    r = _run("glob", f'{{"pattern": "sub/*.txt", "path": "{repo}"}}')
+    assert r["exit_code"] == 0
+    assert "b.txt" in r["output"]
+    assert "c.py" not in r["output"]
+
+
+def test_glob_star_does_not_cross_slash(repo):
+    """src/*.py must NOT match src/a/b/x.py — * is single-segment only."""
+    r = _run("glob", f'{{"pattern": "sub/*.py", "path": "{repo}"}}')
+    assert r["exit_code"] == 0
+    # sub/ has no .py directly, only sub/deep/c.py — should NOT match
+    assert "No files matching" in r["output"]
+
+
+def test_glob_double_star_matches_deep(repo):
+    """**/*.py should match files at any depth."""
+    r = _run("glob", f'{{"pattern": "**/*.py", "path": "{repo}"}}')
+    assert r["exit_code"] == 0
+    assert "a.py" in r["output"]
+    assert "c.py" in r["output"]
 
 
 # ── ls ────────────────────────────────────────────────────────────────────

@@ -18,6 +18,13 @@ DEFAULT_BUDGET = 6000
 DEFAULT_HEADROOM = 0.85
 
 
+def _int_or_zero(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def compute_input_token_budget(
     configured: int,
     context_length: int,
@@ -48,8 +55,8 @@ def compute_input_token_budget(
         - When the window is unknown (context_length <= 0), use the conservative
           ``default`` budget and do NOT scale off the fallback.
     """
-    configured = int(configured or 0)
-    context_length = int(context_length or 0)
+    configured = _int_or_zero(configured)
+    context_length = _int_or_zero(context_length)
 
     if explicit and configured > 0:
         return min(configured, context_length) if context_length > 0 else configured

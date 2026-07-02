@@ -18,6 +18,7 @@ from pathlib import Path
 from datetime import datetime
 from urllib.parse import urljoin, urlparse, urlunparse
 
+from core.log_safety import redact_url
 from fastapi import APIRouter, Query, Depends, Response, HTTPException
 from typing import List, Dict, Optional
 
@@ -149,6 +150,14 @@ def _vunesc(value: str) -> str:
 
 def _parse_vcards(text: str) -> List[Dict]:
     """Parse a stream of vCards into dicts with name, email, phone."""
+    # Unfold RFC 6350 3.2 line folding first: a CRLF/LF followed by a single
+    # space or tab is a continuation of the previous logical line. Real
+    # CardDAV servers (Radicale, iCloud, Apple/Google) fold long EMAIL / FN /
+    # PHOTO lines, and splitting on raw newlines without unfolding dropped the
+    # continuation (e.g. "...@example\n .com" lost the ".com"), truncating the
+    # email/name.
+    text = re.sub(r"\r\n[ \t]", "", text or "")
+    text = re.sub(r"\n[ \t]", "", text)
     contacts = []
     for block in re.split(r"BEGIN:VCARD", text):
         if not block.strip():
@@ -689,15 +698,24 @@ def _delete_contact(uid: str) -> bool:
         url = _resolve_resource_url(uid)
         auth = (cfg["username"], cfg["password"]) if cfg["username"] else None
         r = httpx.delete(url, auth=auth, timeout=10)
-        if r.status_code in (200, 204):
+        if r.status_code in (200, 204, 404):
+            # Invalidate cache so the next fetch sees the server truth.
             _contact_cache["fetched_at"] = None
-            return True
-        if r.status_code == 404:
-            # Resource not found at the resolved URL. With href resolution
-            # this should be rare (genuinely already deleted). Invalidate
-            # the cache and report success so the UI doesn't keep a ghost.
-            logger.info(f"CardDAV DELETE 404 for {uid} — treating as already gone")
-            _contact_cache["fetched_at"] = None
+            # Verify: force a fresh fetch and check the UID is actually gone.
+            # A 404 on the guessed URL ({uid}.vcf) can mean the contact
+            # lives at a different resource URL — the DELETE missed it but
+            # we'd silently report success. This check catches that.
+            fresh = _fetch_contacts(force=True)
+            still_there = any(c.get("uid") == uid for c in fresh)
+            if still_there:
+                logger.warning(
+                    f"CardDAV DELETE reported success for {uid} "
+                    f"but UID still present after re-fetch — "
+                    f"resource URL may differ from {redact_url(url)}"
+                )
+                return False
+            if r.status_code == 404:
+                logger.info(f"CardDAV DELETE 404 for {uid} — already gone")
             return True
         logger.warning(f"CardDAV DELETE returned {r.status_code}: {r.text[:200]}")
         return False

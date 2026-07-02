@@ -6,6 +6,7 @@ Imports MemoryManager and MemoryVectorStore from the Odysseus codebase.
 """
 
 import asyncio
+import os
 import sys
 import time
 from pathlib import Path
@@ -22,6 +23,55 @@ server = Server("memory")
 _memory_manager = None
 _memory_vector = None
 _initialized = False
+
+_OWNER_ENV_KEYS = ("ODYSSEUS_MCP_MEMORY_OWNER", "ODYSSEUS_MEMORY_OWNER")
+_OWNER_SCOPE_ERROR = (
+    "Error: Memory MCP owner is not configured for an owner-scoped memory store. "
+    "Set ODYSSEUS_MCP_MEMORY_OWNER for this server or use the owner-aware native memory tool."
+)
+
+
+def _configured_owner() -> str | None:
+    for key in _OWNER_ENV_KEYS:
+        owner = os.environ.get(key, "").strip()
+        if owner:
+            return owner
+    return None
+
+
+def _entry_owner(entry: dict) -> str | None:
+    owner = entry.get("owner")
+    if owner is None:
+        return None
+    owner_text = str(owner).strip()
+    return owner_text or None
+
+
+def _owner_scoped_store(entries: list[dict]) -> bool:
+    return any(_entry_owner(entry) for entry in entries if isinstance(entry, dict))
+
+
+def _scope_entries() -> tuple[str | None, list[dict], list[dict], str | None]:
+    """Return configured owner, all entries, visible entries, and optional error."""
+    entries = _memory_manager.load_all()
+    owner = _configured_owner()
+    if owner is None and _owner_scoped_store(entries):
+        return None, entries, [], _OWNER_SCOPE_ERROR
+    if owner is None:
+        visible = [
+            entry for entry in entries
+            if isinstance(entry, dict) and _entry_owner(entry) is None
+        ]
+    else:
+        visible = [
+            entry for entry in entries
+            if isinstance(entry, dict) and _entry_owner(entry) == owner
+        ]
+    return owner, entries, visible, None
+
+
+def _text_result(text: str) -> list[TextContent]:
+    return [TextContent(type="text", text=text)]
 
 
 def _ensure_init():
@@ -75,24 +125,26 @@ async def list_tools() -> list[Tool]:
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     if name != "manage_memory":
-        return [TextContent(type="text", text=f"Unknown tool: {name}")]
+        return _text_result(f"Unknown tool: {name}")
 
     _ensure_init()
     if not _memory_manager:
-        return [TextContent(type="text", text="Error: Memory manager not available")]
+        return _text_result("Error: Memory manager not available")
 
     action = arguments.get("action", "")
 
     if action == "list":
         category_filter = arguments.get("category", "")
-        memories = _memory_manager.load()
+        _owner, _all_memories, memories, scope_error = _scope_entries()
+        if scope_error:
+            return _text_result(scope_error)
         if category_filter:
             memories = [m for m in memories if m.get("category", "").lower() == category_filter.lower()]
         if not memories:
             msg = "No memories found"
             if category_filter:
                 msg += f" in category '{category_filter}'"
-            return [TextContent(type="text", text=msg + ".")]
+            return _text_result(msg + ".")
 
         lines = [f"Found {len(memories)} memory entries:\n"]
         for m in memories:
@@ -102,15 +154,17 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             if len(text) > 150:
                 text = text[:150] + "..."
             lines.append(f"- [{cat}] `{mid}` — {text}")
-        return [TextContent(type="text", text="\n".join(lines))]
+        return _text_result("\n".join(lines))
 
     elif action == "add":
         text = arguments.get("text", "")
         category = arguments.get("category", "fact")
         if not text:
-            return [TextContent(type="text", text="Error: Memory text cannot be empty")]
-        entry = _memory_manager.add_entry(text, source="ai_agent", category=category)
-        memories = _memory_manager.load_all()
+            return _text_result("Error: Memory text cannot be empty")
+        owner, memories, _visible, scope_error = _scope_entries()
+        if scope_error:
+            return _text_result(scope_error)
+        entry = _memory_manager.add_entry(text, source="ai_agent", category=category, owner=owner)
         memories.append(entry)
         _memory_manager.save(memories)
         if _memory_vector and _memory_vector.healthy:
@@ -118,25 +172,28 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 _memory_vector.add(entry["id"], text)
             except Exception:
                 pass
-        return [TextContent(type="text", text=f"Memory added: [{category}] {text} (id: {entry['id'][:8]})")]
+        return _text_result(f"Memory added: [{category}] {text} (id: {entry['id'][:8]})")
 
     elif action == "edit":
         memory_id = arguments.get("memory_id", "")
         new_text = arguments.get("text", "")
         if not memory_id or not new_text:
-            return [TextContent(type="text", text="Error: edit needs memory_id and text")]
-        memories = _memory_manager.load_all()
-        found = False
+            return _text_result("Error: edit needs memory_id and text")
+        _owner, memories, visible, scope_error = _scope_entries()
+        if scope_error:
+            return _text_result(scope_error)
         full_id = None
-        for m in memories:
+        for m in visible:
             if m.get("id", "").startswith(memory_id):
-                m["text"] = new_text
-                m["timestamp"] = int(time.time())
-                found = True
                 full_id = m["id"]
                 break
-        if not found:
-            return [TextContent(type="text", text=f"Error: Memory '{memory_id}' not found")]
+        if not full_id:
+            return _text_result(f"Error: Memory '{memory_id}' not found")
+        for m in memories:
+            if m.get("id") == full_id:
+                m["text"] = new_text
+                m["timestamp"] = int(time.time())
+                break
         _memory_manager.save(memories)
         if _memory_vector and _memory_vector.healthy and full_id:
             try:
@@ -144,24 +201,26 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 _memory_vector.add(full_id, new_text)
             except Exception:
                 pass
-        return [TextContent(type="text", text=f"Memory updated: {new_text}")]
+        return _text_result(f"Memory updated: {new_text}")
 
     elif action == "delete":
         memory_id = arguments.get("memory_id", "")
         if not memory_id:
-            return [TextContent(type="text", text="Error: delete needs memory_id")]
-        memories = _memory_manager.load_all()
+            return _text_result("Error: delete needs memory_id")
+        _owner, memories, visible, scope_error = _scope_entries()
+        if scope_error:
+            return _text_result(scope_error)
         full_id = None
         deleted_text = ""
         deleted_category = ""
-        for m in memories:
+        for m in visible:
             if m.get("id", "").startswith(memory_id):
                 full_id = m["id"]
                 deleted_text = m.get("text", "")
                 deleted_category = m.get("category", "")
                 break
         if not full_id:
-            return [TextContent(type="text", text=f"Error: Memory '{memory_id}' not found")]
+            return _text_result(f"Error: Memory '{memory_id}' not found")
         memories = [m for m in memories if m.get("id") != full_id]
         _memory_manager.save(memories)
         if _memory_vector and _memory_vector.healthy and full_id:
@@ -171,30 +230,32 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 pass
         cat = f"[{deleted_category}] " if deleted_category else ""
         snippet = deleted_text if len(deleted_text) <= 120 else deleted_text[:117] + "..."
-        return [TextContent(type="text", text=f"Memory deleted: {cat}{snippet} (id: {memory_id})")]
+        return _text_result(f"Memory deleted: {cat}{snippet} (id: {memory_id})")
 
     elif action == "search":
         query = arguments.get("text", "")
         if not query:
-            return [TextContent(type="text", text="Error: search needs text (query)")]
-        memories = _memory_manager.load()
+            return _text_result("Error: search needs text (query)")
+        _owner, _all_memories, memories, scope_error = _scope_entries()
+        if scope_error:
+            return _text_result(scope_error)
         if hasattr(_memory_manager, 'get_relevant_memories'):
             results = _memory_manager.get_relevant_memories(query, memories, threshold=0.05, max_items=20)
         else:
             query_lower = query.lower()
             results = [m for m in memories if query_lower in m.get("text", "").lower()][:20]
         if not results:
-            return [TextContent(type="text", text=f"No memories found matching '{query}'.")]
+            return _text_result(f"No memories found matching '{query}'.")
         lines = [f"Found {len(results)} matching memories:\n"]
         for m in results:
             cat = m.get("category", "fact")
             mid = m.get("id", "?")[:8]
             text = m.get("text", "")
             lines.append(f"- [{cat}] `{mid}` — {text}")
-        return [TextContent(type="text", text="\n".join(lines))]
+        return _text_result("\n".join(lines))
 
     else:
-        return [TextContent(type="text", text=f"Error: Unknown action '{action}'. Use: list, add, edit, delete, search")]
+        return _text_result(f"Error: Unknown action '{action}'. Use: list, add, edit, delete, search")
 
 
 async def run():

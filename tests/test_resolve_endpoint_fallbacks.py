@@ -147,6 +147,26 @@ def test_returns_explicit_fallback_when_no_endpoint_id_configured(monkeypatch):
     ) == fallback
 
 
+def test_task_session_fallback_wins_before_default_when_task_and_utility_unset(monkeypatch):
+    settings = {
+        "task_endpoint_id": "",
+        "task_model": "",
+        "utility_endpoint_id": "",
+        "utility_model": "",
+        "default_endpoint_id": "default",
+        "default_model": "default-chat",
+    }
+    fallback = ("https://session.example/chat", "session-chat", {"X-Test": "session"})
+    _install_resolver_fakes(monkeypatch, settings, [_endpoint("default", "default-chat")])
+
+    assert resolve_endpoint(
+        "task",
+        fallback_url=fallback[0],
+        fallback_model=fallback[1],
+        fallback_headers=fallback[2],
+    ) == fallback
+
+
 def test_hidden_configured_model_selects_first_enabled_chat_model(monkeypatch):
     settings = {
         "default_endpoint_id": "default",
