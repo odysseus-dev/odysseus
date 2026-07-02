@@ -75,7 +75,7 @@ async function showModelSelector() {
     header.className = 'modal-header';
 
     const title = document.createElement('h4');
-    title.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg>Model Comparison';
+    title.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg>' + window.t('Model Comparison');
     // Absorb the free space so the injected minimize (_) and close (✕) cluster
     // together on the right instead of being spread apart by space-between.
     title.style.marginRight = 'auto';
@@ -91,7 +91,7 @@ async function showModelSelector() {
     const headerMinBtn = document.createElement('button');
     headerMinBtn.type = 'button';
     headerMinBtn.className = 'modal-minimize-btn minimize-btn';
-    headerMinBtn.title = 'Minimize';
+    headerMinBtn.title = window.t('Minimize');
     headerMinBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="18" x2="19" y2="18"/></svg>';
     headerMinBtn.style.margin = '0';
 
@@ -116,12 +116,12 @@ async function showModelSelector() {
     const blindBtn = document.createElement('button');
     blindBtn.type = 'button';
     blindBtn.className = 'compare-blind-toggle active';
-    blindBtn.title = 'Blind Mode — hide model names until you vote';
-    blindBtn.innerHTML = EYE_CLOSED + _toggleLabel('Blind');
+    blindBtn.title = window.t('Blind Mode — hide model names until you vote');
+    blindBtn.innerHTML = EYE_CLOSED + _toggleLabel(window.t('Blind'));
     blindBtn.addEventListener('click', () => {
       state._blindMode = !state._blindMode;
       blindBtn.classList.toggle('active', state._blindMode);
-      blindBtn.innerHTML = (state._blindMode ? EYE_CLOSED : EYE_OPEN) + _toggleLabel('Blind');
+      blindBtn.innerHTML = (state._blindMode ? EYE_CLOSED : EYE_OPEN) + _toggleLabel(window.t('Blind'));
       // Turning off blind mode reveals shuffled models
       if (!state._blindMode && _shuffled) {
         _shuffled = false;
@@ -129,11 +129,11 @@ async function showModelSelector() {
       }
       renderModelRows();
       // Mobile hides the button labels — surface the new state as a toast.
-      uiModule.showToast('Mode: Blind ' + (state._blindMode ? 'on' : 'off'));
+      uiModule.showToast(window.t('Mode: Blind {state}').replace('{state}', state._blindMode ? window.t('on') : window.t('off')));
       _updateModeLabel();
       _setModeHint(state._blindMode
-        ? '<span style="color:var(--color-blind-orange)">Blind mode</span>: model names stay hidden until you vote.'
-        : '<span style="color:var(--color-blind-orange)">Blind mode off</span>: model names are shown.');
+        ? '<span style="color:var(--color-blind-orange)">' + window.t('Blind mode') + '</span>: ' + window.t('model names stay hidden until you vote.')
+        : '<span style="color:var(--color-blind-orange)">' + window.t('Blind mode off') + '</span>: ' + window.t('model names are shown.'));
     });
     toggleRow.appendChild(blindBtn);
 
@@ -142,19 +142,19 @@ async function showModelSelector() {
     const parallelBtn = document.createElement('button');
     parallelBtn.type = 'button';
     parallelBtn.className = 'compare-parallel-toggle active';
-    parallelBtn.title = 'Parallel — run all models at once vs one at a time';
-    parallelBtn.innerHTML = ICON_PARALLEL + _toggleLabel('Parallel');
+    parallelBtn.title = window.t('Parallel — run all models at once vs one at a time');
+    parallelBtn.innerHTML = ICON_PARALLEL + _toggleLabel(window.t('Parallel'));
     parallelBtn.addEventListener('click', () => {
       state._parallel = !state._parallel;
       parallelBtn.classList.toggle('active', state._parallel);
-      parallelBtn.innerHTML = (state._parallel ? ICON_PARALLEL : ICON_SEQUENTIAL) + _toggleLabel(state._parallel ? 'Parallel' : 'Sequential');
-      parallelBtn.title = state._parallel ? 'Switch to one at a time' : 'Run side by side';
+      parallelBtn.innerHTML = (state._parallel ? ICON_PARALLEL : ICON_SEQUENTIAL) + _toggleLabel(state._parallel ? window.t('Parallel') : window.t('Sequential'));
+      parallelBtn.title = state._parallel ? window.t('Switch to one at a time') : window.t('Run side by side');
       renderModelRows();
-      uiModule.showToast('Mode: ' + (state._parallel ? 'Parallel' : 'Sequential'));
+      uiModule.showToast(window.t('Mode: {mode}').replace('{mode}', state._parallel ? window.t('Parallel') : window.t('Sequential')));
       _updateModeLabel();
       _setModeHint(state._parallel
-        ? '<span style="color:#5b8def">Parallel</span>: all models answer at once, side by side.'
-        : '<span style="color:#e0a050">Sequential</span>: models answer one at a time.');
+        ? '<span style="color:#5b8def">' + window.t('Parallel') + '</span>: ' + window.t('all models answer at once, side by side.')
+        : '<span style="color:#e0a050">' + window.t('Sequential') + '</span>: ' + window.t('models answer one at a time.'));
     });
     toggleRow.appendChild(parallelBtn);
 
@@ -162,8 +162,8 @@ async function showModelSelector() {
     const diceBtn = document.createElement('button');
     diceBtn.type = 'button';
     diceBtn.className = 'compare-dice-toggle';
-    diceBtn.title = 'Shuffle — randomly pick models for each slot';
-    diceBtn.innerHTML = ICON_DICE + _toggleLabel('Shuffle');
+    diceBtn.title = window.t('Shuffle — randomly pick models for each slot');
+    diceBtn.innerHTML = ICON_DICE + _toggleLabel(window.t('Shuffle'));
     diceBtn.addEventListener('click', () => {
       if (!_modelsLoaded) return;
       // Toggle off if already shuffled
@@ -171,9 +171,9 @@ async function showModelSelector() {
         _shuffled = false;
         diceBtn.classList.remove('active');
         renderModelRows();
-        uiModule.showToast('Mode: Shuffle off');
+        uiModule.showToast(window.t('Mode: Shuffle off'));
         _updateModeLabel();
-        _setModeHint('<span style="color:var(--red)">Shuffle off</span>: choose the models yourself.');
+        _setModeHint('<span style="color:var(--red)">' + window.t('Shuffle off') + '</span>: ' + window.t('choose the models yourself.'));
         return;
       }
       // Randomly pick models from filtered list for each slot
@@ -193,12 +193,12 @@ async function showModelSelector() {
       if (!state._blindMode) {
         state._blindMode = true;
         blindBtn.classList.add('active');
-        blindBtn.innerHTML = EYE_CLOSED + _toggleLabel('Blind');
+        blindBtn.innerHTML = EYE_CLOSED + _toggleLabel(window.t('Blind'));
       }
       renderModelRows();
-      uiModule.showToast(state._blindMode ? 'Mode: Shuffle on · Blind on' : 'Mode: Shuffle on');
+      uiModule.showToast(state._blindMode ? window.t('Mode: Shuffle on · Blind on') : window.t('Mode: Shuffle on'));
       _updateModeLabel();
-      _setModeHint('<span style="color:var(--red)">Shuffle</span>: random models picked for each slot (auto-hidden).');
+      _setModeHint('<span style="color:var(--red)">' + window.t('Shuffle') + '</span>: ' + window.t('random models picked for each slot (auto-hidden).'));
       // Show active state + spin only the dice icon
       diceBtn.classList.add('active');
       const diceSvg = diceBtn.querySelector('svg');
@@ -220,16 +220,16 @@ async function showModelSelector() {
     const saveBtn = document.createElement('button');
     saveBtn.type = 'button';
     saveBtn.className = 'compare-save-toggle';
-    saveBtn.title = 'Save — keep sessions after closing compare';
-    saveBtn.innerHTML = SAVE_ICON + _toggleLabel('Save');
+    saveBtn.title = window.t('Save — keep sessions after closing compare');
+    saveBtn.innerHTML = SAVE_ICON + _toggleLabel(window.t('Save'));
     saveBtn.addEventListener('click', () => {
       state._saveOnClose = !state._saveOnClose;
       saveBtn.classList.toggle('active', state._saveOnClose);
-      uiModule.showToast('Mode: Save ' + (state._saveOnClose ? 'on' : 'off'));
+      uiModule.showToast(window.t('Mode: Save {state}').replace('{state}', state._saveOnClose ? window.t('on') : window.t('off')));
       _updateModeLabel();
       _setModeHint(state._saveOnClose
-        ? '<span style="color:var(--color-save-green)">Save</span>: keep these sessions after you close Compare.'
-        : '<span style="color:var(--color-save-green)">Save off</span>: sessions are discarded when you close Compare.');
+        ? '<span style="color:var(--color-save-green)">' + window.t('Save') + '</span>: ' + window.t('keep these sessions after you close Compare.')
+        : '<span style="color:var(--color-save-green)">' + window.t('Save off') + '</span>: ' + window.t('sessions are discarded when you close Compare.'));
     });
     toggleRow.appendChild(saveBtn);
 
@@ -237,12 +237,12 @@ async function showModelSelector() {
     const resetBtn = document.createElement('button');
     resetBtn.type = 'button';
     resetBtn.className = 'compare-reset-toggle';
-    resetBtn.title = 'Reset — restore all defaults';
-    resetBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>' + _toggleLabel('Reset');
+    resetBtn.title = window.t('Reset — restore all defaults');
+    resetBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>' + _toggleLabel(window.t('Reset'));
     resetBtn.addEventListener('click', () => {
       state._blindMode = true;
       blindBtn.classList.add('active');
-      blindBtn.innerHTML = EYE_CLOSED + _toggleLabel('Blind');
+      blindBtn.innerHTML = EYE_CLOSED + _toggleLabel(window.t('Blind'));
       _shuffled = false;
       diceBtn.classList.remove('active');
       state._continueChat = false;
@@ -250,7 +250,7 @@ async function showModelSelector() {
       saveBtn.classList.remove('active');
       state._parallel = true;
       parallelBtn.classList.add('active');
-      parallelBtn.innerHTML = ICON_PARALLEL + _toggleLabel('Parallel');
+      parallelBtn.innerHTML = ICON_PARALLEL + _toggleLabel(window.t('Parallel'));
       selections = [null, null];
       renderModelRows();
     });
