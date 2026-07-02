@@ -21,23 +21,39 @@ from src.constants import DEEP_RESEARCH_DIR
 _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]{1,128}$")
 
 
-def _confine_research_path(session_id: str) -> Path:
-    """Return the resolved Path for session_id's JSON inside DEEP_RESEARCH_DIR.
-
-    Validates the session ID format and asserts containment after symlink
-    expansion. Raises HTTPException(400) on format failures, traversal
-    attempts, absolute-path injection, and symlink escape so every caller
-    gets a safe, confined path with no extra validation needed.
-    """
+def _validate_session_id(session_id: str) -> str:
     if not _SESSION_ID_RE.fullmatch(session_id):
-        raise HTTPException(400, "Invalid session ID")
-    root = Path(DEEP_RESEARCH_DIR).resolve()
-    candidate = (root / f"{session_id}.json").resolve()
-    try:
-        candidate.relative_to(root)
-    except ValueError:
-        raise HTTPException(400, "Invalid session ID")
-    return candidate
+        raise HTTPException(400, "Invalid session ID format")
+    return session_id
+
+
+def _research_storage_root() -> Path:
+    return Path(DEEP_RESEARCH_DIR).resolve()
+
+
+def _find_research_path(session_id: str) -> Path | None:
+    """Find a persisted research file without deriving its path from input."""
+    expected_name = f"{_validate_session_id(session_id)}.json"
+    root = _research_storage_root()
+    for stored_path in root.glob("*.json"):
+        if stored_path.name != expected_name:
+            continue
+        resolved = stored_path.resolve()
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            return None
+        if not resolved.is_file():
+            return None
+        return resolved
+    return None
+
+
+def _require_research_path(session_id: str) -> Path:
+    path = _find_research_path(session_id)
+    if path is None:
+        raise HTTPException(404, "Research not found")
+    return path
 
 
 logger = logging.getLogger(__name__)
@@ -192,10 +208,6 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             raise HTTPException(401, "Not authenticated")
         return user
 
-    def _validate_session_id(session_id: str) -> None:
-        if not _SESSION_ID_RE.fullmatch(session_id):
-            raise HTTPException(400, "Invalid session ID format")
-
     def _owns_in_memory(session_id: str, user: str) -> bool:
         """Ownership check for an in-flight (in-memory) research task.
         Falls back to the on-disk JSON if the task has already finished."""
@@ -204,10 +216,10 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             return entry.get("owner", "") == user
         # Task no longer in memory — check the persisted JSON.
         try:
-            path = _confine_research_path(session_id)
+            path = _find_research_path(session_id)
         except HTTPException:
             return False
-        if not path.exists():
+        if path is None:
             return False
         try:
             return json.loads(path.read_text(encoding="utf-8")).get("owner") == user
@@ -270,9 +282,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     def _assert_owns_research(session_id: str, user: str) -> None:
         """404-not-403 ownership gate for a research session's on-disk JSON.
         Use BEFORE returning any data or mutating the file."""
-        path = _confine_research_path(session_id)
-        if not path.exists():
-            raise HTTPException(404, "Research not found")
+        path = _require_research_path(session_id)
         try:
             owner = json.loads(path.read_text(encoding="utf-8")).get("owner")
         except Exception:
@@ -384,9 +394,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         summary, stats — used by the Library preview panel."""
         user = _require_user(request)
         _validate_session_id(session_id)
-        path = _confine_research_path(session_id)
-        if not path.exists():
-            raise HTTPException(404, "Research not found")
+        path = _require_research_path(session_id)
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except Exception as e:
@@ -401,9 +409,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         """Soft-archive / restore a research report (sets `archived` in its JSON)."""
         user = _require_user(request)
         _validate_session_id(session_id)
-        path = _confine_research_path(session_id)
-        if not path.exists():
-            raise HTTPException(404, "Research not found")
+        path = _require_research_path(session_id)
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             if data.get("owner") != user:
@@ -421,9 +427,9 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         """Delete a research result from disk."""
         user = _require_user(request)
         _validate_session_id(session_id)
-        json_path = _confine_research_path(session_id)
+        json_path = _find_research_path(session_id)
         deleted = False
-        if json_path.exists():
+        if json_path is not None:
             # SECURITY: verify ownership before letting the caller delete it.
             try:
                 data = json.loads(json_path.read_text(encoding="utf-8"))
@@ -583,8 +589,8 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             raise HTTPException(404, "No research found for this session")
         result = research_handler.get_result(session_id)
         if result is None:
-            p = _confine_research_path(session_id)
-            if p.exists():
+            p = _find_research_path(session_id)
+            if p is not None:
                 d = json.loads(p.read_text(encoding="utf-8"))
                 return {
                     "result": d.get("result", ""),
@@ -623,8 +629,8 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         sources = research_handler.get_sources(session_id) or []
         query = ""
 
-        path = _confine_research_path(session_id)
-        if path.exists():
+        path = _find_research_path(session_id)
+        if path is not None:
             try:
                 disk = json.loads(path.read_text(encoding="utf-8"))
                 if not result:
