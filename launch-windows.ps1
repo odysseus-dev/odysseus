@@ -20,13 +20,18 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
+$MinimumPythonMajor = 3
+$MinimumPythonMinor = 11
+$BootstrapPythonWingetId = "Python.Python.3.12"
 
 function Write-Step($msg) { Write-Host ""; Write-Host ("==> " + $msg) -ForegroundColor Cyan }
 function Fail($msg) {
     Write-Host ""
     Write-Host ("ERROR: " + $msg) -ForegroundColor Red
     Write-Host ""
-    Read-Host "Press Enter to exit"
+    if ($env:ODYSSEUS_SKIP_RUN_HINT -ne "1") {
+        Read-Host "Press Enter to exit"
+    }
     exit 1
 }
 
@@ -108,42 +113,126 @@ function Get-PythonVersionText($launcher, $launcherArgs) {
     }
 }
 
-$pyExe = $null
-$pyArgs = @()
-$pyVersion = $null
-
-$pyLauncher = Get-Command py -ErrorAction SilentlyContinue
-if ($pyLauncher) {
-    foreach ($v in @("-3.13", "-3.12", "-3.11")) {
-        $ver = Get-PythonVersionText $pyLauncher.Source @($v)
-        if ($ver) {
-            $pyExe = $pyLauncher.Source
-            $pyArgs = @($v)
-            $pyVersion = $ver
-            break
-        }
+function Test-SupportedPythonVersion($versionText) {
+    if (-not $versionText) { return $false }
+    try {
+        $versionParts = $versionText.Split('.')
+        $major = [int]$versionParts[0]
+        $minor = [int]$versionParts[1]
+        return ($major -gt $MinimumPythonMajor -or ($major -eq $MinimumPythonMajor -and $minor -ge $MinimumPythonMinor))
+    } catch {
+        return $false
     }
 }
 
-if (-not $pyExe) {
-    $pythonCmd = Get-Command python -ErrorAction SilentlyContinue
-    if ($pythonCmd) {
-        $ver = Get-PythonVersionText $pythonCmd.Source @()
-        if ($ver) {
-            $versionParts = $ver.Split('.')
-            $major = [int]$versionParts[0]
-            $minor = [int]$versionParts[1]
-            if ($major -gt 3 -or ($major -eq 3 -and $minor -ge 11)) {
-                $pyExe = $pythonCmd.Source
-                $pyVersion = $ver
+function Test-PythonCandidate($launcher, $launcherArgs) {
+    if (-not $launcher) { return $null }
+    $ver = Get-PythonVersionText $launcher $launcherArgs
+    if (-not (Test-SupportedPythonVersion $ver)) { return $null }
+    return @{
+        Exe = $launcher
+        Args = @($launcherArgs)
+        Version = $ver
+    }
+}
+
+function Get-KnownPythonCandidates {
+    $candidates = @()
+    $roots = @()
+    foreach ($name in @("LOCALAPPDATA", "ProgramFiles", "ProgramW6432", "ProgramFiles(x86)")) {
+        $base = [Environment]::GetEnvironmentVariable($name)
+        if ($base) {
+            if ($name -eq "LOCALAPPDATA") {
+                $roots += (Join-Path $base "Programs\Python")
+            } else {
+                $roots += $base
             }
         }
     }
+    foreach ($root in ($roots | Select-Object -Unique)) {
+        foreach ($version in @("Python313", "Python312", "Python311")) {
+            $candidate = Join-Path $root (Join-Path $version "python.exe")
+            if (Test-Path $candidate) { $candidates += $candidate }
+        }
+    }
+    return $candidates
 }
 
-if (-not $pyExe) {
-    Fail "Couldn't find Python 3.11+ for Windows setup. Install Python 3.11+ (or open the Python launcher with 'py -3.11') from https://www.python.org/downloads/, then re-run this script."
+function Find-SupportedPython {
+    $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
+    if ($pyLauncher) {
+        foreach ($v in @("-3.13", "-3.12", "-3.11")) {
+            $candidate = Test-PythonCandidate $pyLauncher.Source @($v)
+            if ($candidate) { return $candidate }
+        }
+    }
+
+    foreach ($path in Get-KnownPythonCandidates) {
+        $candidate = Test-PythonCandidate $path @()
+        if ($candidate) { return $candidate }
+    }
+
+    foreach ($name in @("python", "python3")) {
+        $cmd = Get-Command $name -ErrorAction SilentlyContinue
+        if ($cmd) {
+            $candidate = Test-PythonCandidate $cmd.Source @()
+            if ($candidate) { return $candidate }
+        }
+    }
+    return $null
 }
+
+function Install-PythonWithWinget {
+    if ($env:ODYSSEUS_SKIP_PYTHON_BOOTSTRAP -eq "1") {
+        Write-Host "Python bootstrap skipped because ODYSSEUS_SKIP_PYTHON_BOOTSTRAP=1." -ForegroundColor Yellow
+        return $false
+    }
+    $winget = Get-Command winget -ErrorAction SilentlyContinue
+    if (-not $winget) {
+        Write-Host "winget was not found, so Python cannot be installed automatically." -ForegroundColor Yellow
+        return $false
+    }
+
+    Write-Step "Installing Python 3.12"
+    Write-Host "Python 3.11+ was not found. Installing Python 3.12 with winget..." -ForegroundColor Yellow
+    $commonArgs = @(
+        "install",
+        "--id", $BootstrapPythonWingetId,
+        "--exact",
+        "--source", "winget",
+        "--silent",
+        "--accept-package-agreements",
+        "--accept-source-agreements"
+    )
+    $attempts = @(
+        ,($commonArgs + @("--scope", "user", "--disable-interactivity"))
+        ,($commonArgs + @("--scope", "user"))
+        ,$commonArgs
+    )
+    foreach ($args in $attempts) {
+        & $winget.Source @args
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "Python installer completed. Re-checking Python..." -ForegroundColor Green
+            return $true
+        }
+        Write-Host ("winget attempt failed with exit code {0}; trying fallback options..." -f $LASTEXITCODE) -ForegroundColor Yellow
+    }
+    return $false
+}
+
+$pythonInfo = Find-SupportedPython
+if (-not $pythonInfo) {
+    if (Install-PythonWithWinget) {
+        $pythonInfo = Find-SupportedPython
+    }
+}
+
+if (-not $pythonInfo) {
+    Fail "Couldn't find or install Python 3.11+ for Windows setup. Install Python 3.11+ from https://www.python.org/downloads/ or install with 'winget install --id Python.Python.3.12 --exact --source winget', then re-run this script."
+}
+$pyExe = $pythonInfo.Exe
+$pyArgs = @($pythonInfo.Args)
+$pyVersion = $pythonInfo.Version
 $pythonLabel = ("Using Python {0}: {1} {2}" -f $pyVersion, $pyExe, ($pyArgs -join ' ')).TrimEnd()
 Write-Host $pythonLabel
 

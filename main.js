@@ -296,6 +296,9 @@ function updateStartupProgressFromOutput(message) {
   if (lower.includes('checking for python')) {
     transitionStartupStep('python', 'Checking for Python 3.11 or newer.');
   }
+  if (lower.includes('installing python 3.12') || lower.includes('python 3.11+ was not found. installing python')) {
+    transitionStartupStep('python', 'Installing Python 3.12 with winget.');
+  }
   if (lower.includes('using python')) {
     const pythonLine = text.split(/\r?\n/).find((line) => line.toLowerCase().includes('using python')) || text;
     finishStartupStep('python', pythonLine.trim());

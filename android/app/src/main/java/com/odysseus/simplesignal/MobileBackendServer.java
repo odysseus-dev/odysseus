@@ -9734,6 +9734,7 @@ public class MobileBackendServer {
         String apiKey = valueOr(form.get("api_key"), "");
         String name = valueOr(form.get("name"), hostLabel(baseUrl));
         String kind = valueOr(form.get("endpoint_kind"), baseUrl.startsWith("http://") ? "local" : "api");
+        String modelType = endpointModelType(form);
         JSONArray models = fetchModels(baseUrl, apiKey);
         JSONObject ep = new JSONObject()
                 .put("id", shortId())
@@ -9741,7 +9742,7 @@ public class MobileBackendServer {
                 .put("base_url", baseUrl)
                 .put("api_key", apiKey)
                 .put("endpoint_kind", kind)
-                .put("model_type", valueOr(form.get("model_type"), "llm"))
+                .put("model_type", modelType)
                 .put("is_enabled", true)
                 .put("models", models);
         JSONArray endpoints = loadArray(PREF_ENDPOINTS);
@@ -12755,7 +12756,7 @@ public class MobileBackendServer {
             for (int i = 0; i < data.length(); i++) {
                 JSONObject item = data.optJSONObject(i);
                 String id = item == null ? data.optString(i) : item.optString("id", item.optString("name"));
-                if (!id.isEmpty() && (isChatModel(id) || isImageEditModel(id) || isImageGenerationModel(id))) out.put(id);
+                if (!id.isEmpty()) out.put(id);
             }
         }
         JSONArray models = json.optJSONArray("models");
@@ -12763,15 +12764,15 @@ public class MobileBackendServer {
             for (int i = 0; i < models.length(); i++) {
                 JSONObject item = models.optJSONObject(i);
                 String id = item == null ? models.optString(i) : item.optString("name", item.optString("model"));
-                if (!id.isEmpty() && (isChatModel(id) || isImageEditModel(id) || isImageGenerationModel(id))) out.put(id);
+                if (!id.isEmpty()) out.put(id);
             }
         }
         return out;
     }
 
-    private boolean isChatModel(String id) {
-        String m = id.toLowerCase(Locale.US);
-        return !(m.contains("embed") || m.startsWith("tts-") || m.startsWith("whisper") || m.startsWith("dall-e"));
+    private String endpointModelType(Map<String, String> form) {
+        String type = valueOr(form.get("model_type"), "llm").trim();
+        return type.isEmpty() ? "llm" : type;
     }
 
     private void saveSessionHistory(String sid, JSONArray history) throws Exception {

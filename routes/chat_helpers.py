@@ -205,59 +205,79 @@ def needs_auto_name(name: str) -> bool:
     return False
 
 
+_TITLE_STARTER_RE = re.compile(
+    r"^(?:"
+    r"please\s+|"
+    r"(?:can|could|would)\s+you\s+|"
+    r"help\s+me\s+(?:to\s+)?|"
+    r"i\s+(?:need|want)\s+(?:you\s+)?(?:to\s+)?|"
+    r"tell\s+me\s+(?:about\s+)?"
+    r")",
+    re.IGNORECASE,
+)
+_TITLE_WORD_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_+#./'-]*")
+_TITLE_SMALL_WORDS = {"a", "an", "and", "as", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to", "with"}
+
+
+def _first_user_message_text(sess) -> str:
+    """Return the first user text from a session history."""
+    for msg in getattr(sess, "history", []) or []:
+        if getattr(msg, "role", None) != "user":
+            continue
+        content = getattr(msg, "content", "")
+        if isinstance(content, list):
+            content = next(
+                (
+                    i.get("text", "")
+                    for i in content
+                    if isinstance(i, dict) and i.get("type") == "text"
+                ),
+                "",
+            )
+        return str(content or "")
+    return ""
+
+
+def _title_case_word(word: str, index: int) -> str:
+    if not word:
+        return ""
+    if any(ch.isupper() for ch in word[1:]) or any(ch.isdigit() for ch in word):
+        return word
+    lower = word.lower()
+    if index > 0 and lower in _TITLE_SMALL_WORDS:
+        return lower
+    return lower[:1].upper() + lower[1:]
+
+
+def _derive_session_title_from_text(text: str, *, max_words: int = 6, max_chars: int = 70) -> str:
+    """Create a short local session title without spending an LLM request."""
+    text = str(text or "")
+    text = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+    text = re.sub(r"https?://\S+", " ", text)
+    text = re.sub(r"[\r\n\t]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip(" \t\r\n\"'`*_#>-:")
+    text = _TITLE_STARTER_RE.sub("", text).strip(" \t\r\n\"'`*_#>-:")
+
+    words = _TITLE_WORD_RE.findall(text)
+    if not words:
+        return ""
+
+    pieces = [_title_case_word(word.strip(".,;:!?()[]{}<>"), i) for i, word in enumerate(words[:max_words])]
+    title = " ".join(piece for piece in pieces if piece).strip()
+    if len(title) > max_chars:
+        title = title[:max_chars].rsplit(" ", 1)[0].strip() or title[:max_chars].strip()
+    return title
+
+
 async def auto_name_session(session_manager, sess):
     """Generate a short title for a session from its first user message."""
     try:
-        from src.llm_core import llm_call_async
-        from src.task_endpoint import resolve_task_endpoint
-
-        # Find first user message
-        first_msg = ""
-        for msg in sess.history:
-            if msg.role == "user":
-                content = msg.content
-                if isinstance(content, list):
-                    content = next(
-                        (i.get("text", "") for i in content if isinstance(i, dict) and i.get("type") == "text"),
-                        "",
-                    )
-                first_msg = str(content)[:500]
-                break
-
+        first_msg = _first_user_message_text(sess)
         if not first_msg:
             return
 
-        owner = getattr(sess, "owner", None)
-        t_url, t_model, t_headers = resolve_task_endpoint(
-            sess.endpoint_url, sess.model, sess.headers, owner=owner,
-        )
-        if not t_model:
-            logger.debug("[auto-name] No model provided, skipping")
-            return
-
-        # max_tokens big enough that reasoning models (Minimax M2,
-        # DeepSeek R1, QwQ, etc.) have headroom for <think>…</think>
-        # plus the actual title — 200 used to clip them mid-reasoning
-        # so strip_think left an empty string and no rename happened.
-        # Timeout matches: 60s gives slow local reasoners room to finish.
-        title = await llm_call_async(
-            t_url,
-            t_model,
-            [
-                {"role": "system", "content": "Generate a short title (3-6 words, no quotes) for a conversation that starts with this message. Reply with ONLY the title, nothing else. Do NOT include any thinking, reasoning, or explanation — just the title."},
-                {"role": "user", "content": first_msg},
-            ],
-            temperature=0.3,
-            max_tokens=4096,
-            headers=t_headers,
-            timeout=60,
-        )
-
-        title = title.strip().strip('"\'').strip()
-        # Strip <think>/<thinking> blocks (closed, dangling, or stray tags)
-        # via the central helper.
-        from src.text_helpers import strip_think
-        title = strip_think(title, prose=False, prompt_echo=False)
+        title = _derive_session_title_from_text(first_msg)
         if title and len(title) < 80:
             session_manager.update_session_name(sess.id, title)
             logger.info(f"Auto-named session {sess.id}: {title}")

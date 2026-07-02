@@ -3,6 +3,8 @@ from fastapi import HTTPException
 
 from routes.chat_helpers import (
     _enforce_chat_privileges,
+    _derive_session_title_from_text,
+    auto_name_session,
     clean_thinking_for_save,
     needs_auto_name,
     save_assistant_response,
@@ -161,6 +163,50 @@ class _FakeSession:
 ])
 def test_needs_auto_name(name, expected):
     assert needs_auto_name(name) == expected, f"needs_auto_name({name!r}) should be {expected}"
+
+
+def test_derive_session_title_from_text_is_local_and_short():
+    assert (
+        _derive_session_title_from_text(
+            "Can you debug why LMS runs two prompt processing tries after the reply?"
+        )
+        == "Debug Why LMS Runs Two Prompt"
+    )
+
+
+@pytest.mark.asyncio
+async def test_auto_name_session_does_not_call_llm(monkeypatch):
+    async def fail_llm_call(*args, **kwargs):
+        raise AssertionError("auto-name should not spend an LLM request")
+
+    monkeypatch.setattr("src.llm_core.llm_call_async", fail_llm_call)
+
+    sess = type("Session", (), {})()
+    sess.id = "sess-local-title"
+    sess.history = [
+        type(
+            "Msg",
+            (),
+            {
+                "role": "user",
+                "content": "Can you debug why LMS runs two prompt processing tries after the reply?",
+            },
+        )()
+    ]
+
+    updated = {}
+    session_manager = type(
+        "SessionManager",
+        (),
+        {"update_session_name": lambda self, sid, name: updated.update({"sid": sid, "name": name})},
+    )()
+
+    await auto_name_session(session_manager, sess)
+
+    assert updated == {
+        "sid": "sess-local-title",
+        "name": "Debug Why LMS Runs Two Prompt",
+    }
 
 
 def test_clean_thinking_for_save_extracts_gemma4_thought_channel():

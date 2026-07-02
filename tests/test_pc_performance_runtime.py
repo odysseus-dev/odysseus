@@ -121,6 +121,18 @@ def test_windows_launcher_reuses_running_server_and_skips_unchanged_dependencies
     assert "Set-Content -Path $requirementsMarker -Value $requirementsHash -Encoding ASCII" in LAUNCH_PS1
 
 
+def test_windows_installers_bootstrap_supported_python():
+    assert '$BootstrapPythonWingetId = "Python.Python.3.12"' in LAUNCH_PS1
+    assert "function Install-PythonWithWinget" in LAUNCH_PS1
+    assert "ODYSSEUS_SKIP_PYTHON_BOOTSTRAP" in LAUNCH_PS1
+    assert "Couldn't find or install Python 3.11+" in LAUNCH_PS1
+
+    assert 'WINDOWS_PYTHON_WINGET_ID = "Python.Python.3.12"' in INSTALLER_PY
+    assert "def install_python_with_winget" in INSTALLER_PY
+    assert "MIN_PYTHON_VERSION = (3, 11)" in INSTALLER_PY
+    assert '"Python310"' not in INSTALLER_PY
+
+
 def test_theme_canvas_effects_are_throttled_for_pc_runtime():
     assert "const BG_EFFECT_FRAME_MS = 1000 / 30;" in THEME_JS
     assert "desynchronized: true" in THEME_JS

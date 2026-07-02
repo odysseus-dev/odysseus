@@ -271,8 +271,9 @@ do not run on macOS. MLX-only models are not served by Odysseus.
 
 ### Native Windows
 
-**One-command launcher** (creates the venv, installs deps, runs setup, starts the
-server; safe to re-run):
+**One-command launcher** (installs Python 3.12 with `winget` if Python 3.11+ is
+missing, creates the venv, installs deps, runs setup, starts the server; safe to
+re-run):
 
 ```powershell
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
@@ -293,7 +294,8 @@ python -m uvicorn app:app --host 127.0.0.1 --port 7000
 ```
 
 If `python` points at an older interpreter, use `py -3.12` (or another installed
-3.11+ version) for the venv step.
+3.11+ version) for the venv step. If `winget` is unavailable on a fresh Windows
+install, install Python 3.11+ manually first.
 
 **Requirements:** Python 3.11+. The core app (chat, agent, memory, documents,
 email, calendar, deep research) runs fully native. For full **Cookbook** background

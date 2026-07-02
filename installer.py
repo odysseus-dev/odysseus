@@ -13,6 +13,8 @@ LOG_FILENAME = "odysseus-installer.log"
 SIMPLE_SIGNAL_EXE = "Simple-Signal-Desktop.exe"
 VENV_DIR_NAME = "venv"
 EXTENSION_PORT = int(os.environ.get("ODYSSEUS_EXTENSION_PORT", "7017"))
+MIN_PYTHON_VERSION = (3, 11)
+WINDOWS_PYTHON_WINGET_ID = "Python.Python.3.12"
 
 ELECTRON_CACHE_DIRS = [
     "Cache",
@@ -304,6 +306,52 @@ if os.path.exists(ps1_path) and not _is_port_open(port) and not _launch_lock_rec
 """.replace("__ODYSSEUS_EXTENSION_PORT__", str(EXTENSION_PORT))
     router_path.write_text(router_content, encoding="utf-8")
 
+def python_version_for_command(command: list[str]) -> tuple[int, int, int] | None:
+    try:
+        completed = subprocess.run(
+            [*command, "-c", "import sys; print('.'.join(map(str, sys.version_info[:3])))"],
+            capture_output=True,
+            text=True,
+            check=False,
+            creationflags=get_windows_creation_flags(),
+        )
+    except Exception:
+        return None
+    if completed.returncode != 0:
+        return None
+    raw = (completed.stdout or "").strip().splitlines()
+    if not raw:
+        return None
+    try:
+        parts = [int(p) for p in raw[-1].strip().split(".")[:3]]
+    except ValueError:
+        return None
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts[:3])
+
+def is_supported_python_command(command: list[str]) -> bool:
+    version = python_version_for_command(command)
+    return bool(version and version[:2] >= MIN_PYTHON_VERSION)
+
+def get_known_python_paths() -> list[Path]:
+    paths: list[Path] = []
+    roots: list[Path] = []
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        roots.append(Path(local_app_data) / "Programs" / "Python")
+    for env_name in ("PROGRAMFILES", "ProgramW6432", "ProgramFiles(x86)"):
+        value = os.environ.get(env_name)
+        if value:
+            roots.append(Path(value))
+
+    for root in dict.fromkeys(roots):
+        for version in ("Python313", "Python312", "Python311"):
+            candidate = root / version / "python.exe"
+            if candidate.exists():
+                paths.append(candidate)
+    return paths
+
 def get_python_commands() -> list[list[str]]:
     commands = []
     seen = set()
@@ -315,24 +363,62 @@ def get_python_commands() -> list[list[str]]:
         key = (executable.lower(), tuple(prefix_args))
         if key in seen:
             return
+        command = [executable, *prefix_args]
+        if not is_supported_python_command(command):
+            return
         seen.add(key)
-        commands.append([executable, *prefix_args])
+        commands.append(command)
 
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if local_app_data:
-        for version in ("Python312", "Python311", "Python310"):
-            candidate = Path(local_app_data) / "Programs" / "Python" / version / "python.exe"
-            if candidate.exists():
-                add_command(str(candidate))
+    py_launcher = shutil.which("py")
+    if py_launcher:
+        for version in ("-3.13", "-3.12", "-3.11"):
+            add_command(py_launcher, [version])
+
+    for candidate in get_known_python_paths():
+        add_command(str(candidate))
 
     add_command(shutil.which("python"))
     add_command(shutil.which("python3"))
 
-    py_launcher = shutil.which("py")
-    if py_launcher:
-        add_command(py_launcher, ["-3"])
-
     return commands
+
+def install_python_with_winget(log_path: Path) -> bool:
+    if os.name != "nt":
+        return False
+    if os.environ.get("ODYSSEUS_SKIP_PYTHON_BOOTSTRAP") == "1":
+        print("[!] Python bootstrap skipped because ODYSSEUS_SKIP_PYTHON_BOOTSTRAP=1.")
+        append_log(log_path, "Python bootstrap skipped by ODYSSEUS_SKIP_PYTHON_BOOTSTRAP=1.")
+        return False
+
+    winget = shutil.which("winget")
+    if not winget:
+        print("[!] winget was not found, so Python cannot be installed automatically.")
+        append_log(log_path, "winget was not found; Python bootstrap skipped.")
+        return False
+
+    print(" -> Python 3.11+ was not found. Installing Python 3.12 with winget...")
+    common = [
+        winget,
+        "install",
+        "--id", WINDOWS_PYTHON_WINGET_ID,
+        "--exact",
+        "--source", "winget",
+        "--silent",
+        "--accept-package-agreements",
+        "--accept-source-agreements",
+    ]
+    attempts = [
+        [*common, "--scope", "user", "--disable-interactivity"],
+        [*common, "--scope", "user"],
+        common,
+    ]
+    for command in attempts:
+        completed = run_logged(command, log_path, check=False)
+        if completed.returncode == 0:
+            print(" -> Python installer completed. Re-checking Python...")
+            return True
+        append_log(log_path, f"winget Python install attempt failed with exit code {completed.returncode}.")
+    return False
 
 def get_venv_python(extension_dir: Path) -> Path:
     scripts_dir = "Scripts" if os.name == "nt" else "bin"
@@ -349,9 +435,16 @@ def create_extension_venv(extension_dir: Path, log_path: Path) -> Path:
     commands = get_python_commands()
 
     if not commands:
-        print("[!] Python was not found on PATH.")
-        print(f"    Create the venv manually: python -m venv {venv_dir}")
-        raise RuntimeError("Python was not found; cannot create the extension virtual environment.")
+        install_python_with_winget(log_path)
+        commands = get_python_commands()
+
+    if not commands:
+        print("[!] Python 3.11+ was not found.")
+        print(f"    Create the venv manually after installing Python 3.11+: python -m venv {venv_dir}")
+        raise RuntimeError(
+            "Python 3.11+ was not found or could not be installed; "
+            "cannot create the extension virtual environment."
+        )
 
     print(f" -> Creating virtual environment: {venv_dir}")
     for command in commands:

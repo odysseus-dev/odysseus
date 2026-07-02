@@ -918,9 +918,7 @@ def _probe_endpoint_for_model_type(
     timeout: int = 5,
     model_type: str = "llm",
 ) -> List[str]:
-    if str(model_type or "").strip().lower() == "image":
-        return _probe_endpoint(base_url, api_key, timeout=timeout, include_non_chat=True)
-    return _probe_endpoint(base_url, api_key, timeout=timeout)
+    return _probe_endpoint(base_url, api_key, timeout=timeout, include_non_chat=True)
 
 
 def _local_health_probe_urls(base: str, models_url: Optional[str]) -> List[str]:
