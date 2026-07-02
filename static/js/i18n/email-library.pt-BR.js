@@ -133,4 +133,16 @@ registerMessages('pt-BR', {
   'Search people or emails…': 'Buscar pessoas ou e-mails…',
   'No matches for "{q}".': 'Nenhum resultado para "{q}".',
   'Search failed: {msg}': 'Falha na busca: {msg}',
+
+  // --- attachments / reader tabs ---
+  "Couldn't open {name}: {msg}": 'Nao foi possivel abrir {name}: {msg}',
+  "Couldn't open {name}": 'Nao foi possivel abrir {name}',
+  'Document opened but panel could not mount': 'Documento aberto, mas o painel nao pode ser montado',
+  'Open in document editor': 'Abrir no editor de documentos',
+  'From earlier in this thread': 'De uma mensagem anterior nesta conversa',
+  'Filtered inline images / signature files': 'Imagens embutidas / arquivos de assinatura filtrados',
+  'Attachments ({n})': 'Anexos ({n})',
+  'Thread attachments ({n})': 'Anexos da conversa ({n})',
+  'Hidden inline attachments ({n})': 'Anexos embutidos ocultos ({n})',
+  'Minimize': 'Minimizar',
 });
