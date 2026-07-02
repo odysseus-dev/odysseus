@@ -36,3 +36,13 @@ def test_searxng_instance_is_env_overridable():
         "SEARXNG_INSTANCE default must still be the bundled container URL; "
         "got %r" % value
     )
+
+
+def test_env_example_does_not_enable_searxng_instance_override_by_default():
+    text = Path(".env.example").read_text(encoding="utf-8")
+    active = re.search(r"^\s*SEARXNG_INSTANCE\s*=", text, re.MULTILINE)
+    assert active is None, (
+        ".env.example must not set SEARXNG_INSTANCE by default; copied Docker .env "
+        "files should leave compose fallback at http://searxng:8080"
+    )
+    assert "# SEARXNG_INSTANCE=http://localhost:8080" in text
