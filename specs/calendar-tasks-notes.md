@@ -1,6 +1,6 @@
 # Calendar, Tasks, And Notes
 
-Last updated: dev@270b857 | 2026-06-15
+Last updated: dev@88191d1 | 2026-07-02
 
 ## Scope
 
@@ -9,7 +9,7 @@ This spec covers calendar, reminders, tasks, assistant runs, and notes in:
 - app route wiring, auth exemptions, and scheduler startup in `app.py`;
 - canonical database models in `core/database.py`, with `src/database.py` as a compatibility re-export;
 - `routes/calendar_routes.py`, `src/caldav_sync.py`, and `src/caldav_writeback.py`;
-- `routes/task_routes.py`, `src/task_scheduler.py`, `src/task_endpoint.py`, and `src/event_bus.py`;
+- `routes/task_routes.py`, `src/task_scheduler.py`, `src/task_endpoint.py`, `src/event_bus.py`, and `src/interactive_gate.py`;
 - `routes/assistant_routes.py`;
 - `routes/note_routes.py`, `src/builtin_actions.py`, and `src/action_intents.py`;
 - agent/tool call sites in `src/tool_index.py` and `src/tool_implementations.py`;
@@ -36,7 +36,7 @@ Runtime behavior:
 - CalDAV pull uses a bounded sync window, scopes existing UID lookups to the synced calendar, stamps account ids and remote metadata on local calendars, maps Google principal URLs to event collections, preserves locally-created or writeback-pending events that are not yet remote-owned, and deletes stale in-window remote events only when remote object parsing did not fail;
 - CalDAV writeback stores `remote_href`/`remote_etag`, clears `caldav_sync_pending` only after successful remote writes, and leaves create/update/delete pending markers for retry on failure;
 - sync direction can be pull, push, or both, and pending local writeback rows are included even before remote href metadata exists;
-- ICS import is per-owner, capped, and creates fresh local IDs in the target import calendar;
+- ICS import is per-owner, capped, creates fresh local IDs in the target import calendar, and preserves zero-duration events as visible imported rows rather than dropping them as empty ranges;
 - writeback is best-effort and local SQLite remains source of truth when remote writes fail.
 
 Calendar credentials are encrypted at rest and are not returned to clients. CalDAV URL validation rejects unsafe schemes, credentials, fragments, localhost names, bad ports, unsafe IP literals, and hostnames resolving to disallowed addresses, with `ODYSSEUS_ALLOW_PRIVATE_CALDAV=1` as the explicit private-IP escape hatch. CalDAV sync/writeback clients disable redirects so credentials are not followed to another origin.
@@ -54,6 +54,7 @@ Task webhook paths are auth-exempt at the app middleware layer only for `/api/ta
 Task runtime behavior:
 
 - task runs move through queued/running/success/error/skipped/aborted states;
+- scheduler/background execution can wait for `src.interactive_gate` to report a quiet foreground window, and running background work can use browser heartbeat/chat-stream activity as a cancellation/defer signal where implemented;
 - output targets include chat sessions, notifications, email, and MCP delivery paths;
 - LLM and research tasks can carry a built-in `character_id` persona prompt that the scheduler prepends at execution time;
 - task-created chat sessions can be foldered under `Tasks`, and startup migration backfills task/research folders for legacy sessions;
@@ -113,6 +114,8 @@ The current event bus is not a calendar-event emitter despite the adjacent calen
 - assistant check-ins can use an IANA timezone on `CrewMember`, with UTC fallback.
 
 Dateutil fallbacks strip timezone-aware parser results back to the naive-UTC contract before recurrence/window comparisons. Calendar agent list tools accept current range aliases implemented by `src.tool_implementations`, and equal/same-day start/end ranges are normalized to a one-day window instead of silently returning no rows.
+
+Natural-language parsers prefer time-first interpretations for short reminder/event phrases where the user supplies a clock time before a date phrase.
 
 Calendar frontend week-start preference is browser-local (`cal-week-start`) with Monday/Sunday controls; it is not persisted as a server preference.
 

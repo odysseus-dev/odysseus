@@ -1,6 +1,6 @@
 # Frontend
 
-Last updated: dev@270b857 | 2026-06-15
+Last updated: dev@88191d1 | 2026-07-02
 
 ## Scope
 
@@ -28,6 +28,7 @@ This spec covers the current browser app in:
 - `static/sw.js` `PRECACHE`;
 - app-owned SPA deep links for notes, calendar, cookbook, email, memory, gallery, tasks, and library;
 - `/login` and app-owned static/HTML routes;
+- `/api/activity/heartbeat` browser visibility pings used by the foreground activity gate;
 - `static/app.js` route opener/sidebar/tool-window wiring;
 - frontend JS helper tests and static HTML/CSS/source-shape regressions;
 - CDN dependencies, local vendor libraries, service worker, and PWA manifest.
@@ -102,14 +103,15 @@ Coordinator ownership:
 
 `static/js/MODULE_SUMMARY.md` is historical and explicitly not authoritative. Use the current `static/js/` tree and script tags as truth.
 
-Current small frontend helper contracts include `static/js/model/matchKey.js` for longest-substring model info/pricing matches, `static/js/models.js` for in-flight `/api/models` request sharing, `static/js/providerDeviceFlow.js` for Copilot/ChatGPT Subscription device-flow polling UI, `static/js/composerArrowUpRecall.js` for prompt recall from an empty composer, `static/js/fileHandler.js` for capped pending-file state and collapsed attachment-chip display, `static/js/streamingSegmenter.js` for incremental markdown/code-fence segmentation, `static/js/emojiShortcodes.js` for shortcode replacement, `static/js/documentLibrary.js` for keeping document counters/language chips in sync after archive/delete, and `static/js/modalSnap.js` for reusable desktop modal edge docking.
+Current small frontend helper contracts include `static/js/model/matchKey.js` for longest-substring model info/pricing matches, `static/js/models.js` for in-flight `/api/models` request sharing, `static/js/providerDeviceFlow.js` for Copilot/ChatGPT Subscription device-flow polling UI, `static/js/composerArrowUpRecall.js` for prompt recall from an empty composer, `static/js/fileHandler.js` for capped pending-file state and collapsed attachment-chip display, `static/js/streamingSegmenter.js` for incremental markdown/code-fence segmentation, `static/js/emojiShortcodes.js` for shortcode replacement, `static/js/documentLibrary.js` for keeping document counters/language chips in sync after archive/delete, `static/js/modalSnap.js` for reusable desktop modal edge docking, `static/js/toolWindowZOrder.js` for shared portal/window z-index allocation, and `static/js/emailShared.js` for common email UI helpers.
 
-Recent browser behavior contracts include mobile chat Enter inserting newlines while desktop Enter submits, regenerate-from-here truncating history while normal resend appends a fresh turn, AI-message delete confirmation, notes search reset on reopen, calendar Monday/Sunday week-start localStorage preference, CardDAV unchanged-password placeholders, Google Workspace/.edu email OAuth controls in both email account forms, admin promote/demote buttons, and admin diagnostics log polling.
+Recent browser behavior contracts include mobile chat Enter inserting newlines while desktop Enter submits, regenerate-from-here truncating history while normal resend appends a fresh turn, AI-message delete confirmation, notes search reset on reopen, calendar Monday/Sunday week-start localStorage preference, CardDAV unchanged-password placeholders, Google Workspace/.edu email OAuth controls in both email account forms, OpenDyslexic/text-size accessibility preferences, admin promote/demote buttons, admin diagnostics log polling, and dismissible toasts that do not block pointer interaction longer than intended.
 
 ## UI Policy
 
 - New code must run as browser ES modules without a build step.
 - Reuse existing CSS variables, modal/window patterns, icon style, storage helpers, and route conventions.
+- Custom font handling includes bundled OpenDyslexic assets plus user-supplied fonts exposed through `/api/fonts/custom`; font and text-size settings must stay coordinated between settings UI, theme helpers, and CSS variables.
 - Avoid relying on stale module summaries.
 - API shape changes must update the owning JS module and tests.
 - Add behavior to large coordinators such as `static/app.js`, `static/js/chat.js`, `static/js/document.js`, or `static/js/settings.js` only when it matches their existing wiring ownership.

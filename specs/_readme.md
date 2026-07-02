@@ -1,6 +1,6 @@
 # Specs DocumentMap
 
-Last updated: dev@270b857 | 2026-06-15
+Last updated: dev@88191d1 | 2026-07-02
 
 This folder is the compact implementation-truth map for humans and coding agents working on Odysseus. Read this file first, then open only the subsystem specs that match the work.
 
@@ -44,6 +44,7 @@ project documentation.
 ## Subsystem Map
 
 - [runtime.md](runtime.md): FastAPI startup, router registration, static serving, lifespan, app-wide middleware.
+- [architecture-runtime-inventory.md](architecture-runtime-inventory.md): current runtime/module inventory, import-risk map, and behavior-preserving refactor candidates.
 - [auth-security.md](auth-security.md): auth, privileges, API tokens, security headers, untrusted data, SSRF and admin boundaries.
 - [persistence.md](persistence.md): SQLite models, startup migrations, encrypted columns, ownership columns, data directory rules.
 - [chat.md](chat.md): chat routes, sessions, streaming, uploads-in-chat, compare handoff, research/chat mode dispatch.

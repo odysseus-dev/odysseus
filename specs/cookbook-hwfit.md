@@ -1,6 +1,6 @@
 # Cookbook And Hardware Fit
 
-Last updated: dev@270b857 | 2026-06-15
+Last updated: dev@88191d1 | 2026-07-02
 
 ## Scope
 
@@ -9,13 +9,14 @@ This spec covers model setup/serving and hardware fit in:
 - app route registration in `app.py`;
 - `routes/cookbook_routes.py`;
 - `src/cookbook_serve_lifecycle.py`;
+- `src/host_docker_access.py`;
 - Cookbook package/rebuild/shell integration in `routes/shell_routes.py`;
 - `routes/cookbook_helpers.py`;
 - `routes/hwfit_routes.py`;
 - `services/hwfit/*` and `services/hwfit/data/hf_models.json`;
 - durable Cookbook state through `routes.cookbook_helpers.COOKBOOK_STATE_FILE`;
 - helper/CLI scripts `scripts/odysseus-cookbook`, `scripts/add_hwfit_models.py`, `scripts/hf_download.py`, and `scripts/diffusion_server.py`;
-- Docker GPU overlays `docker-compose.gpu-*.yml`, `docker/gpu.*.yml`, `scripts/check-docker-gpu.sh`, and `scripts/check-docker-amd-gpu.sh`;
+- Docker overlays `docker-compose.gpu-*.yml`, `docker/gpu.*.yml`, `docker/host-docker.yml`, `scripts/check-docker-gpu.sh`, and `scripts/check-docker-amd-gpu.sh`;
 - frontend modules `static/js/cookbook*.js`, including Cookbook running, serve, download, diagnosis, progress, and HW Fit modules;
 - tests covering Cookbook helpers, routes, CLI state, package detection, frontend progress, HW Fit services, serve profiles, Docker GPU overlays, and GPU diagnostic scripts.
 
@@ -48,6 +49,7 @@ Runtime behavior:
 - local Windows uses detached process/log/pid behavior under `%TEMP%\\odysseus-tmux`;
 - remote Windows uses PowerShell runner scripts;
 - missing `tmux`, `docker`, or serve-engine binaries return shaped errors where possible;
+- local Docker inside the Odysseus container is available only when the Docker CLI exists, `ODYSSEUS_ENABLE_HOST_DOCKER=true`, and `/var/run/docker.sock` is actually mounted as a socket; otherwise Cookbook should show the host-Docker access hint and prefer remote SSH Docker workflows;
 - model serve auto-registers LLM or image `ModelEndpoint` rows immediately, then frontend readiness probing can repair/create fallback endpoints;
 - diffusion-server serves are registered as image endpoints;
 - vLLM recipe routes fetch and cache model recipe manifests/YAML from `vllm-project/recipes`, normalize base args/env/dependencies/tool-calling/reasoning variants, and expose compatible strategy metadata for serve setup;
@@ -123,6 +125,7 @@ Runtime behavior:
 - Missing local tools or failed installs should surface command/output/error detail where possible.
 - GPU overlays remain optional and do not break CPU-only deployments.
 - Docker GPU overlays pass host devices/env; they do not install CUDA/ROCm engines by themselves.
+- Default Docker Compose intentionally does not mount the host Docker socket. `docker/host-docker.yml` is an explicit high-trust overlay for operators who accept broad host-Docker control from inside the container.
 - NVIDIA Docker diagnostics are read-only by default, and `.env` edits/install actions require explicit flags.
 - AMD Docker diagnostics are read-only and do not mutate `.env`.
 - vLLM is rejected on unsupported Windows/macOS paths.
@@ -152,7 +155,7 @@ Kill-pid guardrails:
 - validated remote host/port;
 - frontend confirmation for TERM/KILL cleanup.
 
-Shell-bound Cookbook inputs must pass helper validation before command construction. HF tokens, Cookbook state secrets, and endpoint API keys must remain encrypted or masked and must not be written back to clients in raw form.
+Shell-bound Cookbook inputs must pass helper validation before command construction. HF tokens, Cookbook state secrets, and endpoint API keys must remain encrypted or masked and must not be written back to clients in raw form. Host Docker socket access must stay opt-in and clearly distinguished from merely having a Docker CLI in the container.
 
 ## Testing Coverage
 

@@ -1,6 +1,6 @@
 # Integrations
 
-Last updated: dev@270b857 | 2026-06-15
+Last updated: dev@88191d1 | 2026-07-02
 
 ## Scope
 
@@ -14,6 +14,7 @@ This spec covers external integration surfaces in:
 - `routes/webhook_routes.py` and `src/webhook_manager.py`;
 - task webhook generation/triggering in `routes/task_routes.py`, `app.py`, and `static/js/tasks.js`;
 - companion/mobile pairing in `companion/routes.py` and `companion/pairing.py`;
+- provider OAuth/device-flow endpoint links in `routes/copilot_routes.py`, `routes/chatgpt_subscription_routes.py`, `routes/device_flow.py`, and `ProviderAuthSession` rows;
 - integration UI surfaces in `static/js/settings.js` and `static/js/admin.js`;
 - database models `ApiToken` and `Webhook`.
 
@@ -103,7 +104,7 @@ Allowed outgoing events are:
 
 Current webhook event emitters include session creation, chat message/completion paths, and `/api/v1/chat` completion.
 
-`/api/v1/chat` is an inbound external chat endpoint. It requires a `chat` API token, checks session ownership before resume, can create a session from a direct API key, and otherwise falls back to the first owner-visible enabled model endpoint. Token-supplied direct `base_url` values use public-URL validation; configured endpoints remain admin-trusted.
+`/api/v1/chat` is an inbound external chat endpoint. It requires a `chat` API token, checks session ownership before resume, can create a session from a direct API key, and otherwise falls back to the first owner-visible enabled model endpoint. Token-supplied direct `base_url` values use public-URL validation; configured endpoints remain admin-trusted. Logs and delivery/error text that include endpoint URLs should pass through URL redaction helpers before persistence or diagnostics.
 
 ## Task Webhooks And Event Triggers
 
@@ -133,6 +134,7 @@ The Settings Integrations view aggregates several subsystem surfaces:
 - generic API integrations;
 - Codex/Claude agent token setup;
 - CalDAV, CardDAV, email accounts including Google Workspace/.edu OAuth connect flows, MCP/OAuth links, provider device-flow links, and agent tokens.
+- provider-auth backed model endpoints such as ChatGPT Subscription and Copilot, where device-flow credentials live in provider auth rows rather than endpoint API-key fields.
 
 Vault and companion/mobile setup are separate settings/route surfaces today, not entries in the unified add-integration list.
 

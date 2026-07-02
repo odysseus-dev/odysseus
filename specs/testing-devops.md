@@ -1,6 +1,6 @@
 # Testing And Devops
 
-Last updated: dev@270b857 | 2026-06-15
+Last updated: dev@88191d1 | 2026-07-02
 
 ## Scope
 
@@ -11,12 +11,12 @@ This spec covers development and validation surfaces in:
 - `pyproject.toml`;
 - `requirements.txt` and `requirements-optional.txt`;
 - `package.json` and `package-lock.json`;
-- `Dockerfile`, `docker-compose.yml`, `docker/gpu.nvidia.yml`, `docker/gpu.amd.yml`, top-level standalone GPU compose files, and `docker/entrypoint.sh`;
+- `Dockerfile`, `docker-compose.yml`, `docker/gpu.nvidia.yml`, `docker/gpu.amd.yml`, `docker/host-docker.yml`, top-level standalone GPU compose files, and `docker/entrypoint.sh`;
 - `scripts/`, `scripts/odysseus`, `scripts/_lib/cli.py`, `scripts/_completion/*`, `scripts/pr_blocker_audit.py`, and `scripts/odysseus-*`;
 - GPU helper scripts `scripts/check-docker-gpu.sh` and `scripts/check-docker-amd-gpu.sh`;
 - `.github/` templates, workflows, and description-check scripts;
 - contributor workflow docs in `CONTRIBUTING.md` and `docs/pr-blocker-audit.md`;
-- platform launchers `launch-windows.ps1`, `start-macos.sh`, `build-macos-app.sh`, and `update_windows.bat`;
+- platform launchers `launch-windows.ps1`, `launcher.py`, `Odysseus.spec`, `build-windows-portable.ps1`, `start-macos.sh`, `build-macos-app.sh`, and `update_windows.bat`;
 - setup/service files such as `setup.py`, `install-service.sh`, and `odysseus-ui.service`.
 
 ## Test Runtime
@@ -36,6 +36,8 @@ The expected local command uses the project venv:
 Activated-venv `python -m pytest <test path>` is equivalent. System/global `pytest` is not authoritative for this repo because installed versus stubbed dependencies can change collection behavior.
 
 `tests/conftest.py` inserts the repo root on `sys.path` and conditionally stubs missing heavy/runtime dependencies such as SQLAlchemy, FastAPI, Starlette, Pydantic, httpx, bcrypt, and pyotp. Tests that need real dependencies use explicit imports/skips. Tests that stub `sys.modules`, environment variables, globals, or parent packages must restore them with `monkeypatch` or an equivalent cleanup pattern.
+
+The suite currently contains roughly 692 `test_*.py` files. Treat that count as a moving source metric, not a target; focused regression tests are still preferred for narrow changes.
 
 Focused regression tests are preferred for narrow behavior changes. Broaden tests when touching shared contracts such as auth, owner filtering, OAuth/token custody, tool output, context building, provider calls, persistence, frontend rendering, or route/API shapes.
 
@@ -64,7 +66,7 @@ Use `node --check static/js/<changed-file>.js` for syntax checks on changed JS f
 - `PyMuPDF` for PDF forms/rendering with AGPL implications for a network-served app;
 - `markitdown[docx,pptx,xlsx,xls]` for Office/EPUB extraction, pinned to a release older than 30 days.
 
-Optional dependencies should produce clear degraded behavior when absent unless intentionally promoted to core. MarkItDown and PyMuPDF already have focused degraded-path coverage; local STT missing-`faster-whisper` behavior is a remaining coverage gap. Core runtime requirements include `httpx2` where compatibility tests depend on it.
+Optional dependencies should produce clear degraded behavior when absent unless intentionally promoted to core. MarkItDown and PyMuPDF already have focused degraded-path coverage; local STT missing-`faster-whisper` behavior is a remaining coverage gap. Core runtime requirements include `httpx2` where compatibility tests depend on it. The official Docker image additionally installs `libmagic1` plus `python-magic==0.4.27` for content-based upload MIME sniffing; that pairing is image-owned because `python-magic` needs the system shared library at import time.
 
 Chroma has two compatibility modes:
 
@@ -85,11 +87,11 @@ docker compose logs --tail=120 odysseus
 
 `docker-compose.yml` starts Odysseus, ChromaDB, SearXNG, and ntfy. It binds services to loopback by default through `APP_BIND`, `CHROMADB_BIND`, and `NTFY_BIND`, persists configurable `APP_DATA_DIR`/`APP_LOGS_DIR`, SSH identity, HuggingFace cache, and user-local Python installs, and gives the Odysseus container host-loopback reachability through `host.docker.internal`.
 
-`Dockerfile` builds a Python 3.14 slim image with Node/npm, tmux, OpenSSH client, git/cmake, and `gosu`.
+`Dockerfile` builds a Python 3.14 slim image with Node/npm, tmux, OpenSSH client, git/cmake, Docker CLI, `gosu`, `libmagic1`, and the image-only `python-magic` wrapper.
 
-`docker/entrypoint.sh` owns writable path ownership repair, PUID/PGID privilege drop, vLLM/CUDA environment defaults, idempotent `setup.py`, and final uvicorn execution.
+`docker/entrypoint.sh` owns writable path ownership repair, PUID/PGID user/group creation and privilege drop, optional host-Docker socket group handling, vLLM/CUDA environment defaults, idempotent `setup.py`, and final uvicorn execution.
 
-Docker does not mount the host Docker socket by default. Mounting it would grant powerful host access and is outside the default trust boundary.
+Docker does not mount the host Docker socket by default. Mounting it would grant powerful host access and is outside the default trust boundary. `docker/host-docker.yml` is the explicit opt-in overlay and sets `ODYSSEUS_ENABLE_HOST_DOCKER=true`; tests guard that the default and GPU compose files do not enable host Docker accidentally.
 
 ## GPU And Platform
 
@@ -111,6 +113,7 @@ AMD helper behavior:
 Native platform launchers:
 
 - `launch-windows.ps1` requires Python 3.11+, creates `venv`, installs `requirements.txt`, runs `setup.py`, discovers per-user Git Bash installs where possible, warns when Git Bash is missing, and starts uvicorn on port 7000 by default.
+- `launcher.py`, `Odysseus.spec`, and `build-windows-portable.ps1` own the PyInstaller-style portable Windows launcher path, including app-root/data-dir differences covered by `src.runtime_paths`.
 - `start-macos.sh` reads `.env`, defaults to port 7860 to avoid AirPlay conflicts, prefers Homebrew arm64 Python, installs/tolerates Homebrew Cookbook deps, handles Chroma package conflicts, starts ChromaDB for native runs, runs `setup.py`, and starts uvicorn.
 - `build-macos-app.sh` builds a launcher app around the existing repo venv and logs to `logs/odysseus-app.log`.
 - `update_windows.bat` owns the tested Windows Docker update flow.

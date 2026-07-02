@@ -1,6 +1,6 @@
 # Shell And MCP
 
-Last updated: dev@270b857 | 2026-06-15
+Last updated: dev@88191d1 | 2026-07-02
 
 ## Scope
 
@@ -16,6 +16,7 @@ This spec covers shell and MCP behavior in:
 - built-in server registration in `src/builtin_mcp.py`;
 - persisted `McpServer` config in `core/database.py`;
 - MCP tool exposure in `src/agent_loop.py`, `src/tool_index.py`, `src/tool_schemas.py`, `src/tool_parsing.py`, `src/tool_implementations.py`, and `src/tool_security.py`;
+- admin MCP/tool helpers in `src/agent_tools/admin_tools.py`;
 - built-in servers in `mcp_servers/*.py`;
 - Settings/Admin UI in `static/js/settings.js` and `static/js/admin.js`;
 - CLI helper `scripts/odysseus-mcp`;
@@ -74,7 +75,7 @@ Runtime behavior:
 
 `src.mcp_manager.McpManager` owns live connection state, stdio/SSE/Streamable HTTP transports, sessions, tool schemas, qualified names, and tool calls. HTTP route operations update both database state and live manager state where applicable. Streamable HTTP connects in a background task, can report `connecting` or `needs_auth`, and surfaces an authorization URL when the OAuth client flow redirects.
 
-`src.tool_implementations.do_manage_mcp()` is the agent/admin tool path for MCP config. It is narrower than the HTTP routes: add is stdio-only, and enable/disable primarily flips DB config. `scripts/odysseus-mcp` is config-only; it reads and mutates database rows, redacts env values by default, and does not report live manager connection state.
+`src.agent_tools.admin_tools.do_manage_mcp()` is the agent/admin tool path for MCP config and is re-exported lazily through `src.tool_implementations` for compatibility. It is narrower than the HTTP routes: add is stdio-only, command values are checked against an allowlist/denylist before persistence, and enable/disable primarily flips DB config. `scripts/odysseus-mcp` is config-only; it reads and mutates database rows, redacts env values by default, and does not report live manager connection state.
 
 ## Built-In MCP Servers
 
@@ -113,7 +114,7 @@ Per-server disabled MCP tools currently hide tools from prompts/schemas while li
 - Missing Python `mcp` dependency degrades attempted MCP connections to error status.
 - Missing or uncached browser NPX package is optional and log-only during built-in startup; startup should not perform an implicit package download.
 - Windows does not support POSIX PTY/tmux paths; streaming falls back to pipes or detached logfile behavior.
-- Docker images include selected shell dependencies, but Docker CLI/socket access from inside the app container is intentionally treated as unavailable unless configured on a remote host.
+- Docker images include selected shell dependencies and the Docker CLI, but host Docker socket access from inside the app container remains unavailable unless the operator explicitly enables `docker/host-docker.yml`/`ODYSSEUS_ENABLE_HOST_DOCKER=true` and mounts a real socket.
 - OAuth supports Google `installed` or `web` key shapes, a remote paste-back exchange page, and generic Streamable HTTP OAuth token storage through encrypted `McpServer.oauth_tokens`. Google and generic MCP OAuth share `src.mcp_oauth.REDIRECT_URI`, built from `OAUTH_REDIRECT_BASE_URL`, `APP_PUBLIC_URL`, or `http://localhost:7000` plus `/api/mcp/oauth/callback`; `APP_PORT` is intentionally not part of this redirect calculation.
 - `services.shell.service` remains a transitional/simple facade separate from route-level compatibility behavior.
 

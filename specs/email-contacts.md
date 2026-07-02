@@ -1,6 +1,6 @@
 # Email And Contacts
 
-Last updated: dev@270b857 | 2026-06-15
+Last updated: dev@88191d1 | 2026-07-02
 
 ## Scope
 
@@ -17,7 +17,7 @@ This spec covers mail and contacts in:
 - reminder/task email senders in `routes/note_routes.py` and `src/task_scheduler.py`;
 - email/contact agent surfaces in `src/tool_implementations.py`, `src/tool_schemas.py`, `src/tool_index.py`, and `src/agent_loop.py`;
 - CLI wrappers `scripts/odysseus-mail` and `scripts/odysseus-contacts`;
-- frontend modules `static/js/emailInbox.js`, `static/js/emailLibrary.js`, `static/js/emailLibrary/*`, `static/js/document.js`, and `static/js/settings.js`;
+- frontend modules `static/js/emailInbox.js`, `static/js/emailLibrary.js`, `static/js/emailLibrary/*`, `static/js/emailShared.js`, `static/js/chatStream.js`, `static/js/document.js`, and `static/js/settings.js`;
 - tests under `tests/test_email_*`, `tests/test_contacts_*`, `tests/test_mail_cli_*`, `tests/test_mcp_email_*`, `tests/test_schedule_email_*`, email/contact JS tests, and email security regressions.
 
 ## Current Call Sites Include
@@ -65,7 +65,7 @@ Email owner semantics are route-local and compatibility-sensitive:
 - compose upload, draft/send, `wait_for_delivery`, Sent append, and source `\Answered` marking;
 - schedule/list/delete scheduled emails;
 - pending agent-draft approval/cancel flows;
-- mark read/unread/answered, spam flags, move, archive, and delete.
+- mark read/unread/answered, spam flags, move, archive, and delete. IMAP move/delete/archive operations must use UID commands for message identity; sequence-number commands can mutate the wrong visible message after mailbox state changes.
 
 Google OAuth behavior is account-owned:
 
@@ -83,7 +83,7 @@ IMAP helpers quote mailbox names, raise the Python IMAP line cap for large messa
 
 Scheduled email rows live in `data/scheduled_emails.db` and are owner-scoped. Scheduled send times are normalized before storage.
 
-`routes.email_pollers` owns the scheduled-send poller and single-shot/task/CLI automation passes. Only the scheduled-send poller starts in-process by default when `ODYSSEUS_INPROCESS_POLLERS` allows it; Docker forwards that gate. Native cron/systemd can drive one-shot pollers through `scripts/odysseus-mail`.
+`routes.email_pollers` owns the scheduled-send poller and single-shot/task/CLI automation passes. Only the scheduled-send poller starts in-process by default when `ODYSSEUS_INPROCESS_POLLERS` allows it; Docker forwards that gate. Background email automation can also consult the foreground activity gate so auto actions do not compete with active browser/model work. Native cron/systemd can drive one-shot pollers through `scripts/odysseus-mail`.
 
 Transport degraded behavior:
 
@@ -109,9 +109,11 @@ Email bodies and attachments are untrusted model context.
 
 ## Threading And Rendering
 
-`src.email_thread_parser` owns splitting plaintext/HTML email threads into quoted conversation parts. Frontend email library modules own reply-recipient logic, signature folding, local state, and rendering behavior.
+`src.email_thread_parser` owns splitting plaintext/HTML email threads into quoted conversation parts. Frontend email library modules own reply-recipient logic, signature folding, local state, and rendering behavior. `static/js/emailShared.js` owns shared email UI helpers used across inbox/library surfaces.
 
 Remote inbound email HTML is sanitized by frontend email-library utilities before `innerHTML` insertion. Server-side email routes sanitize composed/generated outbound HTML before draft/send. Both sides are part of the rendering invariant.
+
+When the email reader is active, browser chat sends selected-message metadata. `src.tool_implementations` stores that request-local active email reference, `src.agent_loop` injects it as protected untrusted context, and `static/js/chatStream.js` handles `ui_control open_email_reply` so default reply/draft behavior opens the selected message's compose flow instead of a generic new document.
 
 ## MCP Email
 
@@ -169,7 +171,7 @@ CardDAV credentials and URLs are security-sensitive. CardDAV URL setup and deriv
 
 ## Testing Coverage
 
-Existing coverage includes header decoding, envelope recipients, IMAP timeout, SMTP security, IMAP reconnect, Google OAuth state/callback/token-refresh/XOAUTH2 behavior, OAuth account token non-disclosure, iCloud-compatible MCP full-message fetch shape, owner scope, owner-keyed sender signatures, Gmail flag parsing, scheduled offset normalization, thread parsing, HTML sanitizer source checks, MCP header decoding, MCP multi-account/search shapes, CardDAV password encryption, mail CLI behavior, contacts parsing/add basics, reply-recipient JS, signature folding, Gmail quote attribution, and selected security regressions.
+Existing coverage includes header decoding, envelope recipients, IMAP timeout, SMTP security, IMAP reconnect, Google OAuth state/callback/token-refresh/XOAUTH2 behavior, OAuth account token non-disclosure, UID-based IMAP move/delete behavior, iCloud-compatible MCP full-message fetch shape, owner scope, owner-keyed sender signatures, Gmail flag parsing, scheduled offset normalization, active-email reply guard behavior, thread parsing, HTML sanitizer source checks, MCP header decoding, MCP multi-account/search shapes, CardDAV password encryption, mail CLI behavior, contacts parsing/add basics, reply-recipient JS, signature folding, Gmail quote attribution, and selected security regressions.
 
 Route-level and duplicate-path coverage is still thin for email list/read/search/mutations, account CRUD/security outside the OAuth path, send/draft security, attachments, scheduled-poller failures, contacts admin/CardDAV routes, MCP account/scope behavior, CardDAV degraded mode, and executable frontend behavior.
 

@@ -1,6 +1,6 @@
 # Search
 
-Last updated: dev@270b857 | 2026-06-15
+Last updated: dev@88191d1 | 2026-07-02
 
 ## Scope
 
@@ -8,11 +8,11 @@ This spec covers web search, URL fetching, and search-derived context in:
 
 - `routes/search_routes.py`;
 - `services/search/*` and exported `services.search.SearchService`;
-- `src/search/*` compatibility and live duplicate modules;
+- `src/search/*` compatibility aliases around canonical service modules;
 - search call sites in `src/chat_processor.py`, `src/tool_execution.py`, `src/session_search.py`, `src/research_handler.py`, `src/deep_research.py`, and `services/research/research_handler.py`;
 - search settings in `src/settings.py`, `static/js/settings.js`, and compare/research frontend search callers;
 - YouTube context paths in `src/youtube_handler.py` and `services/youtube/youtube_handler.py`;
-- research visual/report consumers in `src/visual_report.py` and `routes/research_routes.py`;
+- research visual/report consumers in `src/visual_report.py` and `routes/research/research_routes.py`;
 - tests under `tests/test_search_*`, `tests/test_service_search_*`, `tests/test_services_search_*`, `tests/test_security_regressions.py`, `tests/test_agent_loop.py`, `tests/test_deep_research_*`, `tests/test_research_handler_*`, `tests/test_youtube_*`, and `tests/test_og_image_extraction.py`.
 
 `routes/chat_routes.py` also exposes `GET /api/search`, but that route searches chat messages and belongs to chat history behavior, not web search.
@@ -38,7 +38,7 @@ Research provider naming is not fully normalized in the UI: some frontend select
 
 `services/search/providers.py` owns provider-specific calls for SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, and Serper. `PROVIDER_INFO`, provider availability, missing-key behavior, and provider dispatch live there.
 
-`services/search/query.py` owns query enhancement. `services/search/ranking.py` owns result ranking, including word-boundary title/snippet/subject matching so short query terms do not match unrelated substrings.
+`services/search/query.py` owns query enhancement and sanitization, including stripping markdown/code-fence noise from model- or user-supplied queries before provider calls. `services/search/ranking.py` owns result ranking, including word-boundary title/snippet/subject matching so short query terms do not match unrelated substrings.
 
 ## Provider Settings And Fallback
 
@@ -64,11 +64,15 @@ Runtime behavior:
 - redirect revalidation on each hop;
 - metadata, Open Graph image, list, table, code block, PDF, and text extraction;
 - readable text extraction for `text/*`, Markdown, `.txt`, `.json`, `.jsonl`, and JSON content types;
+- central User-Agent behavior through `WEB_FETCH_USER_AGENT`;
+- soft and hard download byte caps through `WEB_FETCH_SOFT_MAX_BYTES` and `WEB_FETCH_HARD_MAX_BYTES`, with declared-length and streaming-budget checks;
 - JS-heavy empty result hints;
 - cache writes;
 - empty/error result shape, including explicit HTTP-status failures instead of raising through callers.
 
 `src/search/content.py` is now a compatibility alias to `services.search.content`; chat URL auto-fetch, agent `web_fetch`, and deep research keep the `src.search` import path but share the services implementation.
+
+Agent `web_fetch` raises the per-call budget only within the global hard cap, leads tool output with a partial-content notice when the download budget truncated the page, and then applies normal tool-output truncation so the notice survives.
 
 Content failures are caller-shaped:
 

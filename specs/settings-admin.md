@@ -1,6 +1,6 @@
 # Settings And Admin Surfaces
 
-Last updated: dev@270b857 | 2026-06-15
+Last updated: dev@88191d1 | 2026-07-02
 
 ## Scope
 
@@ -19,7 +19,7 @@ This spec covers settings and admin surfaces in:
 - `routes/vault_routes.py` and vault-related tool implementations;
 - `routes/font_routes.py`;
 - `routes/model_routes.py` for `/api/tools` and settings-bound model endpoint references;
-- `src/tool_implementations.py`, `src/tool_execution.py`, `src/tool_schemas.py`, and `src/tool_index.py` for `manage_settings`;
+- `src/agent_tools/admin_tools.py`, `src/tool_implementations.py`, `src/tool_execution.py`, `src/tool_schemas.py`, and `src/tool_index.py` for `manage_settings`;
 - `src/agent_loop.py` for stale agent prompt references to settings APIs;
 - frontend modules `static/js/settings.js`, `static/js/admin.js`, `static/js/presets.js`, `static/js/theme.js`, and `static/js/storage.js`;
 - CLI helpers `scripts/odysseus-preset` and `scripts/odysseus-theme`.
@@ -71,9 +71,10 @@ Admin gates inherit the auth contracts in `auth-security.md`: normal deployments
 - theme and custom-theme persistence;
 - old theme-name migrations;
 - custom font selection and `/api/fonts/custom` discovery;
+- bundled accessibility font selection such as OpenDyslexic and text-size variable application;
 - CSS variable application.
 
-`static/js/settings.js` owns the Settings modal shell, non-admin settings panels, admin visibility sync, provider/model/search/research/reminder/email/CalDAV/CardDAV/vault panels, scoped-token helpers, and unified integrations forms. Its email account forms include provider presets, Google Workspace/.edu OAuth connect/reconnect controls, display-name fields, password-field hiding for OAuth flows, and redirect result banners. `static/js/admin.js` owns user/admin panels, admin promote/demote controls, model endpoints, builtin tool toggles, MCP admin forms, feature toggles, token/webhook panels, diagnostics logs, backup/import, and danger-zone wipes.
+`static/js/settings.js` owns the Settings modal shell, non-admin settings panels, admin visibility sync, provider/model/search/research/reminder/email/CalDAV/CardDAV/vault panels, accessibility/font/text-size controls, scoped-token helpers, and unified integrations forms. Its email account forms include provider presets, Google Workspace/.edu OAuth connect/reconnect controls, display-name fields, password-field hiding for OAuth flows, and redirect result banners. `static/js/admin.js` owns user/admin panels, admin promote/demote controls, model endpoints, builtin tool toggles, MCP admin forms, feature toggles, token/webhook panels, diagnostics logs, backup/import, and danger-zone wipes.
 
 Logout/user-switch flows clear local/session storage to avoid stale cross-account UI state.
 
@@ -95,7 +96,7 @@ Runtime behavior:
 
 `routes.model_routes` owns `/api/tools`, which writes `settings.json:disabled_tools` for global builtin tool toggles.
 
-`src.tool_implementations.do_manage_settings()` owns the model-facing settings tool. It is admin-only through tool execution/security policy, writes real global settings, refuses secret-shaped setting writes, refuses structured clobbers, resolves model aliases to endpoints, and can enable/disable tools.
+`src.agent_tools.admin_tools.do_manage_settings()` owns the model-facing settings tool and is re-exported through `src.tool_implementations`. It is admin-only through tool execution/security policy, writes real global settings, refuses secret-shaped setting writes, refuses structured clobbers, resolves model aliases to endpoints, and can enable/disable tools.
 
 The stale `app_api` prompt text that mentions `/api/settings` is not the canonical settings surface; the live HTTP route is `/api/auth/settings`, and `manage_settings` is the intended agent settings tool. The `manage_settings` schema also still describes free-form preferences even though implementation only accepts keys in `DEFAULT_SETTINGS`.
 
@@ -118,7 +119,7 @@ HTTP import is best-effort and section-based. It rejects invalid top-level JSON,
 
 ## Diagnostics, Cleanup, And Wipe
 
-`routes.diagnostics_routes` owns admin diagnostics for DB, RAG, YouTube, research status, aggregate optional service health, and application log tails. The service-health endpoint checks ChromaDB, SearXNG, email accounts, ntfy, and model provider endpoints with bounded probes and redacted output. `/api/diagnostics/logs` reads a bounded tail from `DATA_DIR/logs/app.log`, with missing logs returning an empty result. Diagnostics are operational and must avoid growing into broad secret/environment dumps.
+`routes.diagnostics_routes` owns admin diagnostics for DB, RAG, YouTube, research status, aggregate optional service health, and application log tails. The service-health endpoint checks ChromaDB, SearXNG, email accounts, ntfy, and model provider endpoints with bounded probes and redacted output. URL-bearing diagnostics should use log-safety redaction helpers so credentials/query strings do not leak. `/api/diagnostics/logs` reads a bounded tail from `DATA_DIR/logs/app.log`, with missing logs returning an empty result. Diagnostics are operational and must avoid growing into broad secret/environment dumps.
 
 `routes.cleanup_routes` is owner-scoped, not admin-only. It previews and applies session cleanup for the current user through `src.cleanup_service`; when auth is disabled, cleanup can operate as a single-user unscoped flow.
 

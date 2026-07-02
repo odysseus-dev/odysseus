@@ -1,6 +1,6 @@
 # Persistence
 
-Last updated: dev@270b857 | 2026-06-15
+Last updated: dev@88191d1 | 2026-07-02
 
 ## Scope
 
@@ -8,6 +8,8 @@ This spec covers durable state in:
 
 - `core/database.py`;
 - `src/database.py`;
+- `src/runtime_paths.py`;
+- `src/constants.py`;
 - `core/models.py`;
 - `core/session_manager.py`;
 - `core/atomic_io.py`;
@@ -20,7 +22,7 @@ This spec covers durable state in:
 
 `core/database.py` owns SQLAlchemy models and startup migrations. `src/database.py` is a compatibility re-export for legacy imports. Route and service code commonly owns its own `SessionLocal()` lifecycle instead of using one central unit-of-work wrapper.
 
-The default database is SQLite at `data/app.db`. SQLAlchemy can point at a non-SQLite `DATABASE_URL`, but current startup migrations/backfills are SQLite-first and often use `sqlite3`, `PRAGMA`, or SQLite catalog queries. External DBs are not fully migration-compatible unless those helpers are made backend-neutral.
+The default database is SQLite at `DATA_DIR/app.db`. `src.runtime_paths` and `src.constants` own the data-dir default: source runs use the repository `data/` directory, frozen builds default to `~/.odysseus/data`, and `ODYSSEUS_DATA_DIR` overrides both. SQLAlchemy can point at a non-SQLite `DATABASE_URL`, but current startup migrations/backfills are SQLite-first and often use `sqlite3`, `PRAGMA`, or SQLite catalog queries. External DBs are not fully migration-compatible unless those helpers are made backend-neutral.
 
 Timestamp defaults use `utcnow_naive()` so existing naive `DateTime` columns stay UTC without the deprecated `datetime.utcnow()` default.
 
@@ -68,7 +70,9 @@ There is no single anonymous/local owner value today. SQL `NULL` and missing JSO
 
 ## Secrets And Local Stores
 
-`ModelEndpoint` includes cached/hidden/pinned model lists, endpoint kind, refresh mode/interval/timeout, model type, supports-tools, owner, optional `provider_auth_id`, and encrypted API key columns. New endpoint columns need matching startup migration helpers.
+`ModelEndpoint` includes cached/hidden/pinned model lists, endpoint kind, refresh mode/interval/timeout, model type, supports-tools, owner, optional `provider_auth_id`, provider metadata, and encrypted API key columns. New endpoint columns need matching startup migration helpers.
+
+`ProviderAuthSession` rows hold OAuth/device-flow credential state for providers such as ChatGPT Subscription. Endpoints can reference those rows through `provider_auth_id`; deletion/cleanup must preserve auth rows still referenced by another endpoint and remove orphaned provider-auth rows only after the last endpoint reference is gone.
 
 `McpServer` includes stdio/SSE/HTTP transport config, plaintext env JSON, OAuth config, disabled tool names, and encrypted generic OAuth token/client state in `oauth_tokens`.
 
@@ -83,7 +87,7 @@ Current JSON/local stores include:
 - `data/settings.json`, user preferences, feature flags, integration settings, and `data/embedding_endpoint.json`;
 - presets, API key manager state, memory/skills state, upload metadata, personal docs indexes, research JSON, background jobs, contacts/vault JSON, and task/cookbook auxiliary state.
 
-Cookbook state lives under the shared `DATA_DIR` path through the `COOKBOOK_STATE_FILE` constant. Search cache/analytics files also resolve from shared data-dir constants and tolerate read-only image layers during startup.
+Cookbook state lives under the shared `DATA_DIR` path through the `COOKBOOK_STATE_FILE` constant. Search cache/analytics, FastEmbed cache fallback, uploads, generated media, logs, and auxiliary SQLite stores also resolve from shared data-dir constants and must work with source, Docker, and frozen data-dir defaults.
 
 `core.atomic_io` owns atomic file-write behavior for auth/settings/integration-style stores. Upload metadata uses its own locked atomic writer with `.bak` recovery and can rewrite owner fields plus owner-qualified index keys during user rename. Memory and user prefs use temp-and-rename. API keys preserve encrypted values when saving one provider, presets persist atomically, and settings/feature loads degrade to defaults when the store is unreadable.
 

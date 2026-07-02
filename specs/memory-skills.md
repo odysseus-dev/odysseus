@@ -1,6 +1,6 @@
 # Memory And Skills
 
-Last updated: dev@270b857 | 2026-06-15
+Last updated: dev@88191d1 | 2026-07-02
 
 ## Scope
 
@@ -8,7 +8,7 @@ This spec covers persistent memory and user skills in:
 
 - app wiring in `app.py` and `src/app_initializer.py`;
 - active legacy memory managers `src/memory.py` and `src/memory_vector.py`;
-- memory routes in `routes/memory_routes.py`;
+- canonical memory routes in `routes/memory/memory_routes.py`, with `routes/memory_routes.py` as a compatibility shim;
 - chat memory/skill gating in `routes/chat_helpers.py`;
 - memory compatibility modules in `services/memory/memory.py`, `services/memory/memory_vector.py`, and `services/memory/service.py`;
 - provider abstractions in `src/memory_provider.py`;
@@ -23,7 +23,7 @@ This spec covers persistent memory and user skills in:
 
 ## Memory Runtime
 
-`src.app_initializer.initialize_managers()` creates the active `src.memory.MemoryManager` and `src.memory_vector.MemoryVectorStore` used by app startup. `routes.memory_routes` imports through `services.memory` but is passed the startup manager instances.
+`src.app_initializer.initialize_managers()` creates the active `src.memory.MemoryManager` and `src.memory_vector.MemoryVectorStore` used by app startup. `routes.memory.memory_routes` imports through `services.memory` but is passed the startup manager instances; top-level `routes.memory_routes` is a `sys.modules` compatibility shim.
 
 `MemoryManager` owns JSON-backed memory storage in `data/memory.json`, validation, owner fields, pinned state, use counts, and text/keyword similarity. `MemoryVectorStore` owns semantic lookup when Chroma and embeddings are reachable. `services/memory/memory.py` and `services/memory/memory_vector.py` are compatibility imports for these canonical `src` classes. `src.memory_provider.NativeMemoryProvider` is the provider interface around the native manager/vector pair.
 
@@ -56,7 +56,7 @@ Agent skill behavior:
 
 ## Tools, MCP, And Backup
 
-Native `manage_memory` and `manage_skills` tool paths pass owner context and use in-process policy gates. Manual memory add can choose a memory category instead of always defaulting to `fact`, and route-side manual add validates the source session owner before attaching session-derived memories. `mcp_servers/memory_server.py` lazy-initializes `src` managers and currently performs list/add/edit/delete/search without owner scope; list loads the current JSON store, supports category filtering, and returns a bounded text snippet per memory row.
+Native `manage_memory` and `manage_skills` tool paths pass owner context and use in-process policy gates. Manual memory add can choose a memory category instead of always defaulting to `fact`, and route-side manual add validates the source session owner before attaching session-derived memories. `mcp_servers/memory_server.py` lazy-initializes `src` managers and exposes list/add/edit/delete/search. It can scope to `ODYSSEUS_MCP_MEMORY_OWNER` or `ODYSSEUS_MEMORY_OWNER`; if the JSON store contains owner-bearing entries and no owner env is configured, it returns an owner-scope error instead of listing or mutating across owners. Ownerless stores remain ownerless compatibility mode.
 
 `/api/export` owner-filters memories and skills. `/api/import` imports skills through current disk-backed `SkillsManager` APIs, stamping missing owners to the importer and preserving supported skill metadata. Full data snapshots through `scripts/odysseus-backup` preserve on-disk skill trees, memory JSON, and caches differently from JSON import/export.
 
@@ -87,7 +87,7 @@ Owner isolation is surface-specific:
 - native memory/skill tools are expected to pass owner context;
 - Codex exposes scoped token memory behavior separately;
 - normal memory/skills routes are cookie/current-user surfaces, not scoped token APIs;
-- MCP memory and the agent level-0 skill index currently have ownerless/global behavior;
+- MCP memory uses an environment-configured owner for owner-scoped stores, while the agent level-0 skill index currently has ownerless/global behavior;
 - vector dedup during memory extraction suppresses only same-owner or legacy-ownerless vector matches.
 
 Skill test/audit flows intentionally run user-editable `SKILL.md` content as instructions inside controlled jobs. Those jobs rely on route owner checks, admin gates where applicable, and tool execution policy.
@@ -96,7 +96,7 @@ User rename flows update skill frontmatter owner fields and `_usage.json` owner 
 
 ## Testing Coverage
 
-Existing tests cover memory bullet extraction, extraction degraded-vector behavior, manager owner isolation, auto-memory owner isolation, MCP memory list shape, skill owner update/delete, skill prompt-injection wrapping, toolset gating, skill save no-rename behavior, CLI row handling, and selected route owner checks.
+Existing tests cover memory bullet extraction, extraction degraded-vector behavior, manager owner isolation, auto-memory owner isolation, MCP memory list shape and owner-scope behavior, skill owner update/delete, skill prompt-injection wrapping, toolset gating, skill save no-rename behavior, CLI row handling, and selected route owner checks.
 
 Route-level memory CRUD/security, skills route security, MCP memory behavior, vector degraded writes, compatibility facade owner behavior, backup skill import, admin vector cleanup, and frontend endpoint wiring need broader coverage.
 
@@ -104,7 +104,7 @@ Route-level memory CRUD/security, skills route security, MCP memory behavior, ve
 
 - `services/memory/service.py` needs an explicit owner-scope/support decision before it is treated as a public memory API.
 - The agent level-0 skill index should thread owner or be documented as an intentional local/global index.
-- MCP memory access should gain owner scope or be disabled/documented for multi-user contexts.
+- MCP memory still needs a deliberate multi-user UX/config decision, but current behavior avoids cross-owner access when owner-bearing rows exist without an explicit MCP owner env.
 - Memory JSON import does not rebuild vector indexes.
 - Admin wipe vector clearing is currently ineffective.
 - Chat memory retrieval needs a graceful path for vector failures after startup.

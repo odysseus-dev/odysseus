@@ -1,13 +1,13 @@
 # Research
 
-Last updated: dev@270b857 | 2026-06-15
+Last updated: dev@88191d1 | 2026-07-02
 
 ## Scope
 
 This spec covers deep research behavior in:
 
 - app wiring and timeout policy in `app.py` and `src/app_initializer.py`;
-- browser/API routes in `routes/research_routes.py`;
+- canonical browser/API routes in `routes/research/research_routes.py`, with `routes/research_routes.py` as a compatibility shim;
 - chat-triggered research in `routes/chat_routes.py`;
 - diagnostics in `routes/diagnostics_routes.py`;
 - scheduled research in `routes/task_routes.py` and `src/task_scheduler.py`;
@@ -35,7 +35,7 @@ This spec covers deep research behavior in:
 
 `src.research_handler.ResearchHandler` owns panel and chat-stream active research jobs: validation, query synthesis, model probing, endpoint/model selection inputs, task registry state, cancellation, progress, raw findings, result persistence, average-duration caching, owner stamping, and owner rename for active/disk-backed task state.
 
-`routes/research_routes.py` owns the browser/API surface: auth and privileges, active/status/cancel/result/result-peek/stream routes, report HTML, hide/unhide images, library/detail/archive/delete, endpoint resolution for panel launch, and spinoff chat creation.
+`routes.research.research_routes` owns the browser/API surface: auth and privileges, active/status/cancel/result/result-peek/stream routes, report HTML, hide/unhide images, library/detail/archive/delete, endpoint resolution for panel launch, and spinoff chat creation. Top-level `routes.research_routes` is a `sys.modules` compatibility shim.
 
 `TaskScheduler` owns scheduled research execution. It uses `DeepResearcher` directly, creates `[Research]` chat sessions, and writes `data/deep_research/*.json` in a compatible library/report shape without going through `ResearchHandler.start_research()`.
 
@@ -78,6 +78,8 @@ Research persistence uses `data/deep_research/<session_id>.json`. Current JSON c
 
 `src.visual_report` owns HTML report generation from markdown-like research output, heading/TOC processing, category styling, image injection, allowlist sanitization of untrusted rendered HTML, and client-side controls for hiding images and discussing reports.
 
+Research library thumbnails prefer visible source/report images and Open Graph images, while avoiding obvious logos/icons and blocked/hidden images.
+
 `clear_result()` marks/clears in-memory state; it does not delete the on-disk report. Library/detail/report/archive/delete routes operate on persisted JSON.
 
 ## Frontend Panel
@@ -115,6 +117,7 @@ Research routes require an authenticated user, and start routes require research
 Endpoint secret policy:
 
 - `/api/research/start` must use owner-scoped enabled endpoints before decrypted API keys/base URLs are passed to the handler;
+- endpoint/model selectors should resolve `ProviderAuthSession`-backed endpoints for the acting owner and filter non-chat/image-only models out of research model lists;
 - spinoff/follow-up endpoint selection should keep using owner-scoped endpoint context when present;
 - token-authenticated behavior must preserve token owner/scope expectations before being treated as an API surface.
 

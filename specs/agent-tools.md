@@ -1,6 +1,6 @@
 # Agent Tools
 
-Last updated: dev@270b857 | 2026-06-15
+Last updated: dev@88191d1 | 2026-07-02
 
 ## Scope
 
@@ -15,6 +15,7 @@ This spec covers agent/tool behavior in:
 - `src/tool_parsing.py`;
 - `src/tool_security.py`;
 - `src/tool_implementations.py`;
+- `src/tools/*.py`;
 - `src/builtin_actions.py`;
 - `src/ai_interaction.py`;
 - `src/action_intents.py`;
@@ -47,7 +48,9 @@ Workspace mode is request-scoped. Admin chat can send a workspace directory sele
 
 Tool registration is split:
 
-- `src.agent_tools` is now a package/facade. `TOOL_HANDLERS` maps native tool names to handler functions across filesystem, subprocess, web, and document modules, while `TOOL_TAGS` keeps compatibility metadata and the global MCP manager handle;
+- `src.agent_tools` is now a package/facade. `TOOL_HANDLERS` maps native tool names to handler functions across filesystem, subprocess, web, document, interaction, model-interaction, background-job, session, and admin modules, while `TOOL_TAGS` keeps compatibility metadata and the global MCP manager handle;
+- `src.tools` owns domain do_* implementations for calendar, contacts, Cookbook, image, notes, research, search, system, and vault tools. `src.tool_implementations` is now a compatibility facade that re-exports those symbols and lazy-loads admin manage_* symbols to avoid circular imports;
+- `src.agent_tools.admin_tools` owns admin manage_* tools for endpoints, MCP, webhooks, tokens, and settings, including command validation for `manage_mcp`;
 - `src.tool_parsing._TOOL_NAME_MAP` owns aliases and prompted-block parsing;
 - `src.tool_schemas.FUNCTION_TOOL_SCHEMAS` and `function_call_to_tool_block()` own native schema and native-call conversion;
 - `src.tool_index.BUILTIN_TOOL_DESCRIPTIONS` owns retrieval text;
@@ -65,6 +68,8 @@ When adding, removing, or renaming a tool, update the registry chain, execution 
 `src.tool_execution` owns built-in tool execution, MCP dispatch, path confinement, background markers, output truncation, internal HTTP loopback, owner/admin checks, policy-blocked execution results, and formatting tool results for the model/UI. File tools support exact edit diffs, full-file writes, read line ranges, and workspace confinement. Code-navigation tools (`grep`, `glob`, `ls`) prefer `rg`/structured filesystem traversal over ad hoc shell commands. Shared truncation and MCP manager compatibility helpers live in `src.tool_utils`.
 
 Tool retrieval has domain-specific hooks beyond generic similarity: contact queries can surface `resolve_contact`/`manage_contact`; matched skills can add `manage_skills` and their required toolsets to the relevant tool set; explicit admin intents can include admin schemas so prompt text and native schema emission match.
+
+Interaction/session/model helper tools are native first-class tools, not prompt-only conventions. `ask_user` and `update_plan` live in `src.agent_tools.interaction_tools`, model delegation/listing helpers live in `model_interaction_tools`, session creation/list/send/manage helpers live in `session_tools`, and `manage_bg_jobs` lives in `bg_job_tools`.
 
 Prompted-tool parsing includes a narrow recovery path for local models that mention a web tool and then emit a bare JSON object. Executed raw web JSON is stripped from assistant text afterward; this is not a general-purpose JSON-command parser.
 
@@ -90,7 +95,7 @@ Loop-breaker final-answer rounds, optional verifier retries, and teacher escalat
 - Non-admin users must not reach admin tools through agent mode, MCP, retrieval, or loopback calls.
 - Agent owner is passed from chat route `get_current_user(request)`. In `AUTH_ENABLED=false` mode this is `None`, not the `""` value returned by route dependencies. `blocked_tools_for_owner()`, schema hiding, and `execute_tool_block()` all use that owner.
 - Current dev tool security treats explicit `AUTH_ENABLED=false` as single-user even when an auth store exists, while auth-enabled pre-setup callers remain non-admin.
-- Path-based tools must remain confined to allowed roots and reject sensitive paths.
+- Path-based tools must remain confined to allowed roots and reject sensitive paths. Sensitive-path checks are case-insensitive and apply to direct file tools and code-navigation tools; `grep`/`glob`/`ls` must not become existence or content oracles for `.env`, SSH/GPG material, `id_rsa`, and similar denylisted paths.
 - Tool output is bounded/truncated where native execution owns the path, including displayed agent-tool output through the shared truncation helper. MCP output must be treated as untrusted; central MCP-output truncation before model re-entry remains a gap.
 - Provider-emitted native tool calls are requests, not authorization. `tool_execution` and route-level policy remain the authority.
 - Guide-only/no-tools mode blocks tools before prompt assembly, before execution, and in chat preprocessing paths that would otherwise fetch context or start tool-backed research.
@@ -98,7 +103,7 @@ Loop-breaker final-answer rounds, optional verifier retries, and teacher escalat
 
 ## Internal Loopback
 
-`src.tool_implementations.do_app_api()` owns generic app API loopback, OpenAPI discovery, method/path blocklists, and fixed local target behavior. `_internal_headers()` adds the process-secret internal-tool token and optional `X-Odysseus-Owner`; `core.middleware.require_admin()` and auth middleware own the corresponding bypass and owner-stamping rules. Route-specific owner handling must still be audited.
+`do_app_api()` is implemented in `src.tools.system` and re-exported by `src.tool_implementations`. It owns generic app API loopback, OpenAPI discovery, method/path blocklists, and fixed local target behavior. `_internal_headers()` adds the process-secret internal-tool token and optional `X-Odysseus-Owner`; `core.middleware.require_admin()` and auth middleware own the corresponding bypass and owner-stamping rules. Route-specific owner handling must still be audited.
 
 ## MCP
 
@@ -127,7 +132,7 @@ When an email reader is active, browser chat passes active email metadata and th
 - Tool descriptions are duplicated across `FUNCTION_TOOL_SCHEMAS`, agent prompt sections, and `BUILTIN_TOOL_DESCRIPTIONS`.
 - Agent prompts remain heavy for small local context windows.
 - Some AI-control helpers are still globally wired from app startup rather than a narrower service layer.
-- Tool registry consistency is manual across tags, aliases, schemas, retrieval descriptions, execution dispatch, settings/model routes, and frontend toggles.
+- Tool registry consistency is manual across handler maps, tags, aliases, schemas, retrieval descriptions, execution dispatch, settings/model routes, and frontend toggles.
 - MCP disabled-tool changes can stale-cache tool retrieval because disabled maps are not always an index generation input.
 - External MCP output truncation and tool-result prompt-injection wrapping need stronger guarantees.
 - Auth-disabled/no-login owner propagation is inconsistent between route dependencies and chat/agent execution, so tool-security and native tool storage behavior need dedicated regression coverage.

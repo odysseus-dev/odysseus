@@ -1,6 +1,6 @@
 # Documents, RAG, And Uploads
 
-Last updated: dev@270b857 | 2026-06-15
+Last updated: dev@88191d1 | 2026-07-02
 
 ## Scope
 
@@ -25,9 +25,9 @@ This spec covers file/document context, document storage, and vector retrieval i
 
 ## Uploads And Attachments
 
-`src.upload_handler.UploadHandler` owns upload IDs, safe filenames, upload metadata, owner rename rewrites, atomic `uploads.json` writes, and file storage under `data/uploads`. Upload IDs accept extensionless values or one sanitized alphanumeric extension.
+`src.upload_handler.UploadHandler` owns upload IDs, safe filenames, upload metadata, owner rename rewrites, atomic `uploads.json` writes, content-type detection, and file storage under `data/uploads`. Upload IDs accept extensionless values or one sanitized alphanumeric extension.
 
-`src.upload_limits` owns central upload-size caps and environment overrides for chat attachments, gallery, transforms, memory import, personal uploads, email compose, STT audio, and ICS imports. Invalid configured limits fail fast at import so routes do not silently accept unsafe sizes.
+`src.upload_limits` owns central upload-size caps and environment overrides for chat attachments, gallery, transforms, memory import, personal uploads, email compose, STT audio, and ICS imports. Invalid configured limits fail fast at import so routes do not silently accept unsafe sizes. Docker installs `libmagic1` plus `python-magic` so `UploadHandler.detect_content_type()` can sniff bytes in the official image; native installs can fall back to extension/MIME guesses when `python-magic` is unavailable.
 
 `routes/upload_routes.py` owns:
 
@@ -37,7 +37,7 @@ This spec covers file/document context, document storage, and vector retrieval i
 - `GET/PUT /api/upload/{file_id}/vision` for editable OCR/vision cache;
 - thumbnail and masked owner/admin access behavior.
 
-It does not currently expose a general upload list/delete route.
+It does not currently expose a general upload list/delete route. Download/preview responses that serve uploaded content should include `X-Content-Type-Options: nosniff` where route code owns the response so browser MIME sniffing does not widen accepted upload types.
 
 Readable/code-like upload handling includes common text/code extensions plus `.nix`; document processing renders recognized code-like text into fenced blocks with language metadata.
 
@@ -68,6 +68,7 @@ PDF runtime behavior:
 - PDF library entries preserve metadata/preview behavior for source PDFs;
 - pypdf text extraction remains core;
 - PyMuPDF enables form detection, page rendering, page PNGs, annotation fill, render/export PDF, and form filling;
+- PDF render routes should return a shaped 503 when PyMuPDF is absent and use same-origin framing/download behavior for rendered pages;
 - imported PDFs become either plain `pdf_source` markdown or `pdf_form_source` markdown with sidecar field data;
 - PDF markers must resolve back through an upload owned by the caller;
 - signed-reply preparation uses document `source_email_*` provenance and verifies the document owner and signature owner. Source email account resolution still needs explicit owner-scoped coverage.
@@ -133,7 +134,7 @@ Bearer-token callers are not a scoped document/upload API surface today. Routes 
 
 ## Testing Coverage
 
-Existing useful coverage includes upload owner scope, upload IDs, upload atomicity, attachment budgets, `.nix` text upload handling, upload/PDF security regressions, RAG owner fallback, Chroma fast-fail, MarkItDown runtime, PDF runtime, document-library counter updates, and selected document helper behavior.
+Existing useful coverage includes upload owner scope, upload IDs, upload atomicity, attachment budgets, `.nix` text upload handling, upload/PDF security regressions, Docker `libmagic`/`python-magic` upload detection, RAG owner fallback, Chroma fast-fail, MarkItDown runtime, PDF runtime, document-library counter updates, and selected document helper behavior.
 
 Route-level coverage is thinner for document CRUD, PDF import/render/export/fill, direct RAG upload, embedding admin/security behavior, and RAG unavailable states.
 

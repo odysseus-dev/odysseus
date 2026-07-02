@@ -1,6 +1,6 @@
 # Gallery, Editor, And Media
 
-Last updated: dev@270b857 | 2026-06-15
+Last updated: dev@88191d1 | 2026-07-02
 
 ## Scope
 
@@ -8,7 +8,7 @@ This spec covers media surfaces in:
 
 - app route registration and generated-file serving in `app.py`;
 - canonical models in `core/database.py`, with `src.database` as a compatibility import path;
-- `routes/gallery_routes.py` and `routes/gallery_helpers.py`;
+- canonical route package `routes/gallery/gallery_routes.py` and `routes/gallery/gallery_helpers.py`, with top-level `routes/gallery_routes.py` and `routes/gallery_helpers.py` compatibility shims;
 - generated-image writers in `src/ai_interaction.py` and `mcp_servers/image_gen_server.py`;
 - image tool schemas/dispatch/implementations in `src/tool_schemas.py`, `src/tool_execution.py`, and `src/tool_implementations.py`;
 - `routes/editor_draft_routes.py`;
@@ -38,7 +38,7 @@ This spec covers media surfaces in:
 
 ## Gallery
 
-`routes.gallery_routes` owns gallery upload/import/library/editor transform behavior: upload dedupe, image/video extension handling, EXIF extraction for images, albums, favorites, tags, generated media metadata, search/filter/sort, owner filtering, ZIP downloads, soft delete, disk cleanup, and chat-history cleanup after image delete.
+`routes.gallery.gallery_routes` owns gallery upload/import/library/editor transform behavior: upload dedupe, image/video extension handling, EXIF extraction for images, albums, favorites, tags, generated media metadata, search/filter/sort, owner filtering, ZIP downloads, soft delete, disk cleanup, and chat-history cleanup after image delete. Top-level `routes.gallery_routes` is a `sys.modules` compatibility shim to the canonical module.
 
 Frontend gallery behavior includes upload progress, folder-drop album import, stale-while-revalidate cards, saved editor projects, detail actions, bulk delete/download, and cache-busted image refreshes.
 
@@ -75,8 +75,9 @@ Provider behavior:
 
 - OpenAI image edits use multipart `/images/edits`, mask conversion, size coercion, model restrictions, and source compositing where needed;
 - diffusion/self-hosted paths use JSON APIs such as inpaint, img2img, variations, harmonize, or A1111-compatible fallbacks;
-- client-supplied endpoint URLs on selected routes must pass outbound endpoint validation; DB-selected image endpoints are admin-trusted today and do not all re-run outbound validation at call time;
+- client-supplied endpoint URLs on selected routes must pass outbound endpoint validation; DB-selected image endpoints should be resolved through owner-visible endpoint queries before decrypted headers/keys are used;
 - provider-returned image result URLs are validated with `src.url_safety.check_outbound_url()` before server-side download, with private-IP blocking controlled by image-route settings;
+- AI endpoint path suffixes are allowlisted before proxy/download use so arbitrary endpoint paths cannot be selected through gallery/editor requests;
 - editor model pickers load `/api/model-endpoints` and classify image-capable endpoints.
 
 Optional dependency behavior:
@@ -124,7 +125,7 @@ Known boundaries:
 - image-generation routes require `can_generate_images`;
 - image proxy/editor endpoints currently resolve client-selected, DB-selected, or fallback image model endpoints without full owner-scoped endpoint-key policy or uniform outbound revalidation;
 - generated-file serving allows rowless files and null-owner compatibility rows;
-- uploads are byte-limited and extension-gated, but content sniffing is partial;
+- uploads are byte-limited and extension-gated, with content sniffing available through `UploadHandler.detect_content_type()` when `python-magic`/`libmagic` is installed;
 - several base64 JSON editor routes accept large decoded image payloads and need route-level size discipline;
 - gallery DB filenames should be joined through shared generated-media path helpers before filesystem operations;
 - editor draft source image IDs, payloads, and thumbnails are owner-scoped by draft owner but do not fully validate source-gallery ownership or payload size;
@@ -154,7 +155,7 @@ Route-level coverage is thin for full gallery CRUD/album/tag/download/delete flo
 - Media routes need a clear API-token policy: reject token callers, or implement owner/scope handling.
 - Generated-image serving needs live route tests for invalid filenames, rowless files, owned rows, null-owner rows, MIME/cache headers, and cross-owner behavior.
 - Mutable generated filenames plus immutable cache headers need cache-busting tests for replace/save-over-original flows.
-- Media upload/content sniffing and base64 JSON payload size limits need hardening.
+- Base64 JSON editor payload size limits need hardening; upload content sniffing should keep native/Docker parity coverage as dependencies change.
 - MCP image generation needs an owner attribution decision or explicit admin-only documentation.
 - `edit_image` tool route mapping appears stale.
 - Emoji SVG proxy/cache and visual-report raw HTML/link sanitization need stronger tests.
