@@ -111,6 +111,8 @@ REQUEST_TIMEOUT = 5
 # Substring matching — use the shortest unique prefix so variants get caught.
 KNOWN_CONTEXT_WINDOWS = {
     # --- Anthropic ---
+    'claude-fable-5': 1000000,
+    'claude-sonnet-5': 1000000,
     'claude-sonnet-4-5': 200000,
     'claude-sonnet-4-6': 200000,
     'claude-sonnet-4': 200000,
@@ -124,7 +126,26 @@ KNOWN_CONTEXT_WINDOWS = {
     'claude-3-haiku': 200000,
 
     # --- OpenAI ---
+    'gpt-5.5': 1050000,
+    'gpt-5.5-pro': 1050000,
+    'gpt-5.4': 1050000,
+    'gpt-5.4-pro': 1050000,
+    'gpt-5.4-mini': 1050000,
+    'gpt-5.4-nano': 1050000,
+    'gpt-5.3-codex': 400000,
+    'gpt-5.3-codex-spark': 400000,
+    'gpt-5.2': 400000,
+    'gpt-5.2-pro': 400000,
+    'gpt-5.2-codex': 400000,
+    'gpt-5.1': 400000,
+    'gpt-5.1-codex': 400000,
+    'gpt-5.1-codex-max': 400000,
+    'gpt-5.1-codex-mini': 400000,
     'gpt-5': 400000,
+    'gpt-5-pro': 400000,
+    'gpt-5-mini': 400000,
+    'gpt-5-codex': 400000,
+    'gpt-5-nano': 400000,
     'gpt-4.1': 1047576,
     'gpt-4.1-mini': 1047576,
     'gpt-4.1-nano': 1047576,
@@ -149,6 +170,11 @@ KNOWN_CONTEXT_WINDOWS = {
     'deepseek-v2': 64000,
 
     # --- Google ---
+    'gemini-3.5': 1048576,
+    'gemini-3.5-flash': 1048576,
+    'gemini-3.1-pro': 1048576,
+    'gemini-3': 1048576,
+    'gemini-3-flash': 1048576,
     'gemini-2.5-pro': 1048576,
     'gemini-2.5-flash': 1048576,
     'gemini-2.0-flash': 1048576,
@@ -169,6 +195,7 @@ KNOWN_CONTEXT_WINDOWS = {
     'pixtral': 128000,
 
     # --- xAI ---
+    'grok-build-0.1': 200000,
     'grok-4': 131072,
     'grok-3': 131072,
     'grok-2': 131072,
@@ -181,10 +208,20 @@ KNOWN_CONTEXT_WINDOWS = {
     'llama-3': 131072,
 
     # --- Qwen ---
+    'qwen3.7-max': 1000000,
+    'qwen3.7-plus': 1000000,
+    'qwen3.6-plus': 1000000,
+    'qwen3.5-plus': 1000000,
     'qwen3': 131072,
     'qwen2.5': 131072,
     'qwen2': 32768,
     'qwq': 32768,
+
+    # --- GLM ---
+    'glm-5.2': 1000000,
+    'glm-5.1': 1000000,
+    'glm-5v-turbo': 1000000,
+    'glm-5': 200000,
 
     # --- Cohere ---
     'command-r-plus': 128000,
@@ -199,6 +236,9 @@ KNOWN_CONTEXT_WINDOWS = {
     'minimax': 1000000,
 
     # --- Moonshot / Kimi ---
+    'kimi-k2.7-code': 262144,
+    'kimi-k2.6': 262144,
+    'kimi-k2.5': 200000,
     'moonshot': 128000,
     'kimi': 128000,
 
@@ -225,6 +265,8 @@ KNOWN_CONTEXT_WINDOWS = {
     'mimo-v2.5': 1048576,
 
     # --- Open community ---
+    'big-pickle': 200000,
+    'north-mini-code': 256000,
     'dolphin': 32768,
     'mythomax': 4096,
     'wizard': 32768,
