@@ -5554,7 +5554,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
   //   3. Move to Spam / Move to Trash / Delete — destructive
   const actions = [
     {
-      label: 'Open in new tab',
+      label: window.t('Open in new tab'),
       icon: _newTabIcon,
       action: async () => {
         const folder = state._libFolder || 'INBOX';
@@ -5562,13 +5562,13 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       },
     },
     {
-      label: 'Remind to reply',
+      label: window.t('Remind to reply'),
       icon: _bellIcon,
       submenu: 'remind',
     },
     { separator: true },
     {
-      label: em.is_read ? 'Mark as Unread' : 'Mark as Read',
+      label: em.is_read ? window.t('Mark as Unread') : window.t('Mark as Read'),
       icon: _unreadIcon,
       action: async () => {
         const newRead = !em.is_read;
@@ -5588,7 +5588,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       // sidebar-pin / favorites filter so the visual language stays
       // consistent. Toggling updates em.is_flagged and re-sorts via
       // _renderGrid (favorited rows are always pinned at the top).
-      label: em.is_flagged ? 'Unfavorite' : 'Favorite (pin to top)',
+      label: em.is_flagged ? window.t('Unfavorite') : window.t('Favorite (pin to top)'),
       icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (em.is_flagged ? 'currentColor' : 'none') + '" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
       action: async () => {
         const next = !em.is_flagged;
@@ -5605,7 +5605,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       },
     },
     {
-      label: em.is_answered ? 'Mark as Not Done' : 'Mark as Done',
+      label: em.is_answered ? window.t('Mark as Not Done') : window.t('Mark as Done'),
       icon: _checkIcon,
       action: async () => {
         const newState = !em.is_answered;
@@ -5623,7 +5623,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       },
     },
     {
-      label: 'Move to Archive',
+      label: window.t('Move to Archive'),
       icon: _archIcon,
       action: async () => {
         try {
@@ -5635,12 +5635,12 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
     {
       // Save the sender to CardDAV contacts. Pulls name + address off the
       // list-item (em); falls back to splitting the local-part for a name.
-      label: 'Save sender to contacts',
+      label: window.t('Save sender to contacts'),
       icon: _contactIcon,
       action: async () => {
         const email = (em.from_address || em.from || '').trim();
         if (!email) {
-          import('./ui.js').then(m => m.showError && m.showError('No sender address')).catch(() => {});
+          import('./ui.js').then(m => m.showError && m.showError(window.t('No sender address'))).catch(() => {});
           return;
         }
         const name = (em.from_name || '').trim() || email.split('@')[0];
@@ -5653,18 +5653,18 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
           const d = await r.json();
           import('./ui.js').then(m => {
             if (!m.showToast) return;
-            if (d.success && d.message === 'Already exists') m.showToast('Already in contacts');
-            else if (d.success) m.showToast('Saved to contacts');
-            else m.showError && m.showError('Failed to save contact');
+            if (d.success && d.message === 'Already exists') m.showToast(window.t('Already in contacts'));
+            else if (d.success) m.showToast(window.t('Saved to contacts'));
+            else m.showError && m.showError(window.t('Failed to save contact'));
           }).catch(() => {});
         } catch (_) {
-          import('./ui.js').then(m => m.showError && m.showError('Failed to save contact')).catch(() => {});
+          import('./ui.js').then(m => m.showError && m.showError(window.t('Failed to save contact'))).catch(() => {});
         }
       },
     },
     { separator: true },
     {
-      label: 'Move to Spam',
+      label: window.t('Move to Spam'),
       icon: _spamIcon,
       action: async () => {
         try {
@@ -5674,7 +5674,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       },
     },
     {
-      label: 'Move to Trash',
+      label: window.t('Move to Trash'),
       icon: _trashIcon,
       action: async () => {
         try {
@@ -5813,7 +5813,7 @@ function _showCardMenu(em, anchor) {
       },
     });
     actions.push({
-      label: em.is_flagged ? 'Unfavorite' : 'Favorite (pin to top)',
+      label: em.is_flagged ? window.t('Unfavorite') : window.t('Favorite (pin to top)'),
       icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (em.is_flagged ? 'currentColor' : 'none') + '" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
       action: async () => {
         const next = !em.is_flagged;
@@ -5841,7 +5841,7 @@ function _showCardMenu(em, anchor) {
     });
   } else {
     actions.push({
-      label: em.is_flagged ? 'Unfavorite' : 'Favorite (pin to top)',
+      label: em.is_flagged ? window.t('Unfavorite') : window.t('Favorite (pin to top)'),
       icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (em.is_flagged ? 'currentColor' : 'none') + '" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
       action: async () => {
         const next = !em.is_flagged;

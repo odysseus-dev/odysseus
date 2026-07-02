@@ -153,4 +153,22 @@ registerMessages('pt-BR', {
   'No AI summary generated.': 'Nenhum resumo de IA gerado.',
   'Generate now': 'Gerar agora',
   'Failed to summarize': 'Falha ao resumir',
+
+  // --- card "more" menu ---
+  'Open in new tab': 'Abrir em nova aba',
+  'Remind to reply': 'Lembrete para responder',
+  'Mark as Unread': 'Marcar como nao lido',
+  'Mark as Read': 'Marcar como lido',
+  'Unfavorite': 'Desfavoritar',
+  'Favorite (pin to top)': 'Favoritar (fixar no topo)',
+  'Mark as Not Done': 'Marcar como nao concluido',
+  'Mark as Done': 'Marcar como concluido',
+  'Move to Archive': 'Mover para o arquivo',
+  'Save sender to contacts': 'Salvar remetente nos contatos',
+  'No sender address': 'Nenhum endereco de remetente',
+  'Already in contacts': 'Ja esta nos contatos',
+  'Saved to contacts': 'Salvo nos contatos',
+  'Failed to save contact': 'Falha ao salvar contato',
+  'Move to Spam': 'Mover para spam',
+  'Move to Trash': 'Mover para a lixeira',
 });
