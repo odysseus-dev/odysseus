@@ -69,4 +69,14 @@ registerMessages('pt-BR', {
   '{name} failed: {error}': '{name} falhou: {error}',
   '{count} models verified': '{count} modelos verificados',
   '{count} model verified': '{count} modelo verificado',
+
+  // ── scoreboard.js ──
+  'Agent': 'Agente',
+  'No {mode} votes yet. Run a comparison and vote!': 'Nenhum voto de {mode} ainda. Faça uma comparação e vote!',
+  'Win%': 'Vitórias%',
+  'Games': 'Partidas',
+  '{count} votes recorded': '{count} votos registrados',
+  '{count} vote recorded': '{count} voto registrado',
+  'Clear History': 'Limpar Histórico',
+  'Clear all vote history?': 'Limpar todo o histórico de votos?',
 });
