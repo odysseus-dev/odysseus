@@ -4051,6 +4051,7 @@ function startOdysseusApp() {
 
   // Non-critical: load in parallel, resolve silently
   modelsModule.refreshModels(false).then(() => {
+    try { sessionModule.updateModelPicker(); } catch (_) {}
     const modelsBox = document.getElementById('models');
     const hasModels = modelsBox && modelsBox.querySelector('.models-row');
     if (!hasModels) {

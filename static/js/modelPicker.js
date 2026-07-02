@@ -754,6 +754,18 @@ export function updateModelPicker() {
   // silently pre-populate the chatbox of the next user that signed in. If
   // we have no session model and no pending-chat pick, fall through to
   // the "Select model" placeholder below.
+  //
+  // But if the server model cache already has an online endpoint, make the
+  // same safe fallback visible in the picker immediately. The send path can
+  // already resolve a usable model; the UI should not sit on "Select model"
+  // and make it look broken.
+  if (!modelId && !currentSessionId && window.modelsModule && window.modelsModule.getCachedItems) {
+    const fallback = _firstAvailableModel();
+    if (fallback) {
+      _deps.setPendingChat(fallback);
+      modelId = fallback.modelId;
+    }
+  }
 
   // Check if selected model is still available — fall back ONLY for pending chats with no user selection
   // Never override an existing session's model — the user explicitly chose it
