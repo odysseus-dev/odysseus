@@ -102,4 +102,15 @@ registerMessages('pt-BR', {
   'Timeout': 'Tempo esgotado',
   'Response contains the expected answer': 'A resposta contém a resposta esperada',
   'Expected answer not found in response': 'Resposta esperada não encontrada na resposta',
+
+  // ── panes.js ──
+  'Search (role)': 'Busca',
+  'Retrying ({s}s)...': 'Repetindo ({s}s)...',
+  'Re-rolling...': 'Refazendo...',
+  'Run preview': 'Executar pré-visualização',
+  'Show code': 'Mostrar código',
+  'Re-roll': 'Refazer',
+  'Expand': 'Expandir',
+  'Remove pane': 'Remover painel',
+  'Shuffle models?': 'Embaralhar modelos?',
 });

@@ -66,7 +66,7 @@ function stopPane(paneIdx) {
     if (lastAi && lastAi._spinner) { lastAi._spinner.destroy(); lastAi._spinner = null; }
     const body = lastAi && lastAi.querySelector('.body');
     if (body && !body.textContent.trim()) {
-      body.innerHTML = '<span style="opacity:0.4;font-style:italic;">Stopped</span>';
+      body.innerHTML = '<span style="opacity:0.4;font-style:italic;">' + window.t('Stopped') + '</span>';
     }
   }
 }
@@ -103,10 +103,10 @@ async function rerollPane(paneIdx, overrideTimeout) {
   if (state._compareMode === 'search') {
     const aiMsg = document.createElement('div');
     aiMsg.className = 'msg msg-ai';
-    aiMsg.innerHTML = '<div class="role">Search</div><div class="body"></div>';
+    aiMsg.innerHTML = '<div class="role">' + window.t('Search (role)') + '</div><div class="body"></div>';
     const aiBody = aiMsg.querySelector('.body');
     if (spinnerModule) {
-      const spinner = spinnerModule.create('Searching...', 'right');
+      const spinner = spinnerModule.create(window.t('Searching...'), 'right');
       aiBody.appendChild(spinner.createElement());
       spinner.start();
     }
@@ -127,9 +127,9 @@ async function rerollPane(paneIdx, overrideTimeout) {
       const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
       aiBody.innerHTML = '';
       if (data.error) {
-        aiBody.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;">Error: ' + escapeHtml(data.error) + '</div>';
+        aiBody.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;">' + window.t('Error: ') + escapeHtml(data.error) + '</div>';
       } else if (!data.results || data.results.length === 0) {
-        aiBody.innerHTML = '<div style="color:color-mix(in srgb, var(--fg) 50%, transparent);font-size:0.85em;font-style:italic;">No results found</div>';
+        aiBody.innerHTML = '<div style="color:color-mix(in srgb, var(--fg) 50%, transparent);font-size:0.85em;font-style:italic;">' + window.t('No results found') + '</div>';
       } else {
         aiBody.appendChild(_renderSearchResults(data));
       }
@@ -138,13 +138,13 @@ async function rerollPane(paneIdx, overrideTimeout) {
       const span = document.createElement('span');
       span.className = 'response-metrics';
       const parts = [];
-      if (data.results) parts.push(data.results.length + ' results');
+      if (data.results) parts.push(data.results.length + ' ' + window.t('results'));
       parts.push(elapsed + 's');
       span.textContent = parts.join(' | ');
       footer.appendChild(span);
       aiMsg.appendChild(footer);
     } catch (err) {
-      aiBody.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;">Error: ' + escapeHtml(err.message) + '</div>';
+      aiBody.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;">' + window.t('Error: ') + escapeHtml(err.message) + '</div>';
     }
     state._abortControllers[paneIdx] = null;
     hist.scrollTop = hist.scrollHeight;
@@ -157,7 +157,7 @@ async function rerollPane(paneIdx, overrideTimeout) {
   aiMsg.innerHTML = '<div class="role">AI</div><div class="body"></div>';
   const aiBody = aiMsg.querySelector('.body');
   if (spinnerModule) {
-    const label = overrideTimeout ? 'Retrying (' + overrideTimeout + 's)...' : 'Re-rolling...';
+    const label = overrideTimeout ? window.t('Retrying ({s}s)...').replace('{s}', overrideTimeout) : window.t('Re-rolling...');
     const spinner = spinnerModule.create(label, 'right');
     aiBody.appendChild(spinner.createElement());
     spinner.start();
@@ -210,7 +210,7 @@ function _autoPreviewHtml(paneIdx, accumulated) {
   // Show the play button
   previewBtn.style.display = '';
   previewBtn.innerHTML = ICON_PLAY;
-  previewBtn.title = 'Run preview';
+  previewBtn.title = window.t('Run preview');
 }
 
 /** Toggle between iframe preview and code view for a pane. */
@@ -226,7 +226,7 @@ function togglePanePreview(paneIdx) {
     iframe.style.display = 'none';
     hist.style.display = '';
     btn.innerHTML = ICON_PLAY;
-    btn.title = 'Run preview';
+    btn.title = window.t('Run preview');
     btn.classList.remove('active');
   } else {
     // Switch to preview — load on first click
@@ -234,7 +234,7 @@ function togglePanePreview(paneIdx) {
     iframe.style.display = '';
     hist.style.display = 'none';
     btn.innerHTML = ICON_CODE;
-    btn.title = 'Show code';
+    btn.title = window.t('Show code');
     btn.classList.add('active');
   }
 }
@@ -269,7 +269,7 @@ async function copyPaneResponse(paneIdx) {
     ta.value = text; document.body.appendChild(ta); ta.select();
     document.execCommand('copy'); ta.remove();
   }
-  if (uiModule) uiModule.showToast(lastAi._imageData ? 'Prompt copied!' : 'Copied!');
+  if (uiModule) uiModule.showToast(lastAi._imageData ? window.t('Prompt copied!') : window.t('Copied!'));
 }
 
 // ── Add / create / remove panes ──
@@ -293,7 +293,7 @@ async function _addPane(anchorBtn) {
   if (filtered.length >= 5) {
     const searchInput = document.createElement('input');
     searchInput.type = 'text';
-    searchInput.placeholder = 'Search models\u2026';
+    searchInput.placeholder = window.t('Search models\u2026');
     searchInput.className = 'add-pane-search';
     searchInput.addEventListener('input', () => {
       const q = searchInput.value.toLowerCase().trim();
@@ -383,7 +383,7 @@ async function _createAndAppendPane(m) {
   // Create session
   const fd = new FormData();
   // Blind mode: neutral slot name only — never leak the model (issue #1285).
-  fd.append('name', '[CMP] ' + (state._blindMode ? 'Model ' + _slotChar(i) : m.name));
+  fd.append('name', '[CMP] ' + (state._blindMode ? window.t('Model') + ' ' + _slotChar(i) : m.name));
   fd.append('endpoint_url', m.url || '');
   fd.append('model', m.id || '');
   if (m.endpointId) {
@@ -403,7 +403,7 @@ async function _createAndAppendPane(m) {
   if (window._updateCheckBtnState) window._updateCheckBtnState();
 
   // Build pane DOM
-  const label = state._blindMode ? 'Model ' + _slotChar(i) : m.name;
+  const label = state._blindMode ? window.t('Model') + ' ' + _slotChar(i) : m.name;
   const pane = document.createElement('div');
   pane.className = 'compare-pane';
   pane.dataset.pane = String(i);
@@ -413,11 +413,11 @@ async function _createAndAppendPane(m) {
       '<span class="pane-timer" id="cmp-timer-' + i + '"></span>' +
         '<span class="pane-finish-badge" id="cmp-badge-' + i + '"></span>' +
       '<div class="pane-actions">' +
-        '<button class="pane-action-btn pane-preview-btn" data-action="preview" data-pane="' + i + '" id="cmp-preview-' + i + '" title="Run preview" style="display:none;">' + ICON_PLAY + '</button>' +
-        '<button class="pane-action-btn" data-action="reroll" data-pane="' + i + '" title="Re-roll">' + ICON_REROLL + '</button>' +
-        '<button class="pane-action-btn" data-action="copy" data-pane="' + i + '" title="Copy">' + ICON_COPY + '</button>' +
-        '<button class="pane-action-btn" data-action="expand" data-pane="' + i + '" title="Expand">' + ICON_EXPAND + '</button>' +
-        '<button class="pane-action-btn pane-close-btn" data-action="close" data-pane="' + i + '" title="Remove pane">' + ICON_CLOSE + '</button>' +
+        '<button class="pane-action-btn pane-preview-btn" data-action="preview" data-pane="' + i + '" id="cmp-preview-' + i + '" title="' + escapeHtml(window.t('Run preview')) + '" style="display:none;">' + ICON_PLAY + '</button>' +
+        '<button class="pane-action-btn" data-action="reroll" data-pane="' + i + '" title="' + escapeHtml(window.t('Re-roll')) + '">' + ICON_REROLL + '</button>' +
+        '<button class="pane-action-btn" data-action="copy" data-pane="' + i + '" title="' + escapeHtml(window.t('Copy')) + '">' + ICON_COPY + '</button>' +
+        '<button class="pane-action-btn" data-action="expand" data-pane="' + i + '" title="' + escapeHtml(window.t('Expand')) + '">' + ICON_EXPAND + '</button>' +
+        '<button class="pane-action-btn pane-close-btn" data-action="close" data-pane="' + i + '" title="' + escapeHtml(window.t('Remove pane')) + '">' + ICON_CLOSE + '</button>' +
       '</div>' +
     '</div>' +
     '<div class="chat-history" id="cmp-history-' + i + '"></div>' +
@@ -425,7 +425,7 @@ async function _createAndAppendPane(m) {
     '<div class="pane-vote-footer">' +
       '<button class="pane-vote-btn" data-pane="' + i + '" type="button" disabled style="opacity:0.4;">' +
         '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;vertical-align:-2px;"><polyline points="20 6 9 17 4 12"/></svg>' +
-        '<span class="pane-vote-label">Vote ' + escapeHtml(label) + '</span>' +
+        '<span class="pane-vote-label">' + escapeHtml(window.t('Vote')) + ' ' + escapeHtml(label) + '</span>' +
       '</button>' +
     '</div>';
 
@@ -440,9 +440,9 @@ async function _createAndAppendPane(m) {
   // Update header label
   const headerSpan = document.querySelector('.compare-active > div:first-child span');
   if (headerSpan) {
-    const modeLabel = ({ search: ' search providers', agent: ' agents', research: ' research models' }[state._compareMode] || ' models');
-    headerSpan.textContent = 'Comparing' + modeLabel +
-      (state._blindMode ? ' (blind)' : '') + ' \u00b7 ' + state._timeout + 's timeout';
+    const modeLabel = ({ search: window.t(' search providers'), agent: window.t(' agents'), research: window.t(' research models') }[state._compareMode] || window.t(' models'));
+    headerSpan.textContent = window.t('Comparing') + modeLabel +
+      (state._blindMode ? ' ' + window.t('(blind)') : '') + ' \u00b7 ' + state._timeout + window.t('s timeout');
   }
 
   // Rebuild vote bar
@@ -454,7 +454,7 @@ async function _createAndAppendPane(m) {
     if (shuffleBtn) {
       const bubble = document.createElement('div');
       bubble.style.cssText = 'position:absolute;top:100%;right:0;margin-top:6px;background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;white-space:nowrap;z-index:10000;box-shadow:0 4px 12px rgba(0,0,0,0.25);pointer-events:none;opacity:0;transition:opacity 0.2s;';
-      bubble.textContent = 'Shuffle models?';
+      bubble.textContent = window.t('Shuffle models?');
       shuffleBtn.style.position = 'relative';
       shuffleBtn.appendChild(bubble);
       requestAnimationFrame(() => { bubble.style.opacity = '1'; });
@@ -496,7 +496,7 @@ function _removePane(paneIdx) {
 
   const n = state._selectedModels.length;
   for (let i = 0; i < n; i++) {
-    const label = state._blindMode ? 'Model ' + _slotChar(i) : state._selectedModels[i].name;
+    const label = state._blindMode ? window.t('Model') + ' ' + _slotChar(i) : state._selectedModels[i].name;
     const pane = document.createElement('div');
     pane.className = 'compare-pane';
     pane.dataset.pane = String(i);
@@ -506,12 +506,12 @@ function _removePane(paneIdx) {
         '<span class="pane-timer" id="cmp-timer-' + i + '"></span>' +
         '<span class="pane-finish-badge" id="cmp-badge-' + i + '"></span>' +
         '<div class="pane-actions">' +
-          '<button class="pane-action-btn pane-stop-btn" data-action="stop" data-pane="' + i + '" title="Stop" style="display:none;"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>' +
-          '<button class="pane-action-btn pane-preview-btn" data-action="preview" data-pane="' + i + '" id="cmp-preview-' + i + '" title="Run preview" style="display:none;">' + ICON_PLAY + '</button>' +
-          '<button class="pane-action-btn pane-needs-response" data-action="reroll" data-pane="' + i + '" title="Re-roll" style="display:none;">' + ICON_REROLL + '</button>' +
-          '<button class="pane-action-btn pane-needs-response" data-action="copy" data-pane="' + i + '" title="Copy" style="display:none;">' + ICON_COPY + '</button>' +
-          '<button class="pane-action-btn" data-action="expand" data-pane="' + i + '" title="Expand">' + ICON_EXPAND + '</button>' +
-          '<button class="pane-action-btn pane-close-btn" data-action="close" data-pane="' + i + '" title="Remove pane">' + ICON_CLOSE + '</button>' +
+          '<button class="pane-action-btn pane-stop-btn" data-action="stop" data-pane="' + i + '" title="' + escapeHtml(window.t('Stop')) + '" style="display:none;"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>' +
+          '<button class="pane-action-btn pane-preview-btn" data-action="preview" data-pane="' + i + '" id="cmp-preview-' + i + '" title="' + escapeHtml(window.t('Run preview')) + '" style="display:none;">' + ICON_PLAY + '</button>' +
+          '<button class="pane-action-btn pane-needs-response" data-action="reroll" data-pane="' + i + '" title="' + escapeHtml(window.t('Re-roll')) + '" style="display:none;">' + ICON_REROLL + '</button>' +
+          '<button class="pane-action-btn pane-needs-response" data-action="copy" data-pane="' + i + '" title="' + escapeHtml(window.t('Copy')) + '" style="display:none;">' + ICON_COPY + '</button>' +
+          '<button class="pane-action-btn" data-action="expand" data-pane="' + i + '" title="' + escapeHtml(window.t('Expand')) + '">' + ICON_EXPAND + '</button>' +
+          '<button class="pane-action-btn pane-close-btn" data-action="close" data-pane="' + i + '" title="' + escapeHtml(window.t('Remove pane')) + '">' + ICON_CLOSE + '</button>' +
         '</div>' +
       '</div>' +
       '<div class="chat-history" id="cmp-history-' + i + '"></div>' +
@@ -519,7 +519,7 @@ function _removePane(paneIdx) {
       '<div class="pane-vote-footer">' +
         '<button class="pane-vote-btn" data-pane="' + i + '" type="button" disabled style="opacity:0.4;">' +
           '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;vertical-align:-2px;"><polyline points="20 6 9 17 4 12"/></svg>' +
-          '<span class="pane-vote-label">Vote ' + escapeHtml(label) + '</span>' +
+          '<span class="pane-vote-label">' + escapeHtml(window.t('Vote')) + ' ' + escapeHtml(label) + '</span>' +
         '</button>' +
       '</div>';
     grid.appendChild(pane);
@@ -531,9 +531,9 @@ function _removePane(paneIdx) {
   // Update header label
   const headerSpan = document.querySelector('.compare-active > div:first-child span');
   if (headerSpan) {
-    const modeLabel = ({ search: ' search providers', agent: ' agents', research: ' research models' }[state._compareMode] || ' models');
-    headerSpan.textContent = 'Comparing' + modeLabel +
-      (state._blindMode ? ' (blind)' : '') + ' \u00b7 ' + state._timeout + 's timeout';
+    const modeLabel = ({ search: window.t(' search providers'), agent: window.t(' agents'), research: window.t(' research models') }[state._compareMode] || window.t(' models'));
+    headerSpan.textContent = window.t('Comparing') + modeLabel +
+      (state._blindMode ? ' ' + window.t('(blind)') : '') + ' \u00b7 ' + state._timeout + window.t('s timeout');
   }
 
   // Rebuild vote bar
@@ -586,7 +586,7 @@ function _showModelSwapDropdown(paneIdx, titleBtn) {
       }
       const fd = new FormData();
       // Blind mode: neutral slot name only — never leak the model (issue #1285).
-      fd.append('name', '[CMP] ' + (state._blindMode ? 'Model ' + _slotChar(paneIdx) : m.name));
+      fd.append('name', '[CMP] ' + (state._blindMode ? window.t('Model') + ' ' + _slotChar(paneIdx) : m.name));
       fd.append('endpoint_url', m.url || '');
       fd.append('model', m.id || '');
       if (m.endpointId) {
@@ -605,7 +605,7 @@ function _showModelSwapDropdown(paneIdx, titleBtn) {
       const titleEl = document.getElementById('cmp-title-' + paneIdx);
       if (titleEl) {
         const displayName = state._blindMode
-          ? 'Model ' + _slotChar(paneIdx)
+          ? window.t('Model') + ' ' + _slotChar(paneIdx)
           : m.name;
         titleEl.innerHTML = escapeHtml(displayName) + ' <span class="pane-title-caret">&#x25BE;</span>';
       }
@@ -733,7 +733,7 @@ function shufflePanePositions() {
 
       if (hist) hist.innerHTML = paneContents[src];
       if (titleEl) {
-        const lbl = state._blindMode ? 'Model ' + _slotChar(i) : state._selectedModels[i].name;
+        const lbl = state._blindMode ? window.t('Model') + ' ' + _slotChar(i) : state._selectedModels[i].name;
         titleEl.innerHTML = escapeHtml(lbl) + ' <span class="pane-title-caret">&#x25BE;</span>';
         titleEl.style.transition = 'opacity 0.25s ease, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)';
         titleEl.style.opacity = '1';
@@ -774,7 +774,7 @@ function resetCompare() {
     if (badge) { badge.textContent = ''; badge.style.color = ''; }
     const titleEl = document.getElementById('cmp-title-' + i);
     if (titleEl) {
-      const lbl = state._blindMode ? 'Model ' + _slotChar(i) : state._selectedModels[i].name;
+      const lbl = state._blindMode ? window.t('Model') + ' ' + _slotChar(i) : state._selectedModels[i].name;
       titleEl.innerHTML = escapeHtml(lbl) + ' <span class="pane-title-caret">&#x25BE;</span>';
     }
     if (panes[i]) { panes[i].classList.remove('winner', 'loser'); }
