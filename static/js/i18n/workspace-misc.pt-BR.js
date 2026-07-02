@@ -45,4 +45,12 @@ registerMessages('pt-BR', {
 
   // censor.js
   'Click to reveal {label}': 'Clique para revelar {label}',
+
+  // providerDeviceFlow.js
+  'Request failed (HTTP {status})': 'Requisição falhou (HTTP {status})',
+  'Fetch API is unavailable': 'API Fetch indisponível',
+  'Failed to start {label} sign-in': 'Falha ao iniciar login no {label}',
+  '{label} sign-in did not return a poll id': 'O login no {label} não retornou um id de consulta',
+  '{label} sign-in poll failed': 'Consulta de login no {label} falhou',
+  'denied': 'negado',
 });

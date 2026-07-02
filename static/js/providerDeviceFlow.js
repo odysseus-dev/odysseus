@@ -45,7 +45,7 @@ function _messageFromPayload(payload, fallback) {
   return fallback;
 }
 
-export function formatDeviceFlowError(error, fallback = 'Request failed') {
+export function formatDeviceFlowError(error, fallback = window.t('Request failed')) {
   if (!error) return fallback;
   if (typeof error === 'string') return error;
   if (error.detail) return String(error.detail);
@@ -57,7 +57,7 @@ async function _fetchJson(fetchImpl, url, options, fallback) {
   const response = await fetchImpl(url, options);
   const payload = await _jsonOrEmpty(response);
   if (!response.ok) {
-    throw new Error(_messageFromPayload(payload, fallback || `Request failed (HTTP ${response.status})`));
+    throw new Error(_messageFromPayload(payload, fallback || window.t('Request failed (HTTP {status})').replace('{status}', response.status)));
   }
   return payload;
 }
@@ -75,7 +75,7 @@ export async function runProviderDeviceFlow(provider, options = {}) {
   if (!cfg) throw new Error(`Unknown device-flow provider: ${provider}`);
 
   const fetchImpl = options.fetchImpl || globalThis.fetch?.bind(globalThis);
-  if (!fetchImpl) throw new Error('Fetch API is unavailable');
+  if (!fetchImpl) throw new Error(window.t('Fetch API is unavailable'));
 
   const openWindow = options.openWindow || ((url) => {
     if (globalThis.window && typeof globalThis.window.open === 'function') {
@@ -90,9 +90,9 @@ export async function runProviderDeviceFlow(provider, options = {}) {
     method: 'POST',
     body: formData,
     credentials: 'same-origin',
-  }, `Failed to start ${cfg.label} sign-in`);
+  }, window.t('Failed to start {label} sign-in').replace('{label}', cfg.label));
 
-  if (!start.poll_id) throw new Error(`${cfg.label} sign-in did not return a poll id`);
+  if (!start.poll_id) throw new Error(window.t('{label} sign-in did not return a poll id').replace('{label}', cfg.label));
   const authUrl = cfg.authUrl(start);
   await _callCallback(options.onStart, { provider, config: cfg, start, authUrl });
   if (authUrl) openWindow(authUrl);
@@ -112,14 +112,14 @@ export async function runProviderDeviceFlow(provider, options = {}) {
       method: 'POST',
       body: fd,
       credentials: 'same-origin',
-    }, `${cfg.label} sign-in poll failed`);
+    }, window.t('{label} sign-in poll failed').replace('{label}', cfg.label));
     await _callCallback(options.onPoll, { provider, config: cfg, start, poll });
 
     if (poll.status === 'authorized') {
       return { status: 'authorized', endpoint: poll.endpoint || {} };
     }
     if (poll.status === 'failed') {
-      return { status: 'failed', error: poll.error || 'denied' };
+      return { status: 'failed', error: poll.error || window.t('denied') };
     }
     if (poll.interval) {
       stepMs = Math.max(Number(poll.interval || 5), 2) * 1000;
