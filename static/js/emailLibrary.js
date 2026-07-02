@@ -5684,14 +5684,14 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       },
     },
     {
-      label: 'Delete Permanently',
+      label: window.t('Delete Permanently'),
       icon: _deleteForeverIcon,
       danger: true,
       action: async () => {
-        const subject = em.subject || '(no subject)';
+        const subject = em.subject || window.t('(no subject)');
         const ok = await styledConfirm(
-          `Permanently delete "${subject}"? This cannot be undone.`,
-          { confirmText: 'Delete', cancelText: 'Cancel', danger: true }
+          window.t('Permanently delete "{subject}"? This cannot be undone.').replace('{subject}', subject),
+          { confirmText: window.t('Delete'), cancelText: window.t('Cancel'), danger: true }
         );
         if (!ok) return;
         try {
@@ -5729,7 +5729,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
   const _cancelIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
   const cancelItem = document.createElement('div');
   cancelItem.className = 'dropdown-item-compact dropdown-cancel-mobile';
-  cancelItem.innerHTML = _icon(_cancelIco) + '<span>Cancel</span>';
+  cancelItem.innerHTML = _icon(_cancelIco) + '<span>' + window.t('Cancel') + '</span>';
   cancelItem.addEventListener('click', (e) => {
     e.stopPropagation();
     close();
@@ -5764,21 +5764,21 @@ function _showCardMenu(em, anchor) {
 
   const _newTabIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
   const actions = [
-    { label: 'Open', icon: _replyIcon, action: async () => {
+    { label: window.t('Open'), icon: _replyIcon, action: async () => {
       // Just expand inline (same as tapping the row).
       const card = anchor.closest('.doclib-card');
       if (card && !card.classList.contains('doclib-card-expanded')) {
         await _toggleCardPreview(card, em);
       }
     }},
-    { label: 'Open in new tab', icon: _newTabIcon, action: async () => {
+    { label: window.t('Open in new tab'), icon: _newTabIcon, action: async () => {
       // Open this email as its own in-app modal that registers a dock
       // chip — multiple emails can be opened simultaneously, each gets
       // its own chip in the minimized dock.
       const folder = state._libFolder || 'INBOX';
       await _openEmailAsTab(em, folder);
     }},
-    { label: 'Remind to reply', icon: _cardBellIcon, submenu: 'remind' },
+    { label: window.t('Remind to reply'), icon: _cardBellIcon, submenu: 'remind' },
   ];
 
   if (!isSentFolder) {
@@ -5789,7 +5789,7 @@ function _showCardMenu(em, anchor) {
     const _checkForLabel = _cardForLabel ? _cardForLabel.querySelector('.email-card-done') : null;
     const _currentlyDone = _checkForLabel ? _checkForLabel.classList.contains('active') : !!em.is_answered;
     actions.push({
-      label: _currentlyDone ? 'Not Done' : 'Done',
+      label: _currentlyDone ? window.t('Not Done') : window.t('Done'),
       icon: _checkIcon,
       action: async () => {
         const card = anchor.closest('.doclib-card');
@@ -5829,7 +5829,7 @@ function _showCardMenu(em, anchor) {
       },
     });
     actions.push({
-      label: 'Archive',
+      label: window.t('Archive'),
       icon: _archIcon,
       action: async () => {
         await fetch(`${API_BASE}/api/email/archive/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
@@ -5857,7 +5857,7 @@ function _showCardMenu(em, anchor) {
       },
     });
     actions.push({
-      label: 'Archive',
+      label: window.t('Archive'),
       icon: _archIcon,
       action: async () => {
         await fetch(`${API_BASE}/api/email/archive/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
@@ -5876,7 +5876,7 @@ function _showCardMenu(em, anchor) {
   // center lines up with the SVG icons above (which sit a bit higher).
   const _selectIcon = '<span style="font-size:16px;line-height:1;position:relative;top:-2px;">●</span>';
   actions.push({
-    label: 'Select',
+    label: window.t('Select'),
     icon: _selectIcon,
     action: () => {
       state._selectMode = true;
@@ -5920,7 +5920,7 @@ function _showCardMenu(em, anchor) {
   const _cancelIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
   const cancelItem = document.createElement('div');
   cancelItem.className = 'dropdown-item-compact dropdown-cancel-mobile';
-  cancelItem.innerHTML = _icon(_cancelIco) + '<span>Cancel</span>';
+  cancelItem.innerHTML = _icon(_cancelIco) + '<span>' + window.t('Cancel') + '</span>';
   cancelItem.addEventListener('click', (e) => {
     e.stopPropagation();
     close();

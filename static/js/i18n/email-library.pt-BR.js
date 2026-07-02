@@ -171,4 +171,10 @@ registerMessages('pt-BR', {
   'Failed to save contact': 'Falha ao salvar contato',
   'Move to Spam': 'Mover para spam',
   'Move to Trash': 'Mover para a lixeira',
+  'Delete Permanently': 'Excluir permanentemente',
+  'Permanently delete "{subject}"? This cannot be undone.': 'Excluir permanentemente "{subject}"? Isso nao pode ser desfeito.',
+  'Not Done': 'Nao concluido',
+  'Done': 'Concluido',
+  'Open': 'Abrir',
+  'Archive': 'Arquivar',
 });
