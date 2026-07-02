@@ -9,12 +9,7 @@ name: ci / docker publish
 # Registry: ghcr.io/<owner>/<repo>.
 
 on:
-  push:
-    branches: [dev, main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '.github/ISSUE_TEMPLATE/**'
+  workflow_dispatch:
 
 concurrency:
   group: docker-publish-${{ github.ref }}
