@@ -88,8 +88,6 @@ registerMessages('pt-BR', {
   'Writing report': 'Escrevendo relatório',
   'Research error': 'Erro de pesquisa',
   'Generating image...': 'Gerando imagem...',
-  'Terminal': 'Terminal',
-  'Python': 'Python',
   'Read File': 'Ler Arquivo',
   'Write File': 'Escrever Arquivo',
   'Prompt copied!': 'Prompt copiado!',
@@ -99,7 +97,7 @@ registerMessages('pt-BR', {
   'response may be incomplete': 'a resposta pode estar incompleta',
   'Retry +{s}s': 'Repetir +{s}s',
   'Cancelled.': 'Cancelado.',
-  'Timeout': 'Tempo esgotado',
+  'Timed out': 'Tempo esgotado',
   'Response contains the expected answer': 'A resposta contém a resposta esperada',
   'Expected answer not found in response': 'Resposta esperada não encontrada na resposta',
 

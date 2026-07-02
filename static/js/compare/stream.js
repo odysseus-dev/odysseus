@@ -678,7 +678,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
       } else {
         // Timed out or errored — show failed badge
         const badge = document.getElementById('cmp-badge-' + paneIdx);
-        if (badge) { badge.textContent = timedOut ? window.t('Timeout') : window.t('Failed'); badge.style.color = 'var(--color-error)'; }
+        if (badge) { badge.textContent = timedOut ? window.t('Timed out') : window.t('Failed'); badge.style.color = 'var(--color-error)'; }
       }
     }
     // Auto-grade against expected answer — stamps ✓ or ✗ on the pane header.
