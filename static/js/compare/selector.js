@@ -1141,7 +1141,7 @@ async function showModelSelector() {
                   let wIdx = 0;
                   row._waveInterval = setInterval(() => { wIdx = (wIdx + 1) % waveFrames.length; spinner.textContent = waveFrames[wIdx]; }, 100);
                 }
-                if (status) status.textContent = 'Swapping...';
+                if (status) status.textContent = window.t('Swapping...');
               }
 
               // Try up to 3 replacements with 10s timeout each
@@ -1149,7 +1149,7 @@ async function showModelSelector() {
               for (let attempt = 0; attempt < 3 && poolIdx < pool.length; attempt++) {
                 const replacement = pool[poolIdx++];
                 const probePromise = _probeOne({ model: replacement.id, endpoint: replacement.url, endpointId: replacement.endpointId });
-                const timeoutPromise = new Promise(r => setTimeout(() => r({ status: 'timeout', error: 'Swap timed out' }), 10000));
+                const timeoutPromise = new Promise(r => setTimeout(() => r({ status: 'timeout', error: window.t('Swap timed out') }), 10000));
                 const probeResult = await Promise.race([probePromise, timeoutPromise]);
                 if (probeResult.status === 'ok') {
                   selections[i] = { model: replacement.id, endpoint: replacement.url, endpointId: replacement.endpointId, name: replacement.name };
@@ -1166,7 +1166,7 @@ async function showModelSelector() {
                   const spinner = row.querySelector('.compare-probe-spinner');
                   const status = row.querySelector('.compare-probe-status');
                   if (spinner) { spinner.textContent = '\u2717'; spinner.classList.add('fail'); spinner.style.color = ''; }
-                  if (status) { status.textContent = 'No replacement'; }
+                  if (status) { status.textContent = window.t('No replacement'); }
                 }
               }
             }
@@ -1187,7 +1187,7 @@ async function showModelSelector() {
 
           if (providers.length > 0) {
             const titleEl = probeOverlay.querySelector('.compare-probe-title');
-            titleEl.textContent = 'Checking search providers...';
+            titleEl.textContent = window.t('Checking search providers...');
 
             // Add provider rows
             const providerRows = [];
@@ -1230,10 +1230,10 @@ async function showModelSelector() {
               const status = row.querySelector('.compare-probe-status');
               if (result.status === 'ok') {
                 spinner.textContent = '\u2713'; spinner.classList.add('ok');
-                status.textContent = 'OK'; status.classList.add('ok');
+                status.textContent = window.t('OK'); status.classList.add('ok');
               } else {
                 spinner.textContent = '\u2717'; spinner.classList.add('fail');
-                status.textContent = result.error || 'Failed'; status.classList.add('fail');
+                status.textContent = result.error || window.t('Failed'); status.classList.add('fail');
                 row.classList.add('fail');
                 searchAllOk = false;
               }
@@ -1250,7 +1250,7 @@ async function showModelSelector() {
           // Don't hide the Skip button here — collapsing its space made the
           // card shrink and the title + rows jump ("quick cut"). On success the
           // whole overlay fades out a moment later, so just leave it in place.
-          probeOverlay.querySelector('.compare-probe-title').textContent = 'All ready!';
+          probeOverlay.querySelector('.compare-probe-title').textContent = window.t('All ready!');
           setTimeout(() => {
             probeOverlay.style.transition = 'opacity 0.3s ease';
             probeOverlay.style.opacity = '0';
@@ -1266,17 +1266,17 @@ async function showModelSelector() {
           });
           const titleEl = probeOverlay.querySelector('.compare-probe-title');
           titleEl.textContent = failedNames.length <= 2
-            ? failedNames.join(' & ') + ' failed'
-            : `${failCount} models failed`;
+            ? window.t('{names} failed').replace('{names}', failedNames.join(' & '))
+            : window.t('{count} models failed').replace('{count}', failCount);
           const btnRow = document.createElement('div');
           btnRow.style.cssText = 'display:flex;gap:8px;justify-content:center;margin-top:12px;';
           const goBackBtn = document.createElement('button');
-          goBackBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="15 18 9 12 15 6"/></svg>Go Back';
+          goBackBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="15 18 9 12 15 6"/></svg>' + window.t('Go Back');
           goBackBtn.className = 'cmp-btn-secondary';
           goBackBtn.style.cssText = 'padding:5px 12px;font-size:12px;display:inline-flex;align-items:center;';
           goBackBtn.addEventListener('click', () => { _clearProbeWaves(); probeOverlay.remove(); startBtn.disabled = false; startBtn.innerHTML = _cmpStartLabel(); startBtn.style.opacity = '1'; });
           const startAnywayBtn = document.createElement('button');
-          startAnywayBtn.textContent = 'Start Anyway';
+          startAnywayBtn.textContent = window.t('Start Anyway');
           startAnywayBtn.className = 'cmp-btn-primary';
           startAnywayBtn.style.cssText = 'padding:5px 12px;font-size:12px;';
           startAnywayBtn.addEventListener('click', () => { _clearProbeWaves(); probeOverlay.remove(); cleanup(true); });

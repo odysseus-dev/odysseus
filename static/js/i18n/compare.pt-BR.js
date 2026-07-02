@@ -167,4 +167,13 @@ registerMessages('pt-BR', {
   'Swap': 'Trocar',
   'No model': 'Nenhum modelo',
   'No response': 'Sem resposta',
+  'Swapping...': 'Trocando...',
+  'Swap timed out': 'Tempo esgotado ao trocar',
+  'No replacement': 'Sem substituto',
+  'Checking search providers...': 'Verificando provedores de busca...',
+  'All ready!': 'Tudo pronto!',
+  '{names} failed': '{names} falharam',
+  '{count} models failed': '{count} modelos falharam',
+  'Go Back': 'Voltar',
+  'Start Anyway': 'Iniciar Mesmo Assim',
 });
