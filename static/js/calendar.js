@@ -5,14 +5,15 @@
 import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
 import * as Modals from './modalManager.js';
+import { topPortalZ } from './toolWindowZOrder.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { attachColorPicker } from './colorPicker.js';
 import { bindMenuDismiss } from './escMenuStack.js';
 import {
-  WEEKDAYS, MONTHS, MON_SHORT,
+  WEEKDAYS, WEEKDAYS_SUN, MONTHS, MON_SHORT,
   CAL_PALETTE, CAL_COLORS, _CAL_CUSTOM_GRADIENT, _TYPE_PALETTE,
   _trashIcon, _moreIcon, _bellIcon,
-  _isCalBgImage, _calBgImageUrl, _calBgCss,
+  _isCalBgImage, _calBgImageUrl, _calBgCss, _cssUrlEscape,
   _calReadableTextColor,
   _ds, _addDays, _shiftDT, _tzOffset, _localDateOf,
 } from './calendar/utils.js';
@@ -64,6 +65,8 @@ let _hiddenTypes = new Set();   // event_type values to hide
 let _onlyImportant = false;
 
 let _filtersCollapsed = localStorage.getItem('cal-filters-collapsed') === '1';
+// Week-start preference: 'mon' (default, Mon=first col) or 'sun' (Sun=first col).
+let _weekStartSun = localStorage.getItem('cal-week-start') === 'sun';
 let _selectedDay = null;
 let _view = 'month';
 let _searchQuery = '';
@@ -298,7 +301,7 @@ async function _updateEvent(uid, data) {
   return { ok: true };
 }
 
-async function _deleteEvent(uid) {
+async function _deleteEvent(uid, { scope = 'series' } = {}) {
   // Multiple "sibling" UIDs may need to vanish optimistically:
   //   1. The exact uid the user clicked.
   //   2. If the user clicked a RECURRING occurrence (uid contains "::"),
@@ -309,9 +312,12 @@ async function _deleteEvent(uid) {
   //      other days kept rendering until the next full refresh.
   //   3. If the user clicked the master, strip every "master::*"
   //      expansion (same prefix scan).
+  const deleteOccurrenceOnly = scope === 'occurrence' && uid.includes('::');
   const masterUid = uid.includes('::') ? uid.split('::')[0] : uid;
   const backups = {};
-  const _matches = (k) => k === uid || k === masterUid || k.startsWith(masterUid + '::');
+  const _matches = deleteOccurrenceOnly
+    ? (k) => k === uid
+    : (k) => k === uid || k === masterUid || k.startsWith(masterUid + '::');
 
   for (const k of Object.keys(_allEvents)) {
     if (_matches(k)) {
@@ -325,7 +331,8 @@ async function _deleteEvent(uid) {
   if (_open) _render();
   _updateBadge && _updateBadge();
   const isRecurring = uid.includes('::');
-  fetch(`${API_BASE}/api/calendar/events/${encodeURIComponent(uid)}`, {
+  const scopeParam = deleteOccurrenceOnly ? '?scope=occurrence' : '';
+  fetch(`${API_BASE}/api/calendar/events/${encodeURIComponent(uid)}${scopeParam}`, {
     method: 'DELETE', credentials: 'same-origin',
   }).then(r => {
     // 404 = the event was already deleted by another session/device. That's
@@ -360,14 +367,14 @@ function _today() { return _ds(new Date()); }
 function _monthRange(d) {
   const y = d.getFullYear(), m = d.getMonth();
   const first = new Date(y, m, 1);
-  const dow = (first.getDay() + 6) % 7;
+  const dow = _weekStartSun ? first.getDay() : (first.getDay() + 6) % 7;
   const gs = new Date(y, m, 1 - dow);
   const ge = new Date(gs); ge.setDate(gs.getDate() + 42);
   return [_ds(gs), _ds(ge)];
 }
 
 function _weekRange(d) {
-  const dow = (d.getDay() + 6) % 7;
+  const dow = _weekStartSun ? d.getDay() : (d.getDay() + 6) % 7;
   const s = new Date(d); s.setDate(d.getDate() - dow);
   const e = new Date(s); e.setDate(s.getDate() + 7);
   return [_ds(s), _ds(e)];
@@ -411,8 +418,8 @@ function _calEventFg(ev) {
 // Returns '' for normal solid-color events.
 function _calItemBgStyle(ev) {
   if (!_isCalBgImage(ev.color)) return '';
-  const url = _calBgImageUrl(ev.color).replace(/'/g, "\\'");
-  return `background-image: linear-gradient(color-mix(in srgb, var(--bg) 70%, transparent), color-mix(in srgb, var(--bg) 70%, transparent)), url('${url}'); background-size: cover; background-position: center;`;
+  const url = _calBgImageUrl(ev.color);
+  return `background-image: linear-gradient(color-mix(in srgb, var(--bg) 70%, transparent), color-mix(in srgb, var(--bg) 70%, transparent)), url('${_cssUrlEscape(url)}'); background-size: cover; background-position: center;`;
 }
 
 function _todayCount() {
@@ -427,14 +434,77 @@ function _todayCount() {
   }).length;
 }
 
-// Per-event ⋮ menu: Remind me / Delete
+function _findEventByUid(uid) {
+  return _allEvents[uid] || _events.find(e => e && e.uid === uid) || null;
+}
+
+function _isRecurringEvent(ev) {
+  return !!(ev && (ev.is_recurrence || ev.uid?.includes('::') || ev.rrule));
+}
+
+function _chooseRecurringDeleteScope(ev) {
+  return new Promise(resolve => {
+    const name = ev?.summary ? `"${ev.summary}"` : 'this event';
+    const overlay = document.createElement('div');
+    overlay.className = 'modal';
+    overlay.style.display = '';
+    overlay.innerHTML = `
+      <div class="modal-content styled-confirm-box" role="dialog" aria-modal="true" aria-labelledby="cal-delete-choice-title">
+        <div class="modal-header"><h4 id="cal-delete-choice-title">Delete recurring event</h4></div>
+        <div class="modal-body"><p>Delete ${_e(name)}?</p></div>
+        <div class="modal-footer" style="gap:8px;flex-wrap:wrap;">
+          <button class="confirm-btn confirm-btn-secondary" data-choice="cancel">Cancel</button>
+          <button class="confirm-btn confirm-btn-danger" data-choice="occurrence">This event only</button>
+          <button class="confirm-btn confirm-btn-danger" data-choice="series">All recurring events</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const close = (value) => {
+      document.removeEventListener('keydown', onKey);
+      overlay.remove();
+      resolve(value);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        close(null);
+      }
+    };
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) return close(null);
+      const btn = e.target.closest('[data-choice]');
+      if (!btn) return;
+      const choice = btn.dataset.choice;
+      close(choice === 'cancel' ? null : choice);
+    });
+    document.addEventListener('keydown', onKey);
+    overlay.querySelector('[data-choice="occurrence"]')?.focus();
+  });
+}
+
+async function _confirmAndDeleteEvent(ev) {
+  if (!ev) return;
+  const name = ev.summary ? `"${ev.summary}"` : 'this event';
+  let scope = 'series';
+  if (_isRecurringEvent(ev)) {
+    scope = await _chooseRecurringDeleteScope(ev);
+    if (!scope) return;
+  } else {
+    const ok = await uiModule.styledConfirm(`Delete ${name}?`, { confirmText: 'Delete', danger: true });
+    if (!ok) return;
+  }
+  try { await _deleteEvent(ev.uid, { scope }); setTimeout(() => _render(), 100); }
+  catch (_) { uiModule.showToast('Failed to delete'); }
+}
+
+// Per-event ⋮ menu: Edit / Delete
 function _wireQuickDelete(body) {
   body.querySelectorAll('.cal-event-more').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const uid = btn.dataset.uid;
       if (!uid) return;
-      const ev = _allEvents[uid];
+      const ev = _findEventByUid(uid);
       if (!ev) return;
       _showEventMoreMenu(ev, btn);
     });
@@ -468,7 +538,7 @@ function _showEventMoreMenu(ev, anchor) {
   dropdown.className = 'cal-event-dropdown';
   let closeMenu = () => dropdown.remove();
   const rect = anchor.getBoundingClientRect();
-  dropdown.style.cssText = `position:fixed;z-index:10001;min-width:180px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:12px;top:${rect.bottom + 4}px;left:0px;visibility:hidden;`;
+  dropdown.style.cssText = `position:fixed;z-index:${topPortalZ()};min-width:180px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:12px;top:${rect.bottom + 4}px;left:0px;visibility:hidden;`;
 
   const _item = (icon, label, onClick, danger) => {
     const it = document.createElement('div');
@@ -487,10 +557,7 @@ function _showEventMoreMenu(ev, anchor) {
 
   dropdown.appendChild(_item(_trashIcon, 'Delete', async () => {
     closeMenu();
-    const name = ev.summary ? `"${ev.summary}"` : 'this event';
-    const ok = await uiModule.styledConfirm(`Delete ${name}?`, { confirmText: 'Delete', danger: true });
-    if (!ok) return;
-    try { await _deleteEvent(ev.uid); setTimeout(() => _render(), 100); } catch (_) {}
+    await _confirmAndDeleteEvent(ev);
   }, true));
 
   document.body.appendChild(dropdown);
@@ -629,6 +696,28 @@ function _getModal() {
 }
 
 // ── Render dispatch ──
+
+// Quick-add hint examples — the placeholder cycles through these every few
+// seconds so users see different prompt shapes (events, deadlines, recurring).
+const _QA_HINT_EXAMPLES = [
+  'return home to Ithaca 1pm tmrw',
+  'dinner with Penelope Friday 8pm',
+  'coffee with Athena 9am Saturday',
+  'call Telemachus tomorrow morning',
+  'dentist appointment 3pm next Tuesday',
+  'finish the wooden horse by Friday EOD',
+  'gym 7am every weekday',
+  'flight to Athens Sunday 6:30am',
+  'crew muster 10am daily',
+  'council on Ithaca Monday 2pm',
+];
+function _initQuickAddHintCycle() {
+  const span = document.getElementById('qa-hint-example');
+  if (!span) return;
+  // Pick one random example per calendar open — no interval cycling.
+  const idx = Math.floor(Math.random() * _QA_HINT_EXAMPLES.length);
+  span.textContent = _QA_HINT_EXAMPLES[idx];
+}
 
 // Stash the quick-add input's state (focus + caret + value) before a
 // re-render so background fetches don't kick the user out mid-type. Picked
@@ -844,7 +933,7 @@ function _headerHTML() {
       placeholder=" "
       autocomplete="off"
     />
-    <span class="cal-quickadd-hint" id="cal-quickadd-hint" aria-hidden="true"><span class="qa-hint-accent">Quick add</span> — return home to Ithaca 1pm tmrw <svg class="qa-hint-enter" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg></span>
+    <span class="cal-quickadd-hint" id="cal-quickadd-hint" aria-hidden="true"><span class="qa-hint-accent">Quick add</span> — <span class="qa-hint-example" id="qa-hint-example">return home to Ithaca 1pm tmrw</span> <svg class="qa-hint-enter" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg></span>
     <span class="cal-quickadd-status" id="cal-quickadd-status"></span>
   </div>`;
 }
@@ -928,11 +1017,11 @@ async function _renderMonth() {
   _slideDir = 0;
   let h = _headerHTML() + _filtersRowHTML() + `<div class="cal-grid${slideClass}">`;
   h += '<div class="cal-week-headers">';
-  for (const wd of WEEKDAYS) h += `<div class="cal-weekday">${wd}</div>`;
+  for (const wd of (_weekStartSun ? WEEKDAYS_SUN : WEEKDAYS)) h += `<div class="cal-weekday">${wd}</div>`;
   h += '</div>';
 
   const first = new Date(y, m, 1);
-  const dow = (first.getDay() + 6) % 7;
+  const dow = _weekStartSun ? first.getDay() : (first.getDay() + 6) % 7;
   const gs = new Date(y, m, 1 - dow);
 
   const multiDay = _events.filter(e => {
@@ -1141,13 +1230,13 @@ function _wkEventTopHeight(ev, dayStr) {
   // Date math if the string isn't shaped as expected.
   const _toMin = (iso, fallbackDate) => {
     if (!iso) return null;
-    const m = iso.match(/T(\d{2}):(\d{2})/);
-    if (m) {
+    const mins = _timeToMin(iso);
+    if (mins !== null && iso.includes('T')) {
       // If the event spans into a previous/next day, clamp to today's bounds.
-      const evDate = iso.slice(0, 10);
+      const evDate = _localDateOf(iso);
       if (evDate < fallbackDate) return 0;             // event started before today
       if (evDate > fallbackDate) return 24 * 60;       // event ends after today
-      return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+      return mins;
     }
     // All-day or date-only — treat as start of day.
     return 0;
@@ -1204,8 +1293,8 @@ async function _renderWeek() {
     const timedEvents  = _eventsForDay(ds).filter(e => _eventVisible(e) && !e.all_day);
 
     const isSun = d.getDay() === 0;
-    colsHtml += `<div class="cal-wk-col${isToday ? ' cal-wk-today' : ''}${isSun ? ' cal-wk-sun' : ''}" data-date="${ds}">`;
-    colsHtml += `<div class="cal-wk-col-head"><span class="cal-wk-dn">${WEEKDAYS[idx]}</span><span class="cal-wk-dt">${d.getDate()}</span></div>`;
+    colsHtml += `<div class="cal-wk-col${isToday ? ' cal-wk-today' : ''}${isSun && !_weekStartSun ? ' cal-wk-sun' : ''}" data-date="${ds}">`;
+    colsHtml += `<div class="cal-wk-col-head"><span class="cal-wk-dn">${(_weekStartSun ? WEEKDAYS_SUN : WEEKDAYS)[idx]}</span><span class="cal-wk-dt">${d.getDate()}</span></div>`;
     // All-day strip
     colsHtml += `<div class="cal-wk-allday">`;
     for (const ev of allDayEvents) {
@@ -1236,8 +1325,8 @@ async function _renderWeek() {
       // events keep the original tinted treatment.
       let bgDecl;
       if (_isCalBgImage(ev.color)) {
-        const _url = _calBgImageUrl(ev.color).replace(/'/g, "\\'");
-        bgDecl = `background-image: linear-gradient(color-mix(in srgb, var(--bg) 55%, transparent), color-mix(in srgb, var(--bg) 55%, transparent)), url('${_url}'); background-size: cover; background-position: center;`;
+        const _url = _calBgImageUrl(ev.color);
+        bgDecl = `background-image: linear-gradient(color-mix(in srgb, var(--bg) 55%, transparent), color-mix(in srgb, var(--bg) 55%, transparent)), url('${_cssUrlEscape(_url)}'); background-size: cover; background-position: center;`;
       } else {
         bgDecl = `background:color-mix(in srgb, ${_calColor(ev)} 18%, var(--bg));`;
       }
@@ -1286,12 +1375,17 @@ async function _renderWeek() {
       if (!ev) return;
       const cols = Array.from(body.querySelectorAll('.cal-wk-grid'));
       if (!cols.length) return;
-      // Original timing
-      const m1 = (ev.dtstart || '').match(/T(\d{2}):(\d{2})/);
-      const m2 = (ev.dtend || '').match(/T(\d{2}):(\d{2})/);
-      const startMin0 = m1 ? parseInt(m1[1], 10) * 60 + parseInt(m1[2], 10) : 0;
-      const endMin0   = m2 ? parseInt(m2[1], 10) * 60 + parseInt(m2[2], 10) : startMin0 + 60;
-      const durationMin = Math.max(15, endMin0 - startMin0);
+      // Local/display timing
+      const startMin0 = _timeToMin(ev.dtstart) ?? 0;
+      const endMin0   = _timeToMin(ev.dtend) ?? startMin0 + 60;
+
+      let durationMin = endMin0 - startMin0;
+      const startDs = _localDateOf(ev.dtstart);
+      const endDs = ev.dtend ? _localDateOf(ev.dtend) : startDs;
+      if (endDs > startDs && endMin0 <= startMin0) {
+        durationMin += 24 * 60;
+      }
+      durationMin = Math.max(15, durationMin);
 
       // Where did the cursor grab the block? (offset from block-top in px)
       const blockRect = block.getBoundingClientRect();
@@ -1365,7 +1459,7 @@ async function _renderWeek() {
         // a plain click (no movement) must still open the event.
         if (moved) block.dataset.justResized = '1';
         // Decide whether anything actually moved.
-        const oldDs = (ev.dtstart || '').slice(0, 10);
+        const oldDs = _localDateOf(ev.dtstart);
         if (!nextDs) return;
         if (nextDs === oldDs && nextStartMin === startMin0) return;
         // Snapshot the original times so we can offer an Undo.
@@ -1374,11 +1468,10 @@ async function _renderWeek() {
         const newEndMin = nextStartMin + durationMin;
         const hh = String(Math.floor(nextStartMin / 60)).padStart(2, '0');
         const mm = String(nextStartMin % 60).padStart(2, '0');
-        const hh2 = String(Math.floor(newEndMin / 60)).padStart(2, '0');
-        const mm2 = String((newEndMin) % 60).padStart(2, '0');
-        const _tz = _tzOffset();
+        const newDtstartDate = new Date(`${nextDs}T${hh}:${mm}:00`);
+        const _tz = _tzOffsetForDate(newDtstartDate);
         const newDtstart = `${nextDs}T${hh}:${mm}:00${_tz}`;
-        const newDtend   = `${nextDs}T${hh2}:${mm2}:00${_tz}`;
+        const newDtend = _addMinutesToLocalIso(newDtstart, durationMin);
         try {
           await _updateEvent(uid, { dtstart: newDtstart, dtend: newDtend });
           _render();
@@ -1410,10 +1503,7 @@ async function _renderWeek() {
       const uid = block.dataset.uid;
       const ev = _events.find(x => x.uid === uid);
       if (!ev || !grid || !ds) return;
-      const startMin = (() => {
-        const m = (ev.dtstart || '').match(/T(\d{2}):(\d{2})/);
-        return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : 0;
-      })();
+      const startMin = _timeToMin(ev.dtstart) ?? 0;
       const initialTop = parseFloat(block.style.top || '0');
       const gridRect = grid.getBoundingClientRect();
       let newEndMin = startMin;
@@ -1438,9 +1528,8 @@ async function _renderWeek() {
         if (resized) block.dataset.justResized = '1';
         if (newEndMin === startMin) return;
         const prevDtend = ev.dtend;
-        const hh = String(Math.floor(newEndMin / 60)).padStart(2, '0');
-        const mm = String(newEndMin % 60).padStart(2, '0');
-        const newDtend = `${ds}T${hh}:${mm}:00${_tzOffset()}`;
+        const durationMin = newEndMin - startMin;
+        const newDtend = _addMinutesToLocalIso(ev.dtstart, durationMin);
         try {
           await _updateEvent(uid, { dtend: newDtend });
           _render();
@@ -1724,9 +1813,9 @@ async function _renderYear() {
   for (let m = 0; m < 12; m++) {
     h += `<div class="cal-year-month" data-month="${m}"><div class="cal-year-month-title">${MON_SHORT[m]}</div>`;
     h += '<div class="cal-year-grid">';
-    for (const wd of ['M', 'T', 'W', 'T', 'F', 'S', 'S']) h += `<div class="cal-year-wd">${wd}</div>`;
+    for (const wd of (_weekStartSun ? ['S','M','T','W','T','F','S'] : ['M','T','W','T','F','S','S'])) h += `<div class="cal-year-wd">${wd}</div>`;
     const first = new Date(y, m, 1);
-    const dow = (first.getDay() + 6) % 7;
+    const dow = _weekStartSun ? first.getDay() : (first.getDay() + 6) % 7;
     const daysInMonth = new Date(y, m + 1, 0).getDate();
     for (let p = 0; p < dow; p++) h += '<div class="cal-year-cell"></div>';
     for (let d = 1; d <= daysInMonth; d++) {
@@ -1789,7 +1878,7 @@ function _dayDetailHTML(dateStr) {
     </div>`;
   if (_searchQuery) {
     const q = _searchQuery.toLowerCase();
-    const results = _events
+    const results = Object.values(_allEvents || {})
       .filter(_eventVisible)
       .filter(e =>
         (e.summary || '').toLowerCase().includes(q) ||
@@ -1911,6 +2000,7 @@ function _wireAll(body) {
   // ── Quick-add input ─────────────────────────────────────────────
   const _qaInput = document.getElementById('cal-quickadd');
   const _qaStatus = document.getElementById('cal-quickadd-status');
+  _initQuickAddHintCycle();
   if (_qaInput && !_qaInput._wired) {
     _qaInput._wired = true;
     const _submitQA = async () => {
@@ -1966,10 +2056,10 @@ function _wireAll(body) {
             const ad = document.getElementById('cal-f-allday');
             if (ad && !ad.checked) { ad.checked = true; ad.dispatchEvent(new Event('change')); }
           } else {
-            const t1 = (ev.dtstart || '').match(/T(\d{2}:\d{2})/);
-            const t2 = (ev.dtend || '').match(/T(\d{2}:\d{2})/);
-            if (t1) set('cal-f-start', t1[1]);
-            if (t2) set('cal-f-end', t2[1]);
+            const t1 = _fmtTime(ev.dtstart);
+            const t2 = _fmtTime(ev.dtend);
+            if (t1) set('cal-f-start', t1);
+            if (t2) set('cal-f-end', t2);
             document.getElementById('cal-f-start')?.dispatchEvent(new Event('input'));
           }
           // Make sure the details panel is open so the user can verify time.
@@ -2475,6 +2565,13 @@ async function _showCalSettings() {
           <div style="font-size:10px;opacity:0.4;margin-top:4px;">Download a calendar as .ics for backup or to import into another app.</div>
         </div>
         <div style="border-top:1px solid var(--border);padding-top:12px;">
+          <div style="font-size:11px;opacity:0.5;margin-bottom:6px;">Week starts on</div>
+          <div style="display:flex;gap:6px;">
+            <button id="cal-wstart-mon" type="button" style="font-size:12px;padding:3px 10px;border-radius:4px;border:1px solid var(--border);background:${!_weekStartSun ? 'color-mix(in srgb, var(--accent,var(--red)) 18%, var(--panel))' : 'var(--panel)'};color:var(--fg);cursor:pointer;transition:background 0.1s,border-color 0.1s;outline:none;">Monday</button>
+            <button id="cal-wstart-sun" type="button" style="font-size:12px;padding:3px 10px;border-radius:4px;border:1px solid var(--border);background:${_weekStartSun ? 'color-mix(in srgb, var(--accent,var(--red)) 18%, var(--panel))' : 'var(--panel)'};color:var(--fg);cursor:pointer;transition:background 0.1s,border-color 0.1s;outline:none;">Sunday</button>
+          </div>
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:12px;">
           <div style="font-size:11px;opacity:0.5;margin-bottom:6px;">Sync</div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <button class="memory-toolbar-btn" id="cal-settings-sync-now" style="cursor:pointer;">
@@ -2493,6 +2590,28 @@ async function _showCalSettings() {
   const cleanup = () => overlay.remove();
   overlay.querySelector('#cal-settings-close').addEventListener('click', cleanup);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
+
+  // Week-start toggle: save to localStorage, update module state, re-render.
+  const _monBtn = overlay.querySelector('#cal-wstart-mon');
+  const _sunBtn = overlay.querySelector('#cal-wstart-sun');
+  const _activeStyle  = 'color-mix(in srgb, var(--accent,var(--red)) 18%, var(--panel))';
+  const _inactiveStyle = 'var(--panel)';
+  const _applyWeekStartActive = () => {
+    if (_monBtn) _monBtn.style.background = _weekStartSun ? _inactiveStyle : _activeStyle;
+    if (_sunBtn) _sunBtn.style.background = _weekStartSun ? _activeStyle : _inactiveStyle;
+  };
+  _monBtn?.addEventListener('click', () => {
+    _weekStartSun = false;
+    localStorage.setItem('cal-week-start', 'mon');
+    _applyWeekStartActive();
+    if (_open) _render();
+  });
+  _sunBtn?.addEventListener('click', () => {
+    _weekStartSun = true;
+    localStorage.setItem('cal-week-start', 'sun');
+    _applyWeekStartActive();
+    if (_open) _render();
+  });
 
   // Create a new (local) calendar. Defaults the name + next palette color, then
   // reopens the panel so the user can rename it inline and pick a color.
@@ -2799,7 +2918,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
             let bg;
             if (isCustom) {
               const url = _calBgImageUrl(cur);
-              bg = url ? `center/cover no-repeat url('${url}')` : _CAL_CUSTOM_GRADIENT;
+              bg = url ? `center/cover no-repeat url('${_cssUrlEscape(url)}')` : _CAL_CUSTOM_GRADIENT;
             } else {
               bg = c.hex || 'var(--border)';
             }
@@ -2874,7 +2993,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
       // stays readable. Chrome accent falls back to the theme accent.
       const url = _calBgImageUrl(hex);
       _formCard.style.setProperty('--ev-color', 'var(--accent)');
-      _formCard.style.backgroundImage = `linear-gradient(color-mix(in srgb, var(--panel) 65%, transparent), color-mix(in srgb, var(--panel) 65%, transparent)), url('${url.replace(/'/g, "\\'")}')`;
+      _formCard.style.backgroundImage = `linear-gradient(color-mix(in srgb, var(--panel) 65%, transparent), color-mix(in srgb, var(--panel) 65%, transparent)), url('${_cssUrlEscape(url)}')`;
       _formCard.style.backgroundSize = 'cover';
       _formCard.style.backgroundPosition = 'center';
       _formCard.classList.add('cal-form-bg-image');
@@ -2896,7 +3015,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
         if (!url) return;
         const sentinel = 'bg:' + url;
         dot.dataset.color = sentinel;
-        dot.style.background = `center/cover no-repeat url('${url}')`;
+        dot.style.background = `center/cover no-repeat url('${_cssUrlEscape(url)}')`;
         document.querySelectorAll('#cal-f-colors .note-color-dot').forEach(d => d.classList.remove('active'));
         dot.classList.add('active');
         _applyFormTint(sentinel);
@@ -2918,35 +3037,68 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
     const startEl = document.getElementById('cal-f-start');
     const endEl = document.getElementById('cal-f-end');
     if (!startEl || !endEl) return;
+
     const _toMin = (v) => {
       if (!v || !/^\d{2}:\d{2}$/.test(v)) return null;
       const [h, m] = v.split(':').map(n => parseInt(n, 10));
       return h * 60 + m;
     };
+
     const _toHHMM = (mins) => {
       let m = ((mins % 1440) + 1440) % 1440;
       const hh = String(Math.floor(m / 60)).padStart(2, '0');
       const mm = String(m % 60).padStart(2, '0');
       return `${hh}:${mm}`;
     };
+
+    const _autoAdvanceEndDate = () => {
+      const isAD = document.getElementById('cal-f-allday')?.checked;
+      if (isAD) return;
+
+      const dv = document.getElementById('cal-f-date')?.value;
+      const dvEndEl = document.getElementById('cal-f-date-end');
+      if (!dv || !dvEndEl || dvEndEl.value !== dv) return;
+
+      const sVal = startEl.value;
+      const eVal = endEl.value;
+
+      if (sVal && eVal && eVal <= sVal) {
+        const d = new Date(`${dv}T00:00:00`);
+        d.setDate(d.getDate() + 1);
+
+        dvEndEl.value = _ds(d);
+      }
+    };
+
     let prevStartMin = _toMin(startEl.value);
-    endEl.addEventListener('input', () => { endEl.dataset.userEdited = '1'; });
+
+    endEl.addEventListener('input', () => {
+      endEl.dataset.userEdited = '1';
+    });
+
+    endEl.addEventListener('change', _autoAdvanceEndDate);
+
     startEl.addEventListener('change', () => {
       const newStartMin = _toMin(startEl.value);
       const endMin = _toMin(endEl.value);
-      if (newStartMin == null) { prevStartMin = newStartMin; return; }
-      // Compute the duration before the change. Use the user's existing
-      // start→end gap, fallback to 1 hour.
-      let durationMin = 60;
-      if (prevStartMin != null && endMin != null && endMin > prevStartMin) {
-        durationMin = endMin - prevStartMin;
-      } else if (endMin != null && newStartMin != null && endMin > newStartMin && endEl.dataset.userEdited === '1') {
-        // User already set a custom end before changing start — leave it.
+
+      if (newStartMin == null) {
         prevStartMin = newStartMin;
         return;
       }
+
+      let durationMin = 60;
+
+      if (prevStartMin != null && endMin != null && endMin > prevStartMin) {
+        durationMin = endMin - prevStartMin;
+      } else if (endMin != null && newStartMin != null && endMin > newStartMin && endEl.dataset.userEdited === '1') {
+        prevStartMin = newStartMin;
+        return;
+      }
+
       endEl.value = _toHHMM(newStartMin + durationMin);
       prevStartMin = newStartMin;
+      _autoAdvanceEndDate();
     });
   })();
   // Custom reminder picker
@@ -3007,6 +3159,20 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
     // proper UTC instants (is_utc=True). Without this, naive "10:00" gets
     // re-interpreted as local elsewhere — the timezone-misfire bug.
     const _tz = _tzOffset();
+    
+    if (!isAD) {
+      const startVal = document.getElementById('cal-f-start').value;
+      const endVal = document.getElementById('cal-f-end').value;
+
+      const startDt = new Date(`${dv}T${startVal}:00`);
+      const endDt = new Date(`${dvEnd}T${endVal}:00`);
+
+      if (endDt <= startDt) {
+        uiModule.showToast('End time must be after start time');
+        return;
+      }
+    }
+
     const payload = {
       summary,
       dtstart: isAD ? dv : `${dv}T${document.getElementById('cal-f-start').value}:00${_tz}`,
@@ -3014,7 +3180,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
       all_day: isAD,
       description: document.getElementById('cal-f-desc').value,
       location: document.getElementById('cal-f-loc').value,
-      rrule: document.getElementById('cal-f-rrule').value || undefined,
+      rrule: document.getElementById('cal-f-rrule').value || '',
       calendar_href: document.getElementById('cal-f-cal')?.value || (_calendars[0]?.href || ''),
       color: colorVal || undefined,
     };
@@ -3040,11 +3206,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
     } catch (e) { uiModule.showToast('Failed to save'); }
   });
   document.getElementById('cal-f-del')?.addEventListener('click', async () => {
-    const name = existing && existing.summary ? `"${existing.summary}"` : 'this event';
-    const ok = await uiModule.styledConfirm(`Delete ${name}?`, { confirmText: 'Delete', danger: true });
-    if (!ok) return;
-    try { await _deleteEvent(existing.uid); _render(); }
-    catch (e) { uiModule.showToast('Failed to delete'); }
+    await _confirmAndDeleteEvent(existing);
   });
   // ── Bespoke-form behavior ──────────────────────────────────────────
   const formEl = body.querySelector('.cal-form');
@@ -3060,6 +3222,29 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
   // Focusing the title input unfolds the details once (new events). Edit
   // mode opens already expanded when there's any detail content to see.
   titleInput?.addEventListener('focus', () => setExpanded(true), { once: true });
+
+  // Live time parse: typing a time like "11pm" or "15:30" into the title
+  // updates the hero clock + start input on the fly. The same parser still
+  // runs again on submit, but doing it live makes the hero clock track
+  // intent immediately instead of jumping at save.
+  if (titleInput) {
+    titleInput.addEventListener('input', () => {
+      if (document.getElementById('cal-f-allday')?.checked) return;
+      const tt = _parseTitleTime(titleInput.value);
+      if (!tt) return;
+      const startEl = document.getElementById('cal-f-start');
+      const endEl = document.getElementById('cal-f-end');
+      const newStart = `${String(tt.h).padStart(2, '0')}:${String(tt.m).padStart(2, '0')}`;
+      if (!startEl || startEl.value === newStart) return;
+      const toMin = (v) => { const p = (v || '').split(':'); return p.length === 2 ? (+p[0]) * 60 + (+p[1]) : null; };
+      const s0 = toMin(startEl.value), e0 = toMin(endEl?.value);
+      const dur = (s0 != null && e0 != null && e0 > s0) ? e0 - s0 : 60;
+      startEl.value = newStart;
+      const endMin = (tt.h * 60 + tt.m + dur) % 1440;
+      if (endEl) endEl.value = `${String(Math.floor(endMin / 60)).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`;
+      startEl.dispatchEvent(new Event('input'));
+    });
+  }
 
   // Location → Apple Maps. The pin button next to the input is enabled
   // only when there's a non-empty location, and its href tracks the live
@@ -3215,6 +3400,37 @@ function _fmtTime(s) {
   }
   return s.slice(11, 16);
 }
+
+function _timeToMin(iso) {
+  const hm = _fmtTime(iso);
+  if (!hm) return null;
+  const m = hm.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  if (h < 0 || h > 23 || min < 0 || min > 59) return null;
+  return h * 60 + min;
+}
+
+function _tzOffsetForDate(d) {
+  const off = -d.getTimezoneOffset();
+  const sign = off >= 0 ? '+' : '-';
+  const abs = Math.abs(off);
+  const hh = String(Math.floor(abs / 60)).padStart(2, '0');
+  const mm = String(abs % 60).padStart(2, '0');
+  return `${sign}${hh}:${mm}`;
+}
+
+function _addMinutesToLocalIso(baseIso, addMinutes) {
+  const d = new Date(new Date(baseIso).getTime() + addMinutes * 60000);
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const da = String(d.getDate()).padStart(2, '0');
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  return `${y}-${mo}-${da}T${h}:${m}:00${_tzOffsetForDate(d)}`;
+}
+
 function _e(s) { return uiModule.esc ? uiModule.esc(s || '') : (s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
 // Linkify a location string: URLs become clickable, plain addresses get a Maps link.
@@ -3299,8 +3515,18 @@ function openCalendar() {
       // Layer Esc: close the topmost calendar surface first, only fall through
       // to closing the whole calendar when nothing else is on top.
       const settings = document.getElementById('cal-settings-panel');
-      if (settings) { settings.remove(); return; }
-      if (document.querySelector('.cal-form')) { _render(); return; }
+      if (settings) {
+        e.preventDefault();
+        e.stopPropagation();
+        settings.remove();
+        return;
+      }
+      if (document.querySelector('.cal-form')) {
+        e.preventDefault();
+        e.stopPropagation();
+        _render();
+        return;
+      }
       closeCalendar();
     }
     else if (e.key === 'ArrowLeft') document.getElementById('cal-prev')?.click();
@@ -3329,14 +3555,25 @@ async function openCalendarTo(target) {
   if (!target) return;
   try {
     await _fetchCalendars();
+    const targetStr = String(target || '').trim();
+    if (targetStr.startsWith('search:')) {
+      _searchQuery = targetStr.slice('search:'.length).trim();
+      const now = new Date();
+      await _fetchEvents(`${now.getFullYear()}-01-01`, `${now.getFullYear() + 2}-01-01`);
+      _currentDate = now;
+      _selectedDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      _view = 'month';
+      _render();
+      return;
+    }
     // If target looks like an ISO date (YYYY-MM-DD...), go straight there.
     let dt = null;
-    const isoMatch = /^\d{4}-\d{2}-\d{2}/.test(String(target));
+    const isoMatch = /^\d{4}-\d{2}-\d{2}/.test(targetStr);
     if (isoMatch) {
-      dt = new Date(target);
+      dt = new Date(targetStr);
     } else {
       // Treat as an event uid — find it among loaded events.
-      const ev = (_events || []).find(e => e.uid === target || (e.uid || '').startsWith(target));
+      const ev = Object.values(_allEvents || {}).find(e => e.uid === targetStr || (e.uid || '').startsWith(targetStr));
       if (ev && ev.dtstart) dt = new Date(ev.dtstart);
       if (ev) _highlightEventUid = ev.uid;
     }

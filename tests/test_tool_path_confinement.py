@@ -57,6 +57,27 @@ def test_non_sensitive_path():
     assert not _is_sensitive_path("/home/user/projects/file.py")
 
 
+def test_sensitive_case_insensitive():
+    """On case-insensitive filesystems (Windows, default macOS) a case-variant
+    name resolves to the same protected file, so the deny-list must match
+    regardless of case. Built with os.path.join so the separator is right on
+    both POSIX and Windows.
+    """
+    from src.tool_execution import _is_sensitive_path
+    # sensitive directory, varied case
+    assert _is_sensitive_path(os.path.join("home", "u", ".SSH", "authorized_keys"))
+    assert _is_sensitive_path(os.path.join("home", "u", ".Gnupg", "pubring.kbx"))
+    # sensitive filename, varied case
+    assert _is_sensitive_path(os.path.join("ws", "AUTHORIZED_KEYS"))
+    assert _is_sensitive_path(os.path.join("ws", "Id_Rsa"))
+    assert _is_sensitive_path(os.path.join("ws", ".ENV"))
+    assert _is_sensitive_path(os.path.join("ws", ".Env"))
+    # both dir and file varied
+    assert _is_sensitive_path(os.path.join("home", "u", ".SSH", "AUTHORIZED_KEYS"))
+    # an ordinary file with none of the sensitive names is still allowed
+    assert not _is_sensitive_path(os.path.join("ws", "Readme.md"))
+
+
 # ── Unit tests on _resolve_tool_path ─────────────────────────────────
 
 def test_blocks_etc_shadow():

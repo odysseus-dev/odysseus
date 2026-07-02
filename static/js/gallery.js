@@ -6,13 +6,22 @@ import uiModule from './ui.js';
 import { openEditor, closeEditor, isEditorOpen } from './galleryEditor.js';
 import spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
+import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
+import { topPortalZ } from './toolWindowZOrder.js';
+import sessionModule from './sessions.js';
+import fileHandlerModule from './fileHandler.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
 let _galleryResizeHandler = null;
 
 // Auto-refresh gallery when new image is generated
-window.addEventListener('gallery-refresh', () => {
+window.addEventListener('gallery-refresh', (e) => {
+  if (e?.detail?.source === 'chat-upload' && _sort !== 'recent') {
+    _sort = 'recent';
+    const sortSel = document.getElementById('gallery-sort');
+    if (sortSel) sortSel.value = 'recent';
+  }
   if (_open) _fetchLibrary(false);
 });
 let _items = [];
@@ -1201,7 +1210,7 @@ function _renderGrid() {
       .replace(/\.[^.]+$/, '')       // drop extension
       .replace(/[_-]+/g, ' ')
       .trim();
-    const labelText = (img.prompt || '').trim() || fallbackName || 'Photo';
+    const labelText = (img.caption || '').trim() || (img.prompt || '').trim() || fallbackName || 'Photo';
     const promptPreview = labelText.length > 60 ? labelText.substring(0, 58) + '...' : labelText;
     const favCls = img.favorite ? ' gallery-fav-active' : '';
     html += `
@@ -1349,6 +1358,10 @@ function _openDetail(img) {
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
         Edit
       </button>
+      <button class="gallery-detail-back" id="gallery-chat-photo-btn" title="${img.session_id ? 'Open source chat' : 'Start a new chat with this photo'}" aria-label="${img.session_id ? 'Open source chat' : 'Discuss photo'}" style="display:inline-flex;align-items:center;gap:4px;">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>
+        ${img.session_id ? 'Open chat' : 'Discuss'}
+      </button>
       <button class="gallery-detail-back gallery-detail-fav-header${img.favorite ? ' active' : ''}" id="gallery-detail-fav-header" title="${img.favorite ? 'Unfavorite' : 'Favorite'}" aria-label="Favorite" aria-pressed="${img.favorite ? 'true' : 'false'}" style="display:inline-flex;align-items:center;justify-content:center;padding:4px 8px;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="${img.favorite ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
       </button>
@@ -1410,6 +1423,7 @@ function _openDetail(img) {
             <svg class="gallery-name-enter" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
           </div>
         </div>
+        ${img.caption ? `<div class="gallery-detail-section"><label>OCR Caption</label><div class="gallery-detail-prompt">${_esc(img.caption)}</div></div>` : ''}
         ${img.prompt && img.model !== 'imported' ? `<div class="gallery-detail-section"><label>Prompt</label><div class="gallery-detail-prompt">${_esc(img.prompt)}</div></div>` : ''}
         <div class="gallery-detail-section gallery-detail-section-date">
           <label>Date</label>
@@ -1452,6 +1466,45 @@ function _openDetail(img) {
 
   document.getElementById('gallery-detail-back').addEventListener('click', () => {
     detail.style.display = 'none';
+  });
+
+  document.getElementById('gallery-chat-photo-btn')?.addEventListener('click', async () => {
+    if (img.session_id) {
+      closeGallery();
+      try {
+        await sessionModule.selectSession(img.session_id);
+      } catch (e) {
+        console.error('Open source chat failed:', e);
+        uiModule.showError && uiModule.showError('Could not open source chat');
+      }
+      return;
+    }
+
+    try {
+      const dcRes = await fetch('/api/default-chat', { credentials: 'same-origin' });
+      const dc = await dcRes.json();
+      if (!dc?.endpoint_url || !dc?.model) {
+        uiModule.showError && uiModule.showError('Pick a chat model first');
+        return;
+      }
+      sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id);
+      closeGallery();
+      const res = await fetch(img.url, { credentials: 'same-origin' });
+      if (!res.ok) throw new Error('image fetch ' + res.status);
+      const blob = await res.blob();
+      const name = img.filename || 'gallery-photo.jpg';
+      const file = new File([blob], name, { type: blob.type || 'image/jpeg' });
+      fileHandlerModule.addFiles([file]);
+      const input = document.getElementById('message');
+      if (input) {
+        input.value = 'Let’s discuss this photo.';
+        input.dispatchEvent(new Event('input'));
+        input.focus();
+      }
+    } catch (e) {
+      console.error('Discuss photo failed:', e);
+      uiModule.showError && uiModule.showError('Could not start photo chat');
+    }
   });
 
   // Clickable tag chips — both AI Tags and User Tags. Clicking a chip
@@ -1891,6 +1944,13 @@ export function openGallery() {
   if (_open) return;
   _open = true;
   _galleryCascaded = false;   // replay the domino-in cascade on each open
+  let _freshChatUpload = false;
+  try {
+    const ts = Number(localStorage.getItem('gallery-fresh-chat-upload') || '0');
+    _freshChatUpload = ts > 0 && Date.now() - ts < 5 * 60 * 1000;
+    if (_freshChatUpload) localStorage.removeItem('gallery-fresh-chat-upload');
+  } catch (_) {}
+  if (_freshChatUpload) _sort = 'recent';
   // State is preserved across close/reopen — filters, album, sort, items,
   // albums, people — so reopening the gallery feels instant. Use the search
   // input or "All" chip to clear the active filter.
@@ -1952,9 +2012,9 @@ export function openGallery() {
             <option value="">All sources</option>
           </select>
           <select class="gallery-sort" id="gallery-sort">
-            <option value="shuffle">Random</option>
-            <option value="recent">Recent</option>
-            <option value="oldest">Oldest</option>
+            <option value="shuffle"${_sort === 'shuffle' ? ' selected' : ''}>↭ Random order</option>
+            <option value="recent"${_sort === 'recent' ? ' selected' : ''}>↓ Newest first</option>
+            <option value="oldest"${_sort === 'oldest' ? ' selected' : ''}>↑ Oldest first</option>
           </select>
           <button class="gallery-select-btn gallery-toolbar-action" id="gallery-select-btn" title="Select for bulk actions"><span style="position:relative;top:1px;">Select</span></button>
         </div>
@@ -2514,7 +2574,7 @@ export function openGallery() {
   // shares the exact same dropdown style/behaviour.
   const _bulkActionsBtn = document.getElementById('gallery-bulk-actions');
   function _showGalleryBulkMenu(anchor) {
-    document.querySelectorAll('.gallery-bulk-menu').forEach(d => d.remove());
+    document.querySelectorAll('.gallery-bulk-menu').forEach(dismissOrRemove);
     // Standard Odysseus dropdown (.dropdown + dropdown-item-compact) so it
     // matches every other menu in the app. Positioned fixed at the button.
     const dropdown = document.createElement('div');
@@ -2523,7 +2583,7 @@ export function openGallery() {
     const left = Math.min(rect.left, window.innerWidth - 200);
     // Inline the standard dropdown look so it renders correctly even where the
     // `.dropdown` rule is scoped out (e.g. hover-only media queries on mobile).
-    dropdown.style.cssText = `position:fixed;display:block;z-index:10001;top:${rect.bottom + 6}px;left:${Math.max(8, left)}px;right:auto;min-width:180px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:6px;font-size:11px;`;
+    dropdown.style.cssText = `position:fixed;display:block;z-index:${topPortalZ()};top:${rect.bottom + 6}px;left:${Math.max(8, left)}px;right:auto;min-width:180px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:6px;font-size:11px;`;
     const _favIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21s-6.7-4.35-9.33-8.04C.9 10.3 1.4 6.9 4.1 5.6c1.9-.9 4 .03 5 1.7 1-1.67 3.1-2.6 5-1.7 2.7 1.3 3.2 4.7 1.43 7.36C18.7 16.65 12 21 12 21z"/></svg>';
     const _tagIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>';
     const _dlIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
@@ -2548,17 +2608,11 @@ export function openGallery() {
       const it = document.createElement('div');
       it.className = 'dropdown-item-compact' + (a.danger ? ' dropdown-item-danger' : '');
       it.innerHTML = `<span class="dropdown-icon">${a.icon}</span><span>${a.label}</span>`;
-      it.addEventListener('click', (e) => { e.stopPropagation(); dropdown.remove(); a.action(); });
+      it.addEventListener('click', (e) => { e.stopPropagation(); close(); a.action(); });
       dropdown.appendChild(it);
     }
     document.body.appendChild(dropdown);
-    const close = (ev) => {
-      if (!dropdown.contains(ev.target) && ev.target !== anchor) {
-        dropdown.remove();
-        document.removeEventListener('click', close, true);
-      }
-    };
-    setTimeout(() => document.addEventListener('click', close, true), 10);
+    const close = bindMenuDismiss(dropdown, () => { dropdown.remove(); }, (ev) => !dropdown.contains(ev.target) && ev.target !== anchor);
   }
 
   _bulkActionsBtn?.addEventListener('click', (e) => {
@@ -2567,7 +2621,7 @@ export function openGallery() {
     // should close it. The outside-click handler explicitly skips clicks on
     // the anchor, so the button itself has to do its own dismiss.
     const existing = document.querySelector('.gallery-bulk-menu');
-    if (existing) { existing.remove(); return; }
+    if (existing) { dismissOrRemove(existing); return; }
     if (!_selectedIds().length) { uiModule.showToast('Select photos first'); return; }
     _showGalleryBulkMenu(e.currentTarget);
   });

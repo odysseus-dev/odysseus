@@ -1,11 +1,31 @@
 /**
  * Deep Research side panel — open/close, form, job rendering, library.
  */
-import * as jobs from './jobs.js';
+import * as jobs from './jobs.js?v=20260630researchthumb';
 import themeModule from '../theme.js';
 import createResearchSynapse from '../researchSynapse.js';
 import spinnerModule from '../spinner.js';
 import { sortModelIds } from '../modelSort.js';
+
+// Rotating research textarea placeholders — pick one at random each
+// time the panel is rendered so the example keeps feeling fresh.
+const _RESEARCH_HINTS = [
+  "e.g. Trace Odysseus's ten-year journey home from Troy — every island, monster, and detour, and why each one cost him",
+  "e.g. Compare Rust and Go for building a high-throughput web API in 2026",
+  "e.g. Fact-check whether honey actually never spoils",
+  "e.g. How to roast a duck so the skin stays crispy",
+  "e.g. The collapse of Bronze Age civilizations — leading theories and the evidence behind each",
+  "e.g. Best M.2 NVMe SSDs under $200 for a home AI workstation",
+  "e.g. Why do cats knead with their paws? Cover the leading behavioural explanations",
+  "e.g. Side effects and benefits of long-term creatine supplementation",
+  "e.g. How does end-to-end encryption work in Signal, step by step",
+  "e.g. The history of the printing press in East Asia, 700 CE → 1600 CE",
+];
+function _pickResearchHint() {
+  const i = Math.floor(Math.random() * _RESEARCH_HINTS.length);
+  // Escape double-quotes so we can safely splice into a placeholder="…" attribute.
+  return _RESEARCH_HINTS[i].replace(/"/g, '&quot;');
+}
 
 // jobId -> { synapse, status } — survives across _renderJobs() rebuilds so
 // the SVG keeps its accumulated nodes/edges between progress events.
@@ -49,13 +69,12 @@ try { _settingsCollapsed = localStorage.getItem(_COLLAPSE_KEY) === '1'; } catch 
 
 function _saveSettingsToStorage() {
   try {
-    const activeCat = document.querySelector('.research-cat.active');
     localStorage.setItem(_SETTINGS_KEY, JSON.stringify({
       max_rounds: document.getElementById('research-rounds')?.value || '0',
       search_provider: document.getElementById('research-search-provider')?.value || '',
       endpoint_id: document.getElementById('research-endpoint')?.value || '',
       model: document.getElementById('research-model')?.value || '',
-      category: activeCat?.dataset.cat || '',
+      category: document.getElementById('research-category')?.value || '',
     }));
   } catch {}
 }
@@ -278,6 +297,7 @@ export function openPanel(focusJobId) {
   _loadEndpoints().then(_restoreSavedSettings);
   _clearBadge();
   _updateResearchCount();
+  jobs.refreshLibrary?.({ force: true });
 
   if ('Notification' in window && Notification.permission === 'default') {
     try { Notification.requestPermission(); } catch {}
@@ -346,29 +366,31 @@ function _buildPanelHTML() {
     </div>
     <div class="modal-body research-pane-body" data-no-swipe-dismiss>
       <div class="research-new-job">
-        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">
-          <h2 style="margin:0;padding:0;line-height:1;">Research <span id="research-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
+          <h2 style="margin:0;padding:0;line-height:1;display:inline-flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent, var(--red))" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M6 18h8"/><path d="M3 22h18"/><path d="M14 22a7 7 0 1 0 0-14h-1"/><path d="M9 14h2"/><path d="M9 12a2 2 0 0 1-2-2V6h4v4a2 2 0 0 1-2 2Z"/><path d="M12 6V3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3"/></svg>Research <span id="research-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
         </div>
-        <p class="memory-desc doclib-desc" style="margin-top:6px;display:flex;align-items:center;gap:6px;">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.8;"><path d="M6 18h8"/><path d="M3 22h18"/><path d="M14 22a7 7 0 1 0 0-14h-1"/><path d="M9 14h2"/><path d="M9 12a2 2 0 0 1-2-2V6h4v4a2 2 0 0 1-2 2Z"/><path d="M12 6V3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3"/></svg>
+        <p class="memory-desc doclib-desc" style="margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
           <span>Multi-step web research with an LLM-in-the-loop agent</span>
+          <span id="research-no-past-hint" style="display:none;font:inherit;opacity:1;position:static;">All past research found in: <button type="button" class="research-library-link" style="background:none;border:none;padding:0;font:inherit;color:var(--accent, var(--red));cursor:pointer;text-decoration:underline;">Library, Research</button></span>
         </p>
-        <div id="research-no-past-hint" class="memory-desc doclib-desc" style="display:none;margin-top:-2px;font-size:11px;opacity:0.7;">All past research found in <button type="button" class="research-library-link">Library, Research</button></div>
-        <textarea id="research-query" class="research-query" placeholder="e.g. Trace Odysseus's ten-year journey home from Troy — every island, monster, and detour, and why each one cost him" rows="4"></textarea>
-        <div class="research-category-row" id="research-category-row">
-          <button class="research-cat active" data-cat="" title="LLM auto-detects the best format">Auto</button>
-          <button class="research-cat" data-cat="product">Product</button>
-          <button class="research-cat" data-cat="comparison">Compare</button>
-          <button class="research-cat" data-cat="howto">How-to</button>
-          <button class="research-cat" data-cat="factcheck">Fact-check</button>
-        </div>
+        <textarea id="research-query" class="research-query" placeholder="${_pickResearchHint()}" rows="4"></textarea>
         <button id="research-settings-toggle" class="research-settings-toggle${chevronCls}">
-          Settings<span class="research-settings-chevron">${_chevronIcon}</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;opacity:0.85;flex-shrink:0;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings<span class="research-settings-chevron">${_chevronIcon}</span>
         </button>
         <div id="research-settings-body" class="research-settings-row"${settingsHidden}>
           <label class="research-setting">
-            <span class="research-setting-label">Rounds</span>
+            <span class="research-setting-label">Rounds <span class="hwfit-help-chip hwfit-help-chip-inline" title="How many search → read → reflect rounds the agent runs. More rounds = deeper coverage, longer wait, more tokens.">?</span></span>
             <select id="research-rounds">${roundOpts}</select>
+          </label>
+          <label class="research-setting">
+            <span class="research-setting-label">Format <span class="hwfit-help-chip hwfit-help-chip-inline" title="Auto lets the LLM pick the output shape. Override when you specifically want a Compare table, How-to, Product, or Fact-check.">?</span></span>
+            <select id="research-category">
+              <option value="" selected>Auto</option>
+              <option value="product">Product</option>
+              <option value="comparison">Compare</option>
+              <option value="howto">How-to</option>
+              <option value="factcheck">Fact-check</option>
+            </select>
           </label>
           <label class="research-setting">
             <span class="research-setting-label">Search engine</span>
@@ -418,8 +440,8 @@ function _dismissKeyboard(input) {
 
 /** Reset the category selector back to "Auto" (called after each start). */
 function _resetCategoryToAuto() {
-  document.querySelectorAll('.research-cat').forEach(b =>
-    b.classList.toggle('active', (b.dataset.cat || '') === ''));
+  const sel = document.getElementById('research-category');
+  if (sel) sel.value = '';
 }
 
 function _wireEvents(pane) {
@@ -432,13 +454,6 @@ function _wireEvents(pane) {
   });
   pane.querySelector('#research-start-btn').addEventListener('click', _handleStart);
   pane.querySelector('#research-add-btn').addEventListener('click', _handleAdd);
-
-  pane.querySelectorAll('.research-cat').forEach(btn => {
-    btn.addEventListener('click', () => {
-      pane.querySelectorAll('.research-cat').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-    });
-  });
 
   pane.querySelector('#research-settings-toggle').addEventListener('click', () => {
     const body = document.getElementById('research-settings-body');
@@ -465,8 +480,7 @@ function _wireEvents(pane) {
 }
 
 function _readSettings() {
-  const activeCat = document.querySelector('.research-cat.active');
-  const category = activeCat?.dataset.cat || undefined;
+  const category = document.getElementById('research-category')?.value || undefined;
   const settings = {
     max_rounds: parseInt(document.getElementById('research-rounds')?.value || '0', 10),
     search_provider: document.getElementById('research-search-provider')?.value || undefined,
@@ -505,9 +519,8 @@ function _editJob(job) {
   }
   // Restore category
   const cat = job.category || '';
-  document.querySelectorAll('.research-cat').forEach(b => {
-    b.classList.toggle('active', b.dataset.cat === cat);
-  });
+  const catSel = document.getElementById('research-category');
+  if (catSel) catSel.value = cat;
   // Restore settings
   const s = job.settings || {};
   const roundsEl = document.getElementById('research-rounds');
@@ -594,9 +607,8 @@ function _restoreSavedSettings() {
   const saved = _loadSettingsFromStorage();
   if (!saved) return;
   if (saved.category !== undefined) {
-    document.querySelectorAll('.research-cat').forEach(b => {
-      b.classList.toggle('active', b.dataset.cat === saved.category);
-    });
+    const catSel = document.getElementById('research-category');
+    if (catSel) catSel.value = saved.category;
   }
   // Rounds intentionally defaults to "Auto" on every open — don't restore.
   // Users can pick a specific cap each time if needed.
@@ -658,7 +670,7 @@ function _renderJobs() {
   const allJobs = jobs.getJobs();
   if (!allJobs.length) {
     // No empty-state text in the body — the query box above is the call to
-    // action. But still surface the "All past research found in Library,
+    // action. But still surface the "All past research found in: Library,
     // Research" hint under the main title, since the Past section won't
     // render to host it (this is exactly the case the dynamic hint targets).
     container.innerHTML = '';
@@ -707,7 +719,7 @@ function _renderJobs() {
   }
 
   // Dynamic Past hint: when the Past section won't render (no past items),
-  // surface the "All past research found in Library, Research" line under
+  // surface the "All past research found in: Library, Research" line under
   // the main Research title instead, so the link is always discoverable.
   const noPastHint = document.getElementById('research-no-past-hint');
   if (noPastHint) {
@@ -769,6 +781,21 @@ function _renderJobs() {
       +   '<span class="research-section-dot' + (dotPulse ? ' pulsing' : '') + '" style="background:' + dotColor + ';"></span>'
       +   '<svg class="research-section-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>'
       + '</span>';
+    if (key === 'past') {
+      const hint = document.createElement('span');
+      hint.className = 'research-library-hint';
+      hint.innerHTML = '<span>All past research found in:</span> <button type="button" class="research-library-link">Library, Research</button>';
+      hint.querySelector('.research-library-link').addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Close the research panel first so the Library opens ABOVE it on mobile
+        // (otherwise it stacks under the full-screen panel).
+        closePanel();
+        if (window.documentModule && window.documentModule.openLibrary) {
+          window.documentModule.openLibrary({ tab: 'research' });
+        }
+      });
+      header.appendChild(hint);
+    }
     header.addEventListener('click', () => {
       const nowCollapsed = sec.classList.toggle('collapsed');
       if (nowCollapsed) _collapsedSections.add(key); else _collapsedSections.delete(key);
@@ -785,23 +812,6 @@ function _renderJobs() {
     });
     const body = document.createElement('div');
     body.className = 'research-section-body';
-    // Hint inside the "Past research" header (second line, styled like the main
-    // Research description) — past research is kept in the Library's Research tab.
-    if (key === 'past') {
-      const hint = document.createElement('div');
-      hint.className = 'memory-desc doclib-desc research-library-hint';
-      hint.innerHTML = 'All past research found in <button type="button" class="research-library-link">Library, Research</button>';
-      hint.querySelector('.research-library-link').addEventListener('click', (e) => {
-        e.stopPropagation();
-        // Close the research panel first so the Library opens ABOVE it on mobile
-        // (otherwise it stacks under the full-screen panel).
-        closePanel();
-        if (window.documentModule && window.documentModule.openLibrary) {
-          window.documentModule.openLibrary({ tab: 'research' });
-        }
-      });
-      header.appendChild(hint);
-    }
     arr.forEach(j => body.appendChild(_buildJobCard(j)));
     sec.appendChild(header);
     sec.appendChild(body);
@@ -984,6 +994,11 @@ function _buildJobCard(job) {
     const failNote = failed
       ? `<div class="research-job-failnote">Couldn't extract anything — try rephrasing the question, or switch the search engine in Settings.</div>`
       : '';
+    const thumbSource = (job.sources || []).find(s => s && (s.image || s.og_image));
+    const thumbUrl = job.thumbnail || thumbSource?.image || thumbSource?.og_image || '';
+    const thumbnail = thumbUrl
+      ? `<img class="research-job-thumb" src="${_esc(thumbUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
+      : '<span class="research-job-thumb research-job-thumb-empty" aria-hidden="true"></span>';
     card.innerHTML = `
       <div class="research-job-header">
         <span class="research-job-query">${_esc(job.query)}</span>${doneBadge}
@@ -992,9 +1007,10 @@ function _buildJobCard(job) {
       </div>
       ${failNote}
       <div class="research-job-actions">
-        <button class="research-job-action" data-action="copy" title="Copy report to clipboard">${_copyIcon}</button>
-        <button class="research-job-action" data-action="chat" title="Open follow-up chat with this research as context">${_chatIcon} Discuss</button>
+        ${thumbnail}
         <button class="research-job-action research-job-action-report" data-action="report" title="Visual report">${_externalIcon} Visual Report</button>
+        <button class="research-job-action" data-action="chat" title="Open follow-up chat with this research as context">${_chatIcon} Discuss</button>
+        <button class="research-job-action research-job-action-dim" data-action="copy" title="Copy report to clipboard">${_copyIcon}</button>
         <button class="research-job-action research-job-action-dim" data-action="dismiss" title="Clear from list">${_cancelIcon}</button>
         <button class="research-job-action research-job-action-dim" data-action="delete" title="Delete from disk">${_trashIcon} Delete</button>
       </div>

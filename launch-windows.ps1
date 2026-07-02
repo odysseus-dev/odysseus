@@ -105,6 +105,14 @@ if (-not $pyExe) {
     }
 }
 
+if ($pyExe -like "*WindowsApps*python.exe") {
+    $pyCmd = Get-Command py -ErrorAction SilentlyContinue
+    if ($pyCmd) {
+        $pyExe = $pyCmd.Source
+        $pyArgs = @("-3.11")
+    }
+}
+
 if (-not $pyExe) {
     Fail "Couldn't find Python 3.11+ for Windows setup. Install Python 3.11+ (or open the Python launcher with 'py -3.11') from https://www.python.org/downloads/, then re-run this script."
 }
@@ -141,7 +149,20 @@ if (-not (Find-GitBash)) {
     Write-Host "      https://git-scm.com/download/win" -ForegroundColor Yellow
 }
 
-# 6. Start the server (use `python -m uvicorn` - bare `uvicorn` may not be on PATH)
+# 6. Point CUDA_PATH at a real CUDA toolkit so GPU llama-cpp-python can import.
+$cudaBase = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA"
+if (Test-Path $cudaBase) {
+    $cudaBest = Get-ChildItem $cudaBase -Directory -ErrorAction SilentlyContinue |
+        Where-Object { Test-Path (Join-Path $_.FullName "bin") } |
+        Sort-Object { try { [version]($_.Name -replace "^v", "") } catch { [version]"0.0" } } -Descending |
+        Select-Object -First 1
+    if ($cudaBest) {
+        $env:CUDA_PATH = $cudaBest.FullName
+        Write-Host ("Using CUDA_PATH = " + $cudaBest.FullName) -ForegroundColor Cyan
+    }
+}
+
+# 7. Start the server (use `python -m uvicorn` - bare `uvicorn` may not be on PATH)
 Write-Step ("Starting Odysseus at http://{0}:{1}" -f $BindHost, $Port)
 Write-Host "Press Ctrl+C to stop."
 Write-Host ""

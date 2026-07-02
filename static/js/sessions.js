@@ -2,7 +2,7 @@
 // This module handles all session-related operations
 
 import Storage from './storage.js';
-import uiModule, { styledPrompt } from './ui.js';
+import uiModule, { autoResize, styledPrompt } from './ui.js';
 import markdownModule from './markdown.js';
 import chatRenderer from './chatRenderer.js';
 import { providerLogo } from './providers.js';
@@ -16,6 +16,11 @@ let sessions = [];
 let currentSessionId = null;
 let _sessionNavToken = 0;
 let _skipAutoSelect = false;
+let _suppressNextSessionLoading = false;
+const HISTORY_DISPLAY_CHAR_LIMIT = 160000;
+const HISTORY_DISPLAY_TAIL_CHARS = 20000;
+const HISTORY_PAGE_LIMIT_MOBILE = 8;
+const HISTORY_PAGE_LIMIT_DESKTOP = 24;
 
 const SIDEBAR_MAX_VISIBLE = 10;
 const FOLDER_MAX_VISIBLE = 5;
@@ -26,6 +31,232 @@ let _autoCreateInProgress = false; // guard against recursive auto-create
 const _INCOGNITO_SESSIONS_KEY = 'ody-incognito-sessions'; // sessionStorage key for incognito session IDs
 const _isMac = /Mac|iPhone|iPad/.test(navigator.platform);
 const _mod = _isMac ? '⌘' : 'Ctrl';
+let _historyPager = null;
+
+function _paintSessionLoading(chatHistory, label = 'Loading chat') {
+  if (!chatHistory) return;
+  if (chatRenderer.hideWelcomeScreen) chatRenderer.hideWelcomeScreen();
+  chatHistory.style.transition = '';
+  chatHistory.style.opacity = '1';
+  chatHistory.classList.add('no-animate');
+  chatHistory.innerHTML = '';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'session-loading-state session-loading-skeleton';
+  wrap.setAttribute('role', 'status');
+  wrap.setAttribute('aria-live', 'polite');
+  wrap.setAttribute('aria-label', label);
+
+  const viewportHeight = chatHistory.clientHeight || window.innerHeight || 720;
+  const bubbleCount = Math.max(8, Math.min(16, Math.ceil(viewportHeight / 86)));
+  for (let i = 0; i < bubbleCount; i += 1) {
+    const bubble = document.createElement('div');
+    bubble.className = `session-skeleton-bubble ${i % 2 ? 'is-user' : 'is-ai'}`;
+    const lines = i % 4 === 1 ? 2 : (i % 4 === 3 ? 3 : 4);
+    for (let j = 0; j < lines; j += 1) {
+      const line = document.createElement('div');
+      line.className = 'session-skeleton-line';
+      line.style.width = `${[72, 92, 58, 82][(i + j) % 4]}%`;
+      bubble.appendChild(line);
+    }
+    wrap.appendChild(bubble);
+  }
+  chatHistory.appendChild(wrap);
+}
+
+function _updateSessionLoading(chatHistory, label) {
+  const el = chatHistory?.querySelector('.session-loading-state');
+  if (el) el.setAttribute('aria-label', label);
+}
+
+function _nextPaint() {
+  return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+}
+
+function _displayHistoryContent(content) {
+  const text = String(content || '');
+  if (text.length <= HISTORY_DISPLAY_CHAR_LIMIT) return text;
+  const head = text.slice(0, HISTORY_DISPLAY_CHAR_LIMIT - HISTORY_DISPLAY_TAIL_CHARS);
+  const tail = text.slice(-HISTORY_DISPLAY_TAIL_CHARS);
+  const omitted = text.length - head.length - tail.length;
+  return [
+    `> Large message display clipped (${omitted.toLocaleString()} characters omitted). Full content remains stored in chat history/export.`,
+    '',
+    head,
+    '',
+    '```text',
+    `[... ${omitted.toLocaleString()} characters omitted from on-screen history render ...]`,
+    '```',
+    '',
+    tail,
+  ].join('\n');
+}
+
+function _stripUserVisionBlocks(text) {
+  return String(text || '').replace(
+    /\n*\[Image: ([^\]]+)\]\n[\s\S]*?(?=\n*\[Image: |\n*\[Image attached: |\n*=== File: |\n*\[PDF content\]:|$)/g,
+    ''
+  ).trim();
+}
+
+function _historyPageLimit() {
+  return window.innerWidth <= 768 ? HISTORY_PAGE_LIMIT_MOBILE : HISTORY_PAGE_LIMIT_DESKTOP;
+}
+
+function _historyUrl(id, { limit = null, offset = null } = {}) {
+  const url = new URL(`${API_BASE}/api/history/${id}`);
+  if (limit != null) url.searchParams.set('limit', String(limit));
+  if (offset != null) url.searchParams.set('offset', String(offset));
+  return url.toString();
+}
+
+function _renderHistoryMessage(msg, modelName) {
+  const meta = msg.metadata ? { ...msg.metadata, _fromHistory: true } : null;
+  let displayContent;
+  if (typeof msg.content === 'string') {
+    displayContent = _displayHistoryContent(msg.content);
+  } else if (Array.isArray(msg.content)) {
+    displayContent = _displayHistoryContent(msg.content.filter(p => p.type === 'text').map(p => p.text).join('\n').trim());
+  } else {
+    displayContent = '';
+  }
+  if (msg.role === 'user') {
+    displayContent = _stripUserVisionBlocks(displayContent);
+    const trimmed = displayContent.trim();
+    if (
+      trimmed === 'Continue where you left off' ||
+      trimmed.startsWith('Your message was cut off.') ||
+      trimmed.startsWith('Your previous response was interrupted.') ||
+      displayContent.includes('[Instruction: Rewrite') ||
+      displayContent.includes('[Instruction: Explain')
+    ) {
+      return null;
+    }
+    const docEditMatch = displayContent.match(/^In the document, edit this specific text \((lines? [\d-]+)\):\n```\n([\s\S]*?)\n```\n\nInstruction: ([\s\S]*)$/);
+    if (docEditMatch) {
+      displayContent = `[Doc edit: ${docEditMatch[1]}] ${docEditMatch[3]}`;
+    }
+  }
+  const box = document.getElementById('chat-history');
+  if (!box) return null;
+  if (chatRenderer.hideWelcomeScreen) chatRenderer.hideWelcomeScreen();
+
+  const wrap = document.createElement('div');
+  wrap.className = 'msg ' + (msg.role === 'user' ? 'msg-user' : 'msg-ai');
+  wrap.dataset.raw = displayContent;
+  if (meta?._db_id) wrap.dataset.dbId = meta._db_id;
+
+  const roleEl = document.createElement('div');
+  roleEl.className = 'role';
+  if (msg.role === 'user') {
+    roleEl.textContent = 'You';
+  } else {
+    const pair = chatRenderer.replyModelPair ? chatRenderer.replyModelPair(modelName, meta) : {};
+    const resolved = pair.actualModel || pair.requestedModel || modelName;
+    roleEl.textContent = chatRenderer.modelRouteLabel
+      ? chatRenderer.modelRouteLabel(pair.requestedModel, resolved)
+      : (resolved || 'Odysseus');
+    if (chatRenderer.applyModelColor) chatRenderer.applyModelColor(roleEl, resolved);
+  }
+  const timestamp = meta?.timestamp;
+  if (timestamp) {
+    const ts = document.createElement('span');
+    ts.className = 'msg-time';
+    try {
+      ts.textContent = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      ts.textContent = '';
+    }
+    roleEl.appendChild(ts);
+  }
+
+  const body = document.createElement('div');
+  body.className = 'body';
+  body.innerHTML = markdownModule.processWithThinking(
+    markdownModule.squashOutsideCode(markdownModule.renderContent(displayContent || ''))
+  );
+  if (msg.role === 'user' && Array.isArray(meta?.attachments) && meta.attachments.length) {
+    if (chatRenderer.buildAttachCards) {
+      body.appendChild(chatRenderer.buildAttachCards(meta.attachments));
+    }
+  }
+
+  wrap.appendChild(roleEl);
+  wrap.appendChild(body);
+  box.appendChild(wrap);
+  return wrap;
+}
+
+function _clearHistoryPager() {
+  const box = document.getElementById('chat-history');
+  if (_historyPager?.handler && box) {
+    box.removeEventListener('scroll', _historyPager.handler);
+  }
+  _historyPager = null;
+}
+
+function _installHistoryPager(id, pageInfo, modelName) {
+  const box = document.getElementById('chat-history');
+  _clearHistoryPager();
+  if (!box || !pageInfo || !pageInfo.has_more_before) return;
+
+  _historyPager = {
+    sessionId: id,
+    offset: Number(pageInfo.offset || 0),
+    limit: Number(pageInfo.limit || _historyPageLimit()),
+    loading: false,
+    done: false,
+    modelName,
+    handler: null,
+  };
+
+  const loadOlder = async () => {
+    if (!_historyPager || _historyPager.loading || _historyPager.done) return;
+    if (_historyPager.sessionId !== currentSessionId) return;
+    if (box.scrollTop > 90) return;
+
+    const nextOffset = Math.max(0, _historyPager.offset - _historyPager.limit);
+    const nextLimit = _historyPager.offset - nextOffset;
+    if (nextLimit <= 0) {
+      _historyPager.done = true;
+      return;
+    }
+
+    _historyPager.loading = true;
+    const anchor = box.querySelector('.msg, .agent-thread, .gallery-bubble');
+    const beforeHeight = box.scrollHeight;
+    try {
+      const res = await fetch(_historyUrl(_historyPager.sessionId, { limit: nextLimit, offset: nextOffset }));
+      const data = await res.json();
+      if (!_historyPager || _historyPager.sessionId !== currentSessionId) return;
+      const newEls = [];
+      for (const msg of data.history || []) {
+        if (msg.role !== 'user' && msg.role !== 'assistant') continue;
+        const el = _renderHistoryMessage(msg, _historyPager.modelName);
+        if (el) newEls.push(el);
+      }
+      for (const el of newEls) {
+        box.insertBefore(el, anchor || box.firstChild);
+      }
+      _historyPager.offset = Number(data.offset || nextOffset);
+      _historyPager.done = !data.has_more_before;
+      if (window.hljs) {
+        newEls.forEach(el => el.querySelectorAll('pre code:not(.hljs)').forEach(block => window.hljs.highlightElement(block)));
+      }
+      const heightDelta = box.scrollHeight - beforeHeight;
+      box.scrollTop += heightDelta;
+    } catch (e) {
+      console.warn('Failed to load older chat history:', e);
+    } finally {
+      if (_historyPager) _historyPager.loading = false;
+    }
+  };
+
+  _historyPager.handler = () => {
+    if (box.scrollTop <= 90) loadOlder();
+  };
+  box.addEventListener('scroll', _historyPager.handler, { passive: true });
+}
 
 function _getIncognitoIds() {
   try { return JSON.parse(sessionStorage.getItem(_INCOGNITO_SESSIONS_KEY) || '[]'); } catch { return []; }
@@ -742,6 +973,58 @@ function createSessionItem(s) {
   return div;
 }
 
+function _dateBucketLabel(value) {
+  if (!value) return 'Older';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return 'Older';
+  const dayStart = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const today = dayStart(new Date());
+  const day = dayStart(d);
+  const diff = Math.round((today - day) / 86400000);
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Yesterday';
+  if (diff > 1 && diff < 7) return d.toLocaleDateString([], { weekday: 'long' });
+  if (diff >= 365) {
+    const years = Math.floor(diff / 365);
+    return `${years} ${years === 1 ? 'year' : 'years'} ago`;
+  }
+  if (diff >= 180) return '6 months ago';
+  if (diff >= 30) return `${Math.floor(diff / 30) * 30} days ago`;
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleDateString([], sameYear ? { month: 'long', day: 'numeric' } : { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+function _sessionBucketDate(s) {
+  return s.last_message_at || s.updated_at || s.created_at || '';
+}
+
+function _createDateSectionHeader(label, kind = 'session') {
+  const el = document.createElement('div');
+  el.className = `date-section-header ${kind}-date-section-header`;
+  el.textContent = label;
+  return el;
+}
+
+function _appendSessionItemsWithDateHeaders(frag, items) {
+  let lastLabel = null;
+  for (const s of items) {
+    const label = _dateBucketLabel(_sessionBucketDate(s));
+    if (label !== lastLabel) {
+      frag.appendChild(_createDateSectionHeader(label, 'session'));
+      lastLabel = label;
+    }
+    frag.appendChild(createSessionItem(s));
+  }
+}
+
+function _appendFavoriteSessionItems(frag, items) {
+  if (!items.length) return;
+  frag.appendChild(_createDateSectionHeader('Favorites', 'session'));
+  for (const s of items) {
+    frag.appendChild(createSessionItem(s));
+  }
+}
+
 let _renderRAF = null;
 export function renderSessionList() {
   // Debounce rapid re-renders within the same frame
@@ -800,17 +1083,22 @@ function _renderSessionListImpl() {
       }
       return 0;
     });
-    // Starred still float to top
-    const starred = orderedSessions.filter(s => s.is_important);
-    const rest = orderedSessions.filter(s => !s.is_important);
-    const allFlat = [...starred, ...rest];
+    // Favorites are a global pinned block above date buckets, not just
+    // promoted within the day they belong to.
+    const allFlat = [
+      ...orderedSessions.filter(s => s.is_important),
+      ...orderedSessions.filter(s => !s.is_important),
+    ];
 
     const limit = _showAllSessions ? allFlat.length : SIDEBAR_MAX_VISIBLE;
     const visible = allFlat.slice(0, limit);
     const activeIdx = allFlat.findIndex(s => s.id === currentSessionId);
     if (!_showAllSessions && activeIdx >= limit) visible.push(allFlat[activeIdx]);
 
-    visible.forEach(s => _frag.appendChild(createSessionItem(s)));
+    const visibleFavorites = visible.filter(s => s.is_important);
+    const visibleRegular = visible.filter(s => !s.is_important);
+    _appendFavoriteSessionItems(_frag, visibleFavorites);
+    _appendSessionItemsWithDateHeaders(_frag, visibleRegular);
 
     if (allFlat.length > SIDEBAR_MAX_VISIBLE) {
       const remaining = allFlat.length - SIDEBAR_MAX_VISIBLE;
@@ -1449,8 +1737,12 @@ export async function loadSessions() {
       }
     }
 
+    const suppressSessionLoading = _suppressNextSessionLoading;
+    _suppressNextSessionLoading = false;
+
     if (targetId && targetId !== currentSessionId) {
-      await selectSession(targetId, { keepSidebar: true });
+      const showLoading = !suppressSessionLoading && !(_isFirstLoad && !hashId);
+      await selectSession(targetId, { keepSidebar: true, showLoading });
     } else if (targetId && targetId === currentSessionId) {
       // Same session — just refresh the header name in case it was auto-generated
       const s = sessions.find(x => x.id === targetId);
@@ -1488,7 +1780,7 @@ export async function loadSessions() {
   }
 }
 
-export async function selectSession(id, { keepSidebar = false } = {}) {
+export async function selectSession(id, { keepSidebar = false, showLoading = true } = {}) {
   // Exit compare mode cleanly if active
   if (window.compareModule && window.compareModule.isActive()) {
     window.compareModule.deactivate(true);
@@ -1497,6 +1789,7 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
   try {
     const navToken = ++_sessionNavToken;
     const prevSessionId = currentSessionId;
+    _clearHistoryPager();
     // Re-archive peeked session when navigating away
     _checkPeekCleanup(id);
     // Clear any leftover document text selection so it doesn't bleed into the new chat
@@ -1557,6 +1850,9 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     if (msgInput) {
       msgInput.disabled = false;
       msgInput.value = '';
+      msgInput.style.height = '';
+      msgInput.style.overflow = '';
+      autoResize(msgInput);
     }
     const sendBtn2 = document.querySelector('.send-btn');
     if (sendBtn2) {
@@ -1564,7 +1860,15 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
       if (window._updateSendBtnIcon) window._updateSendBtnIcon();
     }
 
-    // On mobile, keep sidebar open — user dismisses it by tapping chat area or swiping
+    // On mobile manual chat switches, move the drawer away before showing the
+    // loader so the status sits over the chat pane instead of being hidden by
+    // the sidebar. Startup auto-restore passes keepSidebar + showLoading=false.
+    if (showLoading && !keepSidebar && window.innerWidth <= 768) {
+      const sidebar = document.getElementById('sidebar');
+      const backdrop = document.getElementById('sidebar-backdrop');
+      if (sidebar) sidebar.classList.add('hidden');
+      if (backdrop) backdrop.classList.remove('visible');
+    }
 
     // Highlight active session in sidebar
     document.querySelectorAll('.list-item.active-session').forEach(el => el.classList.remove('active-session'));
@@ -1588,13 +1892,38 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     // declaration had been removed while leaving the references in
     // place, producing a ReferenceError every selectSession.)
     const isOC = meta && (meta.is_openclaw || id === 'openclaw');
-    let msgHistory = [], modelName = null;
+    let msgHistory = [], modelName = null, pageInfo = null;
+    let paintedLoading = false;
+    let loadingTimer = null;
+    let loadingPaintReady = Promise.resolve();
     if (!isOC) {
-      const res = await fetch(`${API_BASE}/api/history/${id}`);
+      if (showLoading && chatHistory && prevSessionId !== id) {
+        const loadingDelayMs = window.innerWidth <= 768 ? 900 : 500;
+        loadingTimer = setTimeout(() => {
+          if (navToken !== _sessionNavToken || currentSessionId !== id) return;
+          _paintSessionLoading(chatHistory, 'Loading chat');
+          paintedLoading = true;
+          loadingPaintReady = _nextPaint();
+        }, loadingDelayMs);
+      }
+      const res = await fetch(_historyUrl(id, { limit: _historyPageLimit() }));
       const data = await res.json();
+      if (loadingTimer) {
+        clearTimeout(loadingTimer);
+        loadingTimer = null;
+      }
+      if (paintedLoading) {
+        await loadingPaintReady;
+      }
       if (navToken !== _sessionNavToken || currentSessionId !== id) return;
       msgHistory = data.history || [];
       modelName = data.model || null;
+      pageInfo = {
+        offset: data.offset,
+        limit: data.limit,
+        total: data.total,
+        has_more_before: !!data.has_more_before,
+      };
       // The model returned by /api/history is the authoritative one the
       // backend will use for this session. Write it back into the cached
       // session meta and refresh the picker so the displayed model can
@@ -1623,8 +1952,17 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
       return;
     }
 
-    // Fade out old content, swap, fade in
-    if (chatHistory) {
+    if (paintedLoading && chatHistory) {
+      _updateSessionLoading(chatHistory, msgHistory.length ? 'Rendering chat' : 'Opening chat');
+      await _nextPaint();
+      if (navToken !== _sessionNavToken || currentSessionId !== id) return;
+      chatHistory.innerHTML = '';
+    }
+
+    // Fade out old content, swap, fade in. When we already painted a loading
+    // state, keep it visible until render starts instead of fading to a blank
+    // pane during slow history fetches.
+    if (chatHistory && !paintedLoading) {
       chatHistory.style.transition = 'opacity 0.12s ease-out';
       chatHistory.style.opacity = '0';
       await new Promise(r => setTimeout(r, 120));
@@ -1644,26 +1982,11 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
         'OpenClaw');
     } else if (msgHistory.length) {
       for (const msg of msgHistory) {
-        const meta = msg.metadata ? { ...msg.metadata, _fromHistory: true } : null;
-        let displayContent;
-        if (typeof msg.content === 'string') {
-          displayContent = msg.content;
-        } else if (Array.isArray(msg.content)) {
-          // Multimodal (image/audio attachments): extract text parts, skip binary
-          displayContent = msg.content.filter(p => p.type === 'text').map(p => p.text).join('\n').trim();
-        } else {
-          displayContent = '';
+        try {
+          _renderHistoryMessage(msg, modelName);
+        } catch (e) {
+          console.warn('Failed to render history message:', e, msg);
         }
-        // Clean up doc selection context for display
-        if (msg.role === 'user') {
-          // Hide "Continue where you left off" bubbles
-          if (displayContent.trim() === 'Continue where you left off' || displayContent.trim().startsWith('Your message was cut off.') || displayContent.trim().startsWith('Your previous response was interrupted.') || displayContent.includes('[Instruction: Rewrite') || displayContent.includes('[Instruction: Explain')) continue;
-          const docEditMatch = displayContent.match(/^In the document, edit this specific text \((lines? [\d-]+)\):\n```\n([\s\S]*?)\n```\n\nInstruction: ([\s\S]*)$/);
-          if (docEditMatch) {
-            displayContent = `[Doc edit: ${docEditMatch[1]}] ${docEditMatch[3]}`;
-          }
-        }
-        window.chatModule.addMessage(msg.role, markdownModule.renderContent(displayContent), modelName, meta);
       }
     } else {
       if (window.chatModule && window.chatModule.showWelcomeScreen) window.chatModule.showWelcomeScreen();
@@ -1671,6 +1994,9 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
       document.querySelectorAll('.list-item.active-session').forEach(el => el.classList.remove('active-session'));
     }
     uiModule.scrollHistoryInstant();
+    if (!isOC && msgHistory.length) {
+      _installHistoryPager(id, pageInfo, modelName);
+    }
 
     // Fade in and re-enable message animations
     if (chatHistory) {
@@ -1740,6 +2066,16 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
 
   } catch (error) {
     console.error('Error in selectSession:', error);
+    const chatHistory = uiModule.el('chat-history');
+    if (chatHistory?.querySelector('.session-loading-state')) {
+      chatHistory.innerHTML = '';
+      chatHistory.style.opacity = '1';
+      chatHistory.classList.remove('no-animate');
+      const msg = document.createElement('div');
+      msg.className = 'msg msg-ai';
+      msg.innerHTML = `<div class="body">Failed to load this chat. ${uiModule.esc ? uiModule.esc(error.message || '') : ''}</div>`;
+      chatHistory.appendChild(msg);
+    }
     uiModule.showError('Failed to load session: ' + error.message);
   } finally {
     // Ensure memories are loaded after session selection
@@ -1777,6 +2113,7 @@ export function createDirectChat(url, modelId, endpointId) {
   // Don't hit the API — just store the model info and prepare the UI
   _pendingChat = { url, modelId, endpointId };
   _skipAutoSelect = true;
+  _suppressNextSessionLoading = true;
   currentSessionId = null;
   Storage.remove('lastSessionId');
   history.replaceState(null, '', window.location.pathname);
@@ -1873,6 +2210,7 @@ export async function materializePendingSession() {
 
   // Reload sidebar to show the new session — await it so the session
   // is fully registered before the caller proceeds (prevents race conditions)
+  _suppressNextSessionLoading = true;
   await loadSessions().catch(() => {});
   return true;
 }
@@ -1909,6 +2247,7 @@ export function setCurrentSessionId(id) {
   _sessionNavToken++;
   currentSessionId = id;
   if (!id) {
+    _suppressNextSessionLoading = true;
     Storage.remove('lastSessionId');
     history.replaceState(null, '', window.location.pathname);
     document.querySelectorAll('.list-item.active-session, .session-item.active').forEach(el => {
@@ -1938,6 +2277,7 @@ async function _onSessionListKeydown(e) {
   }
 
   if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (item.querySelector('.session-rename-input')) return;
     e.preventDefault();
     const sid = item.dataset.sessionId;
     const s = sessions.find(x => x.id === sid);
@@ -2084,6 +2424,17 @@ export function clearStreaming(sessionId) {
   _updateRailNotifs();
 }
 
+function _clearRunningState(sessionId) {
+  if (!sessionId) return;
+  var changed = false;
+  if (_researchingSessions.delete(sessionId)) changed = true;
+  if (_streamingSessions.delete(sessionId)) changed = true;
+  if (changed) {
+    _updateResearchDots();
+    _updateRailNotifs();
+  }
+}
+
 export function markStreamComplete(sessionId) {
   _researchingSessions.delete(sessionId);
   _streamingSessions.delete(sessionId);
@@ -2154,9 +2505,15 @@ async function _checkServerStream(sessionId) {
     if (window.chatModule && window.chatModule.hasActiveStream && window.chatModule.hasActiveStream(sessionId)) return;
 
     const res = await fetch(`${API_BASE}/api/chat/stream_status/${sessionId}`);
-    if (!res.ok) return; // 404 = no active stream
+    if (!res.ok) {
+      _clearRunningState(sessionId);
+      return; // 404 = no active stream
+    }
     const info = await res.json();
-    if (info.status !== 'streaming') return;
+    if (info.status !== 'streaming') {
+      _clearRunningState(sessionId);
+      return;
+    }
 
     // Skip if this is a research stream — research has its own progress UI
     if (info.mode === 'research' || info.is_research) return;
@@ -2258,8 +2615,8 @@ if (document.readyState === 'loading') {
 // Shared global listener to close all session dropdowns on click-away or Escape
 function _initDropdownDismiss() {
   document.addEventListener('click', (e) => {
-    if (e.target.closest('.session-dropdown-menu')) return;
-    document.querySelectorAll('.session-dropdown-menu').forEach(d => d.style.display = 'none');
+    if (e.target.closest('.session-dropdown-menu, .session-folder-submenu')) return;
+    document.querySelectorAll('.session-dropdown-menu, .session-folder-submenu').forEach(d => d.style.display = 'none');
   });
   // Watch the sidebar — when it's hidden (any path: hamburger, swipe, mobile
   // collapse), close any open session dropdowns so they don't orphan over
@@ -2268,14 +2625,16 @@ function _initDropdownDismiss() {
   if (_sb) {
     new MutationObserver(() => {
       if (_sb.classList.contains('hidden')) {
-        document.querySelectorAll('.session-dropdown-menu, .folder-submenu').forEach(d => d.style.display = 'none');
+        document.querySelectorAll('.session-dropdown-menu, .session-folder-submenu').forEach(d => d.style.display = 'none');
       }
     }).observe(_sb, { attributes: true, attributeFilter: ['class'] });
   }
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      document.querySelectorAll('.session-dropdown-menu').forEach(d => d.style.display = 'none');
-    }
+    if (e.key !== 'Escape') return;
+    // Esc must dismiss both the parent dropdown AND the Move-to-folder
+    // submenu in one keypress — previously only the dropdown closed and
+    // the submenu was left orphaned on screen.
+    document.querySelectorAll('.session-dropdown-menu, .session-folder-submenu').forEach(d => d.style.display = 'none');
   });
 }
 

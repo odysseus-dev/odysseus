@@ -22,6 +22,16 @@ from core.middleware import require_admin
 
 logger = logging.getLogger(__name__)
 
+# Last-resort verdict extraction from a teacher/verifier model's prose (run when
+# JSON parsing fails). `["\'\s:]*` already consumes whitespace, so the original
+# trailing `\s*` made two adjacent \s-matching quantifiers that backtrack O(n^2)
+# on a `verdict` + whitespace flood in untrusted model output (CodeQL
+# py/polynomial-redos). Without it a single unbounded quantifier remains — the
+# matched text is identical, and the scan is linear.
+_VERDICT_PROSE_RE = re.compile(
+    r'verdict["\'\s:]*["\']?(pass|needs_work|fail|inconclusive)', re.I
+)
+
 
 class SkillAddRequest(BaseModel):
     # New schema (preferred)
@@ -196,7 +206,7 @@ async def _eval_skill_run(skill_md: str, task: str, transcript: str,
         # Last resort: pull the verdict keyword straight out of the prose so a
         # clearly-decided run isn't thrown away as "unparseable".
         if v not in _VERDICTS:
-            km = _re.search(r'verdict["\'\s:]*\s*["\']?(pass|needs_work|fail|inconclusive)', text, _re.I)
+            km = _VERDICT_PROSE_RE.search(text)
             if km:
                 v = km.group(1).lower()
                 if data is None:
@@ -691,8 +701,12 @@ async def _run_skill_test_once(md: str, task: str, url, model, headers, owner) -
         {"role": "user", "content": task},
     ]
     try:
+        # max_tokens explicitly set: passing 0 lets some upstreams (Ollama,
+        # OpenAI-compat) generate an empty completion, which manifested as
+        # the skill test returning nothing while chat (which carries its
+        # preset's max_tokens) worked. 4096 matches the chat default.
         async for chunk in stream_agent_loop(url, model, messages, headers=headers,
-                                             temperature=0.3, max_tokens=0, max_rounds=8, owner=owner):
+                                             temperature=0.3, max_tokens=4096, max_rounds=8, owner=owner):
             if not chunk.startswith("data: ") or chunk.strip() == "data: [DONE]":
                 continue
             try:

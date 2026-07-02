@@ -77,6 +77,7 @@ function _handlePickerKeydown(e, listEl, itemSelector, closeFn) {
 // Dependencies injected via initModelPicker()
 let _deps = null;
 let _autoSelectingDefault = false;
+let _defaultChatPickInFlight = false;
 
 function _modelExists(modelId, url) {
   if (!modelId || !window.modelsModule || !window.modelsModule.getCachedItems) return false;
@@ -89,6 +90,66 @@ function _modelExists(modelId, url) {
     const models = (item.models || []).concat(item.models_extra || []);
     return models.includes(modelId) && (!targetUrl || itemUrl === targetUrl);
   });
+}
+
+function _firstAvailableModel() {
+  if (!window.modelsModule || !window.modelsModule.getCachedItems) return null;
+  const items = window.modelsModule.getCachedItems() || [];
+  for (const item of items) {
+    if (item.offline) continue;
+    const models = (item.models || []).concat(item.models_extra || []);
+    if (!models.length) continue;
+    return {
+      url: item.url,
+      modelId: models[0],
+      endpointId: item.endpoint_id || '',
+    };
+  }
+  return null;
+}
+
+async function _ensureModelCacheForFallback() {
+  if (!window.modelsModule || !window.modelsModule.getCachedItems) return;
+  const items = window.modelsModule.getCachedItems() || [];
+  if (items.length) return;
+  if (typeof window.modelsModule.refreshModels === 'function') {
+    try { await window.modelsModule.refreshModels(false); } catch (_) {}
+  }
+}
+
+async function _ensureDefaultPendingChat() {
+  if (!_deps || _defaultChatPickInFlight) return;
+  if (_deps.getCurrentSessionId && _deps.getCurrentSessionId()) return;
+  const pending = _deps.getPendingChat && _deps.getPendingChat();
+  if (pending && pending.modelId) return;
+  _defaultChatPickInFlight = true;
+  try {
+    await _ensureModelCacheForFallback();
+    let dc = null;
+    try {
+      const res = await fetch(`${API_BASE}/api/default-chat`, { credentials: 'same-origin' });
+      if (res.ok) dc = await res.json();
+    } catch (_) {}
+    if (dc && dc.endpoint_url && dc.model && _modelExists(dc.model, dc.endpoint_url)) {
+      _deps.setPendingChat({
+        url: dc.endpoint_url,
+        modelId: dc.model,
+        endpointId: dc.endpoint_id || '',
+      });
+      try { window.__odysseusDefaultChat = dc; } catch (_) {}
+      updateModelPicker();
+      return;
+    }
+    // No configured default, or the configured default is gone/offline:
+    // preserve the convenience fallback and keep the picker usable.
+    const fallback = _firstAvailableModel();
+    if (fallback) {
+      _deps.setPendingChat(fallback);
+      updateModelPicker();
+    }
+  } finally {
+    _defaultChatPickInFlight = false;
+  }
 }
 
 /**
@@ -112,6 +173,7 @@ function _initModelPickerDropdown() {
   const search = document.getElementById('model-picker-search');
   const listEl = document.getElementById('model-picker-list');
   const searchRow = menu ? menu.querySelector('.model-picker-search-row') : null;
+  const refreshBtn = document.getElementById('model-picker-refresh-btn');
   if (!wrap || !btn || !menu || !search || !listEl) return;
 
   function _close() {
@@ -165,6 +227,9 @@ function _initModelPickerDropdown() {
   const _LOCAL_PROBE_TTL_MS = 5000;
 
   async function _refreshLocalProbe() {
+    try {
+      if (window.__odysseusChatBusy || Date.now() < (window.__odysseusChatBusyUntil || 0)) return;
+    } catch (_) {}
     const now = Date.now();
     if (now - _localProbeFetchedAt < _LOCAL_PROBE_TTL_MS) return;
     _localProbeFetchedAt = now;
@@ -608,6 +673,26 @@ function _initModelPickerDropdown() {
 
   search.addEventListener('input', () => _populate(search.value));
   search.addEventListener('click', (e) => e.stopPropagation());
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      refreshBtn.disabled = true;
+      refreshBtn.classList.add('spinning');
+      try {
+        if (window.modelsModule && window.modelsModule.refreshModels) {
+          await window.modelsModule.refreshModels(true);
+        }
+        await _refreshLocalProbe();
+        if (!menu.classList.contains('hidden')) _populate(search.value || '');
+        updateModelPicker();
+      } catch (_) {
+        uiModule.showToast('Model refresh failed');
+      } finally {
+        refreshBtn.disabled = false;
+        refreshBtn.classList.remove('spinning');
+      }
+    });
+  }
   search.addEventListener('keydown', (e) => {
     _handlePickerKeydown(e, listEl, '.model-switch-item', _close);
   });
@@ -669,6 +754,18 @@ export function updateModelPicker() {
   // silently pre-populate the chatbox of the next user that signed in. If
   // we have no session model and no pending-chat pick, fall through to
   // the "Select model" placeholder below.
+  //
+  // But if the server model cache already has an online endpoint, make the
+  // same safe fallback visible in the picker immediately. The send path can
+  // already resolve a usable model; the UI should not sit on "Select model"
+  // and make it look broken.
+  if (!modelId && !currentSessionId && window.modelsModule && window.modelsModule.getCachedItems) {
+    const fallback = _firstAvailableModel();
+    if (fallback) {
+      _deps.setPendingChat(fallback);
+      modelId = fallback.modelId;
+    }
+  }
 
   // Check if selected model is still available — fall back ONLY for pending chats with no user selection
   // Never override an existing session's model — the user explicitly chose it
@@ -689,25 +786,7 @@ export function updateModelPicker() {
     }
   }
   if (!modelId && !_autoSelectingDefault && window.modelsModule && window.modelsModule.getCachedItems) {
-    const items = window.modelsModule.getCachedItems();
-    const first = items.find(item => !item.offline && ((item.models || []).length || (item.models_extra || []).length));
-    if (first) {
-      const models = (first.models || []).concat(first.models_extra || []);
-      modelId = models[0];
-      if (!currentSessionId) {
-        _deps.setPendingChat({ url: first.url, modelId, endpointId: first.endpoint_id });
-      } else {
-        if (s) { s.model = modelId; s.endpoint_url = first.url; }
-        _autoSelectingDefault = true;
-        const fd = new FormData();
-        fd.append('model', modelId);
-        fd.append('endpoint_url', first.url || '');
-        if (first.endpoint_id) fd.append('endpoint_id', first.endpoint_id);
-        fetch(`${API_BASE}/api/session/${currentSessionId}`, { method: 'PATCH', body: fd })
-          .catch(() => {})
-          .finally(() => { _autoSelectingDefault = false; });
-      }
-    }
+    _ensureDefaultPendingChat();
   }
 
   const displayName = modelId ? modelId.split('/').pop() : 'Select model';

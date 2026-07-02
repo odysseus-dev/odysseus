@@ -23,6 +23,7 @@ def test_llama_cpp_maps_to_llama_cpp_python_distribution():
 
 def test_extras_and_version_markers_are_stripped():
     assert _pip_dist_name({"name": "diffusers", "pip": "diffusers[torch]"}) == "diffusers"
+    assert _pip_dist_name({"name": "transformers", "pip": "transformers"}) == "transformers"
     assert _pip_dist_name({"name": "sglang", "pip": "sglang[all]"}) == "sglang"
     assert _pip_dist_name({"name": "rembg", "pip": "rembg[gpu]"}) == "rembg"
     assert _pip_dist_name({"name": "x", "pip": "foo>=1.2,<2"}) == "foo"
@@ -48,3 +49,11 @@ def test_route_uses_dist_name_helper_not_munged_import_name():
     src = (Path(__file__).resolve().parents[1] / "routes" / "shell_routes.py").read_text(encoding="utf-8")
     assert "importlib_metadata.version(_pip_dist_name(pkg))" in src
     assert 'importlib_metadata.version(pkg["name"].replace("_", "-"))' not in src
+
+
+def test_transformers_is_listed_as_image_dependency():
+    src = (Path(__file__).resolve().parents[1] / "routes" / "shell_routes.py").read_text(encoding="utf-8")
+
+    assert '"name": "transformers"' in src
+    assert '"pip": "transformers"' in src
+    assert '"transformers",' in src

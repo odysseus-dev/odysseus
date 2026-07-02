@@ -23,8 +23,10 @@
  * @returns {{x: number, y: number, guides: Array}}
  */
 export function computeSnap(layer, nx, ny, ctx) {
-  const SNAP_PX = 6 / Math.max(ctx.zoom, 0.0001);
-  const cw = ctx.canvasW, ch = ctx.canvasH;
+  if (!layer || !layer.canvas || !ctx) return { x: nx, y: ny, guides: [] };
+  const zoom = Number.isFinite(Number(ctx.zoom)) ? Number(ctx.zoom) : 1;
+  const SNAP_PX = 6 / Math.max(zoom, 0.0001);
+  const cw = Number(ctx.canvasW) || 0, ch = Number(ctx.canvasH) || 0;
   const w = layer.canvas.width, h = layer.canvas.height;
 
   const vTargets = [

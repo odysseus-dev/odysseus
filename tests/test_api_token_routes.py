@@ -502,3 +502,77 @@ def test_delete_token_owner_check_skipped_when_auth_disabled(monkeypatch, token_
     resp = delete_token(request=req, token_id="tok123")
     assert resp == {"status": "deleted"}
     fake_session.delete.assert_called_once_with(fake_token)
+
+
+# ---------------------------------------------------------------------------
+# 7. PATCH /api/tokens/{id} — non-object JSON bodies must not 500
+# ---------------------------------------------------------------------------
+
+
+def test_update_token_with_array_body_does_not_500(monkeypatch, token_routes_mod):
+    """PATCH body of [] must be normalised to {} and not raise."""
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    mod = token_routes_mod
+
+    token = SimpleNamespace(
+        id="tok123", name="original", owner="alice",
+        token_prefix="ody_orig", scopes="email:read", is_active=True,
+    )
+    fake_session = MagicMock()
+    fake_session.query.return_value.filter.return_value.first.return_value = token
+    monkeypatch.setattr(mod, "get_db_session", lambda: _db_ctx(fake_session))
+
+    invalidator = MagicMock()
+    req = _patch_request(invalidator, [])
+    update_token = _get_handler(mod, "PATCH", "/tokens/{token_id}")
+    resp = asyncio.run(update_token(request=req, token_id="tok123"))
+
+    # Name and scopes must be unchanged — payload was normalised to {}
+    assert token.name == "original"
+    assert token.scopes == "email:read"
+    assert resp["name"] == "original"
+
+
+def test_update_token_with_null_body_does_not_500(monkeypatch, token_routes_mod):
+    """PATCH body of null must be normalised to {} and not raise."""
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    mod = token_routes_mod
+
+    token = SimpleNamespace(
+        id="tok123", name="original", owner="alice",
+        token_prefix="ody_orig", scopes="chat", is_active=True,
+    )
+    fake_session = MagicMock()
+    fake_session.query.return_value.filter.return_value.first.return_value = token
+    monkeypatch.setattr(mod, "get_db_session", lambda: _db_ctx(fake_session))
+
+    invalidator = MagicMock()
+    req = _patch_request(invalidator, None)
+    update_token = _get_handler(mod, "PATCH", "/tokens/{token_id}")
+    resp = asyncio.run(update_token(request=req, token_id="tok123"))
+
+    assert token.name == "original"
+    assert token.scopes == "chat"
+
+
+def test_update_token_normal_object_still_works(monkeypatch, token_routes_mod):
+    """Normal dict payload continues to update fields as before."""
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    mod = token_routes_mod
+
+    token = SimpleNamespace(
+        id="tok123", name="original", owner="alice",
+        token_prefix="ody_orig", scopes="email:read", is_active=True,
+    )
+    fake_session = MagicMock()
+    fake_session.query.return_value.filter.return_value.first.return_value = token
+    monkeypatch.setattr(mod, "get_db_session", lambda: _db_ctx(fake_session))
+
+    invalidator = MagicMock()
+    req = _patch_request(invalidator, {"name": "updated"})
+    update_token = _get_handler(mod, "PATCH", "/tokens/{token_id}")
+    resp = asyncio.run(update_token(request=req, token_id="tok123"))
+
+    assert token.name == "updated"
+    assert resp["name"] == "updated"
+    invalidator.assert_called_once()

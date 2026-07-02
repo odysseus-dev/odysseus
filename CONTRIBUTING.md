@@ -37,7 +37,7 @@ Manual development uses Python 3.11+:
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-python -m uvicorn app:app --host 0.0.0.0 --port 7000
+python -m uvicorn app:app --host 127.0.0.1 --port 7000
 ```
 
 Windows is not actively tested. Docker on Linux or a Linux/macOS manual install is the safer path for now.

@@ -20,7 +20,7 @@ from sqlalchemy.pool import NullPool
 
 import core.database as cdb
 import routes.calendar_routes as croutes
-import src.caldav_writeback as wb
+import src.caldav_sync as csync
 from core.database import CalendarCal
 from routes.calendar_routes import EventCreate
 
@@ -39,11 +39,16 @@ croutes.SessionLocal = _TS
 def calls(monkeypatch):
     recorded = []
 
-    async def _fake_writeback(owner, source, cal_id, ev, *, delete=False):
-        recorded.append({"source": source, "cal_id": cal_id, "uid": ev.get("uid"), "delete": delete})
+    async def _fake_create(owner, uid):
+        recorded.append({"uid": uid, "delete": False, "action": "create"})
         return {"ok": True}
 
-    monkeypatch.setattr(wb, "writeback_event", _fake_writeback)
+    async def _fake_delete(owner, uid):
+        recorded.append({"uid": uid, "delete": True, "action": "delete"})
+        return {"ok": True}
+
+    monkeypatch.setattr(csync, "push_event_create", _fake_create)
+    monkeypatch.setattr(csync, "push_event_delete", _fake_delete)
     return recorded
 
 
@@ -77,7 +82,6 @@ async def test_create_on_caldav_calendar_pushes_to_remote(calls):
         summary="Dentist", dtstart="2026-06-10T14:00:00Z", calendar_href=cal_id))
     assert res["ok"] is True
     assert len(calls) == 1
-    assert calls[0]["source"] == "caldav" and calls[0]["cal_id"] == cal_id
     assert calls[0]["delete"] is False
 
 
