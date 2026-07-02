@@ -315,6 +315,17 @@ _RAW_WEB_JSON_TOOL_RE = re.compile(
 )
 _RAW_WEB_JSON_ALLOWED_KEYS = {"query", "queries", "time_filter", "freshness", "max_pages"}
 
+# Narrow rescue for models that ignore native tool calling and print the UI
+# command as plain text. Keep this intentionally tiny: open-panel is a harmless
+# frontend event, while broad plain-text parsing of shell/doc/email tools would
+# be unsafe.
+_PLAIN_UI_OPEN_PANEL_RE = re.compile(
+    r"(?im)^\s*(?:`{1,3})?\s*ui_control\s+open_panel\s+"
+    r"(documents?|library|gallery|images?|email|inbox|mail|sessions?|chats?|history|"
+    r"notes?|brain|memor(?:y|ies)|skills?|settings|preferences|cookbook|models?)"
+    r"\s*(?:`{1,3})?\s*$"
+)
+
 
 # ---------------------------------------------------------------------------
 # Parsing functions
@@ -1131,6 +1142,14 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
         if raw_web_json:
             blocks.append(raw_web_json[0])
 
+    # Pattern 7: plain `ui_control open_panel notes` line. This commonly comes
+    # from weaker native-tool models after reading the tool docs but failing to
+    # emit the actual structured call.
+    if not blocks:
+        m = _PLAIN_UI_OPEN_PANEL_RE.search(text)
+        if m:
+            blocks.append(ToolBlock("ui_control", f"open_panel {m.group(1).lower()}"))
+
     return blocks
 
 
@@ -1168,6 +1187,7 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
         if raw_web_json:
             _, (start, end) = raw_web_json
             cleaned = cleaned[:start] + cleaned[end:]
+    cleaned = _PLAIN_UI_OPEN_PANEL_RE.sub("", cleaned)
     # Strip bare <invoke> blocks not wrapped in <tool_call>
     cleaned = _strip_bare_invoke_markup(cleaned)
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)

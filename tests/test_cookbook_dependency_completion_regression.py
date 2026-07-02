@@ -35,8 +35,8 @@ def test_windows_session_commands_use_shared_powershell_wrapper_and_local_log_di
     assert "host ? '$env:TEMP\\\\odysseus-sessions' : '$env:TEMP\\\\odysseus-tmux'" in source
     assert "function _winPowerShellCmd(task, ps)" in source
     assert "const command = `powershell -Command \"${ps}\"`;" in source
-    assert "if (!task.remoteHost) return command;" in source
-    assert "return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} ${_shQuote(command)}`;" in source
+    assert "if (!host) return command;" in source
+    assert "return `ssh ${_sshPrefix(_getPort(task))}${host} ${_shQuote(command)}`;" in source
 
 
 def test_dep_install_success_recognized_from_exit_sentinel():

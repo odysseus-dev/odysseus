@@ -10,6 +10,8 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
+import urllib.request
 import uuid
 from pathlib import Path
 
@@ -249,6 +251,9 @@ def _append_local_ollama_download_command_lines(
 def setup_cookbook_routes() -> APIRouter:
     router = APIRouter(tags=["cookbook"])
     _cookbook_state_path = Path(COOKBOOK_STATE_FILE)
+    _state_get_cache = {"ts": 0.0, "mtime": 0.0, "value": None}
+    _tasks_status_cache = {"ts": 0.0, "value": None}
+    _tasks_status_inflight = {"task": None}
 
     def _mask_secret(value: str) -> str:
         if not value:
@@ -583,6 +588,35 @@ def setup_cookbook_routes() -> APIRouter:
         safe_chmod(key_path, 0o600)
         safe_chmod(key_path.with_suffix(".pub"), 0o644)
         return {"ok": True, "public_key": _read_cookbook_public_key()}
+
+    class CookbookSshTestRequest(BaseModel):
+        host: str
+        ssh_port: str | None = None
+
+    @router.post("/api/cookbook/test-ssh")
+    async def test_cookbook_ssh(request: Request, req: CookbookSshTestRequest):
+        """Test a configured Cookbook SSH target without using generic shell exec."""
+        require_admin(request)
+        host = validate_remote_host(req.host)
+        ssh_port = validate_ssh_port(req.ssh_port)
+        try:
+            code, stdout, stderr = await run_ssh_command_async(
+                host,
+                ssh_port,
+                "echo ok",
+                timeout=8,
+                connect_timeout=5,
+                strict_host_key_checking=False,
+            )
+        except asyncio.TimeoutError:
+            return {"stdout": "", "stderr": "SSH test timed out", "exit_code": 124}
+        except Exception as e:
+            return {"stdout": "", "stderr": str(e), "exit_code": -1}
+        return {
+            "stdout": stdout.decode("utf-8", errors="replace"),
+            "stderr": stderr.decode("utf-8", errors="replace"),
+            "exit_code": code,
+        }
 
     def _needs_binary(cmd: str, binary: str) -> bool:
         return bool(re.search(rf"(^|[\s;&|()]){re.escape(binary)}($|[\s;&|()])", cmd or ""))
@@ -1038,10 +1072,16 @@ def setup_cookbook_routes() -> APIRouter:
                 cwd=str(Path.home()),
             )
         stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=60)
+        stderr_txt = stderr_b.decode(errors="replace").strip()
+        stdout_txt = stdout_b.decode(errors="replace").strip()
+        if proc.returncode != 0:
+            msg = stderr_txt or f"Cached model scan failed with exit code {proc.returncode}"
+            logger.warning(f"Cached model scan failed host={host or 'local'} rc={proc.returncode}: {msg[:500]}")
+            return {"models": [], "host": host or "local", "error": msg}
 
         models = []
         try:
-            raw = json.loads(stdout_b.decode(errors="replace").strip())
+            raw = json.loads(stdout_txt)
             for m in raw:
                 size_gb = m["size_bytes"] / (1024 ** 3)
                 if size_gb >= 1:
@@ -1069,8 +1109,11 @@ def setup_cookbook_routes() -> APIRouter:
                     entry["gguf_files"] = m["gguf_files"]
                 models.append(entry)
         except Exception as e:
-            logger.warning(f"Failed to parse cached models: {e}")
-            logger.warning(f"stderr: {stderr_b.decode(errors='replace')[:500]}")
+            logger.warning(f"Failed to parse cached models host={host or 'local'}: {e}")
+            if stderr_txt:
+                logger.warning(f"stderr: {stderr_txt[:500]}")
+            msg = stderr_txt or stdout_txt[:500] or str(e)
+            return {"models": [], "host": host or "local", "error": msg}
 
         return {"models": models, "host": host or "local"}
 
@@ -1263,6 +1306,22 @@ def setup_cookbook_routes() -> APIRouter:
                 try:
                     ep = db.query(_ME).filter(_ME.id == endpoint_id).first()
                     if ep:
+                        # A scheduled serve can leave old non-zero exit markers
+                        # in tmux scrollback while the current OpenAI endpoint is
+                        # actually alive. Verify reachability before deleting the
+                        # endpoint row; otherwise chats fall back even though the
+                        # served model is ready.
+                        try:
+                            probe_url = ep.base_url.rstrip("/") + "/models"
+                            with urllib.request.urlopen(probe_url, timeout=3) as resp:
+                                if 200 <= getattr(resp, "status", 0) < 300:
+                                    logger.info(
+                                        f"crash-watchdog: serve {session_id} has exit marker {exit_code} "
+                                        f"but endpoint {ep.id} is reachable; leaving it registered"
+                                    )
+                                    return
+                        except Exception:
+                            pass
                         logger.info(
                             f"crash-watchdog: dropping endpoint {endpoint_id} "
                             f"({ep.name} @ {ep.base_url}) — serve exited {exit_code}"
@@ -1349,6 +1408,8 @@ def setup_cookbook_routes() -> APIRouter:
                 existing.is_enabled = True
                 existing.model_type = "llm"
                 existing.name = display_name
+                existing.endpoint_kind = "local"
+                existing.model_refresh_mode = "auto"
                 if is_ollama_endpoint:
                     existing.endpoint_kind = "ollama"
                     if pinned_models:
@@ -1396,7 +1457,8 @@ def setup_cookbook_routes() -> APIRouter:
                 api_key=None,
                 is_enabled=True,
                 model_type="llm",
-                endpoint_kind="ollama" if is_ollama_endpoint else "auto",
+                endpoint_kind="ollama" if is_ollama_endpoint else "local",
+                model_refresh_mode="auto",
                 cached_models=json.dumps(pinned_models) if pinned_models else None,
                 pinned_models=json.dumps(pinned_models) if pinned_models else None,
                 supports_tools=supports_tools,
@@ -2550,12 +2612,29 @@ def setup_cookbook_routes() -> APIRouter:
     async def get_cookbook_state(request: Request):
         """Load saved cookbook state (tasks, servers, presets, settings)."""
         require_admin(request)
+        now = time.monotonic()
+        try:
+            mtime = _cookbook_state_path.stat().st_mtime if _cookbook_state_path.exists() else 0.0
+        except Exception:
+            mtime = 0.0
+        cached = _state_get_cache.get("value")
+        if cached is not None and _state_get_cache.get("mtime") == mtime and now - float(_state_get_cache.get("ts") or 0) < 1.5:
+            return cached
         if _cookbook_state_path.exists():
             try:
-                return _state_for_client(json.loads(_cookbook_state_path.read_text(encoding="utf-8")))
+                state = json.loads(_cookbook_state_path.read_text(encoding="utf-8"))
+                saved_tasks = state.get("tasks", [])
+                tasks = saved_tasks if isinstance(saved_tasks, list) else list(saved_tasks.values()) if isinstance(saved_tasks, dict) else []
+                client_state = _state_for_client(state)
+                _state_get_cache.update({"ts": now, "mtime": mtime, "value": client_state})
+                return client_state
             except Exception:
-                return {}
-        return {}
+                client_state = _state_for_client({})
+                _state_get_cache.update({"ts": now, "mtime": mtime, "value": client_state})
+                return client_state
+        client_state = _state_for_client({})
+        _state_get_cache.update({"ts": now, "mtime": mtime, "value": client_state})
+        return client_state
 
     @router.post("/api/cookbook/state")
     async def save_cookbook_state(request: Request):
@@ -2663,7 +2742,19 @@ def setup_cookbook_routes() -> APIRouter:
                             f"not in incoming body (race guard): "
                             f"{[t.get('sessionId') for t in preserved]}")
                 data["tasks"] = incoming_tasks + preserved
-            atomic_write_json(str(_cookbook_state_path), _state_for_storage(data, on_disk), indent=2)
+            storage_state = _state_for_storage(data, on_disk)
+            if storage_state == on_disk:
+                return {"ok": True, "preserved": len(preserved), "unchanged": True}
+            atomic_write_json(str(_cookbook_state_path), storage_state, indent=2)
+            try:
+                mtime = _cookbook_state_path.stat().st_mtime
+                _state_get_cache.update({
+                    "ts": time.monotonic(),
+                    "mtime": mtime,
+                    "value": _state_for_client(storage_state),
+                })
+            except Exception:
+                pass
             return {"ok": True, "preserved": len(preserved)}
         except Exception as e:
             return {"ok": False, "error": str(e)}
@@ -2785,10 +2876,10 @@ def setup_cookbook_routes() -> APIRouter:
 
         return {"models": out}
 
-    # Rate-limit for the orphan-tmux adoption sweep. 60s interval so SSH
+    # Rate-limit for the orphan-tmux adoption sweep. Five-minute interval so SSH
     # work is genuinely sparse even on an actively-polled cookbook page.
     _last_orphan_sweep_ts = [0.0]
-    _ORPHAN_SWEEP_MIN_INTERVAL_S = 60.0
+    _ORPHAN_SWEEP_MIN_INTERVAL_S = 300.0
     # Concurrency guard so two requests racing don't both spawn a sweep.
     _orphan_sweep_inflight = [False]
 
@@ -2882,6 +2973,54 @@ def setup_cookbook_routes() -> APIRouter:
                     continue
                 if sid in known_sids:
                     continue
+                try:
+                    cap = subprocess.run(
+                        ssh_base + [host, "tmux", "capture-pane", "-t", sid, "-p", "-S", "-300"],
+                        timeout=6, capture_output=True, text=True,
+                    )
+                    pane = cap.stdout or ""
+                except Exception:
+                    pane = ""
+
+                if sid.startswith("cookbook-"):
+                    repo_id = ""
+                    try:
+                        script = subprocess.run(
+                            ssh_base + [host, "cat", f".{sid}_run.sh"],
+                            timeout=6, capture_output=True, text=True,
+                        )
+                        script_text = script.stdout or ""
+                    except Exception:
+                        script_text = ""
+                    m_repo = re.search(r"repo_id\s*=\s*['\"]([^'\"]+/[^'\"]+)['\"]", script_text)
+                    if not m_repo:
+                        m_repo = re.search(r"snapshot_download\(\s*repo_id\s*=\s*['\"]([^'\"]+/[^'\"]+)['\"]", script_text)
+                    if not m_repo:
+                        m_repo = re.search(r"(?:https://huggingface\.co/)?([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)", script_text)
+                    repo_id = m_repo.group(1) if m_repo else f"adopted:{sid}"
+                    import time as _t2
+                    tasks.append({
+                        "id": sid,
+                        "sessionId": sid,
+                        "name": repo_id.split("/")[-1] if "/" in repo_id else repo_id,
+                        "type": "download",
+                        "status": "running",
+                        "output": (pane or f"Auto-adopted from orphan tmux download session on {host}.")[-5000:],
+                        "ts": int(_t2.time() * 1000),
+                        "payload": {
+                            "repo_id": repo_id,
+                            "remote_host": host,
+                            "_cmd": "(orphan tmux download - original launch cmd recovered from tmux/session only)",
+                        },
+                        "remoteHost": host,
+                        "sshPort": sport,
+                        "platform": "linux",
+                        "_adoptedExternally": True,
+                    })
+                    known_sids.add(sid)
+                    adopted_any = True
+                    logger.info(f"auto-adopted orphan download tmux session {sid!r} on {host}")
+                    continue
                 # Adopt any session whose pane is currently running a
                 # known model-server process (checked below). The earlier
                 # prefix gate (serve-/cookbook-) dropped legitimate
@@ -2911,14 +3050,6 @@ def setup_cookbook_routes() -> APIRouter:
                 # Try to recover a plausible repo_id + port from the
                 # pane buffer. Cheap heuristic — if we can't, register
                 # with placeholder fields; the UI still shows it.
-                try:
-                    cap = subprocess.run(
-                        ssh_base + [host, "tmux", "capture-pane", "-t", sid, "-p", "-S", "-300"],
-                        timeout=6, capture_output=True, text=True,
-                    )
-                    pane = cap.stdout or ""
-                except Exception:
-                    pane = ""
                 import re as _re_orphan
                 # vLLM banner: "model   /path/...". Falls back to the
                 # raw vllm-serve command if the banner already scrolled.
@@ -3303,10 +3434,51 @@ def setup_cookbook_routes() -> APIRouter:
         event loop. Now the whole body runs in a worker thread via
         asyncio.to_thread so other requests stay responsive."""
         require_admin(request)
-        return await asyncio.to_thread(_cookbook_tasks_status_sync)
+        now = time.monotonic()
+        cached = _tasks_status_cache.get("value")
+        if cached is not None and now - float(_tasks_status_cache.get("ts") or 0) < 2.0:
+            return cached
+        inflight = _tasks_status_inflight.get("task")
+        if inflight and not inflight.done():
+            return await inflight
+
+        async def _compute():
+            data = await asyncio.to_thread(_cookbook_tasks_status_sync)
+            _tasks_status_cache.update({"ts": time.monotonic(), "value": data})
+            return data
+
+        task = asyncio.create_task(_compute())
+        _tasks_status_inflight["task"] = task
+        try:
+            return await task
+        finally:
+            if _tasks_status_inflight.get("task") is task:
+                _tasks_status_inflight["task"] = None
 
     def _cookbook_tasks_status_sync():
         import subprocess
+
+        def _pick_download_progress(lines: list[str]) -> str:
+            """Pick the most useful live HF progress line from a tmux pane."""
+            if not lines:
+                return ""
+            downloading_lines = [l for l in lines if l.startswith("Downloading")]
+            if downloading_lines:
+                return downloading_lines[-1]
+            progress_lines = [
+                l for l in lines
+                if re.search(r"\b(?:100|[1-9]?\d)%", l)
+                and (
+                    "<" in l
+                    or "it/s" in l
+                    or "B/s" in l
+                    or "safetensors" in l
+                    or ".gguf" in l.lower()
+                )
+            ]
+            if progress_lines:
+                return progress_lines[-1]
+            return lines[-1]
 
         def _download_cache_complete(repo_id: str, remote_host: str = "", ssh_port: str = "", cache_root: str = "") -> bool:
             """Best-effort check for a completed HF cache entry.
@@ -3489,11 +3661,7 @@ def setup_cookbook_routes() -> APIRouter:
                             encoding="utf-8", errors="replace"
                         ).strip()[-12000:]
                         lines = [l.strip() for l in full_snapshot.split('\n') if l.strip()]
-                        downloading_lines = [l for l in lines if l.startswith("Downloading")]
-                        if downloading_lines:
-                            progress_text = downloading_lines[-1]
-                        elif lines:
-                            progress_text = lines[-1]
+                        progress_text = _pick_download_progress(lines)
                 except Exception:
                     pass
             else:
@@ -3527,11 +3695,7 @@ def setup_cookbook_routes() -> APIRouter:
                             if cap.returncode == 0:
                                 full_snapshot = cap.stdout.strip()
                                 lines = [l.strip() for l in full_snapshot.split('\n') if l.strip()]
-                                downloading_lines = [l for l in lines if l.startswith("Downloading")]
-                                if downloading_lines:
-                                    progress_text = downloading_lines[-1]
-                                elif lines:
-                                    progress_text = lines[-1]
+                                progress_text = _pick_download_progress(lines)
                         except Exception:
                             pass
 

@@ -111,6 +111,18 @@ _HARMONY_MARKERS = (
 )
 _HARMONY_MAX_MARKER_LEN = max(len(marker) for marker in _HARMONY_MARKERS)
 
+_VISIBLE_CHAT_TEMPLATE_ARTIFACT_RE = re.compile(
+    r"(?:\|end\|)+\|?assistan(?:t)?\|?"
+    r"|\|assistan(?:t)?\|"
+    r"|<\|im_start\|>\s*assistant"
+    r"|<\|im_end\|>",
+    re.IGNORECASE,
+)
+
+
+def _strip_visible_chat_template_artifacts(text: str) -> str:
+    return _VISIBLE_CHAT_TEMPLATE_ARTIFACT_RE.sub("", text or "")
+
 
 def _harmony_suffix_hold_len(text: str) -> int:
     """Return how many trailing chars could be the start of a harmony marker."""
@@ -1374,6 +1386,7 @@ def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
 
     return merged
 
+
 def _normalize_anthropic_url(url: str) -> str:
     """Ensure Anthropic URL points to /v1/messages."""
     url = url.rstrip("/")
@@ -1858,7 +1871,8 @@ async def llm_call_async(
 async def stream_llm(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
                      max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                      timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
-                     tools: Optional[List[Dict]] = None, session_id: Optional[str] = None):
+                     tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
+                     tool_choice_none: bool = False):
     """Stream LLM responses with improved error handling.
 
     Yields SSE chunks:
@@ -1918,6 +1932,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             payload[tok_key] = max_tokens
         if tools:
             payload["tools"] = tools
+        elif tool_choice_none:
+            payload["tool_choice"] = "none"
         # Mistral thinking-capable models — send reasoning_effort so Mistral
         # activates thinking mode and returns structured reasoning_content.
         # Effort level is configurable via ODYSSEUS_MISTRAL_REASONING_EFFORT
@@ -2314,6 +2330,9 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                         if reasoning:
                                             yield _stream_delta_event(reasoning, thinking=True)
                                         if content:
+                                            content = _strip_visible_chat_template_artifacts(content)
+                                            if not content:
+                                                continue
                                             content = re.sub(r"<mm:think(\s+[^>]*)?>", r"<think\1>", content, flags=re.IGNORECASE)
                                             content = re.sub(r"</mm:think>", "</think>", content, flags=re.IGNORECASE)
                                             stripped = content.lstrip()
