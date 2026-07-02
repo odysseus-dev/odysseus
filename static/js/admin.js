@@ -22,13 +22,13 @@ function esc(s) { return uiModule.esc(s); }
    USERS TAB
    ═══════════════════════════════════════════ */
 const PRIV_LABELS = {
-  can_use_agent: 'Agent mode',
-  can_use_browser: 'Browser automation',
-  can_use_bash: 'Shell / Python / Files',
-  can_use_documents: 'Document editor',
-  can_use_research: 'Deep research',
-  can_generate_images: 'Image generation',
-  can_manage_memory: 'Memory & skills',
+  can_use_agent: (window.__t || (k=>k))('admin.privCanUseAgent'),
+  can_use_browser: (window.__t || (k=>k))('admin.privCanUseBrowser'),
+  can_use_bash: (window.__t || (k=>k))('admin.privCanUseBash'),
+  can_use_documents: (window.__t || (k=>k))('admin.privCanUseDocuments'),
+  can_use_research: (window.__t || (k=>k))('admin.privCanUseResearch'),
+  can_generate_images: (window.__t || (k=>k))('admin.privCanGenerateImages'),
+  can_manage_memory: (window.__t || (k=>k))('admin.privCanManageMemory'),
 };
 const __t = (k, v) => (window.__t || (kk=>kk))(k, v);
 
@@ -814,12 +814,12 @@ function initEndpointForm() {
     if (deviceAuthConfig) {
       urlInput.value = '';
       urlInput.placeholder = deviceAuthProvider === 'copilot'
-        ? 'GitHub Copilot uses GitHub account sign-in'
-        : 'ChatGPT Subscription uses OpenAI account sign-in';
+        ? (window.__t || (k=>k))('admin.copilotHint')
+        : (window.__t || (k=>k))('admin.chatgptHint');
       urlInput.readOnly = true;
       if (apiKey) {
         apiKey.value = '';
-        apiKey.placeholder = 'No API key needed';
+        apiKey.placeholder = (window.__t || (k=>k))('admin.noApiKeyNeeded');
         apiKey.disabled = true;
       }
       if (testBtn) {
@@ -839,10 +839,10 @@ function initEndpointForm() {
         msg.className = '';
       }
     } else {
-      urlInput.placeholder = 'Base URL or pick provider';
+      urlInput.placeholder = (window.__t || (k=>k))('admin.baseUrlOrPick');
       urlInput.readOnly = false;
       if (apiKey) {
-        apiKey.placeholder = 'API key';
+        apiKey.placeholder = (window.__t || (k=>k))('admin.apiKeyPlaceholder');
         apiKey.disabled = false;
       }
       if (testBtn) {

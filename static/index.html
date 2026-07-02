@@ -1632,7 +1632,7 @@
                   <option value="disabled" data-search-logo="disabled">Disabled</option>
                 </select>
                 <button type="button" class="admin-btn-sm" id="set-searchTestBtn" title="Run a test query against the configured provider" style="margin-left:2px;flex-shrink:0;position:relative;top:2px;display:inline-flex;align-items:center;gap:4px;">
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Test
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg><span data-i18n="settings.searchTest">Test</span>
                 </button>
               </div>
               <div class="settings-row">
@@ -1649,25 +1649,25 @@
                 </div>
               </div>
               <div id="set-searchUrlRow" class="settings-row">
-                <label class="settings-label">URL</label>
-                <input id="set-searchUrl" type="text" placeholder="http://localhost:8080 (optional)" class="settings-select">
+                <label class="settings-label" data-i18n="settings.searchUrlLabel">URL</label>
+                <input id="set-searchUrl" type="text" placeholder="http://localhost:8080 (optional)" data-i18n-placeholder="settings.searchUrlPlaceholder" class="settings-select">
               </div>
               <div id="set-searchKeyRow" class="settings-row" style="display:none;">
-                <label class="settings-label">API Key</label>
+                <label class="settings-label" data-i18n="settings.searchApiKeyLabel">API Key</label>
                 <div style="position:relative;flex:1;display:flex;align-items:center;">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position:absolute;left:9px;top:50%;transform:translateY(-50%);opacity:0.55;pointer-events:none;"><path d="M21 2l-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/><path d="M15.5 7.5l3 3"/></svg>
-                  <input id="set-searchApiKey" type="password" placeholder="API key" class="settings-select" style="flex:1;padding-left:28px;">
+                  <input id="set-searchApiKey" type="password" placeholder="API key" data-i18n-placeholder="settings.searchApiKeyPlaceholder" class="settings-select" style="flex:1;padding-left:28px;">
                 </div>
               </div>
               <div id="set-searchCxRow" class="settings-row" style="display:none;">
-                <label class="settings-label">CX ID</label>
-                <input id="set-searchCx" type="text" placeholder="Google PSE engine ID" class="settings-select">
+                <label class="settings-label" data-i18n="settings.searchCxIdLabel">CX ID</label>
+                <input id="set-searchCx" type="text" placeholder="Google PSE engine ID" data-i18n-placeholder="settings.searchCxPlaceholder" class="settings-select">
               </div>
               <div class="settings-row" style="align-items:flex-start;">
-                <label class="settings-label" style="margin-top:6px;" title="Providers tried in order when the primary fails or hits a rate limit">Fallbacks</label>
+                <label class="settings-label" style="margin-top:6px;" title="Providers tried in order when the primary fails or hits a rate limit" data-i18n="settings.searchFallbacksLabel">Fallbacks</label>
                 <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
                   <div class="settings-fallbacks" id="set-searchFallbackChain"></div>
-                  <button type="button" class="settings-fallback-add" id="set-searchAddFallback" title="Add a search provider to try if the primary fails">+ Add fallback</button>
+                  <button type="button" class="settings-fallback-add" id="set-searchAddFallback" title="Add a search provider to try if the primary fails" data-i18n="settings.searchAddFallback">+ Add fallback</button>
                 </div>
               </div>
               <div id="set-searchHint" class="admin-toggle-sub"></div>
@@ -1992,17 +1992,17 @@
           </div>
 
           <div class="admin-card">
-            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></svg>Translation</h2>
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></svg><span data-i18n="settings.translation">Translation</span></h2>
             <div class="settings-row" style="align-items:center;">
               <div style="flex:1;min-width:0;">
-                <div class="settings-label" style="margin-bottom:3px;">Auto translate</div>
-                <div class="admin-toggle-sub" style="margin:0;">When an opened email appears to be in another language, prepare a translated view.</div>
+                <div class="settings-label" style="margin-bottom:3px;" data-i18n="settings.autoTranslate">Auto translate</div>
+                <div class="admin-toggle-sub" style="margin:0;" data-i18n="settings.desc.autoTranslate">When an opened email appears to be in another language, prepare a translated view.</div>
               </div>
               <label class="admin-switch"><input type="checkbox" id="set-email-auto-translate"><span class="admin-slider"></span></label>
             </div>
             <div class="settings-row" style="align-items:center;margin-top:8px;">
-              <label class="settings-label" for="set-email-translate-language">Translate to</label>
-              <input id="set-email-translate-language" class="settings-select" list="set-email-translate-language-list" placeholder="English, Swedish, Japanese..." style="max-width:220px;">
+              <label class="settings-label" for="set-email-translate-language" data-i18n="settings.translateTo">Translate to</label>
+              <input id="set-email-translate-language" class="settings-select" list="set-email-translate-language-list" placeholder="English, Swedish, Japanese..." data-i18n-placeholder="settings.translateLanguagePlaceholder" style="max-width:220px;">
               <datalist id="set-email-translate-language-list">
                 <option value="English"></option>
                 <option value="Swedish"></option>

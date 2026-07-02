@@ -1182,10 +1182,10 @@ async function initSearchSettings() {
     keyRow.style.display = _searchNeedsKey[prov] ? 'flex' : 'none';
     cxRow.style.display = prov === 'google_pse' ? 'flex' : 'none';
     hint.innerHTML = (_getSearchProviderHints())[prov] || '';
-    if (prov === 'brave') keyInput.placeholder = 'Brave API key';
-    else if (prov === 'google_pse') keyInput.placeholder = 'Google API key';
-    else if (prov === 'tavily') keyInput.placeholder = 'Tavily API key';
-    else if (prov === 'serper') keyInput.placeholder = 'Serper API key';
+    if (prov === 'brave') keyInput.placeholder = (window.__t || (k=>k))('settings.braveApiKey');
+    else if (prov === 'google_pse') keyInput.placeholder = (window.__t || (k=>k))('settings.googleApiKey');
+    else if (prov === 'tavily') keyInput.placeholder = (window.__t || (k=>k))('settings.tavilyApiKey');
+    else if (prov === 'serper') keyInput.placeholder = (window.__t || (k=>k))('settings.serperApiKey');
     else keyInput.placeholder = 'API key';
     loadKeyForProvider(prov);
   }
@@ -1550,18 +1550,18 @@ async function initResearchSettings() {
       parts.push(epName + ' / ' + mName);
     }
     if (tokensInput.value) {
-      parts.push('Max tokens: ' + tokensInput.value);
+      parts.push((window.__t || (k=>k))('settings.maxTokens') + ' ' + tokensInput.value);
     }
     if (extractTimeoutInput.value) {
-      parts.push('Extract: ' + extractTimeoutInput.value + 's');
+      parts.push((window.__t || (k=>k))('settings.extract') + ' ' + extractTimeoutInput.value + 's');
     }
     if (extractConcurrencyInput.value) {
-      parts.push('Parallel: ' + extractConcurrencyInput.value);
+      parts.push((window.__t || (k=>k))('settings.parallel') + ' ' + extractConcurrencyInput.value);
     }
     if (runTimeoutInput.value !== '') {
       var rtv = parseInt(runTimeoutInput.value, 10);
       if (!isNaN(rtv)) {
-        parts.push(rtv === 0 ? 'Max time: no limit' : 'Max time: ' + rtv + 's');
+        parts.push(rtv === 0 ? (window.__t || (k=>k))('settings.maxTimeNoLimit') : (window.__t || (k=>k))('settings.maxTime') + ' ' + rtv + 's');
       }
     }
     if (parts.length) {
@@ -1709,9 +1709,9 @@ async function initAgentSettings() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      msg.textContent = (tools > 0 ? 'Limit: ' + tools + ' tool calls' : 'Unlimited tool calls') +
-        (rounds != null ? ' · ' + rounds + ' steps/message' : '') +
-        (supInput && supInput.checked ? ' · supervisor on' : '');
+      msg.textContent = (tools > 0 ? (window.__t || (k=>k))('settings.agentToolLimit') + ' ' + tools : (window.__t || (k=>k))('settings.agentToolUnlimited')) +
+        (rounds != null ? ' · ' + rounds + ' ' + (window.__t || (k=>k))('settings.agentStepsPerMsg') : '') +
+        (supInput && supInput.checked ? ' · ' + (window.__t || (k=>k))('settings.agentSupervisorOn') : '');
       msg.style.color = 'var(--fg)';
     } catch (e) { msg.textContent = (window.__t || (k=>k))('settings.failedToSave'); msg.style.color = 'var(--red)'; }
   }
@@ -1721,9 +1721,9 @@ async function initAgentSettings() {
   if (supInput) supInput.addEventListener('change', save);
   var cur = parseInt(toolsInput.value, 10) || 0;
   var curR = roundsInput ? (parseInt(roundsInput.value, 10) || 20) : null;
-  msg.textContent = (cur > 0 ? 'Limit: ' + cur + ' tool calls' : 'Unlimited tool calls') +
-    (curR != null ? ' · ' + curR + ' steps/message' : '') +
-    (supInput && supInput.checked ? ' · supervisor on' : '');
+  msg.textContent = (cur > 0 ? (window.__t || (k=>k))('settings.agentToolLimit') + ' ' + cur : (window.__t || (k=>k))('settings.agentToolUnlimited')) +
+    (curR != null ? ' · ' + curR + ' ' + (window.__t || (k=>k))('settings.agentStepsPerMsg') : '') +
+    (supInput && supInput.checked ? ' · ' + (window.__t || (k=>k))('settings.agentSupervisorOn') : '');
 
 }
 
