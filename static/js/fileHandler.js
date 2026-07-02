@@ -76,10 +76,10 @@ export function renderAttachStrip() {
     const badge = document.createElement('div');
     badge.className = 'thumb thumb-collapsed';
     const label = document.createElement('span');
-    label.textContent = total + ' file' + (total > 1 ? 's' : '');
+    label.textContent = total + ' ' + (total > 1 ? window.t('files') : window.t('file'));
     label.className = 'thumb-collapsed-label';
     badge.appendChild(label);
-    badge.title = pendingFiles.map(f => f.name || 'pasted-image').join('\n');
+    badge.title = pendingFiles.map(f => f.name || window.t('pasted-image')).join('\n');
     badge.style.cursor = 'pointer';
     badge.addEventListener('click', (e) => {
       if (e.target.closest('.thumb-collapsed-x')) return;
@@ -89,7 +89,7 @@ export function renderAttachStrip() {
     const x = document.createElement('button');
     x.className = 'thumb-collapsed-x';
     x.textContent = '\u00d7';
-    x.title = 'Remove all';
+    x.title = window.t('Remove all');
     x.addEventListener('click', (e) => { e.stopPropagation(); clearPending(); });
     badge.appendChild(x);
     strip.appendChild(badge);
@@ -111,16 +111,16 @@ function _createChip(f, idx) {
     const img = document.createElement('img');
     img.className = 'thumb-img';
     img.src = _getPreviewUrl(f);
-    img.alt = f.name || 'image';
+    img.alt = f.name || window.t('image');
     chip.appendChild(img);
   } else {
     const span = document.createElement('span');
-    span.textContent = f.name || 'pasted-image';
+    span.textContent = f.name || window.t('pasted-image');
     chip.appendChild(span);
   }
   const x = document.createElement('button');
   x.textContent = '\u00d7';
-  x.setAttribute('aria-label', 'Remove attachment');
+  x.setAttribute('aria-label', window.t('Remove attachment'));
   x.addEventListener('click', (e) => { e.stopPropagation(); removePending(idx); });
   chip.appendChild(x);
   return chip;
@@ -178,7 +178,7 @@ export async function uploadPending() {
       // pendingFiles so the strip re-renders for a retry (see finally below).
       let detail = '';
       try { const e = await res.json(); detail = e.detail || e.error || ''; } catch (_) {}
-      _showToast('Upload failed' + (detail ? ': ' + detail : ` (HTTP ${res.status})`));
+      _showToast(window.t('Upload failed') + (detail ? ': ' + detail : ` (HTTP ${res.status})`));
       return [];
     }
     const data = await res.json();
@@ -205,7 +205,7 @@ export async function uploadPending() {
 export function addFiles(files) {
   for (const f of files) {
     if (pendingFiles.length >= MAX_FILES) {
-      _showToast(`Max ${MAX_FILES} files allowed`);
+      _showToast(window.t('Max {n} files allowed', { n: MAX_FILES }));
       break;
     }
     pendingFiles.push(f);
@@ -250,7 +250,7 @@ export function getPendingInfo() {
   return pendingFiles.map(f => {
     const isImage = f.type?.startsWith('image/') || /\.(png|jpg|jpeg|gif|webp|svg|bmp)$/i.test(f.name || '');
     return {
-      name: f.name || 'pasted-image',
+      name: f.name || window.t('pasted-image'),
       size: f.size || 0,
       mime: f.type || '',
       previewUrl: isImage ? _getPreviewUrl(f) : '',

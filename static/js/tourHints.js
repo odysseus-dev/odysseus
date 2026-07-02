@@ -88,8 +88,8 @@ function _show(modal) {
         <path class="th-cursor" d="M0 0 L0 9 L2.5 7 L4.5 10 L6 9 L4 6 L7 6 Z" fill="currentColor" />
       </svg>
     </div>
-    <div class="tour-hint-text"><b>Pro tip:</b> drag any window's title bar to a screen edge to snap it. Drag to the top for fullscreen.</div>
-    <button class="tour-hint-dismiss" type="button">Got it</button>
+    <div class="tour-hint-text"><b>${window.t('Pro tip:')}</b> ${window.t("drag any window's title bar to a screen edge to snap it. Drag to the top for fullscreen.")}</div>
+    <button class="tour-hint-dismiss" type="button">${window.t('Got it')}</button>
   `;
   document.body.appendChild(pop);
 
