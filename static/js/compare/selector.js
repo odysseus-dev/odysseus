@@ -1302,7 +1302,7 @@ async function showModelSelector() {
       state._cachedModels = fetched;
       _modelsLoaded = true;
       if (models.length < 1) {
-        listContainer.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;padding:12px 0;text-align:center;">No models available</div>';
+        listContainer.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;padding:12px 0;text-align:center;">' + window.t('No models available') + '</div>';
         return;
       }
       // Validate saved selections against available models
@@ -1327,7 +1327,7 @@ async function showModelSelector() {
       renderModelRows();
     }).catch(e => {
       console.error('Failed to fetch models for compare:', e);
-      listContainer.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;padding:12px 0;text-align:center;">Failed to load models</div>';
+      listContainer.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;padding:12px 0;text-align:center;">' + window.t('Failed to load models') + '</div>';
     });
   });
 }
