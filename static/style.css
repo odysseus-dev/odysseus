@@ -39695,3 +39695,13 @@ body.theme-frosted .modal {
 .log-line-default {
   color: var(--fg, #9cdef2);
 }
+
+/* The model-comparison grid hard-codes 2-4 equal columns with no phone
+   breakpoint that stacks them, so at 390px two models render ~178px columns and
+   four render ~88px columns. Each column is a full scrolling chat (code blocks,
+   tool output, vote footer), so the text is unreadably over-wrapped and clipped.
+   On phones, stack the panes into a single scrollable column instead. */
+@media (max-width: 768px) {
+  .compare-grid[data-cols] { grid-template-columns: 1fr !important; overflow-y: auto; }
+  .compare-pane { min-height: 60dvh; }
+}
