@@ -71,25 +71,35 @@ _SENSITIVE_FILE_PATTERNS: tuple[str, ...] = (
     "known_hosts",
 )
 
+# Case-folded views used for matching. On a case-insensitive filesystem
+# (Windows, default macOS) ".SSH/AUTHORIZED_KEYS" and ".env" resolve to the
+# same protected files as their lowercase forms, so the deny-list has to fold
+# case before comparing — the sibling resolver already normcases paths for the
+# same reason. casefold (not os.path.normcase) because normcase is a no-op on
+# POSIX, which is exactly where the macOS read-exfil path lives.
+_SENSITIVE_BASENAMES_CF: frozenset[str] = frozenset(b.casefold() for b in _SENSITIVE_BASENAMES)
+_SENSITIVE_FILE_PATTERNS_CF: frozenset[str] = frozenset(p.casefold() for p in _SENSITIVE_FILE_PATTERNS)
+
 
 def _is_sensitive_path(resolved: str) -> bool:
     """Return True if *resolved* falls under a sensitive directory or
     matches a sensitive filename — regardless of what root it sits under.
+
+    Matching is case-insensitive: on Windows / default macOS a case-variant
+    name (``.SSH``, ``AUTHORIZED_KEYS``, ``Id_Rsa``) points at the same file as
+    the lowercase form, so a case-sensitive check would let it slip past the
+    deny-list in every file tool that relies on it.
     """
-    parts = resolved.split(os.sep)
-    filenames: set[str] = {parts[-1]} if parts else set()
+    parts = [p.casefold() for p in resolved.split(os.sep)]
+    filename = parts[-1] if parts else ""
 
     # Check if any path component is a sensitive directory.
     for part in parts:
-        if part in _SENSITIVE_BASENAMES:
+        if part in _SENSITIVE_BASENAMES_CF:
             return True
 
     # Check filename against known sensitive files.
-    for pat in _SENSITIVE_FILE_PATTERNS:
-        if pat in filenames:
-            return True
-
-    return False
+    return filename in _SENSITIVE_FILE_PATTERNS_CF
 
 
 def _tool_path_roots() -> list[str]:
