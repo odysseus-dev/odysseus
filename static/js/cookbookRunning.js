@@ -40,6 +40,14 @@ function _taskBadge(task) {
   return { text: _statusLabel(task.status, task.type), cls: 'cookbook-task-' + task.status };
 }
 
+function _applyTaskBadge(badge, task, progressText) {
+  if (!badge) return;
+  const view = progressText != null ? { ...task, progress: progressText } : task;
+  const bdg = _taskBadge(view);
+  badge.textContent = bdg.text;
+  badge.className = 'cookbook-task-status' + (bdg.cls ? ` ${bdg.cls}` : '');
+}
+
 function _ggufDisplayPartFromPath(path) {
   const parts = String(path || '').split('/').filter(Boolean);
   const file = parts[parts.length - 1] || '';
@@ -968,10 +976,7 @@ async function _onTaskStop(el, task, { removeAfter = false } = {}) {
   if (!stopOk) {
     try { uiModule.showToast('Stop failed — download may still be running in the background', 'error'); } catch (_) {}
     if (wasRunning) {
-      if (badge) {
-        badge.textContent = _statusLabel('running', task.type);
-        badge.className = 'cookbook-task-status cookbook-task-running';
-      }
+      if (badge) _applyTaskBadge(badge, task);
       el.dataset.status = 'running';
       _updateTask(task.sessionId, { _userStopped: false, status: 'running' });
       _reconnectTask(el, task);
@@ -1487,6 +1492,8 @@ async function _retryTask(el, task) {
       uiModule.showToast('Retrying download — progress may look reset while HuggingFace checks cached files, then it should resume.', 7000);
       _updateTask(task.sessionId, {
         status: 'running',
+        _userStopped: false,
+        progress: '',
         output: `${task.output || ''}\n\n[odysseus] Retrying download. Progress may briefly look like a fresh download while HuggingFace checks cached/incomplete files; cached partial files will be reused when available.`.trim(),
         _retrying: true,
       });
@@ -1528,9 +1535,11 @@ async function _retryDownload(name, payload, replaceSessionId = '') {
           sessionId: data.session_id,
           status: 'running',
           output: '',
+          progress: '',
           ts: Date.now(),
           payload: _payload,
           _retrying: false,
+          _userStopped: false,
         };
         // Tombstone the superseded session so cross-device sync cannot merge the
         // old row back in (Restart looked like it added a second card).
@@ -2502,23 +2511,28 @@ export function _renderRunningTab() {
         const dropdown = document.createElement('div');
         dropdown.className = 'cookbook-task-dropdown';
 
+        // Card wiring captures a stale task object — reload on open so menu
+        // actions match the badge (e.g. hide Stop after the user stopped).
+        const menuTask = _loadTasks().find(t => t.sessionId === task.sessionId) || task;
+        const menuStatus = menuTask.status || el.dataset.status || task.status;
+
         const items = [];
         // ── Run section ─────────────────────────────────────────────
         // Queued download: let the user jump the queue and start it immediately
         // (downloads otherwise run one-at-a-time per server).
-        if (task.type === 'download' && task.status === 'queued') {
+        if (menuTask.type === 'download' && menuStatus === 'queued') {
           items.push({ group: 'run', label: 'Start now', action: 'start-now', custom: () => {
-            _startQueuedDownload(task);
+            _startQueuedDownload(menuTask);
             _renderRunningTab();
           }});
         }
-        if (task.status !== 'running' && task.status !== 'queued') {
+        if (menuStatus !== 'running' && menuStatus !== 'queued') {
           items.push({ group: 'run', label: 'Reconnect tmux', action: 'reconnect' });
         }
-        if (task.status === 'running') {
+        if (menuStatus === 'running') {
           items.push({
             group: 'run',
-            label: task.type === 'download' ? 'Stop download' : 'Stop',
+            label: menuTask.type === 'download' ? 'Stop download' : 'Stop',
             action: 'stop',
             tooltip: 'Stop the session but keep this row — use Restart to resume or clear when done',
           });
@@ -2629,8 +2643,8 @@ export function _renderRunningTab() {
         // matching model-endpoint, THEN animates the task card out.
         // Just "Remove" hid that it stops the live serve too.
         // ── Danger section ──────────────────────────────────────────
-        const _isLiveServe = task.type === 'serve' && ['running', 'ready', 'loading', 'warming', 'starting'].includes(task.status || '');
-        const _isActive = _isLiveServe || (task.status === 'running' && task.type === 'download');
+        const _isLiveServe = menuTask.type === 'serve' && ['running', 'ready', 'loading', 'warming', 'starting'].includes(menuStatus || '');
+        const _isActive = _isLiveServe || (menuStatus === 'running' && menuTask.type === 'download');
         items.push({
           group: 'danger',
           label: _isActive ? 'Stop and remove' : 'Remove',
@@ -2754,7 +2768,7 @@ export function _renderRunningTab() {
       _updateTask(task.sessionId, { status: 'running' });
       el.dataset.status = 'running';
       const badge = el.querySelector('.cookbook-task-status');
-      if (badge) { badge.textContent = _statusLabel('running', task.type); badge.className = 'cookbook-task-status cookbook-task-running'; }
+      if (badge) _applyTaskBadge(badge, task);
       _reconnectTask(el, task);
     });
 
@@ -3132,7 +3146,7 @@ async function _reconnectTask(el, task) {
                     if (_el) {
                       _el.dataset.status = 'running';
                       const _badge = _el.querySelector('.cookbook-task-status');
-                      if (_badge) { _badge.textContent = _statusLabel('running', task.type); _badge.className = 'cookbook-task-status'; }
+                      if (_badge) _applyTaskBadge(_badge, task);
                       const _wave = _el.querySelector('.cookbook-task-wave'); if (_wave) _wave.style.display = '';
                       const _up = _el.querySelector('.cookbook-task-uptime'); if (_up) _up.style.display = '';
                       _reconnectTask(_el, _loadTasks().find(t => t.sessionId === task.sessionId));
@@ -3266,7 +3280,7 @@ async function _reconnectTask(el, task) {
                   el._lastProgress = null;
                   el._lastProgressTime = Date.now();
                   badge.textContent = 'restarted';
-                  badge.className = 'cookbook-task-status cookbook-task-running';
+                  badge.className = 'cookbook-task-status cookbook-task-downloading';
                   continue;
                 }
               } catch {}
@@ -3293,6 +3307,7 @@ async function _reconnectTask(el, task) {
             // so on a resumed download it reflects the true overall progress,
             // whereas completed/totalFiles only see this session's files (→ 0%).
             // Take the higher of the two so resume doesn't read as 0%.
+            let progressText = null;
             if (_useShardAgg) {
               // Multi-shard download: compute TRUE overall as completed shards
               // plus the current shard's fraction. _dlAgg / lastPct represent
@@ -3302,43 +3317,41 @@ async function _reconnectTask(el, task) {
                 : (lastPct ? parseInt(lastPct, 10) / 100 : 0);
               let overallPct = Math.round((((_curShardNum - 1) + curShardFrac) / _totalShards) * 100);
               if (_fetchPct != null) overallPct = Math.max(overallPct, _fetchPct);
-              let text = `${overallPct}%`;
-              if (lastSpeed) text += ` · ${lastSpeed}`;
-              badge.textContent = text;
-              badge.className = 'cookbook-task-status cookbook-task-running';
+              progressText = `${overallPct}%`;
+              if (lastSpeed) progressText += ` · ${lastSpeed}`;
             } else if (_dlAgg != null) {
               // Real aggregate byte progress — most accurate; take the max of all signals.
               let pct = _dlAgg;
               if (_fetchPct != null) pct = Math.max(pct, _fetchPct);
-              let text = `${pct}%`;
-              if (lastSpeed) text += ` · ${lastSpeed}`;
-              badge.textContent = text;
-              badge.className = 'cookbook-task-status cookbook-task-running';
+              progressText = `${pct}%`;
+              if (lastSpeed) progressText += ` · ${lastSpeed}`;
             } else if (totalFiles > 0 && completed < totalFiles) {
               const curFilePct = lastPct ? parseInt(lastPct) / 100 : 0;
               let overallPct = Math.round(((completed + curFilePct) / totalFiles) * 100);
               if (_fetchPct != null) overallPct = Math.max(overallPct, _fetchPct);
-              let text = `${overallPct}%`;
-              if (lastSpeed) text += ` · ${lastSpeed}`;
-              badge.textContent = text;
-              badge.className = 'cookbook-task-status cookbook-task-running';
+              progressText = `${overallPct}%`;
+              if (lastSpeed) progressText += ` · ${lastSpeed}`;
             } else if (_fetchPct != null && _fetchPct < 100) {
               // Resume start: only the aggregate is meaningful yet.
-              let text = `${_fetchPct}%`;
-              if (lastSpeed) text += ` · ${lastSpeed}`;
-              badge.textContent = text;
-              badge.className = 'cookbook-task-status cookbook-task-running';
+              progressText = `${_fetchPct}%`;
+              if (lastSpeed) progressText += ` · ${lastSpeed}`;
             } else if (lastPct != null && parseInt(lastPct, 10) < 100) {
               // Pipe-friendly downloader (hf_download.py) emits per-file
               // "NN%|" lines with no aggregate; the current file's percent
               // is the best live signal (GGUF repos are one big file).
-              let text = `${lastPct}%`;
-              if (lastSpeed) text += ` · ${lastSpeed}`;
-              badge.textContent = text;
-              badge.className = 'cookbook-task-status cookbook-task-running';
+              progressText = `${lastPct}%`;
+              if (lastSpeed) progressText += ` · ${lastSpeed}`;
             } else if (completed > 0 && completed >= totalFiles) {
-              badge.textContent = 'finishing';
-              badge.className = 'cookbook-task-status cookbook-task-running';
+              progressText = 'finishing';
+            }
+            if (progressText) {
+              _applyTaskBadge(badge, task, progressText);
+              // Persist so _renderRunningTab (state sync / background poll) keeps
+              // the live percent instead of resetting to generic "downloading".
+              if (task.progress !== progressText) {
+                task.progress = progressText;
+                _updateTask(task.sessionId, { progress: progressText });
+              }
             }
             if (snapshot.includes('DOWNLOAD_STOPPED')) {
               badge.textContent = _statusLabel('stopped', task.type);
@@ -3362,7 +3375,7 @@ async function _reconnectTask(el, task) {
                 // the cached .incomplete files) after a short delay.
                 _dlRetryCount.set(_dlKey, _dlN + 1);
                 badge.textContent = `retrying (${_dlN + 1}/${_DL_MAX_AUTO_RETRY})…`;
-                badge.className = 'cookbook-task-status cookbook-task-running';
+                badge.className = 'cookbook-task-status cookbook-task-downloading';
                 uiModule.showToast(`Download interrupted — retrying (${_dlN + 1}/${_DL_MAX_AUTO_RETRY}), resumes where it stopped…`, 6000);
                 const _p = task.payload, _nm = task.name;
                 const _retrySid = task.sessionId;
@@ -3404,7 +3417,7 @@ async function _reconnectTask(el, task) {
               // badge so the header reads as completed without a stale label.
               const _typeChip = el.querySelector('.cookbook-task-type');
               if (_typeChip) { _typeChip.textContent = 'finished'; _typeChip.classList.add('cookbook-task-type-done'); }
-              _updateTask(task.sessionId, { status: 'done' });
+              _updateTask(task.sessionId, { status: 'done', progress: '' });
               const _sb2 = el.querySelector('.cookbook-task-serve-btn'); if (_sb2) _sb2.style.display = '';
               _showCookbookNotif();
               _refreshDepsAfterInstall(task);
@@ -3726,8 +3739,7 @@ async function _checkServeReachability() {
             badge.title = pr.error || 'Server not responding — it may have crashed';
           } else if (badge.textContent === 'unreachable') {
             // Recovered — restore the normal running label.
-            badge.textContent = _statusLabel('running', task.type);
-            badge.className = 'cookbook-task-status cookbook-task-running';
+            _applyTaskBadge(badge, task);
             badge.title = '';
           }
         }

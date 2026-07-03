@@ -258,6 +258,19 @@ def _append_local_ollama_download_command_lines(
     lines.append('if [ -z "$ODYSSEUS_OLLAMA_PULL_CMD" ]; then echo "ERROR: Ollama not found on this server. Install Ollama or start an ollama-rocm/ollama-test container."; exit 127; fi')
 
 
+def _cmdline_references_hf_repo(text: str, repo_id: str) -> bool:
+    """True when text references an HF download of repo_id (exact id, not a prefix)."""
+    if not text or not repo_id:
+        return False
+    boundary = r"(?![A-Za-z0-9._-])"
+    escaped = re.escape(repo_id)
+    patterns = (
+        rf"\bhf\s+download\s+{escaped}{boundary}",
+        rf"\bhf_download\.py\s+{escaped}{boundary}",
+    )
+    return any(re.search(p, text) for p in patterns)
+
+
 def setup_cookbook_routes() -> APIRouter:
     router = APIRouter(tags=["cookbook"])
     _cookbook_state_path = Path(COOKBOOK_STATE_FILE)
@@ -723,10 +736,9 @@ def setup_cookbook_routes() -> APIRouter:
             ).stdout or ""
         except Exception:
             return None
-        needles = (f"download {repo_id}", f"hf_download.py {repo_id}")
         for line in out.splitlines():
             pid_s, _, cmdline = line.partition("\t")
-            if any(n in cmdline for n in needles):
+            if _cmdline_references_hf_repo(cmdline, repo_id):
                 try:
                     return int(pid_s.strip())
                 except ValueError:
@@ -831,7 +843,6 @@ def setup_cookbook_routes() -> APIRouter:
 
     def _probe_live_local_download(repo_id: str) -> dict | None:
         """Probe for a live LOCAL download without honouring user-stop markers."""
-        needle = f"hf download {repo_id}"
         try:
             sids = sorted({
                 p.stem.removesuffix("_run")
@@ -847,7 +858,7 @@ def setup_cookbook_routes() -> APIRouter:
                 script_text = script.read_text(encoding="utf-8")
             except OSError:
                 continue
-            if needle not in script_text and f"hf_download.py {repo_id}" not in script_text:
+            if not _cmdline_references_hf_repo(script_text, repo_id):
                 continue
             if IS_WINDOWS:
                 try:
@@ -2975,14 +2986,10 @@ def setup_cookbook_routes() -> APIRouter:
         validate_remote_host(req.remote_host)
         sport = validate_ssh_port(req.ssh_port)
         repo_id_raw = (req.repo_id or "").strip()
-        # repo_id is optional stop metadata. Validate with the same safe
-        # model-id contract as launch paths; only HF org/name ids get
-        # stopped-download markers / orphan-scan side effects.
-        repo_id_for_stop = None
-        if repo_id_raw:
-            validated = _validate_serve_model_id(repo_id_raw)
-            if _REPO_ID_RE.match(validated):
-                repo_id_for_stop = validated
+        # repo_id is optional stop metadata for HF download side effects only.
+        # Never validate it before kill — dependency rows store pip labels
+        # such as llama-cpp-python[server] in payload.repo_id.
+        repo_id_for_stop = repo_id_raw if repo_id_raw and _REPO_ID_RE.match(repo_id_raw) else None
         return await _stop_cookbook_session_impl(
             req.session_id.strip(),
             remote_host=req.remote_host or "",
