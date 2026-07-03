@@ -63,3 +63,53 @@ def test_plain_tell_request_stays_minimal():
     assert not (_EMAIL_TOOLS & tools)
     # Always-available baseline is still there.
     assert set(ALWAYS_AVAILABLE) <= tools
+
+
+# ── Swedish keyword coverage ──
+# Tool descriptions and the default fastembed model are English-only, so
+# Swedish queries get no help from embedding retrieval. The keyword hints
+# carry Swedish synonyms so e.g. "lista mina 5 senaste mejl" still surfaces
+# the email toolset instead of leaving the model tool-blind.
+
+def test_swedish_email_query_gets_email_tools():
+    ti = _index_without_embeddings()
+    for q in (
+        "lista mina 5 senaste mejl",
+        "har jag någon oläst e-post?",
+        "visa inkorgen",
+        "svara på mejlet från Anna",
+    ):
+        tools = ti.get_tools_for_query(q)
+        assert {"list_emails", "read_email"} <= tools, f"email tools missing for {q!r}"
+
+
+def test_swedish_calendar_query_gets_calendar_tool():
+    ti = _index_without_embeddings()
+    for q in (
+        "vad har jag i kalendern imorgon?",
+        "boka ett möte med Johan på fredag",
+        "visa mitt schema för veckan",
+    ):
+        tools = ti.get_tools_for_query(q)
+        assert "manage_calendar" in tools, f"manage_calendar missing for {q!r}"
+
+
+def test_swedish_note_and_reminder_queries_get_notes_tool():
+    ti = _index_without_embeddings()
+    for q in (
+        "påminn mig att ringa banken imorgon",
+        "skapa en anteckning om projektidén",
+    ):
+        tools = ti.get_tools_for_query(q)
+        assert "manage_notes" in tools, f"manage_notes missing for {q!r}"
+
+
+def test_swedish_senaste_does_not_force_web_tools():
+    """'senaste' (= latest) appears in email asks like 'mina 5 senaste mejl';
+    it must not drag web tools into those queries the way English 'latest'
+    would."""
+    ti = _index_without_embeddings()
+    tools = ti.get_tools_for_query("lista mina 5 senaste mejl")
+    # web_search/web_fetch may only appear if always-available, not forced.
+    forced_web = {"web_search", "web_fetch"} - set(ALWAYS_AVAILABLE)
+    assert not (forced_web & tools), "Swedish email query must not force web tools"

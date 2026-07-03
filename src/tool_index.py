@@ -341,14 +341,24 @@ class ToolIndex:
     )
 
     # Keyword hints: if the query mentions these words, force-include the tools.
+    # Tool descriptions (and the default fastembed model) are English-only, so
+    # non-English queries can miss embedding retrieval entirely. The high-traffic
+    # intents below therefore also carry Swedish synonyms — same word-boundary
+    # matching, and the same "no overly generic words" rule (#1707) applies.
     _KEYWORD_HINTS = {
         # NOTE: "tell" was removed from this set. It fired on any "tell me ..."
         # request (e.g. "visit <url> and tell me the title"), force-including the
         # whole email toolset and crowding out the relevant tools — the model then
         # believed it had only email tools and refused web/other tasks (#1707).
-        frozenset({"email", "emails", "mail", "mails", "gmail", "googlemail", "message", "messages", "send", "reply", "replies", "inbox", "unread"}):
+        frozenset({"email", "emails", "mail", "mails", "gmail", "googlemail", "message", "messages", "send", "reply", "replies", "inbox", "unread",
+                   # Swedish
+                   "mejl", "mejlen", "mejlet", "mejla", "e-post", "eposten", "e-posten", "epost",
+                   "inkorg", "inkorgen", "oläst", "olästa", "skicka", "svara", "meddelande", "meddelanden"}):
             {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read", "resolve_contact", "ui_control"},
-        frozenset({"calendar", "event", "meeting", "schedule", "appointment"}):
+        frozenset({"calendar", "event", "meeting", "schedule", "appointment",
+                   # Swedish
+                   "kalender", "kalendern", "möte", "mötet", "möten", "boka", "bokning",
+                   "schema", "schemat", "händelse", "händelser"}):
             {"manage_calendar"},
         # Detached background `bash` jobs (#!bg): check on / read output / kill.
         frozenset({"background job", "background jobs", "bg job", "bg jobs",
@@ -356,7 +366,9 @@ class ToolIndex:
                    "check on that job", "job output", "kill the job",
                    "kill the background", "stop the background", "running job"}):
             {"manage_bg_jobs"},
-        frozenset({"note", "todo", "reminder", "remind", "checklist", "remember to"}):
+        frozenset({"note", "todo", "reminder", "remind", "checklist", "remember to",
+                   # Swedish
+                   "anteckning", "anteckningar", "påminn", "påminnelse", "påminnelser"}):
             {"manage_notes"},
         # Chat/session management. "rename" alone maps to documents below, so a
         # request like "rename the last 12 sessions/chats" needs these session
@@ -376,7 +388,10 @@ class ToolIndex:
                    "cron", "periodically", "on a schedule", "set up a task",
                    "create a task", "summarize my inbox every", "remind me every"}):
             {"manage_tasks"},
-        frozenset({"contact", "address", "phone", "who is"}):
+        frozenset({"contact", "address", "phone", "who is",
+                   # Swedish
+                   "kontakt", "kontakten", "kontakter", "adress", "adressen",
+                   "telefonnummer", "vem är"}):
             {"resolve_contact", "manage_contact"},
         frozenset({"save contact", "add contact", "new contact", "update contact",
                    "edit contact", "delete contact", "remove contact",
@@ -404,9 +419,15 @@ class ToolIndex:
                    "delegate to", "have model"}):
             {"chat_with_model", "ask_teacher", "list_models"},
         # Deep research intent (incl. common typo "reserach")
+        # Swedish: "senaste" (= latest) is deliberately NOT here — it appears in
+        # email/calendar asks like "mina 5 senaste mejl" and would drag web
+        # tools into those queries.
         frozenset({"web search", "search the web", "search online", "look up",
                    "google", "latest", "current", "news", "weather",
-                   "forecast", "stock price", "price of"}):
+                   "forecast", "stock price", "price of",
+                   # Swedish
+                   "googla", "sök på webben", "sök på nätet", "väder", "vädret",
+                   "nyheter", "aktiekurs"}):
             {"web_search", "web_fetch"},
         frozenset({"research", "reserach", "reasearch", "look into", "investigate",
                    "deep dive", "deep research", "find out about", "study up on",
