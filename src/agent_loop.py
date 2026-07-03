@@ -3284,6 +3284,7 @@ async def stream_agent_loop(
         round_response = ""
         round_reasoning = ""  # reasoning_content deltas (DeepSeek-thinking, vLLM --reasoning-parser)
         native_tool_calls = []  # populated if model uses function calling
+        all_tool_schemas = []
         # Reset doc streaming state per round
         _doc_acc = ""
         _doc_opened = False
@@ -3345,6 +3346,10 @@ async def stream_agent_loop(
                     if t.get("function", {}).get("name") not in disabled_tools
                     and t.get("name") not in disabled_tools
                 ]
+        _tool_names_sent = [
+            t.get("function", {}).get("name") or t.get("name")
+            for t in (all_tool_schemas or [])
+        ]
 
         agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
 
