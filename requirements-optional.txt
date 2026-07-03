@@ -34,3 +34,9 @@ PyMuPDF
 # [all]/Azure/audio extras (cloud + heavy). Pinned to a release >30 days old per
 # the dependency-age discussion in issue #485.
 markitdown[docx,pptx,xlsx,xls]==0.1.6
+
+# OCR for scanned PDFs in email attachments. Requires the tesseract-ocr and
+# poppler-utils system packages. Install if you need to read scanned/image-only
+# PDFs that pypdf cannot extract text from.
+pytesseract
+pdf2image

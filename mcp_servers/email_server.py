@@ -1829,6 +1829,49 @@ def _download_attachment(uid, index, folder="INBOX", account=None):
     return {"path": filepath, "filename": os.path.basename(filepath), "size": size}
 
 
+def _try_pdf_ocr(pdf_bytes_io) -> str:
+    """Best-effort OCR for scanned PDFs.
+
+    Tries pdf2image+pytesseract first, then PyMuPDF page-image extraction.
+    Returns extracted text on success, or empty string if OCR is unavailable.
+    """
+    text_parts = []
+
+    try:
+        import io
+        from pdf2image import convert_from_bytes
+        import pytesseract
+        images = convert_from_bytes(pdf_bytes_io.getvalue())
+        for i, img in enumerate(images):
+            text_parts.append(f"--- Page {i+1} ---\n" + (pytesseract.image_to_string(img) or ""))
+        return "\n".join(text_parts).strip()
+    except Exception:
+        pass
+
+    try:
+        import io
+        pdf_bytes_io.seek(0)
+        import fitz
+        doc = fitz.open(stream=pdf_bytes_io.getvalue(), filetype="pdf")
+        for i in range(len(doc)):
+            page = doc.load_page(i)
+            pix = page.get_pixmap(dpi=200)
+            img_data = pix.tobytes("png")
+            try:
+                import pytesseract
+                from PIL import Image
+                text_parts.append(f"--- Page {i+1} ---\n" + (pytesseract.image_to_string(Image.open(io.BytesIO(img_data))) or ""))
+            except Exception:
+                pass
+        doc.close()
+        if text_parts:
+            return "\n".join(text_parts).strip()
+    except Exception:
+        pass
+
+    return ""
+
+
 def _read_email_attachment(uid, index, folder="INBOX", account=None):
     """Extract and read text content from a specific email attachment."""
     conn = None
@@ -1905,13 +1948,30 @@ def _read_email_attachment(uid, index, folder="INBOX", account=None):
                     pdf_file = io.BytesIO(payload)
                     reader = PdfReader(pdf_file)
                     pages_text = []
+                    has_real_text = False
                     for i, page in enumerate(reader.pages):
-                        pages_text.append(f"--- Page {i+1} ---\n" + (page.extract_text() or ""))
+                        page_text = (page.extract_text() or "").strip()
+                        if page_text:
+                            has_real_text = True
+                        pages_text.append(f"--- Page {i+1} ---\n" + page_text)
                     text_content = "\n".join(pages_text).strip()
+                    if has_real_text:
+                        return {
+                            "filename": filename,
+                            "content_type": content_type,
+                            "content": text_content,
+                        }
+                    text_content = _try_pdf_ocr(pdf_file)
+                    if text_content:
+                        return {
+                            "filename": filename,
+                            "content_type": content_type,
+                            "content": text_content,
+                        }
                     return {
                         "filename": filename,
                         "content_type": content_type,
-                        "content": text_content,
+                        "error": "PDF text extraction returned empty content for all pages. This is very likely a scanned/image-based PDF. If OCR is unavailable, use `download_attachment` to save the file and inform the user that the PDF appears to be image-only.",
                     }
                 except Exception as e:
                     return {"error": f"Failed to parse PDF: {e}"}
@@ -2471,7 +2531,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 for a in result['attachments']:
                     size_kb = a['size'] // 1024
                     text += f"  - [{a['index']}] {a['filename']} ({a['content_type']}, {size_kb}KB)\n"
-                text += "\n_Use `download_attachment` with the UID and index to download._\n"
+                text += "\n_Use `read_email_attachment` with the UID and index to extract attachment text inline, or `download_attachment` to save it to disk._\n"
             text += f"\n---\n\n{result['body']}"
             return [TextContent(type="text", text=text)]
 

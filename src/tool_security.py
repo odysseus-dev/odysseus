@@ -29,6 +29,7 @@ BUILTIN_EMAIL_TOOLS = frozenset({
     "mark_email_read",
     "bulk_email",
     "download_attachment",
+    "read_email_attachment",
 })
 
 

@@ -1203,6 +1203,74 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "download_attachment",
+            "description": "Download an email attachment to disk by UID and attachment index. Returns the saved file path. Use read_email_attachment instead if you just need the text content inline.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "uid": {"type": "string", "description": "Email UID from list_emails/read_email"},
+                    "index": {"type": "integer", "description": "Attachment index (0 = first attachment)"},
+                    "folder": {"type": "string", "description": "IMAP folder (default: INBOX)"},
+                    "account": {"type": "string", "description": "Optional account name/email/id from list_email_accounts"},
+                },
+                "required": ["uid", "index"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_email_attachment",
+            "description": "Read and extract text content from an email attachment inline. Supports plain text, HTML, and PDF files. Use this when you want to analyze or summarize attachment contents without saving to disk.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "uid": {"type": "string", "description": "Email UID from list_emails/read_email"},
+                    "index": {"type": "integer", "description": "Attachment index (0 = first attachment)"},
+                    "folder": {"type": "string", "description": "IMAP folder (default: INBOX)"},
+                    "account": {"type": "string", "description": "Optional account name/email/id from list_email_accounts"},
+                },
+                "required": ["uid", "index"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "draft_email",
+            "description": "Start a new email draft in the editor. Returns a document ID the user can review and send.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "to": {"type": "string", "description": "Recipient email address"},
+                    "subject": {"type": "string", "description": "Email subject"},
+                    "body": {"type": "string", "description": "Email body text"},
+                    "account": {"type": "string", "description": "Optional account name/email/id from list_email_accounts"},
+                },
+                "required": ["to", "subject", "body"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "draft_email_reply",
+            "description": "Start a reply draft in the editor for an existing email thread by UID. Returns a document ID the user can review and send.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "uid": {"type": "string", "description": "Email UID to reply to"},
+                    "body": {"type": "string", "description": "Reply body text"},
+                    "folder": {"type": "string", "description": "IMAP folder (default: INBOX)"},
+                    "account": {"type": "string", "description": "Optional account name/email/id from list_email_accounts"},
+                },
+                "required": ["uid", "body"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "manage_bg_jobs",
             "description": "Inspect and control detached background `bash` jobs (started with the `#!bg` marker). action='list' shows this chat's jobs with id/status/age/command; action='output' returns a job's captured output so far (use for a still-running job, or to re-read a finished one); action='kill' terminates a runaway job's process tree instead of waiting out its max-runtime. output and kill need job_id from list.",
             "parameters": {

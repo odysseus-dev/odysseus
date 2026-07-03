@@ -35,6 +35,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
+# OCR/system dependencies for optional extras (tesseract, poppler).
+# Installed only when INSTALL_OPTIONAL=true so the default image stays lean.
+ARG INSTALL_OPTIONAL=false
+RUN if [ "$INSTALL_OPTIONAL" = "true" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends \
+        tesseract-ocr \
+        poppler-utils \
+    && rm -rf /var/lib/apt/lists/* \
+    ; fi
+
 # libgl1/libglib2.0-0t64/libxcb1 are runtime shared libs (libGL.so.1,
 # libglib-2.0/libgthread, libxcb.so.1) that opencv-python (cv2) loads. The
 # slim base omits them, so the Cookbook "install realesrgan" path imports cv2
