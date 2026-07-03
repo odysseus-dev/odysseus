@@ -2802,6 +2802,11 @@ function _renderRecipes() {
   html += '<div class="memory-category-filters">';
   html += '<input type="text" class="memory-search-input" id="serve-search" placeholder="Search cached models\u2026" style="flex:1;min-width:120px;" />';
   html += '<button class="memory-toolbar-btn" id="hwfit-cache-select">Select</button>';
+  // Rescan bypasses the 6 h localStorage scan cache (see cookbookServe.js) so a
+  // model downloaded after the last scan shows up without waiting out the TTL.
+  // The click handler and #hwfit-cache-scan styling already exist; only this
+  // template line was missing.
+  html += '<button class="memory-toolbar-btn" id="hwfit-cache-scan" title="Rescan cached models (bypass the 6 h scan cache)">Rescan</button>';
   html += '</div>';
   html += '<div class="doclib-lang-chips" id="serve-tags"></div>';
   html += '</div>';
