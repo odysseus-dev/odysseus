@@ -468,8 +468,23 @@ class McpManager:
                     logger.error(f"MCP reconnect failed for {server_id}")
                     return {"error": f"MCP server crashed and reconnect failed: {server_id}", "exit_code": 1}
             else:
-                logger.error(f"MCP tool call failed: {qualified_name}: {e}")
-                return {"error": str(e), "exit_code": 1}
+                import traceback
+                logger.warning(f"MCP call failed for {qualified_name}, attempting reconnect: {type(e).__name__}: {e!r}")
+                logger.error(f"MCP tool call traceback:\n{traceback.format_exc()}")
+                reconnected = await self._reconnect_external(server_id)
+                if reconnected:
+                    session = self._sessions.get(server_id)
+                    if session:
+                        try:
+                            result = await self._do_call(session, tool_name, arguments)
+                        except Exception as e2:
+                            logger.error(f"MCP tool call failed after reconnect: {qualified_name}: {type(e2).__name__}: {e2!r}")
+                            return {"error": f"{type(e2).__name__}: {e2}", "exit_code": 1}
+                    else:
+                        return {"error": f"Reconnected but no session for {server_id}", "exit_code": 1}
+                else:
+                    logger.error(f"MCP reconnect failed for {server_id}")
+                    return {"error": f"{type(e).__name__}: {e} (reconnect also failed)", "exit_code": 1}
 
         return result
 
@@ -531,6 +546,41 @@ class McpManager:
         except Exception as e:
             logger.error(f"Failed to reconnect builtin MCP server {name}: {e}")
             return False
+
+    async def _reconnect_external(self, server_id: str) -> bool:
+        """Tear down and reconnect a user-added external MCP server (SSE/stdio/http)
+        whose underlying transport session died (e.g. anyio.ClosedResourceError)."""
+        from core.database import McpServer, SessionLocal
+        import json
+
+        db = SessionLocal()
+        try:
+            srv = db.query(McpServer).filter(McpServer.id == server_id).first()
+            if not srv:
+                logger.error(f"_reconnect_external: no DB record for {server_id}")
+                return False
+
+            await self.disconnect_server(server_id)
+
+            args = json.loads(srv.args) if srv.args else []
+            env = json.loads(srv.env) if srv.env else {}
+            ok = await self.connect_server(
+                server_id=server_id,
+                name=srv.name,
+                transport=srv.transport,
+                command=srv.command,
+                args=args,
+                env=env,
+                url=srv.url,
+            )
+            if ok:
+                logger.info(f"Reconnected external MCP server: {srv.name}")
+            return ok
+        except Exception as e:
+            logger.error(f"Failed to reconnect external MCP server {server_id}: {e}")
+            return False
+        finally:
+            db.close()
 
     def get_all_openai_schemas(self, disabled_map: Optional[Dict[str, set]] = None) -> List[Dict]:
         """Return all MCP tools in OpenAI function-calling format.
