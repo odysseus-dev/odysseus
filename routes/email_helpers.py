@@ -1273,10 +1273,15 @@ def _imap_move(uid, dest, src="INBOX", account_id: str | None = None, owner: str
     try:
         c = _imap_connect(account_id, owner=owner)
         c.select(_q(src))
-        status, _ = c.copy(uid, _q(dest))
+        # Callers pass a real IMAP UID (from conn.uid("SEARCH", ...)). copy()
+        # and store() operate on message SEQUENCE NUMBERS, so addressing them
+        # with a UID moved/deleted the wrong message (or silently no-oped when
+        # the UID exceeded the message count). Use the UID commands, matching
+        # the move/delete path in email_routes.py.
+        status, _ = c.uid("COPY", uid, _q(dest))
         if status != "OK":
             return False
-        c.store(uid, "+FLAGS", "\\Deleted")
+        c.uid("STORE", uid, "+FLAGS", "\\Deleted")
         c.expunge()
         return True
     except Exception as e:

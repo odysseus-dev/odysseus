@@ -13,6 +13,57 @@ import pytest
 from src.constants import WEB_FETCH_SOFT_MAX_BYTES, WEB_FETCH_HARD_MAX_BYTES
 from services.search import content as content_mod
 
+import pytest as _pytest_for_client_stream_compat
+
+
+@_pytest_for_client_stream_compat.fixture(autouse=True)
+def _client_stream_compat_for_pinned_fetch(monkeypatch):
+    """Adapt old size-cap tests to the current pinned Client.stream path.
+
+    These tests monkeypatch httpx.stream(...) to return fake responses. The
+    production fetcher now uses httpx.Client(...).stream(...) so it can pass a
+    pinned transport. When a test has replaced httpx.stream, route Client.stream
+    through that fake. When it has not, fall back to a real Client so unrelated
+    behavior in this file is not changed.
+    """
+    import httpx
+
+    real_client_cls = httpx.Client
+    original_stream = httpx.stream
+
+    class _ClientProxy:
+        def __init__(self, *args, **kwargs):
+            self._args = args
+            self._kwargs = kwargs
+            self._real_cm = None
+            self._real_client = None
+
+        def __enter__(self):
+            if httpx.stream is original_stream:
+                self._real_cm = real_client_cls(*self._args, **self._kwargs)
+                self._real_client = self._real_cm.__enter__()
+                return self._real_client
+            return self
+
+        def __exit__(self, *args):
+            if self._real_cm is not None:
+                return self._real_cm.__exit__(*args)
+            return False
+
+        def stream(self, method, url):
+            if self._real_client is not None:
+                return self._real_client.stream(method, url)
+
+            kwargs = {
+                "headers": self._kwargs.get("headers"),
+                "timeout": self._kwargs.get("timeout"),
+                "follow_redirects": self._kwargs.get("follow_redirects"),
+            }
+            return httpx.stream(method, url, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", _ClientProxy)
+
+
 
 class _FakeStream:
     """Stands in for the httpx.stream(...) context manager."""

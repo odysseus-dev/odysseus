@@ -575,6 +575,9 @@ async function initDefaultChat() {
     publishControlDefaults();
   } catch (e) { console.warn('Failed to load default chat settings', e); }
 
+  epSel.addEventListener('change', function() { refreshModels(''); saveDefault(); });
+  modelSel.addEventListener('change', saveDefault);
+
   async function saveDefault() {
     try {
       var clean = _fallbacks.filter(function(f) { return f.endpoint_id && f.model; });
@@ -616,8 +619,6 @@ async function initDefaultChat() {
     }
   }
 
-  epSel.addEventListener('change', function() { refreshModels(''); saveDefault(); });
-  modelSel.addEventListener('change', saveDefault);
   if (reasoningSel) reasoningSel.addEventListener('change', saveDefaultControls);
   if (verbositySel) verbositySel.addEventListener('change', saveDefaultControls);
   if (addFbBtn) addFbBtn.addEventListener('click', function() {
