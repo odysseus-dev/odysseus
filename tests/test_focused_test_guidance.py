@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -88,3 +89,60 @@ def test_format_report_handles_no_changed_test_paths():
 
     assert "No changed paths under `tests/`." in report
     assert "No directly runnable pytest files changed." in report
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.check_output(["git", *args], cwd=repo, text=True).strip()
+
+
+def _write(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def test_changed_paths_from_merge_base_excludes_base_only_test_changes(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "ci@example.test")
+    _git(repo, "config", "user.name", "CI Test")
+
+    _write(repo / "tests/test_shared.py", "def test_shared():\n    assert True\n")
+    _git(repo, "add", "tests/test_shared.py")
+    _git(repo, "commit", "-m", "base")
+    ancestor = _git(repo, "rev-parse", "HEAD")
+
+    _git(repo, "checkout", "-b", "feature")
+    _write(repo / "tests/test_pr_delta.py", "def test_pr_delta():\n    assert True\n")
+    _git(repo, "add", "tests/test_pr_delta.py")
+    _git(repo, "commit", "-m", "add pr test")
+    head_sha = _git(repo, "rev-parse", "HEAD")
+
+    _git(repo, "checkout", "-b", "dev", ancestor)
+    _write(repo / "tests/test_shared.py", "def test_shared():\n    assert 1 == 1\n")
+    _git(repo, "add", "tests/test_shared.py")
+    _git(repo, "commit", "-m", "base-only test change")
+    base_sha = _git(repo, "rev-parse", "HEAD")
+
+    endpoint_paths = guidance.parse_paths(
+        subprocess.check_output(
+            [
+                "git",
+                "diff",
+                "--name-only",
+                "--diff-filter=ACMRT",
+                "-z",
+                base_sha,
+                head_sha,
+                "--",
+                "tests/",
+            ],
+            cwd=repo,
+        )
+    )
+    assert "tests/test_shared.py" in endpoint_paths
+
+    monkeypatch.chdir(repo)
+    assert guidance.changed_paths_from_merge_base(base_sha, head_sha) == [
+        "tests/test_pr_delta.py"
+    ]

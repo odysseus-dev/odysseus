@@ -31,8 +31,6 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           report_file="$RUNNER_TEMP/focused-test-guidance.md"
-          changed_paths="$RUNNER_TEMP/focused-test-paths"
-
           publish_report() {
             cat "$report_file"
             if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
@@ -63,13 +61,9 @@ jobs:
             report_unavailable "The pull request head commit is unavailable locally."
           fi
 
-          if ! git diff --name-only --diff-filter=ACMRT -z \
-            "$BASE_SHA" "$HEAD_SHA" -- tests/ > "$changed_paths"; then
-            report_unavailable "Changed test paths could not be determined."
-          fi
-
           if ! python3 .github/scripts/focused_test_guidance.py \
-            < "$changed_paths" > "$report_file"; then
+            --base-sha "$BASE_SHA" \
+            --head-sha "$HEAD_SHA" > "$report_file"; then
             report_unavailable "The focused test guidance helper could not produce a report."
           fi
 
