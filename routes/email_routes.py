@@ -56,6 +56,9 @@ from routes.email_helpers import (
     SendEmailRequest, ExtractStyleRequest,
     ATTACHMENTS_DIR, COMPOSE_UPLOADS_DIR, SCHEDULED_DB,
     attachment_extract_dir, _email_cache_owner_clause, email_translation_body_hash,
+    normalize_email_urgency_slug, list_email_urgency_levels, save_email_urgency_level,
+    archive_email_urgency_level, upsert_email_urgency_assignment, clear_email_urgency_assignment,
+    load_email_urgency_assignments, email_urgency_message_key,
 )
 from routes.email_pollers import _start_poller
 
@@ -134,6 +137,17 @@ def _email_tag_account_clause(account_id: str | None) -> tuple[str, list[str]]:
     return "1=1", []
 
 
+def _effective_email_account_id(account_id: str | None, owner: str = "") -> str:
+    account = (account_id or "").strip()
+    if account:
+        return account
+    try:
+        cfg = _get_email_config(None, owner=owner)
+        return (cfg.get("account_id") or "").strip()
+    except Exception:
+        return ""
+
+
 _VISIBLE_EMAIL_TAGS = {"urgent", "reply-soon", "action-needed", "calendar", "bills", "receipt", "travel"}
 _DONE_RESPONSE_TAGS = {"urgent", "reply-soon", "action-needed"}
 
@@ -187,6 +201,31 @@ def _clear_done_response_tags(owner: str, account_id: str | None, folder: str, u
         conn.close()
     except Exception as e:
         logger.debug(f"clear done response tags skipped: {e}")
+
+
+def _attach_email_urgency(owner: str, account_id: str | None, folder: str, emails: list[dict]) -> None:
+    if not emails:
+        return
+    try:
+        assignments = load_email_urgency_assignments(
+            owner=owner,
+            account_id=_effective_email_account_id(account_id, owner),
+            folder=folder,
+            emails=emails,
+        )
+        for e in emails:
+            key = email_urgency_message_key(
+                e.get("message_id") or "",
+                e.get("folder") or folder,
+                e.get("uid") or "",
+            )
+            urgency = assignments.get(key)
+            if urgency:
+                e["urgency"] = urgency
+            else:
+                e.pop("urgency", None)
+    except Exception as e:
+        logger.debug(f"email urgency attach skipped: {e}")
 
 
 def _record_email_received_events(owner: str, account_id: str | None, folder: str, emails: list[dict]):
@@ -1421,6 +1460,50 @@ def setup_email_routes():
                 from datetime import datetime as _dt, timedelta as _td
                 _before = (_dt.utcnow() - _td(days=30)).strftime("%d-%b-%Y")
                 status, data = _imap_uid_search(conn, f'(UNANSWERED BEFORE "{_before}"{from_clause})')
+            elif filter_ and filter_.startswith("urgency:"):
+                _urgency_slug = normalize_email_urgency_slug(filter_[len("urgency:"):])
+                _urgency_message_ids = []
+                _urgency_uid_fallback = []
+                try:
+                    import sqlite3 as _sql3u
+                    _cu = _sql3u.connect(SCHEDULED_DB)
+                    _resolved_account = _effective_email_account_id(account_id, owner)
+                    rows_u = _cu.execute(
+                        """
+                        SELECT message_id, uid
+                        FROM email_urgency_assignments
+                        WHERE owner=? AND account_id=? AND folder=? AND urgency_slug=?
+                        """,
+                        (owner or "", _resolved_account, folder, _urgency_slug),
+                    ).fetchall()
+                    _cu.close()
+                    for mid, uid in rows_u:
+                        if mid:
+                            _urgency_message_ids.append(str(mid).strip())
+                        elif uid:
+                            _urgency_uid_fallback.append(str(uid).strip())
+                except Exception as _ue:
+                    logger.warning(f"urgency filter lookup failed: {_ue}")
+                if not _urgency_message_ids and not _urgency_uid_fallback:
+                    return {"emails": [], "total": 0, "folder": folder}
+
+                def _imap_search_quote(value: str) -> str:
+                    return '"' + str(value or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+                _uids = set()
+                for _mid in dict.fromkeys(_urgency_message_ids):
+                    if not _mid:
+                        continue
+                    st_m, data_m = _imap_uid_search(conn, f'(HEADER Message-ID {_imap_search_quote(_mid)}{from_clause})')
+                    if st_m == "OK" and data_m and data_m[0]:
+                        _uids.update(data_m[0].split())
+                for _uid in _urgency_uid_fallback:
+                    if _uid:
+                        _uids.add(str(_uid).encode())
+                if not _uids:
+                    return {"emails": [], "total": 0, "folder": folder}
+                data = [b" ".join(sorted(_uids, key=lambda x: int(x) if str(x, "ascii", "ignore").isdigit() else 0))]
+                status = "OK"
             elif filter_ and filter_.startswith("tag:"):
                 # Tag-based filter — resolve UIDs from email_tags first, then
                 # ask IMAP for those messages by Message-ID. `tag:spam` reads
@@ -1726,10 +1809,18 @@ def setup_email_routes():
                 except Exception as e:
                     logger.debug(f"email calendar event link attach skipped: {e}")
 
+                _attach_email_urgency(owner, account_id, folder, emails)
                 _hide_unlinked_calendar_tags(emails)
                 if filter_ and filter_.startswith("tag:") and filter_ != "tag:spam":
                     _final_tag = filter_[len("tag:"):].strip().lower().replace("_", "-")
                     emails = [e for e in emails if _final_tag in (e.get("tags") or [])]
+                    total = len(emails)
+                if filter_ and filter_.startswith("urgency:"):
+                    _final_urgency = normalize_email_urgency_slug(filter_[len("urgency:"):])
+                    emails = [
+                        e for e in emails
+                        if (e.get("urgency") or {}).get("slug") == _final_urgency
+                    ]
                     total = len(emails)
 
             if has_attachments_only:
@@ -2340,7 +2431,7 @@ def setup_email_routes():
                     logger.debug(f"thread parse on read failed: {_pe}")
                     cached_turns = None
 
-            return {
+            result = {
                 "uid": uid,
                 "folder": folder,
                 "message_id": message_id.strip(),
@@ -2364,6 +2455,8 @@ def setup_email_routes():
                 "thread_turns": cached_turns,
                 "sender_signature": cached_sender_sig,
             }
+            _attach_email_urgency(owner, account_id, folder, [result])
+            return result
         except Exception as e:
             logger.error(f"Failed to read email {uid}: {e}")
             return {"error": "Mail operation failed"}
@@ -2407,6 +2500,7 @@ def setup_email_routes():
                     _asyncio.create_task(_asyncio.to_thread(_mark_email_seen_sync, uid, folder, account_id, owner))
                 except RuntimeError:
                     pass
+            _attach_email_urgency(owner, account_id, folder, [cached])
             return cached
         if not full:
             persisted = _email_preview_cache_get(owner, account_id, folder, uid)
@@ -2417,8 +2511,11 @@ def setup_email_routes():
                         _asyncio.create_task(_asyncio.to_thread(_mark_email_seen_sync, uid, folder, account_id, owner))
                     except RuntimeError:
                         pass
+                _attach_email_urgency(owner, account_id, folder, [persisted])
                 return persisted
         result = await _asyncio.to_thread(_read_email_sync, uid, folder, account_id, owner, mark_seen, full)
+        if result and not result.get("error"):
+            _attach_email_urgency(owner, account_id, folder, [result])
         if result and not result.get("error"):
             _read_cache_put(ck, result)
             if not full:
@@ -4512,6 +4609,76 @@ def setup_email_routes():
     # Multi-account support. Each row is an independent IMAP/SMTP config.
     # Exactly one row has is_default=True; that account is used when callers
     # don't specify an account_id.
+
+    @router.get("/urgency-levels")
+    async def get_email_urgency_levels(
+        include_inactive: bool = Query(False),
+        owner: str = Depends(require_user),
+    ):
+        return {"levels": list_email_urgency_levels(owner, include_inactive=bool(include_inactive))}
+
+    @router.post("/urgency-levels")
+    async def create_email_urgency_level(payload: dict, owner: str = Depends(require_user)):
+        level = save_email_urgency_level(owner, payload or {})
+        return {"success": True, "level": level, "levels": list_email_urgency_levels(owner)}
+
+    @router.put("/urgency-levels/{slug}")
+    async def update_email_urgency_level(slug: str, payload: dict, owner: str = Depends(require_user)):
+        level = save_email_urgency_level(owner, payload or {}, existing_slug=slug)
+        return {"success": True, "level": level, "levels": list_email_urgency_levels(owner)}
+
+    @router.delete("/urgency-levels/{slug}")
+    async def delete_email_urgency_level(slug: str, owner: str = Depends(require_user)):
+        result = archive_email_urgency_level(owner, slug)
+        _invalidate_list_cache()
+        return {**result, "levels": list_email_urgency_levels(owner)}
+
+    @router.put("/urgency-assignment")
+    async def set_email_urgency_assignment(payload: dict, owner: str = Depends(require_user)):
+        payload = payload or {}
+        folder = str(payload.get("folder") or "INBOX")
+        account_id = _effective_email_account_id(payload.get("account_id"), owner)
+        urgency_slug = normalize_email_urgency_slug(payload.get("urgency_slug") or payload.get("slug") or "")
+        if not urgency_slug:
+            result = clear_email_urgency_assignment(
+                owner=owner,
+                account_id=account_id,
+                message_id=str(payload.get("message_id") or ""),
+                uid=str(payload.get("uid") or ""),
+                folder=folder,
+            )
+            _invalidate_list_cache(account_id, folder)
+            return result
+        urgency = upsert_email_urgency_assignment(
+            owner=owner,
+            account_id=account_id,
+            message_id=str(payload.get("message_id") or ""),
+            uid=str(payload.get("uid") or ""),
+            folder=folder,
+            urgency_slug=urgency_slug,
+            reason=str(payload.get("reason") or ""),
+            confidence=payload.get("confidence"),
+            source=str(payload.get("source") or "manual"),
+            subject=str(payload.get("subject") or ""),
+            sender=str(payload.get("sender") or ""),
+        )
+        _invalidate_list_cache(account_id, folder)
+        return {"success": True, "urgency": urgency}
+
+    @router.delete("/urgency-assignment")
+    async def delete_email_urgency_assignment(payload: dict, owner: str = Depends(require_user)):
+        payload = payload or {}
+        folder = str(payload.get("folder") or "INBOX")
+        account_id = _effective_email_account_id(payload.get("account_id"), owner)
+        result = clear_email_urgency_assignment(
+            owner=owner,
+            account_id=account_id,
+            message_id=str(payload.get("message_id") or ""),
+            uid=str(payload.get("uid") or ""),
+            folder=folder,
+        )
+        _invalidate_list_cache(account_id, folder)
+        return result
 
     @router.get("/accounts")
     async def list_email_accounts(owner: str = Depends(require_user)):
