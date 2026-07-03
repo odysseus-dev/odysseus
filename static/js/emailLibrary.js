@@ -6049,7 +6049,7 @@ async function _bulkAction(action) {
   if (action === 'delete' && actionsBtn) actionsBtn.disabled = true;
   if (cancelBtn) cancelBtn.disabled = true;
   if (selectAll) selectAll.disabled = true;
-  if (countEl) countEl.textContent = `${verbing} ${uids.length}…`;
+  if (countEl) countEl.textContent = window.t('{verb} {n}…').replace('{verb}', verbing).replace('{n}', uids.length);
 
   // Single-uid worker.
   const handleOne = async (uid) => {
@@ -6101,7 +6101,7 @@ async function _bulkAction(action) {
           handleOne(uid).finally(() => {
             inFlight--;
             finishedCount++;
-            if (countEl) countEl.textContent = `${verbing} ${finishedCount}/${queue.length}…`;
+            if (countEl) countEl.textContent = window.t('{verb} {done}/{total}…').replace('{verb}', verbing).replace('{done}', finishedCount).replace('{total}', queue.length);
             if (nextSlot >= queue.length && inFlight === 0) resolve();
             else launch();
           });
@@ -6146,7 +6146,7 @@ async function _bulkAction(action) {
   _updateBulkBar();
   _renderGrid();
   if (failedReadSync > 0) {
-    showToast(`Failed to update ${failedReadSync} email${failedReadSync === 1 ? '' : 's'}`);
+    showToast(window.t('Failed to update {n} email{s}').replace('{n}', failedReadSync).replace('{s}', failedReadSync === 1 ? '' : 's'));
   }
   // Sync successful local mutations into the SWR cache so reopen doesn't
   // briefly show the pre-bulk state.
@@ -6236,15 +6236,15 @@ function _showAiReplyChoice(btn, em, data) {
   // filled circle so it reads as a complement to the lightning, not as a "stop".
   menu.innerHTML = `
     <div class="email-ai-reply-row" style="display:flex;flex-direction:column;gap:6px;min-width:180px;">
-      <textarea data-note-input rows="2" placeholder="Add context (optional)" style="width:100%;box-sizing:border-box;resize:vertical;min-height:42px;font-family:inherit;font-size:11px;padding:5px 6px;border-radius:5px;border:1px solid var(--border,#333);background:var(--bg-elev,#1a1a1a);color:var(--fg);"></textarea>
+      <textarea data-note-input rows="2" placeholder="${window.t('Add context (optional)')}" style="width:100%;box-sizing:border-box;resize:vertical;min-height:42px;font-family:inherit;font-size:11px;padding:5px 6px;border-radius:5px;border:1px solid var(--border,#333);background:var(--bg-elev,#1a1a1a);color:var(--fg);"></textarea>
       <div style="display:flex;align-items:center;gap:4px;">
-        <button class="memory-toolbar-btn" data-mode="ai-reply-fast" title="Shorter, faster draft" style="display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:1;">
+        <button class="memory-toolbar-btn" data-mode="ai-reply-fast" title="${window.t('Shorter, faster draft')}" style="display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:1;">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="var(--accent, var(--red))" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-          Fast
+          ${window.t('Fast')}
         </button>
-        <button class="memory-toolbar-btn" data-mode="ai-reply-full" title="Uses the fuller reply context" style="display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:1;">
+        <button class="memory-toolbar-btn" data-mode="ai-reply-full" title="${window.t('Uses the fuller reply context')}" style="display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:1;">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="color:var(--accent, var(--red));"><circle cx="12" cy="12" r="6"/></svg>
-          Full
+          ${window.t('Full')}
         </button>
       </div>
     </div>
@@ -6326,7 +6326,7 @@ function _showLibRemindSubmenu(em, parentDropdown) {
   const header = document.createElement('div');
   header.className = 'dropdown-item-compact';
   header.style.cssText = 'opacity:0.5;font-size:10px;pointer-events:none;text-transform:uppercase;letter-spacing:0.5px;padding-top:6px;';
-  header.innerHTML = '<span>Remind me</span>';
+  header.innerHTML = '<span>' + window.t('Remind me') + '</span>';
   parentDropdown.appendChild(header);
 
   const now = new Date();
@@ -6339,9 +6339,9 @@ function _showLibRemindSubmenu(em, parentDropdown) {
   const nextWeek = new Date(now); nextWeek.setDate(now.getDate()+daysUntilMon); nextWeek.setHours(8,0,0,0);
 
   const presets = [
-    { label: 'Later today', sub: laterToday.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' }), date: laterToday },
-    { label: 'Tomorrow', sub: tomorrow.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' }), date: tomorrow },
-    { label: 'Next week', sub: nextWeek.toLocaleDateString([], { weekday:'short' }) + ' ' + nextWeek.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' }), date: nextWeek },
+    { label: window.t('Later today'), sub: laterToday.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' }), date: laterToday },
+    { label: window.t('Tomorrow'), sub: tomorrow.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' }), date: tomorrow },
+    { label: window.t('Next week'), sub: nextWeek.toLocaleDateString([], { weekday:'short' }) + ' ' + nextWeek.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' }), date: nextWeek },
   ];
   for (const p of presets) {
     const item = document.createElement('div');
@@ -6356,7 +6356,7 @@ function _showLibRemindSubmenu(em, parentDropdown) {
   }
   const customItem = document.createElement('div');
   customItem.className = 'dropdown-item-compact';
-  customItem.innerHTML = '<span>Pick date and time…</span>';
+  customItem.innerHTML = '<span>' + window.t('Pick date and time…') + '</span>';
   customItem.addEventListener('click', (e) => {
     e.stopPropagation();
     parentDropdown.remove();
@@ -6380,7 +6380,7 @@ function _showLibRemindSubmenu(em, parentDropdown) {
   // due_date, so no timer/reminder fires.
   const noteItem = document.createElement('div');
   noteItem.className = 'dropdown-item-compact';
-  noteItem.innerHTML = '<span>Note</span>';
+  noteItem.innerHTML = '<span>' + window.t('Note') + '</span>';
   noteItem.addEventListener('click', (e) => {
     e.stopPropagation();
     parentDropdown.remove();
@@ -6394,13 +6394,13 @@ function _promptEmailNote(em) {
   overlay.style.cssText = 'position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;padding:16px;';
   const card = document.createElement('div');
   card.style.cssText = 'background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;min-width:280px;max-width:min(420px, 92vw);display:flex;flex-direction:column;gap:8px;box-shadow:0 12px 32px rgba(0,0,0,0.4);';
-  const subject = em.subject || '(no subject)';
+  const subject = em.subject || window.t('(no subject)');
   card.innerHTML = `
-    <div style="font-size:11px;opacity:0.6;">Note about ${_esc(subject)}</div>
-    <textarea data-note placeholder="Write your note…" rows="4" style="resize:vertical;min-height:80px;font-family:inherit;font-size:12px;padding:7px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-elev,#1a1a1a);color:var(--fg);box-sizing:border-box;width:100%;"></textarea>
+    <div style="font-size:11px;opacity:0.6;">${window.t('Note about {subject}').replace('{subject}', _esc(subject))}</div>
+    <textarea data-note placeholder="${window.t('Write your note…')}" rows="4" style="resize:vertical;min-height:80px;font-family:inherit;font-size:12px;padding:7px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-elev,#1a1a1a);color:var(--fg);box-sizing:border-box;width:100%;"></textarea>
     <div style="display:flex;gap:6px;justify-content:flex-end;">
-      <button class="memory-toolbar-btn" data-act="cancel">Cancel</button>
-      <button class="memory-toolbar-btn active" data-act="save">Save</button>
+      <button class="memory-toolbar-btn" data-act="cancel">${window.t('Cancel')}</button>
+      <button class="memory-toolbar-btn active" data-act="save">${window.t('Save')}</button>
     </div>
   `;
   overlay.appendChild(card);
@@ -6429,7 +6429,7 @@ async function _createEmailReplyReminder(em, dueDate, customText = '') {
     : null;
   const fullFrom = em.from || em.sender || '';
   // Extract just the first name from "First Last <email@x>" or fall back to email local part
-  let from = 'someone';
+  let from = window.t('someone');
   if (fullFrom) {
     const fullName = _extractName(fullFrom);
     if (fullName) {
@@ -6438,17 +6438,17 @@ async function _createEmailReplyReminder(em, dueDate, customText = '') {
       if (first) from = first.charAt(0).toUpperCase() + first.slice(1);
     }
   }
-  const subject = em.subject || '(no subject)';
+  const subject = em.subject || window.t('(no subject)');
   const folder = state._libFolder || 'INBOX';
   const deepLink = `${window.location.origin}/#email=${encodeURIComponent(folder)}:${em.uid}`;
-  const itemText = customText || `Reply to ${from}: ${subject}`;
+  const itemText = customText || window.t('Reply to {from}: {subject}').replace('{from}', from).replace('{subject}', subject);
   const payload = {
-    title: `Reply: ${subject}`,
+    title: window.t('Reply: {subject}').replace('{subject}', subject),
     note_type: 'todo',
     items: [
       { text: itemText, checked: false },
     ],
-    content: `Open email: ${deepLink}`,
+    content: window.t('Open email: {link}').replace('{link}', deepLink),
     label: 'email reminder',
     source: 'email',
   };
@@ -6463,16 +6463,16 @@ async function _createEmailReplyReminder(em, dueDate, customText = '') {
     const { showToast } = await import('./ui.js');
     if (dueDate) {
       const fmt = dueDate.toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
-      showToast(`Todo reminder set for ${fmt}`);
+      showToast(window.t('Todo reminder set for {date}').replace('{date}', fmt));
     } else {
-      showToast('Reply note saved');
+      showToast(window.t('Reply note saved'));
     }
     if ('Notification' in window && Notification.permission === 'default') {
       try { Notification.requestPermission(); } catch {}
     }
   } catch (e) {
     const { showError } = await import('./ui.js');
-    showError('Failed to create reminder');
+    showError(window.t('Failed to create reminder'));
   }
 }
 
