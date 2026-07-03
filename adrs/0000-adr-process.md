@@ -1,7 +1,7 @@
 # ADR-0000: Architecture Decision Record Process
 
 - Status: proposed
-- Deciders: Felix, X (i propose 5) active maintainers needed to add here.
+- Deciders: Felix + X (i propose 5) active maintainers needed to add here.
 - Date: 2026-06-16
 
 ## Summary
@@ -44,8 +44,10 @@ Why this decision is needed. What forces are at play.
 
 ## Decision
 What was decided and why. 
+
+## Implementation
 Source-grounded evidence — not opinion.
-Proposed implementation plan.
+Proposed implementation plan with risk assessment.
 Open questions.
 
 ## Consequences
