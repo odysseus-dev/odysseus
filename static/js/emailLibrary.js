@@ -867,8 +867,8 @@ export function openEmailLibrary(opts = {}) {
             <rect x="2" y="4" width="20" height="16" rx="2"/>
             <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
           </svg>
-          Email
-          <span id="email-lib-unread-badge" class="email-lib-unread-badge" role="button" tabindex="0" title="Show unread emails" style="display:none"></span>
+          ${window.t('Email')}
+          <span id="email-lib-unread-badge" class="email-lib-unread-badge" role="button" tabindex="0" title="${window.t('Show unread emails')}" style="display:none"></span>
           <span id="email-lib-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal;margin-left:8px;position:relative;top:-2px"></span>
         </h4>
         <div class="email-lib-header-actions" style="display:flex;align-items:center;gap:8px;">
@@ -881,48 +881,48 @@ export function openEmailLibrary(opts = {}) {
             <div id="email-lib-accounts" style="display:flex;gap:4px;flex:1;min-width:0;"></div>
             <button class="memory-toolbar-btn email-compose-jiggle" id="email-lib-compose-btn">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:3px;"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
-              New
+              ${window.t('New (email)')}
             </button>
           </div>
           <div class="memory-toolbar">
             <div class="memory-category-filters">
               <select class="memory-sort-select" id="email-lib-folder" style="flex:1;min-width:0;text-overflow:ellipsis;">
-                <option value="INBOX">Inbox</option>
+                <option value="INBOX">${window.t('Inbox')}</option>
               </select>
               <!-- Hidden native select kept as the source of truth — all
                    existing change handlers still fire via the custom picker
                    dispatching 'change' on it. -->
               <select class="memory-sort-select" id="email-lib-filter" style="display:none;">
-                <option value="all">All</option>
-                <option value="unread">Unread</option>
-                <option value="favorites">Favorites</option>
-                <option value="undone">Undone</option>
-                <option value="reminders">Reminders</option>
-                <option value="unanswered">Unanswered</option>
-                <option value="pending_30d">Pending · 30d</option>
-                <option value="stale_30d">Stale · &gt;30d</option>
-                <optgroup label="Tags">
-                  <option value="tag:urgent">Urgent</option>
-                  <option value="tag:reply-soon">Reply soon</option>
-                  <option value="tag:spam">Spam</option>
-                  <option value="tag:newsletter">Newsletter</option>
-                  <option value="tag:marketing">Marketing</option>
+                <option value="all">${window.t('All')}</option>
+                <option value="unread">${window.t('Unread')}</option>
+                <option value="favorites">${window.t('Favorites')}</option>
+                <option value="undone">${window.t('Undone')}</option>
+                <option value="reminders">${window.t('Reminders')}</option>
+                <option value="unanswered">${window.t('Unanswered')}</option>
+                <option value="pending_30d">${window.t('Pending · 30d')}</option>
+                <option value="stale_30d">${window.t('Stale · >30d')}</option>
+                <optgroup label="${window.t('Tags')}">
+                  <option value="tag:urgent">${window.t('Urgent')}</option>
+                  <option value="tag:reply-soon">${window.t('Reply soon')}</option>
+                  <option value="tag:spam">${window.t('Spam')}</option>
+                  <option value="tag:newsletter">${window.t('Newsletter')}</option>
+                  <option value="tag:marketing">${window.t('Marketing')}</option>
                 </optgroup>
               </select>
               <div class="email-filter-picker" id="email-filter-picker" style="flex:1;min-width:0;position:relative;">
                 <button type="button" class="email-filter-btn" id="email-filter-btn" aria-haspopup="listbox" aria-expanded="false">
-                  <span class="email-filter-current"><span class="email-filter-icon"></span><span class="email-filter-label">All</span></span>
+                  <span class="email-filter-current"><span class="email-filter-icon"></span><span class="email-filter-label">${window.t('All')}</span></span>
                   <svg class="email-filter-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
                 </button>
                 <div class="email-filter-menu" id="email-filter-menu" role="listbox" hidden></div>
               </div>
-              <button class="memory-toolbar-btn email-filter-select-btn" id="email-lib-select-btn"><svg class="memory-select-btn-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>Select</button>
-              <button class="memory-toolbar-btn email-filter-refresh-btn" id="email-lib-refresh-btn" title="Refresh">
+              <button class="memory-toolbar-btn email-filter-select-btn" id="email-lib-select-btn"><svg class="memory-select-btn-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>${window.t('Select')}</button>
+              <button class="memory-toolbar-btn email-filter-refresh-btn" id="email-lib-refresh-btn" title="${window.t('Refresh')}">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
               </button>
-              <button class="memory-toolbar-btn email-reminders-clear-btn hidden" id="email-reminders-clear-btn" title="Permanently delete Odysseus reminder emails">
+              <button class="memory-toolbar-btn email-reminders-clear-btn hidden" id="email-reminders-clear-btn" title="${window.t('Permanently delete Odysseus reminder emails')}">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
-                Clear
+                ${window.t('Clear')}
               </button>
             </div>
             <div class="email-search-row" style="display:flex;gap:6px;align-items:flex-start;">
@@ -930,32 +930,32 @@ export function openEmailLibrary(opts = {}) {
               <div class="email-lib-chip-bar memory-search-input" id="email-lib-chip-bar" style="width:100%;padding-right:96px;padding-left:26px;display:flex;align-items:center;flex-wrap:wrap;gap:4px;cursor:text;min-height:30px;position:relative;">
                 <svg class="email-lib-chip-bar-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="position:absolute;left:8px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--accent, var(--red));"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
                 <span id="email-lib-pills" style="display:contents"></span>
-                <input type="text" id="email-lib-search" placeholder="Search by name or text" autocomplete="off" style="flex:1;min-width:80px;border:0;outline:none;background:transparent;color:inherit;font:inherit;padding:0;position:relative;top:-1px;" />
+                <input type="text" id="email-lib-search" placeholder="${window.t('Search by name or text')}" autocomplete="off" style="flex:1;min-width:80px;border:0;outline:none;background:transparent;color:inherit;font:inherit;padding:0;position:relative;top:-1px;" />
               </div>
               <div id="email-lib-suggest" style="display:none;position:absolute;top:calc(100% + 2px);left:0;right:0;z-index:60;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,0.25);max-height:240px;overflow-y:auto;"></div>
-              <button class="memory-toolbar-btn email-undone-toggle email-undone-toggle-inline" id="email-undone-btn" title="Show only emails not marked as done (undone)">
+              <button class="memory-toolbar-btn email-undone-toggle email-undone-toggle-inline" id="email-undone-btn" title="${window.t('Show only emails not marked as done (undone)')}">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
               </button>
-              <button class="memory-toolbar-btn email-reminder-toggle-inline hidden" id="email-reminder-btn" title="Show Odysseus reminder emails">
+              <button class="memory-toolbar-btn email-reminder-toggle-inline hidden" id="email-reminder-btn" title="${window.t('Show Odysseus reminder emails')}">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>
               </button>
-              <button class="memory-toolbar-btn email-attach-toggle email-attach-toggle-inline" id="email-attach-btn" title="Show only emails with attachments">
+              <button class="memory-toolbar-btn email-attach-toggle email-attach-toggle-inline" id="email-attach-btn" title="${window.t('Show only emails with attachments')}">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
               </button>
             </div>
             </div>
           </div>
           <div id="email-lib-bulk" class="memory-bulk-bar hidden" style="margin-bottom:5px;">
-            <label class="memory-bulk-check-all" style="position:relative;top:0px;"><input type="checkbox" id="email-lib-select-all"> All</label>
-            <span id="email-lib-selected-count" style="position:relative;top:1px;">0 Selected</span>
-            <button class="memory-toolbar-btn" id="email-lib-bulk-actions" style="position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Actions <span style="opacity:0.55;font-size:9px;">▼</span></button>
-            <button class="memory-toolbar-btn" id="email-lib-bulk-delete" style="position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Delete</button>
-            <button class="memory-toolbar-btn" id="email-lib-bulk-cancel" title="Cancel (Esc)" style="margin-left:4px;padding:3px 6px;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+            <label class="memory-bulk-check-all" style="position:relative;top:0px;"><input type="checkbox" id="email-lib-select-all"> ${window.t('All')}</label>
+            <span id="email-lib-selected-count" style="position:relative;top:1px;">${window.t('{n} Selected').replace('{n}', 0)}</span>
+            <button class="memory-toolbar-btn" id="email-lib-bulk-actions" style="position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>${window.t('Actions')} <span style="opacity:0.55;font-size:9px;">▼</span></button>
+            <button class="memory-toolbar-btn" id="email-lib-bulk-delete" style="position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>${window.t('Delete')}</button>
+            <button class="memory-toolbar-btn" id="email-lib-bulk-cancel" title="${window.t('Cancel (Esc)')}" style="margin-left:4px;padding:3px 6px;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
           </div>
           <div id="email-lib-grid" class="doclib-grid"></div>
-          <button class="email-lib-fab" id="email-lib-fab" type="button" aria-label="New email">
+          <button class="email-lib-fab" id="email-lib-fab" type="button" aria-label="${window.t('New email')}">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="19" height="15" rx="2.5"/><path d="M3 6.5l9 6 9-6"/></svg>
-            <span class="email-lib-fab-label">New</span>
+            <span class="email-lib-fab-label">${window.t('New (email)')}</span>
           </button>
         </div>
       </div>
@@ -972,7 +972,7 @@ export function openEmailLibrary(opts = {}) {
   // expanded inside stays expanded.
   try {
     Modals.register('email-lib-modal', {
-      label: 'Email',
+      label: window.t('Email'),
       icon: 'M2 4h20v16H2zM22 7l-9.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7',
       closeFn: () => {
         const m = document.getElementById('email-lib-modal');
@@ -1801,19 +1801,19 @@ function _scoreSuggestion(s, needle) {
 // corresponding filter row with its icon; picking it pins a filter
 // pill that drives state._libFilter or the has-attachments toggle.
 const _LIB_FILTER_OPTIONS = [
-  { value: 'filter:has-attachments', label: 'Has attachments', keywords: ['attachment', 'attachments', 'has attachment', 'attach'] },
-  { value: 'filter:unread',          label: 'Unread',          keywords: ['unread', 'new', 'unseen'] },
-  { value: 'filter:favorites',       label: 'Favorites',       keywords: ['favorite', 'favorites', 'starred', 'star', 'flagged'] },
-  { value: 'filter:undone',          label: 'Undone',          keywords: ['undone', 'pending', 'todo'] },
-  { value: 'filter:reminders',       label: 'Reminders',       keywords: ['reminder', 'reminders'] },
-  { value: 'filter:unanswered',      label: 'Unanswered',      keywords: ['unanswered', 'unreplied', 'no reply'] },
-  { value: 'filter:pending_30d',     label: 'Pending · 30d',   keywords: ['pending 30d', 'pending', 'recent pending'] },
-  { value: 'filter:stale_30d',       label: 'Stale · >30d',    keywords: ['stale', 'old', 'stale 30d'] },
-  { value: 'filter:tag:urgent',      label: 'Urgent',          keywords: ['urgent', 'critical'] },
-  { value: 'filter:tag:reply-soon',  label: 'Reply soon',      keywords: ['reply soon', 'reply', 'follow up'] },
-  { value: 'filter:tag:spam',        label: 'Spam',            keywords: ['spam', 'junk'] },
-  { value: 'filter:tag:newsletter',  label: 'Newsletter',      keywords: ['newsletter', 'newsletters', 'subscriptions'] },
-  { value: 'filter:tag:marketing',   label: 'Marketing',       keywords: ['marketing', 'promo', 'promotional'] },
+  { value: 'filter:has-attachments', label: window.t('Has attachments'), keywords: ['attachment', 'attachments', 'has attachment', 'attach'] },
+  { value: 'filter:unread',          label: window.t('Unread'),          keywords: ['unread', 'new', 'unseen'] },
+  { value: 'filter:favorites',       label: window.t('Favorites'),       keywords: ['favorite', 'favorites', 'starred', 'star', 'flagged'] },
+  { value: 'filter:undone',          label: window.t('Undone'),          keywords: ['undone', 'pending', 'todo'] },
+  { value: 'filter:reminders',       label: window.t('Reminders'),       keywords: ['reminder', 'reminders'] },
+  { value: 'filter:unanswered',      label: window.t('Unanswered'),      keywords: ['unanswered', 'unreplied', 'no reply'] },
+  { value: 'filter:pending_30d',     label: window.t('Pending · 30d'),   keywords: ['pending 30d', 'pending', 'recent pending'] },
+  { value: 'filter:stale_30d',       label: window.t('Stale · >30d'),    keywords: ['stale', 'old', 'stale 30d'] },
+  { value: 'filter:tag:urgent',      label: window.t('Urgent'),          keywords: ['urgent', 'critical'] },
+  { value: 'filter:tag:reply-soon',  label: window.t('Reply soon'),      keywords: ['reply soon', 'reply', 'follow up'] },
+  { value: 'filter:tag:spam',        label: window.t('Spam'),            keywords: ['spam', 'junk'] },
+  { value: 'filter:tag:newsletter',  label: window.t('Newsletter'),      keywords: ['newsletter', 'newsletters', 'subscriptions'] },
+  { value: 'filter:tag:marketing',   label: window.t('Marketing'),       keywords: ['marketing', 'promo', 'promotional'] },
 ];
 
 function _libFilterIconFor(value) {
@@ -2807,9 +2807,9 @@ function _renderGrid() {
     if (_isTrulyEmpty) {
       grid.innerHTML =
         '<div class="email-loading" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;text-align:center;">' +
-          '<span>No emails' + _smileyIco + '</span>' +
+          '<span>' + window.t('No emails') + _smileyIco + '</span>' +
           '<span style="opacity:0.7;font-size:11px;">' +
-            'Set up at: <a href="#" data-open-settings="integrations" style="color:var(--accent,var(--red));text-decoration:underline;">Settings &rsaquo; Integrations</a>' +
+            window.t('Set up at:') + ' <a href="#" data-open-settings="integrations" style="color:var(--accent,var(--red));text-decoration:underline;">' + window.t('Settings &rsaquo; Integrations') + '</a>' +
           '</span>' +
         '</div>';
       const _link = grid.querySelector('[data-open-settings]');
@@ -2820,7 +2820,7 @@ function _renderGrid() {
     } else {
       grid.innerHTML =
         '<div class="email-loading" style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;">' +
-          '<span>No emails' + _smileyIco + '</span>' +
+          '<span>' + window.t('No emails') + _smileyIco + '</span>' +
         '</div>';
     }
     return;
@@ -2888,7 +2888,7 @@ function _createCard(em) {
   let senderName;
   let senderAddress;
   if (isSentFolderEarly) {
-    senderName = _formatRecipients(em.to) || em.to || '(no recipient)';
+    senderName = _formatRecipients(em.to) || em.to || window.t('(no recipient)');
     // First address out of em.to for click-to-pill targeting.
     const _firstTo = String(em.to || '').split(',')[0] || '';
     const _m = _firstTo.match(/<([^>]+)>/);
@@ -2921,7 +2921,7 @@ function _createCard(em) {
 
   const titleEl = document.createElement('span');
   titleEl.className = 'memory-item-title';
-  titleEl.textContent = em.subject || '(no subject)';
+  titleEl.textContent = em.subject || window.t('(no subject)');
   // Hover preview: surface the cached AI summary directly on the title via
   // a native browser tooltip — no need to open the email to skim it.
   if (em.cached_summary) {
@@ -2932,7 +2932,7 @@ function _createCard(em) {
 
   if (em.has_attachments) {
     const att = document.createElement('span');
-    att.title = 'Has attachments';
+    att.title = window.t('Has attachments');
     att.style.cssText = 'opacity:0.6;flex-shrink:0;display:inline-flex;';
     att.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>';
     titleRow.appendChild(att);
@@ -2957,7 +2957,7 @@ function _createCard(em) {
   if (!isSentFolder) {
     const doneCheck = document.createElement('span');
     doneCheck.className = 'email-card-done' + (em.is_answered ? ' active' : '');
-    doneCheck.title = em.is_answered ? 'Mark not done' : 'Mark done';
+    doneCheck.title = em.is_answered ? window.t('Mark not done') : window.t('Mark done');
     doneCheck.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
     const _toggleDone = async (e) => {
       if (e) e.stopPropagation();
@@ -2968,7 +2968,7 @@ function _createCard(em) {
       const newState = !wasActive;
       em.is_answered = newState;
       doneCheck.classList.toggle('active', newState);
-      doneCheck.title = newState ? 'Mark not done' : 'Mark done';
+      doneCheck.title = newState ? window.t('Mark not done') : window.t('Mark done');
       // Animate in both directions so the user gets explicit feedback when
       // un-checking too — without this the hover state and the active state
       // look identical, so the click felt like a no-op.
@@ -3000,7 +3000,7 @@ function _createCard(em) {
 
   if (em.is_flagged) {
     const star = document.createElement('span');
-    star.title = 'Favorited';
+    star.title = window.t('Favorited');
     star.style.cssText = 'color:var(--accent, var(--red));opacity:0.85;flex-shrink:0;display:inline-flex;';
     star.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
     titleRow.appendChild(star);
@@ -3012,8 +3012,8 @@ function _createCard(em) {
   const navArrows = document.createElement('span');
   navArrows.className = 'email-card-nav-arrows';
   navArrows.innerHTML = `
-    <button type="button" class="email-card-nav-btn" data-nav-dir="-1" title="Previous email"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
-    <button type="button" class="email-card-nav-btn" data-nav-dir="1" title="Next email"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
+    <button type="button" class="email-card-nav-btn" data-nav-dir="-1" title="${window.t('Previous email')}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+    <button type="button" class="email-card-nav-btn" data-nav-dir="1" title="${window.t('Next email')}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
   `;
   navArrows.addEventListener('click', async (ev) => {
     const btn = ev.target.closest('.email-card-nav-btn');
@@ -3052,7 +3052,7 @@ function _createCard(em) {
     actionsWrap.className = 'memory-item-actions';
     const menuBtn = document.createElement('button');
     menuBtn.className = 'memory-item-btn';
-    menuBtn.title = 'Actions';
+    menuBtn.title = window.t('Actions');
     menuBtn.style.position = 'relative';
     menuBtn.style.top = '-1px';
     menuBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
@@ -3250,7 +3250,7 @@ async function _toggleCardPreview(card, em) {
       return;
     }
     if (data.error) {
-      reader.innerHTML = `<div style="padding:20px;color:var(--red,#e55)">Error: ${_esc(data.error)}</div>`;
+      reader.innerHTML = `<div style="padding:20px;color:var(--red,#e55)">${window.t('Error: {msg}').replace('{msg}', _esc(data.error))}</div>`;
       return;
     }
 
@@ -3297,21 +3297,21 @@ async function _toggleCardPreview(card, em) {
       <div class="email-reader-header">
         <div class="email-reader-meta">
           <div class="email-reader-meta-row email-reader-meta-from">
-            <strong>From:</strong>
-            <span class="recipient-chips">${fromChip}${(data.to || data.cc) ? `<button class="email-reader-meta-toggle" type="button" aria-expanded="false" title="Show recipients"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>` : ''}</span>
+            <strong>${window.t('From:')}</strong>
+            <span class="recipient-chips">${fromChip}${(data.to || data.cc) ? `<button class="email-reader-meta-toggle" type="button" aria-expanded="false" title="${window.t('Show recipients')}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>` : ''}</span>
           </div>
           ${(data.to || data.cc) ? `<div class="email-reader-meta-details" hidden>
-            ${data.to ? `<div class="email-reader-meta-row"><strong>To:</strong><span class="recipient-chips">${buildRecipients(data.to)}</span></div>` : ''}
-            ${data.cc ? `<div class="email-reader-meta-row"><strong>Cc:</strong><span class="recipient-chips">${buildRecipients(data.cc)}</span></div>` : ''}
+            ${data.to ? `<div class="email-reader-meta-row"><strong>${window.t('To:')}</strong><span class="recipient-chips">${buildRecipients(data.to)}</span></div>` : ''}
+            ${data.cc ? `<div class="email-reader-meta-row"><strong>${window.t('Cc:')}</strong><span class="recipient-chips">${buildRecipients(data.cc)}</span></div>` : ''}
           </div>` : ''}
           <div class="email-reader-actions-inline">
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? 'AI Reply (cached draft ready)' : 'AI Reply (suggest a draft)'}">${_aiReplyIcon(data)}<span class="reader-btn-label">AI reply</span></button>
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="reply" title="Reply"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg><span class="reader-btn-label">Reply</span></button>
-            ${_hasMultipleRecipients(data) ? `<button class="memory-toolbar-btn reader-icon-btn" data-act="reply-all" title="Reply All"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 17 2 12 7 7"/><polyline points="12 17 7 12 12 7"/><path d="M22 18v-2a4 4 0 0 0-4-4H7"/></svg><span class="reader-btn-label">Reply all</span></button>` : ''}
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="forward" title="Forward"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg><span class="reader-btn-label">Forward</span></button>
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="Summarize">${_summaryIcon(data)}<span class="reader-btn-label">Summary</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? window.t('AI Reply (cached draft ready)') : window.t('AI Reply (suggest a draft)')}">${_aiReplyIcon(data)}<span class="reader-btn-label">${window.t('AI reply')}</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="reply" title="${window.t('Reply')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg><span class="reader-btn-label">${window.t('Reply')}</span></button>
+            ${_hasMultipleRecipients(data) ? `<button class="memory-toolbar-btn reader-icon-btn" data-act="reply-all" title="${window.t('Reply All')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 17 2 12 7 7"/><polyline points="12 17 7 12 12 7"/><path d="M22 18v-2a4 4 0 0 0-4-4H7"/></svg><span class="reader-btn-label">${window.t('Reply all')}</span></button>` : ''}
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="forward" title="${window.t('Forward')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg><span class="reader-btn-label">${window.t('Forward')}</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="${window.t('Summarize')}">${_summaryIcon(data)}<span class="reader-btn-label">${window.t('Summary')}</span></button>
             <div class="email-reader-more-wrap" style="position:relative">
-              <button class="memory-toolbar-btn reader-icon-btn" data-act="more" title="More actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg><span class="reader-btn-label">More</span></button>
+              <button class="memory-toolbar-btn reader-icon-btn" data-act="more" title="${window.t('More actions')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg><span class="reader-btn-label">${window.t('More')}</span></button>
             </div>
           </div>
         </div>
@@ -3474,7 +3474,7 @@ async function _toggleCardPreview(card, em) {
     // Always stop bubbling so the card's click doesn't fire while reading.
     reader.addEventListener('click', (ev) => { ev.stopPropagation(); });
   } catch (e) {
-    reader.innerHTML = `<div style="padding:20px;color:var(--red,#e55)">Failed to load email</div>`;
+    reader.innerHTML = `<div style="padding:20px;color:var(--red,#e55)">${window.t('Failed to load email')}</div>`;
   }
 }
 
@@ -3574,13 +3574,13 @@ function _renderEmailBody(data) {
     let out = fmt(head);
     if (quoteSection) {
       out += '<details class="email-quote-fold">'
-           + _foldSummary('Earlier thread', _QUOTE_ICON, _extractQuoteMeta(quoteSection))
+           + _foldSummary(window.t('Earlier thread'), _QUOTE_ICON, _extractQuoteMeta(quoteSection))
            + fmt(quoteSection) + '</details>';
     }
     if (sigSection) {
       const sigHtml = fmt(sigSection);
       if (_isBloatedSig(sigHtml)) {
-        out += '<details class="email-sig-fold">' + _foldSummary('Signature', _SIG_ICON)
+        out += '<details class="email-sig-fold">' + _foldSummary(window.t('Signature'), _SIG_ICON)
              + sigHtml + '</details>';
       } else {
         // Short closing — leave inline; folding would just add chrome.
@@ -3613,7 +3613,7 @@ function _safeRenderEmailBody(data) {
     const plain = (typeof data?.body === 'string') ? data.body : '';
     if (plain) return _escLinkify(plain).replace(/\n/g, '<br>');
     if (data?.body_html) return _sanitizeHtml(data.body_html);
-    return '<span style="opacity:.65">No body</span>';
+    return '<span style="opacity:.65">' + window.t('No body') + '</span>';
   }
 }
 
@@ -3691,12 +3691,12 @@ function _renderTurnsAsBubbles(turns, data) {
     let isMine, author, date;
     if (t.level === 0) {
       isMine = lvl0Mine;
-      author = lvl0Author || 'Me';
+      author = lvl0Author || window.t('Me');
       date = lvl0Date;
     } else {
       const p = _parseTurnMeta(t.meta || '');
       isMine = !!p.email && mineSet.has(p.email);
-      author = p.author || (t.meta || 'Earlier reply');
+      author = p.author || (t.meta || window.t('Earlier reply'));
       date = p.date;
     }
     // No-self fallback: route by per-sender side mapping.
@@ -3738,7 +3738,7 @@ function _renderTurnsFromServer(turns) {
   const stack = []; // [{ level, html }]
   const wrap = (t) =>
     `<details class="email-thread-turn email-quote-fold" open>`
-    + _foldSummary('Earlier reply', _QUOTE_ICON, t.meta || '')
+    + _foldSummary(window.t('Earlier reply'), _QUOTE_ICON, t.meta || '')
     + `<div class="email-thread-turn-body">${t.html}</div>`
     + '</details>';
 
@@ -3844,7 +3844,7 @@ function _renderThreadStructure(html) {
     if (!meta && _looksLikeSignature(innerHtml)) {
       turnsHtml.push(
         '<details class="email-sig-fold">'
-        + _foldSummary('Signature', _SIG_ICON)
+        + _foldSummary(window.t('Signature'), _SIG_ICON)
         + `<div class="email-sig-body">${innerHtml}</div>`
         + '</details>'
       );
@@ -3859,7 +3859,7 @@ function _renderThreadStructure(html) {
     const isLast = i === tops.length - 1;
     turnsHtml.push(
       `<details class="email-thread-turn email-quote-fold${isLast ? ' last-fold' : ''}" ${i === 0 ? '' : 'open'}>`
-        + _foldSummary('Earlier reply', _QUOTE_ICON, meta || '')
+        + _foldSummary(window.t('Earlier reply'), _QUOTE_ICON, meta || '')
         + `<div class="email-thread-turn-body">${bodyHtml}</div>`
       + '</details>'
     );
@@ -3951,7 +3951,7 @@ function _renderPlaintextThread(text) {
   const stack = [];
   const wrapTurn = (t) =>
     `<details class="email-thread-turn email-quote-fold" open>`
-    + _foldSummary('Earlier reply', _QUOTE_ICON, t.meta || '')
+    + _foldSummary(window.t('Earlier reply'), _QUOTE_ICON, t.meta || '')
     + `<div class="email-thread-turn-body">${t.html}</div>`
     + '</details>';
 
@@ -4019,7 +4019,7 @@ function _foldQuotedReplies(html) {
           const det = doc.createElement('details');
           det.className = 'email-quote-fold';
           // Build the summary as raw HTML — easier than building DOM by hand.
-          const summary = _foldSummary('Earlier thread', _QUOTE_ICON, _extractQuoteMeta(bq.innerHTML));
+          const summary = _foldSummary(window.t('Earlier thread'), _QUOTE_ICON, _extractQuoteMeta(bq.innerHTML));
           det.innerHTML = summary;
           bq.parentNode.insertBefore(det, bq);
           det.appendChild(bq); // move the original blockquote (and any nested ones) into the details
@@ -4052,7 +4052,7 @@ function _foldQuotedReplies(html) {
     // Outlook fallback only ever produces ONE fold, so tag it as last.
     html = html.slice(0, idx) + m[1]
       + '<details class="email-quote-fold last-fold">'
-      + _foldSummary('Earlier thread', _QUOTE_ICON, _extractQuoteMeta(m[2]))
+      + _foldSummary(window.t('Earlier thread'), _QUOTE_ICON, _extractQuoteMeta(m[2]))
       + m[2] + '</details>';
   }
   return html;
@@ -4080,7 +4080,7 @@ function _showCachedSummary(reader, summary, btn) {
   panel.innerHTML =
     '<div class="email-summary-header email-summary-toggle" role="button" tabindex="0">'
     +   '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>'
-    +   '<span>Summary</span>'
+    +   '<span>' + window.t('Summary') + '</span>'
     +   '<svg class="email-summary-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:auto;transition:transform .15s ease;"><polyline points="6 9 12 15 18 9"/></svg>'
     + '</div>'
     + '<div class="email-summary-content"></div>';
@@ -4102,7 +4102,7 @@ function _showCachedSummary(reader, summary, btn) {
   if (btn) {
     btn.classList.add('active');
     const label = btn.querySelector('.btn-label');
-    if (label) label.textContent = 'Summary';
+    if (label) label.textContent = window.t('Summary');
   }
 }
 
@@ -4142,7 +4142,7 @@ async function _toggleFromSenderPanel(reader, data, btn) {
 
   const fromAddr = String(data.from_address || '').trim();
   if (!fromAddr) {
-    if (typeof showError === 'function') showError('No sender address available');
+    if (typeof showError === 'function') showError(window.t('No sender address available'));
     return;
   }
 
@@ -4153,14 +4153,14 @@ async function _toggleFromSenderPanel(reader, data, btn) {
   panel.innerHTML = `
     <div class="from-sender-header">
       <span class="from-sender-chips"></span>
-      <span class="from-sender-header-empty" hidden>All senders</span>
-      <button type="button" class="from-sender-toggle" data-toggle="attachments" title="Show only emails with attachments" aria-pressed="false">
+      <span class="from-sender-header-empty" hidden>${window.t('All senders')}</span>
+      <button type="button" class="from-sender-toggle" data-toggle="attachments" title="${window.t('Show only emails with attachments')}" aria-pressed="false">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
       </button>
-      <button type="button" class="from-sender-close" title="Close" aria-label="Close sender panel">&times;</button>
+      <button type="button" class="from-sender-close" title="${window.t('Close')}" aria-label="${window.t('Close sender panel')}">&times;</button>
     </div>
     <div class="from-sender-search-wrap">
-      <input type="text" class="from-sender-search" placeholder="Search ${_esc(firstName)}…" autocomplete="off" />
+      <input type="text" class="from-sender-search" placeholder="${window.t('Search {name}…').replace('{name}', _esc(firstName))}" autocomplete="off" />
       <div class="from-sender-suggest" hidden></div>
     </div>
     <div class="from-sender-list">
@@ -4203,7 +4203,7 @@ async function _toggleFromSenderPanel(reader, data, btn) {
     chipsContainer.innerHTML = panel._tags.map((t, i) => `
       <span class="from-sender-chip" title="${_esc(t.address)}" data-tag-index="${i}">
         <span class="from-sender-chip-name">${_esc(t.name || t.address)}</span>
-        <button class="from-sender-chip-x" type="button" title="Remove" aria-label="Remove ${_esc(t.name || t.address)}">&times;</button>
+        <button class="from-sender-chip-x" type="button" title="${window.t('Remove')}" aria-label="${window.t('Remove {name}').replace('{name}', _esc(t.name || t.address))}">&times;</button>
       </span>
     `).join('');
     if (emptyLabel) emptyLabel.hidden = panel._tags.length > 0;
@@ -4234,8 +4234,8 @@ async function _toggleFromSenderPanel(reader, data, btn) {
     if (panel._attachmentsOnly) view = view.filter(e => e.has_attachments);
     if (!view.length) {
       const why = panel._attachmentsOnly
-        ? 'No emails with attachments in this view.'
-        : (panel._tags.length > 1 ? 'No emails involve all those people.' : 'No matches.');
+        ? window.t('No emails with attachments in this view.')
+        : (panel._tags.length > 1 ? window.t('No emails involve all those people.') : window.t('No matches.'));
       listEl.innerHTML = `<div class="from-sender-empty">${why}</div>`;
     } else {
       _renderFromSenderRows(view, listEl, reader, { showFolder: !!panel._lastShowFolder });
@@ -4280,18 +4280,18 @@ async function _toggleFromSenderPanel(reader, data, btn) {
     emails = raw;
 
     if (!emails.length) {
-      listEl.innerHTML = `<div class="from-sender-empty">No other emails from this sender in ${_esc(state._libFolder || 'INBOX')}.</div>`;
+      listEl.innerHTML = `<div class="from-sender-empty">${window.t('No other emails from this sender in {folder}.').replace('{folder}', _esc(state._libFolder || 'INBOX'))}</div>`;
     } else {
       panel._setResults(emails, { showFolder: false });
     }
   } catch (err) {
-    listEl.innerHTML = `<div class="from-sender-empty" style="color:var(--red, #e55)">Failed to load: ${_esc(String(err))}</div>`;
+    listEl.innerHTML = `<div class="from-sender-empty" style="color:var(--red, #e55)">${window.t('Failed to load: {msg}').replace('{msg}', _esc(String(err)))}</div>`;
   }
   const updatePlaceholder = () => {
     if (!searchEl) return;
     searchEl.placeholder = panel._tags.length
-      ? 'Add another person…'
-      : 'Search people or emails…';
+      ? window.t('Add another person…')
+      : window.t('Search people or emails…');
   };
   updatePlaceholder();
   _renderChips();
@@ -4328,7 +4328,7 @@ async function _toggleFromSenderPanel(reader, data, btn) {
       updatePlaceholder();
     } catch (err) {
       if (myToken !== _recentToken) return;
-      listEl.innerHTML = `<div class="from-sender-empty" style="color:var(--red, #e55)">Failed to load: ${_esc(String(err))}</div>`;
+      listEl.innerHTML = `<div class="from-sender-empty" style="color:var(--red, #e55)">${window.t('Failed to load: {msg}').replace('{msg}', _esc(String(err)))}</div>`;
     }
   };
 
@@ -4376,13 +4376,13 @@ async function _toggleFromSenderPanel(reader, data, btn) {
           return db - da;
         });
         if (!merged.length) {
-          listEl.innerHTML = `<div class="from-sender-empty">No matches for "${_esc(q)}".</div>`;
+          listEl.innerHTML = `<div class="from-sender-empty">${window.t('No matches for "{q}".').replace('{q}', _esc(q))}</div>`;
           return;
         }
         panel._setResults(merged, { showFolder: true });
       } catch (err) {
         if (myToken !== searchToken) return;
-        listEl.innerHTML = `<div class="from-sender-empty" style="color:var(--red, #e55)">Search failed: ${_esc(String(err))}</div>`;
+        listEl.innerHTML = `<div class="from-sender-empty" style="color:var(--red, #e55)">${window.t('Search failed: {msg}').replace('{msg}', _esc(String(err)))}</div>`;
       }
     };
 
@@ -4506,12 +4506,12 @@ async function _toggleFromSenderPanel(reader, data, btn) {
   panel._originalEmails = (typeof emails !== 'undefined') ? emails : [];
 }
 
-const _ATT_ICON = '<svg class="from-sender-att" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Has attachments"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>';
+const _ATT_ICON = `<svg class="from-sender-att" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="${window.t('Has attachments')}"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>`;
 
 function _renderFromSenderRows(emails, listEl, reader, opts = {}) {
   const { showFolder = false } = opts;
   listEl.innerHTML = emails.map(em => {
-    const subj = em.subject || '(no subject)';
+    const subj = em.subject || window.t('(no subject)');
     const date = em.date ? new Date(em.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : (em.date_display || '');
     const unread = em.is_read ? '' : ' from-sender-unread';
     const att = em.has_attachments ? _ATT_ICON : '';
@@ -4528,7 +4528,7 @@ function _renderFromSenderRows(emails, listEl, reader, opts = {}) {
           ${folderChip}
         </span>
       </button>
-      <button class="from-sender-row-more" type="button" title="More actions" aria-label="More actions">
+      <button class="from-sender-row-more" type="button" title="${window.t('More actions')}" aria-label="${window.t('More actions')}">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
       </button>
     </div>`;
@@ -4589,7 +4589,7 @@ function _wireAttachmentHandlers(reader, folder) {
         const json = await res.json().catch(() => ({}));
         if (!res.ok || !json.doc_id) {
           const msg = (json && json.error) || `HTTP ${res.status}`;
-          try { const { showError } = await import('./ui.js'); showError(`Couldn't open ${name}: ${msg}`); } catch (_) { alert(`Couldn't open ${name}: ${msg}`); }
+          try { const { showError } = await import('./ui.js'); showError(window.t("Couldn't open {name}: {msg}").replace('{name}', name).replace('{msg}', msg)); } catch (_) { alert(window.t("Couldn't open {name}: {msg}").replace('{name}', name).replace('{msg}', msg)); }
           return;
         }
         try {
@@ -4614,11 +4614,11 @@ function _wireAttachmentHandlers(reader, folder) {
           }
         } catch (e) {
           console.error('Open document failed:', e);
-          try { const { showError } = await import('./ui.js'); showError('Document opened but panel could not mount'); } catch (_) {}
+          try { const { showError } = await import('./ui.js'); showError(window.t('Document opened but panel could not mount')); } catch (_) {}
         }
       } catch (e) {
         console.error('attachment-as-doc error', e);
-        try { const { showError } = await import('./ui.js'); showError(`Couldn't open ${name}`); } catch (_) {}
+        try { const { showError } = await import('./ui.js'); showError(window.t("Couldn't open {name}").replace('{name}', name)); } catch (_) {}
       } finally {
         openBtn.style.opacity = orig;
       }
@@ -4729,7 +4729,7 @@ function _buildAttsHtmlFor(uid, data) {
     const chipUid = a.source_uid || a.uid || uid;
     const chipFolder = a.source_folder || data.folder || state._libFolder || 'INBOX';
     const openBtn = openable
-      ? `<span class="email-attachment-open" title="Open in document editor" data-open-uid="${_esc(chipUid)}" data-open-index="${a.index}" data-open-name="${_esc(a.filename)}" data-open-folder="${_esc(chipFolder)}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><line x1="8" y1="9" x2="10" y2="9"/></svg><span class="email-attachment-open-label">Open</span></span>`
+      ? `<span class="email-attachment-open" title="${window.t('Open in document editor')}" data-open-uid="${_esc(chipUid)}" data-open-index="${a.index}" data-open-name="${_esc(a.filename)}" data-open-folder="${_esc(chipFolder)}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><line x1="8" y1="9" x2="10" y2="9"/></svg><span class="email-attachment-open-label">${window.t('Open')}</span></span>`
       : '';
     return `<button type="button" class="email-attachment-chip${extraClass}" data-att-uid="${_esc(chipUid)}" data-att-index="${a.index}" data-att-name="${_esc(a.filename)}" data-att-folder="${_esc(chipFolder)}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg><span>${_esc(a.filename)}</span><span class="att-size">${Math.round((a.size||0)/1024)} KB</span>${openBtn}</button>`;
   };
@@ -4740,16 +4740,16 @@ function _buildAttsHtmlFor(uid, data) {
     ? '<div class="email-reader-atts">' + chips + '</div>'
     : '';
   const relatedSection = related.length
-    ? '<div class="email-reader-atts-hidden-note">From earlier in this thread</div><div class="email-reader-atts email-reader-atts-related">' + relatedChips + '</div>'
+    ? '<div class="email-reader-atts-hidden-note">' + window.t('From earlier in this thread') + '</div><div class="email-reader-atts email-reader-atts-related">' + relatedChips + '</div>'
     : '';
   const hiddenSection = hidden.length
-    ? '<div class="email-reader-atts-hidden-note">Filtered inline images / signature files</div><div class="email-reader-atts email-reader-atts-hidden">' + hiddenChips + '</div>'
+    ? '<div class="email-reader-atts-hidden-note">' + window.t('Filtered inline images / signature files') + '</div><div class="email-reader-atts email-reader-atts-hidden">' + hiddenChips + '</div>'
     : '';
   const label = visible.length
-    ? `Attachments (${visible.length + related.length})`
+    ? window.t('Attachments ({n})').replace('{n}', visible.length + related.length)
     : related.length
-      ? `Thread attachments (${related.length})`
-      : `Hidden inline attachments (${hidden.length})`;
+      ? window.t('Thread attachments ({n})').replace('{n}', related.length)
+      : window.t('Hidden inline attachments ({n})').replace('{n}', hidden.length);
   return (
     '<div class="email-reader-atts-wrap collapsed">'
     +   '<div class="email-reader-atts-header email-summary-toggle" role="button" tabindex="0">'
@@ -4871,10 +4871,10 @@ async function _openEmailAsTab(em, folder) {
     <div class="modal-content doclib-modal-content email-reader-tab-content" style="background:var(--bg);width:min(720px, 92vw);display:flex;flex-direction:column;">
       <div class="modal-header">
         <h4 style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">
-          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:8px;">${_esc(em.subject || '(no subject)')}</span>
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:8px;">${_esc(em.subject || window.t('(no subject)'))}</span>
         </h4>
-        <button class="minimize-btn" type="button" title="Minimize">_</button>
-        <button class="close-btn" type="button" title="Close">&#x2716;</button>
+        <button class="minimize-btn" type="button" title="${window.t('Minimize')}">_</button>
+        <button class="close-btn" type="button" title="${window.t('Close')}">&#x2716;</button>
       </div>
       <div class="modal-body email-reader-tab-body" style="display:flex;flex-direction:column;overflow:hidden;flex:1;min-height:0;padding:0;">
         <div class="email-card-reader email-card-expanded" style="flex:1;min-height:0;display:flex;flex-direction:column;">
@@ -4891,7 +4891,7 @@ async function _openEmailAsTab(em, folder) {
   document.body.classList.add('email-front');
 
   Modals.register(modalId, {
-    label: 'Email',
+    label: window.t('Email'),
     icon: _EMAIL_ICON_PATH,
     closeFn: () => {
       modal.remove();
@@ -5003,7 +5003,7 @@ async function _openEmailAsTab(em, folder) {
     const res = await fetch(`${API_BASE}/api/email/read/${em.uid}?folder=${encodeURIComponent(useFolder)}${_acct()}`);
     const data = await res.json();
     if (data.error) {
-      reader.innerHTML = `<div style="padding:20px;color:var(--red,#e55)">Error: ${_esc(data.error)}</div>`;
+      reader.innerHTML = `<div style="padding:20px;color:var(--red,#e55)">${window.t('Error: {msg}').replace('{msg}', _esc(data.error))}</div>`;
       return;
     }
     _syncEmailReadState(em.uid, true);
@@ -5022,22 +5022,22 @@ async function _openEmailAsTab(em, folder) {
       <div class="email-reader-header">
         <div class="email-reader-meta">
           <div class="email-reader-meta-row email-reader-meta-from">
-            <strong>From:</strong>
-            <span class="recipient-chips">${fromChip}${(data.to || data.cc) ? `<button class="email-reader-meta-toggle" type="button" aria-expanded="false" title="Show recipients"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>` : ''}</span>
+            <strong>${window.t('From:')}</strong>
+            <span class="recipient-chips">${fromChip}${(data.to || data.cc) ? `<button class="email-reader-meta-toggle" type="button" aria-expanded="false" title="${window.t('Show recipients')}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>` : ''}</span>
           </div>
           ${(data.to || data.cc) ? `<div class="email-reader-meta-details" hidden>
-            ${data.to ? `<div class="email-reader-meta-row"><strong>To:</strong><span class="recipient-chips">${buildChips(data.to)}</span></div>` : ''}
-            ${data.cc ? `<div class="email-reader-meta-row"><strong>Cc:</strong><span class="recipient-chips">${buildChips(data.cc)}</span></div>` : ''}
+            ${data.to ? `<div class="email-reader-meta-row"><strong>${window.t('To:')}</strong><span class="recipient-chips">${buildChips(data.to)}</span></div>` : ''}
+            ${data.cc ? `<div class="email-reader-meta-row"><strong>${window.t('Cc:')}</strong><span class="recipient-chips">${buildChips(data.cc)}</span></div>` : ''}
           </div>` : ''}
           <div class="email-reader-actions-inline">
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? 'AI Reply (cached draft ready)' : 'AI Reply'}">${_aiReplyIcon(data)}<span class="reader-btn-label">AI reply</span></button>
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="reply" title="Reply"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg><span class="reader-btn-label">Reply</span></button>
-            ${_hasMultipleRecipients(data) ? `<button class="memory-toolbar-btn reader-icon-btn" data-act="reply-all" title="Reply All"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 17 2 12 7 7"/><polyline points="12 17 7 12 12 7"/><path d="M22 18v-2a4 4 0 0 0-4-4H7"/></svg><span class="reader-btn-label">Reply all</span></button>` : ''}
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="forward" title="Forward"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg><span class="reader-btn-label">Forward</span></button>
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="Summarize">${_summaryIcon(data)}<span class="reader-btn-label">Summary</span></button>
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="from-sender" title="Search text in this thread"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span class="reader-btn-label">Search</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? window.t('AI Reply (cached draft ready)') : window.t('AI Reply')}">${_aiReplyIcon(data)}<span class="reader-btn-label">${window.t('AI reply')}</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="reply" title="${window.t('Reply')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg><span class="reader-btn-label">${window.t('Reply')}</span></button>
+            ${_hasMultipleRecipients(data) ? `<button class="memory-toolbar-btn reader-icon-btn" data-act="reply-all" title="${window.t('Reply All')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 17 2 12 7 7"/><polyline points="12 17 7 12 12 7"/><path d="M22 18v-2a4 4 0 0 0-4-4H7"/></svg><span class="reader-btn-label">${window.t('Reply all')}</span></button>` : ''}
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="forward" title="${window.t('Forward')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg><span class="reader-btn-label">${window.t('Forward')}</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="${window.t('Summarize')}">${_summaryIcon(data)}<span class="reader-btn-label">${window.t('Summary')}</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="from-sender" title="${window.t('Search text in this thread')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span class="reader-btn-label">${window.t('Search')}</span></button>
             <div class="email-reader-more-wrap" style="position:relative">
-              <button class="memory-toolbar-btn reader-icon-btn" data-act="more" title="More actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg><span class="reader-btn-label">More</span></button>
+              <button class="memory-toolbar-btn reader-icon-btn" data-act="more" title="${window.t('More actions')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg><span class="reader-btn-label">${window.t('More')}</span></button>
             </div>
           </div>
         </div>
@@ -5083,7 +5083,7 @@ async function _openEmailAsTab(em, folder) {
       try { _showReaderMoreMenu(em, modal, reader, ev.currentTarget); } catch {}
     });
   } catch (err) {
-    reader.innerHTML = `<div style="padding:20px;color:var(--red,#e55)">Failed to load: ${_esc(String(err))}</div>`;
+    reader.innerHTML = `<div style="padding:20px;color:var(--red,#e55)">${window.t('Failed to load: {msg}').replace('{msg}', _esc(String(err)))}</div>`;
   }
 }
 
@@ -5107,9 +5107,9 @@ async function _openEmailWindow(em, folder) {
       <div class="modal-header">
         <h4 style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
-          <span class="email-window-subject" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(em.subject || '(no subject)')}</span>
+          <span class="email-window-subject" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(em.subject || window.t('(no subject)'))}</span>
         </h4>
-        <button class="close-btn" type="button" title="Close">&#x2716;</button>
+        <button class="close-btn" type="button" title="${window.t('Close')}">&#x2716;</button>
       </div>
       <div class="modal-body email-window-body" style="overflow:auto;padding:14px 16px;flex:1;min-height:0;">
         <div class="email-window-loading" style="display:flex;justify-content:center;padding:24px;"></div>
@@ -5178,21 +5178,21 @@ async function _openEmailWindow(em, folder) {
       <div class="email-reader-header">
         <div class="email-reader-meta">
           <div class="email-reader-meta-row email-reader-meta-from">
-            <strong>From:</strong>
-            <span class="recipient-chips">${fromChip}${(data.to || data.cc) ? `<button class="email-reader-meta-toggle" type="button" aria-expanded="false" title="Show recipients"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>` : ''}</span>
+            <strong>${window.t('From:')}</strong>
+            <span class="recipient-chips">${fromChip}${(data.to || data.cc) ? `<button class="email-reader-meta-toggle" type="button" aria-expanded="false" title="${window.t('Show recipients')}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>` : ''}</span>
           </div>
           ${(data.to || data.cc) ? `<div class="email-reader-meta-details" hidden>
-            ${data.to ? `<div class="email-reader-meta-row"><strong>To:</strong><span class="recipient-chips">${_chipsFor(data.to)}</span></div>` : ''}
-            ${data.cc ? `<div class="email-reader-meta-row"><strong>Cc:</strong><span class="recipient-chips">${_chipsFor(data.cc)}</span></div>` : ''}
+            ${data.to ? `<div class="email-reader-meta-row"><strong>${window.t('To:')}</strong><span class="recipient-chips">${_chipsFor(data.to)}</span></div>` : ''}
+            ${data.cc ? `<div class="email-reader-meta-row"><strong>${window.t('Cc:')}</strong><span class="recipient-chips">${_chipsFor(data.cc)}</span></div>` : ''}
           </div>` : ''}
           <div class="email-reader-actions-inline">
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? 'AI Reply (cached draft ready)' : 'AI Reply (suggest a draft)'}">${_aiReplyIcon(data)}<span class="reader-btn-label">AI reply</span></button>
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="reply" title="Reply"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg><span class="reader-btn-label">Reply</span></button>
-            ${_hasMultipleRecipients(data) ? `<button class="memory-toolbar-btn reader-icon-btn" data-act="reply-all" title="Reply All"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 17 2 12 7 7"/><polyline points="12 17 7 12 12 7"/><path d="M22 18v-2a4 4 0 0 0-4-4H7"/></svg><span class="reader-btn-label">Reply all</span></button>` : ''}
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="forward" title="Forward"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg><span class="reader-btn-label">Forward</span></button>
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="Summarize">${_summaryIcon(data)}<span class="reader-btn-label">Summary</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? window.t('AI Reply (cached draft ready)') : window.t('AI Reply (suggest a draft)')}">${_aiReplyIcon(data)}<span class="reader-btn-label">${window.t('AI reply')}</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="reply" title="${window.t('Reply')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg><span class="reader-btn-label">${window.t('Reply')}</span></button>
+            ${_hasMultipleRecipients(data) ? `<button class="memory-toolbar-btn reader-icon-btn" data-act="reply-all" title="${window.t('Reply All')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 17 2 12 7 7"/><polyline points="12 17 7 12 12 7"/><path d="M22 18v-2a4 4 0 0 0-4-4H7"/></svg><span class="reader-btn-label">${window.t('Reply all')}</span></button>` : ''}
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="forward" title="${window.t('Forward')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg><span class="reader-btn-label">${window.t('Forward')}</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="${window.t('Summarize')}">${_summaryIcon(data)}<span class="reader-btn-label">${window.t('Summary')}</span></button>
             <div class="email-reader-more-wrap" style="position:relative">
-              <button class="memory-toolbar-btn reader-icon-btn" data-act="more" title="More actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg><span class="reader-btn-label">More</span></button>
+              <button class="memory-toolbar-btn reader-icon-btn" data-act="more" title="${window.t('More actions')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg><span class="reader-btn-label">${window.t('More')}</span></button>
             </div>
           </div>
         </div>
@@ -5243,7 +5243,7 @@ async function _openEmailWindow(em, folder) {
       try { _showReaderMoreMenu(em, modal, bodyEl, ev.currentTarget); } catch {}
     });
   } catch (err) {
-    bodyEl.innerHTML = `<div style="color:var(--red,#e55);padding:16px;">Failed to load: ${_esc(String(err))}</div>`;
+    bodyEl.innerHTML = `<div style="color:var(--red,#e55);padding:16px;">${window.t('Failed to load: {msg}').replace('{msg}', _esc(String(err)))}</div>`;
   }
 }
 
@@ -5273,7 +5273,7 @@ async function _swapReaderToUid(reader, uid, folder) {
     // Update the header meta (From/To/Subject) so it matches the new email.
     const headerMeta = reader.querySelector('.email-reader-meta');
     if (headerMeta) {
-      const subj = data.subject || '(no subject)';
+      const subj = data.subject || window.t('(no subject)');
       const date = data.date ? new Date(data.date).toLocaleString() : '';
       const chipsFor = (addrs) => {
         if (!addrs) return '';
@@ -5284,11 +5284,11 @@ async function _swapReaderToUid(reader, uid, folder) {
       };
       const fromChip = _recipientChipHtml(`${data.from_name || ''} <${data.from_address || ''}>`, data.from_name || data.from_address, 'from-chip');
       headerMeta.innerHTML = `
-        <div class="email-reader-meta-row"><strong>Subject:</strong> ${_esc(subj)}</div>
-        <div class="email-reader-meta-row"><strong>From:</strong><span class="recipient-chips">${fromChip}</span></div>
-        ${data.to ? `<div class="email-reader-meta-row"><strong>To:</strong><span class="recipient-chips">${chipsFor(data.to)}</span></div>` : ''}
-        ${data.cc ? `<div class="email-reader-meta-row"><strong>Cc:</strong><span class="recipient-chips">${chipsFor(data.cc)}</span></div>` : ''}
-        ${date ? `<div class="email-reader-meta-row"><strong>Date:</strong> ${_esc(date)}</div>` : ''}
+        <div class="email-reader-meta-row"><strong>${window.t('Subject:')}</strong> ${_esc(subj)}</div>
+        <div class="email-reader-meta-row"><strong>${window.t('From:')}</strong><span class="recipient-chips">${fromChip}</span></div>
+        ${data.to ? `<div class="email-reader-meta-row"><strong>${window.t('To:')}</strong><span class="recipient-chips">${chipsFor(data.to)}</span></div>` : ''}
+        ${data.cc ? `<div class="email-reader-meta-row"><strong>${window.t('Cc:')}</strong><span class="recipient-chips">${chipsFor(data.cc)}</span></div>` : ''}
+        ${date ? `<div class="email-reader-meta-row"><strong>${window.t('Date:')}</strong> ${_esc(date)}</div>` : ''}
       `;
       _wireRecipientChips(reader);
     }
@@ -5347,13 +5347,13 @@ async function _summarizeEmail(reader, data, btn) {
       existing.style.display = '';
       if (btn) {
         btn.classList.add('active');
-        btn.querySelector('.btn-label').textContent = 'Summary';
+        btn.querySelector('.btn-label').textContent = window.t('Summary');
       }
     } else {
       existing.style.display = 'none';
       if (btn) {
         btn.classList.remove('active');
-        btn.querySelector('.btn-label').textContent = 'Summary';
+        btn.querySelector('.btn-label').textContent = window.t('Summary');
       }
     }
     return;
@@ -5368,14 +5368,14 @@ async function _summarizeEmail(reader, data, btn) {
     prompt.innerHTML = `
       <div class="email-summary-header">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>
-        <span>Summary</span>
+        <span>${window.t('Summary')}</span>
       </div>
-      <div class="email-summary-content" style="white-space:normal;display:flex;align-items:center;flex-wrap:wrap;gap:6px;"><span style="opacity:0.65">No AI summary generated.</span><button class="memory-toolbar-btn" data-act="summary-generate" style="font-size:10px;margin-left:auto;">Generate now</button></div>`;
+      <div class="email-summary-content" style="white-space:normal;display:flex;align-items:center;flex-wrap:wrap;gap:6px;"><span style="opacity:0.65">${window.t('No AI summary generated.')}</span><button class="memory-toolbar-btn" data-act="summary-generate" style="font-size:10px;margin-left:auto;">${window.t('Generate now')}</button></div>`;
     body.insertBefore(prompt, body.firstChild);
     if (btn) {
       btn.classList.add('active');
       const label = btn.querySelector('.btn-label');
-      if (label) label.textContent = 'Summary';
+      if (label) label.textContent = window.t('Summary');
     }
     // No Cancel button — toggling the Summary button again hides this panel
     // (handled by the existing-panel branch above), so it'd be redundant.
@@ -5400,7 +5400,7 @@ async function _generateSummary(reader, data, btn) {
   panel.innerHTML =
     '<div class="email-summary-header email-summary-toggle" role="button" tabindex="0">'
     +   '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>'
-    +   '<span>Summary</span>'
+    +   '<span>' + window.t('Summary') + '</span>'
     +   '<svg class="email-summary-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:auto;transition:transform .15s ease;"><polyline points="6 9 12 15 18 9"/></svg>'
     + '</div>'
     + '<div class="email-summary-content"></div>';
@@ -5447,16 +5447,16 @@ async function _generateSummary(reader, data, btn) {
       if (btn) {
         btn.classList.add('active');
         const label = btn.querySelector('.btn-label');
-        if (label) label.textContent = 'Summary';
+        if (label) label.textContent = window.t('Summary');
       }
     } else {
-      content.innerHTML = `<span style="color:var(--red)">${_esc(result.error || 'Failed to summarize')}</span>`;
+      content.innerHTML = `<span style="color:var(--red)">${_esc(result.error || window.t('Failed to summarize'))}</span>`;
       panel.remove();
     }
   } catch (e) {
     sp.destroy();
     panel.remove();
-    if (uiModule) uiModule.showError?.('Failed to summarize');
+    if (uiModule) uiModule.showError?.(window.t('Failed to summarize'));
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -5554,7 +5554,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
   //   3. Move to Spam / Move to Trash / Delete — destructive
   const actions = [
     {
-      label: 'Open in new tab',
+      label: window.t('Open in new tab'),
       icon: _newTabIcon,
       action: async () => {
         const folder = state._libFolder || 'INBOX';
@@ -5562,13 +5562,13 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       },
     },
     {
-      label: 'Remind to reply',
+      label: window.t('Remind to reply'),
       icon: _bellIcon,
       submenu: 'remind',
     },
     { separator: true },
     {
-      label: em.is_read ? 'Mark as Unread' : 'Mark as Read',
+      label: em.is_read ? window.t('Mark as Unread') : window.t('Mark as Read'),
       icon: _unreadIcon,
       action: async () => {
         const newRead = !em.is_read;
@@ -5588,7 +5588,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       // sidebar-pin / favorites filter so the visual language stays
       // consistent. Toggling updates em.is_flagged and re-sorts via
       // _renderGrid (favorited rows are always pinned at the top).
-      label: em.is_flagged ? 'Unfavorite' : 'Favorite (pin to top)',
+      label: em.is_flagged ? window.t('Unfavorite') : window.t('Favorite (pin to top)'),
       icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (em.is_flagged ? 'currentColor' : 'none') + '" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
       action: async () => {
         const next = !em.is_flagged;
@@ -5605,7 +5605,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       },
     },
     {
-      label: em.is_answered ? 'Mark as Not Done' : 'Mark as Done',
+      label: em.is_answered ? window.t('Mark as Not Done') : window.t('Mark as Done'),
       icon: _checkIcon,
       action: async () => {
         const newState = !em.is_answered;
@@ -5623,7 +5623,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       },
     },
     {
-      label: 'Move to Archive',
+      label: window.t('Move to Archive'),
       icon: _archIcon,
       action: async () => {
         try {
@@ -5635,12 +5635,12 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
     {
       // Save the sender to CardDAV contacts. Pulls name + address off the
       // list-item (em); falls back to splitting the local-part for a name.
-      label: 'Save sender to contacts',
+      label: window.t('Save sender to contacts'),
       icon: _contactIcon,
       action: async () => {
         const email = (em.from_address || em.from || '').trim();
         if (!email) {
-          import('./ui.js').then(m => m.showError && m.showError('No sender address')).catch(() => {});
+          import('./ui.js').then(m => m.showError && m.showError(window.t('No sender address'))).catch(() => {});
           return;
         }
         const name = (em.from_name || '').trim() || email.split('@')[0];
@@ -5653,18 +5653,18 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
           const d = await r.json();
           import('./ui.js').then(m => {
             if (!m.showToast) return;
-            if (d.success && d.message === 'Already exists') m.showToast('Already in contacts');
-            else if (d.success) m.showToast('Saved to contacts');
-            else m.showError && m.showError('Failed to save contact');
+            if (d.success && d.message === 'Already exists') m.showToast(window.t('Already in contacts'));
+            else if (d.success) m.showToast(window.t('Saved to contacts'));
+            else m.showError && m.showError(window.t('Failed to save contact'));
           }).catch(() => {});
         } catch (_) {
-          import('./ui.js').then(m => m.showError && m.showError('Failed to save contact')).catch(() => {});
+          import('./ui.js').then(m => m.showError && m.showError(window.t('Failed to save contact'))).catch(() => {});
         }
       },
     },
     { separator: true },
     {
-      label: 'Move to Spam',
+      label: window.t('Move to Spam'),
       icon: _spamIcon,
       action: async () => {
         try {
@@ -5674,7 +5674,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       },
     },
     {
-      label: 'Move to Trash',
+      label: window.t('Move to Trash'),
       icon: _trashIcon,
       action: async () => {
         try {
@@ -5684,14 +5684,14 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       },
     },
     {
-      label: 'Delete Permanently',
+      label: window.t('Delete Permanently'),
       icon: _deleteForeverIcon,
       danger: true,
       action: async () => {
-        const subject = em.subject || '(no subject)';
+        const subject = em.subject || window.t('(no subject)');
         const ok = await styledConfirm(
-          `Permanently delete "${subject}"? This cannot be undone.`,
-          { confirmText: 'Delete', cancelText: 'Cancel', danger: true }
+          window.t('Permanently delete "{subject}"? This cannot be undone.').replace('{subject}', subject),
+          { confirmText: window.t('Delete'), cancelText: window.t('Cancel'), danger: true }
         );
         if (!ok) return;
         try {
@@ -5729,7 +5729,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
   const _cancelIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
   const cancelItem = document.createElement('div');
   cancelItem.className = 'dropdown-item-compact dropdown-cancel-mobile';
-  cancelItem.innerHTML = _icon(_cancelIco) + '<span>Cancel</span>';
+  cancelItem.innerHTML = _icon(_cancelIco) + '<span>' + window.t('Cancel') + '</span>';
   cancelItem.addEventListener('click', (e) => {
     e.stopPropagation();
     close();
@@ -5764,21 +5764,21 @@ function _showCardMenu(em, anchor) {
 
   const _newTabIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
   const actions = [
-    { label: 'Open', icon: _replyIcon, action: async () => {
+    { label: window.t('Open'), icon: _replyIcon, action: async () => {
       // Just expand inline (same as tapping the row).
       const card = anchor.closest('.doclib-card');
       if (card && !card.classList.contains('doclib-card-expanded')) {
         await _toggleCardPreview(card, em);
       }
     }},
-    { label: 'Open in new tab', icon: _newTabIcon, action: async () => {
+    { label: window.t('Open in new tab'), icon: _newTabIcon, action: async () => {
       // Open this email as its own in-app modal that registers a dock
       // chip — multiple emails can be opened simultaneously, each gets
       // its own chip in the minimized dock.
       const folder = state._libFolder || 'INBOX';
       await _openEmailAsTab(em, folder);
     }},
-    { label: 'Remind to reply', icon: _cardBellIcon, submenu: 'remind' },
+    { label: window.t('Remind to reply'), icon: _cardBellIcon, submenu: 'remind' },
   ];
 
   if (!isSentFolder) {
@@ -5789,7 +5789,7 @@ function _showCardMenu(em, anchor) {
     const _checkForLabel = _cardForLabel ? _cardForLabel.querySelector('.email-card-done') : null;
     const _currentlyDone = _checkForLabel ? _checkForLabel.classList.contains('active') : !!em.is_answered;
     actions.push({
-      label: _currentlyDone ? 'Not Done' : 'Done',
+      label: _currentlyDone ? window.t('Not Done') : window.t('Done'),
       icon: _checkIcon,
       action: async () => {
         const card = anchor.closest('.doclib-card');
@@ -5813,7 +5813,7 @@ function _showCardMenu(em, anchor) {
       },
     });
     actions.push({
-      label: em.is_flagged ? 'Unfavorite' : 'Favorite (pin to top)',
+      label: em.is_flagged ? window.t('Unfavorite') : window.t('Favorite (pin to top)'),
       icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (em.is_flagged ? 'currentColor' : 'none') + '" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
       action: async () => {
         const next = !em.is_flagged;
@@ -5829,7 +5829,7 @@ function _showCardMenu(em, anchor) {
       },
     });
     actions.push({
-      label: 'Archive',
+      label: window.t('Archive'),
       icon: _archIcon,
       action: async () => {
         await fetch(`${API_BASE}/api/email/archive/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
@@ -5841,7 +5841,7 @@ function _showCardMenu(em, anchor) {
     });
   } else {
     actions.push({
-      label: em.is_flagged ? 'Unfavorite' : 'Favorite (pin to top)',
+      label: em.is_flagged ? window.t('Unfavorite') : window.t('Favorite (pin to top)'),
       icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (em.is_flagged ? 'currentColor' : 'none') + '" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
       action: async () => {
         const next = !em.is_flagged;
@@ -5857,7 +5857,7 @@ function _showCardMenu(em, anchor) {
       },
     });
     actions.push({
-      label: 'Archive',
+      label: window.t('Archive'),
       icon: _archIcon,
       action: async () => {
         await fetch(`${API_BASE}/api/email/archive/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
@@ -5876,7 +5876,7 @@ function _showCardMenu(em, anchor) {
   // center lines up with the SVG icons above (which sit a bit higher).
   const _selectIcon = '<span style="font-size:16px;line-height:1;position:relative;top:-2px;">●</span>';
   actions.push({
-    label: 'Select',
+    label: window.t('Select'),
     icon: _selectIcon,
     action: () => {
       state._selectMode = true;
@@ -5887,9 +5887,9 @@ function _showCardMenu(em, anchor) {
   });
 
   actions.push(
-    { label: 'Delete', icon: _delIcon, danger: true, action: async () => {
-      const subject = em.subject || '(no subject)';
-      const ok = await styledConfirm(`Delete "${subject}"?`, { confirmText: 'Delete', cancelText: 'Cancel', danger: true });
+    { label: window.t('Delete'), icon: _delIcon, danger: true, action: async () => {
+      const subject = em.subject || window.t('(no subject)');
+      const ok = await styledConfirm(window.t('Delete "{subject}"?').replace('{subject}', subject), { confirmText: window.t('Delete'), cancelText: window.t('Cancel'), danger: true });
       if (!ok) return;
       await fetch(`${API_BASE}/api/email/delete/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'DELETE' });
       await _animateEmailCardRemoval([em.uid]);
@@ -5920,7 +5920,7 @@ function _showCardMenu(em, anchor) {
   const _cancelIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
   const cancelItem = document.createElement('div');
   cancelItem.className = 'dropdown-item-compact dropdown-cancel-mobile';
-  cancelItem.innerHTML = _icon(_cancelIco) + '<span>Cancel</span>';
+  cancelItem.innerHTML = _icon(_cancelIco) + '<span>' + window.t('Cancel') + '</span>';
   cancelItem.addEventListener('click', (e) => {
     e.stopPropagation();
     close();
@@ -5946,9 +5946,9 @@ function _showBulkActionsMenu(anchor) {
   const _unreadIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>';
   const _doneIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
   const items = [
-    { label: 'Done', icon: _doneIco, action: () => _bulkAction('done') },
-    { label: 'Mark Read', icon: _readIco, action: () => _bulkAction('read') },
-    { label: 'Mark Unread', icon: _unreadIco, action: () => _bulkAction('unread') },
+    { label: window.t('Done'), icon: _doneIco, action: () => _bulkAction('done') },
+    { label: window.t('Mark Read'), icon: _readIco, action: () => _bulkAction('read') },
+    { label: window.t('Mark Unread'), icon: _unreadIco, action: () => _bulkAction('unread') },
   ];
   for (const a of items) {
     const it = document.createElement('div');
@@ -5961,7 +5961,7 @@ function _showBulkActionsMenu(anchor) {
   const _cancelIco2 = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
   const cancelIt = document.createElement('div');
   cancelIt.className = 'dropdown-item-compact dropdown-cancel-mobile';
-  cancelIt.innerHTML = `<span class="dropdown-icon">${_cancelIco2}</span><span>Cancel</span>`;
+  cancelIt.innerHTML = `<span class="dropdown-icon">${_cancelIco2}</span><span>${window.t('Cancel')}</span>`;
   cancelIt.addEventListener('click', (e) => {
     e.stopPropagation();
     close();
@@ -5985,11 +5985,11 @@ function _updateBulkBar() {
   const selectBtn = document.getElementById('email-lib-select-btn');
   if (bar) bar.classList.toggle('hidden', !state._selectMode);
   if (selectBtn) {
-    selectBtn.textContent = state._selectMode ? 'Cancel' : 'Select';
+    selectBtn.textContent = state._selectMode ? window.t('Cancel') : window.t('Select');
     selectBtn.classList.toggle('active', state._selectMode);
   }
   const count = document.getElementById('email-lib-selected-count');
-  if (count) count.textContent = `${state._selectedUids.size} Selected`;
+  if (count) count.textContent = window.t('{n} Selected').replace('{n}', state._selectedUids.size);
   const all = document.getElementById('email-lib-select-all');
   if (all) all.checked = state._libEmails.length > 0 && state._libEmails.every(e => state._selectedUids.has(e.uid));
   // When something's selected, brighten Actions to the same full --fg color as
@@ -6006,8 +6006,8 @@ async function _bulkAction(action) {
   let failedReadSync = 0;
   if (action === 'delete') {
     const ok = await styledConfirm(
-      `Delete ${uids.length} selected email${uids.length === 1 ? '' : 's'}?`,
-      { confirmText: 'Delete', cancelText: 'Cancel', danger: true },
+      window.t('Delete {n} selected email{s}?').replace('{n}', uids.length).replace('{s}', uids.length === 1 ? '' : 's'),
+      { confirmText: window.t('Delete'), cancelText: window.t('Cancel'), danger: true },
     );
     if (!ok) return;
   }
@@ -6026,12 +6026,12 @@ async function _bulkAction(action) {
   // Actions button (or Delete button) shows a whirlpool + verb-ing
   // label, and the count surfaces progress.
   const verbing = {
-    delete: 'Deleting',
-    archive: 'Archiving',
-    done: 'Marking done',
-    read: 'Marking read',
-    unread: 'Marking unread',
-  }[action] || 'Updating';
+    delete: window.t('Deleting'),
+    archive: window.t('Archiving'),
+    done: window.t('Marking done'),
+    read: window.t('Marking read'),
+    unread: window.t('Marking unread'),
+  }[action] || window.t('Updating');
   const targetBtn = action === 'delete' ? deleteBtn : actionsBtn;
   let originalTargetHtml = '';
   if (targetBtn) {
@@ -6049,7 +6049,7 @@ async function _bulkAction(action) {
   if (action === 'delete' && actionsBtn) actionsBtn.disabled = true;
   if (cancelBtn) cancelBtn.disabled = true;
   if (selectAll) selectAll.disabled = true;
-  if (countEl) countEl.textContent = `${verbing} ${uids.length}…`;
+  if (countEl) countEl.textContent = window.t('{verb} {n}…').replace('{verb}', verbing).replace('{n}', uids.length);
 
   // Single-uid worker.
   const handleOne = async (uid) => {
@@ -6101,7 +6101,7 @@ async function _bulkAction(action) {
           handleOne(uid).finally(() => {
             inFlight--;
             finishedCount++;
-            if (countEl) countEl.textContent = `${verbing} ${finishedCount}/${queue.length}…`;
+            if (countEl) countEl.textContent = window.t('{verb} {done}/{total}…').replace('{verb}', verbing).replace('{done}', finishedCount).replace('{total}', queue.length);
             if (nextSlot >= queue.length && inFlight === 0) resolve();
             else launch();
           });
@@ -6146,7 +6146,7 @@ async function _bulkAction(action) {
   _updateBulkBar();
   _renderGrid();
   if (failedReadSync > 0) {
-    showToast(`Failed to update ${failedReadSync} email${failedReadSync === 1 ? '' : 's'}`);
+    showToast(window.t('Failed to update {n} email{s}').replace('{n}', failedReadSync).replace('{s}', failedReadSync === 1 ? '' : 's'));
   }
   // Sync successful local mutations into the SWR cache so reopen doesn't
   // briefly show the pre-bulk state.
@@ -6236,15 +6236,15 @@ function _showAiReplyChoice(btn, em, data) {
   // filled circle so it reads as a complement to the lightning, not as a "stop".
   menu.innerHTML = `
     <div class="email-ai-reply-row" style="display:flex;flex-direction:column;gap:6px;min-width:180px;">
-      <textarea data-note-input rows="2" placeholder="Add context (optional)" style="width:100%;box-sizing:border-box;resize:vertical;min-height:42px;font-family:inherit;font-size:11px;padding:5px 6px;border-radius:5px;border:1px solid var(--border,#333);background:var(--bg-elev,#1a1a1a);color:var(--fg);"></textarea>
+      <textarea data-note-input rows="2" placeholder="${window.t('Add context (optional)')}" style="width:100%;box-sizing:border-box;resize:vertical;min-height:42px;font-family:inherit;font-size:11px;padding:5px 6px;border-radius:5px;border:1px solid var(--border,#333);background:var(--bg-elev,#1a1a1a);color:var(--fg);"></textarea>
       <div style="display:flex;align-items:center;gap:4px;">
-        <button class="memory-toolbar-btn" data-mode="ai-reply-fast" title="Shorter, faster draft" style="display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:1;">
+        <button class="memory-toolbar-btn" data-mode="ai-reply-fast" title="${window.t('Shorter, faster draft')}" style="display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:1;">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="var(--accent, var(--red))" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-          Fast
+          ${window.t('Fast')}
         </button>
-        <button class="memory-toolbar-btn" data-mode="ai-reply-full" title="Uses the fuller reply context" style="display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:1;">
+        <button class="memory-toolbar-btn" data-mode="ai-reply-full" title="${window.t('Uses the fuller reply context')}" style="display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:1;">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="color:var(--accent, var(--red));"><circle cx="12" cy="12" r="6"/></svg>
-          Full
+          ${window.t('Full')}
         </button>
       </div>
     </div>
@@ -6326,7 +6326,7 @@ function _showLibRemindSubmenu(em, parentDropdown) {
   const header = document.createElement('div');
   header.className = 'dropdown-item-compact';
   header.style.cssText = 'opacity:0.5;font-size:10px;pointer-events:none;text-transform:uppercase;letter-spacing:0.5px;padding-top:6px;';
-  header.innerHTML = '<span>Remind me</span>';
+  header.innerHTML = '<span>' + window.t('Remind me') + '</span>';
   parentDropdown.appendChild(header);
 
   const now = new Date();
@@ -6339,9 +6339,9 @@ function _showLibRemindSubmenu(em, parentDropdown) {
   const nextWeek = new Date(now); nextWeek.setDate(now.getDate()+daysUntilMon); nextWeek.setHours(8,0,0,0);
 
   const presets = [
-    { label: 'Later today', sub: laterToday.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' }), date: laterToday },
-    { label: 'Tomorrow', sub: tomorrow.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' }), date: tomorrow },
-    { label: 'Next week', sub: nextWeek.toLocaleDateString([], { weekday:'short' }) + ' ' + nextWeek.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' }), date: nextWeek },
+    { label: window.t('Later today'), sub: laterToday.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' }), date: laterToday },
+    { label: window.t('Tomorrow'), sub: tomorrow.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' }), date: tomorrow },
+    { label: window.t('Next week'), sub: nextWeek.toLocaleDateString([], { weekday:'short' }) + ' ' + nextWeek.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' }), date: nextWeek },
   ];
   for (const p of presets) {
     const item = document.createElement('div');
@@ -6356,7 +6356,7 @@ function _showLibRemindSubmenu(em, parentDropdown) {
   }
   const customItem = document.createElement('div');
   customItem.className = 'dropdown-item-compact';
-  customItem.innerHTML = '<span>Pick date and time…</span>';
+  customItem.innerHTML = '<span>' + window.t('Pick date and time…') + '</span>';
   customItem.addEventListener('click', (e) => {
     e.stopPropagation();
     parentDropdown.remove();
@@ -6380,7 +6380,7 @@ function _showLibRemindSubmenu(em, parentDropdown) {
   // due_date, so no timer/reminder fires.
   const noteItem = document.createElement('div');
   noteItem.className = 'dropdown-item-compact';
-  noteItem.innerHTML = '<span>Note</span>';
+  noteItem.innerHTML = '<span>' + window.t('Note') + '</span>';
   noteItem.addEventListener('click', (e) => {
     e.stopPropagation();
     parentDropdown.remove();
@@ -6394,13 +6394,13 @@ function _promptEmailNote(em) {
   overlay.style.cssText = 'position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;padding:16px;';
   const card = document.createElement('div');
   card.style.cssText = 'background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;min-width:280px;max-width:min(420px, 92vw);display:flex;flex-direction:column;gap:8px;box-shadow:0 12px 32px rgba(0,0,0,0.4);';
-  const subject = em.subject || '(no subject)';
+  const subject = em.subject || window.t('(no subject)');
   card.innerHTML = `
-    <div style="font-size:11px;opacity:0.6;">Note about ${_esc(subject)}</div>
-    <textarea data-note placeholder="Write your note…" rows="4" style="resize:vertical;min-height:80px;font-family:inherit;font-size:12px;padding:7px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-elev,#1a1a1a);color:var(--fg);box-sizing:border-box;width:100%;"></textarea>
+    <div style="font-size:11px;opacity:0.6;">${window.t('Note about {subject}').replace('{subject}', _esc(subject))}</div>
+    <textarea data-note placeholder="${window.t('Write your note…')}" rows="4" style="resize:vertical;min-height:80px;font-family:inherit;font-size:12px;padding:7px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-elev,#1a1a1a);color:var(--fg);box-sizing:border-box;width:100%;"></textarea>
     <div style="display:flex;gap:6px;justify-content:flex-end;">
-      <button class="memory-toolbar-btn" data-act="cancel">Cancel</button>
-      <button class="memory-toolbar-btn active" data-act="save">Save</button>
+      <button class="memory-toolbar-btn" data-act="cancel">${window.t('Cancel')}</button>
+      <button class="memory-toolbar-btn active" data-act="save">${window.t('Save')}</button>
     </div>
   `;
   overlay.appendChild(card);
@@ -6429,7 +6429,7 @@ async function _createEmailReplyReminder(em, dueDate, customText = '') {
     : null;
   const fullFrom = em.from || em.sender || '';
   // Extract just the first name from "First Last <email@x>" or fall back to email local part
-  let from = 'someone';
+  let from = window.t('someone');
   if (fullFrom) {
     const fullName = _extractName(fullFrom);
     if (fullName) {
@@ -6438,17 +6438,17 @@ async function _createEmailReplyReminder(em, dueDate, customText = '') {
       if (first) from = first.charAt(0).toUpperCase() + first.slice(1);
     }
   }
-  const subject = em.subject || '(no subject)';
+  const subject = em.subject || window.t('(no subject)');
   const folder = state._libFolder || 'INBOX';
   const deepLink = `${window.location.origin}/#email=${encodeURIComponent(folder)}:${em.uid}`;
-  const itemText = customText || `Reply to ${from}: ${subject}`;
+  const itemText = customText || window.t('Reply to {from}: {subject}').replace('{from}', from).replace('{subject}', subject);
   const payload = {
-    title: `Reply: ${subject}`,
+    title: window.t('Reply: {subject}').replace('{subject}', subject),
     note_type: 'todo',
     items: [
       { text: itemText, checked: false },
     ],
-    content: `Open email: ${deepLink}`,
+    content: window.t('Open email: {link}').replace('{link}', deepLink),
     label: 'email reminder',
     source: 'email',
   };
@@ -6463,16 +6463,16 @@ async function _createEmailReplyReminder(em, dueDate, customText = '') {
     const { showToast } = await import('./ui.js');
     if (dueDate) {
       const fmt = dueDate.toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
-      showToast(`Todo reminder set for ${fmt}`);
+      showToast(window.t('Todo reminder set for {date}').replace('{date}', fmt));
     } else {
-      showToast('Reply note saved');
+      showToast(window.t('Reply note saved'));
     }
     if ('Notification' in window && Notification.permission === 'default') {
       try { Notification.requestPermission(); } catch {}
     }
   } catch (e) {
     const { showError } = await import('./ui.js');
-    showError('Failed to create reminder');
+    showError(window.t('Failed to create reminder'));
   }
 }
 
