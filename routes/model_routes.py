@@ -265,6 +265,16 @@ _PROVIDER_CURATED = {
     "xai": [
         "grok-4.3", "grok-4", "grok-4-fast", "grok-3", "grok-3-fast",
     ],
+    "cloudflare": [
+        "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        "@cf/meta/llama-3.1-8b-instruct-fast",
+        "@cf/meta/llama-3.2-3b-instruct",
+        "@cf/openai/gpt-oss-120b",
+        "@cf/qwen/qwen3-30b-a3b-fp8",
+        "@cf/moonshotai/kimi-k2.7-code",
+        "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
+        "@cf/mistral/mistral-7b-instruct-v0.2-lora",
+    ],
 }
 
 # Map hostnames → curated-list keys for providers whose _detect_provider()
@@ -285,6 +295,7 @@ _HOST_TO_CURATED = (
     ("x.ai", "xai"),
     ("openrouter.ai", "openrouter"),
     ("ollama.com", "ollama"),
+    ("cloudflare.com", "cloudflare"),
 )
 
 
@@ -668,12 +679,15 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         if api_key:
             status = e.response.status_code if e.response is not None else "unknown"
             logger.warning(f"Failed to probe {url} with API key: HTTP {status}")
-            return []
+            # Cloudflare does not implement /v1/models — fall through to curated list
+            if "cloudflare.com" not in url:
+                return []
         logger.warning(f"Failed to probe {url}: {e}")
     except Exception as e:
         if api_key:
             logger.warning(f"Failed to probe {url} with API key: {e}")
-            return []
+            if "cloudflare.com" not in url:
+                return []
         logger.warning(f"Failed to probe {url}: {e}")
 
     # Older Ollama builds and some proxies expose native /api/tags even when
@@ -753,6 +767,9 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
     except Exception:
         pass
 
+    # Cloudflare Workers AI returns 400 on GET /v1 — treat as reachable
+    if "cloudflare.com" in base:
+        return {"reachable": True, "status_code": 200, "error": None}
     try:
         r = httpx.get(base, headers=headers, timeout=timeout, verify=llm_verify())
         return _result_from_response(r)

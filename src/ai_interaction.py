@@ -125,6 +125,10 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
                 except Exception:
                     model_ids = []
 
+                # Cloudflare Workers AI does not implement /v1/models — skip probe
+                if not model_ids and "cloudflare.com" in base:
+                    return build_chat_url(base), model_name, headers
+
                 # Exact match first
                 for mid in model_ids:
                     if mid.lower() == model_name.lower():
