@@ -418,6 +418,8 @@ def _detect_provider(url: str) -> str:
         return "openrouter"
     if _host_match(url, "groq.com"):
         return "groq"
+    if _host_match(url, "cloudflare.com"):
+        return "cloudflare"
     from src.copilot import is_copilot_base
     if is_copilot_base(url):
         return "copilot"

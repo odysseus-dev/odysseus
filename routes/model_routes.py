@@ -680,13 +680,13 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
             status = e.response.status_code if e.response is not None else "unknown"
             logger.warning(f"Failed to probe {url} with API key: HTTP {status}")
             # Cloudflare does not implement /v1/models — fall through to curated list
-            if "cloudflare.com" not in url:
+            if _detect_provider(url) != "cloudflare":
                 return []
         logger.warning(f"Failed to probe {url}: {e}")
     except Exception as e:
         if api_key:
             logger.warning(f"Failed to probe {url} with API key: {e}")
-            if "cloudflare.com" not in url:
+            if _detect_provider(url) != "cloudflare":
                 return []
         logger.warning(f"Failed to probe {url}: {e}")
 
@@ -768,7 +768,7 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
         pass
 
     # Cloudflare Workers AI returns 400 on GET /v1 — treat as reachable
-    if "cloudflare.com" in base:
+    if _detect_provider(base) == "cloudflare":
         return {"reachable": True, "status_code": 200, "error": None}
     try:
         r = httpx.get(base, headers=headers, timeout=timeout, verify=llm_verify())

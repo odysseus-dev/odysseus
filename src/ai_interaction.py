@@ -126,7 +126,7 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
                     model_ids = []
 
                 # Cloudflare Workers AI does not implement /v1/models — skip probe
-                if not model_ids and "cloudflare.com" in base:
+                if not model_ids and _detect_provider(base) == "cloudflare":
                     return build_chat_url(base), model_name, headers
 
                 # Exact match first
