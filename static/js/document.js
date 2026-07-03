@@ -7040,8 +7040,8 @@ import { t } from './i18n.js';
       s.startLine === s.endLine ? `L${s.startLine}` : `L${s.startLine}-${s.endLine}`
     );
     const label = _selections.length === 1
-      ? `${labels[0]} selected`
-      : `${_selections.length} selections (${labels.join(', ')})`;
+      ? t('{line} selected', { line: labels[0] })
+      : t('{count} selections ({lines})', { count: _selections.length, lines: labels.join(', ') });
     badge.innerHTML = `${label}<button class="doc-selection-clear" title="Clear all selections">&times;</button>`;
     badge.style.display = '';
     badge.querySelector('.doc-selection-clear').addEventListener('click', (e) => {
@@ -7817,7 +7817,9 @@ import { t } from './i18n.js';
     const el = statusEl || document.getElementById('diff-toolbar-status');
     if (!el) return;
     const resolved = _diffChunks.length - _diffUnresolvedCount;
-    el.textContent = `${resolved} / ${_diffChunks.length} changes resolved`;
+    el.textContent = _diffChunks.length === 1
+      ? t('{resolved} / 1 change resolved', { resolved })
+      : t('{resolved} / {total} changes resolved', { resolved, total: _diffChunks.length });
   }
 
   /** Resolve a single chunk */
@@ -8436,7 +8438,7 @@ import { t } from './i18n.js';
 
     await loadDocument(draftId);
     _renderComposeAttachments();
-    if (uiModule) uiModule.showToast(`Reply draft ready — "${att.filename}" attached`);
+    if (uiModule) uiModule.showToast(t('Reply draft ready — "{filename}" attached', { filename: att.filename }));
   }
 
   /** Save manual edits */
@@ -8617,7 +8619,7 @@ import { t } from './i18n.js';
           }
         }
       } catch (err) {
-        if (uiModule && uiModule.showError) uiModule.showError('Import failed: ' + (err.message || err));
+        if (uiModule && uiModule.showError) uiModule.showError(t('Import failed: {message}', { message: err.message || err }));
       } finally {
         fi.value = '';
         fi.remove();
@@ -8817,8 +8819,8 @@ import { t } from './i18n.js';
     const doc = docs.get(activeDocId);
     const name = doc ? doc.title : 'this document';
     const ok = uiModule && uiModule.styledConfirm
-      ? await uiModule.styledConfirm(`Delete "${name}"?`, { confirmText: 'Delete', danger: true })
-      : confirm(`Delete "${name}"?`);
+      ? await uiModule.styledConfirm(t('Delete "{name}"?', { name }), { confirmText: t('Delete'), danger: true })
+      : confirm(t('Delete "{name}"?', { name }));
     if (!ok) return;
     try {
       const res = await fetch(`${API_BASE}/api/document/${activeDocId}`, { method: 'DELETE' });
@@ -9885,9 +9887,9 @@ import { t } from './i18n.js';
         <div class="doc-version-item" data-version="${v.version_number}">
           <div class="doc-version-info">
             <span class="doc-version-num">v${v.version_number}</span>
-            ${i === 0 ? '<span class="doc-version-latest">latest</span>' : `<span class="doc-version-source">${v.source}</span><span class="doc-version-time">${v.created_at ? new Date(v.created_at).toLocaleString() : ''}</span>`}
+            ${i === 0 ? '<span class="doc-version-latest">latest</span>' : `<span class="doc-version-source">${_esc(v.source || '')}</span><span class="doc-version-time">${v.created_at ? new Date(v.created_at).toLocaleString() : ''}</span>`}
           </div>
-          ${v.summary ? `<div class="doc-version-summary">${v.summary}</div>` : ''}
+          ${v.summary ? `<div class="doc-version-summary">${_esc(v.summary)}</div>` : ''}
           ${diffs[i] ? `<div class="doc-version-diff">${diffs[i]}</div>` : ''}
           ${i > 0 ? `<button class="doc-version-restore" data-version="${v.version_number}">Restore</button>` : ''}
         </div>
@@ -9948,7 +9950,7 @@ import { t } from './i18n.js';
         d.version = doc.version_count || 1;
       }
       await loadVersionHistory();
-      if (uiModule) uiModule.showToast(`Restored to v${num}`);
+      if (uiModule) uiModule.showToast(t('Restored to v{version}', { version: num }));
     } catch (e) {
       console.error('Failed to restore version:', e);
       if (uiModule) uiModule.showError('Failed to restore version');
