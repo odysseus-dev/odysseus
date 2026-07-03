@@ -185,6 +185,71 @@ def parse_suggest_blocks(content: str) -> list:
     return suggestions
 
 
+def _pdf_source_upload_id(content: str) -> Optional[str]:
+    try:
+        from src.pdf_form_doc import find_source_upload_id
+        return find_source_upload_id(content or "")
+    except Exception:
+        return None
+
+
+def _strip_pdf_editor_markers(content: str) -> str:
+    """Turn a PDF-wrapper markdown doc into ordinary editable markdown.
+
+    PDF docs use hidden HTML comments for source-upload links, form fields, and
+    page annotations. Those comments are necessary for rendering/exporting the
+    original PDF, but they make a derived AI text edit keep showing the original
+    PDF preview. Remove only the editor plumbing and keep the readable text.
+    """
+    text = content or ""
+    text = re.sub(r'(?im)^\s*<!--\s*pdf(?:_form)?_source\s+[^>]*-->\s*\n*', '', text)
+    text = re.sub(r'\s*<!--\s*field=[^>]*-->', '', text)
+    text = re.sub(r'\s*<!--\s*annotation\s+[^>]*-->', '', text)
+    return text.strip()
+
+
+def _create_pdf_text_derivative(db, *, source_doc, content: str, owner: Optional[str], summary: str) -> dict:
+    import uuid
+    from src.database import Document, DocumentVersion
+
+    clean = _strip_pdf_editor_markers(content)
+    title_base = (getattr(source_doc, "title", None) or "PDF").strip()
+    title = title_base if title_base.lower().endswith("edited") else f"{title_base} edited"
+    doc_id = str(uuid.uuid4())
+    ver_id = str(uuid.uuid4())
+    new_doc = Document(
+        id=doc_id,
+        session_id=getattr(source_doc, "session_id", None),
+        title=title,
+        language="markdown",
+        current_content=clean,
+        version_count=1,
+        is_active=True,
+        owner=owner if owner is not None else getattr(source_doc, "owner", None),
+    )
+    ver = DocumentVersion(
+        id=ver_id,
+        document_id=doc_id,
+        version_number=1,
+        content=clean,
+        summary=summary,
+        source="ai",
+    )
+    db.add(new_doc)
+    db.add(ver)
+    db.commit()
+    set_active_document(doc_id)
+    return {
+        "action": "create",
+        "doc_id": doc_id,
+        "title": title,
+        "language": "markdown",
+        "content": clean,
+        "version": 1,
+        "source_doc_id": getattr(source_doc, "id", None),
+    }
+
+
 class CreateDocumentTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         """Create a new document. Supports two formats:
@@ -332,6 +397,15 @@ class UpdateDocumentTool:
             if is_email_doc:
                 doc.language = "email"
 
+            if not is_email_doc and _pdf_source_upload_id(doc.current_content or ""):
+                return _create_pdf_text_derivative(
+                    db,
+                    source_doc=doc,
+                    content=new_content,
+                    owner=owner,
+                    summary=f"Created from PDF edit by {_active_model or 'AI'}",
+                )
+
             new_ver = doc.version_count + 1
             ver = DocumentVersion(
                 id=str(uuid.uuid4()),
@@ -415,6 +489,15 @@ class EditDocumentTool:
 
             if applied == 0:
                 return {"error": f"No edits applied — none of the FIND blocks matched the document content (skipped {skipped})"}
+
+            if _pdf_source_upload_id(doc.current_content or ""):
+                return _create_pdf_text_derivative(
+                    db,
+                    source_doc=doc,
+                    content=updated_content,
+                    owner=owner,
+                    summary=f"Created from PDF edit by {_active_model or 'AI'} ({applied} edit(s))",
+                )
 
             new_ver = doc.version_count + 1
             ver = DocumentVersion(
@@ -564,9 +647,20 @@ class ManageDocumentTool:
                 if not doc:
                     return {"error": f"Document '{doc_id}' not found", "exit_code": 1}
                 body = doc.current_content or ""
-                preview_limit = int(args.get("limit", MAX_READ_CHARS))
-                truncated = len(body) > preview_limit
-                preview = body[:preview_limit] + (f"\n... (truncated, {len(body)} chars total)" if truncated else "")
+                try:
+                    preview_limit = max(1, min(int(args.get("limit", MAX_READ_CHARS)), MAX_READ_CHARS))
+                except (TypeError, ValueError):
+                    preview_limit = MAX_READ_CHARS
+                try:
+                    offset = max(0, int(args.get("offset", 0) or 0))
+                except (TypeError, ValueError):
+                    offset = 0
+                offset = min(offset, len(body))
+                end = min(offset + preview_limit, len(body))
+                truncated = end < len(body)
+                preview = body[offset:end]
+                if truncated:
+                    preview += f"\n... (truncated, {len(body)} chars total; next_offset={end})"
                 anchor = f"[{doc.title}](#document-{doc.id})"
                 return {
                     "response": f"{anchor} — click to open in editor.\n\n```{doc.language or ''}\n{preview}\n```",
@@ -577,6 +671,8 @@ class ManageDocumentTool:
                         "size": len(body),
                         "content": preview,
                         "truncated": truncated,
+                        "offset": offset,
+                        "next_offset": end if truncated else None,
                     },
                     "exit_code": 0,
                 }
