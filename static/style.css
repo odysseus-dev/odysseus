@@ -32396,7 +32396,24 @@ body.doc-find-active mark.doc-find-mark.current {
 .email-urgency-check {
   flex-direction: row !important;
   align-items: center;
+  gap: 6px !important;
   font-weight: 600 !important;
+  line-height: 1.2;
+  min-height: 16px;
+  transform: none;
+  transition: none;
+}
+.email-urgency-check input[type="checkbox"] {
+  flex: 0 0 13px;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  transform: none;
+  transition: none;
+}
+.email-urgency-check:hover,
+.email-urgency-check:hover input[type="checkbox"] {
+  transform: none;
 }
 .email-urgency-actions {
   display: flex;
