@@ -110,6 +110,31 @@ def timezone_label(dt: Optional[datetime] = None) -> str:
     return f"{name}, {offset_label}" if name else offset_label
 
 
+def _week_block(local_now: datetime) -> str:
+    """Precomputed week context so models never derive weekday/week math.
+
+    Local models spend whole thinking budgets (and still guess wrong —
+    Sunday-start weeks, misassigned weekday names) when asked for "this
+    week". Hand them the ISO 8601 answer: week number, Monday–Sunday
+    bounds, and an explicit weekday→date map they can copy into tool args.
+    """
+    monday = local_now - timedelta(days=local_now.weekday())
+    days = [monday + timedelta(days=i) for i in range(7)]
+    day_map = ", ".join(f"{d.strftime('%A')}={d.strftime('%Y-%m-%d')}" for d in days)
+    prev_monday, prev_sunday = days[0] - timedelta(days=7), days[0] - timedelta(days=1)
+    next_monday, next_sunday = days[6] + timedelta(days=1), days[6] + timedelta(days=7)
+    week_no = local_now.isocalendar()[1]
+    return (
+        "Weeks run Monday through Sunday (ISO 8601). "
+        f"This week is ISO week {week_no}: {day_map}.\n"
+        f"Last week: {prev_monday.strftime('%Y-%m-%d')} (Mon) to {prev_sunday.strftime('%Y-%m-%d')} (Sun); "
+        f"next week: {next_monday.strftime('%Y-%m-%d')} (Mon) to {next_sunday.strftime('%Y-%m-%d')} (Sun).\n"
+        "These dates and the UTC offset above are already fully resolved "
+        "(daylight saving included) — copy them as-is; never re-derive "
+        "weekdays, week bounds, or DST adjustments yourself.\n"
+    )
+
+
 def current_datetime_prompt(now_utc: Optional[datetime] = None) -> str:
     """Build reusable system prompt text for date/time reasoning."""
     if now_utc is None:
@@ -128,6 +153,7 @@ def current_datetime_prompt(now_utc: Optional[datetime] = None) -> str:
         f"current UTC time is {utc_now.strftime('%H:%M')}.\n"
         f"Tomorrow is {_date_label(tomorrow)} ({tomorrow.strftime('%Y-%m-%d')}) "
         "in the user's local timezone.\n"
+        + _week_block(local_now) +
         "Use this for any 'today', 'tomorrow', 'tonight', 'this week', or other "
         "relative-date reasoning. Do not ask for an exact date just because the "
         "user used a relative date.\n"
@@ -188,6 +214,7 @@ def current_datetime_context_message_for_tz(
         f"current UTC time is {utc_now.strftime('%H:%M')}.\n"
         f"Tomorrow is {_date_label(tomorrow)} ({tomorrow.strftime('%Y-%m-%d')}) "
         "in this timezone.\n"
+        + _week_block(local_now) +
         "Use this for any 'today', 'tomorrow', 'tonight', 'this week', or other "
         "relative-date reasoning. Do not ask for an exact date just because the "
         "user used a relative date.\n\n"
