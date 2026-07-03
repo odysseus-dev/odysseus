@@ -1625,6 +1625,27 @@ def test_workspace_catalog_has_complete_contextual_portuguese_copy() -> None:
         "Use this folder": "Usar esta pasta",
         "Workspace set: {name}": "Área de trabalho definida: {name}",
         "Could not browse folders": "Não foi possível navegar pelas pastas",
+        # tourHints.js
+        "Pro tip:": "Dica:",
+        "drag any window's title bar to a screen edge to snap it. Drag to "
+        "the top for fullscreen.": (
+            "arraste a barra de título de qualquer janela até a borda da tela "
+            "para encaixá-la. Arraste até o topo para tela cheia."
+        ),
+        "Got it": "Entendi",
+        # section-management.js
+        "Collapse section": "Recolher seção",
+        # fileHandler.js
+        "file": "arquivo",
+        "files": "arquivos",
+        "pasted-image": "imagem-colada",
+        "Remove all": "Remover todos",
+        "Remove attachment": "Remover anexo",
+        "image": "imagem",
+        "Upload failed": "Falha no envio",
+        "Max {n} files allowed": "Máximo de {n} arquivos permitidos",
+        # censor.js
+        "Click to reveal {label}": "Clique para revelar {label}",
     }
 
     assert catalog == expected

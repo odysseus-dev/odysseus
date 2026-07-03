@@ -97,7 +97,6 @@ registerMessages('pt-BR', {
 
   // --- reader header ---
   'From:': 'De:',
-  'Cc:': 'Cc:',
   'Show recipients': 'Mostrar destinatarios',
   'AI Reply (cached draft ready)': 'Resposta com IA (rascunho em cache pronto)',
   'AI Reply (suggest a draft)': 'Resposta com IA (sugerir rascunho)',
