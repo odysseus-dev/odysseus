@@ -758,12 +758,16 @@ def _upload_file_report(
                 _upload_sample(record, upload_dir, manifest_ids, live_upload_ids)
             )
 
+    traversal_unreadable = state.skipped_unreadable_count > 0
+    traversal_incomplete = state.truncated or traversal_unreadable
     if state.truncated:
         warnings.append("upload_traversal_truncated")
+    if traversal_unreadable:
+        warnings.append("upload_traversal_unreadable")
     return {
-        "file_count": None if state.truncated else file_count,
+        "file_count": None if traversal_incomplete else file_count,
         "file_count_observed": file_count,
-        "total_size_bytes": None if state.truncated else total_size,
+        "total_size_bytes": None if traversal_incomplete else total_size,
         "total_size_bytes_observed": total_size,
         "truncated": state.truncated,
         "visited_files": state.visited_files,
@@ -774,7 +778,9 @@ def _upload_file_report(
             observed_count=orphan_count,
             sample=orphan_sample,
             reference_scan_complete=reference_scan_complete,
-            upload_traversal_complete=not state.truncated,
+            upload_traversal_complete=not traversal_incomplete,
+            upload_traversal_truncated=state.truncated,
+            upload_traversal_unreadable=traversal_unreadable,
         ),
     }
 
@@ -785,12 +791,18 @@ def _suspected_orphan_report(
     sample: list[dict[str, Any]],
     reference_scan_complete: bool,
     upload_traversal_complete: bool,
+    upload_traversal_truncated: bool = False,
+    upload_traversal_unreadable: bool = False,
 ) -> dict[str, Any]:
     reasons: list[str] = []
     if not reference_scan_complete:
         reasons.append("db_reference_scan_incomplete")
-    if not upload_traversal_complete:
+    if upload_traversal_truncated or (
+        not upload_traversal_complete and not upload_traversal_unreadable
+    ):
         reasons.append("upload_traversal_truncated")
+    if upload_traversal_unreadable:
+        reasons.append("upload_traversal_unreadable")
     complete = not reasons
     return {
         "definitive": complete,
@@ -918,7 +930,20 @@ def _upload_sample(
 
 
 def _upload_file_is_live(path: Path, live_upload_ids: set[str]) -> bool:
-    return path.name in live_upload_ids or path.stem in live_upload_ids
+    if path.name in live_upload_ids or path.stem in live_upload_ids:
+        return True
+    sidecar_source = _pdf_form_sidecar_source_id(path.name)
+    if sidecar_source is None:
+        return False
+    return sidecar_source in live_upload_ids or Path(sidecar_source).stem in live_upload_ids
+
+
+def _pdf_form_sidecar_source_id(filename: str) -> str | None:
+    suffix = ".fields.json"
+    if not filename.endswith(suffix):
+        return None
+    source_name = filename[:-len(suffix)]
+    return source_name or None
 
 
 def _upload_file_in_manifest(path: Path, manifest_ids: set[str]) -> bool:

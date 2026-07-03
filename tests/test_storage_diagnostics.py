@@ -612,3 +612,79 @@ def test_unsupported_database_sources_are_non_fatal(tmp_path, database_url, warn
     assert report["status"] == "success"
     assert report["database"]["path_present"] is False
     assert warning in report["warnings"]
+
+def test_unreadable_upload_traversal_makes_orphan_report_observed_only(monkeypatch, tmp_path):
+    db_path = tmp_path / "app.db"
+    conn = _init_db(db_path)
+    conn.close()
+
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+
+    def fake_iter_upload_files(_upload_dir, state):
+        state.skipped_unreadable_count += 1
+        if False:
+            yield None
+
+    monkeypatch.setattr(storage_diagnostics, "_iter_upload_files", fake_iter_upload_files)
+
+    report = collect_storage_bloat_diagnostics(db_path=db_path, upload_dir=upload_dir)
+    uploads = report["uploads"]
+    orphans = uploads["suspected_orphans"]
+
+    assert uploads["file_count"] is None
+    assert uploads["total_size_bytes"] is None
+    assert uploads["file_count_observed"] == 0
+    assert uploads["total_size_bytes_observed"] == 0
+    assert uploads["skipped_unreadable_count"] == 1
+    assert "upload_traversal_unreadable" in report["warnings"]
+
+    assert orphans["definitive"] is False
+    assert orphans["complete"] is False
+    assert orphans["observed_only"] is True
+    assert orphans["count"] is None
+    assert orphans["observed_count"] == 0
+    assert "upload_traversal_unreadable" in orphans["reason_incomplete"]
+    assert "upload_traversal_truncated" not in orphans["reason_incomplete"]
+
+
+def test_live_pdf_form_field_sidecar_is_not_suspected_orphan(tmp_path):
+    db_path = tmp_path / "app.db"
+    source_upload_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.pdf"
+    sidecar_name = f"{source_upload_id}.fields.json"
+
+    conn = _init_db(db_path)
+    conn.execute(
+        """
+        CREATE TABLE documents (
+            id TEXT PRIMARY KEY,
+            current_content TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO documents(id, current_content) VALUES (?, ?)",
+        (
+            "doc-1",
+            f'<!-- pdf_form_source upload_id="{source_upload_id}" -->\n# form doc',
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    (upload_dir / source_upload_id).write_bytes(b"%PDF-1.7")
+    (upload_dir / sidecar_name).write_text("{}", encoding="utf-8")
+
+    report = collect_storage_bloat_diagnostics(db_path=db_path, upload_dir=upload_dir)
+    uploads = report["uploads"]
+    orphans = uploads["suspected_orphans"]
+
+    assert report["database"]["upload_references"]["live_reference_count"] == 1
+    assert uploads["file_count"] == 2
+    assert uploads["file_count_observed"] == 2
+    assert orphans["definitive"] is True
+    assert orphans["count"] == 0
+    assert orphans["observed_count"] == 0
+    assert orphans["sample"] == []
