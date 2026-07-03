@@ -276,6 +276,7 @@ class GalleryImage(TimestampMixin, Base):
     id         = Column(String, primary_key=True, index=True)
     filename   = Column(String, nullable=False, unique=True)
     prompt     = Column(Text, nullable=False, default="")
+    caption    = Column(Text, nullable=True, default="")
     model      = Column(String, nullable=True)
     size       = Column(String, nullable=True)
     quality    = Column(String, nullable=True)
@@ -1182,6 +1183,29 @@ def _migrate_add_multiuser_owner_columns():
     _migrate_add_owner_to_table("documents", "ix_documents_owner")
 
 
+def _migrate_add_gallery_caption_column():
+    """Add OCR/vision caption storage for gallery images."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(gallery_images)").fetchall()]
+        if columns and "caption" not in columns:
+            conn.execute("ALTER TABLE gallery_images ADD COLUMN caption TEXT DEFAULT ''")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added caption column to gallery_images")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Migration gallery caption column failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _migrate_add_api_token_scopes_column():
     """Add API token scopes for existing installs.
 
@@ -1670,6 +1694,7 @@ class CalendarEvent(TimestampMixin, Base):
     # `Z`-suffix on serialization so the frontend interprets correctly.
     is_utc      = Column(Boolean, default=False, nullable=False)
     rrule       = Column(String, default="")
+    recurrence_exdates = Column(Text, default="")  # JSON list of skipped occurrence starts
     color       = Column(String, nullable=True)  # per-event color override
     status      = Column(String, default="confirmed")  # confirmed, cancelled
     importance  = Column(String, default="normal")    # low | normal | high | critical
@@ -1811,6 +1836,7 @@ def init_db():
     _migrate_add_token_columns()
     _migrate_add_mode_column()
     _migrate_add_multiuser_owner_columns()
+    _migrate_add_gallery_caption_column()
     _migrate_add_api_token_scopes_column()
     _migrate_backfill_document_owner_from_session()
     _migrate_assign_legacy_owner()
@@ -1833,6 +1859,7 @@ def init_db():
     _migrate_add_calendar_origin()
     _migrate_add_calendar_account_id()
     _migrate_add_caldav_sync_columns()
+    _migrate_add_calendar_recurrence_exdates()
     _migrate_chat_messages_fts()
     _migrate_encrypt_email_passwords()
     _migrate_encrypt_signatures()
@@ -2178,6 +2205,28 @@ def _migrate_add_calendar_metadata():
         conn.commit()
     except Exception as e:
         logging.getLogger(__name__).warning(f"calendar_events migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _migrate_add_calendar_recurrence_exdates():
+    """Add skipped recurrence occurrences for deleting one instance of a series."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(calendar_events)").fetchall()]
+        if columns and "recurrence_exdates" not in columns:
+            conn.execute("ALTER TABLE calendar_events ADD COLUMN recurrence_exdates TEXT DEFAULT ''")
+        conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"calendar_events recurrence_exdates migration failed: {e}")
     finally:
         try:
             conn.close()

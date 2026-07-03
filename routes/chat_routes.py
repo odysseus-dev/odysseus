@@ -730,6 +730,15 @@ def setup_chat_routes(
                 else:
                     logger.warning(f"[doc-inject] NOT FOUND by ID {active_doc_id}")
             if not active_doc:
+                _email_doc_q = _doc_db.query(DBDocument).filter(
+                    DBDocument.session_id == session,
+                    DBDocument.is_active == True,
+                    DBDocument.language == "email",
+                )
+                active_doc = _owner_session_filter(_email_doc_q, ctx.user).order_by(DBDocument.updated_at.desc()).first()
+                if active_doc:
+                    logger.info(f"[doc-inject] found email draft by session fallback: title={active_doc.title!r}")
+            if not active_doc:
                 _session_doc_q = _doc_db.query(DBDocument).filter(
                     DBDocument.session_id == session,
                     DBDocument.is_active == True
@@ -790,19 +799,19 @@ def setup_chat_routes(
                 "manage_skills",      # skill presets tied to user
             })
 
-        # Active email reader open → strip the tools that let the agent
-        # "drift" to a new compose: create_document (writes a fake email-
-        # shaped .md file) and send_email (sends fresh to a recipient the
-        # agent invented). With those gone, the only paths left for "write
-        # email saying X" are ui_control open_email_reply (draft) and
-        # reply_to_email (immediate send) — both of which use the open
-        # email's UID. Code-level enforcement instead of relying on a
-        # prompt rule the model can ignore.
+        # Active email reader open → strip the tools that let the agent drift
+        # away from the visible email or skip review. The only allowed compose
+        # path is ui_control open_email_reply, which opens the same draft editor
+        # as the Reply button with the generated body pre-filled. This prevents
+        # the model from falling back to direct SMTP when it botches a draft
+        # call, and prevents fake email-shaped documents.
         if active_email_ctx and active_email_ctx.get("uid"):
             disabled_tools.update({
                 "create_document",
                 "send_email",
+                "reply_to_email",
                 "mcp__email__send_email",
+                "mcp__email__reply_to_email",
             })
 
         # Enforce per-user privileges
@@ -1255,7 +1264,14 @@ def setup_chat_routes(
                 try:
                     from src.settings import get_setting
                     from src.agent_tools import MAX_AGENT_ROUNDS as _DEFAULT_ROUNDS
-                    _tool_budget = int(get_setting("agent_max_tool_calls", 0))
+                    # Per-message tool budget from settings; guard defensively in
+                    # case settings.json was hand-edited to a non-numeric value
+                    # (the HTTP admin endpoint validates, but direct edits bypass
+                    # it). 0 = unlimited, matching auth_routes set_settings().
+                    try:
+                        _tool_budget = int(get_setting("agent_max_tool_calls", 0))
+                    except (TypeError, ValueError):
+                        _tool_budget = 0
                     # Per-message round cap from settings; clamp defensively in
                     # case settings.json was hand-edited to a bad value.
                     try:
@@ -1290,6 +1306,7 @@ def setup_chat_routes(
                         approved_plan=approved_plan or None,
                         workspace=workspace or None,
                         forced_tools=_forced_tools,
+                        uploaded_files=ctx.uploaded_files,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -1342,9 +1359,11 @@ def setup_chat_routes(
                         elif chunk.startswith("event: "):
                             yield chunk
                         elif chunk == "data: [DONE]\n\n":
-                            if full_response:
+                            _has_tool_events = bool((last_metrics or {}).get("tool_events"))
+                            if full_response or _has_tool_events:
+                                _response_to_save = full_response or "Done."
                                 _saved_id = save_assistant_response(
-                                    sess, session_manager, session, full_response, last_metrics,
+                                    sess, session_manager, session, _response_to_save, last_metrics,
                                     character_name=ctx.preset.character_name,
                                     web_sources=web_sources,
                                     rag_sources=ctx.rag_sources,
@@ -1354,7 +1373,7 @@ def setup_chat_routes(
                                 if _saved_id:
                                     yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
                                 run_post_response_tasks(
-                                    sess, session_manager, session, message, full_response,
+                                    sess, session_manager, session, message, _response_to_save,
                                     last_metrics, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
                                     incognito=incognito, compare_mode=compare_mode,
                                     character_name=ctx.preset.character_name,

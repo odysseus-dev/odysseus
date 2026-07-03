@@ -102,7 +102,7 @@ def test_local_windows_platform_comes_from_backend_host_state():
     assert "platform: _envState.hostPlatform || _envState.platform || ''" not in text
     assert 'return "windows" if IS_WINDOWS else ""' in routes
     assert 'env["hostPlatform"] = _client_host_platform()' in routes
-    assert "return _state_for_client({})" in routes
+    assert "client_state = _state_for_client({})" in routes
     assert 'env.pop("hostPlatform", None)' in routes
     assert "delete env.hostPlatform;" in running
 

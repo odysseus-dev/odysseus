@@ -499,7 +499,8 @@ async function loadEndpoints() {
       return;
     }
     const rowHtml = data.map(ep => {
-      const visibleCount = ep.models.length;
+      const epModels = Array.isArray(ep.models) ? ep.models : [];
+      const visibleCount = epModels.length;
       const totalCount = visibleCount + (ep.hidden_count || 0);
       // `ep.models` is the *visible* set — when every model is hidden it's
       // empty, but we still need to render the expand panel so the user can
@@ -1393,34 +1394,77 @@ function initEndpointForm() {
     _refreshOfflineCount();
   }
 
-  const probeAllBtn = el('adm-epProbeAllBtn');
-  if (probeAllBtn) {
-    probeAllBtn.addEventListener('click', async () => {
+  const _fetchWithTimeout = async (url, opts = {}, timeoutMs = 25000) => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...opts, signal: ctrl.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  const _collectAddedEndpointIds = async () => {
+    const domIds = Array.from(document.querySelectorAll('[data-adm-ep-id]'))
+      .map(r => r.getAttribute('data-adm-ep-id'))
+      .filter(Boolean);
+    if (domIds.length) return Array.from(new Set(domIds));
+    try {
+      const res = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+      const data = await res.json().catch(() => []);
+      return (Array.isArray(data) ? data : []).map(ep => ep && ep.id).filter(Boolean);
+    } catch (_) {
+      return [];
+    }
+  };
+  const _setProbeAllButtonLabel = async (btn, text, whirlpoolRef) => {
+    btn.innerHTML = '';
+    if (whirlpoolRef && whirlpoolRef.element) btn.appendChild(whirlpoolRef.element);
+    btn.appendChild(document.createTextNode(text));
+  };
+  if (!window.__admEpProbeAllWired) {
+    window.__admEpProbeAllWired = true;
+    document.addEventListener('click', async (ev) => {
+      const probeAllBtn = ev.target.closest('#adm-epProbeAllBtn');
+      if (!probeAllBtn || probeAllBtn.disabled) return;
+      ev.preventDefault();
       probeAllBtn.disabled = true;
       const origHTML = probeAllBtn.innerHTML;
       let _wp = null;
       try {
-        const sp = window.spinnerModule || (await import('./spinner.js')).default;
-        _wp = sp.createWhirlpool(11);
-        _wp.element.style.cssText = 'display:inline-flex;width:11px;height:11px;margin:0 4px 0 0;';
-        probeAllBtn.innerHTML = '';
-        probeAllBtn.appendChild(_wp.element);
-        probeAllBtn.appendChild(document.createTextNode('Probing'));
-      } catch (_) {
-        probeAllBtn.innerHTML = '<span style="opacity:0.7;">Probing…</span>';
-      }
-      try {
-        // Hit the bulk local probe (same one the model picker uses).
-        await fetch('/api/model-endpoints/probe-local', { credentials: 'same-origin' }).catch(() => {});
-        // Then per-endpoint /probe for the rest so API/cloud endpoints
-        // refresh too. Parallel — capped to 6 at a time so we don't
-        // hammer the backend on a big list.
-        const ids = Array.from(document.querySelectorAll('[data-adm-ep-id]')).map(r => r.getAttribute('data-adm-ep-id')).filter(Boolean);
+        try {
+          const sp = window.spinnerModule || (await import('./spinner.js')).default;
+          _wp = sp.createWhirlpool(11);
+          _wp.element.style.cssText = 'display:inline-flex;width:11px;height:11px;margin:0 4px 0 0;';
+          await _setProbeAllButtonLabel(probeAllBtn, 'Probing', _wp);
+        } catch (_) {
+          probeAllBtn.innerHTML = '<span style="opacity:0.7;">Probing...</span>';
+        }
+        await _fetchWithTimeout('/api/model-endpoints/probe-local', { credentials: 'same-origin' }, 12000).catch(() => null);
+        const ids = await _collectAddedEndpointIds();
+        if (!ids.length) {
+          await loadEndpoints();
+          if (uiModule && uiModule.showToast) uiModule.showToast('No endpoints to probe', 1800);
+          return;
+        }
+        let done = 0;
+        let failed = 0;
         const lane = async (id) => {
-          try { await fetch(`/api/model-endpoints/${id}/probe`, { credentials: 'same-origin' }); } catch (_) {}
+          try {
+            const res = await _fetchWithTimeout(`/api/model-endpoints/${encodeURIComponent(id)}/models?refresh=true&refresh_timeout=20`, {
+              credentials: 'same-origin'
+            }, 25000);
+            if (!res || !res.ok || res.headers.get('X-Model-Refresh-Status') === 'failed') failed += 1;
+            else await res.json().catch(() => null);
+          } catch (err) {
+            failed += 1;
+            console.warn('Endpoint probe failed', id, err);
+          } finally {
+            done += 1;
+            try { await _setProbeAllButtonLabel(probeAllBtn, `Probing ${done}/${ids.length}`, _wp); } catch (_) {}
+          }
         };
         const queue = [...ids];
-        const workers = Array.from({length: Math.min(6, queue.length)}, () => (async () => {
+        const workers = Array.from({ length: Math.min(4, queue.length) }, () => (async () => {
           while (queue.length) {
             const id = queue.shift();
             if (id) await lane(id);
@@ -1428,7 +1472,11 @@ function initEndpointForm() {
         })());
         await Promise.all(workers);
         await loadEndpoints();
-        if (uiModule && uiModule.showToast) uiModule.showToast('Endpoint status refreshed', 1800);
+        _refreshOfflineCount();
+        if (uiModule && uiModule.showToast) {
+          const ok = Math.max(0, ids.length - failed);
+          uiModule.showToast(failed ? `Probed ${ok}/${ids.length} endpoints; ${failed} failed` : `Probed ${ids.length} endpoints`, failed ? 4200 : 1800);
+        }
       } finally {
         if (_wp) { try { _wp.destroy(); } catch (_) {} }
         probeAllBtn.innerHTML = origHTML;

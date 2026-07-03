@@ -297,6 +297,36 @@ def test_guide_only_suppresses_active_document_context(monkeypatch):
     assert "Relevant skills" not in prompt_payloads[0]
 
 
+def test_document_my_style_does_not_infer_public_persona(monkeypatch):
+    _patch_loop_basics(monkeypatch)
+    monkeypatch.setattr(al, "_build_base_prompt", lambda *a, **k: ("BASE", ""), raising=False)
+    monkeypatch.setattr(al, "_cached_base_prompt", None, raising=False)
+    monkeypatch.setattr(al, "_cached_base_prompt_key", None, raising=False)
+
+    import src.settings as settings
+    monkeypatch.setattr(settings, "load_settings", lambda: {"document_writing_style": ""}, raising=False)
+
+    active_doc = SimpleNamespace(
+        id="doc-style",
+        current_content="A short poem already exists here.",
+        title="Morning Poem",
+        language="markdown",
+    )
+
+    messages, _ = al._build_system_prompt(
+        [{"role": "user", "content": "Write as my style"}],
+        model="local-model",
+        active_document=active_doc,
+        mcp_mgr=None,
+        relevant_tools={"edit_document", "update_document"},
+        suppress_skills=True,
+    )
+    payload = "\n\n".join(str(msg.get("content", "")) for msg in messages)
+
+    assert "There is no saved document writing style" in payload
+    assert "do NOT infer that style from memories, identity, public persona" in payload
+
+
 def test_guide_only_skips_teacher_escalation(monkeypatch):
     _patch_loop_basics(monkeypatch)
 
