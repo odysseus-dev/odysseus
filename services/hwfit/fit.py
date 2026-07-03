@@ -9,7 +9,7 @@ from services.hwfit.models import (
 GPU_BANDWIDTH = {
     "5090": 1792, "5080": 960, "5070 ti": 896, "5070": 672, "5060 ti": 448, "5060": 256,
     "4090": 1008, "4080 super": 736, "4080": 717, "4070 ti super": 672, "4070 ti": 504, "4070 super": 504, "4070": 504, "4060 ti": 288, "4060": 272,
-    "3090 ti": 1008, "3090": 936, "3080 ti": 912, "3080": 760, "3070 ti": 608, "3070": 448, "3060 ti": 448, "3060": 360,
+    "3090 ti": 1008, "3090": 936, "3080 ti": 912, "3080": 760, "3070 ti": 608, "3070": 448, "3060 ti": 448, "3060": 360, "3050 ti": 192, "3050": 224,
     "2080 ti": 616, "2080 super": 496, "2080": 448, "2070 super": 448, "2070": 448, "2060 super": 448, "2060": 336,
     "1660 ti": 288, "1660 super": 336, "1660": 192, "1650 super": 192, "1650": 128,
     "h100 sxm": 3350, "h100": 2039, "h200": 4800, "a100 sxm": 2039, "a100": 1555,
@@ -19,6 +19,10 @@ GPU_BANDWIDTH = {
     "6950 xt": 576, "6900 xt": 512, "6800 xt": 512, "6800": 512, "6700 xt": 384, "6600 xt": 256, "6600": 224,
     "mi300x": 5300, "mi300": 5300, "mi250x": 3277, "mi250": 3277, "mi210": 1638, "mi100": 1229,
     "9070 xt": 624, "9070": 488, "9060 xt": 322, "9060": 322,
+    # NVIDIA GB10 Grace-Blackwell superchip (DGX Spark). Unified LPDDR5X memory,
+    # not Apple Silicon, so it lives in the generic GPU table — the Apple-only
+    # lookup never matches it (its name carries no "apple").
+    "gb10": 273,
 }
 
 # Pre-sort keys by length descending for correct substring matching
@@ -126,6 +130,44 @@ def _lookup_bandwidth(system):
     return None
 
 
+def _canonical_cpu_backend(system):
+    """Return the canonical CPU backend for cpu_only speed estimation.
+
+    Normalizes CPU-architecture aliases separately from the GPU backend, and
+    overrides GPU-only backends (CUDA/ROCm/Metal) so they do not inherit a
+    discrete-GPU fallback constant when the model is actually running on CPU.
+    """
+    backend = (system.get("backend") or "").lower().strip()
+    cpu_arch = (system.get("cpu_arch") or "").lower().strip()
+    cpu_name = (system.get("cpu_name") or "").lower()
+    gpu_name = (system.get("gpu_name") or "").lower()
+
+    # Already-canonical CPU backends
+    if backend in ("cpu_x86", "cpu_arm"):
+        return backend
+
+    # Raw CPU-architecture aliases. Treat plain "arm" as 32-bit ARM, not the
+    # ARM64-class CPU fallback used for Apple Silicon/aarch64 machines.
+    if backend in ("x86_64", "amd64", "i386", "i686"):
+        return "cpu_x86"
+    if backend in ("arm64", "aarch64"):
+        return "cpu_arm"
+
+    # Prefer an explicit CPU architecture field when present
+    if cpu_arch:
+        if cpu_arch in ("x86_64", "amd64", "x86", "i386", "i686"):
+            return "cpu_x86"
+        if cpu_arch in ("arm64", "aarch64"):
+            return "cpu_arm"
+
+    # Apple Silicon enters ranking as backend="metal"; its CPU path is ARM.
+    if backend in ("metal", "mps", "apple") or "apple" in cpu_name or "apple" in gpu_name:
+        return "cpu_arm"
+
+    # Conservative default for CUDA/ROCm/discrete GPU backends and unknowns.
+    return "cpu_x86"
+
+
 def _estimate_speed(model, quant, run_mode, system, offload_frac=0.0):
     """Estimate tok/s. Uses active params for MoE (only active experts run per token).
 
@@ -142,6 +184,11 @@ def _estimate_speed(model, quant, run_mode, system, offload_frac=0.0):
     is_moe = model.get("is_moe", False)
     bw = _lookup_bandwidth(system)
     backend = system.get("backend", "cpu_x86")
+
+    # CPU-only inference must never inherit a GPU backend's fallback constant,
+    # even if the detected system happens to report a CUDA/Metal/ROCm backend.
+    if run_mode == "cpu_only":
+        backend = _canonical_cpu_backend(system)
 
     if bw and run_mode in ("gpu", "cpu_offload"):
         bpp = QUANT_BYTES_PER_PARAM.get(quant, 0.5)

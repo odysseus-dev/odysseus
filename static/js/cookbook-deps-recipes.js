@@ -56,7 +56,7 @@ const _RECIPES = [
     match: () => true,
     variants: {
       pip:    { commands: ['CMAKE_ARGS="-DGGML_CUDA=on" uv pip install -U "llama-cpp-python[server]"'] },
-      docker: { commands: ['docker pull ghcr.io/ggerganov/llama.cpp:server-cuda'] },
+      docker: { commands: ['docker pull ghcr.io/ggml-org/llama.cpp:server-cuda'] },
     },
   },
 ];

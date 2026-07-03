@@ -101,6 +101,8 @@ function _setupProviderFromInput(input) {
     xai: 'xai',
     grok: 'xai',
     nvidia: 'nvidia',
+    opencodezen: 'opencode-zen',
+    opencodego: 'opencode-go',
   };
   return SETUP_PROVIDER_URLS[aliases[raw] || raw] || null;
 }
@@ -129,6 +131,8 @@ function _extractSetupProviderCredential(input) {
     ['google', 'gemini'], ['gemini', 'gemini'],
     ['x ai', 'xai'], ['xai', 'xai'], ['grok', 'xai'],
     ['nvidia', 'nvidia'],
+    ['opencode zen', 'opencode-zen'], ['opencode-zen', 'opencode-zen'],
+    ['opencode go', 'opencode-go'], ['opencode-go', 'opencode-go'],
   ];
   for (const [alias, key] of providerAliases) {
     const re = new RegExp('(^|\\s|[,;:])(' + alias.replace(/\s+/g, '\\s+') + ')(?=$|\\s|[,;:])', 'i');
@@ -204,6 +208,8 @@ function _showSetupEndpointChoices() {
         '<pre style="margin:4px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">http://localhost:11434/v1</code></pre>' +
         '<div style="margin-top:4px;">or</div>' +
         '<pre style="margin:2px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">http://llm-host.local:8000/v1</code></pre>' +
+        '<div style="margin-top:4px;">or llama.cpp (llama-server):</div>' +
+        '<pre style="margin:2px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">http://localhost:8080/v1</code></pre>' +
       '</div>' +
       '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:color-mix(in srgb,var(--bg) 88%,var(--fg) 12%);">' +
         '<div style="font-weight:700;margin-bottom:6px;">' + SETUP_API_ICON + 'API setup</div>' +
@@ -233,6 +239,12 @@ function _showSetupEndpointChoicesStreamed(options = {}) {
       kind: 'code',
       text: 'http://llm-host.local:8000/v1',
       copyText: 'http://llm-host.local:8000/v1',
+    },
+    { kind: 'p', text: 'or llama.cpp (llama-server):' },
+    {
+      kind: 'code',
+      text: 'http://localhost:8080/v1',
+      copyText: 'http://localhost:8080/v1',
     },
     { kind: 'heading', html: SETUP_API_ICON + 'API setup' },
     { kind: 'p', text: 'Paste provider name then API key (example):' },
@@ -991,7 +1003,7 @@ async function _cmdSessionNew(args, ctx) {
   if (res.ok) {
     const data = await res.json();
     await sessionModule.loadSessions();
-    await sessionModule.selectSession(data.id);
+    await sessionModule.selectSession(data.id, { showLoading: false });
     _hideWelcomeScreen();
     const shortModel = (model || '').split('/').pop();
     await typewriterReply(`New session — ${shortModel || 'ready'}.`);

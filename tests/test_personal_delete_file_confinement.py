@@ -72,3 +72,24 @@ def test_delete_file_removes_regular_file_inside_upload_root(tmp_path, monkeypat
     assert not uploaded_file.exists()
     assert docs.excluded == [filepath]
     assert rag.deleted_sources == [filepath]
+
+
+def test_delete_file_refuses_other_owners_upload(tmp_path, monkeypatch):
+    # alice must not be able to delete a file living under bob's per-owner
+    # upload subdir, even though it sits inside the shared uploads root.
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    victim = uploads / "bob" / "secret.txt"
+    victim.parent.mkdir()
+    victim.write_text("keep me", encoding="utf-8")
+
+    docs = _FakePersonalDocs()
+    rag = _FakeRAG()
+    monkeypatch.setattr(personal_routes, "UPLOADS_DIR", str(uploads))
+    monkeypatch.setattr(personal_routes, "get_rag_manager", lambda: rag)
+
+    filepath = str(victim)
+    result = asyncio.run(_delete_endpoint(docs)(filepath=filepath, owner="alice", _admin=None))
+
+    assert result["deleted_from_disk"] is False
+    assert victim.read_text(encoding="utf-8") == "keep me"
