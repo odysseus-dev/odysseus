@@ -85,8 +85,7 @@ def _run(cases: list) -> list:
         ["node", "--input-type=module"],
         input=js,
         capture_output=True,
-        text=True,
-        encoding="utf-8",
+        text=True, encoding="utf-8",
         cwd=str(_REPO),
         timeout=30,
     )
@@ -170,8 +169,7 @@ def test_wire_is_idempotent():
         ["node", "--input-type=module"],
         input=js,
         capture_output=True,
-        text=True,
-        encoding="utf-8",
+        text=True, encoding="utf-8",
         cwd=str(_REPO),
         timeout=30,
     )
@@ -212,8 +210,7 @@ def test_get_last_user_message_from_chat_history():
         ["node", "--input-type=module"],
         input=js,
         capture_output=True,
-        text=True,
-        encoding="utf-8",
+        text=True, encoding="utf-8",
         cwd=str(_REPO),
         timeout=30,
     )
@@ -268,8 +265,7 @@ def test_integration_recalls_from_chat_history_dom():
         ["node", "--input-type=module"],
         input=js,
         capture_output=True,
-        text=True,
-        encoding="utf-8",
+        text=True, encoding="utf-8",
         cwd=str(_REPO),
         timeout=30,
     )

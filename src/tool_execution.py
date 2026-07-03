@@ -16,6 +16,7 @@ import os
 import pathlib
 import re
 import sys
+import tempfile
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
@@ -90,7 +91,7 @@ def _is_sensitive_path(resolved: str) -> bool:
     the lowercase form, so a case-sensitive check would let it slip past the
     deny-list in every file tool that relies on it.
     """
-    parts = [p.casefold() for p in resolved.split(os.sep)]
+    parts = [p.casefold() for p in pathlib.Path(resolved).parts]
     filename = parts[-1] if parts else ""
 
     # Check if any path component is a sensitive directory.
@@ -122,10 +123,8 @@ def _tool_path_roots() -> list[str]:
     except OSError:
         pass
 
-    # $TMPDIR — per-user temp root on macOS (e.g. /var/folders/.../T/).
-    tmpdir = os.environ.get("TMPDIR")
-    if tmpdir:
-        roots.append(tmpdir)
+    # System temp directory (handles TMPDIR on POSIX, TMP/TEMP on Windows).
+    roots.append(tempfile.gettempdir())
 
     # Opt-in extra roots from settings.
     try:

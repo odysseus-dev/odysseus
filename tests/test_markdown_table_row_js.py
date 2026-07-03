@@ -21,12 +21,12 @@ _HAS_NODE = shutil.which("node") is not None
 
 def _split(row: str):
     js = f"""
-    import {{ splitTableRow }} from '{_HELPER.as_posix()}';
+    import {{ splitTableRow }} from '{_HELPER.as_uri()}';
     console.log(JSON.stringify(splitTableRow({json.dumps(row)})));
     """
     proc = subprocess.run(
         ["node", "--input-type=module"],
-        input=js, capture_output=True, text=True, cwd=str(_REPO), timeout=30,
+        input=js, capture_output=True, text=True, encoding="utf-8", cwd=str(_REPO), timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout.strip())
@@ -50,7 +50,7 @@ def test_header_row_unaffected():
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_non_string_row_falls_back_to_empty_cell():
     js = f"""
-    import {{ splitTableRow }} from '{_HELPER.as_posix()}';
+    import {{ splitTableRow }} from '{_HELPER.as_uri()}';
     console.log(JSON.stringify([
       splitTableRow(null),
       splitTableRow({{"bad": "row"}})
@@ -58,7 +58,7 @@ def test_non_string_row_falls_back_to_empty_cell():
     """
     proc = subprocess.run(
         ["node", "--input-type=module"],
-        input=js, capture_output=True, text=True, cwd=str(_REPO), timeout=30,
+        input=js, capture_output=True, text=True, encoding="utf-8", cwd=str(_REPO), timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout.strip()) == [[""], [""]]

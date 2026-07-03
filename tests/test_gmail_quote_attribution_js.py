@@ -29,12 +29,12 @@ def _meta(html: str) -> str:
         "globalThis.document = { createElement() { return {"
         " set textContent(v) { this._t = v; },"
         " get innerHTML() { return this._t || ''; } }; } };"
-        f"const {{ _extractQuoteMeta }} = await import('{_HELPER.as_posix()}');"
+        f"const {{ _extractQuoteMeta }} = await import('{_HELPER.as_uri()}');"
         f"console.log(JSON.stringify(_extractQuoteMeta({json.dumps(html)})));"
     )
     proc = subprocess.run(
         ["node", "--input-type=module"],
-        input=js, capture_output=True, text=True, cwd=str(_REPO), timeout=30,
+        input=js, capture_output=True, text=True, encoding="utf-8", cwd=str(_REPO), timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout.strip())

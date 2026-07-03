@@ -88,7 +88,7 @@ def _run_handler(body: str, fields: dict) -> list:
     js = _HARNESS.format(fields=json.dumps(fields), body=body)
     proc = subprocess.run(
         ["node", "--input-type=module"],
-        input=js, capture_output=True, text=True, cwd=str(_REPO), timeout=30,
+        input=js, capture_output=True, text=True, encoding="utf-8", cwd=str(_REPO), timeout=30,
     )
     assert proc.returncode == 0, f"node failed: {proc.stderr}\n---\n{js}"
     return json.loads(proc.stdout.strip())

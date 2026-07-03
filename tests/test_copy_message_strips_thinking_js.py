@@ -96,7 +96,7 @@ def _extract_thinking_blocks(text: str) -> dict:
         cwd=_REPO,
         capture_output=True,
         timeout=15,
-        text=True,
+        text=True, encoding="utf-8",
     )
     if result.returncode != 0:
         raise AssertionError(f"node failed:\nSTDERR:\n{result.stderr}\nSTDOUT:\n{result.stdout}")

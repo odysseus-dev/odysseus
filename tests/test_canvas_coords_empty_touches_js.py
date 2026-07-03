@@ -23,13 +23,13 @@ _CANVAS = "{width:800,height:600,getBoundingClientRect:()=>({width:400,height:30
 
 def _coords(event_js):
     js = f"""
-    import {{ canvasCoords }} from '{_MOD.as_posix()}';
+    import {{ canvasCoords }} from '{_MOD.as_uri()}';
     const canvas = {_CANVAS};
     console.log(JSON.stringify(canvasCoords({event_js}, canvas)));
     """
     proc = subprocess.run(
         ["node", "--input-type=module"],
-        input=js, capture_output=True, text=True, cwd=str(_REPO), timeout=30,
+        input=js, capture_output=True, text=True, encoding="utf-8", cwd=str(_REPO), timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout.strip())

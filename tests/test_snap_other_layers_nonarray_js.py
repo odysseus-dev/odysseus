@@ -15,14 +15,14 @@ _HAS_NODE = shutil.which("node") is not None
 
 def _snap(other_layers):
     js = f"""
-    import {{ computeSnap }} from '{_HELPER.as_posix()}';
+    import {{ computeSnap }} from '{_HELPER.as_uri()}';
     const layer = {{ id: 'L1', canvas: {{ width: 100, height: 50 }} }};
     const ctx = {{ zoom: 1, canvasW: 800, canvasH: 600, otherLayers: {json.dumps(other_layers)} }};
     console.log(JSON.stringify(computeSnap(layer, 10, 10, ctx)));
     """
     proc = subprocess.run(
         ["node", "--input-type=module"],
-        input=js, capture_output=True, text=True, cwd=str(_REPO), timeout=30,
+        input=js, capture_output=True, text=True, encoding="utf-8", cwd=str(_REPO), timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout.strip())
@@ -39,7 +39,7 @@ def test_compute_snap_tolerates_non_array_other_layers():
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_compute_snap_tolerates_missing_layer_or_context():
     js = f"""
-    import {{ computeSnap }} from '{_HELPER.as_posix()}';
+    import {{ computeSnap }} from '{_HELPER.as_uri()}';
     console.log(JSON.stringify([
       computeSnap(null, 10, 20, {{ zoom: 1, canvasW: 800, canvasH: 600 }}),
       computeSnap({{ id: 'L1' }}, 11, 21, {{ zoom: 1, canvasW: 800, canvasH: 600 }}),
@@ -48,7 +48,7 @@ def test_compute_snap_tolerates_missing_layer_or_context():
     """
     proc = subprocess.run(
         ["node", "--input-type=module"],
-        input=js, capture_output=True, text=True, cwd=str(_REPO), timeout=30,
+        input=js, capture_output=True, text=True, encoding="utf-8", cwd=str(_REPO), timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout.strip()) == [

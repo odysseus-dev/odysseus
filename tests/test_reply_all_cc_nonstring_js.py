@@ -15,12 +15,12 @@ _HAS_NODE = shutil.which("node") is not None
 
 def _cc(data, mine):
     js = f"""
-    import {{ buildReplyAllCc }} from '{_HELPER.as_posix()}';
+    import {{ buildReplyAllCc }} from '{_HELPER.as_uri()}';
     console.log(JSON.stringify(buildReplyAllCc({json.dumps(data)}, {json.dumps(mine)})));
     """
     proc = subprocess.run(
         ["node", "--input-type=module"],
-        input=js, capture_output=True, text=True, cwd=str(_REPO), timeout=30,
+        input=js, capture_output=True, text=True, encoding="utf-8", cwd=str(_REPO), timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout.strip())
