@@ -56,6 +56,19 @@ def _require_research_path(session_id: str) -> Path:
     return path
 
 
+def _find_owned_research_path(session_id: str, user: str) -> Path | None:
+    path = _find_research_path(session_id)
+    if path is None:
+        return None
+    try:
+        owner = json.loads(path.read_text(encoding="utf-8")).get("owner")
+    except Exception:
+        return None
+    if owner != user:
+        return None
+    return path
+
+
 logger = logging.getLogger(__name__)
 
 # Model-name substrings that are NOT chat/generation models — research must
@@ -216,15 +229,28 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             return entry.get("owner", "") == user
         # Task no longer in memory — check the persisted JSON.
         try:
-            path = _find_research_path(session_id)
+            return _find_owned_research_path(session_id, user) is not None
         except HTTPException:
             return False
+
+    def _require_owned_or_active_research_path(session_id: str, user: str) -> Path | None:
+        """Validate ownership once and return the completed on-disk path.
+
+        Active in-memory research has no completed disk path yet, so return
+        None after checking the active owner. Completed research returns the
+        owned disk path, avoiding a second directory scan in result_peek and
+        spinoff after the ownership gate.
+        """
+        entry = research_handler._active_tasks.get(session_id)
+        if entry is not None:
+            if entry.get("owner", "") != user:
+                raise HTTPException(404, "No research found for this session")
+            return None
+
+        path = _find_owned_research_path(session_id, user)
         if path is None:
-            return False
-        try:
-            return json.loads(path.read_text(encoding="utf-8")).get("owner") == user
-        except Exception:
-            return False
+            raise HTTPException(404, "No research found for this session")
+        return path
 
     @router.get("/api/research/active")
     async def research_active(request: Request):
@@ -585,11 +611,10 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         """Get research result without clearing it (for panel use)."""
         user = _require_user(request)
         _validate_session_id(session_id)
-        if not _owns_in_memory(session_id, user):
-            raise HTTPException(404, "No research found for this session")
+        owned_disk_path = _require_owned_or_active_research_path(session_id, user)
         result = research_handler.get_result(session_id)
         if result is None:
-            p = _find_research_path(session_id)
+            p = owned_disk_path
             if p is not None:
                 d = json.loads(p.read_text(encoding="utf-8"))
                 return {
@@ -619,8 +644,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         # otherwise any authenticated user could spin off (and thereby read)
         # another user's report by guessing its session ID. Mirrors every other
         # endpoint in this file (see result_peek above).
-        if not _owns_in_memory(session_id, user):
-            raise HTTPException(404, "No research found for this session")
+        owned_disk_path = _require_owned_or_active_research_path(session_id, user)
         if session_manager is None:
             raise HTTPException(500, "session_manager not configured")
 
@@ -629,7 +653,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         sources = research_handler.get_sources(session_id) or []
         query = ""
 
-        path = _find_research_path(session_id)
+        path = owned_disk_path
         if path is not None:
             try:
                 disk = json.loads(path.read_text(encoding="utf-8"))

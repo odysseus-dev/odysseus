@@ -21,6 +21,7 @@ from fastapi import HTTPException
 
 from routes.research_routes import setup_research_routes
 from routes.research.research_routes import (
+    _find_owned_research_path,
     _find_research_path,
     _require_research_path,
 )
@@ -149,6 +150,23 @@ def test_find_ignores_symlink_escape(tmp_path, monkeypatch):
     except (AttributeError, NotImplementedError, OSError) as e:
         pytest.skip(f"symlinks unavailable: {e}")
     assert _find_research_path("rp-linktest1234") is None
+
+
+
+def test_find_owned_returns_path_for_matching_owner(tmp_path, monkeypatch):
+    data_dir = tmp_path / "deep_research"
+    expected = _write_research(data_dir, "rp-ownedalice1", owner="alice")
+    monkeypatch.setattr("routes.research_routes.DEEP_RESEARCH_DIR", str(data_dir))
+
+    assert _find_owned_research_path("rp-ownedalice1", "alice") == expected.resolve()
+
+
+def test_find_owned_returns_none_for_other_owner(tmp_path, monkeypatch):
+    data_dir = tmp_path / "deep_research"
+    _write_research(data_dir, "rp-ownedbybob12", owner="bob")
+    monkeypatch.setattr("routes.research_routes.DEEP_RESEARCH_DIR", str(data_dir))
+
+    assert _find_owned_research_path("rp-ownedbybob12", "alice") is None
 
 
 # ---------------------------------------------------------------------------
@@ -382,3 +400,106 @@ def test_spinoff_rejects_traversal(bad_id):
     with pytest.raises(HTTPException) as exc:
         asyncio.run(target(session_id=bad_id, request=_request("alice")))
     assert exc.value.status_code == 400
+
+def test_result_peek_uses_single_disk_lookup_for_completed_result(tmp_path, monkeypatch):
+    data_dir = tmp_path / "deep_research"
+    path = _write_research(
+        data_dir,
+        "rp-peeksingle1",
+        owner="alice",
+        result="saved result",
+        sources=["s1"],
+        raw_findings=["f1"],
+        category="security",
+    ).resolve()
+
+    calls = []
+
+    def fake_find_owned(session_id, user):
+        calls.append((session_id, user))
+        return path
+
+    monkeypatch.setattr(
+        "routes.research.research_routes._find_owned_research_path",
+        fake_find_owned,
+    )
+
+    handler = _research_handler()
+    handler.get_result.return_value = None
+    router = setup_research_routes(handler)
+    target = _route(router, "/api/research/result-peek/{session_id}", "POST")
+
+    out = asyncio.run(target(session_id="rp-peeksingle1", request=_request("alice")))
+
+    assert out["result"] == "saved result"
+    assert out["sources"] == ["s1"]
+    assert out["raw_findings"] == ["f1"]
+    assert out["category"] == "security"
+    assert calls == [("rp-peeksingle1", "alice")]
+
+
+def test_spinoff_uses_single_disk_lookup_for_completed_result(tmp_path, monkeypatch):
+    data_dir = tmp_path / "deep_research"
+    path = _write_research(
+        data_dir,
+        "rp-spinsingle1",
+        owner="alice",
+        result="saved report",
+        sources=["s1", "s2"],
+        query="original query",
+    ).resolve()
+
+    calls = []
+
+    def fake_find_owned(session_id, user):
+        calls.append((session_id, user))
+        return path
+
+    class FakeSession:
+        endpoint_url = ""
+        model = ""
+        headers = {}
+
+        def __init__(self):
+            self.messages = []
+
+        def add_message(self, message):
+            self.messages.append(message)
+
+    class FakeSessionManager:
+        def __init__(self):
+            self.created = None
+
+        def get_session(self, session_id):
+            raise KeyError(session_id)
+
+        def create_session(self, **kwargs):
+            self.created = FakeSession()
+            return self.created
+
+        def save_sessions(self):
+            pass
+
+    monkeypatch.setattr(
+        "routes.research.research_routes._find_owned_research_path",
+        fake_find_owned,
+    )
+    monkeypatch.setattr(
+        "routes.research.research_routes.resolve_endpoint",
+        lambda *_args, **_kwargs: ("http://endpoint/v1", "model", {}),
+    )
+
+    handler = _research_handler()
+    handler.get_result.return_value = None
+    handler.get_sources.return_value = []
+    session_manager = FakeSessionManager()
+    router = setup_research_routes(handler, session_manager=session_manager)
+    target = _route(router, "/api/research/spinoff/{session_id}", "POST")
+
+    out = asyncio.run(target(session_id="rp-spinsingle1", request=_request("alice")))
+
+    assert out["name"] == "Follow-up: original query"
+    assert out["source_count"] == 2
+    assert calls == [("rp-spinsingle1", "alice")]
+    assert session_manager.created is not None
+    assert session_manager.created.messages
