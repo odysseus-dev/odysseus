@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Odysseus Search Evaluation Report</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --text: #c9d1d9;
+  --muted: #8b949e;
+  --border: #30363d;
+  --accent: #58a6ff;
+  --good: #3fb950;
+  --warn: #d29922;
+  --bad: #f85149;
+}
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.55;
+}
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+h1 {
+  font-weight: 600;
+  margin: 0 0 0.25rem 0;
+  font-size: 1.75rem;
+}
+.subtitle {
+  color: var(--muted);
+  margin-bottom: 1.5rem;
+  font-size: 0.95rem;
+}
+.summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 0.8rem;
+  margin-bottom: 1.5rem;
+}
+.metric {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.9rem;
+}
+.metric-value {
+  font-size: 1.65rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.metric-label {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin-top: 0.2rem;
+}
+.filters {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+  margin-bottom: 1.25rem;
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.filters input[type="text"], .filters select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.9rem;
+}
+.filters label {
+  color: var(--muted);
+  font-size: 0.9rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+}
+.query-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 1rem;
+  overflow: hidden;
+}
+.query-header {
+  padding: 0.9rem 1rem;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+.query-title {
+  font-weight: 600;
+  font-size: 1.05rem;
+  word-break: break-word;
+}
+.badges {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 0.35rem;
+}
+.badge {
+  font-size: 0.72rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.badge.category {
+  color: var(--accent);
+  border-color: rgba(88, 166, 255, 0.35);
+}
+.failure {
+  color: var(--bad);
+  border-color: rgba(248, 81, 73, 0.4);
+}
+.results {
+  padding: 0.4rem 1rem;
+}
+.result-row {
+  display: grid;
+  grid-template-columns: 1.75rem 1fr;
+  gap: 0.75rem;
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.result-row:last-child {
+  border-bottom: none;
+}
+.rank {
+  color: var(--muted);
+  font-size: 0.8rem;
+  padding-top: 0.15rem;
+}
+.result-title a {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.98rem;
+}
+.result-title a:hover {
+  text-decoration: underline;
+}
+.result-url {
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin-top: 0.15rem;
+  word-break: break-all;
+}
+.result-snippet {
+  color: var(--text);
+  font-size: 0.88rem;
+  margin-top: 0.35rem;
+}
+.result-meta {
+  margin-top: 0.35rem;
+}
+.score-badge {
+  font-weight: 700;
+  font-size: 0.78rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 4px;
+  background: var(--bg);
+}
+.score-0 { color: var(--bad); }
+.score-1 { color: #ff7b72; }
+.score-2 { color: var(--warn); }
+.score-3 { color: #56d364; }
+.score-4 { color: var(--good); }
+.reason {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 0.5rem 0 0.4rem 0;
+  padding-top: 0.5rem;
+  border-top: 1px dashed var(--border);
+}
+.empty {
+  color: var(--muted);
+  padding: 2rem 0;
+}
+.hidden {
+  display: none !important;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Search Evaluation Report</h1>
+  <div class="subtitle">$subtitle</div>
+  <div class="summary">
+    $summary_cards
+  </div>
+  <div class="filters">
+    <input type="text" id="queryFilter" placeholder="Filter queries..." oninput="applyFilters()">
+    <select id="categoryFilter" onchange="applyFilters()">
+      <option value="">All categories</option>
+      $category_options
+    </select>
+    <label><input type="checkbox" id="failureFilter" onchange="applyFilters()"> Failures only</label>
+  </div>
+  <div id="queries">
+    $query_cards
+  </div>
+</div>
+<script>
+function applyFilters() {
+  const text = document.getElementById('queryFilter').value.toLowerCase();
+  const cat = document.getElementById('categoryFilter').value;
+  const failOnly = document.getElementById('failureFilter').checked;
+  for (const card of document.querySelectorAll('.query-card')) {
+    const queryMatch = card.textContent.toLowerCase().includes(text);
+    const catMatch = !cat || card.dataset.category === cat;
+    const failMatch = !failOnly || card.dataset.failures === 'true';
+    card.classList.toggle('hidden', !(queryMatch && catMatch && failMatch));
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,361 @@
+[
+  {
+    "query": "score of Mexico vs Ecuador FIFA World Cup match last night",
+    "category": "exact lookup",
+    "expected_topics": ["Mexico vs Ecuador", "FIFA World Cup 2026", "final score", "2-0", "goals scored"],
+    "description": "User wants the exact result of a specific recent World Cup match.",
+    "broad_topic": "FIFA World Cup 2026"
+  },
+  {
+    "query": "current FIFA World Cup 2026 group stage standings",
+    "category": "current status",
+    "expected_topics": ["group standings", "points table", "goal difference", "qualified teams", "matches played"],
+    "description": "User is checking the latest tournament table.",
+    "broad_topic": "FIFA World Cup 2026"
+  },
+  {
+    "query": "top goal scorer FIFA World Cup 2026 so far",
+    "category": "exact lookup",
+    "expected_topics": ["top scorers ranking", "player name", "goals", "team", "assists"],
+    "description": "User wants the current leading goalscorer in the tournament.",
+    "broad_topic": "FIFA World Cup 2026"
+  },
+  {
+    "query": "FIFA World Cup 2026 match schedule July 5 and 6",
+    "category": "schedule lookup",
+    "expected_topics": ["fixtures", "kick-off times", "teams", "venues", "TV channels"],
+    "description": "User needs upcoming match times and details.",
+    "broad_topic": "FIFA World Cup 2026"
+  },
+  {
+    "query": "VAR decision controversy Argentina vs France World Cup yesterday",
+    "category": "news summary",
+    "expected_topics": ["VAR review", "Argentina France", "referee decision", "controversy", "match context"],
+    "description": "User is asking about a specific recent officiating incident.",
+    "broad_topic": "FIFA World Cup 2026"
+  },
+
+  {
+    "query": "current Bitcoin price in USD right now",
+    "category": "exact lookup",
+    "expected_topics": ["Bitcoin", "BTC", "price", "USD", "market cap", "24h change"],
+    "description": "User wants the precise real-time Bitcoin price.",
+    "broad_topic": "Cryptocurrency Market Updates"
+  },
+  {
+    "query": "Ethereum price today and any major news",
+    "category": "current status",
+    "expected_topics": ["Ethereum", "ETH price", "recent news", "ETF flows", "network updates"],
+    "description": "User checking Ethereum price plus latest developments.",
+    "broad_topic": "Cryptocurrency Market Updates"
+  },
+  {
+    "query": "top cryptocurrency gainers last 24 hours",
+    "category": "comparison",
+    "expected_topics": ["top gainers", "percentage change", "coins like SOL XRP", "volume"],
+    "description": "User wants the best-performing cryptos in the last day.",
+    "broad_topic": "Cryptocurrency Market Updates"
+  },
+  {
+    "query": "latest crypto regulation news SEC or Congress July 2026",
+    "category": "news summary",
+    "expected_topics": ["SEC", "crypto regulation", "bill or ruling", "market impact", "stablecoins"],
+    "description": "User seeking the most recent regulatory developments.",
+    "broad_topic": "Cryptocurrency Market Updates"
+  },
+  {
+    "query": "Solana price and recent network performance",
+    "category": "exact lookup",
+    "expected_topics": ["Solana", "SOL price", "TPS", "outages or upgrades", "ecosystem news"],
+    "description": "User wants current Solana price and key metrics.",
+    "broad_topic": "Cryptocurrency Market Updates"
+  },
+
+  {
+    "query": "latest xAI Grok model release or major update",
+    "category": "exact lookup",
+    "expected_topics": ["xAI", "Grok", "new version", "features", "release date", "benchmarks"],
+    "description": "User inquiring about the newest Grok AI capabilities.",
+    "broad_topic": "Major Tech Announcements"
+  },
+  {
+    "query": "Apple WWDC 2026 key announcements and new iOS features",
+    "category": "news summary",
+    "expected_topics": ["WWDC 2026", "iOS", "Apple Intelligence", "new features", "hardware"],
+    "description": "User wants highlights from Apple's latest developer event.",
+    "broad_topic": "Major Tech Announcements"
+  },
+  {
+    "query": "OpenAI latest model o4 or GPT status and release",
+    "category": "current status",
+    "expected_topics": ["OpenAI", "o4", "GPT", "release date", "capabilities", "availability"],
+    "description": "User checking the status of OpenAI's newest models.",
+    "broad_topic": "Major Tech Announcements"
+  },
+  {
+    "query": "Google Gemini 3 release date features and availability",
+    "category": "exact lookup",
+    "expected_topics": ["Google Gemini 3", "features", "release", "multimodal", "integration"],
+    "description": "User wants details on Google's latest flagship AI model.",
+    "broad_topic": "Major Tech Announcements"
+  },
+  {
+    "query": "Microsoft Copilot major updates or new features this month",
+    "category": "news summary",
+    "expected_topics": ["Microsoft Copilot", "updates", "Windows", "Office 365", "new capabilities"],
+    "description": "User looking for recent Microsoft AI product news.",
+    "broad_topic": "Major Tech Announcements"
+  },
+
+  {
+    "query": "top 10 movies box office this weekend July 2026",
+    "category": "current status",
+    "expected_topics": ["box office", "weekend earnings", "movie titles", "new releases", "rankings"],
+    "description": "User wants current weekend box office results.",
+    "broad_topic": "Box Office and Movies"
+  },
+  {
+    "query": "Deadpool 4 or next Marvel movie release date and details",
+    "category": "exact lookup",
+    "expected_topics": ["Deadpool", "Marvel", "release date", "cast", "plot summary"],
+    "description": "User inquiring about the next major Marvel film.",
+    "broad_topic": "Box Office and Movies"
+  },
+  {
+    "query": "highest grossing movie of 2026 so far",
+    "category": "exact lookup",
+    "expected_topics": ["highest grossing 2026", "movie title", "total worldwide earnings"],
+    "description": "User wants the current leader in 2026 box office.",
+    "broad_topic": "Box Office and Movies"
+  },
+  {
+    "query": "reviews and Rotten Tomatoes score for new movie released this week",
+    "category": "news summary",
+    "expected_topics": ["movie title", "Rotten Tomatoes", "critic score", "audience score", "reviews"],
+    "description": "User seeking critical reception for a recent film.",
+    "broad_topic": "Box Office and Movies"
+  },
+  {
+    "query": "Netflix top 10 shows and movies this week viewing hours",
+    "category": "current status",
+    "expected_topics": ["Netflix top 10", "viewing hours", "series or movie titles", "rankings"],
+    "description": "User checking current Netflix performance metrics.",
+    "broad_topic": "Box Office and Movies"
+  },
+
+  {
+    "query": "current Dow Jones S&P 500 and Nasdaq values today",
+    "category": "exact lookup",
+    "expected_topics": ["Dow Jones", "S&P 500", "Nasdaq", "points", "daily change", "percent"],
+    "description": "User wants the latest major US index values.",
+    "broad_topic": "Global Stock Markets"
+  },
+  {
+    "query": "Tesla stock price today and recent performance",
+    "category": "current status",
+    "expected_topics": ["Tesla", "TSLA", "stock price", "percent change", "volume", "news"],
+    "description": "User checking Tesla stock with context.",
+    "broad_topic": "Global Stock Markets"
+  },
+  {
+    "query": "Nvidia stock reaction after latest earnings report",
+    "category": "exact lookup",
+    "expected_topics": ["Nvidia", "NVDA", "earnings", "stock movement", "AI revenue"],
+    "description": "User wants post-earnings stock performance details.",
+    "broad_topic": "Global Stock Markets"
+  },
+  {
+    "query": "biggest stock gainers in S&P 500 today",
+    "category": "comparison",
+    "expected_topics": ["top gainers", "S&P 500", "percentage increase", "company names"],
+    "description": "User looking for the day's best-performing stocks.",
+    "broad_topic": "Global Stock Markets"
+  },
+  {
+    "query": "latest Federal Reserve interest rate decision or Powell statement",
+    "category": "news summary",
+    "expected_topics": ["Federal Reserve", "FOMC", "interest rates", "Powell", "economic outlook"],
+    "description": "User wants the most recent Fed policy update.",
+    "broad_topic": "Global Stock Markets"
+  },
+
+  {
+    "query": "latest SpaceX Starship test flight results and outcome",
+    "category": "recent result",
+    "expected_topics": ["Starship", "flight test", "success or failure", "altitude", "landing attempt"],
+    "description": "User wants the outcome of the most recent Starship flight.",
+    "broad_topic": "Space Exploration"
+  },
+  {
+    "query": "NASA Artemis program latest mission status 2026",
+    "category": "current status",
+    "expected_topics": ["Artemis", "Artemis II or III", "launch date", "crew", "progress"],
+    "description": "User checking the current status of NASA's lunar return program.",
+    "broad_topic": "Space Exploration"
+  },
+  {
+    "query": "James Webb Space Telescope new discoveries or images this week",
+    "category": "news summary",
+    "expected_topics": ["JWST", "new images", "exoplanets", "galaxies", "scientific findings"],
+    "description": "User wants recent scientific output from the James Webb telescope.",
+    "broad_topic": "Space Exploration"
+  },
+  {
+    "query": "Blue Origin New Glenn rocket launch or test update",
+    "category": "exact lookup",
+    "expected_topics": ["Blue Origin", "New Glenn", "launch", "test flight", "status"],
+    "description": "User inquiring about Blue Origin's latest rocket activities.",
+    "broad_topic": "Space Exploration"
+  },
+  {
+    "query": "China Tiangong space station recent crew or experiment news",
+    "category": "current status",
+    "expected_topics": ["Tiangong", "China space station", "crew", "experiments", "updates"],
+    "description": "User wants recent developments from China's space station.",
+    "broad_topic": "Space Exploration"
+  },
+
+  {
+    "query": "Billboard Hot 100 number 1 song this week",
+    "category": "exact lookup",
+    "expected_topics": ["Billboard Hot 100", "#1 song", "artist", "weeks at number one"],
+    "description": "User wants the current top song on the US charts.",
+    "broad_topic": "Music Industry"
+  },
+  {
+    "query": "new Taylor Swift album or single release date and details 2026",
+    "category": "exact lookup",
+    "expected_topics": ["Taylor Swift", "new album", "release date", "title", "tracks"],
+    "description": "User inquiring about Taylor Swift's latest music project.",
+    "broad_topic": "Music Industry"
+  },
+  {
+    "query": "Spotify global top streamed songs and artists right now",
+    "category": "current status",
+    "expected_topics": ["Spotify charts", "top songs", "top artists", "streams", "global"],
+    "description": "User checking current Spotify popularity rankings.",
+    "broad_topic": "Music Industry"
+  },
+  {
+    "query": "Grammy Awards 2027 nominations or recent winners",
+    "category": "news summary",
+    "expected_topics": ["Grammy Awards", "nominations", "winners", "categories", "artists"],
+    "description": "User wants the latest Grammy-related information.",
+    "broad_topic": "Music Industry"
+  },
+  {
+    "query": "upcoming major concert tours and dates summer 2026",
+    "category": "schedule lookup",
+    "expected_topics": ["tour dates", "artist", "cities", "venues", "tickets"],
+    "description": "User looking for current major tour schedules.",
+    "broad_topic": "Music Industry"
+  },
+
+  {
+    "query": "Tesla Cybertruck latest production and delivery numbers",
+    "category": "exact lookup",
+    "expected_topics": ["Cybertruck", "production rate", "deliveries", "sales figures", "backlog"],
+    "description": "User wants the most recent Cybertruck manufacturing stats.",
+    "broad_topic": "Automotive and EV Industry"
+  },
+  {
+    "query": "BYD vs Tesla global EV sales comparison latest quarter",
+    "category": "comparison",
+    "expected_topics": ["BYD", "Tesla", "EV sales", "market share", "quarterly figures"],
+    "description": "User comparing the two leading EV makers' recent sales.",
+    "broad_topic": "Automotive and EV Industry"
+  },
+  {
+    "query": "new electric vehicle models launching summer or fall 2026",
+    "category": "exact lookup",
+    "expected_topics": ["new EV models", "brands", "release dates", "range", "price"],
+    "description": "User interested in upcoming electric vehicle releases.",
+    "broad_topic": "Automotive and EV Industry"
+  },
+  {
+    "query": "Waymo or Cruise robotaxi expansion or incidents latest news",
+    "category": "news summary",
+    "expected_topics": ["Waymo", "Cruise", "robotaxi", "expansion cities", "safety incidents"],
+    "description": "User seeking updates on autonomous ride-hailing services.",
+    "broad_topic": "Automotive and EV Industry"
+  },
+  {
+    "query": "Ford or GM latest EV investment and model plans 2026",
+    "category": "current status",
+    "expected_topics": ["Ford", "GM", "EV strategy", "investment", "upcoming models"],
+    "description": "User checking traditional automakers' electric vehicle progress.",
+    "broad_topic": "Automotive and EV Industry"
+  },
+
+  {
+    "query": "latest quantum computing breakthrough or milestone 2026",
+    "category": "news summary",
+    "expected_topics": ["quantum computing", "qubits", "error correction", "company or lab", "milestone achieved"],
+    "description": "User wants recent advances in quantum computing.",
+    "broad_topic": "Scientific Breakthroughs"
+  },
+  {
+    "query": "recent FDA drug approval or cancer treatment breakthrough",
+    "category": "exact lookup",
+    "expected_topics": ["FDA approval", "cancer drug", "new treatment", "company", "clinical results"],
+    "description": "User inquiring about the latest medical approvals.",
+    "broad_topic": "Scientific Breakthroughs"
+  },
+  {
+    "query": "new CRISPR gene editing clinical trial results or applications",
+    "category": "news summary",
+    "expected_topics": ["CRISPR", "gene editing", "clinical trial", "results", "disease target"],
+    "description": "User looking for the latest CRISPR developments.",
+    "broad_topic": "Scientific Breakthroughs"
+  },
+  {
+    "query": "nuclear fusion energy latest breakthrough or net energy gain",
+    "category": "current status",
+    "expected_topics": ["nuclear fusion", "ignition", "net energy", "company", "milestone"],
+    "description": "User checking progress toward practical fusion power.",
+    "broad_topic": "Scientific Breakthroughs"
+  },
+  {
+    "query": "AI used in new drug discovery success story or approval",
+    "category": "exact lookup",
+    "expected_topics": ["AI drug discovery", "new drug", "AlphaFold or similar", "company", "approval"],
+    "description": "User wants examples of AI accelerating pharmaceutical development.",
+    "broad_topic": "Scientific Breakthroughs"
+  },
+
+  {
+    "query": "Taylor Swift Travis Kelce latest relationship or public appearance news",
+    "category": "news summary",
+    "expected_topics": ["Taylor Swift", "Travis Kelce", "relationship updates", "events", "social media"],
+    "description": "User following high-profile celebrity couple news.",
+    "broad_topic": "Celebrity and Pop Culture News"
+  },
+  {
+    "query": "winner of latest reality TV show finale Big Brother or Survivor",
+    "category": "recent result",
+    "expected_topics": ["reality show", "winner name", "finale", "season number"],
+    "description": "User wants the winner of a recently concluded reality TV season.",
+    "broad_topic": "Celebrity and Pop Culture News"
+  },
+  {
+    "query": "Met Gala 2026 theme best dressed celebrities and outfits",
+    "category": "exact lookup",
+    "expected_topics": ["Met Gala 2026", "theme", "best dressed", "celebrity outfits", "highlights"],
+    "description": "User interested in Met Gala fashion and celebrity moments.",
+    "broad_topic": "Celebrity and Pop Culture News"
+  },
+  {
+    "query": "current viral TikTok trend or challenge this week",
+    "category": "current status",
+    "expected_topics": ["TikTok trend", "challenge name", "sound or song", "participants", "views"],
+    "description": "User wants to know about the latest viral social media trend.",
+    "broad_topic": "Celebrity and Pop Culture News"
+  },
+  {
+    "query": "latest royal family news Prince Harry Meghan or King Charles",
+    "category": "news summary",
+    "expected_topics": ["royal family", "Prince Harry", "Meghan Markle", "King Charles", "recent events"],
+    "description": "User seeking the most recent updates from the British royal family.",
+    "broad_topic": "Celebrity and Pop Culture News"
+  }
+]
