@@ -32,7 +32,7 @@ class _FakeQuery:
         self._endpoints = endpoints
         self._user = user
         self._include_shared = include_shared
-    
+
     def filter(self, *conditions):
         for cond in conditions:
             cond_str = str(cond)
@@ -40,12 +40,12 @@ class _FakeQuery:
             if 'owner' in cond_str and 'IS NULL' not in cond_str:
                 self._include_shared = False
         return self
-    
+
     def first(self):
         """Return first endpoint respecting owner filter"""
         if not self._endpoints:
             return None
-        
+
         if self._user:
             for ep in self._endpoints:
                 ep_owner = getattr(ep, 'owner', None)
@@ -84,7 +84,7 @@ def _make_request(user=None, auth_manager=None):
 ### Shared test logic
 def _run_get_default_chat_test(monkeypatch, share_defaults_enabled, second_endpoint_only=False):
     """Helper function that runs get_default_chat with the given share_defaults_with_users setting."""
-    
+
     global_settings = {
         "default_endpoint_id": "global-ep-123",
         "default_model": "qwen-3.6",
@@ -96,10 +96,10 @@ def _run_get_default_chat_test(monkeypatch, share_defaults_enabled, second_endpo
 
     monkeypatch.setattr(model_routes, "_load_settings", lambda: global_settings)
     monkeypatch.setattr(prefs_routes, "_load_for_user", lambda user: {})
-    
+
     fake_auth_manager = MagicMock()
     fake_auth_manager.is_admin = lambda user: False
-    
+
     endpoints = [
         _FakeEndpoint(
             id="global-ep-123",
@@ -112,22 +112,22 @@ def _run_get_default_chat_test(monkeypatch, share_defaults_enabled, second_endpo
             is_enabled=True
         )
     ]
-    
+
     # When testing fallback scenario, removes the primary endpoint
     if second_endpoint_only:
         endpoints = [endpoints[1]]
-    
+
     fake_db = _make_db_session(endpoints, user="regular_user")
     monkeypatch.setattr(model_routes, "SessionLocal", lambda: fake_db)
     monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url)
     monkeypatch.setattr(model_routes, "build_chat_url", lambda base: f"{base}/chat")
-    
+
     router = model_routes.setup_model_routes(model_discovery=None)
     get_default_chat = _get_default_chat_route(router)
     fake_request = _make_request(user="regular_user", auth_manager=fake_auth_manager)
-    
+
     result = get_default_chat(fake_request)
-    
+
     return result
 
 ### Test Functions
@@ -139,7 +139,7 @@ def test_get_default_chat_user_no_prefs_share_disabled_resolves_nothing(monkeypa
     """
 
     test_data = _run_get_default_chat_test(monkeypatch, share_defaults_enabled=False)
-    
+
     assert test_data["endpoint_id"] == "", "Should get empty endpoint_id"
     assert test_data["model"] == "", "Should get empty model"
 
@@ -151,13 +151,13 @@ def test_get_default_chat_user_no_prefs_share_enabled_resolves_global_defaults_f
     """
 
     test_data = _run_get_default_chat_test(monkeypatch, share_defaults_enabled=True)
-    
+
     assert test_data["model"] == "qwen-3.6", \
         "model should be resolved from global default_model"
-    
+
     assert test_data["endpoint_id"] == "global-ep-123", \
         "Should get global endpoint_id"
-    
+
 def test_get_default_chat_user_no_prefs_share_enabled_resolves_global_defaults(monkeypatch):
     """
     Non-admin user without personal preferences should resolve to global
@@ -165,9 +165,9 @@ def test_get_default_chat_user_no_prefs_share_enabled_resolves_global_defaults(m
     """
 
     test_data = _run_get_default_chat_test(monkeypatch, share_defaults_enabled=True, second_endpoint_only=True)
-    
+
     assert test_data["model"] == "qwen-3.6", \
         "model should be resolved from global default_model"
-    
+
     assert test_data["endpoint_id"] == "fallback-ep", \
         "Should get global endpoint_id"

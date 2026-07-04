@@ -7,6 +7,7 @@ import Storage from './storage.js';
 import themeModule from './theme.js';
 import markdownModule from './markdown.js';
 import sessionModule from './sessions.js';
+import documentModule from './document.js';
 
 /**
  * Handle a ui_control SSE event — AI-driven UI manipulation.
@@ -183,6 +184,19 @@ export function handleUIControl(uiData) {
       }
 
     } else if (uiEvent === 'open_email_reply' || uiData.ui_event === 'open_email_reply') {
+      try {
+        var existingDocId = documentModule && documentModule.findEmailDocId
+          ? documentModule.findEmailDocId(uiData.uid, uiData.folder || 'INBOX')
+          : null;
+        if (existingDocId && documentModule.replaceEmailReplyBody) {
+          if (documentModule.loadDocument) documentModule.loadDocument(existingDocId);
+          documentModule.replaceEmailReplyBody(existingDocId, uiData.body || '', { force: true });
+          if (uiModule && uiModule.showToast) uiModule.showToast('Wrote reply into the open email');
+          return;
+        }
+      } catch (e) {
+        console.warn('open_email_reply existing draft update failed:', e);
+      }
       import('./emailInbox.js').then(function(mod) {
         var fn = mod.openReplyDraft || (mod.default && mod.default.openReplyDraft);
         if (fn) fn(uiData.uid, uiData.folder || 'INBOX', uiData.mode || 'reply', uiData.body || '');

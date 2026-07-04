@@ -40,11 +40,11 @@ def test_direct_upload_routes_use_bounded_reads():
         "routes/stt_routes.py": [
             "read_upload_limited(file, STT_MAX_AUDIO_BYTES",
         ],
-        "routes/gallery_routes.py": [
+        "routes/gallery/gallery_routes.py": [
             "read_upload_limited(file, GALLERY_UPLOAD_MAX_BYTES",
             "read_upload_limited(file, GALLERY_TRANSFORM_UPLOAD_MAX_BYTES",
         ],
-        "routes/memory_routes.py": [
+        "routes/memory/memory_routes.py": [
             "read_upload_limited(file, MEMORY_IMPORT_MAX_BYTES",
         ],
         "routes/calendar_routes.py": [

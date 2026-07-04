@@ -3,7 +3,8 @@
 import json
 import uuid
 import logging
-from typing import Dict, Any
+import re
+from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, Request, HTTPException
 
@@ -18,6 +19,63 @@ from routes.session_routes import (
 )
 
 logger = logging.getLogger(__name__)
+
+_HISTORY_INLINE_MEDIA_THRESHOLD = 200_000
+_DATA_IMAGE_RE = re.compile(r"data:image/[^;,\"]+;base64,[A-Za-z0-9+/=\s]+")
+
+
+def _history_display_content(content: Any) -> Any:
+    """Return a lightweight browser-display copy of stored message content.
+
+    Older multimodal user messages may be persisted as a JSON *string*
+    containing image_url blocks with inline base64 image bytes. Those bytes are
+    needed for model calls when the turn is first sent, but they should not be
+    sent back through /api/history every time the user opens the chat. The
+    attachment metadata already carries file ids/names for the UI cards.
+    """
+    if isinstance(content, list):
+        text_parts = []
+        omitted_media = 0
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text":
+                text = block.get("text")
+                if isinstance(text, str) and text:
+                    text_parts.append(text)
+            elif block.get("type") in {"image_url", "input_image", "audio", "input_audio"}:
+                omitted_media += 1
+        text = "\n".join(text_parts).strip()
+        if omitted_media and not text:
+            return f"[{omitted_media} media attachment{'s' if omitted_media != 1 else ''} omitted from history view]"
+        return text
+
+    if not isinstance(content, str):
+        return content
+    if len(content) < _HISTORY_INLINE_MEDIA_THRESHOLD and "data:image/" not in content:
+        return content
+
+    stripped = content.lstrip()
+    if stripped.startswith("["):
+        try:
+            blocks = json.loads(content)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            blocks = None
+        if isinstance(blocks, list):
+            text_parts = []
+            for block in blocks:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text":
+                    text = block.get("text")
+                    if isinstance(text, str) and text:
+                        text_parts.append(text)
+            if text_parts:
+                return "\n".join(text_parts).strip()
+
+    if "data:image/" in content:
+        return _DATA_IMAGE_RE.sub("[inline image omitted from history view]", content)
+    return content
 
 
 def _merge_continue_rows_to_delete(db_messages, db1, db2):
@@ -43,9 +101,69 @@ def _merge_continue_rows_to_delete(db_messages, db1, db2):
 def setup_history_routes(session_manager) -> APIRouter:
     router = APIRouter(tags=["history"])
 
+    def _db_history_entry(m: DbChatMessage) -> Dict[str, Any]:
+        entry = {"role": m.role, "content": _history_display_content(m.content)}
+        meta = {}
+        if m.meta_data:
+            try:
+                meta = json.loads(m.meta_data) or {}
+            except (json.JSONDecodeError, ValueError):
+                meta = {}
+        if m.timestamp and "timestamp" not in meta:
+            meta["timestamp"] = m.timestamp.isoformat() + "Z"
+        if meta:
+            entry["metadata"] = meta
+        return entry
+
     @router.get("/api/history/{session_id}")
-    async def get_session_history(request: Request, session_id: str) -> Dict[str, Any]:
+    async def get_session_history(
+        request: Request,
+        session_id: str,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> Dict[str, Any]:
         _verify_session_owner(request, session_id)
+        if limit is not None:
+            page_limit = max(1, min(int(limit), 100))
+            db = SessionLocal()
+            try:
+                db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+                if db_session is None:
+                    raise HTTPException(404, f"Session '{session_id}' not found")
+
+                total = (
+                    db.query(DbChatMessage)
+                    .filter(DbChatMessage.session_id == session_id)
+                    .count()
+                )
+                page_offset = int(offset) if offset is not None else max(total - page_limit, 0)
+                page_offset = max(0, min(page_offset, total))
+                rows = (
+                    db.query(DbChatMessage)
+                    .filter(DbChatMessage.session_id == session_id)
+                    .order_by(DbChatMessage.timestamp)
+                    .offset(page_offset)
+                    .limit(page_limit)
+                    .all()
+                )
+                history_dict = [
+                    entry for entry in (_db_history_entry(m) for m in rows)
+                    if not (entry.get("metadata") or {}).get("hidden")
+                ]
+                return {
+                    "history": history_dict,
+                    "model": db_session.model,
+                    "endpoint_url": db_session.endpoint_url,
+                    "name": db_session.name,
+                    "offset": page_offset,
+                    "limit": page_limit,
+                    "total": total,
+                    "has_more_before": page_offset > 0,
+                    "has_more_after": page_offset + len(rows) < total,
+                }
+            finally:
+                db.close()
+
         try:
             session = session_manager.get_session(session_id)
         except KeyError:
@@ -57,7 +175,7 @@ def setup_history_routes(session_manager) -> APIRouter:
                 # Skip hidden messages (e.g. compaction summaries for AI context)
                 if msg.metadata and msg.metadata.get("hidden"):
                     continue
-                entry = {"role": msg.role, "content": msg.content}
+                entry = {"role": msg.role, "content": _history_display_content(msg.content)}
                 if msg.metadata:
                     entry["metadata"] = msg.metadata
                 history_dict.append(entry)
@@ -66,7 +184,7 @@ def setup_history_routes(session_manager) -> APIRouter:
                     continue
                 entry = {
                     "role": msg.get("role", ""),
-                    "content": msg.get("content", ""),
+                    "content": _history_display_content(msg.get("content", "")),
                 }
                 if msg.get("metadata"):
                     entry["metadata"] = msg["metadata"]
@@ -82,21 +200,9 @@ def setup_history_routes(session_manager) -> APIRouter:
                     .order_by(DbChatMessage.timestamp)
                     .all()
                 )
-                import json as _json
                 db_history = []
                 for m in db_messages:
-                    entry = {"role": m.role, "content": m.content}
-                    meta = {}
-                    if m.meta_data:
-                        try:
-                            meta = _json.loads(m.meta_data) or {}
-                        except (json.JSONDecodeError, ValueError):
-                            meta = {}
-                    if m.timestamp and "timestamp" not in meta:
-                        meta["timestamp"] = m.timestamp.isoformat() + "Z"
-                    if meta:
-                        entry["metadata"] = meta
-                    db_history.append(entry)
+                    db_history.append(_db_history_entry(m))
                 if db_history:
                     # Rebuild in-memory history from the full set so hidden
                     # messages (e.g. compaction summaries) are kept for AI context.

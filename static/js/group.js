@@ -6,7 +6,7 @@ import markdownModule from './markdown.js';
 import chatRenderer from './chatRenderer.js';
 import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
-import { PROMPT_TEMPLATES, getAllPresets } from './presets.js';
+import { PROMPT_TEMPLATES, getUserTemplates } from './presets.js';
 import { sortModelObjects } from './modelSort.js';
 import Storage from './storage.js';
 
@@ -89,12 +89,16 @@ function _initGroupTab() {
 
     const charSel = document.createElement('select');
     charSel.className = 'preset-input';
+    // add an identifier that this is a character selection
+    charSel.dataset.selectionType = "character"
     charSel.style.cssText = 'font-size:11px;flex:1;height:26px;';
     charSel.innerHTML = '<option value="">Empty...</option>' +
       characters.map(c => '<option value="' + c.id + '">' + uiModule.esc(c.name) + '</option>').join('');
 
     const modelSel = document.createElement('select');
     modelSel.className = 'preset-input';
+    // add an identifier that this is a model selection
+    modelSel.dataset.selectionType = "model"
     modelSel.style.cssText = 'font-size:11px;flex:1;height:26px;';
     modelSel.innerHTML = '<option value="">Model…</option>' +
       models.map(m => '<option value="' + m.mid + '">' + uiModule.esc(m.display) + '</option>').join('');
@@ -196,14 +200,66 @@ function _initGroupTab() {
   });
 
   const groupTab = document.querySelector('.preset-tab[data-chartab="group"]');
+  // whenever a user navigates to the Group tab
   if (groupTab) groupTab.addEventListener('click', () => {
     _modelsCache = null;
     if (startBtn) startBtn.textContent = 'Start Group';
     _loadGroupPresets();
-    if (_groupParticipants.length === 0) {
+
+    const isGroupTabUnInitialized =
+      _groupParticipants.length === 0 && participantsEl.children.length === 0;
+
+    if (isGroupTabUnInitialized) {
       setTimeout(() => addBtn.click(), 100);
+    } else {
+      // queue this asynchronously since repopulating the selection drop-downs
+      // do not need to be visible right away; it can be safely delayed before
+      // the next event loop
+      queueMicrotask(() => {
+        repopulateExistingSelections();
+      })
     }
   });
+
+  async function repopulateExistingSelections() {
+    const EMPTY = "";
+
+    const characterSelections = participantsEl.querySelectorAll("select.preset-input[data-selection-type=character]");
+    const modelSelections = participantsEl.querySelectorAll("select.preset-input[data-selection-type=model]");
+
+    if (characterSelections.length !== 0) {
+      const characters = await _getCharacterList();
+
+      characterSelections.forEach((characterSelection) => {
+
+        const chosenCharacter = characterSelection.value;
+        const isChosenCharacterExisting = chosenCharacter !== EMPTY
+          && characters.findIndex((char) => char.id === chosenCharacter) !== -1;
+
+        characterSelection.innerHTML = '<option value="">Empty...</option>' +
+          characters.map(c => '<option value="' + c.id + '">' + uiModule.esc(c.name) + '</option>').join('');
+        if (isChosenCharacterExisting) {
+          characterSelection.value = chosenCharacter;
+        }
+      });
+    }
+
+    if (modelSelections.length !== 0) {
+      const models = await _getModels();
+
+      modelSelections.forEach((modelSelection) => {
+        const chosenModel = modelSelection.value;
+        const isChosenModelExisting = chosenModel !== EMPTY
+          && models.findIndex((model) => model.mid === chosenModel) !== -1;
+
+        modelSelection.innerHTML = '<option value="">Model…</option>' +
+          models.map(m => '<option value="' + m.mid + '">' + uiModule.esc(m.display) + '</option>').join('');
+        if (isChosenModelExisting) {
+          modelSelection.value = chosenModel;
+        }
+      });
+    }
+  }
 
   // Load and render saved group presets
   async function _loadGroupPresets() {
@@ -288,17 +344,6 @@ async function _getCharacterList() {
   const chars = PROMPT_TEMPLATES.filter(t => t.isCharacter).map(t => ({
     id: t.id, name: t.name, prompt: t.prompt,
   }));
-  // User-created characters from presets
-  try {
-    const allPresets = getAllPresets();
-    if (allPresets && allPresets.custom && allPresets.custom.character_name) {
-      chars.push({
-        id: 'custom',
-        name: allPresets.custom.character_name,
-        prompt: allPresets.custom.system_prompt || allPresets.custom.prompt || '',
-      });
-    }
-  } catch (e) {}
   // Load user templates and wait for them before returning.
   // The endpoint returns a JSON array directly (not {templates:[...]}).
   // All user templates are personas by definition — no isCharacter filter needed.
@@ -306,12 +351,26 @@ async function _getCharacterList() {
     const r = await fetch(API_BASE + '/api/presets/templates', { credentials: 'same-origin' });
     const data = await r.json();
     const templates = Array.isArray(data) ? data : (data.templates || []);
+
     templates.forEach(t => {
       if (t.id && t.name && !chars.find(c => c.id === t.id)) {
         chars.push({ id: t.id, name: t.name, prompt: t.system_prompt || t.prompt || '' });
       }
     });
   } catch (e) {}
+
+  // Also merge in-memory templates from presets.js — these may include
+  // newly created characters whose async save-to-API hasn't completed yet.
+  const memTemplates = getUserTemplates();
+
+  if (Array.isArray(memTemplates)) {
+    memTemplates.forEach(t => {
+      if (t.id && t.name && !chars.find(c => c.id === t.id)) {
+        chars.push({ id: t.id, name: t.name, prompt: t.system_prompt || t.prompt || '' });
+      }
+    });
+  }
+
   return chars;
 }
 
