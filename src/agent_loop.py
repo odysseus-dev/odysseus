@@ -3402,6 +3402,40 @@ async def stream_agent_loop(
                     # never re-verify an unchanged state in a loop.
                     _effectful_used = False
                     continue
+            # ── Unknown-tool-name supervisor ─────────────────────────
+            # The model emitted native tool call(s) that all failed to convert
+            # (a hallucinated / un-namespaced name like `search_files` instead
+            # of `mcp__<id>__search_files`) and wrote no text, so this round has
+            # nothing to run and nothing to say. Left alone it hits the break
+            # below and the turn dead-ends as "The model returned an empty
+            # response" with no hint about the real cause. Give it one corrective
+            # round — list the names it got wrong plus the exact valid names for
+            # this turn — so it can retry or answer from context. Shares the
+            # _MAX_INTENT_NUDGES cap so a model that keeps guessing can't loop.
+            _all_native_failed = bool(native_tool_calls) and not converted_calls
+            _round_is_silent = not _strip_think_blocks(cleaned_round).strip()
+            if (_all_native_failed and _round_is_silent
+                    and _intent_nudge_count < _MAX_INTENT_NUDGES):
+                _intent_nudge_count += 1
+                _bad_names = sorted({str(tc.get("name") or "").strip() for tc in native_tool_calls} - {""})
+                _valid_names = [n for n in _tool_names_sent if n]
+                logger.info(f"[agent] unknown-tool nudge #{_intent_nudge_count} on round {round_num}: bad={_bad_names}")
+                _bad_label = ", ".join(repr(n) for n in _bad_names) or "an unknown tool"
+                _valid_label = ", ".join(_valid_names) if _valid_names else "(none available this turn)"
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        f"You called {_bad_label}, which "
+                        f"{'is not a valid tool name' if len(_bad_names) == 1 else 'are not valid tool names'} "
+                        "this turn, so nothing ran and the user saw an empty reply. "
+                        f"The exact tool names available right now are: {_valid_label}. "
+                        "Call one of those with its exact name (MCP tools keep their "
+                        "`mcp__<server>__<tool>` prefix), or if none fits, answer the "
+                        "user directly from what you already know."
+                    ),
+                })
+                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                continue
             # ── Intent-without-action supervisor ─────────────────────
             # Catch "Let me tail the output" / "I'll check the logs" /
             # "Let me investigate" patterns where the model announces an
