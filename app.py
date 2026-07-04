@@ -197,7 +197,19 @@ class _RequestTimeoutMiddleware(_BaseHTTPMiddleware):
             )
 
 
+class _InteractiveActivityMiddleware(_BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        from src.interactive_gate import should_track_interactive_request, track_interactive_request
+
+        path = request.url.path or ""
+        if not should_track_interactive_request(path, request.method):
+            return await call_next(request)
+        async with track_interactive_request(path, request.method):
+            return await call_next(request)
+
+
 app.add_middleware(_RequestTimeoutMiddleware)
+app.add_middleware(_InteractiveActivityMiddleware)
 
 # ========= AUTH =========
 from routes.auth_routes import setup_auth_routes, SESSION_COOKIE
@@ -583,6 +595,14 @@ webhook_manager = WebhookManager(api_key_manager=api_key_manager)
 auth_router = setup_auth_routes(auth_manager)
 app.include_router(auth_router)
 
+
+@app.post("/api/activity/heartbeat")
+async def activity_heartbeat():
+    from src.interactive_gate import mark_browser_activity
+    await mark_browser_activity()
+    return {"ok": True}
+
+
 # Uploads
 from routes.upload_routes import setup_upload_routes
 upload_router, upload_cleanup_func = setup_upload_routes(upload_handler)
@@ -625,7 +645,7 @@ from routes.research.research_routes import setup_research_routes
 app.include_router(setup_research_routes(research_handler, session_manager=session_manager))
 
 # History
-from routes.history_routes import setup_history_routes
+from routes.history.history_routes import setup_history_routes
 app.include_router(setup_history_routes(session_manager))
 
 # Search
@@ -1005,17 +1025,21 @@ async def _startup_event():
 
     _startup_tasks.append(asyncio.create_task(_warmup_endpoints()))
 
-    # Keep-alive: ping endpoints every 60 seconds to prevent cold starts
-    async def _keepalive_loop():
-        while True:
-            try:
-                await asyncio.sleep(60)
-                await _warmup_endpoints()
-            except Exception as e:
-                logger.warning(f"Keepalive loop error: {e}")
-                await asyncio.sleep(300)  # Back off on error
+    # Keep-alive is opt-in. The ping path performs model discovery, and when
+    # stale LAN endpoints are configured it can add periodic backend pressure
+    # that delays unrelated UI requests such as Notes/Documents.
+    _keepalive_enabled = str(os.getenv("ODYSSEUS_MODEL_KEEPALIVE", "")).lower() in {"1", "true", "yes", "on"}
+    if _keepalive_enabled:
+        async def _keepalive_loop():
+            while True:
+                try:
+                    await asyncio.sleep(60)
+                    await _warmup_endpoints()
+                except Exception as e:
+                    logger.warning(f"Keepalive loop error: {e}")
+                    await asyncio.sleep(300)  # Back off on error
 
-    _startup_tasks.append(asyncio.create_task(_keepalive_loop()))
+        _startup_tasks.append(asyncio.create_task(_keepalive_loop()))
 
     async def _ensure_default_tasks():
         # Create/reconcile default automation tasks + personal assistant for every user.
