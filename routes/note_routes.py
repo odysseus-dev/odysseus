@@ -479,7 +479,11 @@ async def dispatch_reminder(
                 base = intg["base_url"].rstrip("/")
                 topic = settings.get("reminder_ntfy_topic") or "reminders"
                 ntfy_body = synthesis or note_body or title
-                hdrs = {"Title": title or "Reminder", "Priority": "high", "Tags": "bell"}
+                # HTTP headers must be ASCII; ntfy's Title header is sent raw,
+                # so emoji/non-ASCII titles raise UnicodeEncodeError and the
+                # reminder silently fails. Replace unsupported chars with "?".
+                _clean_title = (title or "Reminder").encode("ascii", "replace").decode("ascii")
+                hdrs = {"Title": _clean_title, "Priority": "high", "Tags": "bell"}
                 api_key = intg.get("api_key", "")
                 if api_key:
                     hdrs["Authorization"] = f"Bearer {api_key}"
