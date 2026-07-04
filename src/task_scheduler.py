@@ -10,6 +10,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, Tuple
 
 from core.auth import RESERVED_USERNAMES
+from src.task_action_policy import (
+    is_admin_only_task_action,
+    owner_has_admin_task_privileges,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -819,6 +823,28 @@ class TaskScheduler:
                     stale.finished_at = _utcnow()
                     stale.error = f"Task no longer active (status={task.status if task else 'deleted'})"
                     db.commit()
+                return
+
+            if (
+                is_admin_only_task_action(task.task_type, task.action)
+                and not owner_has_admin_task_privileges(task.owner)
+            ):
+                msg = f"Action '{task.action}' requires admin privileges"
+                blocked = db.query(TaskRun).filter(TaskRun.id == run_id).first()
+                if blocked:
+                    blocked.status = "error"
+                    blocked.result = msg
+                    blocked.error = msg
+                    blocked.finished_at = _utcnow()
+                task.status = "paused"
+                task.next_run = None
+                task.last_run = _utcnow()
+                logger.warning(
+                    "Paused admin-only task %s for non-admin owner %r",
+                    task_id,
+                    task.owner,
+                )
+                db.commit()
                 return
 
             if gate_foreground:
