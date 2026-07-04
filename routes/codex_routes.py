@@ -1,7 +1,7 @@
 """Codex integration routes.
 
 These are small HTTP surfaces intended for the Codex plugin/MCP bridge. They
-reuse existing Odysseus helpers and enforce API-token scopes before touching
+reuse existing Void helpers and enforce API-token scopes before touching
 user data.
 """
 
@@ -226,9 +226,9 @@ def setup_codex_routes(
             for path in sorted(root.rglob("*")):
                 if path.is_dir() or "__pycache__" in path.parts or path.suffix == ".pyc":
                     continue
-                zf.write(path, Path("odysseus") / path.relative_to(root))
+                zf.write(path, Path("void") / path.relative_to(root))
         buf.seek(0)
-        headers = {"Content-Disposition": 'attachment; filename="odysseus-codex-plugin.zip"'}
+        headers = {"Content-Disposition": 'attachment; filename="void-codex-plugin.zip"'}
         return StreamingResponse(buf, media_type="application/zip", headers=headers)
 
     @router.get("/todos")
@@ -614,7 +614,7 @@ def setup_codex_routes(
         # moment vllm exits; the log file is the raw stdout/stderr and
         # survives unchanged. Falls back to pane for older tasks predating
         # the tee-to-log runner change.
-        log_path = f"/tmp/odysseus-tmux/{session_id}.log"
+        log_path = f"/tmp/void-tmux/{session_id}.log"
         inner = (
             f"if [ -s {log_path} ]; then tail -n {tail} {log_path}; "
             f"else tmux capture-pane -t {session_id} -p -S -{tail}; fi"
@@ -904,7 +904,7 @@ def setup_claude_routes() -> APIRouter:
                     continue
                 zf.write(path, path.relative_to(bundle_root))
         buf.seek(0)
-        headers = {"Content-Disposition": 'attachment; filename="odysseus-claude-skill.zip"'}
+        headers = {"Content-Disposition": 'attachment; filename="void-claude-skill.zip"'}
         return StreamingResponse(buf, media_type="application/zip", headers=headers)
 
     return router

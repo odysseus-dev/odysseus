@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""odysseus-tasks — shell wrapper for the scheduled-tasks feature.
+"""void-tasks — shell wrapper for the scheduled-tasks feature.
 
-    odysseus-tasks list [--status active|paused|completed] [--limit N]
-    odysseus-tasks show TASK_ID
-    odysseus-tasks pause TASK_ID
-    odysseus-tasks resume TASK_ID
-    odysseus-tasks runs [--task TASK_ID] [--limit N]
+    void-tasks list [--status active|paused|completed] [--limit N]
+    void-tasks show TASK_ID
+    void-tasks pause TASK_ID
+    void-tasks resume TASK_ID
+    void-tasks runs [--task TASK_ID] [--limit N]
 """
 
 from __future__ import annotations
@@ -131,7 +131,7 @@ def _build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--pretty", action="store_true")
 
-    p = argparse.ArgumentParser(prog="odysseus-tasks", parents=[common])
+    p = argparse.ArgumentParser(prog="void-tasks", parents=[common])
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pl = sub.add_parser("list", parents=[common])

@@ -552,7 +552,7 @@ _APP_API_BLOCKLIST_METHOD_PATH = (
 
 
 async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
-    """Generic loopback to allowed internal Odysseus API endpoints. Lets the
+    """Generic loopback to allowed internal Void API endpoints. Lets the
     agent reach the full UI-button surface (cookbook, email, notes,
     calendar, skills, sessions, gallery, research, etc.) without us
     landing a named tool wrapper for every one.

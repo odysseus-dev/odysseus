@@ -8,7 +8,7 @@ body could register an MCP server running arbitrary code as the app UID.
 _validate_mcp_command now gates the agent path before any DB write or spawn:
 interpreters, runtimes, package runners, shells, and exec-wrappers are
 hard-denied (even if an operator allowlists one); the command must otherwise be
-a bare basename in ODYSSEUS_MCP_ALLOWED_COMMANDS; code-exec flags are rejected
+a bare basename in VOID_MCP_ALLOWED_COMMANDS; code-exec flags are rejected
 by prefix (catching glued forms like -cimport os and --eval=); remote-URL args
 and code-injecting env vars (LD_PRELOAD, NODE_OPTIONS, PYTHONPATH, ...) are
 rejected too.
@@ -37,7 +37,7 @@ def _env(monkeypatch):
     monkeypatch.setattr(cdb, "SessionLocal", _TS)
     # Allow one benign launcher (so the positive path is reachable) and also
     # python3 (to prove the hard-deny still wins over an operator allowlist).
-    monkeypatch.setenv("ODYSSEUS_MCP_ALLOWED_COMMANDS", "mcp-server-demo,python3")
+    monkeypatch.setenv("VOID_MCP_ALLOWED_COMMANDS", "mcp-server-demo,python3")
     db = _TS()
     try:
         db.query(McpServer).delete()
@@ -80,7 +80,7 @@ def test_validator_rejects_dangerous_env(key):
 
 
 def test_denied_command_rejected_even_when_operator_allowlists_it():
-    # python3 is in ODYSSEUS_MCP_ALLOWED_COMMANDS for this test; hard-deny wins.
+    # python3 is in VOID_MCP_ALLOWED_COMMANDS for this test; hard-deny wins.
     assert _validate_mcp_command("python3", ["server.py"], {}) is not None
 
 
@@ -97,7 +97,7 @@ def test_versioned_and_alias_runtimes_are_denied(command):
 def test_alias_runtime_denied_even_if_operator_allowlists_it(monkeypatch):
     # The exact scenario from review: an operator allowlists a versioned alias.
     # Hard-deny by family must still win, before the allowlist is consulted.
-    monkeypatch.setenv("ODYSSEUS_MCP_ALLOWED_COMMANDS", "python3.11,node18,java,bunx")
+    monkeypatch.setenv("VOID_MCP_ALLOWED_COMMANDS", "python3.11,node18,java,bunx")
     for command in ("python3.11", "node18", "java", "bunx"):
         assert _validate_mcp_command(command, [], {}) is not None, command
 

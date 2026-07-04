@@ -45,7 +45,7 @@ def _load_mail_cli(monkeypatch):
         attributes={"SessionLocal": object, "EmailAccount": object},
         install_core_package=True,
     )
-    return load_script("odysseus-mail")
+    return load_script("void-mail")
 
 
 def test_cmd_read_handles_empty_fetch_payload(monkeypatch):

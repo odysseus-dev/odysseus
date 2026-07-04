@@ -824,7 +824,7 @@ class TaskScheduler:
             if gate_foreground:
                 waiting = db.query(TaskRun).filter(TaskRun.id == run_id).first()
                 if waiting and waiting.status == "queued":
-                    waiting.result = "Queued — waiting for Odysseus to be idle…"
+                    waiting.result = "Queued — waiting for Void to be idle…"
                     db.commit()
                 from src.interactive_gate import wait_for_interactive_quiet
                 await wait_for_interactive_quiet(f"scheduled task {task.name}")
@@ -874,7 +874,7 @@ class TaskScheduler:
                         await asyncio.sleep(1.0)
                         if has_foreground_activity():
                             foreground_cancel["hit"] = True
-                            logger.info("Task '%s' interrupted because Odysseus became active", task.name)
+                            logger.info("Task '%s' interrupted because Void became active", task.name)
                             if current_task:
                                 current_task.cancel()
                             return
@@ -920,7 +920,7 @@ class TaskScheduler:
                 return
             except asyncio.CancelledError:
                 msg = (
-                    "Paused because Odysseus became active"
+                    "Paused because Void became active"
                     if foreground_cancel.get("hit")
                     else "Stopped by user"
                 )
@@ -1807,9 +1807,9 @@ class TaskScheduler:
             msg["From"] = from_addr
             msg["To"] = to_addr
             msg["Subject"] = f"[Task] {task.name}"
-            msg["X-Odysseus-Origin"] = "odysseus-ui"
-            msg["X-Odysseus-Kind"] = "task"
-            msg["X-Odysseus-Ref"] = str(task.id)
+            msg["X-Void-Origin"] = "void-ui"
+            msg["X-Void-Kind"] = "task"
+            msg["X-Void-Ref"] = str(task.id)
             msg.set_content(result or "")
             _send_smtp_message(cfg, from_addr, [to_addr], msg.as_string(), timeout=30)
             logger.info("Task %s emailed result (recipient_set=%s, %sb)", task.id, bool(to_addr), len(result or ""))
@@ -2147,9 +2147,9 @@ class TaskScheduler:
             "subject": f"[Task] {task.name}",
             "body": result,
             "headers": {
-                "X-Odysseus-Origin": "odysseus-ui",
-                "X-Odysseus-Kind": "task",
-                "X-Odysseus-Ref": str(task.id),
+                "X-Void-Origin": "void-ui",
+                "X-Void-Kind": "task",
+                "X-Void-Ref": str(task.id),
             },
         }
         if recipient:

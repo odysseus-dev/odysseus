@@ -391,7 +391,7 @@ def test_no_fetch_files_skips_progress(monkeypatch, capsys):
 def test_area_classification():
     audit = load_module()
 
-    areas = audit.classify_areas(["scripts/odysseus-mail", "tests/test_email.py"], "CalDAV sync")
+    areas = audit.classify_areas(["scripts/void-mail", "tests/test_email.py"], "CalDAV sync")
 
     assert "Email / CalDAV" in areas
     assert "Docs / tooling / tests" in areas

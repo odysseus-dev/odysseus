@@ -5,7 +5,7 @@ single compose file and do not honor COMPOSE_FILE or multiple ``-f`` overlays,
 so the repo ships standalone ``docker-compose.gpu-*.yml`` files that inline the
 GPU overlay. The base ``docker-compose.yml`` plus ``docker/gpu.*.yml`` overlays
 remain the source of truth; these tests assert each standalone file equals the
-base compose with only the matching overlay merged into the ``odysseus``
+base compose with only the matching overlay merged into the ``void``
 service. No Docker / docker compose is required — everything is pure YAML.
 """
 
@@ -24,7 +24,7 @@ HOST_DOCKER_OVERLAY = ROOT / "docker" / "host-docker.yml"
 NVIDIA_STANDALONE = ROOT / "docker-compose.gpu-nvidia.yml"
 AMD_STANDALONE = ROOT / "docker-compose.gpu-amd.yml"
 
-SERVICE = "odysseus"
+SERVICE = "void"
 
 
 def _load(path: Path) -> dict:
@@ -53,7 +53,7 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
 
 
 def _merge_overlay_into_base(base: dict, overlay: dict) -> dict:
-    """Build the expected standalone config: base + overlay on odysseus only."""
+    """Build the expected standalone config: base + overlay on void only."""
     expected = copy.deepcopy(base)
     overlay_service = overlay["services"][SERVICE]
     expected["services"][SERVICE] = _deep_merge(
@@ -89,11 +89,11 @@ def test_amd_standalone_equals_base_plus_overlay(base):
     assert standalone == _merge_overlay_into_base(base, overlay)
 
 
-# --- Non-odysseus services and volumes untouched ---------------------------
+# --- Non-void services and volumes untouched ---------------------------
 
 
 @pytest.mark.parametrize("standalone_path", [NVIDIA_STANDALONE, AMD_STANDALONE])
-def test_non_odysseus_services_match_base(base, standalone_path):
+def test_non_void_services_match_base(base, standalone_path):
     standalone = _load(standalone_path)
     for name, definition in base["services"].items():
         if name == SERVICE:
@@ -108,10 +108,10 @@ def test_top_level_volumes_match_base(base, standalone_path):
     assert standalone.get("volumes") == base.get("volumes")
 
 
-# --- odysseus = base service + only the overlay additions ------------------
+# --- void = base service + only the overlay additions ------------------
 
 
-def test_nvidia_odysseus_adds_only_overlay(base):
+def test_nvidia_void_adds_only_overlay(base):
     standalone = _load(NVIDIA_STANDALONE)
     svc = standalone["services"][SERVICE]
     base_svc = base["services"][SERVICE]
@@ -138,7 +138,7 @@ def test_nvidia_odysseus_adds_only_overlay(base):
     assert "group_add" not in svc
 
 
-def test_amd_odysseus_adds_only_overlay(base):
+def test_amd_void_adds_only_overlay(base):
     standalone = _load(AMD_STANDALONE)
     svc = standalone["services"][SERVICE]
     base_svc = base["services"][SERVICE]
@@ -163,7 +163,7 @@ def test_base_has_no_host_docker_access(base):
     service = base["services"][SERVICE]
 
     assert "/var/run/docker.sock:/var/run/docker.sock" not in service["volumes"]
-    assert "ODYSSEUS_ENABLE_HOST_DOCKER=true" not in service["environment"]
+    assert "VOID_ENABLE_HOST_DOCKER=true" not in service["environment"]
     assert "group_add" not in service
 
 
@@ -172,7 +172,7 @@ def test_base_plus_host_docker_overlay_has_explicit_access(base):
     service = merged["services"][SERVICE]
 
     assert "/var/run/docker.sock:/var/run/docker.sock" in service["volumes"]
-    assert "ODYSSEUS_ENABLE_HOST_DOCKER=true" in service["environment"]
+    assert "VOID_ENABLE_HOST_DOCKER=true" in service["environment"]
     assert service["group_add"] == ["${DOCKER_GID:-963}"]
 
 
@@ -189,7 +189,7 @@ def test_nvidia_plus_host_docker_preserves_gpu_and_docker_access(base):
         {"driver": "nvidia", "count": "all", "capabilities": ["gpu"]}
     ]
     assert "/var/run/docker.sock:/var/run/docker.sock" in service["volumes"]
-    assert "ODYSSEUS_ENABLE_HOST_DOCKER=true" in service["environment"]
+    assert "VOID_ENABLE_HOST_DOCKER=true" in service["environment"]
     assert service["group_add"] == ["${DOCKER_GID:-963}"]
 
 
@@ -208,4 +208,4 @@ def test_amd_plus_host_docker_preserves_gpu_and_docker_groups(base):
         "${DOCKER_GID:-963}",
     ]
     assert "/var/run/docker.sock:/var/run/docker.sock" in service["volumes"]
-    assert "ODYSSEUS_ENABLE_HOST_DOCKER=true" in service["environment"]
+    assert "VOID_ENABLE_HOST_DOCKER=true" in service["environment"]

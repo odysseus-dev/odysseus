@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""odysseus-logs — unified view of log files across the app.
+"""void-logs — unified view of log files across the app.
 
 Right now logs live in two places:
   - logs/                       app-level (compound.log, future runtime)
-  - /tmp/odysseus-tmux/*.log    per-tmux-session model download/serve logs
+  - /tmp/void-tmux/*.log    per-tmux-session model download/serve logs
 
 This CLI surfaces them so you don't have to remember which directory
 holds what.
 
-    odysseus-logs list                    # every log we know about
-    odysseus-logs tail NAME               # tail -f a specific log
-    odysseus-logs tail NAME --lines 200   # last N lines only (no follow)
-    odysseus-logs cat NAME                # print full content
-    odysseus-logs clean                   # delete tmux logs older than 7 days
+    void-logs list                    # every log we know about
+    void-logs tail NAME               # tail -f a specific log
+    void-logs tail NAME --lines 200   # last N lines only (no follow)
+    void-logs cat NAME                # print full content
+    void-logs clean                   # delete tmux logs older than 7 days
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ from pathlib import Path
 
 
 _APP_LOGS = _REPO_ROOT / "logs"
-_TMUX_LOGS = Path("/tmp/odysseus-tmux")
+_TMUX_LOGS = Path("/tmp/void-tmux")
 
 
 def _enumerate() -> list[dict]:
@@ -80,7 +80,7 @@ def cmd_list(args):
 def cmd_tail(args):
     p = _resolve(args.name)
     if p is None:
-        fail(f"no log matching {args.name!r}; run `odysseus-logs list`")
+        fail(f"no log matching {args.name!r}; run `void-logs list`")
     if args.follow:
         # Exec tail -f so signals + buffering are native.
         os.execvp("tail", ["tail", "-n", str(args.lines), "-f", str(p)])
@@ -118,7 +118,7 @@ def cmd_clean(args):
 
 
 def _build_parser():
-    p = common_parser("odysseus-logs", "Tail / list logs across the app.")
+    p = common_parser("void-logs", "Tail / list logs across the app.")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pl = sub.add_parser("list", parents=p._common_parents)

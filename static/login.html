@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-visual">
-<title>Odysseus — Login</title>
+<title>Void — Login</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 4L16 22L6 22Z' fill='%23e06c75'/%3E%3Cpath d='M16 8L16 22L24 22Z' fill='%23e06c75' opacity='0.6'/%3E%3Cpath d='M4 24Q10 20 16 24Q22 28 28 24' stroke='%23e06c75' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="manifest" href="/static/manifest.json">
 <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
@@ -23,7 +23,7 @@
   };
   var THEME_DEFAULT_INTENSITY = { midnight:0.5, terminal:0.8, organs:0.65 };
   try {
-    var t = JSON.parse(localStorage.getItem('odysseus-theme'));
+    var t = JSON.parse(localStorage.getItem('void-theme'));
     var s = document.documentElement.style;
     if (t && t.colors) {
       var c = t.colors;
@@ -88,7 +88,7 @@
   @font-face { font-family: 'Fira Code'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Regular.woff2') format('woff2'); }
   @font-face { font-family: 'Fira Code'; font-weight: 600; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-SemiBold.woff2') format('woff2'); }
   /* Mirror the main app's :root defaults (static/style.css ~line 18) so an
-     uncustomized theme — or a fresh browser with no `odysseus-theme` in
+     uncustomized theme — or a fresh browser with no `void-theme` in
      localStorage — renders the login page in the same palette as the rest
      of the app instead of a different greys+offwhite scheme. */
   :root {
@@ -137,7 +137,7 @@
     font-family: 'Fira Code', monospace;
     font-size: 2rem; font-weight: 600;
     letter-spacing: 0.04em;
-    /* Same gradient as the main app's welcome-screen "Odysseus" title
+    /* Same gradient as the main app's welcome-screen "Void" title
        (static/style.css #welcome-screen .welcome-name) so the brand
        wordmark is consistent across login + first-launch screens. */
     background: linear-gradient(135deg, var(--brand-color, var(--red)), color-mix(in srgb, var(--brand-color, var(--red)) 60%, var(--fg)));
@@ -253,7 +253,7 @@
 <body>
 <main class="card">
   <h1 class="logo">
-    <svg class="logo-boat" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path d="M16 4L16 22L6 22Z" fill="currentColor"/><path d="M16 8L16 22L24 22Z" fill="currentColor" opacity="0.6"/><path d="M4 24Q10 20 16 24Q22 28 28 24" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round"/></svg><span>Odysseus</span>
+    <svg class="logo-boat" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path d="M16 4L16 22L6 22Z" fill="currentColor"/><path d="M16 8L16 22L24 22Z" fill="currentColor" opacity="0.6"/><path d="M4 24Q10 20 16 24Q22 28 28 24" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round"/></svg><span>Void</span>
   </h1>
   <p class="setup-note" id="setupNote" style="display:none"></p>
 
@@ -311,7 +311,7 @@
 
   // Prefill last username
   const usernameInput = document.getElementById('username');
-  const savedUser = localStorage.getItem('odysseus-last-user');
+  const savedUser = localStorage.getItem('void-last-user');
   if (savedUser && usernameInput) {
     usernameInput.value = savedUser;
     document.getElementById('password').focus();
@@ -471,8 +471,8 @@
     const remember = document.getElementById('remember').checked;
     function finishLogin() {
       const _rem = document.getElementById('remember').checked;
-      if (_rem) localStorage.setItem('odysseus-last-user', username);
-      else localStorage.removeItem('odysseus-last-user');
+      if (_rem) localStorage.setItem('void-last-user', username);
+      else localStorage.removeItem('void-last-user');
       sessionStorage.removeItem('ody-session-active');
       submitBtn.innerHTML = '<span class="login-spinner" aria-hidden="true"></span>';
       submitBtn.disabled = true;

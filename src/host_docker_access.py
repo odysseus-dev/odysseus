@@ -5,11 +5,11 @@ import stat
 from collections.abc import Mapping
 
 
-HOST_DOCKER_ENV_VAR = "ODYSSEUS_ENABLE_HOST_DOCKER"
+HOST_DOCKER_ENV_VAR = "VOID_ENABLE_HOST_DOCKER"
 HOST_DOCKER_SOCKET_PATH = "/var/run/docker.sock"
 
 HOST_DOCKER_ACCESS_HINT = (
-    "Local Docker daemon access is disabled inside the Odysseus container; a "
+    "Local Docker daemon access is disabled inside the Void container; a "
     "Docker CLI alone is not enough. Default Docker Compose intentionally does "
     "not mount the host Docker socket. Raw socket access is high-trust and can "
     "grant broad control over the host Docker daemon. If you accept that risk, "

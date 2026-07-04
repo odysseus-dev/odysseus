@@ -71,7 +71,7 @@ def test_octet_stream_with_txt_suffix_returns_body(monkeypatch, no_cache):
 def test_application_json_returns_body(monkeypatch, no_cache):
     # application/json is not text/*; it must still be returned verbatim
     # instead of being fed to the HTML parser (which yields empty content).
-    body = '{"name": "odysseus", "items": [1, 2, 3]}'
+    body = '{"name": "void", "items": [1, 2, 3]}'
     _patch_fetch(monkeypatch, body, "application/json")
     r = content_mod.fetch_webpage_content("https://api.example.com/data")
     assert r["success"] is True

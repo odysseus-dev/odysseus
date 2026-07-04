@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""odysseus-mail — Unix-style command-line wrapper around the email
+"""void-mail — Unix-style command-line wrapper around the email
 backend that powers the web UI.
 
 Calls the same helpers `routes/email_helpers.py` exports, so a request
@@ -10,12 +10,12 @@ and the same parsing pipeline as the HTTP routes. State is shared via
 Output is JSON on stdout, errors on stderr, non-zero exit on failure.
 Designed to compose:
 
-    odysseus-mail list --folder INBOX --limit 5 \\
+    void-mail list --folder INBOX --limit 5 \\
       | jq -r '.[] | .uid + "\\t" + .from_name + "\\t" + .subject'
 
-    odysseus-mail send --to alice@example.com --subject hi <<<"hello"
+    void-mail send --to alice@example.com --subject hi <<<"hello"
 
-    odysseus-mail folders --account work | jq
+    void-mail folders --account work | jq
 
 Subcommands:
     list       List recent messages in a folder
@@ -49,7 +49,7 @@ from pathlib import Path
 # Anchor the path so the script works when invoked from anywhere.
 # The web-app logger is verbose at import time (cot_prompts, embeddings,
 # etc.). For a CLI tool we only care about warnings+; users can re-raise
-# with `LOG_LEVEL=DEBUG odysseus-mail ...`. We force the root level AFTER
+# with `LOG_LEVEL=DEBUG void-mail ...`. We force the root level AFTER
 # imports because some submodules call basicConfig themselves during
 # initialization, which we have to override.
 def quiet_logs() -> None:
@@ -305,7 +305,7 @@ def cmd_send(args) -> None:
     if not (cfg.get("smtp_host") and cfg.get("smtp_user") and cfg.get("smtp_password")):
         fail(
             f"SMTP not configured for account {cfg.get('account_name', '<default>')!r}; "
-            f"check `odysseus-mail accounts` and the web settings"
+            f"check `void-mail accounts` and the web settings"
         )
 
     outer = MIMEMultipart("alternative")
@@ -346,8 +346,8 @@ def _build_parser() -> argparse.ArgumentParser:
     common.add_argument("--pretty", action="store_true", help="Pretty-print JSON output")
 
     p = argparse.ArgumentParser(
-        prog="odysseus-mail",
-        description="Shell-friendly wrapper around the Odysseus email backend.",
+        prog="void-mail",
+        description="Shell-friendly wrapper around the Void email backend.",
         parents=[common],
     )
     sub = p.add_subparsers(dest="cmd", required=True)

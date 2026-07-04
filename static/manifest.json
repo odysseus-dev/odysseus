@@ -1,6 +1,6 @@
 {
-  "name": "Odysseus",
-  "short_name": "Odysseus",
+  "name": "Void",
+  "short_name": "Void",
   "description": "Self-hosted AI chat with memory, documents, and tools",
   "start_url": "/",
   "scope": "/",

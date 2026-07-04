@@ -1,4 +1,4 @@
-"""Regression: `odysseus-calendar list` must select events that OVERLAP the
+"""Regression: `void-calendar list` must select events that OVERLAP the
 query window, matching the canonical web-route filter in
 routes/calendar_routes.py (`dtstart < end AND dtend > start`) and the
 recurring-expansion contract asserted in test_calendar_recurrence.py
@@ -7,7 +7,7 @@ recurring-expansion contract asserted in test_calendar_recurrence.py
 The buggy CLI filtered on `dtstart >= start AND dtstart < end`, which drops a
 multi-day / in-progress event that started before the window but is still
 running inside it (e.g. an all-day-running conference when you call
-`odysseus-calendar list` with the default start=now()).
+`void-calendar list` with the default start=now()).
 """
 
 import importlib.machinery
@@ -96,8 +96,8 @@ def _load_cli(monkeypatch, rows):
     db.CalendarEvent = cal_event
     db.CalendarCal = MagicMock()
     monkeypatch.setitem(sys.modules, "core.database", db)
-    path = ROOT / "scripts" / "odysseus-calendar"
-    loader = importlib.machinery.SourceFileLoader("odysseus_calendar_cli", str(path))
+    path = ROOT / "scripts" / "void-calendar"
+    loader = importlib.machinery.SourceFileLoader("void_calendar_cli", str(path))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)

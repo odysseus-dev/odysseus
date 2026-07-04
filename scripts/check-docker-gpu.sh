@@ -2,7 +2,7 @@
 # check-docker-gpu.sh — Diagnostic and optional setup helper for NVIDIA Docker GPU access.
 #
 # Default mode is READ-ONLY — does not install packages, modify config, or restart Docker.
-# The Odysseus app never calls this script automatically.
+# The Void app never calls this script automatically.
 #
 # USAGE
 #   scripts/check-docker-gpu.sh                              # read-only diagnostics (default)
@@ -93,7 +93,7 @@ Examples:
   # Full assisted setup without prompts (automated/CI use):
   scripts/check-docker-gpu.sh --install-nvidia-toolkit --enable-nvidia-overlay --yes
 
-After a successful setup, start Odysseus:
+After a successful setup, start Void:
   docker compose up -d --build
 
 Full guide: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html
@@ -327,7 +327,7 @@ _enable_nvidia_overlay() {
     if echo "${_current_cf}" | grep -qF "${_overlay_fragment}"; then
         _pass "COMPOSE_FILE already includes the NVIDIA overlay — nothing to change."
         echo
-        _info "Start or restart Odysseus to apply:"
+        _info "Start or restart Void to apply:"
         _info "  docker compose up -d --build"
         return 0
     fi
@@ -366,7 +366,7 @@ _enable_nvidia_overlay() {
 
     _pass "COMPOSE_FILE set to: ${_new_cf}"
     echo
-    _info "Start or restart Odysseus with the NVIDIA overlay:"
+    _info "Start or restart Void with the NVIDIA overlay:"
     _info "  docker compose up -d --build"
     echo
     _info "To undo, restore the backup:"
@@ -376,7 +376,7 @@ _enable_nvidia_overlay() {
 # ─── mode: default read-only diagnostic ──────────────────────────────────────
 
 _mode_check() {
-    echo "=== Odysseus Docker GPU diagnostic ==="
+    echo "=== Void Docker GPU diagnostic ==="
     echo
     _check_nvidia_smi
     _check_docker || { echo "=== Results: ${PASS} passed, ${FAIL} failed ==="; return 1; }
@@ -385,7 +385,7 @@ _mode_check() {
     if [ "${OPT_ENABLE_OVERLAY}" -eq 1 ]; then
         if [ "${_GPU_PASSTHROUGH_OK}" -eq 0 ]; then
             # Hard gate: broken passthrough blocks .env edits regardless of --yes.
-            # Writing COMPOSE_FILE before passthrough works causes Odysseus to fail
+            # Writing COMPOSE_FILE before passthrough works causes Void to fail
             # at startup, so this is not a prompt — it is a stop.
             _fail "GPU passthrough is not working — .env will not be modified."
             _info "Fix passthrough first, then re-run with --enable-nvidia-overlay:"

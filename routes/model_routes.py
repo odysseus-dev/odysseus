@@ -257,7 +257,7 @@ def _container_loopback_reachable(base_url: str, timeout: float = 0.2) -> bool:
     """True when the requested loopback host:port is already reachable from
     inside the current container.
 
-    This distinguishes "a model server running alongside Odysseus in the same
+    This distinguishes "a model server running alongside Void in the same
     container" from "a model server running on the Docker host". Only the
     latter should be rewritten to host.docker.internal.
     """
@@ -283,11 +283,11 @@ def _container_loopback_reachable(base_url: str, timeout: float = 0.2) -> bool:
 def _rewrite_loopback_for_docker(base_url: str, *, container_local: bool = False) -> str:
     """Rewrite a loopback model-endpoint URL to ``host.docker.internal`` when
     running in Docker. A URL like ``http://localhost:1234/v1`` (the LM Studio
-    default) otherwise targets the Odysseus container itself, so the probe gets
+    default) otherwise targets the Void container itself, so the probe gets
     a connection error and the endpoint is rejected with a misleading "No
     models found for that provider/key".
 
-    Cookbook local serves are the opposite case: Odysseus started the model
+    Cookbook local serves are the opposite case: Void started the model
     server inside the same container/process environment, so the saved endpoint
     must remain container-local. In that mode, normalize a bind address such as
     0.0.0.0 to a connectable loopback host, but do not jump to the Docker host.
@@ -982,7 +982,7 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
                 return {
                     "reachable": False,
                     "status_code": r.status_code,
-                    "error": "That is Odysseus, not a model server. Use the Ollama URL, usually http://host.docker.internal:11434/v1 in Docker.",
+                    "error": "That is Void, not a model server. Use the Ollama URL, usually http://host.docker.internal:11434/v1 in Docker.",
                 }
             return {"reachable": False, "status_code": r.status_code, "error": f"HTTP {r.status_code} redirect"}
         if 200 <= r.status_code < 300:
@@ -1469,7 +1469,7 @@ def setup_model_routes(model_discovery):
         result = _fetch_models(owner=owner, is_admin=_is_admin)
         _models_cache[_cache_key] = {"data": result, "time": now}
         # Kick off background refresh to update caches from live endpoints.
-        # Page boot can opt out with background=false so opening Odysseus does
+        # Page boot can opt out with background=false so opening Void does
         # not start endpoint probes against slow/offline model servers.
         if background or refresh:
             _refresh_caches_bg(force=refresh)
@@ -1814,7 +1814,7 @@ def setup_model_routes(model_discovery):
         from src.endpoint_resolver import resolve_url
         base_url = resolve_url(base_url)
         # In Docker, manually added loopback URLs usually point at a host-local
-        # server. Cookbook local serves are launched inside Odysseus itself, so
+        # server. Cookbook local serves are launched inside Void itself, so
         # keep those container-local when the frontend marks them as such.
         base_url = _rewrite_loopback_for_docker(base_url, container_local=_truthy(container_local))
 

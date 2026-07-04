@@ -351,7 +351,7 @@ async function _deleteSignature(id) {
 
 // Smoothness slider maps a single 0–10 value to the two main knobs.
 // Persisted in localStorage so the user's preference sticks.
-const SMOOTH_KEY = 'odysseus.signature.smoothness';
+const SMOOTH_KEY = 'void.signature.smoothness';
 function _loadSmoothness() {
   const v = parseInt(localStorage.getItem(SMOOTH_KEY) || '', 10);
   return Number.isFinite(v) && v >= 0 && v <= 10 ? v : 7;

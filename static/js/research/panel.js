@@ -10,7 +10,7 @@ import { sortModelIds } from '../modelSort.js';
 // Rotating research textarea placeholders — pick one at random each
 // time the panel is rendered so the example keeps feeling fresh.
 const _RESEARCH_HINTS = [
-  "e.g. Trace Odysseus's ten-year journey home from Troy — every island, monster, and detour, and why each one cost him",
+  "e.g. Trace Void's ten-year journey home from Troy — every island, monster, and detour, and why each one cost him",
   "e.g. Compare Rust and Go for building a high-throughput web API in 2026",
   "e.g. Fact-check whether honey actually never spoils",
   "e.g. How to roast a duck so the skin stays crispy",
@@ -62,8 +62,8 @@ let _expandedJobId = null;
 let _markdownModule = null;
 let _sessionModule = null;
 let _settingsCollapsed = false;
-const _SETTINGS_KEY = 'odysseus-research-settings';
-const _COLLAPSE_KEY = 'odysseus-research-settings-collapsed';
+const _SETTINGS_KEY = 'void-research-settings';
+const _COLLAPSE_KEY = 'void-research-settings-collapsed';
 
 try { _settingsCollapsed = localStorage.getItem(_COLLAPSE_KEY) === '1'; } catch {}
 
@@ -462,7 +462,7 @@ function _wireEvents(pane) {
     _settingsCollapsed = !_settingsCollapsed;
     body.style.display = _settingsCollapsed ? 'none' : '';
     btn.classList.toggle('collapsed', _settingsCollapsed);
-    try { localStorage.setItem('odysseus-research-settings-collapsed', _settingsCollapsed ? '1' : '0'); } catch {}
+    try { localStorage.setItem('void-research-settings-collapsed', _settingsCollapsed ? '1' : '0'); } catch {}
   });
 
   const queryInput = pane.querySelector('#research-query');

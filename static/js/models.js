@@ -18,10 +18,10 @@ let _cachedItems = []; // cached /api/models items for model-switch dropdown
 let _lastFetchTime = 0;
 let _fetchInflight = null;
 const _FETCH_CACHE_TTL = 30000; // 30s client-side cache for /api/models
-const COLLAPSE_KEY = 'odysseus-models-collapsed';
-const FAVORITES_KEY = 'odysseus-model-favorites';
-const USAGE_KEY = 'odysseus-model-usage';
-const SORT_KEY = 'odysseus-model-sort';
+const COLLAPSE_KEY = 'void-models-collapsed';
+const FAVORITES_KEY = 'void-model-favorites';
+const USAGE_KEY = 'void-model-usage';
+const SORT_KEY = 'void-model-sort';
 
 export function init(apiBase) {
   API_BASE = apiBase;

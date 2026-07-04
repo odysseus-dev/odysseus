@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""odysseus-calendar — Unix-style CLI for the calendar feature.
+"""void-calendar — Unix-style CLI for the calendar feature.
 
 Reads the same SQLite the web UI uses (`data/app.db`). Output is JSON on
 stdout, errors on stderr, non-zero exit on failure. Composable:
 
-    odysseus-calendar list --start 2026-05-01 --end 2026-05-31 \\
+    void-calendar list --start 2026-05-01 --end 2026-05-31 \\
       | jq -r '.[] | .dtstart + "\\t" + .summary'
 
-    odysseus-calendar calendars | jq -r '.[].name'
+    void-calendar calendars | jq -r '.[].name'
 
 Subcommands:
     list       List events in a date range (optionally per-calendar)
@@ -216,8 +216,8 @@ def _build_parser() -> argparse.ArgumentParser:
     common.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
 
     p = argparse.ArgumentParser(
-        prog="odysseus-calendar",
-        description="Shell-friendly wrapper around the Odysseus calendar.",
+        prog="void-calendar",
+        description="Shell-friendly wrapper around the Void calendar.",
         parents=[common],
     )
     sub = p.add_subparsers(dest="cmd", required=True)

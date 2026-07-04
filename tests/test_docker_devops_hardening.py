@@ -27,14 +27,14 @@ TEST_DOCS = [
 
 def _compose_env_names(path: Path) -> set[str]:
     compose = yaml.safe_load(path.read_text(encoding="utf-8"))
-    env = compose["services"]["odysseus"]["environment"]
+    env = compose["services"]["void"]["environment"]
     return {entry.split("=", 1)[0] for entry in env}
 
 
 def _upload_limit_env_names() -> set[str]:
     source = (ROOT / "src" / "upload_limits.py").read_text(encoding="utf-8")
-    return set(re.findall(r'"(ODYSSEUS_[A-Z_]*BYTES)"', source)) | {
-        "ODYSSEUS_CHAT_UPLOAD_MAX_BYTES"
+    return set(re.findall(r'"(VOID_[A-Z_]*BYTES)"', source)) | {
+        "VOID_CHAT_UPLOAD_MAX_BYTES"
     }
 
 
@@ -63,11 +63,11 @@ def test_default_compose_files_do_not_mount_host_docker_socket():
 
 def test_host_docker_overlay_mounts_socket_and_adds_docker_group():
     overlay = yaml.safe_load(HOST_DOCKER_OVERLAY.read_text(encoding="utf-8"))
-    service = overlay["services"]["odysseus"]
+    service = overlay["services"]["void"]
 
     assert "/var/run/docker.sock:/var/run/docker.sock" in service["volumes"]
     assert "${DOCKER_GID:-963}" in service["group_add"]
-    assert "ODYSSEUS_ENABLE_HOST_DOCKER=true" in service["environment"]
+    assert "VOID_ENABLE_HOST_DOCKER=true" in service["environment"]
 
 
 def test_docker_entrypoint_gates_socket_group_plumbing_on_explicit_opt_in():
@@ -77,7 +77,7 @@ def test_docker_entrypoint_gates_socket_group_plumbing_on_explicit_opt_in():
     socket_group_block = script[block_start:block_end]
 
     opt_in_check = socket_group_block.index(
-        "[ \"${ODYSSEUS_ENABLE_HOST_DOCKER:-}\" = \"true\" ]"
+        "[ \"${VOID_ENABLE_HOST_DOCKER:-}\" = \"true\" ]"
     )
     socket_check = socket_group_block.index("[ -S \"$DOCKER_SOCK\" ]")
     stat_socket = socket_group_block.index("stat -c")

@@ -29,7 +29,7 @@ def _export(cal_name, events):
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
-        "PRODID:-//Odysseus//Calendar//EN",
+        "PRODID:-//Void//Calendar//EN",
         f"X-WR-CALNAME:{_ics_escape(cal_name)}",
     ]
     for ev in events:

@@ -39,7 +39,7 @@ def test_censor_pref_reads_enabled_flag():
     values = _node_eval(
         """
         globalThis.localStorage = {
-          getItem(key) { return key === 'odysseus-sensitive-blur' ? 'on' : null; }
+          getItem(key) { return key === 'void-sensitive-blur' ? 'on' : null; }
         };
         const { _prefEnabled } = await import('./static/js/censor.js');
         console.log(JSON.stringify({ enabled: _prefEnabled() }));

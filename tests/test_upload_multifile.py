@@ -151,7 +151,7 @@ def test_rate_limit_accommodates_a_full_batch():
     # The per-minute file cap must comfortably exceed the frontend batch cap,
     # or a single legitimate multi-file attach trips it (issue #1346).
     h = UploadHandler.__new__(UploadHandler)
-    UploadHandler.__init__(h, base_dir="/tmp", upload_dir="/tmp/_odysseus_test_uploads_cfg")
+    UploadHandler.__init__(h, base_dir="/tmp", upload_dir="/tmp/_void_test_uploads_cfg")
     assert h.upload_rate_limit >= _max_files_from_frontend()
 
 

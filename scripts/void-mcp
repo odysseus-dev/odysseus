@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""odysseus-mcp — shell wrapper for MCP (Model Context Protocol) servers.
+"""void-mcp — shell wrapper for MCP (Model Context Protocol) servers.
 
 MCP servers are configured in the `mcp_servers` table. The web app's
 McpManager handles live connections; this CLI manages the *config*
 (read, add, enable/disable, delete). Runtime connection state lives
 in the manager process — query it via the web UI or `curl /api/mcp/servers`.
 
-    odysseus-mcp list                    # configured servers
-    odysseus-mcp show SERVER_ID
-    odysseus-mcp enable SERVER_ID
-    odysseus-mcp disable SERVER_ID
-    odysseus-mcp add --name "Filesystem" --transport stdio \\
+    void-mcp list                    # configured servers
+    void-mcp show SERVER_ID
+    void-mcp enable SERVER_ID
+    void-mcp disable SERVER_ID
+    void-mcp add --name "Filesystem" --transport stdio \\
                     --command npx --args '["@modelcontextprotocol/server-filesystem","/tmp"]'
-    odysseus-mcp delete SERVER_ID
+    void-mcp delete SERVER_ID
 """
 
 from __future__ import annotations
@@ -166,7 +166,7 @@ def cmd_delete(args):
 def _build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--pretty", action="store_true")
-    p = argparse.ArgumentParser(prog="odysseus-mcp", parents=[common])
+    p = argparse.ArgumentParser(prog="void-mcp", parents=[common])
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pl = sub.add_parser("list", parents=[common])

@@ -50,7 +50,7 @@ def test_service_searxng_json_sends_safesearch(monkeypatch):
     monkeypatch.setattr(providers, "_get_search_settings", lambda: {"search_safesearch": "moderate"})
     monkeypatch.setattr(providers.httpx, "get", fake_get)
 
-    results = providers.searxng_search_api("odysseus", count=1)
+    results = providers.searxng_search_api("void", count=1)
 
     assert results
     assert seen["url"] == "http://searx.test/search"
@@ -94,7 +94,7 @@ def test_service_ddg_html_fallback_sends_safesearch(monkeypatch):
     monkeypatch.setitem(sys.modules, "ddgs", None)
     monkeypatch.setattr(providers.httpx, "get", fake_get)
 
-    results = providers.duckduckgo_search("odysseus", count=1)
+    results = providers.duckduckgo_search("void", count=1)
 
     assert seen["params"]["kp"] == "-2"
     assert results[0]["url"].startswith("https://notduckduckgo.com/")

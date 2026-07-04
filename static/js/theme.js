@@ -32,8 +32,8 @@ export const THEMES = {
 };
 
 const DEFAULT_THEME = 'dark';
-const LS_KEY = 'odysseus-theme';
-const CUSTOM_THEMES_KEY = 'odysseus-custom-themes';
+const LS_KEY = 'void-theme';
+const CUSTOM_THEMES_KEY = 'void-custom-themes';
 
 const FONT_MAP = {
   mono: "'Fira Code', monospace",
@@ -184,7 +184,7 @@ const ADV_KEYS = [
   { key: 'aiBubbleBg',         css: '--ai-bubble-bg',      label: 'AI Chat Bubble',   group: 'Chat Bubbles' },
   { key: 'bubbleBorder',       css: '--bubble-border',     label: 'Border Chat Bubble', group: 'Chat Bubbles' },
   { key: 'sidebarBg',          css: '--sidebar-bg',        label: 'Sidebar Bg',       group: 'Sidebar' },
-  { key: 'brandColor',         css: '--brand-color',       label: 'Odysseus Logo',    group: 'Sidebar' },
+  { key: 'brandColor',         css: '--brand-color',       label: 'Void Logo',    group: 'Sidebar' },
   { key: 'brandMixTo',         css: '--brand-mix-to',      label: 'Logo Gradient End', group: 'Sidebar' },
   { key: 'hamburgerColor',     css: '--hamburger-color',   label: 'Hamburger Menu',   group: 'Sidebar' },
   { key: 'inputBg',            css: '--input-bg',          label: 'Input Bg',         group: 'Chat Input / Prompt Area' },
@@ -391,7 +391,7 @@ export function applyFontDensity(font, density) {
 // UI text-size scale (accessibility). Global and independent of the active
 // theme, so the chosen size persists across theme switches. Stored as a plain
 // percentage string ('100' | '110' | '125' | '150').
-const UI_SCALE_KEY = 'odysseus-ui-scale';
+const UI_SCALE_KEY = 'void-ui-scale';
 const DEFAULT_UI_SCALE = '100';
 
 export function applyUiScale(scale) {
@@ -1287,7 +1287,7 @@ export function initThemeUI() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'odysseus_' + (obj.name || 'theme') + '.json';
+      a.download = 'void_' + (obj.name || 'theme') + '.json';
       a.click();
       URL.revokeObjectURL(url);
       newExp.innerHTML = '&#x2713; Downloaded!';

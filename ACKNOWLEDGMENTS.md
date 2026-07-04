@@ -1,6 +1,6 @@
 # Acknowledgments
 
-Odysseus stands on the shoulders of a lot of open-source work. This file
+Void stands on the shoulders of a lot of open-source work. This file
 credits the projects whose code, assets, or designs are included in or
 adapted by this repository, and notes their licenses.
 
@@ -29,10 +29,10 @@ The full license texts are kept in [`licenses/`](licenses/).
   Copyright © Alex Jones. **MIT License.** Adapted in `services/hwfit/`
   (hardware detection, quant-aware fit scoring, model catalog),
   `routes/cookbook_*.py`, `routes/hwfit_routes.py`, `static/js/cookbook*.js`,
-  and `scripts/odysseus-cookbook`.
+  and `scripts/void-cookbook`.
 - **[Tongyi DeepResearch](https://github.com/Alibaba-NLP/DeepResearch)** by
   **Alibaba-NLP / Tongyi Lab** — the multi-step deep-research agent pipeline.
-  Copyright © Alibaba-NLP / Tongyi Lab. **Apache-2.0.** Adapted for Odysseus's
+  Copyright © Alibaba-NLP / Tongyi Lab. **Apache-2.0.** Adapted for Void's
   Deep Research feature (`services/research/`, `src/research_handler.py`,
   `routes/research_routes.py`, `services/search/`). Full text in
   [`licenses/DeepResearch-Apache-2.0.txt`](licenses/DeepResearch-Apache-2.0.txt).
@@ -42,7 +42,7 @@ The full license texts are kept in [`licenses/`](licenses/).
 ## Bundled via Docker Compose
 
 These services are pulled as images by the project's `docker-compose.yml`
-and run alongside Odysseus on `docker compose up`. They are not modified —
+and run alongside Void on `docker compose up`. They are not modified —
 just composed.
 
 | Service | Image | Purpose | License |
@@ -124,7 +124,7 @@ Core (`requirements.txt`) and optional (`requirements-optional.txt`):
 
 ## Companion services (interoperated with, not bundled)
 
-Odysseus talks to these over the network/API. They are **not** distributed
+Void talks to these over the network/API. They are **not** distributed
 with this project; their licenses do not bind this codebase, but they deserve
 credit:
 
@@ -153,7 +153,7 @@ concerns from earlier are resolved:
   install it, AGPL's network clause then applies to *that feature* for your
   deployment (Artifex also sells a commercial PyMuPDF license that lifts this).
 - **`caldav`** (Python lib) is **dual-licensed GPL-3.0-or-later OR Apache-2.0**.
-  Odysseus uses it under **Apache-2.0**, which is permissive and MIT-compatible.
+  Void uses it under **Apache-2.0**, which is permissive and MIT-compatible.
 - **`markitdown`** (Microsoft) is **MIT** and used only as an *optional* dependency for Office/EPUB text
   extraction (`src/markitdown_runtime.py`), lazy-imported with graceful fallback — the MIT core runs without
   it. The cloud `az-doc-intel` extra is deliberately **not** installed, keeping extraction fully local.
@@ -162,7 +162,7 @@ concerns from earlier are resolved:
 
 ## Thanks to
 
-Most of Odysseus's code was written *with* AI models, not just by a human.
+Most of Void's code was written *with* AI models, not just by a human.
 The project would not exist without them — credit where credit is due:
 
 - **gpt-oss-120b** — the legend that kicked this project off.

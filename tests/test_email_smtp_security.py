@@ -2,7 +2,7 @@ import os
 import tempfile
 from pathlib import Path
 
-_tmp_data = Path(tempfile.mkdtemp(prefix="odysseus-email-smtp-test-"))
+_tmp_data = Path(tempfile.mkdtemp(prefix="void-email-smtp-test-"))
 os.environ.setdefault("DATA_DIR", str(_tmp_data))
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{_tmp_data / 'app.db'}")
 

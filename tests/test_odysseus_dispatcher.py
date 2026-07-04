@@ -2,8 +2,8 @@ from tests.helpers.cli_loader import load_script
 
 
 def test_is_runnable_subcommand_requires_executable_file(tmp_path):
-    cli = load_script("odysseus")
-    sub = tmp_path / "odysseus-demo"
+    cli = load_script("void")
+    sub = tmp_path / "void-demo"
     sub.write_text("#!/bin/sh\n")
     sub.chmod(0o644)
 

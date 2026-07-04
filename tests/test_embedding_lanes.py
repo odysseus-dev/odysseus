@@ -30,12 +30,12 @@ def test_build_embedding_lanes_keeps_custom_and_fastembed_dimensions_separate(mo
         lambda: FakeEmbedder(384, "sentence-transformers/all-MiniLM-L6-v2", "local://fastembed"),
     )
 
-    built = build_embedding_lanes("odysseus_memories")
+    built = build_embedding_lanes("void_memories")
 
     assert [lane.name for lane in built] == [LANE_CUSTOM, LANE_FASTEMBED]
-    assert built[0].collection_name == "odysseus_memories_custom"
+    assert built[0].collection_name == "void_memories_custom"
     assert built[0].dimension == 768
-    assert built[1].collection_name == "odysseus_memories_fastembed"
+    assert built[1].collection_name == "void_memories_fastembed"
     assert built[1].dimension == 384
 
     built[0].collection.add(ids=["custom"], embeddings=built[0].encode(["a"]), documents=["a"])
@@ -48,7 +48,7 @@ def test_build_embedding_lanes_keeps_custom_and_fastembed_dimensions_separate(mo
 def test_build_embedding_lanes_recreates_only_custom_when_fingerprint_changes(monkeypatch):
     fake = FakeChroma()
     old_custom = fake.get_or_create_collection(
-        "odysseus_rag_custom",
+        "void_rag_custom",
         metadata={
             "embedding_lane": "custom",
             "embedding_dimension": 768,
@@ -57,7 +57,7 @@ def test_build_embedding_lanes_recreates_only_custom_when_fingerprint_changes(mo
     )
     old_custom.add(ids=["old"], embeddings=[[0.0] * 768], documents=["old"])
     fast = fake.get_or_create_collection(
-        "odysseus_rag_fastembed",
+        "void_rag_fastembed",
         metadata={
             "embedding_lane": "fastembed",
             "embedding_dimension": 384,
@@ -71,19 +71,19 @@ def test_build_embedding_lanes_recreates_only_custom_when_fingerprint_changes(mo
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: FakeEmbedder(1024, "bge-large", "http://embeddings/v1"))
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "sentence-transformers/all-MiniLM-L6-v2", "local://fastembed"))
 
-    built = build_embedding_lanes("odysseus_rag")
+    built = build_embedding_lanes("void_rag")
 
-    assert "odysseus_rag_custom" in fake.deleted
-    assert fake.collections["odysseus_rag_custom"].count() == 1
-    assert len(fake.collections["odysseus_rag_custom"].rows["old"]["embedding"]) == 1024
-    assert fake.collections["odysseus_rag_fastembed"].count() == 1
+    assert "void_rag_custom" in fake.deleted
+    assert fake.collections["void_rag_custom"].count() == 1
+    assert len(fake.collections["void_rag_custom"].rows["old"]["embedding"]) == 1024
+    assert fake.collections["void_rag_fastembed"].count() == 1
     assert built[0].dimension == 1024
 
 
 def test_lane_reset_reembeds_existing_documents_on_fingerprint_change(monkeypatch):
     fake = FakeChroma()
     old_custom = fake.get_or_create_collection(
-        "odysseus_memories_custom",
+        "void_memories_custom",
         metadata={
             "embedding_lane": "custom",
             "embedding_dimension": 384,
@@ -107,11 +107,11 @@ def test_lane_reset_reembeds_existing_documents_on_fingerprint_change(monkeypatc
 
     monkeypatch.setattr(lanes, "_build_fastembed_client", fail_fastembed)
 
-    built = build_embedding_lanes("odysseus_memories")
+    built = build_embedding_lanes("void_memories")
 
     assert [lane.name for lane in built] == [LANE_CUSTOM]
-    assert "odysseus_memories_custom" in fake.deleted
-    rebuilt = fake.collections["odysseus_memories_custom"]
+    assert "void_memories_custom" in fake.deleted
+    rebuilt = fake.collections["void_memories_custom"]
     assert rebuilt.count() == 1
     assert rebuilt.get()["ids"] == ["existing-memory"]
     assert len(rebuilt.rows["existing-memory"]["embedding"]) == 768
@@ -120,7 +120,7 @@ def test_lane_reset_reembeds_existing_documents_on_fingerprint_change(monkeypatc
 def test_lane_reset_keeps_existing_collection_when_reembed_fails(monkeypatch):
     fake = FakeChroma()
     old_custom = fake.get_or_create_collection(
-        "odysseus_memories_custom",
+        "void_memories_custom",
         metadata={
             "embedding_lane": "custom",
             "embedding_dimension": 384,
@@ -140,18 +140,18 @@ def test_lane_reset_keeps_existing_collection_when_reembed_fails(monkeypatch):
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: FailingEmbedder(768, "nomic", "http://embeddings/v1"))
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
 
-    built = build_embedding_lanes("odysseus_memories")
+    built = build_embedding_lanes("void_memories")
 
     assert [lane.name for lane in built] == [LANE_FASTEMBED]
-    assert "odysseus_memories_custom" not in fake.deleted
-    assert fake.collections["odysseus_memories_custom"].count() == 1
-    assert len(fake.collections["odysseus_memories_custom"].rows["existing-memory"]["embedding"]) == 384
+    assert "void_memories_custom" not in fake.deleted
+    assert fake.collections["void_memories_custom"].count() == 1
+    assert len(fake.collections["void_memories_custom"].rows["existing-memory"]["embedding"]) == 384
 
 
 def test_lane_reset_keeps_existing_collection_when_preserve_read_fails(monkeypatch):
     fake = FakeChroma()
     old_custom = fake.get_or_create_collection(
-        "odysseus_memories_custom",
+        "void_memories_custom",
         metadata={
             "embedding_lane": "custom",
             "embedding_dimension": 384,
@@ -180,17 +180,17 @@ def test_lane_reset_keeps_existing_collection_when_preserve_read_fails(monkeypat
 
     monkeypatch.setattr(lanes, "_build_fastembed_client", fail_fastembed)
 
-    built = build_embedding_lanes("odysseus_memories")
+    built = build_embedding_lanes("void_memories")
 
     assert built == []
-    assert "odysseus_memories_custom" not in fake.deleted
-    assert "odysseus_memories_custom" in fake.collections
+    assert "void_memories_custom" not in fake.deleted
+    assert "void_memories_custom" in fake.collections
 
 
 def test_lane_reset_restores_existing_collection_when_rewrite_fails(monkeypatch):
     fake = FakeChroma()
     old_custom = fake.get_or_create_collection(
-        "odysseus_memories_custom",
+        "void_memories_custom",
         metadata={
             "embedding_lane": "custom",
             "embedding_dimension": 384,
@@ -203,7 +203,7 @@ def test_lane_reset_restores_existing_collection_when_rewrite_fails(monkeypatch)
         documents=["existing custom memory"],
         metadatas=[{"source": "memory"}],
     )
-    fake.fail_next_add_for["odysseus_memories_custom"] = 1
+    fake.fail_next_add_for["void_memories_custom"] = 1
     patch_chroma(monkeypatch, fake)
 
     import src.embedding_lanes as lanes
@@ -215,10 +215,10 @@ def test_lane_reset_restores_existing_collection_when_rewrite_fails(monkeypatch)
 
     monkeypatch.setattr(lanes, "_build_fastembed_client", fail_fastembed)
 
-    built = build_embedding_lanes("odysseus_memories")
+    built = build_embedding_lanes("void_memories")
 
     assert built == []
-    restored = fake.collections["odysseus_memories_custom"]
+    restored = fake.collections["void_memories_custom"]
     assert restored.count() == 1
     assert restored.get()["ids"] == ["existing-memory"]
     assert len(restored.rows["existing-memory"]["embedding"]) == 384
@@ -236,10 +236,10 @@ def test_build_embedding_lanes_uses_fastembed_when_custom_unavailable(monkeypatc
     monkeypatch.setattr(lanes, "_build_custom_client", fail_custom)
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
 
-    built = build_embedding_lanes("odysseus_tool_index")
+    built = build_embedding_lanes("void_tool_index")
 
     assert [lane.name for lane in built] == [LANE_FASTEMBED]
-    assert built[0].collection_name == "odysseus_tool_index_fastembed"
+    assert built[0].collection_name == "void_tool_index_fastembed"
 
 
 def test_custom_lane_preserves_default_embedding_client_probe(monkeypatch):

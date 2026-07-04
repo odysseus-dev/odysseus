@@ -7,7 +7,7 @@
 
 let _enabled = true;
 let _observer = null;
-const PREF_KEY = 'odysseus-sensitive-blur';
+const PREF_KEY = 'void-sensitive-blur';
 export const _prefEnabled = () => {
   try {
     return localStorage.getItem(PREF_KEY) === 'on';
@@ -44,7 +44,7 @@ const PATTERNS = [
 export function init() {
   // Load enabled state from feature flags
   _loadState();
-  window.addEventListener('odysseus-sensitive-blur-change', (e) => {
+  window.addEventListener('void-sensitive-blur-change', (e) => {
     setEnabled(e.detail?.enabled !== false);
   });
   // Set up click handler for reveals (delegated)

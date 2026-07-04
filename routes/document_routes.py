@@ -1562,7 +1562,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         from core.database import Signature
         # COMPOSE_UPLOADS_DIR lives in email_routes — re-derive here so we
         # don't import from a routes file (cycle-prone). Same env override
-        # as email_routes (ODYSSEUS_MAIL_ATTACHMENTS_DIR).
+        # as email_routes (VOID_MAIL_ATTACHMENTS_DIR).
         from pathlib import Path as _Path
         _COMPOSE_DIR = _Path(MAIL_ATTACHMENTS_DIR) / "_compose"
         _COMPOSE_DIR.mkdir(parents=True, exist_ok=True)

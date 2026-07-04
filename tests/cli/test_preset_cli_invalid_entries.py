@@ -2,7 +2,7 @@ from tests.helpers.cli_loader import load_script
 
 
 def test_entry_or_fail_rejects_non_object_entries():
-    cli = load_script("odysseus-preset")
+    cli = load_script("void-preset")
 
     try:
         cli._entry_or_fail({"broken": "raw prompt"}, "broken")
@@ -13,6 +13,6 @@ def test_entry_or_fail_rejects_non_object_entries():
 
 
 def test_entry_or_fail_returns_valid_entry():
-    cli = load_script("odysseus-preset")
+    cli = load_script("void-preset")
 
     assert cli._entry_or_fail({"ok": {"name": "ok"}}, "ok") == {"name": "ok"}

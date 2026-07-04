@@ -11,21 +11,21 @@
 # running Docker in the `video` and `render` groups. Set RENDER_GID to your
 # host's numeric render group id when needed. See docker/gpu.amd.yml for details.
 services:
-  odysseus:
+  void:
     build: .
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000"
     volumes:
       - ${APP_DATA_DIR:-./data}:/app/data:z
       - ${APP_LOGS_DIR:-./logs}:/app/logs:z
-      # Cookbook remote-server SSH identity. Odysseus can generate a key here;
+      # Cookbook remote-server SSH identity. Void can generate a key here;
       # add the shown public key to each remote server's authorized_keys.
       - ${APP_DATA_DIR:-./data}/ssh:/app/.ssh:z
-      # Cookbook local model cache. Inside Docker, "Local" means the Odysseus
+      # Cookbook local model cache. Inside Docker, "Local" means the Void
       # container, so persist its HuggingFace cache under ./data/huggingface.
       - ${APP_DATA_DIR:-./data}/huggingface:/app/.cache/huggingface:z
       # Cookbook-installed Python CLIs/packages (vLLM, llama-cpp-python, etc.)
-      # land under /app/.local for the odysseus user. Persist them so a
+      # land under /app/.local for the void user. Persist them so a
       # container recreate does not silently remove installed serve engines.
       - ${APP_DATA_DIR:-./data}/local:/app/.local:z
     extra_hosts:
@@ -46,8 +46,8 @@ services:
       - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
       - AUTH_ENABLED=${AUTH_ENABLED:-true}
       - LOCALHOST_BYPASS=${LOCALHOST_BYPASS:-false}
-      - ODYSSEUS_ADMIN_USER=${ODYSSEUS_ADMIN_USER:-admin}
-      - ODYSSEUS_ADMIN_PASSWORD=${ODYSSEUS_ADMIN_PASSWORD:-}
+      - VOID_ADMIN_USER=${VOID_ADMIN_USER:-admin}
+      - VOID_ADMIN_PASSWORD=${VOID_ADMIN_PASSWORD:-}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost,http://127.0.0.1}
       - SECURE_COOKIES=${SECURE_COOKIES:-false}
       - EMBEDDING_URL=${EMBEDDING_URL:-}
@@ -56,17 +56,17 @@ services:
       - FASTEMBED_MODEL=${FASTEMBED_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
       - FASTEMBED_CACHE_PATH=${FASTEMBED_CACHE_PATH:-}
       - CLEANUP_INTERVAL_HOURS=${CLEANUP_INTERVAL_HOURS:-24}
-      - ODYSSEUS_INPROCESS_POLLERS=${ODYSSEUS_INPROCESS_POLLERS:-1}
-      - ODYSSEUS_INPROCESS_TASKS=${ODYSSEUS_INPROCESS_TASKS:-1}
-      - ODYSSEUS_SCRIPT_HOST=${ODYSSEUS_SCRIPT_HOST:-localhost}
-      - ODYSSEUS_CHAT_UPLOAD_MAX_BYTES=${ODYSSEUS_CHAT_UPLOAD_MAX_BYTES:-10485760}
-      - ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES=${ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES:-104857600}
-      - ODYSSEUS_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES=${ODYSSEUS_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES:-26214400}
-      - ODYSSEUS_MEMORY_IMPORT_MAX_BYTES=${ODYSSEUS_MEMORY_IMPORT_MAX_BYTES:-10485760}
-      - ODYSSEUS_PERSONAL_UPLOAD_MAX_BYTES=${ODYSSEUS_PERSONAL_UPLOAD_MAX_BYTES:-26214400}
-      - ODYSSEUS_EMAIL_COMPOSE_UPLOAD_MAX_BYTES=${ODYSSEUS_EMAIL_COMPOSE_UPLOAD_MAX_BYTES:-26214400}
-      - ODYSSEUS_STT_MAX_AUDIO_BYTES=${ODYSSEUS_STT_MAX_AUDIO_BYTES:-26214400}
-      - ODYSSEUS_ICS_MAX_BYTES=${ODYSSEUS_ICS_MAX_BYTES:-10485760}
+      - VOID_INPROCESS_POLLERS=${VOID_INPROCESS_POLLERS:-1}
+      - VOID_INPROCESS_TASKS=${VOID_INPROCESS_TASKS:-1}
+      - VOID_SCRIPT_HOST=${VOID_SCRIPT_HOST:-localhost}
+      - VOID_CHAT_UPLOAD_MAX_BYTES=${VOID_CHAT_UPLOAD_MAX_BYTES:-10485760}
+      - VOID_GALLERY_UPLOAD_MAX_BYTES=${VOID_GALLERY_UPLOAD_MAX_BYTES:-104857600}
+      - VOID_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES=${VOID_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES:-26214400}
+      - VOID_MEMORY_IMPORT_MAX_BYTES=${VOID_MEMORY_IMPORT_MAX_BYTES:-10485760}
+      - VOID_PERSONAL_UPLOAD_MAX_BYTES=${VOID_PERSONAL_UPLOAD_MAX_BYTES:-26214400}
+      - VOID_EMAIL_COMPOSE_UPLOAD_MAX_BYTES=${VOID_EMAIL_COMPOSE_UPLOAD_MAX_BYTES:-26214400}
+      - VOID_STT_MAX_AUDIO_BYTES=${VOID_STT_MAX_AUDIO_BYTES:-26214400}
+      - VOID_ICS_MAX_BYTES=${VOID_ICS_MAX_BYTES:-10485760}
       - DATA_BRAVE_API_KEY=${DATA_BRAVE_API_KEY:-}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
       - GOOGLE_PSE_CX=${GOOGLE_PSE_CX:-}
@@ -107,7 +107,7 @@ services:
     restart: unless-stopped
 
   searxng:
-    # Pinned, not :latest — odysseus waits on searxng's healthcheck
+    # Pinned, not :latest — void waits on searxng's healthcheck
     # (depends_on: condition: service_healthy), so a broken upstream `latest`
     # tag blocks the whole app from starting. 2026.6.2 crashes on boot with
     # `KeyError: 'default_doi_resolver'`, failing the healthcheck (issue #1414).
@@ -118,7 +118,7 @@ services:
       - -c
       - |
         set -eu
-        if [ ! -s /etc/searxng/settings.yml ] || grep -q 'odysseus-local-searxng-json-2026-05-30\|__SEARXNG_SECRET__' /etc/searxng/settings.yml; then
+        if [ ! -s /etc/searxng/settings.yml ] || grep -q 'void-local-searxng-json-2026-05-30\|__SEARXNG_SECRET__' /etc/searxng/settings.yml; then
           secret="$${SEARXNG_SECRET:-}"
           if [ -z "$$secret" ]; then
             secret="$$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"

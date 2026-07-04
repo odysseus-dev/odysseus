@@ -2217,7 +2217,7 @@ function _rerenderCachedModels() {
       }
 
       // Saved-configs dropdown. Rebuilt each open (and after delete) so it always
-      // reflects the stored presets. Standard Odysseus .dropdown look, positioned
+      // reflects the stored presets. Standard Void .dropdown look, positioned
       // fixed at the toggle and right-aligned to it.
       function _showSavedConfigMenu(anchor) {
         document.querySelectorAll('.cookbook-saved-menu').forEach(d => { if (typeof d._dismiss === 'function') d._dismiss(); else d.remove(); });
@@ -3655,7 +3655,7 @@ function _renderCachedModelsData(list, data, host) {
 
   if (!allModels.length) {
     if (!host) {
-      list.innerHTML = '<div class="hwfit-loading" style="flex-direction:column;gap:6px;text-align:center;"><div>No cached models found</div><div style="font-size:11px;opacity:0.55;max-width:420px;line-height:1.4;">Docker Local uses Odysseus’s cache in <code>data/huggingface</code>. Download a model here, or copy an existing host HuggingFace cache into that folder once.</div></div>';
+      list.innerHTML = '<div class="hwfit-loading" style="flex-direction:column;gap:6px;text-align:center;"><div>No cached models found</div><div style="font-size:11px;opacity:0.55;max-width:420px;line-height:1.4;">Docker Local uses Void’s cache in <code>data/huggingface</code>. Download a model here, or copy an existing host HuggingFace cache into that folder once.</div></div>';
     } else {
       list.innerHTML = '<div class="hwfit-loading" style="flex-direction:column;gap:8px;text-align:center;"><div>No cached models found</div><div style="font-size:11px;opacity:0.55;max-width:420px;line-height:1.4;">No complete model folders were found on this server.</div><button type="button" class="hwfit-gpu-btn serve-empty-scan-btn" style="height:26px;padding:3px 10px;">Refresh</button></div>';
       list.querySelector('.serve-empty-scan-btn')?.addEventListener('click', () => {

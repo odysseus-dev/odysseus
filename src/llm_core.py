@@ -370,11 +370,11 @@ def _normalize_openai_chat_url(url: str) -> str:
 
 
 def _ollama_normalize_messages(messages: List[Dict]) -> List[Dict]:
-    """Adapt Odysseus' canonical OpenAI-style messages to native Ollama /api/chat.
+    """Adapt Void' canonical OpenAI-style messages to native Ollama /api/chat.
 
     Two shape mismatches silently break requests:
 
-    1. Tool calls: Odysseus carries `function.arguments` as a JSON *string*.
+    1. Tool calls: Void carries `function.arguments` as a JSON *string*.
        Native Ollama expects a JSON *object* and rejects the string form with
        HTTP 400 ("Value looks like object, but can't find closing '}' symbol"),
        aborting every follow-up (tool-result) round. Parse the arguments back
@@ -383,7 +383,7 @@ def _ollama_normalize_messages(messages: List[Dict]) -> List[Dict]:
        dropped — it is meaningless to Ollama and only matters when the
        conversation is replayed to Gemini.
 
-    2. Images (issue #4723): Odysseus carries multimodal user content as an
+    2. Images (issue #4723): Void carries multimodal user content as an
        OpenAI-style list ``[{type: "text", ...}, {type: "image_url",
        image_url: {url: "data:image/...;base64,XXX"}}, ...]``. Native Ollama
        does not accept a list for ``content`` — it wants ``content`` as a
@@ -738,7 +738,7 @@ def _apply_local_cache_affinity(payload: Dict, url: str, session_id: Optional[st
     slots via LRU when no stable identifier is present ("session_id=<empty>
     server-selected (LCP/LRU)"), which means consecutive turns of the same
     chat can land on different slots and lose their cached prefix entirely.
-    Sending a stable ``session_id`` (derived from the Odysseus session) lets
+    Sending a stable ``session_id`` (derived from the Void session) lets
     the server keep routing the same conversation to the same slot, and
     ``cache_prompt: true`` asks it to retain/reuse the prefix it already has.
 
@@ -760,8 +760,8 @@ def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str
     if isinstance(headers, dict):
         h.update(headers)
     if provider == "openrouter":
-        h.setdefault("HTTP-Referer", "https://github.com/pewdiepie-archdaemon/odysseus")
-        h.setdefault("X-OpenRouter-Title", "Odysseus")
+        h.setdefault("HTTP-Referer", "https://github.com/MKarthik730/void-core")
+        h.setdefault("X-OpenRouter-Title", "Void")
     if provider == "copilot":
         # Ensure the Copilot-required headers are present even when the caller
         # didn't pass pre-built headers (e.g. model listing). build_headers()
@@ -962,7 +962,7 @@ def _restricts_temperature(model: str) -> bool:
 
 # The official Moonshot API fixes temperature at 1.0 in thinking mode and 0.6
 # when thinking is explicitly disabled for Kimi K2.5/K2.6. Any other explicit
-# value returns HTTP 400. Odysseus does not currently send the `thinking` mode
+# value returns HTTP 400. Void does not currently send the `thinking` mode
 # control, so omit temperature and let Moonshot use its default thinking mode.
 # Keep the gate provider-specific: self-hosted Kimi deployments may accept
 # custom sampling values, and older Moonshot models have different defaults.
@@ -1005,8 +1005,8 @@ def _anthropic_rejects_temperature(model: str) -> bool:
 # Reasoning effort level sent to Mistral thinking-capable models. Mistral's
 # API accepts "high", "medium", "low", "none" — see
 # https://docs.mistral.ai/capabilities/reasoning/. Override via env var
-# ODYSSEUS_MISTRAL_REASONING_EFFORT (e.g. set to "medium" for cheaper chat).
-_MISTRAL_REASONING_EFFORT = os.getenv("ODYSSEUS_MISTRAL_REASONING_EFFORT", "high")
+# VOID_MISTRAL_REASONING_EFFORT (e.g. set to "medium" for cheaper chat).
+_MISTRAL_REASONING_EFFORT = os.getenv("VOID_MISTRAL_REASONING_EFFORT", "high")
 
 # Models that support structured thinking — may output </think> without opening tag
 _THINKING_MODEL_PATTERNS = (
@@ -1244,7 +1244,7 @@ _REFERENCE_CONTEXT_BOUNDARY = "Reference context received."
 
 
 def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
-    """Strip Odysseus-only metadata before sending messages to providers.
+    """Strip Void-only metadata before sending messages to providers.
 
     Per the OpenAI chat format: user/system messages must have content; a tool
     message needs content + tool_call_id; an assistant message may carry content,
@@ -1935,7 +1935,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             payload["tool_choice"] = "none"
         # Mistral thinking-capable models — send reasoning_effort so Mistral
         # activates thinking mode and returns structured reasoning_content.
-        # Effort level is configurable via ODYSSEUS_MISTRAL_REASONING_EFFORT
+        # Effort level is configurable via VOID_MISTRAL_REASONING_EFFORT
         # (high / medium / low / none); default "high".
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT

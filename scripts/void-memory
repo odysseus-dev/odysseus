@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""odysseus-memory — shell wrapper for the AI memory store.
+"""void-memory — shell wrapper for the AI memory store.
 
 The chat assistant accumulates durable facts about the user (name,
 projects, preferences, contacts) into `data/memory.json`. This CLI
 lets you inspect, search, and prune them from the shell.
 
-    odysseus-memory list                          # all entries (paged)
-    odysseus-memory list --category preference
-    odysseus-memory search "tokyo"                # substring match
-    odysseus-memory show MEMORY_ID
-    odysseus-memory add "User lives in Tokyo" --category fact
-    odysseus-memory delete MEMORY_ID
-    odysseus-memory categories                    # counts per category
+    void-memory list                          # all entries (paged)
+    void-memory list --category preference
+    void-memory search "tokyo"                # substring match
+    void-memory show MEMORY_ID
+    void-memory add "User lives in Tokyo" --category fact
+    void-memory delete MEMORY_ID
+    void-memory categories                    # counts per category
 
 Reads/writes the same `data/memory.json` the web UI uses via the
 `MemoryManager` helper. Atomic — the manager handles the temp-file
@@ -118,7 +118,7 @@ def cmd_categories(args):
 def _build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--pretty", action="store_true")
-    p = argparse.ArgumentParser(prog="odysseus-memory", parents=[common])
+    p = argparse.ArgumentParser(prog="void-memory", parents=[common])
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pl = sub.add_parser("list", parents=[common])

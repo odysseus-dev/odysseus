@@ -1,10 +1,10 @@
-# Contributing to Odysseus
+# Contributing to Void
 
 Thanks for helping. The project is moving quickly, so the best contributions are focused, easy to review, and easy to test.
 
 ## Branch model
 
-Odysseus has two branches:
+Void has two branches:
 
 - **`dev`** — where all PRs land. Things can be in flux here; the merge button gets used freely.
 - **`main`** — what users run. Curated and tested by the maintainer. Fast-forwarded to a stable `dev` commit at each release.
@@ -25,8 +25,8 @@ End-users cloning the repo will land on `dev` by default. To run the curated/sta
 Docker is the recommended path for normal testing:
 
 ```bash
-git clone https://github.com/pewdiepie-archdaemon/odysseus.git
-cd odysseus
+git clone https://github.com/MKarthik730/void-core.git
+cd void
 cp .env.example .env
 docker compose up -d --build
 ```
@@ -57,7 +57,7 @@ For Docker-related changes:
 ```bash
 docker compose config
 docker compose up -d --build
-docker compose logs --tail=120 odysseus
+docker compose logs --tail=120 void
 ```
 
 Mention what you ran in the pull request description. If you could not run a check, say so.
@@ -78,7 +78,7 @@ Please keep PRs small. Large PRs that mix unrelated cleanup, formatting, refacto
 
 ## Style and visual changes
 
-Odysseus has an intentional visual style. PRs that ignore it will be closed without merge, no matter how correct the underlying code is.
+Void has an intentional visual style. PRs that ignore it will be closed without merge, no matter how correct the underlying code is.
 
 Before submitting any change that affects what the app looks like — buttons, icons, fonts, colors, spacing, layout, CSS, HTML, SVG, or any `static/js/` module that draws to the DOM — please:
 
@@ -98,8 +98,8 @@ If you are unsure whether a change is "visual," it is. Default to attaching a sc
 
 Don't hardcode values that the project already exposes through a constant or a helper. Hardcoded literals drift out of sync, break on non-default deployments, and reintroduce bugs we've already fixed.
 
-- **Filesystem paths:** never build writable paths from `Path(__file__)...` into the source tree, hardcode `/app/...`, or use a relative `"data/..."` string. Every persisted file and directory has a named constant in `src/constants.py` (for example `AUTH_FILE`, `USER_PREFS_FILE`, `SETTINGS_FILE`, `TTS_CACHE_DIR`, `CHROMA_DIR`). Import and use that named constant; do not re-derive the path locally with `os.path.join(DATA_DIR, "x.json")` or `DATA_DIR / "x.json"`. `DATA_DIR` is the single place that reads `ODYSSEUS_DATA_DIR`, so use it directly only for dynamic paths that have no fixed name (for example per-owner files). If a data file or directory has no constant yet, add one to `src/constants.py`. The source tree is read-only in Docker and `/app/...` does not exist on native runs; guard directory creation so an unwritable path degrades gracefully instead of crashing at import.
-- **Internal API / loopback URLs:** don't hardcode `http://localhost:7000`. Use `internal_api_base()` from `src.constants` (it honors `ODYSSEUS_INTERNAL_BASE` / `APP_PORT`).
+- **Filesystem paths:** never build writable paths from `Path(__file__)...` into the source tree, hardcode `/app/...`, or use a relative `"data/..."` string. Every persisted file and directory has a named constant in `src/constants.py` (for example `AUTH_FILE`, `USER_PREFS_FILE`, `SETTINGS_FILE`, `TTS_CACHE_DIR`, `CHROMA_DIR`). Import and use that named constant; do not re-derive the path locally with `os.path.join(DATA_DIR, "x.json")` or `DATA_DIR / "x.json"`. `DATA_DIR` is the single place that reads `VOID_DATA_DIR`, so use it directly only for dynamic paths that have no fixed name (for example per-owner files). If a data file or directory has no constant yet, add one to `src/constants.py`. The source tree is read-only in Docker and `/app/...` does not exist on native runs; guard directory creation so an unwritable path degrades gracefully instead of crashing at import.
+- **Internal API / loopback URLs:** don't hardcode `http://localhost:7000`. Use `internal_api_base()` from `src.constants` (it honors `VOID_INTERNAL_BASE` / `APP_PORT`).
 - **Ports, limits, model lists, and similar:** reuse the existing constant if one exists; if it doesn't and the value is used in more than one place, add a constant rather than copying the literal.
 
 If you need a value that has no constant or helper yet, add it to `src/constants.py` (the single source of truth for paths and config; `core/constants.py` only re-exports it for backward compatibility) and import it, rather than repeating a literal across files.

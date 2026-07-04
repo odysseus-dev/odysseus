@@ -2,7 +2,7 @@
 
 Background tasks are allowed to run only after normal UI/API traffic has
 settled. This keeps scheduled jobs and email pollers from competing with the
-user opening Odysseus, Cookbook, email, documents, notes, or other panels.
+user opening Void, Cookbook, email, documents, notes, or other panels.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def _max_wait_seconds() -> float:
 
 
 def _browser_active_seconds() -> float:
-    """How long a visible Odysseus browser heartbeat blocks background tasks."""
+    """How long a visible Void browser heartbeat blocks background tasks."""
     try:
         return max(0.0, float(os.getenv("BACKGROUND_TASK_BROWSER_ACTIVE_SECONDS", "45")))
     except Exception:
@@ -80,7 +80,7 @@ def should_track_interactive_request(path: str, method: str = "GET") -> bool:
 
 
 async def mark_browser_activity() -> None:
-    """Record that an authenticated browser tab is visibly using Odysseus."""
+    """Record that an authenticated browser tab is visibly using Void."""
     global _LAST_BROWSER_ACTIVITY
     if not _enabled():
         return

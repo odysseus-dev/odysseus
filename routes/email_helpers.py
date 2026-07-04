@@ -217,7 +217,7 @@ def _friendly_email_auth_error(protocol: str, host: str, error: object) -> str:
     if microsoft_basic_auth_failure:
         return (
             "Microsoft no longer accepts normal mailbox passwords for "
-            "Outlook/Office 365 IMAP/SMTP in most accounts. Odysseus "
+            "Outlook/Office 365 IMAP/SMTP in most accounts. Void "
             "does not support Microsoft OAuth/Graph mail yet, so Outlook "
             "accounts cannot be added with this password form."
         )
@@ -411,7 +411,7 @@ def _cleanup_compose_uploads(tokens) -> None:
 from src.constants import DATA_DIR as _DATA_DIR, MAIL_ATTACHMENTS_DIR, SETTINGS_FILE as _SETTINGS_FILE, SCHEDULED_EMAILS_DB
 DATA_DIR = Path(_DATA_DIR)
 SETTINGS_FILE = Path(_SETTINGS_FILE)
-# Override at deploy time via ODYSSEUS_MAIL_ATTACHMENTS_DIR. Defaults to a
+# Override at deploy time via VOID_MAIL_ATTACHMENTS_DIR. Defaults to a
 # subdir of the install's data/ tree so the app works out-of-the-box without
 # a hardcoded /home/<user>/ path.
 ATTACHMENTS_DIR = Path(MAIL_ATTACHMENTS_DIR)
@@ -803,8 +803,8 @@ def _init_scheduled_db():
         cols = [r[1] for r in conn.execute("PRAGMA table_info(scheduled_emails)").fetchall()]
         if "account_id" not in cols:
             conn.execute("ALTER TABLE scheduled_emails ADD COLUMN account_id TEXT")
-        if "odysseus_kind" not in cols:
-            conn.execute("ALTER TABLE scheduled_emails ADD COLUMN odysseus_kind TEXT")
+        if "void_kind" not in cols:
+            conn.execute("ALTER TABLE scheduled_emails ADD COLUMN void_kind TEXT")
         if "owner" not in cols:
             conn.execute("ALTER TABLE scheduled_emails ADD COLUMN owner TEXT DEFAULT ''")
         conn.execute("CREATE INDEX IF NOT EXISTS ix_scheduled_emails_owner_status ON scheduled_emails(owner, status)")
@@ -1011,7 +1011,7 @@ def _coerce_imap_timeout_seconds(raw: str | None) -> int:
     return max(5, min(value, 300))
 
 
-_IMAP_TIMEOUT_SECONDS = _coerce_imap_timeout_seconds(os.environ.get("ODYSSEUS_IMAP_TIMEOUT_SECONDS"))
+_IMAP_TIMEOUT_SECONDS = _coerce_imap_timeout_seconds(os.environ.get("VOID_IMAP_TIMEOUT_SECONDS"))
 
 
 def _open_imap_connection(host: str, port: int, *, starttls: bool, timeout: int = _IMAP_TIMEOUT_SECONDS):
@@ -1844,8 +1844,8 @@ class SendEmailRequest(BaseModel):
     # answered after successful delivery so it leaves undone/reply-soon views.
     source_uid: Optional[str] = None
     source_folder: Optional[str] = None
-    # Internal marker for Odysseus-generated mail (e.g. reminder, scheduled).
-    odysseus_kind: Optional[str] = None
+    # Internal marker for Void-generated mail (e.g. reminder, scheduled).
+    void_kind: Optional[str] = None
     # If true, /send waits for SMTP + Sent append and returns the sent UID.
     wait_for_delivery: bool = False
 

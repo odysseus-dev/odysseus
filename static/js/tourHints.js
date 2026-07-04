@@ -4,7 +4,7 @@
 // fullscreened by dragging the title bar. Shown once globally — once the
 // user has dismissed it (or it auto-hides), it never returns.
 
-const HINT_SEEN_KEY = 'odysseus-hint-drag-to-snap-seen';
+const HINT_SEEN_KEY = 'void-hint-drag-to-snap-seen';
 
 // Allow-list of modals where the snap/fullscreen hint makes sense.
 // These are the full-window "tool" modals where users commonly want to

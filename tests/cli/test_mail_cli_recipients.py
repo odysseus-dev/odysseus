@@ -26,7 +26,7 @@ def _load_mail_cli(monkeypatch):
         install_core_package=True,
     )
 
-    return load_script("odysseus-mail")
+    return load_script("void-mail")
 
 
 def test_recipient_list_trims_to_cc_and_bcc(monkeypatch):

@@ -32,7 +32,7 @@ def test_windows_session_commands_use_shared_powershell_wrapper_and_local_log_di
     source = _read("static/js/cookbookRunning.js")
 
     assert "const host = task.remoteHost;" in source
-    assert "host ? '$env:TEMP\\\\odysseus-sessions' : '$env:TEMP\\\\odysseus-tmux'" in source
+    assert "host ? '$env:TEMP\\\\void-sessions' : '$env:TEMP\\\\void-tmux'" in source
     assert "function _winPowerShellCmd(task, ps)" in source
     assert "const command = `powershell -Command \"${ps}\"`;" in source
     assert "if (!host) return command;" in source

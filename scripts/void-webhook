@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""odysseus-webhook — shell wrapper for scheduled-task webhook tokens.
+"""void-webhook — shell wrapper for scheduled-task webhook tokens.
 
 Tasks in the scheduled-task system can carry a `webhook_token`. Any
 HTTP POST to `/api/webhook/<token>` fires the task. This CLI lists,
 rotates, and revokes those tokens.
 
-    odysseus-webhook list                       # tasks that have a token
-    odysseus-webhook show TASK_ID
-    odysseus-webhook rotate TASK_ID             # generate a fresh token
-    odysseus-webhook revoke TASK_ID             # remove the token
-    odysseus-webhook url TASK_ID --base https://app.example.com
+    void-webhook list                       # tasks that have a token
+    void-webhook show TASK_ID
+    void-webhook rotate TASK_ID             # generate a fresh token
+    void-webhook revoke TASK_ID             # remove the token
+    void-webhook url TASK_ID --base https://app.example.com
 """
 
 from __future__ import annotations
@@ -124,7 +124,7 @@ def cmd_url(args):
 def _build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--pretty", action="store_true")
-    p = argparse.ArgumentParser(prog="odysseus-webhook", parents=[common])
+    p = argparse.ArgumentParser(prog="void-webhook", parents=[common])
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pl = sub.add_parser("list", parents=[common])

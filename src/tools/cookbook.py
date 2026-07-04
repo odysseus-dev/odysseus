@@ -562,7 +562,7 @@ async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
             )
             note = "" if registered else " (state-write failed — task may not show in UI)"
             where = host or "local"
-            log_path = f"/tmp/odysseus-tmux/{sid}.log"
+            log_path = f"/tmp/void-tmux/{sid}.log"
             return {
                 "output": (
                     f"Serving {repo_id} on {where} (session: {sid}){note}\n"
@@ -693,7 +693,7 @@ async def do_list_served_models(content: str, owner: Optional[str] = None) -> Di
                 # Prefer a window around a Python traceback if one exists,
                 # falling back to the last 30 lines. The previous 6-line
                 # tail showed only the post-crash bash prompt / neofetch
-                # banner ("Locale: C / Ubuntu_Odysseus ❯") — useless for
+                # banner ("Locale: C / Ubuntu_Void ❯") — useless for
                 # diagnosis. The traceback we want is usually 50-200 lines
                 # earlier in the buffer.
                 _tail_lines = tail.splitlines()
@@ -867,7 +867,7 @@ async def do_tail_serve_output(content: str, owner: Optional[str] = None) -> Dic
         except HTTPException as e:
             return {"error": str(getattr(e, "detail", e)), "exit_code": 1}
 
-    # Prefer the persisted /tmp/odysseus-tmux/SESSION.log file over the
+    # Prefer the persisted /tmp/void-tmux/SESSION.log file over the
     # live tmux pane. The pane is what the user would see scrolling on
     # their screen — including the post-crash neofetch banner and the
     # idle bash prompt that overwrites the actual traceback the moment
@@ -875,7 +875,7 @@ async def do_tail_serve_output(content: str, owner: Optional[str] = None) -> Dic
     # process and survives the crash unchanged. We only fall back to
     # the pane when the log file doesn't exist (older sessions launched
     # before the tmux+tee wrapper was added).
-    log_path = f"/tmp/odysseus-tmux/{session_id}.log"
+    log_path = f"/tmp/void-tmux/{session_id}.log"
     pane_inner = f"tmux capture-pane -t {shlex.quote(session_id)} -p -S -{tail} 2>/dev/null"
     file_inner = f"tail -n {tail} {shlex.quote(log_path)} 2>/dev/null"
     inner = (

@@ -24,8 +24,8 @@ def test_vector_rag_writes_both_lanes_and_falls_back_to_fastembed(monkeypatch):
 
     rag = VectorRAG()
     assert rag.add_document("session search belongs in tools", {"source": "/tmp/a.md", "owner": "alice"})
-    assert "odysseus_rag_custom" not in fake.collections
-    assert fake.collections["odysseus_rag_fastembed"].count() == 1
+    assert "void_rag_custom" not in fake.collections
+    assert fake.collections["void_rag_fastembed"].count() == 1
 
     results = rag.search("session search", k=3, owner="alice")
     assert results[0]["document"] == "session search belongs in tools"
@@ -50,8 +50,8 @@ def test_vector_rag_batch_index_continues_when_custom_lane_fails(monkeypatch, tm
 
     assert result["success"]
     assert result["added_count"] == 1
-    assert fake.collections["odysseus_rag_custom"].count() == 0
-    assert fake.collections["odysseus_rag_fastembed"].count() == 1
+    assert fake.collections["void_rag_custom"].count() == 0
+    assert fake.collections["void_rag_fastembed"].count() == 1
 
 
 def test_vector_rag_batch_index_reports_failure_when_all_lanes_fail(monkeypatch, tmp_path):
@@ -71,20 +71,20 @@ def test_vector_rag_batch_index_reports_failure_when_all_lanes_fail(monkeypatch,
     ])
 
     assert not result["success"]
-    assert fake.collections["odysseus_rag_custom"].count() == 0
-    assert fake.collections["odysseus_rag_fastembed"].count() == 0
+    assert fake.collections["void_rag_custom"].count() == 0
+    assert fake.collections["void_rag_fastembed"].count() == 0
 
 
 def test_rag_rebuild_does_not_reimport_legacy_collection(monkeypatch, tmp_path):
     fake = FakeChroma()
-    legacy = fake.get_or_create_collection("odysseus_rag", metadata={"hnsw:space": "cosine"})
+    legacy = fake.get_or_create_collection("void_rag", metadata={"hnsw:space": "cosine"})
     legacy.add(
         ids=["stale-doc"],
         embeddings=[[0.0] * 384],
         documents=["stale legacy document"],
         metadatas=[{"source": "/tmp/stale.md"}],
     )
-    inactive_custom = fake.get_or_create_collection("odysseus_rag_custom", metadata={"embedding_lane": "custom"})
+    inactive_custom = fake.get_or_create_collection("void_rag_custom", metadata={"embedding_lane": "custom"})
     inactive_custom.add(
         ids=["stale-custom-doc"],
         embeddings=[[0.0] * 768],
@@ -101,21 +101,21 @@ def test_rag_rebuild_does_not_reimport_legacy_collection(monkeypatch, tmp_path):
     from src.rag_vector import VectorRAG
 
     rag = VectorRAG(persist_directory=str(tmp_path))
-    assert fake.collections["odysseus_rag_fastembed"].count() == 1
+    assert fake.collections["void_rag_fastembed"].count() == 1
 
     assert rag.rebuild_index()
 
-    assert "odysseus_rag" not in fake.collections
-    assert "odysseus_rag_custom" not in fake.collections
-    assert fake.collections["odysseus_rag_fastembed"].count() == 0
+    assert "void_rag" not in fake.collections
+    assert "void_rag_custom" not in fake.collections
+    assert fake.collections["void_rag_fastembed"].count() == 0
     assert rag.search("stale legacy", k=3) == []
 
 
 def test_rag_remove_directory_deletes_inactive_lane_collection(monkeypatch, tmp_path):
     fake = FakeChroma()
-    legacy_collection = fake.get_or_create_collection("odysseus_rag", metadata={"hnsw:space": "cosine"})
-    custom_collection = fake.get_or_create_collection("odysseus_rag_custom", metadata={"embedding_lane": "custom"})
-    fast_collection = fake.get_or_create_collection("odysseus_rag_fastembed", metadata={"embedding_lane": "fastembed"})
+    legacy_collection = fake.get_or_create_collection("void_rag", metadata={"hnsw:space": "cosine"})
+    custom_collection = fake.get_or_create_collection("void_rag_custom", metadata={"embedding_lane": "custom"})
+    fast_collection = fake.get_or_create_collection("void_rag_fastembed", metadata={"embedding_lane": "fastembed"})
     source = str(tmp_path / "docs" / "note.md")
     directory = str(tmp_path / "docs")
     legacy_collection.add(
@@ -142,7 +142,7 @@ def test_rag_remove_directory_deletes_inactive_lane_collection(monkeypatch, tmp_
         name=LANE_FASTEMBED,
         client=FakeEmbedder(384, "mini", "local://fastembed"),
         collection=fast_collection,
-        collection_name="odysseus_rag_fastembed",
+        collection_name="void_rag_fastembed",
         model="mini",
         url="local://fastembed",
         dimension=384,
@@ -167,9 +167,9 @@ def test_rag_remove_directory_deletes_inactive_lane_collection(monkeypatch, tmp_
 
 def test_rag_delete_by_source_deletes_inactive_lane_collection(monkeypatch, tmp_path):
     fake = FakeChroma()
-    legacy_collection = fake.get_or_create_collection("odysseus_rag", metadata={"hnsw:space": "cosine"})
-    custom_collection = fake.get_or_create_collection("odysseus_rag_custom", metadata={"embedding_lane": "custom"})
-    fast_collection = fake.get_or_create_collection("odysseus_rag_fastembed", metadata={"embedding_lane": "fastembed"})
+    legacy_collection = fake.get_or_create_collection("void_rag", metadata={"hnsw:space": "cosine"})
+    custom_collection = fake.get_or_create_collection("void_rag_custom", metadata={"embedding_lane": "custom"})
+    fast_collection = fake.get_or_create_collection("void_rag_fastembed", metadata={"embedding_lane": "fastembed"})
     source = str(tmp_path / "docs" / "note.md")
     legacy_collection.add(
         ids=["legacy-doc"],
@@ -195,7 +195,7 @@ def test_rag_delete_by_source_deletes_inactive_lane_collection(monkeypatch, tmp_
         name=LANE_FASTEMBED,
         client=FakeEmbedder(384, "mini", "local://fastembed"),
         collection=fast_collection,
-        collection_name="odysseus_rag_fastembed",
+        collection_name="void_rag_fastembed",
         model="mini",
         url="local://fastembed",
         dimension=384,
@@ -216,7 +216,7 @@ def test_rag_delete_by_source_deletes_inactive_lane_collection(monkeypatch, tmp_
 
 
 def test_vector_rag_uses_keyword_fallback_when_all_lanes_query_fail():
-    collection = FakeCollection("odysseus_rag_fastembed", metadata={"embedding_lane": "fastembed"})
+    collection = FakeCollection("void_rag_fastembed", metadata={"embedding_lane": "fastembed"})
     collection.add(
         ids=["doc-1"],
         embeddings=[[0.0] * 384],
@@ -232,7 +232,7 @@ def test_vector_rag_uses_keyword_fallback_when_all_lanes_query_fail():
         name=LANE_FASTEMBED,
         client=FakeEmbedder(384, "mini", "local://fastembed"),
         collection=collection,
-        collection_name="odysseus_rag_fastembed",
+        collection_name="void_rag_fastembed",
         model="mini",
         url="local://fastembed",
         dimension=384,

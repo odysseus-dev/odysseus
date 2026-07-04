@@ -9,11 +9,11 @@ APP_VERSION = "1.0.1"
 # Base paths
 BASE_DIR = os.path.join(get_app_root(), "")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
-DATA_DIR = os.getenv("ODYSSEUS_DATA_DIR", get_default_data_dir())
+DATA_DIR = os.getenv("VOID_DATA_DIR", get_default_data_dir())
 
 # Data file paths
 # Single source of truth: every persisted file/dir lives under DATA_DIR, which
-# is the ONLY place ODYSSEUS_DATA_DIR is read. Import these constants instead of
+# is the ONLY place VOID_DATA_DIR is read. Import these constants instead of
 # re-deriving paths from __file__ or a relative "data" literal.
 SESSIONS_FILE = os.path.join(DATA_DIR, "sessions.json")
 MEMORY_FILE = os.path.join(DATA_DIR, "memory.json")
@@ -56,7 +56,7 @@ GALLERY_UPLOADS_DIR = os.path.join(DATA_DIR, "gallery_uploads")
 MEMORY_VECTORS_DIR = os.path.join(DATA_DIR, "memory_vectors")
 
 # Paths with an intentional dedicated env override, defaulting under DATA_DIR.
-MAIL_ATTACHMENTS_DIR = os.getenv("ODYSSEUS_MAIL_ATTACHMENTS_DIR", os.path.join(DATA_DIR, "mail-attachments"))
+MAIL_ATTACHMENTS_DIR = os.getenv("VOID_MAIL_ATTACHMENTS_DIR", os.path.join(DATA_DIR, "mail-attachments"))
 # `or` (not os.getenv's default arg) so a PRESENT-but-EMPTY value falls back to
 # the default. docker-compose.yml injects `FASTEMBED_CACHE_PATH=${FASTEMBED_CACHE_PATH:-}`,
 # which sets the var to "" when the host hasn't defined it. os.getenv(name, default)
@@ -111,11 +111,11 @@ DEFAULT_MAX_TOKENS = 0
 
 
 def internal_api_base() -> str:
-    """Base URL for in-process loopback calls to Odysseus's own API.
+    """Base URL for in-process loopback calls to Void's own API.
 
     Agent tools and background jobs reach admin-gated routes by calling the
     running server over HTTP. Resolution order:
-      1. ODYSSEUS_INTERNAL_BASE  - explicit override (e.g. behind a TLS proxy).
+      1. VOID_INTERNAL_BASE  - explicit override (e.g. behind a TLS proxy).
       2. APP_PORT                - http://127.0.0.1:$APP_PORT (docker-compose).
       3. Fallback http://127.0.0.1:7000 - legacy default.
 
@@ -123,7 +123,7 @@ def internal_api_base() -> str:
     call. Without this, loopback tools fail with "All connection attempts
     failed" whenever the server is not on port 7000.
     """
-    override = os.environ.get("ODYSSEUS_INTERNAL_BASE")
+    override = os.environ.get("VOID_INTERNAL_BASE")
     if override:
         return override.rstrip("/")
     return f"http://127.0.0.1:{os.environ.get('APP_PORT', '7000')}"

@@ -86,7 +86,7 @@ _BUILTIN_NPX_SERVERS = {
 }
 
 # Global flag to disable MCP if there are compatibility issues
-MCP_DISABLED = os.environ.get("ODYSSEUS_DISABLE_MCP", "").lower() in ("1", "true", "yes")
+MCP_DISABLED = os.environ.get("VOID_DISABLE_MCP", "").lower() in ("1", "true", "yes")
 
 
 # Strong references to the fire-and-forget startup tasks scheduled below.
@@ -107,7 +107,7 @@ def _spawn_bg(coro) -> asyncio.Task:
 async def register_builtin_servers(mcp_manager):
     """Connect all built-in MCP servers to the manager."""
     if MCP_DISABLED:
-        logger.info("Built-in MCP servers disabled via ODYSSEUS_DISABLE_MCP")
+        logger.info("Built-in MCP servers disabled via VOID_DISABLE_MCP")
         return
 
     base_dir = get_app_root()
@@ -166,7 +166,7 @@ async def register_builtin_servers(mcp_manager):
                     f"  Reason: npm package {pkg_spec!r} is not installed in the npx cache.\n"
                     f"  Impact: tools provided by this MCP server will be unavailable.\n"
                     f"  Fix:    {os.path.basename(npx_path)} -y {pkg_spec} --version\n"
-                    f"          (run once, then restart Odysseus)\n"
+                    f"          (run once, then restart Void)\n"
                     f"  Notes:  this server is optional; see README.md "
                     f"'Built-in MCP servers' for details."
                 )

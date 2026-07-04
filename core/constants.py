@@ -4,7 +4,7 @@
 Historically there were two copies of this module (this one lagged behind at
 APP_VERSION 0.9.1 and was missing the consolidated tool-output constants). To
 kill the drift, this now simply re-exports everything from src.constants so
-there is exactly one place that defines paths and reads ODYSSEUS_DATA_DIR.
+there is exactly one place that defines paths and reads VOID_DATA_DIR.
 internal_api_base() also lives in src.constants now and is re-exported here so
 existing `from core.constants import internal_api_base` callers keep working.
 """

@@ -703,7 +703,7 @@ def _cache_key(host: str, ssh_port: str, platform_name: str):
 
 
 def _is_containerized():
-    """Best-effort check for whether the local Odysseus process is running in a container."""
+    """Best-effort check for whether the local Void process is running in a container."""
     if _remote_host:
         return False
 
@@ -738,7 +738,7 @@ def _hardware_visibility_warning(result):
             "severity": "warning",
             "title": "No GPU visible inside Docker",
             "message": (
-                "Cookbook is scanning hardware from inside the Odysseus container. "
+                "Cookbook is scanning hardware from inside the Void container. "
                 "If your host has a GPU, Docker may not be exposing it to the container, "
                 "so model recommendations may be CPU-only or too conservative."
             ),

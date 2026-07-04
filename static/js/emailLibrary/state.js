@@ -25,7 +25,7 @@ export const state = {
   _libFilter: 'all',             // all, unread, unanswered
   _libSort: 'recent',            // recent, unread, favorites
   _libHasAttachments: false,
-  _libShowTags: localStorage.getItem('odysseus.email.showTags') !== '0',
+  _libShowTags: localStorage.getItem('void.email.showTags') !== '0',
   _libLoading: false,
   _docModule: null,
   _onEmailClick: null,

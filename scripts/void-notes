@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""odysseus-notes — shell wrapper around the notes feature.
+"""void-notes — shell wrapper around the notes feature.
 
 Reads the same SQLite the web UI uses. Output JSON; pipe-friendly.
 
-    odysseus-notes list --label calendar | jq -r '.[] | .title'
-    odysseus-notes show NOTE_ID
-    odysseus-notes search "invoice"
-    odysseus-notes create --title "Buy milk" --content "..."
-    odysseus-notes delete NOTE_ID
+    void-notes list --label calendar | jq -r '.[] | .title'
+    void-notes show NOTE_ID
+    void-notes search "invoice"
+    void-notes create --title "Buy milk" --content "..."
+    void-notes delete NOTE_ID
 """
 
 from __future__ import annotations
@@ -137,7 +137,7 @@ def _build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--pretty", action="store_true")
 
-    p = argparse.ArgumentParser(prog="odysseus-notes", parents=[common])
+    p = argparse.ArgumentParser(prog="void-notes", parents=[common])
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pl = sub.add_parser("list", parents=[common])

@@ -1,10 +1,10 @@
 # Threat Model
 
-Odysseus is a **self-hosted AI workspace with privileged local access**. This document states the trust boundary so contributors can reason about security decisions without reading through the full auth and middleware stack.
+Void is a **self-hosted AI workspace with privileged local access**. This document states the trust boundary so contributors can reason about security decisions without reading through the full auth and middleware stack.
 
 ## Trust Boundary
 
-Odysseus is designed for **trusted users on a private network**, not public exposure. The README describes it as "treat it like an admin console" — that framing is accurate. A logged-in admin can execute shell commands, read and write files, send email, and control model serving. This is intentional. The threat model does not try to prevent admins from doing these things. It does try to prevent:
+Void is designed for **trusted users on a private network**, not public exposure. The README describes it as "treat it like an admin console" — that framing is accurate. A logged-in admin can execute shell commands, read and write files, send email, and control model serving. This is intentional. The threat model does not try to prevent admins from doing these things. It does try to prevent:
 
 - Unauthenticated access
 - Non-admins reaching admin-only capabilities
@@ -46,7 +46,7 @@ Non-admin defaults are in `core/auth.py:DEFAULT_PRIVILEGES`. Tool enforcement is
 Agent tool calls reach admin-gated HTTP routes over an in-process HTTP loopback. The mechanism:
 
 1. At app startup, `core/middleware.py` generates a random `INTERNAL_TOOL_TOKEN` via `secrets.token_hex(32)`. It is never persisted and never sent to clients.
-2. Loopback requests carry `X-Odysseus-Internal-Token: <token>` or have `request.state.current_user` already set to `"internal-tool"` by the auth middleware.
+2. Loopback requests carry `X-Void-Internal-Token: <token>` or have `request.state.current_user` already set to `"internal-tool"` by the auth middleware.
 3. `require_admin` recognises either signal and grants access without checking the session user.
 
 The agent may be running in a non-admin user's session, but tool dispatch first calls `src/tool_security.py:owner_is_admin_or_single_user` to verify the session owner is an admin before issuing any loopback call. Non-admin users cannot invoke admin tools even via the agent.

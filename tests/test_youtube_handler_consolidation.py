@@ -1,6 +1,6 @@
 """Regression: the YouTube handler must live in a single module.
 
-Odysseus carried two independent copies of the handler — ``src.youtube_handler``
+Void carried two independent copies of the handler — ``src.youtube_handler``
 and ``services.youtube.youtube_handler`` — that silently drifted:
 
 * ``app.py`` calls ``services.youtube.init_youtube()`` at startup, but the chat

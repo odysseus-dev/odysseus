@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Manage the isolated email demo: a throwaway, local-only Dovecot user +
-# a switchable 'Demo' account in Odysseus + fake seed mail.
+# a switchable 'Demo' account in Void + fake seed mail.
 #
 #   ./manage.sh setup      # add Dovecot user, reload, create account, seed mail
 #   ./manage.sh reseed     # wipe + re-seed the fake mail (clean slate)
@@ -11,9 +11,9 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-DOCKER_DIR="${ODYSSEUS_DEMO_MAIL_DIR:-$HOME/docker/snappymail}"
+DOCKER_DIR="${VOID_DEMO_MAIL_DIR:-$HOME/docker/snappymail}"
 USERS_FILE="$DOCKER_DIR/dovecot/conf/users"
-DEMO_USER="demo@odysseus.local"
+DEMO_USER="demo@void.local"
 DEMO_PASS="demodemo"
 HERE="$REPO/scripts/demo_email"
 # Use the app's venv (has bcrypt/httpx + the app modules); fall back to python3.
@@ -52,7 +52,7 @@ case "${1:-}" in
     "$PY" "$HERE/demo_account.py" setup
     "$PY" "$HERE/seed_demo_emails.py" --reset
     echo
-    echo "Done. In Odysseus, switch to the 'Demo' account to show off the inbox."
+    echo "Done. In Void, switch to the 'Demo' account to show off the inbox."
     ;;
   reseed)
     "$PY" "$HERE/seed_demo_emails.py" --reset

@@ -1,6 +1,6 @@
 """Compatibility wrapper for the canonical services.youtube.youtube_handler module.
 
-Odysseus historically carried two independent copies of the YouTube handler —
+Void historically carried two independent copies of the YouTube handler —
 one here under ``src`` and one under ``services.youtube``. They drifted: the
 comment-fetch timeout fix landed only in the ``src`` copy, while ``app.py``
 calls ``services.youtube.init_youtube()`` at startup. Because the chat flow

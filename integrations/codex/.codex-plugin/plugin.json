@@ -1,22 +1,22 @@
 {
-  "name": "odysseus",
+  "name": "void",
   "version": "0.1.1",
-  "description": "Connect Codex to a scoped Odysseus instance.",
+  "description": "Connect Codex to a scoped Void instance.",
   "author": {
-    "name": "Odysseus"
+    "name": "Void"
   },
   "skills": "./skills/",
   "interface": {
-    "displayName": "Odysseus",
-    "shortDescription": "Use scoped Odysseus tools from Codex.",
-    "longDescription": "Connects Codex terminal sessions to Odysseus through user-controlled scoped API tokens. Codex must use /api/codex/* endpoints so Odysseus Settings can enforce tool access.",
-    "developerName": "Odysseus",
+    "displayName": "Void",
+    "shortDescription": "Use scoped Void tools from Codex.",
+    "longDescription": "Connects Codex terminal sessions to Void through user-controlled scoped API tokens. Codex must use /api/codex/* endpoints so Void Settings can enforce tool access.",
+    "developerName": "Void",
     "category": "Productivity",
     "capabilities": [
       "todos",
       "email",
       "scoped-api"
     ],
-    "defaultPrompt": "Use Odysseus only through configured scoped access. Check capabilities before reading or writing data."
+    "defaultPrompt": "Use Void only through configured scoped access. Check capabilities before reading or writing data."
   }
 }

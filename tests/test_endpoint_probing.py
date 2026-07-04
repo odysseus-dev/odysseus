@@ -9,7 +9,7 @@ probe surface that drives endpoint setup and degraded-state reporting:
     /api/tags fallback for Ollama builds without /v1/models, and the
     no-models-found result.
   * `_ping_endpoint`      — reachability classification: 2xx, auth failures,
-    the "this is Odysseus, not a model server" /login-redirect trap, generic
+    the "this is Void, not a model server" /login-redirect trap, generic
     redirects, transport errors, and the native-Ollama /api/version fallback.
   * `_probe_single_model` — ok/fail/timeout status mapping, upstream error-body
     extraction, and per-provider (OpenAI / Anthropic) request routing.
@@ -232,7 +232,7 @@ class TestPingEndpoint:
             "reachable": False, "status_code": 401, "error": "HTTP 401",
         }
 
-    def test_detects_odysseus_login_redirect(self, monkeypatch):
+    def test_detects_void_login_redirect(self, monkeypatch):
         _patch_resolve(monkeypatch)
 
         def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):

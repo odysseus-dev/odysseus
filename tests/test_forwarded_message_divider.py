@@ -2,7 +2,7 @@
 ---------" divider as a quote boundary, like "----- Original Message -----".
 
 `_ORIG_RE` already recognised the Japanese forward marker (転送) but not the
-English "Forwarded message" one, so forwarded mail produced by Odysseus itself
+English "Forwarded message" one, so forwarded mail produced by Void itself
 (static/js/emailInbox.js emits exactly `---------- Forwarded message ----------`)
 leaked the divider into the level-0 reply bubble — or, with no Outlook header
 block to fall back on, was not split into turns at all.

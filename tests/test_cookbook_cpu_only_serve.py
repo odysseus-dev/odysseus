@@ -80,10 +80,10 @@ def test_vllm_route_strips_swap_space_when_runtime_rejects_it():
 
     assert "Setting vLLM --swap-space 0 so the runtime does not reserve CPU swap per GPU." in text
     assert "vLLM serve does not expose --swap-space; removing the flag and patching the runtime default to 0." in text
-    assert "ODYSSEUS_VLLM_HELP_CMD" in text
+    assert "VOID_VLLM_HELP_CMD" in text
     assert "print(shlex.join(parts[:serve_i + 1] + [\"--help\"]))" in text
-    assert "eval \"$ODYSSEUS_VLLM_HELP_CMD\" 2>&1 | grep -q -- \"--swap-space\"" in text
-    assert "eval \"$ODYSSEUS_SERVE_CMD\"" in text
+    assert "eval \"$VOID_VLLM_HELP_CMD\" 2>&1 | grep -q -- \"--swap-space\"" in text
+    assert "eval \"$VOID_SERVE_CMD\"" in text
 
 
 def test_local_windows_platform_comes_from_backend_host_state():

@@ -55,7 +55,7 @@ def test_mcp_memory_uses_configured_owner_for_all_operations(monkeypatch, tmp_pa
     )
     manager.save([alice, bob])
     _configure_server(monkeypatch, manager, vector)
-    monkeypatch.setenv("ODYSSEUS_MCP_MEMORY_OWNER", "alice")
+    monkeypatch.setenv("VOID_MCP_MEMORY_OWNER", "alice")
 
     list_text = _tool_text({"action": "list"})
     assert "Alice likes green tea" in list_text

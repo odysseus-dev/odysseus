@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""odysseus-skills — shell wrapper for AI skill scripts.
+"""void-skills — shell wrapper for AI skill scripts.
 
 Skills are `SKILL.md` files under `data/skills/<category>/<name>/`. Each
 captures a reusable how-to the assistant has learned. This CLI lets you
 list, inspect, and prune them from the shell.
 
-    odysseus-skills list [--category general]
-    odysseus-skills show SKILL_NAME
-    odysseus-skills categories
-    odysseus-skills delete SKILL_NAME
-    odysseus-skills export SKILL_NAME --raw      # full SKILL.md to stdout
+    void-skills list [--category general]
+    void-skills show SKILL_NAME
+    void-skills categories
+    void-skills delete SKILL_NAME
+    void-skills export SKILL_NAME --raw      # full SKILL.md to stdout
 """
 
 from __future__ import annotations
@@ -132,7 +132,7 @@ def cmd_export(args):
 def _build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--pretty", action="store_true")
-    p = argparse.ArgumentParser(prog="odysseus-skills", parents=[common])
+    p = argparse.ArgumentParser(prog="void-skills", parents=[common])
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pl = sub.add_parser("list", parents=[common])

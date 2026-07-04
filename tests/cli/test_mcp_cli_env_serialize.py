@@ -17,13 +17,13 @@ def _srv(env):
 
 def test_serialize_handles_list_env(monkeypatch):
     make_core_db_stub(monkeypatch, models=["McpServer"])
-    cli = load_script("odysseus-mcp")
+    cli = load_script("void-mcp")
     out = cli._serialize(_srv("[1, 2]"))  # JSON array, not object
     assert out["id"] == "s1"
 
 
 def test_serialize_redacts_dict_env(monkeypatch):
     make_core_db_stub(monkeypatch, models=["McpServer"])
-    cli = load_script("odysseus-mcp")
+    cli = load_script("void-mcp")
     out = cli._serialize(_srv('{"API_KEY": "secret"}'))
     assert out["env"] == {"API_KEY": "***"}

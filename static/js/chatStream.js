@@ -107,15 +107,15 @@ export function handleUIControl(uiData) {
       }
 
     } else if (uiEvent === 'highlight' || uiData.ui_event === 'highlight') {
-      document.querySelectorAll('.odysseus-highlight').forEach(function(e) { e.classList.remove('odysseus-highlight'); });
-      document.querySelectorAll('.odysseus-hl-label').forEach(function(e) { e.remove(); });
+      document.querySelectorAll('.void-highlight').forEach(function(e) { e.classList.remove('void-highlight'); });
+      document.querySelectorAll('.void-hl-label').forEach(function(e) { e.remove(); });
       var target = document.querySelector(uiData.selector);
       if (target) {
-        target.classList.add('odysseus-highlight');
+        target.classList.add('void-highlight');
         target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         if (uiData.label) {
           var lbl = document.createElement('div');
-          lbl.className = 'odysseus-hl-label';
+          lbl.className = 'void-hl-label';
           lbl.textContent = uiData.label;
           if (!target.style.position) target.style.position = 'relative';
           target.appendChild(lbl);
@@ -123,8 +123,8 @@ export function handleUIControl(uiData) {
       }
 
     } else if (uiEvent === 'clear_highlight' || uiData.ui_event === 'clear_highlight') {
-      document.querySelectorAll('.odysseus-highlight').forEach(function(e) { e.classList.remove('odysseus-highlight'); });
-      document.querySelectorAll('.odysseus-hl-label').forEach(function(e) { e.remove(); });
+      document.querySelectorAll('.void-highlight').forEach(function(e) { e.classList.remove('void-highlight'); });
+      document.querySelectorAll('.void-hl-label').forEach(function(e) { e.remove(); });
 
     } else if (uiEvent === 'research_started' || uiData.ui_event === 'research_started') {
       // Agent kicked off deep research — adopt the session into the

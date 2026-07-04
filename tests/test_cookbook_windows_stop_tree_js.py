@@ -42,7 +42,7 @@ def test_remote_windows_stop_tree_payload_survives_shell_parsing():
         "Get-CimInstance Win32_Process -Filter ('ParentProcessId = ' + $Id) "
         "-ErrorAction SilentlyContinue | ForEach-Object { Stop-Tree ([int]$_.ProcessId) }; "
         "Stop-Process -Id $Id -Force -ErrorAction SilentlyContinue }; "
-        "$p = Get-Content '$env:TEMP\\odysseus-sessions\\serve_abc.pid' "
+        "$p = Get-Content '$env:TEMP\\void-sessions\\serve_abc.pid' "
         "-ErrorAction SilentlyContinue; "
         "if ($p -match '^\\d+$') { Stop-Tree ([int]$p) }"
     )

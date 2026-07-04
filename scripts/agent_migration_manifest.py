@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Build a neutral agent migration manifest.
 
-This helper is intentionally read-only. It does not import the Odysseus
+This helper is intentionally read-only. It does not import the Void
 application package, write to data/, call an LLM, or apply anything. It turns
-common agent export shapes into a portable JSON manifest that Odysseus can
+common agent export shapes into a portable JSON manifest that Void can
 preview or import later.
 """
 from __future__ import annotations
@@ -559,7 +559,7 @@ def build_manifest(args) -> dict[str, Any]:
 
 
 def parse_args(argv: list[str] | None = None):
-    parser = argparse.ArgumentParser(description="Build a neutral Odysseus agent migration manifest.")
+    parser = argparse.ArgumentParser(description="Build a neutral Void agent migration manifest.")
     parser.add_argument("--source-name", default="agent-export", help="Human-readable source name.")
     parser.add_argument("--source-kind", default="generic", help="Source adapter kind, e.g. generic, openclaw, hermes.")
     parser.add_argument(

@@ -10,7 +10,7 @@ def _load_sessions_cli(monkeypatch):
         attributes={"SessionLocal": object, "Session": object},
         install_core_package=True,
     )
-    return load_script("odysseus-sessions")
+    return load_script("void-sessions")
 
 
 def test_serialize_normalizes_numeric_counters(monkeypatch):

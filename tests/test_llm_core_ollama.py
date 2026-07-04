@@ -128,7 +128,7 @@ def test_list_model_ids_from_openai_compatible_v1(monkeypatch):
 # ---------------------------------------------------------------------------
 # Tool-call argument serialization for native Ollama
 #
-# Odysseus carries assistant tool calls in the OpenAI shape, where
+# Void carries assistant tool calls in the OpenAI shape, where
 # `function.arguments` is a JSON *string*. Native Ollama /api/chat expects a
 # JSON *object* and rejects the string form with HTTP 400 ("Value looks like
 # object, but can't find closing '}' symbol"), aborting every follow-up

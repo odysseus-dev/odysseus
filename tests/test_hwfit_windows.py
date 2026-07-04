@@ -1,6 +1,6 @@
 """Windows support for Cookbook hardware-fit.
 
-Odysseus only supports llama.cpp on Windows (vLLM/SGLang are explicitly
+Void only supports llama.cpp on Windows (vLLM/SGLang are explicitly
 blocked). llama.cpp requires GGUF, so non-GGUF models — including AWQ/GPTQ/
 FP8 safetensors repos — must be filtered out on Windows so the Cookbook does
 not recommend models the user cannot actually serve.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""odysseus-backup — snapshot + restore of the data directory.
+"""void-backup — snapshot + restore of the data directory.
 
 Backs up everything the app keeps under `data/`: the SQLite DB, the
 Fernet key, JSON state files, RAG indexes, personal docs, attachments,
@@ -7,11 +7,11 @@ WhatsApp session, etc. Output is a gzip tarball — composable with cron
 + scp + s3cmd. The backup uses `sqlite3 .backup` for the DB so the
 app can keep running during the snapshot.
 
-    odysseus-backup snapshot                       # → backups/YYYY-MM-DD-HHMMSS.tar.gz
-    odysseus-backup snapshot --out /mnt/nas/x.tgz
-    odysseus-backup list                           # entries in backups/
-    odysseus-backup restore PATH [--yes]           # overwrite current data/ from a tarball
-    odysseus-backup verify PATH                    # tarball integrity check (no extract)
+    void-backup snapshot                       # → backups/YYYY-MM-DD-HHMMSS.tar.gz
+    void-backup snapshot --out /mnt/nas/x.tgz
+    void-backup list                           # entries in backups/
+    void-backup restore PATH [--yes]           # overwrite current data/ from a tarball
+    void-backup verify PATH                    # tarball integrity check (no extract)
 
 Restore is destructive: it overwrites `data/` in place. Always pass
 `--yes` so a typo can't nuke your live state.
@@ -76,7 +76,7 @@ def cmd_snapshot(args):
         fail(f"no data dir at {_DATA_DIR}")
     _BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     out_path = Path(args.out) if args.out else (
-        _BACKUP_DIR / f"odysseus-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.tar.gz"
+        _BACKUP_DIR / f"void-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.tar.gz"
     )
     _reject_output_inside_data(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -227,7 +227,7 @@ def cmd_restore(args):
 def _build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--pretty", action="store_true")
-    p = argparse.ArgumentParser(prog="odysseus-backup", parents=[common])
+    p = argparse.ArgumentParser(prog="void-backup", parents=[common])
     sub = p.add_subparsers(dest="cmd", required=True)
 
     ps = sub.add_parser("snapshot", parents=[common])

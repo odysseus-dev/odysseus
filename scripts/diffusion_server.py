@@ -2,7 +2,7 @@
 """Minimal OpenAI-compatible image generation API server using diffusers.
 
 Serves /v1/images/generations and /v1/models for compatibility with
-Odysseus's image generation tool.
+Void's image generation tool.
 
 Usage:
     python3 scripts/diffusion_server.py --model /path/to/model --port 8100
@@ -55,7 +55,7 @@ async def lifespan(application):
 app = FastAPI(title="Diffusion Server", lifespan=lifespan)
 
 # Conservative defaults — server is designed for server-to-server use from
-# the Odysseus backend. Wildcard CORS + the 127.0.0.1 default bind used to
+# the Void backend. Wildcard CORS + the 127.0.0.1 default bind used to
 # leave the server reachable via DNS-rebinding from any browser tab on the
 # same host. The CLI flags below extend these allowlists for operators who
 # need browser access; the safe defaults handle the common case.

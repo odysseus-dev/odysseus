@@ -22,7 +22,7 @@ const TOUR_FOR_MODAL = {
   'gallery-modal':          'tour-gallery',
 };
 
-const SEEN_KEY = (tour) => `odysseus-tour-autoplay-seen-${tour}`;
+const SEEN_KEY = (tour) => `void-tour-autoplay-seen-${tour}`;
 
 let _initialized = false;
 // Suppress re-fire if a tour is already active or another modal opens while

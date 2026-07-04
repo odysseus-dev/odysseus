@@ -25,9 +25,9 @@ export const WAVE_FRAMES = ['▁▂▃', '▂▃▄', '▃▄▅', '▄▅▆', 
 
 // ── Storage keys & limits ──
 
-export const VOTES_STORAGE_KEY = 'odysseus-compare-votes';
+export const VOTES_STORAGE_KEY = 'void-compare-votes';
 export const VOTES_MAX = 200;
-export const POOL_STORAGE_KEY = 'odysseus-shuffle-pool-excluded';
+export const POOL_STORAGE_KEY = 'void-shuffle-pool-excluded';
 
 // ── Evaluation prompt templates ──
 //

@@ -6,7 +6,7 @@ from tests.helpers.db_stubs import make_core_db_stub
 
 def test_serialize_ignores_invalid_note_items(monkeypatch):
     make_core_db_stub(monkeypatch, models=["Note"])
-    cli = load_script("odysseus-notes")
+    cli = load_script("void-notes")
     note = SimpleNamespace(
         id="n1",
         title="Checklist",
@@ -28,7 +28,7 @@ def test_serialize_ignores_invalid_note_items(monkeypatch):
 
 def test_serialize_keeps_list_note_items(monkeypatch):
     make_core_db_stub(monkeypatch, models=["Note"])
-    cli = load_script("odysseus-notes")
+    cli = load_script("void-notes")
     note = SimpleNamespace(
         id="n1",
         title="Checklist",
@@ -50,7 +50,7 @@ def test_serialize_keeps_list_note_items(monkeypatch):
 
 def test_serialize_skips_invalid_note_item_rows(monkeypatch):
     make_core_db_stub(monkeypatch, models=["Note"])
-    cli = load_script("odysseus-notes")
+    cli = load_script("void-notes")
     note = SimpleNamespace(
         id="n1",
         title="Checklist",

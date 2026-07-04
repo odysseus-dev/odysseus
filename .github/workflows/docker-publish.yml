@@ -1,6 +1,6 @@
 name: ci / docker publish
 
-# Build the Odysseus image and publish to GHCR.
+# Build the Void image and publish to GHCR.
 #   push to main -> :latest, :X.Y.Z            (curated release; main is fast-forwarded at releases)
 #   push to dev  -> :dev,    :X.Y.Z-dev.<sha>  (rolling dev + an immutable, traceable pin)
 # Multi-arch (linux/amd64 + linux/arm64): each arch builds on its own native

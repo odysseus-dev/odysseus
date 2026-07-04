@@ -822,11 +822,11 @@ def setup_contacts_routes():
         if format == "csv":
             content = _contacts_to_csv(contacts)
             media_type = "text/csv; charset=utf-8"
-            filename = "odysseus-contacts.csv"
+            filename = "void-contacts.csv"
         else:
             content = _contacts_to_vcf(contacts)
             media_type = "text/vcard; charset=utf-8"
-            filename = "odysseus-contacts.vcf"
+            filename = "void-contacts.vcf"
         return Response(
             content=content,
             media_type=media_type,

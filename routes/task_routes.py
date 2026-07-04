@@ -43,7 +43,7 @@ def _maybe_cascade_calendar_event(task) -> None:
     from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
     headers = {INTERNAL_TOOL_HEADER: INTERNAL_TOOL_TOKEN}
     if task.owner:
-        headers["X-Odysseus-Owner"] = task.owner
+        headers["X-Void-Owner"] = task.owner
 
     # Strategy 1: explicit UID marker in prompt.
     event_uid = ""

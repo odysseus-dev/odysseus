@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Read-only pull request overlap audit helper.
 
-This script intentionally does not import the Odysseus application package.
+This script intentionally does not import the Void application package.
 It only reads local JSON input or invokes read-only `gh` list/API commands.
 """
 from __future__ import annotations

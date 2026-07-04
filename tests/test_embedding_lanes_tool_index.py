@@ -28,8 +28,8 @@ def test_tool_index_indexes_and_retrieves_from_available_lanes(monkeypatch):
     index = ToolIndex()
     index.index_builtin_tools()
 
-    assert fake.collections["odysseus_tool_index_custom"].count() > 0
-    assert fake.collections["odysseus_tool_index_fastembed"].count() > 0
+    assert fake.collections["void_tool_index_custom"].count() > 0
+    assert fake.collections["void_tool_index_fastembed"].count() > 0
     assert "bash" in index.retrieve("run a shell command", k=10)
 
 
@@ -37,8 +37,8 @@ def test_tool_index_builtin_indexing_fails_when_all_lanes_fail():
     custom_lane = EmbeddingLane(
         name=LANE_CUSTOM,
         client=FailingEmbedder(768, "nomic", "http://embeddings/v1"),
-        collection=FakeCollection("odysseus_tool_index_custom", metadata={"embedding_lane": "custom"}),
-        collection_name="odysseus_tool_index_custom",
+        collection=FakeCollection("void_tool_index_custom", metadata={"embedding_lane": "custom"}),
+        collection_name="void_tool_index_custom",
         model="nomic",
         url="http://embeddings/v1",
         dimension=768,
@@ -47,8 +47,8 @@ def test_tool_index_builtin_indexing_fails_when_all_lanes_fail():
     fast_lane = EmbeddingLane(
         name=LANE_FASTEMBED,
         client=FailingEmbedder(384, "mini", "local://fastembed"),
-        collection=FakeCollection("odysseus_tool_index_fastembed", metadata={"embedding_lane": "fastembed"}),
-        collection_name="odysseus_tool_index_fastembed",
+        collection=FakeCollection("void_tool_index_fastembed", metadata={"embedding_lane": "fastembed"}),
+        collection_name="void_tool_index_fastembed",
         model="mini",
         url="local://fastembed",
         dimension=384,
@@ -67,8 +67,8 @@ def test_tool_index_builtin_indexing_fails_when_all_lanes_fail():
 
 
 def test_tool_index_retrieval_continues_when_custom_lane_query_fails():
-    custom_collection = FakeCollection("odysseus_tool_index_custom", metadata={"embedding_lane": "custom"})
-    fast_collection = FakeCollection("odysseus_tool_index_fastembed", metadata={"embedding_lane": "fastembed"})
+    custom_collection = FakeCollection("void_tool_index_custom", metadata={"embedding_lane": "custom"})
+    fast_collection = FakeCollection("void_tool_index_fastembed", metadata={"embedding_lane": "fastembed"})
     fast_collection.add(
         ids=["builtin_bash"],
         embeddings=[[0.0] * 384],
@@ -91,7 +91,7 @@ def test_tool_index_retrieval_continues_when_custom_lane_query_fails():
         name=LANE_CUSTOM,
         client=FakeEmbedder(768, "nomic", "http://embeddings/v1"),
         collection=custom_collection,
-        collection_name="odysseus_tool_index_custom",
+        collection_name="void_tool_index_custom",
         model="nomic",
         url="http://embeddings/v1",
         dimension=768,
@@ -101,7 +101,7 @@ def test_tool_index_retrieval_continues_when_custom_lane_query_fails():
         name=LANE_FASTEMBED,
         client=FakeEmbedder(384, "mini", "local://fastembed"),
         collection=fast_collection,
-        collection_name="odysseus_tool_index_fastembed",
+        collection_name="void_tool_index_fastembed",
         model="mini",
         url="local://fastembed",
         dimension=384,
@@ -117,8 +117,8 @@ def test_tool_index_retrieval_continues_when_custom_lane_query_fails():
 
 
 def test_tool_index_merges_fallback_tool_results_before_limit():
-    custom_collection = FakeCollection("odysseus_tool_index_custom", metadata={"embedding_lane": "custom"})
-    fast_collection = FakeCollection("odysseus_tool_index_fastembed", metadata={"embedding_lane": "fastembed"})
+    custom_collection = FakeCollection("void_tool_index_custom", metadata={"embedding_lane": "custom"})
+    fast_collection = FakeCollection("void_tool_index_fastembed", metadata={"embedding_lane": "fastembed"})
     custom_collection.add(
         ids=["builtin_one", "builtin_two"],
         embeddings=[[0.0] * 768, [0.0] * 768],
@@ -153,7 +153,7 @@ def test_tool_index_merges_fallback_tool_results_before_limit():
         name=LANE_CUSTOM,
         client=FakeEmbedder(768, "nomic", "http://embeddings/v1"),
         collection=custom_collection,
-        collection_name="odysseus_tool_index_custom",
+        collection_name="void_tool_index_custom",
         model="nomic",
         url="http://embeddings/v1",
         dimension=768,
@@ -163,7 +163,7 @@ def test_tool_index_merges_fallback_tool_results_before_limit():
         name=LANE_FASTEMBED,
         client=FakeEmbedder(384, "mini", "local://fastembed"),
         collection=fast_collection,
-        collection_name="odysseus_tool_index_fastembed",
+        collection_name="void_tool_index_fastembed",
         model="mini",
         url="local://fastembed",
         dimension=384,

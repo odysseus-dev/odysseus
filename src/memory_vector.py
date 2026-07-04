@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 class MemoryVectorStore:
     """Vector index over memory entries for semantic retrieval."""
 
-    COLLECTION_NAME = "odysseus_memories"
+    COLLECTION_NAME = "void_memories"
 
     def __init__(self, data_dir: str, embedding_model=None):
         self._model = embedding_model

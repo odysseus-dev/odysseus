@@ -3,7 +3,7 @@
 #
 # This script does not install packages, edit .env, or restart Docker. It only
 # checks host AMD device nodes, Docker access, and whether a small container can
-# see /dev/kfd and /dev/dri. The Odysseus slim image does not include ROCm tools
+# see /dev/kfd and /dev/dri. The Void slim image does not include ROCm tools
 # such as rocm-smi, so container verification checks devices instead.
 
 set -u
@@ -13,7 +13,7 @@ FAIL=0
 WARN=0
 RENDER_GID=""
 VIDEO_GID=""
-TEST_IMAGE="${ODYSSEUS_AMD_TEST_IMAGE:-alpine:3.20}"
+TEST_IMAGE="${VOID_AMD_TEST_IMAGE:-alpine:3.20}"
 
 _pass() { printf '\033[32m[PASS]\033[0m %s\n' "$*"; PASS=$((PASS + 1)); }
 _fail() { printf '\033[31m[FAIL]\033[0m %s\n' "$*"; FAIL=$((FAIL + 1)); }
@@ -34,7 +34,7 @@ Checks:
   - Docker can pass AMD device nodes into a small container
 
 Environment:
-  ODYSSEUS_AMD_TEST_IMAGE   Docker image for the passthrough smoke
+  VOID_AMD_TEST_IMAGE   Docker image for the passthrough smoke
                             (default: alpine:3.20)
 USAGE
 }
@@ -183,15 +183,15 @@ _print_next_steps() {
         printf 'RENDER_GID=<numeric render group id>\n'
     fi
     echo
-    echo "After restarting Odysseus, verify the slim app container sees devices:"
-    echo "  docker compose exec odysseus sh -lc 'test -e /dev/kfd && test -d /dev/dri && ls -l /dev/kfd /dev/dri/renderD*'"
+    echo "After restarting Void, verify the slim app container sees devices:"
+    echo "  docker compose exec void sh -lc 'test -e /dev/kfd && test -d /dev/dri && ls -l /dev/kfd /dev/dri/renderD*'"
     echo
-    echo "Note: rocm-smi/rocminfo are not expected inside the slim Odysseus image."
+    echo "Note: rocm-smi/rocminfo are not expected inside the slim Void image."
     echo "Device passthrough is necessary but not sufficient for GPU serving; vLLM and"
     echo "llama.cpp still need ROCm-compatible builds or ROCm-specific Docker images."
 }
 
-echo "=== Odysseus AMD Docker GPU diagnostic ==="
+echo "=== Void AMD Docker GPU diagnostic ==="
 echo
 _check_host_devices
 _check_groups

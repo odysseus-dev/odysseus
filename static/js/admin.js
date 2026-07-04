@@ -452,7 +452,7 @@ async function _selectAddedModelInChat(endpoint) {
     }
   } catch (_) {}
   try {
-    document.dispatchEvent(new CustomEvent('odysseus:auto-select-model', {
+    document.dispatchEvent(new CustomEvent('void:auto-select-model', {
       detail: {
         endpointId: endpoint.id || '',
         endpointName: endpoint.name || '',
@@ -1723,7 +1723,7 @@ function initEndpointForm() {
   document.querySelectorAll('.adm-quickstart-section').forEach((sec) => {
     const head = sec.querySelector('.adm-quickstart-toggle');
     if (!head) return;
-    const key = 'odysseus.addModels.' + sec.id + '.open';
+    const key = 'void.addModels.' + sec.id + '.open';
     let open = false;
     try { open = localStorage.getItem(key) === '1'; } catch {}
     const apply = () => {
@@ -2504,7 +2504,7 @@ async function loadTokens() {
         // Codex / Claude integration cards on the Integrations panel are
         // backed by these tokens — let them re-render so the deleted token
         // disappears there too.
-        try { window.dispatchEvent(new CustomEvent('odysseus-integrations-changed')); } catch (_) {}
+        try { window.dispatchEvent(new CustomEvent('void-integrations-changed')); } catch (_) {}
       });
     });
     // Toggle permissions panel
@@ -2765,7 +2765,7 @@ function initBackup() {
       const blob = await res.blob();
       const disposition = res.headers.get('Content-Disposition') || '';
       const match = disposition.match(/filename=(.+)/);
-      const filename = match ? match[1] : 'odysseus_backup.json';
+      const filename = match ? match[1] : 'void_backup.json';
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = filename;

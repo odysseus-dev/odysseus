@@ -151,7 +151,7 @@ def _shell_path(p: str) -> str:
 def _local_tooling_path_export(executable: str) -> str:
     """Bash line prepending the running interpreter's bin dir to PATH.
 
-    When Odysseus runs from a virtualenv, that bin dir holds the tools the
+    When Void runs from a virtualenv, that bin dir holds the tools the
     cookbook runners shell out to (`hf`, `python`). tmux runners start from a
     fresh login shell with the venv NOT activated, so without this they can't
     find `hf` and downloads fail with "hf: command not found" — notably on
@@ -283,7 +283,7 @@ def _venv_safe_local_pip_install_cmd(cmd: str, *, local: bool, in_venv: bool) ->
 
     Cookbook dependency installs run through the model-serve task path so users
     can watch progress in the same log UI. For local POSIX runs, that task
-    prepends Odysseus' own interpreter directory to PATH. If Odysseus itself is
+    prepends Void' own interpreter directory to PATH. If Void itself is
     running from a venv, `python3` resolves to the venv Python and pip rejects
     `--user` with "User site-packages are not visible in this virtualenv".
 
@@ -350,17 +350,17 @@ def _append_pip_install_runner_lines(runner_lines: list[str], cmd: str) -> None:
     runner_lines.append(f"if {help_check}; then")
     runner_lines.append(f"  {cmd}")
     runner_lines.append("else")
-    runner_lines.append('  echo "[odysseus] pip does not support --break-system-packages; installing without it."')
+    runner_lines.append('  echo "[void] pip does not support --break-system-packages; installing without it."')
     runner_lines.append(f"  {without_break}")
     runner_lines.append("fi")
 
 
 def _user_shell_path_bootstrap() -> list[str]:
     return [
-        'ODYSSEUS_USER_SHELL="${SHELL:-}"',
-        'if [ -n "$ODYSSEUS_USER_SHELL" ] && [ -x "$ODYSSEUS_USER_SHELL" ]; then',
-        '  ODYSSEUS_USER_PATH="$("$ODYSSEUS_USER_SHELL" -ic \'printf "__ODYSSEUS_PATH__%s\\n" "$PATH"\' 2>/dev/null | sed -n \'s/^__ODYSSEUS_PATH__//p\' | tail -n 1 || true)"',
-        '  if [ -n "$ODYSSEUS_USER_PATH" ]; then export PATH="$ODYSSEUS_USER_PATH:$PATH"; fi',
+        'VOID_USER_SHELL="${SHELL:-}"',
+        'if [ -n "$VOID_USER_SHELL" ] && [ -x "$VOID_USER_SHELL" ]; then',
+        '  VOID_USER_PATH="$("$VOID_USER_SHELL" -ic \'printf "__VOID_PATH__%s\\n" "$PATH"\' 2>/dev/null | sed -n \'s/^__VOID_PATH__//p\' | tail -n 1 || true)"',
+        '  if [ -n "$VOID_USER_PATH" ]; then export PATH="$VOID_USER_PATH:$PATH"; fi',
         'fi',
         # Windows can expose python3 as a Microsoft Store App Execution Alias
         # under WindowsApps. Git Bash sees that stub as present, but it exits
@@ -506,7 +506,7 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "    return int(n)",
         "def scan_ollama():",
         "    if any(m.get('is_ollama') for m in models): return",
-        "    if os.name == 'nt' and not os.environ.get('ODYSSEUS_ALLOW_OLLAMA_CLI_SCAN'): return",
+        "    if os.name == 'nt' and not os.environ.get('VOID_ALLOW_OLLAMA_CLI_SCAN'): return",
         "    if not shutil.which('ollama'): return",
         "    try:",
         "        p = subprocess.run(['ollama', 'list'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=6)",
@@ -638,7 +638,7 @@ def _ollama_bind_from_cmd(cmd: str | None, *, default_host: str = "127.0.0.1") -
     """Return the Ollama bind host/port requested by a serve command.
 
     Plain local `ollama serve` defaults to loopback. Remote callers can pass a
-    wider default host so the resulting API is reachable by Odysseus.
+    wider default host so the resulting API is reachable by Void.
     """
     if not cmd:
         return default_host, "11434"
@@ -756,8 +756,8 @@ def _validate_serve_cmd(v: str | None) -> str | None:
 
 def _append_serve_preflight_exit_lines(runner_lines: list[str], *, keep_shell_open: bool) -> None:
     """Append serve-runner lines that surface preflight failures before exit."""
-    runner_lines.append('if [ -n "$ODYSSEUS_PREFLIGHT_EXIT" ]; then')
-    runner_lines.append('  echo ""; echo "=== Process exited with code $ODYSSEUS_PREFLIGHT_EXIT ==="')
+    runner_lines.append('if [ -n "$VOID_PREFLIGHT_EXIT" ]; then')
+    runner_lines.append('  echo ""; echo "=== Process exited with code $VOID_PREFLIGHT_EXIT ==="')
     if keep_shell_open:
         # Decouple the post-crash interactive shell from the persistent log
         # file. fds 3/4 were saved BEFORE the tee redirect at the top of
@@ -768,23 +768,23 @@ def _append_serve_preflight_exit_lines(runner_lines: list[str], *, keep_shell_op
         runner_lines.append('  sleep 0.2  # let tee child flush + exit')
         runner_lines.append('  exec "${SHELL:-/bin/bash}"')
     else:
-        runner_lines.append('  exit "$ODYSSEUS_PREFLIGHT_EXIT"')
+        runner_lines.append('  exit "$VOID_PREFLIGHT_EXIT"')
     runner_lines.append('fi')
 
 
 def _append_vllm_linux_preflight_lines(runner_lines: list[str]) -> None:
     """Append Linux vLLM readiness lines that identify the runtime being used."""
-    # Keep the user install bin visible for Odysseus-managed `pip install --user`
+    # Keep the user install bin visible for Void-managed `pip install --user`
     # installs, but then report the actual CLI path so external runtimes are clear.
     runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
-    runner_lines.append('ODYSSEUS_VLLM_BIN="$(command -v vllm 2>/dev/null || true)"')
-    runner_lines.append('if [ -z "$ODYSSEUS_VLLM_BIN" ]; then')
+    runner_lines.append('VOID_VLLM_BIN="$(command -v vllm 2>/dev/null || true)"')
+    runner_lines.append('if [ -z "$VOID_VLLM_BIN" ]; then')
     runner_lines.append('  echo "ERROR: vLLM is not installed."')
-    runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
+    runner_lines.append('  VOID_PREFLIGHT_EXIT=127')
     runner_lines.append('else')
-    runner_lines.append('  echo "[odysseus] vLLM CLI: $ODYSSEUS_VLLM_BIN"')
-    runner_lines.append('  ODYSSEUS_VLLM_VERSION="$("$ODYSSEUS_VLLM_BIN" --version 2>&1 | head -n 1 || true)"')
-    runner_lines.append('  if [ -n "$ODYSSEUS_VLLM_VERSION" ]; then echo "[odysseus] vLLM version: $ODYSSEUS_VLLM_VERSION"; fi')
+    runner_lines.append('  echo "[void] vLLM CLI: $VOID_VLLM_BIN"')
+    runner_lines.append('  VOID_VLLM_VERSION="$("$VOID_VLLM_BIN" --version 2>&1 | head -n 1 || true)"')
+    runner_lines.append('  if [ -n "$VOID_VLLM_VERSION" ]; then echo "[void] vLLM version: $VOID_VLLM_VERSION"; fi')
     runner_lines.append('fi')
 
 def _append_serve_exit_code_lines(
@@ -794,18 +794,18 @@ def _append_serve_exit_code_lines(
     is_pip_install: bool = False,
 ) -> None:
     """Append serve-runner lines that preserve and report the command exit code."""
-    runner_lines.append('ODYSSEUS_CMD_EXIT=$?')
+    runner_lines.append('VOID_CMD_EXIT=$?')
     if is_pip_install:
-        runner_lines.append('if [ $ODYSSEUS_CMD_EXIT -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; fi')
+        runner_lines.append('if [ $VOID_CMD_EXIT -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; fi')
     if keep_shell_open:
-        runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="')
+        runner_lines.append('echo ""; echo "=== Process exited with code $VOID_CMD_EXIT ==="')
         # See preflight branch above for the rationale on restoring fds 3/4.
         runner_lines.append('exec 1>&3 2>&4 3>&- 4>&- 2>/dev/null || true')
         runner_lines.append('sleep 0.2  # let tee child flush + exit')
         runner_lines.append('exec "${SHELL:-/bin/bash}"')
     else:
-        runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="')
-        runner_lines.append('exit "$ODYSSEUS_CMD_EXIT"')
+        runner_lines.append('echo ""; echo "=== Process exited with code $VOID_CMD_EXIT ==="')
+        runner_lines.append('exit "$VOID_CMD_EXIT"')
 
 
 def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
@@ -819,64 +819,64 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     # cmake/build-essential/git/CUDA-headers needed at all. The from-source
     # build below stays as a fallback (custom flags, esoteric arch, no
     # internet, etc). 30 seconds vs 5+ minutes of compile, and removes
-    # every OS-package dep from the launch path. Sets _odysseus_have_prebuilt=1
+    # every OS-package dep from the launch path. Sets _void_have_prebuilt=1
     # on success; the existing build-tier if/elif chain below is gated on
     # that variable so we never compile twice or shadow the prebuilt symlink.
-    runner_lines.append('    _odysseus_have_prebuilt=""')
-    runner_lines.append('    _odysseus_arch="$(uname -m)"')
-    runner_lines.append('    _odysseus_prebuilt_url=""')
-    runner_lines.append('    if command -v curl >/dev/null 2>&1 && [ "$_odysseus_arch" = "x86_64" ]; then')
-    runner_lines.append('      _odysseus_pat=""')
-    runner_lines.append('      _odysseus_has_nv_inline() { command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L 2>/dev/null | grep -q "GPU "; }')
-    runner_lines.append('      _odysseus_has_vk_inline() { ldconfig -p 2>/dev/null | grep -q "libvulkan\\.so" || command -v vulkaninfo >/dev/null 2>&1 || [ -e /usr/lib/x86_64-linux-gnu/libvulkan.so.1 ]; }')
-    runner_lines.append('      _odysseus_has_vkdev_inline() { ls /dev/dri/renderD* >/dev/null 2>&1 || (lspci 2>/dev/null | grep -Ei \'VGA|3D|Display\' | grep -Eiq \'AMD|ATI|Radeon\'); }')
-    runner_lines.append('      if _odysseus_has_nv_inline; then')
-    runner_lines.append('        _odysseus_pat="ubuntu.*cuda"')
-    runner_lines.append('      elif _odysseus_has_vkdev_inline && _odysseus_has_vk_inline; then')
-    runner_lines.append('        _odysseus_pat="ubuntu.*vulkan"')
+    runner_lines.append('    _void_have_prebuilt=""')
+    runner_lines.append('    _void_arch="$(uname -m)"')
+    runner_lines.append('    _void_prebuilt_url=""')
+    runner_lines.append('    if command -v curl >/dev/null 2>&1 && [ "$_void_arch" = "x86_64" ]; then')
+    runner_lines.append('      _void_pat=""')
+    runner_lines.append('      _void_has_nv_inline() { command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L 2>/dev/null | grep -q "GPU "; }')
+    runner_lines.append('      _void_has_vk_inline() { ldconfig -p 2>/dev/null | grep -q "libvulkan\\.so" || command -v vulkaninfo >/dev/null 2>&1 || [ -e /usr/lib/x86_64-linux-gnu/libvulkan.so.1 ]; }')
+    runner_lines.append('      _void_has_vkdev_inline() { ls /dev/dri/renderD* >/dev/null 2>&1 || (lspci 2>/dev/null | grep -Ei \'VGA|3D|Display\' | grep -Eiq \'AMD|ATI|Radeon\'); }')
+    runner_lines.append('      if _void_has_nv_inline; then')
+    runner_lines.append('        _void_pat="ubuntu.*cuda"')
+    runner_lines.append('      elif _void_has_vkdev_inline && _void_has_vk_inline; then')
+    runner_lines.append('        _void_pat="ubuntu.*vulkan"')
     runner_lines.append('      else')
-    runner_lines.append('        _odysseus_pat="ubuntu-x64\\\\.zip"')
+    runner_lines.append('        _void_pat="ubuntu-x64\\\\.zip"')
     runner_lines.append('      fi')
-    runner_lines.append('      _odysseus_prebuilt_url="$(curl -fsSL --max-time 15 https://api.github.com/repos/ggml-org/llama.cpp/releases/latest 2>/dev/null | grep \'"browser_download_url"\' | cut -d\'"\' -f4 | grep -iE "$_odysseus_pat" | grep -iv "arm\\|aarch64" | head -1)"')
+    runner_lines.append('      _void_prebuilt_url="$(curl -fsSL --max-time 15 https://api.github.com/repos/ggml-org/llama.cpp/releases/latest 2>/dev/null | grep \'"browser_download_url"\' | cut -d\'"\' -f4 | grep -iE "$_void_pat" | grep -iv "arm\\|aarch64" | head -1)"')
     runner_lines.append('    fi')
     # Accept any of unzip / bsdtar / python3 -m zipfile as the extractor.
     # python3 is essentially always present on modern Linux, so this lets
     # the prebuilt path work on minimal Ubuntu installs that lack `unzip`.
-    runner_lines.append('    if [ -n "$_odysseus_prebuilt_url" ] && (command -v unzip >/dev/null 2>&1 || command -v bsdtar >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1); then')
-    runner_lines.append('      echo "[odysseus] Found prebuilt llama-server: $_odysseus_prebuilt_url"')
-    runner_lines.append('      mkdir -p ~/bin "$HOME/.cache/odysseus/llama-cpp-prebuilt" && cd "$HOME/.cache/odysseus/llama-cpp-prebuilt"')
+    runner_lines.append('    if [ -n "$_void_prebuilt_url" ] && (command -v unzip >/dev/null 2>&1 || command -v bsdtar >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1); then')
+    runner_lines.append('      echo "[void] Found prebuilt llama-server: $_void_prebuilt_url"')
+    runner_lines.append('      mkdir -p ~/bin "$HOME/.cache/void/llama-cpp-prebuilt" && cd "$HOME/.cache/void/llama-cpp-prebuilt"')
     runner_lines.append('      rm -f llama-cpp.zip')
-    runner_lines.append('      if curl -fsSL --max-time 120 "$_odysseus_prebuilt_url" -o llama-cpp.zip && [ -s llama-cpp.zip ]; then')
+    runner_lines.append('      if curl -fsSL --max-time 120 "$_void_prebuilt_url" -o llama-cpp.zip && [ -s llama-cpp.zip ]; then')
     runner_lines.append('        rm -rf build && mkdir -p build')
     runner_lines.append('        if command -v unzip >/dev/null 2>&1; then unzip -qq -o llama-cpp.zip -d build; elif command -v bsdtar >/dev/null 2>&1; then bsdtar -xf llama-cpp.zip -C build; else python3 -c "import zipfile; zipfile.ZipFile(\\"llama-cpp.zip\\").extractall(\\"build\\")"; fi')
-    runner_lines.append('        _odysseus_extracted="$(find build -type f -name llama-server 2>/dev/null | head -1)"')
-    runner_lines.append('        if [ -n "$_odysseus_extracted" ]; then')
-    runner_lines.append('          chmod +x "$_odysseus_extracted"')
-    runner_lines.append('          ln -sf "$_odysseus_extracted" ~/bin/llama-server')
-    runner_lines.append('          _odysseus_libdir="$(dirname "$_odysseus_extracted")"')
-    runner_lines.append('          mkdir -p ~/.config && echo "export LD_LIBRARY_PATH=\\"$_odysseus_libdir:\\${LD_LIBRARY_PATH:-}\\"" > ~/.config/odysseus-llama-cpp-env')
-    runner_lines.append('          _odysseus_have_prebuilt=1')
-    runner_lines.append('          echo "[odysseus] Prebuilt llama-server installed at $_odysseus_extracted"')
+    runner_lines.append('        _void_extracted="$(find build -type f -name llama-server 2>/dev/null | head -1)"')
+    runner_lines.append('        if [ -n "$_void_extracted" ]; then')
+    runner_lines.append('          chmod +x "$_void_extracted"')
+    runner_lines.append('          ln -sf "$_void_extracted" ~/bin/llama-server')
+    runner_lines.append('          _void_libdir="$(dirname "$_void_extracted")"')
+    runner_lines.append('          mkdir -p ~/.config && echo "export LD_LIBRARY_PATH=\\"$_void_libdir:\\${LD_LIBRARY_PATH:-}\\"" > ~/.config/void-llama-cpp-env')
+    runner_lines.append('          _void_have_prebuilt=1')
+    runner_lines.append('          echo "[void] Prebuilt llama-server installed at $_void_extracted"')
     runner_lines.append('        fi')
     runner_lines.append('      fi')
-    runner_lines.append('      [ -z "$_odysseus_have_prebuilt" ] && echo "[odysseus] Prebuilt download/extract failed — falling back to from-source build."')
-    runner_lines.append('    elif [ -z "$_odysseus_prebuilt_url" ]; then')
-    runner_lines.append('      echo "[odysseus] No matching prebuilt llama-server for this host (arch=$_odysseus_arch) — will build from source."')
+    runner_lines.append('      [ -z "$_void_have_prebuilt" ] && echo "[void] Prebuilt download/extract failed — falling back to from-source build."')
+    runner_lines.append('    elif [ -z "$_void_prebuilt_url" ]; then')
+    runner_lines.append('      echo "[void] No matching prebuilt llama-server for this host (arch=$_void_arch) — will build from source."')
     runner_lines.append('    fi')
-    runner_lines.append('  if [ -z "$_odysseus_have_prebuilt" ]; then')
+    runner_lines.append('  if [ -z "$_void_have_prebuilt" ]; then')
     # Detect pip-installed nvcc (from vLLM/nvidia CUDA wheels) and put it on PATH
     # so cmake's CUDA configure can find it — BUT only when actual NVIDIA
     # hardware is present. On AMD/Intel hosts the pip nvcc is a misleading
     # leftover (no libcudart, no GPU it could target) and would otherwise
     # send the build down the CUDA branch and fail with "CUDA Toolkit not
     # found" instead of trying Vulkan.
-    runner_lines.append('    _odysseus_has_nvidia_hw() {')
+    runner_lines.append('    _void_has_nvidia_hw() {')
     runner_lines.append('      command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L 2>/dev/null | grep -q "GPU " && return 0')
     runner_lines.append('      ls /dev/nvidia* >/dev/null 2>&1 && return 0')
     runner_lines.append('      lspci 2>/dev/null | grep -iE \'VGA|3D|Display\' | grep -iq nvidia && return 0')
     runner_lines.append('      return 1')
     runner_lines.append('    }')
-    runner_lines.append('    if _odysseus_has_nvidia_hw; then')
+    runner_lines.append('    if _void_has_nvidia_hw; then')
     runner_lines.append('      for _cudir in ~/.local/lib/python*/site-packages/nvidia/cu13 ~/.local/lib/python*/site-packages/nvidia/cu12 ~/.local/lib/python*/site-packages/nvidia/cuda_nvcc; do')
     runner_lines.append('        [ -x "$_cudir/bin/nvcc" ] && export CUDA_HOME="$_cudir" && export PATH="$_cudir/bin:$PATH" && break')
     runner_lines.append('      done')
@@ -891,35 +891,35 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     # diagnosis pattern (cookbook_routes.py / cookbook_helpers.py) surfaces
     # an explicit "install cmake" suggestion in the Cookbook diagnosis
     # toolbar after the inevitable build failure.
-    runner_lines.append('    _odysseus_apt_bootstrap() {')
+    runner_lines.append('    _void_apt_bootstrap() {')
     runner_lines.append('      local _missing=""')
     runner_lines.append('      command -v cmake >/dev/null 2>&1 || _missing="$_missing cmake"')
     runner_lines.append('      command -v g++ >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 || _missing="$_missing build-essential"')
     runner_lines.append('      command -v git >/dev/null 2>&1 || _missing="$_missing git"')
     runner_lines.append('      [ -z "$_missing" ] && return 0')
     runner_lines.append('      if command -v apt-get >/dev/null 2>&1 && sudo -n true 2>/dev/null; then')
-    runner_lines.append('        echo "[odysseus] Auto-installing missing build deps via apt:$_missing"')
+    runner_lines.append('        echo "[void] Auto-installing missing build deps via apt:$_missing"')
     runner_lines.append('        sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>&1 | tail -3')
     runner_lines.append('        sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $_missing 2>&1 | tail -5 || true')
     runner_lines.append('      elif command -v pacman >/dev/null 2>&1 && sudo -n true 2>/dev/null; then')
-    runner_lines.append('        echo "[odysseus] Auto-installing missing build deps via pacman:$_missing"')
+    runner_lines.append('        echo "[void] Auto-installing missing build deps via pacman:$_missing"')
     runner_lines.append('        local _pacpkgs="$(echo "$_missing" | sed -e \'s/build-essential/base-devel/g\')"')
     runner_lines.append('        sudo -n pacman -Sy --needed --noconfirm $_pacpkgs 2>&1 | tail -5 || true')
     runner_lines.append('      elif command -v dnf >/dev/null 2>&1 && sudo -n true 2>/dev/null; then')
-    runner_lines.append('        echo "[odysseus] Auto-installing missing build deps via dnf:$_missing"')
+    runner_lines.append('        echo "[void] Auto-installing missing build deps via dnf:$_missing"')
     runner_lines.append('        local _dnfpkgs="$(echo "$_missing" | sed -e \'s/build-essential/gcc gcc-c++ make/g\')"')
     runner_lines.append('        sudo -n dnf install -y $_dnfpkgs 2>&1 | tail -5 || true')
     runner_lines.append('      else')
-    runner_lines.append('        echo "[odysseus] WARNING: missing build deps ($_missing) — passwordless sudo is unavailable, cannot auto-install. Cookbook Diagnosis will explain the fix after the build fails."')
+    runner_lines.append('        echo "[void] WARNING: missing build deps ($_missing) — passwordless sudo is unavailable, cannot auto-install. Cookbook Diagnosis will explain the fix after the build fails."')
     runner_lines.append('      fi')
     runner_lines.append('    }')
-    runner_lines.append('    _odysseus_apt_bootstrap')
-    runner_lines.append('    _odysseus_missing_build_deps=""')
-    runner_lines.append('    command -v cmake >/dev/null 2>&1 || _odysseus_missing_build_deps="$_odysseus_missing_build_deps cmake"')
-    runner_lines.append('    command -v git >/dev/null 2>&1 || _odysseus_missing_build_deps="$_odysseus_missing_build_deps git"')
-    runner_lines.append('    command -v g++ >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 || _odysseus_missing_build_deps="$_odysseus_missing_build_deps build-essential"')
-    runner_lines.append('    if [ -n "$_odysseus_missing_build_deps" ]; then')
-    runner_lines.append('      echo "ERROR: llama.cpp source build needs missing packages:$_odysseus_missing_build_deps"')
+    runner_lines.append('    _void_apt_bootstrap')
+    runner_lines.append('    _void_missing_build_deps=""')
+    runner_lines.append('    command -v cmake >/dev/null 2>&1 || _void_missing_build_deps="$_void_missing_build_deps cmake"')
+    runner_lines.append('    command -v git >/dev/null 2>&1 || _void_missing_build_deps="$_void_missing_build_deps git"')
+    runner_lines.append('    command -v g++ >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 || _void_missing_build_deps="$_void_missing_build_deps build-essential"')
+    runner_lines.append('    if [ -n "$_void_missing_build_deps" ]; then')
+    runner_lines.append('      echo "ERROR: llama.cpp source build needs missing packages:$_void_missing_build_deps"')
     runner_lines.append('      if command -v apt-get >/dev/null 2>&1; then')
     runner_lines.append('        echo "Install on this host: sudo apt-get update && sudo apt-get install -y cmake build-essential git"')
     runner_lines.append('      elif command -v pacman >/dev/null 2>&1; then')
@@ -928,17 +928,17 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     runner_lines.append('        echo "Install on this host: sudo dnf install -y cmake gcc gcc-c++ make git"')
     runner_lines.append('      fi')
     runner_lines.append('      echo "Alternative: install a native llama-server on PATH, then relaunch."')
-    runner_lines.append('      ODYSSEUS_PREFLIGHT_EXIT=127')
+    runner_lines.append('      VOID_PREFLIGHT_EXIT=127')
     runner_lines.append('    fi')
     runner_lines.append('    cd ~/llama.cpp')
-    runner_lines.append('    _odysseus_has_vulkan() {')
+    runner_lines.append('    _void_has_vulkan() {')
     runner_lines.append('      ldconfig -p 2>/dev/null | grep -q \'libvulkan\\.so\' && return 0')
     runner_lines.append('      [ -e /usr/lib/libvulkan.so.1 ] && return 0')
     runner_lines.append('      [ -e /usr/lib/x86_64-linux-gnu/libvulkan.so.1 ] && return 0')
     runner_lines.append('      command -v vulkaninfo >/dev/null 2>&1 && return 0')
     runner_lines.append('      return 1')
     runner_lines.append('    }')
-    runner_lines.append('    _odysseus_has_vulkan_device() {')
+    runner_lines.append('    _void_has_vulkan_device() {')
     runner_lines.append('      ls /dev/dri/renderD* >/dev/null 2>&1 && return 0')
     runner_lines.append('      lspci 2>/dev/null | grep -Ei \'VGA|3D|Display\' | grep -Eiq \'AMD|ATI|Radeon\' && return 0')
     runner_lines.append('      return 1')
@@ -954,15 +954,15 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     runner_lines.append('        export HIPCXX="${HIPCXX:-$(hipconfig -l)/clang}"')
     runner_lines.append('        export HIP_PATH="${HIP_PATH:-$(hipconfig -R)}"')
     runner_lines.append('      fi')
-    runner_lines.append('      echo "[odysseus] ROCm/HIP detected — building llama-server with HIP support..."')
+    runner_lines.append('      echo "[void] ROCm/HIP detected — building llama-server with HIP support..."')
     runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
-    runner_lines.append('    elif command -v nvcc &>/dev/null && _odysseus_has_nvidia_hw; then')
+    runner_lines.append('    elif command -v nvcc &>/dev/null && _void_has_nvidia_hw; then')
     runner_lines.append('      rm -rf build')
     # nvcc alone is not sufficient — pip-installed CUDA wheels or incomplete
     # tooling can expose nvcc without shipping libcudart, causing cmake to fail
     # mid-build with "CUDA runtime library not found". Check cudart explicitly
     # via a small helper so the guard stays readable.
-    runner_lines.append('      _odysseus_has_cudart() {')
+    runner_lines.append('      _void_has_cudart() {')
     runner_lines.append('        ldconfig -p 2>/dev/null | grep -q \'libcudart\\.so\' && return 0')
     runner_lines.append('        local _cuh="${CUDA_HOME:-/usr/local/cuda}"')
     runner_lines.append('        ls "$_cuh/lib64/libcudart.so"* &>/dev/null && return 0')
@@ -972,27 +972,27 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     runner_lines.append('        ls "${_cuh%/cuda_nvcc}/cuda_runtime/lib/libcudart.so"* &>/dev/null && return 0')
     runner_lines.append('        return 1')
     runner_lines.append('      }')
-    runner_lines.append('      if _odysseus_has_cudart; then')
-    runner_lines.append('        echo "[odysseus] CUDA nvcc + cudart found — building llama-server with CUDA (GPU) support..."')
+    runner_lines.append('      if _void_has_cudart; then')
+    runner_lines.append('        echo "[void] CUDA nvcc + cudart found — building llama-server with CUDA (GPU) support..."')
     runner_lines.append('        cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
     runner_lines.append('      else')
-    runner_lines.append('        echo "[odysseus] WARNING: nvcc found but CUDA runtime (libcudart.so) is not visible — building llama-server for CPU only."')
-    runner_lines.append('        echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
-    runner_lines.append('        echo "[odysseus]   Ensure libcudart is installed (e.g. cuda-runtime package) and visible via ldconfig or CUDA_HOME."')
+    runner_lines.append('        echo "[void] WARNING: nvcc found but CUDA runtime (libcudart.so) is not visible — building llama-server for CPU only."')
+    runner_lines.append('        echo "[void]   GPU inference will not be available for this llama.cpp build."')
+    runner_lines.append('        echo "[void]   Ensure libcudart is installed (e.g. cuda-runtime package) and visible via ldconfig or CUDA_HOME."')
     runner_lines.append('        cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
     runner_lines.append('      fi')
-    runner_lines.append('    elif _odysseus_has_vulkan_device && _odysseus_has_vulkan; then')
-    runner_lines.append('      echo "[odysseus] Vulkan-capable GPU detected (no ROCm/CUDA toolchain installed) — building llama-server with Vulkan support..."')
+    runner_lines.append('    elif _void_has_vulkan_device && _void_has_vulkan; then')
+    runner_lines.append('      echo "[void] Vulkan-capable GPU detected (no ROCm/CUDA toolchain installed) — building llama-server with Vulkan support..."')
     runner_lines.append('      rm -rf build-vulkan')
     runner_lines.append('      cmake -B build-vulkan -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON && cmake --build build-vulkan -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build-vulkan/bin/llama-server ~/bin/llama-server')
     runner_lines.append('    else')
-    runner_lines.append('      echo "[odysseus] WARNING: no HIP/CUDA/Vulkan toolchain found — building llama-server for CPU only."')
-    runner_lines.append('      echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
-    runner_lines.append('      echo "[odysseus]   Install Vulkan (libvulkan-dev) / ROCm for AMD GPUs or CUDA tooling for NVIDIA, then re-launch this serve task."')
+    runner_lines.append('      echo "[void] WARNING: no HIP/CUDA/Vulkan toolchain found — building llama-server for CPU only."')
+    runner_lines.append('      echo "[void]   GPU inference will not be available for this llama.cpp build."')
+    runner_lines.append('      echo "[void]   Install Vulkan (libvulkan-dev) / ROCm for AMD GPUs or CUDA tooling for NVIDIA, then re-launch this serve task."')
     runner_lines.append('      rm -rf build')
     runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
     runner_lines.append('    fi')
-    runner_lines.append('  fi  # end _odysseus_have_prebuilt guard')
+    runner_lines.append('  fi  # end _void_have_prebuilt guard')
 
 
 def _llama_cpp_rebuild_cmd(update_source: bool = False) -> str:
@@ -1011,10 +1011,10 @@ def _llama_cpp_rebuild_cmd(update_source: bool = False) -> str:
         update_cmd = (
             'if [ -d "$HOME/llama.cpp/.git" ]; then '
             'git -C "$HOME/llama.cpp" pull --ff-only --depth 1 || '
-            'echo "[odysseus] WARNING: llama.cpp source update failed; clearing cached build anyway."; '
+            'echo "[void] WARNING: llama.cpp source update failed; clearing cached build anyway."; '
             'elif command -v git >/dev/null 2>&1; then '
             'git clone --depth 1 https://github.com/ggml-org/llama.cpp "$HOME/llama.cpp" || '
-            'echo "[odysseus] WARNING: llama.cpp clone failed; clearing cached build anyway."; '
+            'echo "[void] WARNING: llama.cpp clone failed; clearing cached build anyway."; '
             'fi && '
         )
     return (
@@ -1022,7 +1022,7 @@ def _llama_cpp_rebuild_cmd(update_source: bool = False) -> str:
         f'{update_cmd}'
         'rm -f "$HOME/bin/llama-server" && '
         'rm -rf "$HOME/llama.cpp/build" "$HOME/llama.cpp/build-vulkan" && '
-        'echo "[odysseus] Cleared the cached llama.cpp build. '
+        'echo "[void] Cleared the cached llama.cpp build. '
         'Re-launch the serve task to rebuild llama-server from source '
         '(Vulkan, HIP, or CUDA will be used if a matching toolchain is now available)."'
     )
@@ -1176,7 +1176,7 @@ def _ssh_ps(host, script_path, port=None):
 
 
 # Windows session dir — stored in user's temp on the remote
-WIN_SESSION_DIR = "$env:TEMP\\\\odysseus-sessions"
+WIN_SESSION_DIR = "$env:TEMP\\\\void-sessions"
 
 
 def _diagnose_serve_output(text: str) -> dict | None:

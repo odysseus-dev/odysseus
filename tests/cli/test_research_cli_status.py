@@ -1,4 +1,4 @@
-"""`odysseus-research list --status complete` must match completed runs.
+"""`void-research list --status complete` must match completed runs.
 
 Completed research runs are persisted with status "done" (research_handler),
 but the user-facing CLI value is the friendlier "complete". The CLI offered
@@ -19,8 +19,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def _load_cli():
-    path = ROOT / "scripts" / "odysseus-research"
-    loader = importlib.machinery.SourceFileLoader("odysseus_research_cli_status", str(path))
+    path = ROOT / "scripts" / "void-research"
+    loader = importlib.machinery.SourceFileLoader("void_research_cli_status", str(path))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)

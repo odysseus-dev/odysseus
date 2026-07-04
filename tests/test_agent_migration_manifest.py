@@ -23,7 +23,7 @@ def test_collect_memory_json_accepts_strings_and_objects(tmp_path):
         json.dumps(
             [
                 "Pacey prefers GLM for routine coding.",
-                {"text": "Odysseus runs on a self-hosted machine.", "category": "project", "source": "manual"},
+                {"text": "Void runs on a self-hosted machine.", "category": "project", "source": "manual"},
                 {"content": "Duplicate source keys still work.", "category": "fact"},
             ]
         ),

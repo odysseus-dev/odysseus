@@ -4,9 +4,9 @@
 #   COMPOSE_FILE=docker-compose.yml:docker/host-docker.yml
 #   DOCKER_GID=<numeric host Docker group id>
 services:
-  odysseus:
+  void:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     group_add: ["${DOCKER_GID:-963}"]
     environment:
-      - ODYSSEUS_ENABLE_HOST_DOCKER=true
+      - VOID_ENABLE_HOST_DOCKER=true

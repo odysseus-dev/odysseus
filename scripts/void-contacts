@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""odysseus-contacts — Unix-style CLI for the contacts feature.
+"""void-contacts — Unix-style CLI for the contacts feature.
 
 Talks to the same CardDAV server the web UI does, using credentials
 from `data/settings.json` (set via the Settings → Connections panel).
 Output is JSON on stdout, errors on stderr, non-zero exit on failure.
 
-    odysseus-contacts list | jq -r '.[] | .name + "\\t" + .email'
-    odysseus-contacts search alice
-    odysseus-contacts add --name "Alice Doe" --email alice@example.com
+    void-contacts list | jq -r '.[] | .name + "\\t" + .email'
+    void-contacts search alice
+    void-contacts add --name "Alice Doe" --email alice@example.com
 
 Subcommands:
     list      List all contacts
@@ -118,8 +118,8 @@ def _build_parser() -> argparse.ArgumentParser:
     common.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
 
     p = argparse.ArgumentParser(
-        prog="odysseus-contacts",
-        description="Shell-friendly wrapper around the Odysseus contacts (CardDAV) feature.",
+        prog="void-contacts",
+        description="Shell-friendly wrapper around the Void contacts (CardDAV) feature.",
         parents=[common],
     )
     sub = p.add_subparsers(dest="cmd", required=True)

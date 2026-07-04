@@ -763,7 +763,7 @@ def _strip_bare_invoke_markup(text: str) -> str:
 
 
 def _parse_stepfun_tool_call(tool_name: str, body: str) -> Optional[ToolBlock]:
-    """Parse StepFun native tool-call tokens into an Odysseus ToolBlock."""
+    """Parse StepFun native tool-call tokens into an Void ToolBlock."""
     tool_name = tool_name.lower().replace("-", "_").replace(".", "_")
     mapped = _TOOL_NAME_MAP.get(tool_name) or (tool_name if tool_name in TOOL_TAGS else None)
     if not mapped:

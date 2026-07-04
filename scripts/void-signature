@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""odysseus-signature — shell wrapper for stored email signature images.
+"""void-signature — shell wrapper for stored email signature images.
 
 The web UI lets you draw a signature; the result lives as a PNG (and
 optional SVG) in the `signatures` table, keyed by id + owner.
 
-    odysseus-signature list                      # all signatures (metadata only)
-    odysseus-signature show SIG_ID               # full record incl. data_png
-    odysseus-signature export SIG_ID --png OUT   # write PNG bytes to a file
-    odysseus-signature delete SIG_ID
+    void-signature list                      # all signatures (metadata only)
+    void-signature show SIG_ID               # full record incl. data_png
+    void-signature export SIG_ID --png OUT   # write PNG bytes to a file
+    void-signature delete SIG_ID
 """
 
 from __future__ import annotations
@@ -116,7 +116,7 @@ def cmd_delete(args):
 def _build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--pretty", action="store_true")
-    p = argparse.ArgumentParser(prog="odysseus-signature", parents=[common])
+    p = argparse.ArgumentParser(prog="void-signature", parents=[common])
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pl = sub.add_parser("list", parents=[common])

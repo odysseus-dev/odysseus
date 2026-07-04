@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""odysseus-cookbook — shell wrapper for the cookbook feature.
+"""void-cookbook — shell wrapper for the cookbook feature.
 
 The web UI orchestrates HuggingFace model downloads + local serving
 through tmux sessions and writes its bookkeeping to
 `data/cookbook_state.json`. This CLI exposes the same operations on
 the shell so they can be cron'd, piped, or scripted:
 
-    odysseus-cookbook list                       # active downloads + servers
-    odysseus-cookbook gpus                       # nvidia-smi per-GPU JSON
-    odysseus-cookbook cached                     # local HF cache snapshot
-    odysseus-cookbook hf-latest --vram-gb 24     # trending HF models that fit
-    odysseus-cookbook download Qwen/Qwen3-8B     # fire off `hf download` in tmux
-    odysseus-cookbook kill cookbook-abc123       # tmux kill-session
+    void-cookbook list                       # active downloads + servers
+    void-cookbook gpus                       # nvidia-smi per-GPU JSON
+    void-cookbook cached                     # local HF cache snapshot
+    void-cookbook hf-latest --vram-gb 24     # trending HF models that fit
+    void-cookbook download Qwen/Qwen3-8B     # fire off `hf download` in tmux
+    void-cookbook kill cookbook-abc123       # tmux kill-session
 
 Reads/writes the same `data/cookbook_state.json` the web UI uses, so
 state stays in sync. Output is JSON on stdout, errors on stderr,
@@ -45,7 +45,7 @@ _STATE_PATH = _DATA_DIR / "cookbook_state.json"
 # Mirror routes/shell_routes.TMUX_LOG_DIR — don't import it because that pulls
 # the whole web app into the process. Match its definition instead.
 import tempfile
-_TMUX_LOG_DIR = Path(tempfile.gettempdir()) / "odysseus-tmux"
+_TMUX_LOG_DIR = Path(tempfile.gettempdir()) / "void-tmux"
 
 from core.platform_compat import NVIDIA_PATH_CANDIDATES, SSH_PATH_OVERRIDE
 
@@ -325,10 +325,10 @@ def cmd_download(args) -> None:
 
     if args.host:
         # Remote — let the remote shell decide log location.
-        remote_log = f"/tmp/odysseus-tmux/{session_id}.log"
+        remote_log = f"/tmp/void-tmux/{session_id}.log"
         hf_cmd = " ".join(map(_shell_quote, cmd_parts))
         remote_shell_cmd = (
-            f"mkdir -p /tmp/odysseus-tmux && "
+            f"mkdir -p /tmp/void-tmux && "
             f"tmux new-session -d -s {_shell_quote(session_id)} "
             f"bash -lc {_shell_quote(f'{hf_cmd} 2>&1 | tee {remote_log}; echo DONE')}"
         )
@@ -346,7 +346,7 @@ def cmd_download(args) -> None:
             "host": args.host,
             "remote_log_path": remote_log,
             "tail_cmd": f"ssh {args.host} tail -f {remote_log}",
-            "kill_cmd": f"odysseus-cookbook kill {session_id} --host {args.host}",
+            "kill_cmd": f"void-cookbook kill {session_id} --host {args.host}",
         }, args)
         return
 
@@ -369,7 +369,7 @@ def cmd_download(args) -> None:
         "repo": args.repo,
         "log_path": str(log_path),
         "tail_cmd": f"tail -f {log_path}",
-        "kill_cmd": f"odysseus-cookbook kill {session_id}",
+        "kill_cmd": f"void-cookbook kill {session_id}",
     }, args)
 
 
@@ -388,8 +388,8 @@ def cmd_serve(args) -> None:
     platform-specific template generation. For the CLI you pass the full
     serve command via `--cmd`. Common patterns:
 
-        odysseus-cookbook serve qwen3-8b --cmd 'python -m vllm.entrypoints.openai.api_server --model Qwen/Qwen3-8B --port 8000'
-        odysseus-cookbook serve sdxl --cmd 'python scripts/diffusion_server.py --model stabilityai/sdxl --port 8006'
+        void-cookbook serve qwen3-8b --cmd 'python -m vllm.entrypoints.openai.api_server --model Qwen/Qwen3-8B --port 8000'
+        void-cookbook serve sdxl --cmd 'python scripts/diffusion_server.py --model stabilityai/sdxl --port 8006'
     """
     if not args.cmd or not args.cmd.strip():
         fail("--cmd is required and must be a non-empty serve command")
@@ -413,7 +413,7 @@ def cmd_serve(args) -> None:
         "log_path": str(log_path),
         "cmd": args.cmd,
         "tail_cmd": f"tail -f {log_path}",
-        "kill_cmd": f"odysseus-cookbook kill {session_id}",
+        "kill_cmd": f"void-cookbook kill {session_id}",
     }, args)
 
 
@@ -499,8 +499,8 @@ def _build_parser() -> argparse.ArgumentParser:
     common.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
 
     p = argparse.ArgumentParser(
-        prog="odysseus-cookbook",
-        description="Shell-friendly wrapper around the Odysseus cookbook (model download + serve).",
+        prog="void-cookbook",
+        description="Shell-friendly wrapper around the Void cookbook (model download + serve).",
         parents=[common],
     )
     sub = p.add_subparsers(dest="cmd", required=True)

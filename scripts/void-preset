@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""odysseus-preset — shell wrapper for AI system-prompt presets.
+"""void-preset — shell wrapper for AI system-prompt presets.
 
 Presets are name → {name, temperature, system_prompt} in
 `data/presets.json`. Used by the chat UI's preset picker.
 
-    odysseus-preset list
-    odysseus-preset get NAME
-    odysseus-preset set NAME --temperature 0.7 --prompt "You are..."
-    odysseus-preset set NAME --prompt-file ./prompt.md
-    odysseus-preset delete NAME
+    void-preset list
+    void-preset get NAME
+    void-preset set NAME --temperature 0.7 --prompt "You are..."
+    void-preset set NAME --prompt-file ./prompt.md
+    void-preset delete NAME
 """
 
 from __future__ import annotations
@@ -110,7 +110,7 @@ def cmd_delete(args):
 def _build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--pretty", action="store_true")
-    p = argparse.ArgumentParser(prog="odysseus-preset", parents=[common])
+    p = argparse.ArgumentParser(prog="void-preset", parents=[common])
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pl = sub.add_parser("list", parents=[common])

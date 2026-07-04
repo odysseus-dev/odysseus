@@ -1,4 +1,4 @@
-"""`odysseus-research list --status complete` was returning nothing.
+"""`void-research list --status complete` was returning nothing.
 
 The CLI's `--status` argparse choice is "complete" — that is the user-facing
 label — but the writer in `services/research/research_handler.py` stores
@@ -10,7 +10,7 @@ These tests pin the alias so the friendlier CLI word keeps matching the
 stored value. The other choices (`running`, `cancelled`, `error`) are
 stored verbatim, so they must NOT be rewritten by the alias map.
 
-Part of #2122 (odysseus-* CLI list/search bugs).
+Part of #2122 (void-* CLI list/search bugs).
 """
 
 from __future__ import annotations
@@ -25,8 +25,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def _load_cli():
-    path = ROOT / "scripts" / "odysseus-research"
-    loader = importlib.machinery.SourceFileLoader("odysseus_research_cli", str(path))
+    path = ROOT / "scripts" / "void-research"
+    loader = importlib.machinery.SourceFileLoader("void_research_cli", str(path))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)

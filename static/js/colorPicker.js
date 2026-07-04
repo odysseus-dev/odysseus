@@ -4,7 +4,7 @@
 // their .value stays the source of truth, and we dispatch 'input'
 // events so existing listeners keep working.
 
-const LS_RECENT = 'odysseus-recent-colors';
+const LS_RECENT = 'void-recent-colors';
 const MAX_RECENT = 12;
 
 let _popover = null;

@@ -393,11 +393,11 @@ async function showModelSelector() {
     listContainer.appendChild(_loadingDiv);
 
     // Restore last used selections from storage (per-mode)
-    const _selKey = 'odysseus-compare-selections-' + (state._compareMode || 'chat');
-    let selections = Storage.getJSON(_selKey) || Storage.getJSON('odysseus-compare-selections') || [];
+    const _selKey = 'void-compare-selections-' + (state._compareMode || 'chat');
+    let selections = Storage.getJSON(_selKey) || Storage.getJSON('void-compare-selections') || [];
     // Restore synthesis models for search/research
     if (state._compareMode === 'search' || state._compareMode === 'research') {
-      const savedSynth = Storage.getJSON('odysseus-compare-synth-' + state._compareMode);
+      const savedSynth = Storage.getJSON('void-compare-synth-' + state._compareMode);
       if (savedSynth) state._searchSynthModels = savedSynth;
     }
     // Validate saved selections against available models (done after models load)

@@ -19,7 +19,7 @@ from tests.helpers.embedding_lanes import FakeChroma, FakeEmbedder, patch_chroma
 def test_lane_reset_restores_when_chroma_returns_numpy_embeddings(monkeypatch):
     fake = FakeChroma()
     old_custom = fake.get_or_create_collection(
-        "odysseus_memories_custom",
+        "void_memories_custom",
         metadata={
             "embedding_lane": "custom",
             "embedding_dimension": 384,
@@ -45,7 +45,7 @@ def test_lane_reset_restores_when_chroma_returns_numpy_embeddings(monkeypatch):
     old_custom.get = ndarray_get
 
     # Force the post-reset rewrite to fail so the restore branch runs.
-    fake.fail_next_add_for["odysseus_memories_custom"] = 1
+    fake.fail_next_add_for["void_memories_custom"] = 1
     patch_chroma(monkeypatch, fake)
 
     import src.embedding_lanes as lanes
@@ -57,12 +57,12 @@ def test_lane_reset_restores_when_chroma_returns_numpy_embeddings(monkeypatch):
 
     monkeypatch.setattr(lanes, "_build_fastembed_client", fail_fastembed)
 
-    built = build_embedding_lanes("odysseus_memories")
+    built = build_embedding_lanes("void_memories")
 
     # Both lanes are unavailable, but the existing row must survive — not be
     # wiped by an ndarray-truthiness crash in the restore path.
     assert built == []
-    restored = fake.collections["odysseus_memories_custom"]
+    restored = fake.collections["void_memories_custom"]
     assert restored.count() == 1
     assert restored.get()["ids"] == ["existing-memory"]
     assert len(restored.rows["existing-memory"]["embedding"]) == 384

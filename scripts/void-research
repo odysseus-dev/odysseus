@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""odysseus-research — shell wrapper for deep-research sessions.
+"""void-research — shell wrapper for deep-research sessions.
 
 Each research run is a JSON blob in `data/deep_research/<id>.json`
 holding the query, findings, sources, and final report. This CLI
 enumerates and inspects them — running new research requires the
 streaming endpoint, so it's not exposed here.
 
-    odysseus-research list [--limit N] [--status complete|running|cancelled]
-    odysseus-research show RP_ID            # full record (large)
-    odysseus-research report RP_ID --raw    # just the markdown report
-    odysseus-research search "query text"
-    odysseus-research delete RP_ID
+    void-research list [--limit N] [--status complete|running|cancelled]
+    void-research show RP_ID            # full record (large)
+    void-research report RP_ID --raw    # just the markdown report
+    void-research search "query text"
+    void-research delete RP_ID
 """
 
 from __future__ import annotations
@@ -156,7 +156,7 @@ def cmd_delete(args):
 def _build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--pretty", action="store_true")
-    p = argparse.ArgumentParser(prog="odysseus-research", parents=[common])
+    p = argparse.ArgumentParser(prog="void-research", parents=[common])
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pl = sub.add_parser("list", parents=[common])

@@ -4,7 +4,7 @@ Run before the server makes a request to a *user-supplied* URL — e.g. the cust
 embedding endpoint set via ``POST /api/embeddings/endpoint``, which then triggers
 an outbound ``httpx`` call.
 
-Odysseus is local-first: pointing the embedding endpoint at a loopback or LAN
+Void is local-first: pointing the embedding endpoint at a loopback or LAN
 address (a local vLLM / llama.cpp / Ollama server) is a normal, intended setup.
 So this guard does **not** blanket-block private addresses by default — that would
 break the primary use case. What it *always* rejects:

@@ -13,7 +13,7 @@ def _load_signature_cli(monkeypatch):
     monkeypatch.setitem(sys.modules, "sqlalchemy", sqlalchemy_mod)
     monkeypatch.setitem(sys.modules, "core", core_mod)
     monkeypatch.setitem(sys.modules, "core.database", database_mod)
-    return load_script("odysseus-signature")
+    return load_script("void-signature")
 
 
 def test_decode_png_data_accepts_data_url(monkeypatch):

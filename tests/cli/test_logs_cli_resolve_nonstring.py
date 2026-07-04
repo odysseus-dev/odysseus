@@ -8,6 +8,6 @@ from tests.helpers.cli_loader import load_script
 
 
 def test_non_string_name_returns_none():
-    cli = load_script("odysseus-logs")
+    cli = load_script("void-logs")
     assert cli._resolve(None) is None
     assert cli._resolve(123) is None

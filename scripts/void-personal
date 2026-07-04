@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""odysseus-personal — shell wrapper for the personal-docs RAG index.
+"""void-personal — shell wrapper for the personal-docs RAG index.
 
 `data/personal_docs/` holds local files indexed into RAG so chat can
 recall their content (`contacts.txt`, runbook fragments, etc.). This
 CLI lists indexed directories + manages the index.
 
-    odysseus-personal list                  # files currently in the index
-    odysseus-personal dirs                  # tracked directory roots
-    odysseus-personal add-dir DIR
-    odysseus-personal remove-dir DIR
-    odysseus-personal reload                # re-scan all dirs
-    odysseus-personal exclude PATH          # mark a file as excluded
+    void-personal list                  # files currently in the index
+    void-personal dirs                  # tracked directory roots
+    void-personal add-dir DIR
+    void-personal remove-dir DIR
+    void-personal reload                # re-scan all dirs
+    void-personal exclude PATH          # mark a file as excluded
 """
 
 from __future__ import annotations
@@ -95,7 +95,7 @@ def cmd_exclude(args):
 def _build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--pretty", action="store_true")
-    p = argparse.ArgumentParser(prog="odysseus-personal", parents=[common])
+    p = argparse.ArgumentParser(prog="void-personal", parents=[common])
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pl = sub.add_parser("list", parents=[common])

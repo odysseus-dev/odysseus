@@ -1,22 +1,22 @@
 #!/bin/bash
-# Build a downloadable macOS launcher app + .dmg for Odysseus.
+# Build a downloadable macOS launcher app + .dmg for Void.
 #
 #   ./build-macos-app.sh
 #
 # Produces:
-#   dist/Odysseus.app   — double-click: starts the local server (using this
+#   dist/void.app   — double-click: starts the local server (using this
 #                         repo's venv) and opens the UI in an app-style window.
-#   dist/Odysseus.dmg   — drag-to-Applications disk image (the downloadable).
+#   dist/void.dmg   — drag-to-Applications disk image (the downloadable).
 #
 # This is a *launcher* wrapper: it drives the venv we set up in this repo, it
 # does not bundle Python. The install path is baked into the app at build time,
-# so rebuild if you move the repo. Override the port with ODYSSEUS_PORT.
+# so rebuild if you move the repo. Override the port with VOID_PORT.
 set -e
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_NAME="Odysseus"
+APP_NAME="Void"
 INSTALL_DIR="$REPO_DIR"
-PORT="${ODYSSEUS_PORT:-7860}"
+PORT="${VOID_PORT:-7860}"
 DIST="$REPO_DIR/dist"
 APP="$DIST/$APP_NAME.app"
 
@@ -27,22 +27,22 @@ echo "  port:        $PORT"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-# ── Icon (best effort) — center-crop docs/odysseus.jpg to a square .icns ──
-if [ -f "$REPO_DIR/docs/odysseus.jpg" ] && command -v sips >/dev/null 2>&1; then
+# ── Icon (best effort) — center-crop docs/void.jpg to a square .icns ──
+if [ -f "$REPO_DIR/docs/void.jpg" ] && command -v sips >/dev/null 2>&1; then
   TMPIMG="$(mktemp -d)"
   # Center-crop to a square, scale to 512 (sips' icns encoder caps at 512), and
   # let sips emit the .icns directly — more robust across macOS versions than
   # building an .iconset by hand.
-  sips -c 720 720 "$REPO_DIR/docs/odysseus.jpg" --out "$TMPIMG/sq.png" >/dev/null 2>&1 || cp "$REPO_DIR/docs/odysseus.jpg" "$TMPIMG/sq.png"
+  sips -c 720 720 "$REPO_DIR/docs/void.jpg" --out "$TMPIMG/sq.png" >/dev/null 2>&1 || cp "$REPO_DIR/docs/void.jpg" "$TMPIMG/sq.png"
   sips -z 512 512 "$TMPIMG/sq.png" --out "$TMPIMG/icon.png" >/dev/null 2>&1
-  if sips -s format icns "$TMPIMG/icon.png" --out "$APP/Contents/Resources/odysseus.icns" >/dev/null 2>&1; then
-    echo "  icon:        odysseus.icns"
+  if sips -s format icns "$TMPIMG/icon.png" --out "$APP/Contents/Resources/void.icns" >/dev/null 2>&1; then
+    echo "  icon:        void.icns"
   else
     echo "  icon:        (skipped — conversion failed)"
   fi
   rm -rf "$TMPIMG"
 else
-  echo "  icon:        (skipped — no docs/odysseus.jpg)"
+  echo "  icon:        (skipped — no docs/void.jpg)"
 fi
 
 # ── Info.plist ──
@@ -53,12 +53,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <dict>
     <key>CFBundleName</key>            <string>$APP_NAME</string>
     <key>CFBundleDisplayName</key>     <string>$APP_NAME</string>
-    <key>CFBundleIdentifier</key>      <string>com.odysseus.launcher</string>
+    <key>CFBundleIdentifier</key>      <string>com.void.launcher</string>
     <key>CFBundleVersion</key>         <string>1.0</string>
     <key>CFBundleShortVersionString</key><string>1.0</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>CFBundleExecutable</key>      <string>$APP_NAME</string>
-    <key>CFBundleIconFile</key>        <string>odysseus</string>
+    <key>CFBundleIconFile</key>        <string>void</string>
     <key>LSMinimumSystemVersion</key>  <string>11.0</string>
     <key>NSHighResolutionCapable</key> <true/>
     <key>LSUIElement</key>             <false/>
@@ -69,22 +69,22 @@ PLIST
 # ── Launcher executable (placeholders filled below) ──
 cat > "$APP/Contents/MacOS/$APP_NAME.tmpl" <<'LAUNCHER'
 #!/bin/bash
-# Odysseus.app — start the local server and open the UI in an app window.
+# Void.app — start the local server and open the UI in an app window.
 INSTALL_DIR="__INSTALL_DIR__"
 PORT="__PORT__"
 URL="http://127.0.0.1:${PORT}"
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 UVICORN="$INSTALL_DIR/venv/bin/uvicorn"
-LOG="$INSTALL_DIR/logs/odysseus-app.log"
+LOG="$INSTALL_DIR/logs/void-app.log"
 
-notify() { /usr/bin/osascript -e "display notification \"$1\" with title \"Odysseus\"" >/dev/null 2>&1; }
+notify() { /usr/bin/osascript -e "display notification \"$1\" with title \"Void\"" >/dev/null 2>&1; }
 die_gui() {
-  /usr/bin/osascript -e "display dialog \"$1\" with title \"Odysseus\" buttons {\"OK\"} default button 1 with icon stop" >/dev/null 2>&1
+  /usr/bin/osascript -e "display dialog \"$1\" with title \"Void\" buttons {\"OK\"} default button 1 with icon stop" >/dev/null 2>&1
   exit 1
 }
 
-[ -x "$UVICORN" ] || die_gui "Odysseus isn't set up yet. Open Terminal and run:
+[ -x "$UVICORN" ] || die_gui "Void isn't set up yet. Open Terminal and run:
 
 cd $INSTALL_DIR
 python3.11 -m venv venv
@@ -133,7 +133,7 @@ trap 'kill $SERVER_PID 2>/dev/null; exit 0' TERM INT
 READY=0
 for i in $(seq 1 120); do
   /usr/bin/curl -s -o /dev/null --max-time 2 "$URL" && { READY=1; break; }
-  kill -0 "$SERVER_PID" 2>/dev/null || die_gui "Odysseus failed to start. Log:
+  kill -0 "$SERVER_PID" 2>/dev/null || die_gui "Void failed to start. Log:
 $LOG"
   sleep 1
 done
@@ -141,7 +141,7 @@ done
 if [ "$READY" = "1" ]; then
   open_ui
 else
-  notify "Odysseus is taking a while — open $URL once it finishes starting."
+  notify "Void is taking a while — open $URL once it finishes starting."
 fi
 wait "$SERVER_PID"
 LAUNCHER
@@ -170,4 +170,4 @@ echo "  $APP"
 echo "  $DIST/$APP_NAME.dmg"
 echo ""
 echo "Run it:        open '$APP'"
-echo "Install:       open '$DIST/$APP_NAME.dmg'  (drag Odysseus to Applications)"
+echo "Install:       open '$DIST/$APP_NAME.dmg'  (drag Void to Applications)"

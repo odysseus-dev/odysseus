@@ -1,6 +1,6 @@
 # Container security: Dockerfile lint
 #
-# Purpose: the Docker image is how most people run Odysseus, so it is part of
+# Purpose: the Docker image is how most people run Void, so it is part of
 # the attack surface. hadolint lints the Dockerfile for mistakes and insecure
 # patterns (running as root longer than needed, unpinned base image, bad apt
 # usage). Blocking.

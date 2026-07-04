@@ -23,7 +23,7 @@ Example (GigaChat):
     # Sber publishes the chain at
     # https://www.gosuslugi.ru/crt/rootca_ssl_rsa2022.cer
     # Convert to PEM and point the env var at it.
-    LLM_CA_BUNDLE=/etc/odysseus/ca/russian-trusted-root.pem
+    LLM_CA_BUNDLE=/etc/void/ca/russian-trusted-root.pem
 
 Scope:
     `llm_verify()` is intentionally consumed by only two call sites — the

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""odysseus-gallery — shell wrapper for the photo / image gallery.
+"""void-gallery — shell wrapper for the photo / image gallery.
 
 Read-only by default (upload + edit operations need multipart payloads
 that are awkward at the shell). Filters images by tag, prompt, favorite,
 album, and surfaces EXIF metadata.
 
-    odysseus-gallery list --limit 20 --favorites
-    odysseus-gallery show IMAGE_ID
-    odysseus-gallery albums | jq -r '.[] | .name'
-    odysseus-gallery search "sunset"          # matches prompt + tags
-    odysseus-gallery delete IMAGE_ID          # soft-delete (is_active=False)
+    void-gallery list --limit 20 --favorites
+    void-gallery show IMAGE_ID
+    void-gallery albums | jq -r '.[] | .name'
+    void-gallery search "sunset"          # matches prompt + tags
+    void-gallery delete IMAGE_ID          # soft-delete (is_active=False)
 """
 
 from __future__ import annotations
@@ -152,7 +152,7 @@ def _build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--pretty", action="store_true")
 
-    p = argparse.ArgumentParser(prog="odysseus-gallery", parents=[common])
+    p = argparse.ArgumentParser(prog="void-gallery", parents=[common])
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pl = sub.add_parser("list", parents=[common])

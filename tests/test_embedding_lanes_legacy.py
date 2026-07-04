@@ -8,7 +8,7 @@ from tests.helpers.embedding_lanes import (
 
 def test_legacy_collection_backfills_fastembed_lane(monkeypatch):
     fake = FakeChroma()
-    legacy = fake.get_or_create_collection("odysseus_memories", metadata={"hnsw:space": "cosine"})
+    legacy = fake.get_or_create_collection("void_memories", metadata={"hnsw:space": "cosine"})
     legacy.add(
         ids=["legacy-memory"],
         embeddings=[[0.0] * 384],
@@ -27,13 +27,13 @@ def test_legacy_collection_backfills_fastembed_lane(monkeypatch):
     store = MemoryVectorStore("data")
 
     assert store.count() == 1
-    assert fake.collections["odysseus_memories"].count() == 1
-    assert fake.collections["odysseus_memories_fastembed"].count() == 1
+    assert fake.collections["void_memories"].count() == 1
+    assert fake.collections["void_memories_fastembed"].count() == 1
 
 
 def test_legacy_collection_backfills_custom_only_lane(monkeypatch):
     fake = FakeChroma()
-    legacy = fake.get_or_create_collection("odysseus_memories", metadata={"hnsw:space": "cosine"})
+    legacy = fake.get_or_create_collection("void_memories", metadata={"hnsw:space": "cosine"})
     legacy.add(
         ids=["legacy-memory"],
         embeddings=[[0.0] * 384],
@@ -56,14 +56,14 @@ def test_legacy_collection_backfills_custom_only_lane(monkeypatch):
     store = MemoryVectorStore("data")
 
     assert store.count() == 1
-    assert "odysseus_memories_fastembed" not in fake.collections
-    assert fake.collections["odysseus_memories_custom"].count() == 1
-    assert len(fake.collections["odysseus_memories_custom"].rows["legacy-memory"]["embedding"]) == 768
+    assert "void_memories_fastembed" not in fake.collections
+    assert fake.collections["void_memories_custom"].count() == 1
+    assert len(fake.collections["void_memories_custom"].rows["legacy-memory"]["embedding"]) == 768
 
 
 def test_legacy_migration_continues_when_custom_backfill_fails(monkeypatch):
     fake = FakeChroma()
-    legacy = fake.get_or_create_collection("odysseus_memories", metadata={"hnsw:space": "cosine"})
+    legacy = fake.get_or_create_collection("void_memories", metadata={"hnsw:space": "cosine"})
     legacy.add(
         ids=["legacy-memory"],
         embeddings=[[0.0] * 384],
@@ -82,20 +82,20 @@ def test_legacy_migration_continues_when_custom_backfill_fails(monkeypatch):
     store = MemoryVectorStore("data")
 
     assert store.healthy
-    assert fake.collections["odysseus_memories_custom"].count() == 0
-    assert fake.collections["odysseus_memories_fastembed"].count() == 1
+    assert fake.collections["void_memories_custom"].count() == 0
+    assert fake.collections["void_memories_fastembed"].count() == 1
 
 
 def test_legacy_migration_resumes_partial_lane_backfill(monkeypatch):
     fake = FakeChroma()
-    legacy = fake.get_or_create_collection("odysseus_memories", metadata={"hnsw:space": "cosine"})
+    legacy = fake.get_or_create_collection("void_memories", metadata={"hnsw:space": "cosine"})
     legacy.add(
         ids=["legacy-1", "legacy-2"],
         embeddings=[[0.0] * 384, [0.0] * 384],
         documents=["legacy memory one", "legacy memory two"],
         metadatas=[{"source": "memory"}, {"source": "memory"}],
     )
-    partial = fake.get_or_create_collection("odysseus_memories_fastembed", metadata={"embedding_lane": "fastembed"})
+    partial = fake.get_or_create_collection("void_memories_fastembed", metadata={"embedding_lane": "fastembed"})
     partial.add(
         ids=["legacy-1"],
         embeddings=[[0.0] * 384],
@@ -114,4 +114,4 @@ def test_legacy_migration_resumes_partial_lane_backfill(monkeypatch):
     store = MemoryVectorStore("data")
 
     assert store.count() == 2
-    assert set(fake.collections["odysseus_memories_fastembed"].get()["ids"]) == {"legacy-1", "legacy-2"}
+    assert set(fake.collections["void_memories_fastembed"].get()["ids"]) == {"legacy-1", "legacy-2"}
