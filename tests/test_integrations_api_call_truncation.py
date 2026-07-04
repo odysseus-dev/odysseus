@@ -82,6 +82,9 @@ async def _call(json_data, status=200):
 
     with (
         patch.object(integrations, "_find_integration", return_value=DUMMY_INTEGRATION),
+        # These tests cover response truncation, not URL safety — stub the
+        # SSRF guard so no unit test performs live DNS resolution.
+        patch.object(integrations, "check_outbound_url", return_value=(True, "ok")),
         patch("httpx.AsyncClient", return_value=mock_client),
     ):
         return await integrations.execute_api_call("test_integ", "GET", "/items")
@@ -97,6 +100,8 @@ async def _call_with_integration(integration, path="/items"):
 
     with (
         patch.object(integrations, "_find_integration", return_value=integration),
+        # Truncation tests, not URL-safety tests — keep them DNS-free.
+        patch.object(integrations, "check_outbound_url", return_value=(True, "ok")),
         patch("httpx.AsyncClient", return_value=mock_client),
     ):
         result = await integrations.execute_api_call("test_integ", "GET", path)

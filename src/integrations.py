@@ -13,6 +13,7 @@ from core.atomic_io import atomic_write_json
 from core.platform_compat import safe_chmod
 from src.secret_storage import decrypt, encrypt, is_encrypted
 from src.constants import DATA_DIR, INTEGRATIONS_FILE, SETTINGS_FILE
+from src.url_safety import check_outbound_url
 
 log = logging.getLogger(__name__)
 
@@ -394,6 +395,19 @@ async def execute_api_call(
         return {"error": "Path must not contain a fragment", "exit_code": 1}
 
     url = _join_integration_url(base_url, path)
+
+    # SSRF guard — same check_outbound_url pattern as the reminder webhook
+    # branch, gallery, embeddings, and CardDAV. Always rejects link-local /
+    # metadata / reserved addresses; additionally rejects private and
+    # loopback targets when INTEGRATION_API_BLOCK_PRIVATE_IPS=true. Off by
+    # default because LAN integrations (Home Assistant, Miniflux, ntfy) are
+    # the primary use case. The path arrives from the api_call agent tool,
+    # so validate the joined URL, not just the stored base_url.
+    block_private = os.getenv("INTEGRATION_API_BLOCK_PRIVATE_IPS", "false").lower() == "true"
+    url_ok, url_reason = check_outbound_url(url, block_private=block_private)
+    if not url_ok:
+        return {"error": f"Integration URL rejected: {url_reason}", "exit_code": 1}
+
     method = method.upper()
 
     # Build headers
