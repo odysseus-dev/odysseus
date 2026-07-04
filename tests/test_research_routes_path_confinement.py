@@ -503,3 +503,63 @@ def test_spinoff_uses_single_disk_lookup_for_completed_result(tmp_path, monkeypa
     assert calls == [("rp-spinsingle1", "alice")]
     assert session_manager.created is not None
     assert session_manager.created.messages
+
+def test_spinoff_reads_saved_query_for_done_active_task(tmp_path, monkeypatch):
+    session_id = "rp-activedone1"
+    data_dir = tmp_path / "deep_research"
+    _write_research(
+        data_dir,
+        session_id,
+        owner="alice",
+        result="saved report",
+        sources=["s1"],
+        query="completed query",
+    )
+
+    class FakeSession:
+        endpoint_url = ""
+        model = ""
+        headers = {}
+
+        def __init__(self):
+            self.messages = []
+
+        def add_message(self, message):
+            self.messages.append(message)
+
+    class FakeSessionManager:
+        def __init__(self):
+            self.created = None
+
+        def get_session(self, session_id):
+            raise KeyError(session_id)
+
+        def create_session(self, **kwargs):
+            self.created = FakeSession()
+            return self.created
+
+        def save_sessions(self):
+            pass
+
+    monkeypatch.setattr(
+        "routes.research.research_routes.resolve_endpoint",
+        lambda *_args, **_kwargs: ("http://endpoint/v1", "model", {}),
+    )
+
+    handler = _research_handler()
+    handler._active_tasks[session_id] = {"owner": "alice", "status": "done"}
+    handler.get_result.return_value = None
+    handler.get_sources.return_value = []
+
+    session_manager = FakeSessionManager()
+    router = setup_research_routes(handler, session_manager=session_manager)
+    target = _route(router, "/api/research/spinoff/{session_id}", "POST")
+
+    out = asyncio.run(target(session_id=session_id, request=_request("alice")))
+
+    assert out["name"] == "Follow-up: completed query"
+    assert out["source_count"] == 1
+    assert session_manager.created is not None
+    primer = session_manager.created.messages[0].content
+    assert "completed query" in primer
+    assert "(not recorded)" not in primer

@@ -236,15 +236,19 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     def _require_owned_or_active_research_path(session_id: str, user: str) -> Path | None:
         """Validate ownership once and return the completed on-disk path.
 
-        Active in-memory research has no completed disk path yet, so return
-        None after checking the active owner. Completed research returns the
-        owned disk path, avoiding a second directory scan in result_peek and
-        spinoff after the ownership gate.
+        Active running research has no completed disk path yet. Completed
+        tasks can remain in _active_tasks after persistence, so prefer their
+        owned disk path when available. Completed disk lookups still reuse the
+        path after the ownership gate.
         """
         entry = research_handler._active_tasks.get(session_id)
         if entry is not None:
             if entry.get("owner", "") != user:
                 raise HTTPException(404, "No research found for this session")
+            if entry.get("status") != "running":
+                path = _find_owned_research_path(session_id, user)
+                if path is not None:
+                    return path
             return None
 
         path = _find_owned_research_path(session_id, user)
