@@ -100,6 +100,16 @@ def _parse_scalar(raw: str) -> Any:
     if raw.lower() in ("null", "none", "~"):
         return None
     if (raw[0] == raw[-1]) and raw[0] in ("'", '"'):
+        # A double-quoted scalar is a JSON string: decode \", \\, and legacy
+        # \uXXXX escapes (older _emit_scalar wrote non-ASCII that way before
+        # ensure_ascii=False). Decoding also heals files already corrupted by
+        # the old escaping — one level per load. Single-quoted stays literal
+        # since it isn't JSON and is only ever hand-authored.
+        if raw[0] == '"':
+            try:
+                return json.loads(raw)
+            except (ValueError, TypeError):
+                return raw[1:-1]
         return raw[1:-1]
     # Try number
     try:
@@ -182,7 +192,10 @@ def _emit_scalar(v: Any) -> str:
         return "[" + ", ".join(_emit_scalar(x) for x in v) + "]"
     s = str(v)
     if any(c in s for c in (":", "#", "\n", "[", "]", "{", "}", ",", "&", "*", "!", "|", ">", "'", '"', "%", "@")):
-        return json.dumps(s)
+        # SKILL.md is UTF-8; keep non-ASCII text literal instead of \uXXXX so
+        # it round-trips and displays correctly. ensure_ascii=True re-escaped
+        # already-escaped text on every save, compounding backslashes (#5210).
+        return json.dumps(s, ensure_ascii=False)
     return s
 
 
