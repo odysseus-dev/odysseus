@@ -469,7 +469,7 @@ Bulk delete/archive/mark emails. Use this for "delete all those" after listing e
 {"action": "create_event", "summary": "<event title>", "dtstart": "<natural language or ISO datetime>"}
 ```
 Calendar event management (CalDAV). Actions: `list_events`, `create_event`, `update_event`, `delete_event`, `list_calendars`. \
-For `list_events`: {start?, end?, calendar?}; prefer `start`/`end` for the range, though start_date/end_date and from/to aliases are accepted. \
+For `list_events`: {action: "list_events", start: "YYYY-MM-DDT00:00:00", end: "YYYY-MM-DDT00:00:00", calendar?}; resolve month/week phrases yourself from the Current date and time context and do not pass a loose `query` field. Prefer `start`/`end`; start_time/end_time, start_date/end_date, and from/to aliases are accepted. \
 For `create_event`: {summary, dtstart, dtend?, duration?, calendar?, location?, description?, reminder_minutes?, rrule?}. \
 For `update_event`: {uid, summary?, dtstart?, dtend?, all_day?, location?, description?, event_type?, importance?, rrule?}. Pass `rrule: ""` to remove recurrence and make a repeating event a single event. \
 `dtstart` accepts natural language ("tomorrow at 1pm", "in 2 hours", "next monday 9am") or ISO ("2026-05-12T13:00:00"). \
@@ -2532,11 +2532,17 @@ async def stream_agent_loop(
                         )
                         logger.info(f"[tool-rag] Retrieved tools for query: {sorted(_relevant_tools - ALWAYS_AVAILABLE)}")
                     except asyncio.TimeoutError:
+                        # Leave _relevant_tools unset so the keyword fallback
+                        # below still runs. Hard-coding ALWAYS_AVAILABLE here
+                        # skipped the deterministic keyword hints whenever the
+                        # embedding backend was slow (e.g. a remote endpoint
+                        # cold-loading its model), silently stripping email/
+                        # calendar tools from queries that named them outright.
                         logger.warning(
-                            "[tool-rag] Retrieval exceeded %.1fs; falling back to always-available tools",
+                            "[tool-rag] Retrieval exceeded %.1fs; falling back to keyword tool selection",
                             _TOOL_SELECTION_TIMEOUT_SECONDS,
                         )
-                        _relevant_tools = set(ALWAYS_AVAILABLE)
+                        _relevant_tools = None
         except Exception as e:
             logger.warning(f"[tool-rag] Retrieval failed, using keyword fallback: {e}")
             _relevant_tools = None
