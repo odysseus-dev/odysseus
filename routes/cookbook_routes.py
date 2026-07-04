@@ -1358,7 +1358,7 @@ def setup_cookbook_routes() -> APIRouter:
             return
         logger.debug(f"crash-watchdog: no exit marker for {session_id} within window; leaving endpoint {endpoint_id}")
 
-    def _auto_register_llm_endpoint(req: ServeRequest, remote: str | None) -> str | None:
+    def _auto_register_llm_endpoint(req: ServeRequest, remote: str | None, *, skip_pin: bool = False) -> str | None:
         """Register a freshly-served LLM as a model endpoint so it appears in the
         model picker without a manual /setup step — the text-model sibling of
         _auto_register_image_endpoint.
@@ -1368,6 +1368,13 @@ def setup_cookbook_routes() -> APIRouter:
         endpoint at that server's /v1; the picker auto-discovers the model id by
         probing /v1/models and dims the endpoint until the server is reachable,
         so registering immediately (before the server finishes loading) is safe.
+
+        `skip_pin` suppresses pinning `req.repo_id` as an available Ollama model
+        when the tag could not be verified against the target daemon (a native
+        local `ollama serve` whose daemon wasn't up yet at launch). The endpoint
+        is still created, but the post-launch /v1/models re-probe decides what it
+        actually serves — so an unpulled tag never shows as a phantom picker
+        entry that chat then can't use.
         """
         logger.info(
             f"_auto_register_llm_endpoint: ENTRY repo_id={req.repo_id!r} "
@@ -1426,7 +1433,7 @@ def setup_cookbook_routes() -> APIRouter:
         # agent_loop trusts emitted tool_calls instead of the name heuristic.
         is_ollama_endpoint = "ollama" in (req.cmd or "").lower()
         supports_tools = True if "--enable-auto-tool-choice" in req.cmd else None
-        pinned_models = [req.repo_id] if is_ollama_endpoint and req.repo_id else []
+        pinned_models = [req.repo_id] if is_ollama_endpoint and req.repo_id and not skip_pin else []
 
         db = SessionLocal()
         try:
@@ -1615,53 +1622,74 @@ def setup_cookbook_routes() -> APIRouter:
         # were native `ollama serve`, prepending OLLAMA_HOST=… and then
         # running the ollama-not-found preflight which exits 127.
         _serve_in_container = not remote and os.path.exists("/.dockerenv")
-        # In-container `ollama serve` can ONLY proxy to the host daemon — the
-        # container has no ollama binary, so it cannot import a HuggingFace GGUF
-        # repo or `ollama pull` a missing tag. A plain serve here would report
-        # success and pin `req.repo_id` as an available model the host daemon may
-        # not actually serve (an HF-GGUF repo it never imported, or a tag the
-        # user hasn't pulled), surfacing as a model-not-found failure at chat
-        # time. Verify the selected model is already served by host Ollama before
-        # launching; reject early with guidance otherwise. This replaces the
-        # earlier slash-presence heuristic, which both rejected valid namespaced
-        # Ollama tags (`library/qwen3:8b`) and let unverified bare tags through.
-        # (Remote hosts use the `docker exec … ollama-import` helper path built
-        # in cookbook.js, which does import the GGUF, so this gate is local-only.)
-        if (_serve_in_container and re.search(r"\bollama\s+serve\b", req.cmd)):
+        # A local `ollama serve` (in-container or native) can only serve tags the
+        # target daemon already has — it never imports an HF-GGUF repo or pulls a
+        # missing tag. Verify against the daemon's native /api/tags before pinning,
+        # so we don't register a model chat will fail to find. Checking the
+        # daemon's real tags (not a slash-in-repo_id heuristic) avoids both
+        # rejecting valid namespaced tags like `library/qwen3:8b` and pinning
+        # unverified bare tags. (Remote hosts use the `docker exec … ollama-import`
+        # helper in cookbook.js, which does import the GGUF, so they skip this
+        # gate.) See branches for why the container / native-reachable /
+        # native-unreachable cases differ.
+        _skip_ollama_pin = False
+        if (not remote and re.search(r"\bollama\s+serve\b", req.cmd)):
             _host_port = _ollama_bind_from_cmd(req.cmd, default_host="127.0.0.1")[1]
-            # Probe the host daemon's NATIVE /api/tags (not the chat-filtered
-            # /v1/models path) so presence verification sees every served tag,
-            # including embedding models whose names would be filtered out as
-            # non-chat.
-            _host_tags_url = f"http://host.docker.internal:{_host_port}"
+            _probe_host = "host.docker.internal" if _serve_in_container else "127.0.0.1"
+            # Native /api/tags, not the chat-filtered /v1/models: the latter drops
+            # embedding tags Ollama actually serves, false-rejecting valid models.
+            _host_tags_url = f"http://{_probe_host}:{_host_port}"
             try:
                 from routes.model_routes import _probe_ollama_tags
                 _served = _probe_ollama_tags(_host_tags_url, timeout=5)
             except Exception as _pe:
-                logger.warning(f"host-Ollama tag probe failed for {_host_tags_url}: {_pe!r}")
+                logger.warning(f"local-Ollama tag probe failed for {_host_tags_url}: {_pe!r}")
                 _served = []
             if not _ollama_tag_served(req.repo_id, _served):
-                # Distinguish "host Ollama unreachable" (empty probe) from "tag
-                # not installed" so the guidance points at the real fix.
-                if not _served:
+                if _serve_in_container:
+                    # Distinguish "host Ollama unreachable" (empty probe) from
+                    # "tag not installed" so the guidance points at the real fix.
+                    if not _served:
+                        raise HTTPException(
+                            400,
+                            f"Could not reach your host's Ollama at "
+                            f"host.docker.internal:{_host_port} to verify "
+                            f"'{req.repo_id}'. Make sure Ollama is running on your "
+                            f"host machine (not inside this container) and, on Linux, "
+                            f"that docker-compose maps host.docker.internal "
+                            f"(extra_hosts: host-gateway).",
+                        )
                     raise HTTPException(
                         400,
-                        f"Could not reach your host's Ollama at "
-                        f"host.docker.internal:{_host_port} to verify "
-                        f"'{req.repo_id}'. Make sure Ollama is running on your "
-                        f"host machine (not inside this container) and, on Linux, "
-                        f"that docker-compose maps host.docker.internal "
-                        f"(extra_hosts: host-gateway).",
+                        f"'{req.repo_id}' is not available in your host's Ollama, so "
+                        f"Odysseus cannot serve it from inside Docker (the container "
+                        f"cannot import a HuggingFace GGUF or pull a missing tag). "
+                        f"Pull it into host Ollama first (`ollama pull {req.repo_id}`), "
+                        f"then select that tag here; or run a llama.cpp/vLLM backend "
+                        f"for a GGUF instead.",
                     )
-                raise HTTPException(
-                    400,
-                    f"'{req.repo_id}' is not available in your host's Ollama, so "
-                    f"Odysseus cannot serve it from inside Docker (the container "
-                    f"cannot import a HuggingFace GGUF or pull a missing tag). "
-                    f"Pull it into host Ollama first (`ollama pull {req.repo_id}`), "
-                    f"then select that tag here; or run a llama.cpp/vLLM backend "
-                    f"for a GGUF instead.",
-                )
+                elif _served:
+                    # Native local, daemon reachable, tag genuinely absent →
+                    # `ollama serve` will never import/pull it, so reject with
+                    # pull guidance instead of pinning a model chat can't use.
+                    raise HTTPException(
+                        400,
+                        f"'{req.repo_id}' is not available in your local Ollama. "
+                        f"`ollama serve` only serves already-pulled models (it does "
+                        f"not import a HuggingFace GGUF or pull a missing tag). "
+                        f"Pull it first (`ollama pull {req.repo_id}`), then select "
+                        f"that tag here; or run a llama.cpp/vLLM backend for a GGUF "
+                        f"instead.",
+                    )
+                else:
+                    # Native local, daemon not reachable yet → can't verify; let
+                    # the launch proceed but don't pin the unverified tag.
+                    _skip_ollama_pin = True
+                    logger.info(
+                        f"Native-local Ollama daemon unreachable at "
+                        f"{_host_tags_url}; deferring pin of {req.repo_id!r} to "
+                        f"the post-launch model re-probe."
+                    )
         if (re.search(r"\bollama\s+serve\b", req.cmd) and "OLLAMA_HOST=" not in req.cmd
                 and not _serve_in_container):
             # Skip port-scan rewrite in container mode: the scan probes
@@ -2202,7 +2230,7 @@ def setup_cookbook_routes() -> APIRouter:
         if is_diffusion:
             endpoint_id = _auto_register_image_endpoint(req, remote)
         elif not is_pip_install:
-            endpoint_id = _auto_register_llm_endpoint(req, remote)
+            endpoint_id = _auto_register_llm_endpoint(req, remote, skip_pin=_skip_ollama_pin)
 
         # Crash watchdog: the auto-register above writes the endpoint row
         # IMMEDIATELY (before the server has even bound its port) so the
