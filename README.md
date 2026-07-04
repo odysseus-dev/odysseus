@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/void-wordmark.png" alt="Void" width="238">
+  <img src="docs/void-wordmark.jpg" alt="Void" width="238">
 </p>
 
 <p align="center">
