@@ -424,8 +424,12 @@ class GrepTool:
                     cmd.append("--ignore-case")
                 if glob_pat:
                     cmd += ["--glob", glob_pat]
+                # --iglob (not --glob) so the exclusion is case-insensitive:
+                # on a case-insensitive filesystem "ID_RSA"/"Known_Hosts"
+                # resolve to the same secret as their lowercase forms, and the
+                # Python fallback below already folds case via _is_sensitive_path.
                 for _pat in _SENSITIVE_FILE_PATTERNS:
-                    cmd += ["--glob", f"!*{_pat}*"]
+                    cmd += ["--iglob", f"!*{_pat}*"]
                 for _d in _CODENAV_SKIP_DIRS:
                     cmd += ["--glob", f"!**/{_d}/**"]
                 cmd += ["--regexp", pattern, root]
