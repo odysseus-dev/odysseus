@@ -145,7 +145,8 @@ def _resolve_sqlite_path(
     if not database_url.startswith("sqlite:///"):
         warnings.append("unsupported database URL; only SQLite file diagnostics are available")
         return None
-    path = Path(unquote(database_url.removeprefix("sqlite:///")))
+    raw_path = database_url.removeprefix("sqlite:///").partition("?")[0]
+    path = Path(unquote(raw_path))
     if path.is_absolute():
         return path
     return Path(get_app_root()) / path

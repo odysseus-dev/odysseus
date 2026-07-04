@@ -590,6 +590,49 @@ def test_configured_storage_helper_uses_database_url(monkeypatch, tmp_path):
     assert tables["sessions"]["row_count"] == 1
 
 
+def test_resolve_sqlite_path_strips_sqlite_url_query_parameters(tmp_path):
+    db_path = tmp_path / "custom.db"
+    warnings = []
+
+    resolved = storage_diagnostics._resolve_sqlite_path(
+        f"sqlite:///{db_path}?timeout=30&uri=true",
+        None,
+        warnings,
+    )
+
+    assert resolved == db_path
+    assert warnings == []
+
+
+def test_configured_storage_helper_strips_sqlite_url_query_parameters(monkeypatch, tmp_path):
+    default_db = tmp_path / "default.db"
+    default_conn = _init_db(default_db)
+    default_conn.close()
+
+    custom_db = tmp_path / "custom.db"
+    custom_conn = _init_db(custom_db)
+    custom_conn.execute("INSERT INTO sessions(id, name) VALUES ('s1', 'Custom')")
+    custom_conn.commit()
+    custom_conn.close()
+
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        f"sqlite:///{custom_db}?timeout=30&check_same_thread=false",
+    )
+
+    report = collect_configured_storage_bloat_diagnostics(
+        default_db_path=default_db,
+        upload_dir=upload_dir,
+    )
+
+    assert report["database"]["path_present"] is True
+    assert report["database"]["tables"]["sessions"]["row_count"] == 1
+    assert "database file missing" not in report["warnings"]
+
+
 @pytest.mark.parametrize(
     ("database_url", "warning"),
     [
