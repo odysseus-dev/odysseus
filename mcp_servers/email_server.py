@@ -58,6 +58,11 @@ def _uid_fetch_rows(data) -> list:
 _ACCOUNT_CACHE: dict = {}  # key = normalized account selector -> config dict
 _MCP_OWNER_ARG = "_odysseus_owner"
 _CURRENT_OWNER: ContextVar[str | None] = ContextVar("email_mcp_owner", default=None)
+_OWNER_ENV_KEYS = ("ODYSSEUS_MCP_EMAIL_OWNER", "ODYSSEUS_EMAIL_OWNER")
+_OWNER_SCOPE_ERROR = (
+    "Error: email MCP requires an authenticated owner or ODYSSEUS_MCP_EMAIL_OWNER "
+    "when owner-scoped email accounts are configured."
+)
 
 
 def _clean_header_value(value) -> str:
@@ -71,13 +76,29 @@ def _db_path() -> Path:
     return Path(APP_DB)
 
 
+def _configured_owner() -> str | None:
+    for key in _OWNER_ENV_KEYS:
+        owner = os.environ.get(key, "").strip()
+        if owner:
+            return owner
+    return None
+
+
 def _current_owner() -> str:
     owner = _CURRENT_OWNER.get()
-    return str(owner or "").strip()
+    return str(owner or _configured_owner() or "").strip()
+
+
+def _account_owner(row: dict) -> str:
+    return str(row.get("owner") or "").strip()
+
+
+def _has_owner_scoped_accounts(rows: list[dict]) -> bool:
+    return any(_account_owner(r) for r in rows)
 
 
 def _account_visible_to_owner(row: dict, owner: str) -> bool:
-    row_owner = str(row.get("owner") or "").strip()
+    row_owner = _account_owner(row)
     if row_owner == owner:
         return True
     if row_owner:
@@ -96,8 +117,7 @@ def _filter_accounts_for_owner(rows: list[dict]) -> list[dict]:
     if owner:
         return [r for r in rows if _account_visible_to_owner(r, owner)]
 
-    owners = {str(r.get("owner") or "").strip() for r in rows if str(r.get("owner") or "").strip()}
-    if len(owners) > 1:
+    if _has_owner_scoped_accounts(rows):
         return []
     return rows
 
@@ -106,8 +126,7 @@ def _mcp_owner_required(rows: list[dict] | None = None) -> bool:
     if _current_owner():
         return False
     rows = rows if rows is not None else _read_accounts_from_db()
-    owners = {str(r.get("owner") or "").strip() for r in rows if str(r.get("owner") or "").strip()}
-    return len(owners) > 1
+    return _has_owner_scoped_accounts(rows)
 
 
 def _load_email_writing_style() -> str:
@@ -274,6 +293,8 @@ def _load_config(account: str | None = None) -> dict:
     }
 
     raw_rows = _read_accounts_from_db()
+    if _mcp_owner_required(raw_rows):
+        raise ValueError(_OWNER_SCOPE_ERROR)
     rows = _filter_accounts_for_owner(raw_rows)
     row = _resolve_account_from_rows(rows, account)
     if _current_owner() and raw_rows and not rows:
@@ -1193,10 +1214,14 @@ def _send_email(to, subject, body, in_reply_to=None, references=None, cc=None, b
     UI. This closes the auto-send hole that let earlier models invent
     signatures and ship them to real recipients without confirmation."""
     if _read_agent_email_confirm_setting():
+        # Even confirmation-first sends must resolve the selected account now.
+        # Otherwise a caller could stage a pending draft against another
+        # owner's account selector before browser approval handles it.
+        cfg = _load_config(account)
         return _stash_agent_draft(
             to=to, subject=subject, body=body,
             in_reply_to=in_reply_to, references=references,
-            cc=cc, bcc=bcc, account=account,
+            cc=cc, bcc=bcc, account=cfg.get("account_id") or account,
         )
     send_account, cfg = _resolve_send_config(account)
     msg = EmailMessage()
@@ -2142,10 +2167,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     try:
         all_db_accounts = _read_accounts_from_db()
         if _mcp_owner_required(all_db_accounts):
-            return [TextContent(
-                type="text",
-                text="Error: email MCP requires an authenticated owner when multiple email account owners are configured.",
-            )]
+            return [TextContent(type="text", text=_OWNER_SCOPE_ERROR)]
 
         if name == "list_email_accounts":
             rows = _filter_accounts_for_owner(all_db_accounts)
