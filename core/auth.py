@@ -132,9 +132,6 @@ class AuthManager:
         # concurrent create/delete/rename/privilege operations don't interleave
         # and corrupt the user database.
         self._config_lock = threading.Lock()
-        # Guards the first-run setup check-and-write so concurrent requests
-        # cannot both observe is_configured==False and both create admin accounts.
-        self._setup_lock = threading.Lock()
         # Path for the inter-process file lock (fcntl.flock).  Shared across
         # all uvicorn workers so first-admin bootstrap and auth.json mutations
         # are serialised across processes, not just threads within one worker.
@@ -265,7 +262,8 @@ class AuthManager:
 
     @signup_enabled.setter
     def signup_enabled(self, value: bool):
-        with self._config_lock:
+        with self._interprocess_auth_lock(), self._config_lock:
+            self._load()
             self._config["signup_enabled"] = value
             self._save()
 
@@ -316,14 +314,15 @@ class AuthManager:
 
     def setup(self, username: str, password: str) -> bool:
         """First-run admin setup. Only works if no users exist."""
-        with self._interprocess_auth_lock(), self._setup_lock:
+        username = username.strip().lower()
+        with self._interprocess_auth_lock(), self._config_lock:
             # Reload from disk so we see what another worker may have
             # written since our last _load().
             self._load()
             if self.is_configured:
                 return False
-            # _create_user_locked assumes both locks are already held,
-            # avoiding a nested fcntl.flock deadlock (flock is not
+            # _create_user_locked assumes the interprocess lock is already
+            # held, avoiding a nested fcntl.flock deadlock (flock is not
             # reentrant across different file descriptors).
             return self._create_user_locked(username, password, is_admin=True)
 
@@ -346,6 +345,7 @@ class AuthManager:
     def _create_user_locked(self, username: str, password: str, is_admin: bool) -> bool:
         """Internal helper — caller must hold _interprocess_auth_lock
         and _config_lock.  Does not reload (caller did that)."""
+        username = username.strip().lower()
         if username in RESERVED_USERNAMES:
             logger.warning("Refused to create reserved username '%s'", username)
             return False
@@ -507,7 +507,8 @@ class AuthManager:
         their cookie expired naturally (default ~30 days).
         """
         username = username.strip().lower()
-        with self._config_lock:
+        with self._interprocess_auth_lock(), self._config_lock:
+            self._load()
             if username not in self.users:
                 return False
             if username == requesting_user:
@@ -557,7 +558,8 @@ class AuthManager:
         if new_username in RESERVED_USERNAMES:
             logger.warning("Refused to rename '%s' into reserved username '%s'", old_username, new_username)
             return False
-        with self._config_lock:
+        with self._interprocess_auth_lock(), self._config_lock:
+            self._load()
             if old_username not in self.users:
                 return False
             if new_username in self.users:
@@ -612,7 +614,8 @@ class AuthManager:
     def set_privileges(self, username: str, privileges: Dict[str, Any]) -> bool:
         """Update privileges for a user. Can't modify admin privileges."""
         username = username.strip().lower()
-        with self._config_lock:
+        with self._interprocess_auth_lock(), self._config_lock:
+            self._load()
             if username not in self.users:
                 return False
             if self.users[username].get("is_admin"):
@@ -648,7 +651,8 @@ class AuthManager:
         username = (username or "").strip().lower()
         requesting_user = (requesting_user or "").strip().lower()
         is_admin = bool(is_admin)
-        with self._config_lock:
+        with self._interprocess_auth_lock(), self._config_lock:
+            self._load()
             target = self._config.get("users", {}).get(username)
             if target is None:
                 return SetAdminResult.USER_NOT_FOUND
@@ -692,14 +696,15 @@ class AuthManager:
 
     def change_password(self, username: str, current_password: str, new_password: str) -> bool:
         username = username.strip().lower()
-        if username not in self.users:
-            return False
-        pw_hash = self.users[username].get("password_hash")
-        if pw_hash is None:
-            return False  # OIDC-only user — password changes must go through the IdP
-        if not _verify_password(current_password, pw_hash):
-            return False
-        with self._config_lock:
+        with self._interprocess_auth_lock(), self._config_lock:
+            self._load()
+            if username not in self.users:
+                return False
+            pw_hash = self.users[username].get("password_hash")
+            if pw_hash is None:
+                return False  # OIDC-only user — password changes must go through the IdP
+            if not _verify_password(current_password, pw_hash):
+                return False
             self._config["users"][username]["password_hash"] = _hash_password(new_password)
             self._save()
         return True
@@ -716,10 +721,11 @@ class AuthManager:
     def totp_generate_secret(self, username: str) -> Optional[str]:
         """Generate a new TOTP secret for a user. Returns the secret (not yet enabled)."""
         username = username.strip().lower()
-        if username not in self.users:
-            return None
         secret = pyotp.random_base32()
-        with self._config_lock:
+        with self._interprocess_auth_lock(), self._config_lock:
+            self._load()
+            if username not in self.users:
+                return None
             self._config["users"][username]["totp_secret_pending"] = secret
             self._save()
         return secret
@@ -732,15 +738,16 @@ class AuthManager:
     def totp_confirm_enable(self, username: str, code: str) -> bool:
         """Verify a TOTP code against the pending secret, then enable 2FA."""
         username = username.strip().lower()
-        user = self.users.get(username, {})
-        secret = user.get("totp_secret_pending")
-        if not secret:
-            return False
-        totp = pyotp.TOTP(secret)
-        if not totp.verify(code, valid_window=1):
-            return False
-        # Enable 2FA
-        with self._config_lock:
+        with self._interprocess_auth_lock(), self._config_lock:
+            self._load()
+            user = self._config.get("users", {}).get(username, {})
+            secret = user.get("totp_secret_pending")
+            if not secret:
+                return False
+            totp = pyotp.TOTP(secret)
+            if not totp.verify(code, valid_window=1):
+                return False
+            # Enable 2FA
             self._config["users"][username]["totp_secret"] = secret
             self._config["users"][username]["totp_enabled"] = True
             self._config["users"][username].pop("totp_secret_pending", None)
@@ -766,12 +773,16 @@ class AuthManager:
         # Check backup codes first
         backup = user.get("totp_backup_codes", [])
         if code in backup:
-            with self._config_lock:
-                backup.remove(code)
-                self._config["users"][username]["totp_backup_codes"] = backup
-                self._save()
-            logger.info(f"Backup code used for '{username}' ({len(backup)} remaining)")
-            return True
+            with self._interprocess_auth_lock(), self._config_lock:
+                self._load()
+                latest_backup = self._config.get("users", {}).get(username, {}).get("totp_backup_codes", [])
+                if code in latest_backup:
+                    latest_backup.remove(code)
+                    self._config["users"][username]["totp_backup_codes"] = latest_backup
+                    self._save()
+                    logger.info(f"Backup code used for '{username}' ({len(latest_backup)} remaining)")
+                    return True
+                return False
         totp = pyotp.TOTP(secret)
         return totp.verify(code, valid_window=1)
 
@@ -780,7 +791,10 @@ class AuthManager:
         username = username.strip().lower()
         if not self.verify_password(username, password):
             return False
-        with self._config_lock:
+        with self._interprocess_auth_lock(), self._config_lock:
+            self._load()
+            if username not in self.users:
+                return False
             self._config["users"][username].pop("totp_secret", None)
             self._config["users"][username].pop("totp_secret_pending", None)
             self._config["users"][username].pop("totp_backup_codes", None)
