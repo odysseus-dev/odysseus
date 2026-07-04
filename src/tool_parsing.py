@@ -1123,6 +1123,53 @@ def _parse_function_model_call(body: str) -> Optional[ToolBlock]:
     return function_call_to_tool_block(tool_name, params)
 
 
+def _parse_json_tool_call_body(body: str) -> Optional[ToolBlock]:
+    """Parse a bare JSON function-call object from inside a <tool_call> wrapper.
+
+    Qwen and Hermes/NousResearch models are trained to emit the OpenAI
+    function-call object as JSON directly inside the wrapper:
+
+        <tool_call>
+        {"name": "bash", "arguments": {"command": "mkdir -p agent-test"}}
+        </tool_call>
+
+    not the <invoke>/<parameter> XML the wrapper parser expects. When the
+    endpoint can't surface structured tool_calls (a manually added Ollama
+    endpoint, native_tools=False), the block otherwise lands as inert text
+    and nothing runs (#5187). Only reached after the <invoke>/<direct> XML
+    parses come up empty, so it never competes with those formats. Bare JSON
+    outside a <tool_call> wrapper is deliberately NOT parsed here — the
+    wrapper is the disambiguating signal that keeps prose JSON from executing.
+    """
+    if not body:
+        return None
+    stripped = body.strip()
+    if not stripped.startswith("{"):
+        return None
+    try:
+        payload = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    name = payload.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None
+    # Qwen/Hermes use "arguments"; some finetunes use "parameters". The value
+    # is normally an object, but a few emit it as a JSON-encoded string.
+    args = payload.get("arguments")
+    if args is None:
+        args = payload.get("parameters")
+    if isinstance(args, str):
+        arguments_json = args
+    elif args is None:
+        arguments_json = "{}"
+    else:
+        arguments_json = json.dumps(args)
+    from src.tool_schemas import function_call_to_tool_block
+    return function_call_to_tool_block(name.strip(), arguments_json)
+
+
 def _iter_delimited(text, open_re, close_re):
     """Yield ``(match_start, inner_start, inner_end, match_end)`` for each
     non-overlapping ``open_re ... close_re`` pair, scanning strictly forward.
@@ -1320,20 +1367,29 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
                 blocks.append(block)
         if blocks:
             return blocks
-        # Try wrapped: <tool_call><invoke ...>...</invoke></tool_call>
+        # Try wrapped: <tool_call><invoke ...>...</invoke></tool_call>, then
+        # <tool_call>{JSON}</tool_call>. Track per-body (not the global list) so
+        # each wrapper falls back independently — Qwen commonly emits several
+        # <tool_call> JSON blocks in one turn, and a global guard would drop all
+        # but the first.
         for _ms, inner_start, inner_end, _me in _iter_delimited(
             text, _XML_TOOL_CALL_OPEN_RE, _XML_TOOL_CALL_CLOSE_RE
         ):
             body = text[inner_start:inner_end]
+            before = len(blocks)
             for inv_name, inv_body in _iter_xml_invoke(body):
                 block = _parse_xml_invoke(inv_name, inv_body)
                 if block:
                     blocks.append(block)
-            if not blocks:
+            if len(blocks) == before:
                 for d_name, d_body in _iter_xml_direct(body):
                     block = _parse_xml_direct_tool(d_name, d_body)
                     if block:
                         blocks.append(block)
+            if len(blocks) == before:
+                block = _parse_json_tool_call_body(body)
+                if block:
+                    blocks.append(block)
         # Some local models stream an opening <tool_call> wrapper and a
         # complete inner tool tag, but forget the closing </tool_call>.
         if not blocks:
@@ -1349,6 +1405,12 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
                     block = _parse_xml_direct_tool(d_name, d_body)
                     if block:
                         blocks.append(block)
+                if blocks:
+                    break
+                block = _parse_json_tool_call_body(body)
+                if block:
+                    blocks.append(block)
+                    break
         # Try bare <invoke> without wrapper
         if not blocks:
             for inv_name, inv_body in _iter_xml_invoke(text):
