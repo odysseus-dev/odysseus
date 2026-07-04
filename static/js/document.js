@@ -2378,20 +2378,27 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   }
 
   // ── WYSIWYG email body helpers ──
+  function _emailPlainTextToHtml(text) {
+    const d = document.createElement('div');
+    d.textContent = text == null ? '' : String(text);
+    return d.innerHTML.replace(/\n/g, '<br>');
+  }
+
   function _emailBodyToHtml(text) {
     const t = (text || '').trim();
     if (!t) return '';
     // If it already contains a formatting/structural HTML tag, it's a saved
-    // WYSIWYG body — use it verbatim. (Checking a leading '<' isn't enough: a
+    // WYSIWYG body — sanitize it before rendering. (Checking a leading '<' isn't enough: a
     // rich body often starts with plain text, e.g. "Hi <b>there</b>".)
-    if (/<\/?(b|i|u|s|strong|em|del|strike|a|p|div|br|ul|ol|li|h[1-3]|blockquote|span|code|pre)\b[^>]*>/i.test(t)) return t;
+    if (/<\/?(b|i|u|s|strong|em|del|strike|a|p|div|br|ul|ol|li|h[1-3]|blockquote|span|code|pre)\b[^>]*>/i.test(t)) {
+      return markdownModule.sanitizeAllowedHtml
+        ? markdownModule.sanitizeAllowedHtml(t)
+        : _emailPlainTextToHtml(t);
+    }
     // Email body: keep author-typed `:shortcode:` text literal. Issue #345
     // (shortcode → emoji) is scoped to chat; do not rewrite colons in mail.
     try { return markdownModule.mdToHtml(text, { shortcodes: false }); }
-    catch (_) {
-      const d = document.createElement('div'); d.textContent = text;
-      return d.innerHTML.replace(/\n/g, '<br>');
-    }
+    catch (_) { return _emailPlainTextToHtml(text); }
   }
   // Mirror the rich body's plain text into the hidden textarea so the existing
   // send / draft / change-detection plumbing (which reads the textarea) stays
