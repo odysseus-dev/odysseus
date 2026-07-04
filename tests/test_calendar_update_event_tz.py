@@ -78,3 +78,36 @@ async def test_update_event_dtstart_anchored_to_user_tz(tokyo_offset):
         assert bool(ev.is_utc) is True
     finally:
         db.close()
+
+
+async def test_list_events_accepts_start_time_end_time_aliases():
+    from src.tool_implementations import do_manage_calendar
+
+    owner = "list-" + uuid.uuid4().hex[:6]
+    created = await do_manage_calendar(json.dumps({
+        "action": "create_event",
+        "summary": "July planning",
+        "dtstart": "2026-07-15T12:00:00Z",
+        "dtend": "2026-07-15T13:00:00Z",
+    }), owner=owner)
+    assert created.get("exit_code", 0) == 0, created
+
+    listed = await do_manage_calendar(json.dumps({
+        "action": "list_events",
+        "start_time": "2026-07-01T00:00:00Z",
+        "end_time": "2026-08-01T00:00:00Z",
+    }), owner=owner)
+    assert listed.get("exit_code", 0) == 0, listed
+    assert "between 2026-07-01 and 2026-08-01" in listed["response"]
+    assert [event["summary"] for event in listed["events"]] == ["July planning"]
+
+
+async def test_list_events_query_without_range_does_not_default_to_two_weeks():
+    from src.tool_implementations import do_manage_calendar
+
+    listed = await do_manage_calendar(json.dumps({
+        "action": "list_events",
+        "query": "July",
+    }), owner="list-" + uuid.uuid4().hex[:6])
+    assert listed.get("exit_code") == 1, listed
+    assert "explicit start/end" in listed["error"]
