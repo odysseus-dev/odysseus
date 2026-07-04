@@ -217,7 +217,9 @@ export function _getPlatform(hostOrTask) {
   if (!hostOrTask) return _envState.remoteHost ? (_envState.platform || '') : (_envState.hostPlatform || '');
   if (typeof hostOrTask === 'object') {
     const taskHost = hostOrTask.remoteServerKey || hostOrTask.remoteHost || '';
-    if (!taskHost || taskHost === 'local') return _envState.hostPlatform || '';
+    if (!taskHost || taskHost === 'local') {
+      return hostOrTask.platform || hostOrTask.payload?.platform || _envState.hostPlatform || '';
+    }
     return hostOrTask.platform || _getPlatform(taskHost);
   }
   const selected = hostOrTask === _envState.remoteHost ? _selectedServer() : null;

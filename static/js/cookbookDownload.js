@@ -505,7 +505,7 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
   const srv = _serverByVal?.(_envState.remoteServerKey || host) || {};
   const env = host ? (srv.env || 'none') : (_envState.env || 'none');
   const envPath = host ? (srv.envPath || '') : (_envState.envPath || '');
-  const platform = host ? (srv.platform || '') : (_envState.platform || '');
+  const platform = host ? (srv.platform || '') : (_envState.hostPlatform || '');
   const isWin = host ? (platform === 'windows') : _isWindows();
 
   const payload = { repo_id: repo, backend };

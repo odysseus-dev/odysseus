@@ -833,11 +833,16 @@ export function _addTask(sessionId, name, type, payload) {
   _saveTasks(tasks);
   // New action → collapse all other cards, leave only this one open.
   _soloExpandTaskId = sessionId;
+  // Activate Running before render so the log poller attaches on the first pass
+  // (re-renders only update existing cards and used to skip _reconnectTask).
+  _activateRunningTab();
   _renderRunningTab();
   // Always start the background monitor when a task is added — works even
   // when modal is closed and ensures the sidebar shows live status immediately
   _startBackgroundMonitor();
-  // Switch to Running tab
+  // Tab may not exist until after the first render — activate again, then click
+  // so any tab-specific side effects still run.
+  _activateRunningTab();
   const body = document.querySelector('#cookbook-modal .cookbook-body');
   if (body) {
     const tab = body.querySelector('.cookbook-tab[data-backend="Running"]');
@@ -998,7 +1003,10 @@ function _taskRemoteHost(task) {
 }
 
 export function _tmuxCmd(task, tmuxArgs) {
-  if (_isWindows(task)) {
+  const localWin = !_taskRemoteHost(task)
+    && (_isWindows(task) || _isWindows('local')
+      || (typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent)));
+  if (_isWindows(task) || localWin) {
     return _winSessionCmd(task, tmuxArgs);
   }
   const host = _taskRemoteHost(task);
@@ -1516,47 +1524,66 @@ async function _retryDownload(name, payload, replaceSessionId = '') {
     if (!res.ok) {
       uiModule.showToast('Download failed: HTTP ' + res.status);
       if (replaceSessionId) _updateTask(replaceSessionId, { status: 'crashed', _retrying: false });
-      return;
+      return false;
     }
     const data = await res.json();
     if (!data.ok) {
       uiModule.showToast('Download failed: ' + (data.error || ''));
       if (replaceSessionId) _updateTask(replaceSessionId, { status: 'crashed', _retrying: false });
-      return;
+      return false;
     }
     if (replaceSessionId) {
       const tasks = _loadTasks();
       const idx = tasks.findIndex(t => t.sessionId === replaceSessionId);
       if (idx >= 0) {
         const oldSessionId = replaceSessionId;
-        const updated = {
-          ...tasks[idx],
-          id: data.session_id,
-          sessionId: data.session_id,
-          status: 'running',
-          output: '',
-          progress: '',
-          ts: Date.now(),
-          payload: _payload,
-          _retrying: false,
-          _userStopped: false,
-        };
-        // Tombstone the superseded session so cross-device sync cannot merge the
-        // old row back in (Restart looked like it added a second card).
-        _tombstoneTask(oldSessionId);
-        const dedupeKey = _downloadDedupeKey(updated);
-        const next = tasks.filter((t, i) => {
-          if (i === idx) return false;
-          if (!dedupeKey || t.type !== 'download' || _downloadDedupeKey(t) !== dedupeKey) return true;
-          if (['running', 'queued'].includes(t.status || '')) return true;
-          _tombstoneTask(t.sessionId);
-          return false;
-        });
-        next.push(updated);
-        _saveTasks(next);
-        _soloExpandTaskId = data.session_id;
-        _renderRunningTab();
-        _startBackgroundMonitor();
+        const newSessionId = data.session_id;
+        if (newSessionId === oldSessionId) {
+          const updated = {
+            ...tasks[idx],
+            status: 'running',
+            output: '',
+            progress: '',
+            ts: Date.now(),
+            payload: _payload,
+            _retrying: false,
+            _userStopped: false,
+          };
+          tasks[idx] = updated;
+          _saveTasks(tasks);
+          _soloExpandTaskId = newSessionId;
+          _renderRunningTab();
+          _startBackgroundMonitor();
+        } else {
+          const updated = {
+            ...tasks[idx],
+            id: newSessionId,
+            sessionId: newSessionId,
+            status: 'running',
+            output: '',
+            progress: '',
+            ts: Date.now(),
+            payload: _payload,
+            _retrying: false,
+            _userStopped: false,
+          };
+          // Tombstone the superseded session so cross-device sync cannot merge the
+          // old row back in (Restart looked like it added a second card).
+          _tombstoneTask(oldSessionId);
+          const dedupeKey = _downloadDedupeKey(updated);
+          const next = tasks.filter((t, i) => {
+            if (i === idx) return false;
+            if (!dedupeKey || t.type !== 'download' || _downloadDedupeKey(t) !== dedupeKey) return true;
+            if (['running', 'queued'].includes(t.status || '')) return true;
+            _tombstoneTask(t.sessionId);
+            return false;
+          });
+          next.push(updated);
+          _saveTasks(next);
+          _soloExpandTaskId = newSessionId;
+          _renderRunningTab();
+          _startBackgroundMonitor();
+        }
       } else {
         _addTask(data.session_id, name, 'download', _payload);
       }
@@ -1564,9 +1591,11 @@ async function _retryDownload(name, payload, replaceSessionId = '') {
       _addTask(data.session_id, name, 'download', _payload);
     }
     uiModule.showToast(`Downloading ${name}...`);
+    return true;
   } catch (e) {
     uiModule.showToast('Download failed: ' + e.message);
     if (replaceSessionId) _updateTask(replaceSessionId, { status: 'crashed', _retrying: false });
+    return false;
   }
 }
 
@@ -2774,27 +2803,30 @@ export function _renderRunningTab() {
 
     // Wire stop — kills the session but keeps the row (stopped badge + clear pill).
     el.querySelector('.cookbook-task-action-stop').addEventListener('click', async () => {
-      await _onTaskStop(el, task, { removeAfter: false });
+      const liveTask = _loadTasks().find(t => t.sessionId === task.sessionId) || task;
+      await _onTaskStop(el, liveTask, { removeAfter: false });
     });
 
     // Wire kill — running tasks: stop then dismiss; finished/stopped: remove only.
     el.querySelector('.cookbook-task-action-kill').addEventListener('click', async () => {
-      const _isLiveServe = task.type === 'serve' && ['running', 'ready', 'loading', 'warming', 'starting'].includes(task.status || '');
-      const _isActive = _isLiveServe || task.status === 'running';
+      const liveTask = _loadTasks().find(t => t.sessionId === task.sessionId) || task;
+      const liveStatus = liveTask.status || el.dataset.status || task.status;
+      const _isLiveServe = liveTask.type === 'serve' && ['running', 'ready', 'loading', 'warming', 'starting'].includes(liveStatus || '');
+      const _isActive = _isLiveServe || (liveStatus === 'running' && liveTask.type === 'download');
       if (_isActive) {
-        await _onTaskStop(el, task, { removeAfter: true });
+        await _onTaskStop(el, liveTask, { removeAfter: true });
         return;
       }
       // Inactive download rows are UI history only — the session is already dead.
       // stop-session with repo_id would mark the model user-stopped and kill any
       // newer Restart of the same repo (duplicate-card cleanup scenario).
-      if (task.type === 'download') {
-        _animateOutThenRemove(el, task.sessionId);
+      if (liveTask.type === 'download') {
+        _animateOutThenRemove(el, liveTask.sessionId);
         return;
       }
-      const outputText = el.querySelector('.cookbook-output-pre')?.textContent || task.output || '';
-      const isLive = task.type === 'serve' && ['running', 'ready', 'loading', 'warming', 'starting'].includes(task.status || '');
-      const ollamaUnload = _ollamaUnloadCommand(task, outputText);
+      const outputText = el.querySelector('.cookbook-output-pre')?.textContent || liveTask.output || '';
+      const isLive = liveTask.type === 'serve' && ['running', 'ready', 'loading', 'warming', 'starting'].includes(liveStatus || '');
+      const ollamaUnload = _ollamaUnloadCommand(liveTask, outputText);
       if (ollamaUnload) {
         try {
           await fetch('/api/shell/exec', {
@@ -2806,16 +2838,16 @@ export function _renderRunningTab() {
       }
       let killOk = true;
       try {
-        const result = await _stopCookbookSession(task);
+        const result = await _stopCookbookSession(liveTask);
         killOk = !!(result && result.ok);
         // tmux kill returns 0 even when there was nothing to kill — verify
         // live serves are actually gone before removing the row.
-        if (killOk && task.sessionId && isLive && !_isWindows(task)) {
+        if (killOk && liveTask.sessionId && isLive && !_isWindows(liveTask)) {
           try {
             const probe = await fetch('/api/shell/exec', {
               method: 'POST', credentials: 'same-origin',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ command: _tmuxCmd(task, `has-session -t ${task.sessionId}`) }),
+              body: JSON.stringify({ command: _tmuxCmd(liveTask, `has-session -t ${liveTask.sessionId}`) }),
             });
             if (probe.ok) {
               const pj = await probe.json();
@@ -2828,10 +2860,10 @@ export function _renderRunningTab() {
         try { uiModule.showToast('Kill failed — session may still be running. Check `tmux ls` on the server.', 'error'); } catch (_) {}
         return;  // leave the row so the user can retry
       }
-      if (task.type === 'serve' && task.payload) {
-        const endpointUrl = _endpointUrlForTask(task, outputText);
+      if (liveTask.type === 'serve' && liveTask.payload) {
+        const endpointUrl = _endpointUrlForTask(liveTask, outputText);
         _removeEndpointByUrl(endpointUrl);
-        const modelName = task.payload.model || task.name || '';
+        const modelName = liveTask.payload.model || liveTask.name || '';
         if (modelName) {
           fetch('/api/model-endpoints', { credentials: 'same-origin' })
             .then(r => r.json())
@@ -2841,7 +2873,7 @@ export function _renderRunningTab() {
             }).catch(() => {});
         }
       }
-      _animateOutThenRemove(el, task.sessionId);
+      _animateOutThenRemove(el, liveTask.sessionId);
     });
 
     // Wire retry
@@ -2870,14 +2902,14 @@ export function _renderRunningTab() {
     if (targetBody) targetBody.appendChild(el);
     else group.appendChild(el);
 
-    // Auto-attach the tmux output stream for any task whose underlying
-    // session could still be alive — not just 'running'. Scheduler-
-    // launched serves transition to 'ready' as soon as /v1/models
-    // responds; without this, the user opens the Running tab and sees
-    // only the placeholder ("Launched by scheduled task …") because
-    // _reconnectTask never fires for status 'ready'/'loading'/'warming'.
-    if (_isRunningTabVisible() && ['running', 'ready', 'loading', 'warming', 'starting'].includes(task.status)) {
-      _reconnectTask(el, task);
+    _ensureTaskReconnect(el, task);
+  }
+
+  if (_isRunningTabVisible()) {
+    for (const task of tasks) {
+      if (!_RECONNECT_STATUSES.includes(task.status)) continue;
+      const el = group.querySelector(`.cookbook-task[data-task-id="${task.sessionId}"]`);
+      if (el) _ensureTaskReconnect(el, task);
     }
   }
 
@@ -2907,8 +2939,32 @@ export function _renderRunningTab() {
 
 // ── Reconnect task (polling loop) ──
 
+const _RECONNECT_STATUSES = ['running', 'ready', 'loading', 'warming', 'starting'];
+
+function _activateRunningTab() {
+  const body = document.querySelector('#cookbook-modal .cookbook-body');
+  if (!body) return;
+  const tabBar = body.querySelector('.cookbook-tabs');
+  const tab = body.querySelector('.cookbook-tab[data-backend="Running"]');
+  if (!tabBar || !tab) return;
+  tabBar.querySelectorAll('.cookbook-tab').forEach(t => t.classList.remove('active'));
+  tab.classList.add('active');
+  body.querySelectorAll('.cookbook-group').forEach(g => {
+    g.classList.toggle('hidden', g.dataset.backendGroup !== 'Running');
+  });
+}
+
+function _ensureTaskReconnect(el, task) {
+  if (!_isRunningTabVisible()) return;
+  if (!_RECONNECT_STATUSES.includes(task.status)) return;
+  if (el._abort && !el._abort.signal.aborted) return;
+  _reconnectTask(el, task);
+}
+
 async function _reconnectTask(el, task) {
   const output = el.querySelector('.cookbook-output-pre');
+  if (!output) return;
+  if (el._abort) el._abort.abort();
   const controller = new AbortController();
   el._abort = controller;
   let failCount = 0;
@@ -3256,34 +3312,19 @@ async function _reconnectTask(el, task) {
                   body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${task.sessionId}`) }),
                 });
               } catch {}
-              try {
-                // Reuse original payload so the full repo_id (e.g. "Qwen/Qwen3.5-...")
-                // is preserved — rebuilding from task.repo/task.name drops the org prefix.
-                const dlPayload = task.payload
-                  ? { ...task.payload }
-                  : { repo_id: task.repo || task.name, remote_host: task.remoteHost || '' };
-                if (_envState.hfToken) dlPayload.hf_token = _envState.hfToken;
-                // Stalled with hf_transfer — restart on the reliable downloader.
-                dlPayload.disable_hf_transfer = true;
-                // Don't overwrite env_prefix — task.payload already has the correct
-                // "source <path>" form. The bare envPath would miss the `source` and
-                // the venv never activates (so hf CLI falls off PATH).
-                const res = await fetch('/api/model/download', {
-                  method: 'POST', credentials: 'same-origin',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(dlPayload),
-                });
-                const data = await res.json();
-                if (data.ok && data.session_id) {
-                  _updateTask(task.sessionId, { sessionId: data.session_id, status: 'running', output: '' });
-                  task.sessionId = data.session_id;
-                  el._lastProgress = null;
-                  el._lastProgressTime = Date.now();
-                  badge.textContent = 'restarted';
-                  badge.className = 'cookbook-task-status cookbook-task-downloading';
-                  continue;
-                }
-              } catch {}
+              const dlPayload = task.payload
+                ? { ...task.payload }
+                : { repo_id: task.repo || task.name, remote_host: task.remoteHost || '' };
+              if (_envState.hfToken) dlPayload.hf_token = _envState.hfToken;
+              dlPayload.disable_hf_transfer = true;
+              const restarted = await _retryDownload(task.name || task.repo, dlPayload, task.sessionId);
+              if (restarted) {
+                el._lastProgress = null;
+                el._lastProgressTime = Date.now();
+                badge.textContent = 'restarted';
+                badge.className = 'cookbook-task-status cookbook-task-downloading';
+                continue;
+              }
               badge.textContent = 'stale — restart failed';
               badge.className = 'cookbook-task-status cookbook-task-error';
               _showCookbookNotif(true);

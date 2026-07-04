@@ -182,3 +182,20 @@ def test_llamacpp_vision_uses_scanned_projector_instead_of_runtime_find():
     assert "!/(?:^|\\s)(?:--mmproj|--clip_model_path)\\b/.test(launchCmd)" in text
     assert "no mmproj projector is in the launch command" in text
     assert "find ${_vsearchdir} -iname 'mmproj*.gguf'" not in text
+
+
+def test_local_windows_cached_model_delete_uses_powershell():
+    text = SERVE_SRC.read_text(encoding="utf-8")
+    idx = text.index("async function _deleteCachedModel")
+    block = text[idx:idx + 3200]
+    assert "function _localWinPowerShellCmd(ps)" in text
+    assert "cmd = _localWinPowerShellCmd(ps);" in block
+    assert "if (Test-Path" in block
+    assert "-ErrorAction Stop" in block
+    assert "_deleteShellAlreadyGone(data)" in text
+    assert "_invalidateCachedModelScan(_cachedModelScanSig())" in text
+    assert "function _modelMatchesServeFilter" in text
+    assert "function _renderEmptyCachedModelsList" in text
+    assert "Remove-Item -Recurse -Force" in block
+    # Remote Windows still goes through ssh + powershell; local must not rely on bash.
+    assert 'ssh ${pf}${host} "powershell -Command' in block

@@ -15,9 +15,62 @@ def test_inactive_download_remove_skips_stop_session():
     source = RUNNING_JS.read_text(encoding="utf-8")
     idx = source.index("Inactive download rows are UI history only")
     block = source[idx:idx + 500]
-    assert "task.type === 'download'" in block
-    assert "_animateOutThenRemove(el, task.sessionId)" in block
+    assert "liveTask.type === 'download'" in block
+    assert "_animateOutThenRemove(el, liveTask.sessionId)" in block
     assert "_stopCookbookSession(task)" not in block
+
+
+def test_menu_kill_handler_uses_refreshed_task_not_stale_closure():
+    source = RUNNING_JS.read_text(encoding="utf-8")
+    idx = source.index(".cookbook-task-action-kill').addEventListener('click'")
+    block = source[idx:idx + 900]
+    assert "const liveTask = _loadTasks().find(t => t.sessionId === task.sessionId)" in block
+    assert "const liveStatus = liveTask.status || el.dataset.status" in block
+    assert "await _onTaskStop(el, liveTask" in block
+
+
+def test_retry_download_skips_tombstone_when_session_reused():
+    source = RUNNING_JS.read_text(encoding="utf-8")
+    idx = source.index("async function _retryDownload")
+    block = source[idx:idx + 2800]
+    assert "if (newSessionId === oldSessionId)" in block
+    reuse_idx = block.index("if (newSessionId === oldSessionId)")
+    tombstone_idx = block.index("_tombstoneTask(oldSessionId)")
+    assert reuse_idx < tombstone_idx
+
+
+def test_local_task_platform_used_for_windows_log_poll():
+    source = (ROOT / "static" / "js" / "cookbook.js").read_text(encoding="utf-8")
+    idx = source.index("export function _getPlatform")
+    block = source[idx:idx + 520]
+    assert "hostOrTask.platform || hostOrTask.payload?.platform" in block
+
+
+def test_local_windows_download_uses_detached_log_path():
+    source = RUNNING_JS.read_text(encoding="utf-8")
+    idx = source.index("export function _tmuxCmd")
+    block = source[idx:idx + 500]
+    assert "const localWin = !_taskRemoteHost(task)" in block
+    assert "Get-Content (Join-Path $env:TEMP 'odysseus-tmux" in source
+
+
+def test_running_tab_reconnect_survives_rerender():
+    source = RUNNING_JS.read_text(encoding="utf-8")
+    assert "function _ensureTaskReconnect(el, task)" in source
+    assert "function _activateRunningTab()" in source
+    assert "_activateRunningTab();" in source
+    idx = source.index("if (_isRunningTabVisible()) {")
+    block = source[idx:idx + 320]
+    assert "_RECONNECT_STATUSES.includes(task.status)" in block
+    assert "_ensureTaskReconnect(el, task)" in block
+
+
+def test_stale_progress_restart_uses_retry_download_bookkeeping():
+    source = RUNNING_JS.read_text(encoding="utf-8")
+    idx = source.index("badge.textContent = _startupStalled ? '0% stall — retrying'")
+    block = source[idx:idx + 1400]
+    assert "_retryDownload(task.name || task.repo, dlPayload, task.sessionId)" in block
+    assert "fetch('/api/model/download'" not in block
 
 
 def test_auto_retry_download_reuses_same_card():
