@@ -1074,6 +1074,10 @@ def _convert_openai_content_to_anthropic(content):
                 try:
                     header, b64_data = url.split(",", 1)
                     media_type = header.split(";")[0].replace("data:", "")
+                    # Anthropic's image API accepts "image/jpeg", not the
+                    # "image/jpg" alias a .jpg data-URI header carries.
+                    if media_type == "image/jpg":
+                        media_type = "image/jpeg"
                 except (ValueError, IndexError):
                     continue
                 converted.append({
