@@ -530,6 +530,7 @@ async function loadEndpoints() {
               ${hasModels ? `<span style="font-size:10px;opacity:0.4;${category === 'api' ? 'flex-basis:100%;' : ''}">Click to manage models</span>` : ''}
             </div>
             <div style="display:flex;gap:4px;align-items:center;">
+              ${ep.model_type === 'image' ? '' : `<button class="admin-btn-sm" data-adm-tools-ep="${ep.id}" data-adm-tools-state="${ep.supports_tools === true ? 'on' : ep.supports_tools === false ? 'off' : 'auto'}" title="Native tool calling for this endpoint.&#10;Auto: decide from the model name / endpoint host.&#10;On: always send function schemas — needed for local models (e.g. Qwen on Ollama) that support tools but aren't auto-detected.&#10;Off: always use text parsing.">Tools: ${ep.supports_tools === true ? 'On' : ep.supports_tools === false ? 'Off' : 'Auto'}</button>`}
               <button class="admin-btn-sm" data-adm-toggle-ep="${ep.id}">${ep.is_enabled ? 'Disable' : 'Enable'}</button>
               <button class="admin-btn-delete" data-adm-del-ep="${ep.id}" data-adm-ep-online="${ep.online ? '1' : '0'}">Delete</button>
               ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
@@ -573,6 +574,21 @@ async function loadEndpoints() {
     };
     queryAll('[data-adm-toggle-ep]').forEach(btn => {
       btn.addEventListener('click', async (e) => { e.stopPropagation(); await fetch(`/api/model-endpoints/${btn.dataset.admToggleEp}`, { method: 'PATCH' }); loadEndpoints(); });
+    });
+    queryAll('[data-adm-tools-ep]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        // Cycle Auto -> On -> Off -> Auto (supports_tools null -> true -> false -> null).
+        const cur = btn.dataset.admToolsState;
+        const next = cur === 'auto' ? true : cur === 'on' ? false : null;
+        await fetch(`/api/model-endpoints/${btn.dataset.admToolsEp}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ supports_tools: next }),
+        });
+        loadEndpoints();
+      });
     });
     queryAll('[data-adm-copy-url]').forEach(btn => {
       btn.addEventListener('click', (e) => {
