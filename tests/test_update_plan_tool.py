@@ -9,7 +9,7 @@ import json
 
 from src.agent_tools import ToolBlock, TOOL_TAGS  # import first to avoid circular
 from src.tool_execution import execute_tool_block
-from src.tool_index import ALWAYS_AVAILABLE, BUILTIN_TOOL_DESCRIPTIONS
+from src.tool_index import get_always_available_tools, BUILTIN_TOOL_DESCRIPTIONS
 from src.tool_security import is_public_blocked_tool
 
 
@@ -38,7 +38,7 @@ def test_empty_rejected():
 
 def test_registered_everywhere():
     assert "update_plan" in TOOL_TAGS
-    assert "update_plan" in ALWAYS_AVAILABLE
+    assert "update_plan" in get_always_available_tools()
     assert "update_plan" in BUILTIN_TOOL_DESCRIPTIONS
     from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
     assert "update_plan" in {s["function"]["name"] for s in FUNCTION_TOOL_SCHEMAS}

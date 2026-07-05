@@ -12,7 +12,7 @@ These hints are deterministic string matching — no embeddings — so we can te
 `get_tools_for_query` directly with retrieval stubbed out (no ChromaDB needed).
 """
 
-from src.tool_index import ToolIndex, ALWAYS_AVAILABLE
+from src.tool_index import ToolIndex, get_always_available_tools
 
 _EMAIL_TOOLS = {
     "list_emails", "read_email", "send_email", "reply_to_email",
@@ -62,4 +62,4 @@ def test_plain_tell_request_stays_minimal():
     tools = ti.get_tools_for_query("tell me a joke")
     assert not (_EMAIL_TOOLS & tools)
     # Always-available baseline is still there.
-    assert set(ALWAYS_AVAILABLE) <= tools
+    assert set(get_always_available_tools()) <= tools

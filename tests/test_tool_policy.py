@@ -164,7 +164,7 @@ def test_guide_only_skips_tool_retrieval(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
         "src.tool_index",
-        SimpleNamespace(get_tool_index=_fail_tool_index, ALWAYS_AVAILABLE=set()),
+        SimpleNamespace(get_tool_index=_fail_tool_index, get_always_available_tools=lambda: set()),
     )
     policy = build_effective_tool_policy(last_user_message="Do not use tools.")
 
