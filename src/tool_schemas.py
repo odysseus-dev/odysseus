@@ -14,6 +14,7 @@ from typing import Optional
 
 from src.agent_tools import ToolBlock, TOOL_TAGS
 from src.tool_parsing import _TOOL_NAME_MAP
+from src.tool_security import BUILTIN_EMAIL_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -325,7 +326,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "send_to_session",
-            "description": "Send a message to an existing chat and get the model's response. The chat keeps its conversation history.",
+            "description": "Send a new message to an existing live chat and get that chat model's response. Do not use this to retrieve, read, summarize, or inspect old chats; use search_chats or list_sessions for past chat evidence.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -415,7 +416,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "ui_control",
-            "description": "Control the user interface. Actions: toggle (turn tools on/off), open_panel (open a modal: documents/library, gallery, email, sessions, notes, memories/brain, skills, settings, cookbook), open_email_reply (open an email reply draft document; does NOT send), set_mode, switch_model, set_theme (built-in presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute), create_theme (CREATE any custom theme with a name + colors object — pick distinctive, evocative hex colors that match the requested aesthetic, NOT generic defaults. The theme auto-applies after creation). When a user asks for ANY theme not in the built-in preset list, ALWAYS use create_theme.",
+            "description": "Control the user interface. Actions: toggle (turn tools on/off), open_panel (open a modal: documents/library, gallery, email, sessions, notes, memories/brain, skills, settings, cookbook), open_email_reply (open an email reply draft document; DOES NOT send. For 'write/draft a reply saying X', include body with the drafted reply), set_mode, switch_model, set_theme (built-in presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute), create_theme (CREATE any custom theme with a name + colors object — pick distinctive, evocative hex colors that match the requested aesthetic, NOT generic defaults. The theme auto-applies after creation). When a user asks for ANY theme not in the built-in preset list, ALWAYS use create_theme.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -426,6 +427,7 @@ FUNCTION_TOOL_SCHEMAS = [
                     "uid": {"type": "string", "description": "Email UID for open_email_reply"},
                     "folder": {"type": "string", "description": "Email folder for open_email_reply (default INBOX)"},
                     "mode": {"type": "string", "description": "Reply draft mode for open_email_reply: reply, reply-all, or ai-reply"},
+                    "body": {"type": "string", "description": "For open_email_reply: reply body to pre-fill. Required whenever the user told you what the reply should say. Opens a draft, does not send."},
                     "colors": {"type": "object", "description": "For create_theme: the theme colors",
                                "properties": {
                                    "bg": {"type": "string", "description": "Background color (hex, e.g. #1a1a2e)"},
@@ -467,7 +469,7 @@ FUNCTION_TOOL_SCHEMAS = [
                     "question": {"type": "string", "description": "The question to ask. Be specific and self-contained."},
                     "options": {
                         "type": "array",
-                        "description": "2-6 mutually exclusive choices. Each is an object with a short `label` and an optional `description` explaining the trade-off.",
+                        "description": "2-6 choices. Each is an object with a short `label` and an optional `description` explaining the trade-off.",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -477,7 +479,7 @@ FUNCTION_TOOL_SCHEMAS = [
                             "required": ["label"]
                         }
                     },
-                    "multi": {"type": "boolean", "description": "Set true to let the user select multiple options instead of one. Default false."}
+                    "multi": {"type": "boolean", "description": "Set true ONLY when the question explicitly allows choosing more than one option. Otherwise omit it or set false. Default false."}
                 },
                 "required": ["question", "options"]
             }
@@ -538,7 +540,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "manage_calendar",
-            "description": "Manage calendar events: list events in a date range, create, update, delete. Each event can carry a tag/category (event_type) and importance level. Resolve relative dates like today/tomorrow against the 'Current date and time' system context, then pass ISO 8601 datetimes in the user's local wall time; for all-day events set all_day=true and pass YYYY-MM-DD. For event reminders/alarms, pass reminder_minutes; the tool creates the Odysseus note reminder, so do not also call manage_notes for the same reminder.",
+            "description": "Manage calendar events: list events in a date range, create, update, delete. Each event can carry a tag/category (event_type) and importance level. Resolve relative dates like today/tomorrow against the 'Current date and time' system context, then pass ISO 8601 datetimes in the user's local wall time; for all-day events set all_day=true and pass YYYY-MM-DD. For event reminders/alarms, pass reminder_minutes; the tool creates the Odysseus note reminder, so do not also call manage_notes for the same reminder. Do not set rrule for single-occurrence requests such as 'next Wednesday only'; use rrule only when the user explicitly wants recurrence.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -554,12 +556,12 @@ FUNCTION_TOOL_SCHEMAS = [
                     "uid": {"type": "string", "description": "Event UID (for update/delete)"},
                     "calendar_href": {"type": "string", "description": "Specific calendar URL (optional; defaults to first calendar)"},
                     "calendar": {"type": "string", "description": "Filter list_events by calendar name or href"},
-                    "start": {"type": "string", "description": "list_events range start (ISO datetime); defaults to today. Prefer start; backend also accepts start_date, range_start, from, dtstart, since."},
-                    "end": {"type": "string", "description": "list_events range end (ISO datetime); defaults to +14 days. Prefer end; backend also accepts end_date, range_end, to, dtend, until."},
+                    "start": {"type": "string", "description": "list_events range start (ISO datetime). Use this for month/week requests after resolving the date range; do not pass a loose query string. Prefer start; backend also accepts start_time, start_date, range_start, from, dtstart, since."},
+                    "end": {"type": "string", "description": "list_events range end (ISO datetime). Use this for month/week requests after resolving the date range; defaults to +14 days only when no range is requested. Prefer end; backend also accepts end_time, end_date, range_end, to, dtend, until."},
                     "event_type": {"type": "string", "description": "Tag / category for the event. Common values: work, personal, health, travel, meal, social, admin, other. Aliases accepted: tag, category, type."},
                     "importance": {"type": "string", "enum": ["low", "normal", "high", "critical"], "description": "Priority level (defaults to 'normal')"},
                     "reminder_minutes": {"type": "integer", "description": "For create_event: create an Odysseus reminder this many minutes before the event, e.g. 5 for 'reminder 5 min before'."},
-                    "rrule": {"type": "string", "description": "Recurrence rule in iCalendar RRULE format, e.g. 'FREQ=WEEKLY;BYDAY=MO' for weekly on Monday. Use with create_event or update_event."}
+                    "rrule": {"type": "string", "description": "Recurrence rule in iCalendar RRULE format, e.g. 'FREQ=WEEKLY;BYDAY=MO' for weekly on Monday. Use with create_event or update_event. For update_event, pass an explicit empty string to remove recurrence and make the event single-occurrence."}
                 },
                 "required": ["action"]
             }
@@ -569,12 +571,12 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "manage_notes",
-            "description": "Manage notes and checklists (Google Keep-style): list, add, update, delete, toggle_item. IMPORTANT: For to-do lists / checklists, set note_type='checklist' and pass the items as the `checklist_items` array — do NOT serialize them into `content` as plain text. For freeform notes, use note_type='note' and put the body in `content`. `due_date` accepts natural language like 'tomorrow at 9am' (parsed in the user's timezone) and fires a notification — do not also create a calendar event for the same reminder.",
+            "description": "Manage notes and checklists (Google Keep-style): list, view, add, update, delete, toggle_item. Use list/search to find candidate notes, then view with the note id when you need the full body. IMPORTANT: For to-do lists / checklists, set note_type='checklist' and pass the items as the `checklist_items` array — do NOT serialize them into `content` as plain text. For freeform notes, use note_type='note' and put the body in `content`. `due_date` accepts natural language like 'tomorrow at 9am' (parsed in the user's timezone) and fires a notification — do not also create a calendar event for the same reminder.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {"type": "string",
-                               "enum": ["list", "add", "update", "delete", "toggle_item"],
+                               "enum": ["list", "view", "add", "update", "delete", "toggle_item"],
                                "description": "The action to perform"},
                     "id": {"type": "string", "description": "Note id (for update/delete/toggle_item); 8-char prefix is fine"},
                     "title": {"type": "string", "description": "Note title (for add/update)"},
@@ -1106,7 +1108,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "reply_to_email",
-            "description": "SEND a reply email immediately by UID. Do not use this when the user asks to open/start a reply window or draft; use ui_control action=open_email_reply instead. For follow-up 'reply ...' requests where the user clearly wants to send now, use the exact UID from the latest read_email/list_emails result; never invent UID 1. Automatically threads with In-Reply-To/References headers.",
+            "description": "SEND a reply email immediately by UID. Do not use this when the user asks to write/draft/open/start a reply; use ui_control action=open_email_reply with body instead so the user can review. Only use when the user explicitly says to send now. Use the exact UID from the latest read_email/list_emails result; never invent UID 1. Automatically threads with In-Reply-To/References headers.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1210,27 +1212,97 @@ FUNCTION_TOOL_SCHEMAS = [
 # Converter: native function call -> ToolBlock
 # ---------------------------------------------------------------------------
 
+def _decode_loose_json_string(value: str) -> str:
+    """Decode common JSON string escapes without requiring inner quotes to be escaped."""
+    out = []
+    i = 0
+    while i < len(value):
+        ch = value[i]
+        if ch != "\\" or i + 1 >= len(value):
+            out.append(ch)
+            i += 1
+            continue
+        nxt = value[i + 1]
+        if nxt == "n":
+            out.append("\n")
+        elif nxt == "r":
+            out.append("\r")
+        elif nxt == "t":
+            out.append("\t")
+        elif nxt == "b":
+            out.append("\b")
+        elif nxt == "f":
+            out.append("\f")
+        elif nxt in ('"', "\\", "/"):
+            out.append(nxt)
+        elif nxt == "u" and i + 5 < len(value):
+            try:
+                out.append(chr(int(value[i + 2:i + 6], 16)))
+                i += 4
+            except ValueError:
+                out.append("\\" + nxt)
+        else:
+            out.append("\\" + nxt)
+        i += 2
+    return "".join(out)
+
+
+def _repair_document_function_args(tool_type: str, arguments: str) -> Optional[dict]:
+    """Salvage obvious malformed document tool args from local model wrappers.
+
+    The doc LoRA sometimes emits the right native tool call but puts raw quotes
+    inside the document text, making the surrounding JSON invalid. Treat that as
+    a wrapper parse failure, not a semantic tool-choice failure.
+    """
+    if tool_type != "update_document" or not isinstance(arguments, str):
+        return None
+    raw = arguments.strip()
+    if not raw.startswith("{") or not raw.endswith("}"):
+        return None
+    for key in ("content", "conten"):
+        marker = f'"{key}"'
+        key_pos = raw.find(marker)
+        if key_pos < 0:
+            continue
+        colon_pos = raw.find(":", key_pos + len(marker))
+        if colon_pos < 0:
+            continue
+        first_quote = raw.find('"', colon_pos + 1)
+        if first_quote < 0:
+            continue
+        close_brace = raw.rfind("}")
+        last_quote = raw.rfind('"', first_quote + 1, close_brace)
+        if last_quote <= first_quote:
+            continue
+        content = _decode_loose_json_string(raw[first_quote + 1:last_quote])
+        return {"content": content}
+    return None
+
+
 def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock]:
     """Convert a native function call into a ToolBlock for the existing execution pipeline."""
+    tool_type = _TOOL_NAME_MAP.get(name, name)
     try:
         if not arguments or (isinstance(arguments, str) and not arguments.strip()):
             args = {}
         else:
             args = json.loads(arguments) if isinstance(arguments, str) else arguments
     except (json.JSONDecodeError, TypeError):
-        logger.error(f"Failed to parse function call arguments for {name}: {arguments}")
-        return None
-
-    tool_type = _TOOL_NAME_MAP.get(name, name)
-    _BUILTIN_EMAIL_TOOLS = {"list_email_accounts", "send_email", "list_emails", "read_email", "reply_to_email",
-                            "archive_email", "delete_email", "mark_email_read", "bulk_email", "download_attachment"}
+        args = _repair_document_function_args(tool_type, arguments)
+        if args is not None:
+            logger.warning(f"Repaired malformed document function call arguments for {name}")
+        else:
+            logger.error(f"Failed to parse function call arguments for {name}: {arguments}")
+            return None
 
     # Some models emit valid JSON that isn't an object (e.g. a bare array
     # ["ls -la"], string, or number) as function arguments. Most local tools keep
     # the legacy empty-object coercion for stream robustness, but email MCP tools
     # must fail closed so a malformed call cannot read the default mailbox.
+    # Uses the shared BUILTIN_EMAIL_TOOLS (single source of truth) so the
+    # fail-closed set can't drift from the dispatch/blocklist sets.
     if not isinstance(args, dict):
-        if tool_type.startswith("mcp__email__") or name in _BUILTIN_EMAIL_TOOLS:
+        if tool_type.startswith("mcp__email__") or name in BUILTIN_EMAIL_TOOLS:
             logger.warning(f"Non-object email function call arguments for {name}: {args!r}; rejecting")
             return None
         logger.warning(f"Non-object function call arguments for {name}: {args!r}; treating as empty")
@@ -1241,7 +1313,7 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         content = json.dumps(args) if args else "{}"
         return ToolBlock(tool_type, content)
     # Email tools are implemented as MCP — route them to email
-    if name in _BUILTIN_EMAIL_TOOLS:
+    if name in BUILTIN_EMAIL_TOOLS:
         return ToolBlock(f"mcp__email__{name}", json.dumps(args) if args else "{}")
     if tool_type not in TOOL_TAGS:
         logger.warning(f"Unknown function call: {name}")
@@ -1373,6 +1445,9 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
             folder = args.get("folder") or value or "INBOX"
             mode = args.get("mode") or "reply"
             content = f"open_email_reply {uid} {folder} {mode}"
+            body = args.get("body") or args.get("extra") or args.get("content") or ""
+            if body:
+                content += f" {body}"
         elif action == "set_mode":
             content = f"set_mode {value or name}"
         elif action == "switch_model":
@@ -1406,6 +1481,12 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         content = json.dumps(args)
     elif tool_type == "ask_teacher":
         content = args.get("model", "auto") + "\n" + args.get("problem", "")
+    elif tool_type == "ask_user":
+        # Keep user-facing labels readable in the tool trace.  The outer SSE
+        # JSON encoder will escape them for transport and JSON.parse restores
+        # them once; pre-escaping here caused literal ``\u00f1`` sequences to
+        # remain visible in the debug panel.
+        content = json.dumps(args, ensure_ascii=False)
     else:
         content = json.dumps(args)
 

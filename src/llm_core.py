@@ -110,6 +110,18 @@ _HARMONY_MARKERS = (
 )
 _HARMONY_MAX_MARKER_LEN = max(len(marker) for marker in _HARMONY_MARKERS)
 
+_VISIBLE_CHAT_TEMPLATE_ARTIFACT_RE = re.compile(
+    r"(?:\|end\|)+\|?assistan(?:t)?\|?"
+    r"|\|assistan(?:t)?\|"
+    r"|<\|im_start\|>\s*assistant"
+    r"|<\|im_end\|>",
+    re.IGNORECASE,
+)
+
+
+def _strip_visible_chat_template_artifacts(text: str) -> str:
+    return _VISIBLE_CHAT_TEMPLATE_ARTIFACT_RE.sub("", text or "")
+
 
 def _harmony_suffix_hold_len(text: str) -> int:
     """Return how many trailing chars could be the start of a harmony marker."""
@@ -345,41 +357,112 @@ def _normalize_ollama_url(url: str) -> str:
     return base.rstrip("/") + "/chat"
 
 
-def _ollama_normalize_tool_messages(messages: List[Dict]) -> List[Dict]:
+def _normalize_openai_chat_url(url: str) -> str:
+    """Ensure an OpenAI-compatible base URL points at /chat/completions."""
+    base = (url or "").strip().rstrip("/")
+    if not base:
+        return base
+    if base.endswith("/chat/completions") or base.endswith("/completions"):
+        return base
+    if base.endswith("/models"):
+        base = base[: -len("/models")].rstrip("/")
+    return base + "/chat/completions"
+
+
+def _ollama_normalize_messages(messages: List[Dict]) -> List[Dict]:
     """Adapt Odysseus' canonical OpenAI-style messages to native Ollama /api/chat.
 
-    Odysseus carries assistant tool calls in the OpenAI shape, where
-    `function.arguments` is a JSON *string*. Native Ollama expects it to be a
-    JSON *object*; given the string it fails the whole request with HTTP 400
-    "Value looks like object, but can't find closing '}' symbol", which aborts
-    every follow-up (tool-result) round. Parse the arguments back into an object
-    here, on a shallow copy, leaving non-tool messages untouched. The opaque
-    Gemini `extra_content` (thought_signature) is dropped — it is meaningless to
-    Ollama and only matters when the conversation is replayed to Gemini.
+    Two shape mismatches silently break requests:
+
+    1. Tool calls: Odysseus carries `function.arguments` as a JSON *string*.
+       Native Ollama expects a JSON *object* and rejects the string form with
+       HTTP 400 ("Value looks like object, but can't find closing '}' symbol"),
+       aborting every follow-up (tool-result) round. Parse the arguments back
+       into an object here, on a shallow copy, leaving non-tool messages
+       untouched. The opaque Gemini `extra_content` (thought_signature) is
+       dropped — it is meaningless to Ollama and only matters when the
+       conversation is replayed to Gemini.
+
+    2. Images (issue #4723): Odysseus carries multimodal user content as an
+       OpenAI-style list ``[{type: "text", ...}, {type: "image_url",
+       image_url: {url: "data:image/...;base64,XXX"}}, ...]``. Native Ollama
+       does not accept a list for ``content`` — it wants ``content`` as a
+       string plus a separate ``images`` array of raw base64 strings (no
+       ``data:`` prefix). Without this conversion the image blocks pass
+       through untouched, the vision-capable model never sees the picture,
+       and the user gets "I can't see any image" even though the request
+       succeeded.
     """
     out: List[Dict] = []
     for m in messages or []:
-        tcs = m.get("tool_calls") if isinstance(m, dict) else None
-        if not tcs:
+        if not isinstance(m, dict):
             out.append(m)
             continue
-        new_calls = []
-        for tc in tcs:
-            fn = tc.get("function") or {}
-            args = fn.get("arguments")
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args) if args.strip() else {}
-                except (json.JSONDecodeError, TypeError):
-                    args = {}
-            call: Dict = {"function": {"name": fn.get("name", ""), "arguments": args or {}}}
-            if tc.get("id"):
-                call["id"] = tc["id"]
-            new_calls.append(call)
+
         nm = dict(m)
-        nm["tool_calls"] = new_calls
+
+        # 1. Tool-call argument strings -> objects.
+        tcs = nm.get("tool_calls")
+        if tcs:
+            new_calls = []
+            for tc in tcs:
+                fn = tc.get("function") or {}
+                args = fn.get("arguments")
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args) if args.strip() else {}
+                    except (json.JSONDecodeError, TypeError):
+                        args = {}
+                call: Dict = {"function": {"name": fn.get("name", ""), "arguments": args or {}}}
+                if tc.get("id"):
+                    call["id"] = tc["id"]
+                new_calls.append(call)
+            nm["tool_calls"] = new_calls
+
+        # 2. Multimodal content list -> native content string + images array.
+        content = nm.get("content")
+        if isinstance(content, list):
+            text_parts: List[str] = []
+            images: List[str] = list(nm.get("images") or [])
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type")
+                if btype == "text":
+                    t = block.get("text")
+                    if t:
+                        text_parts.append(str(t))
+                elif btype == "image_url":
+                    url = (block.get("image_url") or {}).get("url", "")
+                    if not url:
+                        continue
+                    if url.startswith("data:"):
+                        # Strip the ``data:[...];base64,`` prefix — native
+                        # Ollama wants only the base64 bytes.
+                        _, _, b64 = url.partition(",")
+                        if b64:
+                            images.append(b64)
+                    else:
+                        # Native Ollama images[] is base64-only; it does
+                        # not fetch HTTP URLs.  Skip unsupported schemes
+                        # rather than sending a non-base64 string that the
+                        # model silently ignores.
+                        logger.warning(
+                            "Skipping non-data image_url (Ollama images[] "
+                            "requires base64): %s",
+                            url[:80],
+                        )
+            nm["content"] = "\n".join(text_parts).strip()
+            if images:
+                nm["images"] = images
+
         out.append(nm)
     return out
+
+
+# Backward-compatible alias for callers/tests that imported the older name
+# (it only handled tool messages originally — issue #4723 broadened scope).
+_ollama_normalize_tool_messages = _ollama_normalize_messages
 
 
 def _build_ollama_payload(
@@ -404,7 +487,7 @@ def _build_ollama_payload(
     """
     payload: Dict = {
         "model": model,
-        "messages": _ollama_normalize_tool_messages(messages),
+        "messages": _ollama_normalize_messages(messages),
         "stream": stream,
     }
     options: Dict = {}
@@ -618,6 +701,10 @@ def _detect_provider(url: str) -> str:
     from src.copilot import is_copilot_base
     if is_copilot_base(url):
         return "copilot"
+    if _host_match(url, "cerebras.ai"):
+        return "cerebras"
+    if _host_match(url, "mistral.ai"):
+        return "mistral"
     return "openai"
 
 
@@ -702,6 +789,8 @@ def _provider_label(url: str) -> str:
     if is_chatgpt_subscription_base(url): return "ChatGPT Subscription"
     from src.copilot import is_copilot_base
     if is_copilot_base(url): return "GitHub Copilot"
+    if _host_match(url, "cerebras.ai"):
+        return "cerebras"
     if _host_match(url, "mistral.ai"): return "Mistral"
     if _host_match(url, "deepseek.com"): return "DeepSeek"
     if _host_match(url, "nvidia.com"): return "NVIDIA"
@@ -716,10 +805,17 @@ def _provider_label(url: str) -> str:
             pass
     if _is_ollama_native_url(url): return "Ollama"
     try:
-        host = (urlparse(url).hostname or "").lower()
+        _parsed_local = urlparse(url)
+        host = (_parsed_local.hostname or "").lower()
+        port = _parsed_local.port
     except Exception:
         return "provider"
     if host in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
+        # A port alone is not authoritative: vLLM, SGLang, llama.cpp and plain
+        # OpenAI-compatible servers all routinely share 8000/8080, so naming the
+        # serving tool from the port here would mislabel real setups. The tool is
+        # identified by probing llama-server's native /props endpoint during
+        # discovery (see ModelDiscovery._fingerprint_provider); this stays neutral.
         return "local endpoint"
     return host or "provider"
 
@@ -906,10 +1002,17 @@ def _anthropic_rejects_temperature(model: str) -> bool:
         return False
     return (int(match.group(1)), int(match.group(2))) >= (4, 7)
 
+# Reasoning effort level sent to Mistral thinking-capable models. Mistral's
+# API accepts "high", "medium", "low", "none" — see
+# https://docs.mistral.ai/capabilities/reasoning/. Override via env var
+# ODYSSEUS_MISTRAL_REASONING_EFFORT (e.g. set to "medium" for cheaper chat).
+_MISTRAL_REASONING_EFFORT = os.getenv("ODYSSEUS_MISTRAL_REASONING_EFFORT", "high")
+
 # Models that support structured thinking — may output </think> without opening tag
 _THINKING_MODEL_PATTERNS = (
     "qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "minimax",
     "m2-reap", "gemma", "stepfun", "step-3", "step3",
+    "magistral", "mistral-small", "mistral-medium",
 )
 
 def _supports_thinking(model: str) -> bool:
@@ -918,6 +1021,38 @@ def _supports_thinking(model: str) -> bool:
         return False
     m = model.lower()
     return any(p in m for p in _THINKING_MODEL_PATTERNS)
+
+def _normalize_mistral_content(content):
+    """Mistral returns content as a structured array when reasoning is on:
+        [{"type": "thinking", "thinking": [{"type": "text", "text": "..."}], "closed": true},
+         {"type": "text", "text": "...final answer..."}]
+    Convert to (text, thinking) tuple of plain strings. Pass through strings
+    unchanged so non-Mistral OpenAI-compat endpoints are unaffected.
+    """
+    if isinstance(content, str):
+        return content, ""
+    if not isinstance(content, list):
+        return "", ""
+    text_parts = []
+    thinking_parts = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type")
+        if btype == "text":
+            t = block.get("text", "")
+            if t:
+                text_parts.append(t)
+        elif btype == "thinking":
+            inner = block.get("thinking", [])
+            if isinstance(inner, list):
+                for tb in inner:
+                    if isinstance(tb, dict) and tb.get("text"):
+                        thinking_parts.append(tb["text"])
+            elif isinstance(inner, str):
+                thinking_parts.append(inner)
+    return "".join(text_parts), "".join(thinking_parts)
+
 
 def _convert_openai_content_to_anthropic(content):
     """Convert OpenAI multimodal content blocks to Anthropic format.
@@ -1089,6 +1224,25 @@ def _as_content_blocks(content) -> List[Dict]:
     return []
 
 
+def _is_untrusted_context_content(content) -> bool:
+    if isinstance(content, str):
+        return (
+            content.startswith("UNTRUSTED SOURCE DATA\n")
+            or "<<<UNTRUSTED_SOURCE_DATA>>>" in content
+        )
+    if isinstance(content, list):
+        return any(
+            isinstance(block, dict)
+            and block.get("type") == "text"
+            and _is_untrusted_context_content(block.get("text") or "")
+            for block in content
+        )
+    return False
+
+
+_REFERENCE_CONTEXT_BOUNDARY = "Reference context received."
+
+
 def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
     """Strip Odysseus-only metadata before sending messages to providers.
 
@@ -1201,6 +1355,10 @@ def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
 
         last = merged[-1]
         if last.get("role") == "user" and item.get("role") == "user":
+            if _is_untrusted_context_content(last.get("content")):
+                merged.append({"role": "assistant", "content": _REFERENCE_CONTEXT_BOUNDARY})
+                merged.append(item)
+                continue
             last_copy = dict(last)
             lc = last_copy.get("content")
             ic = item.get("content")
@@ -1226,6 +1384,7 @@ def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
             merged.append(item)
 
     return merged
+
 
 def _normalize_anthropic_url(url: str) -> str:
     """Ensure Anthropic URL points to /v1/messages."""
@@ -1338,8 +1497,10 @@ def list_model_ids(
         r = httpx_get_kimi_aware(models_url, h, timeout=timeout)
         r.raise_for_status()
         data = r.json()
-        model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
-        if not model_ids:
+        # Some OpenAI-compatible APIs (e.g. Together) return a bare list here.
+        items = data if isinstance(data, list) else (data.get("data") or [])
+        model_ids = [m.get("id") for m in items if isinstance(m, dict) and m.get("id")]
+        if not model_ids and isinstance(data, dict):
             model_ids = [
                 m.get("name") or m.get("model")
                 for m in (data.get("models") or [])
@@ -1427,7 +1588,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             stream=False, num_ctx=get_context_length(url, model),
         )
     else:
-        target_url = url
+        target_url = _normalize_openai_chat_url(url)
         if provider == "copilot":
             from src.copilot import apply_request_headers
             apply_request_headers(h, messages_copy)
@@ -1441,6 +1602,8 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
+        if provider == "mistral" and _supports_thinking(model):
+            payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
     try:
         note_model_activity(target_url, model)
         r = httpx_post_kimi_aware(target_url, h, json=payload, timeout=timeout)
@@ -1456,7 +1619,16 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             response = _parse_ollama_response(data)
         else:
             msg = data["choices"][0]["message"]
-            response = msg.get("content") or msg.get("reasoning_content") or ""
+            content = msg.get("content")
+            if isinstance(content, list):
+                # Mistral structured content — extract thinking + text
+                text_part, thinking_part = _normalize_mistral_content(content)
+                if thinking_part:
+                    response = thinking_part + "\n\n" + (text_part or "")
+                else:
+                    response = text_part or msg.get("reasoning_content") or ""
+            else:
+                response = content or msg.get("reasoning_content") or ""
         _set_cached_response(cache_key, response)
         return response
     except Exception:
@@ -1620,7 +1792,7 @@ async def llm_call_async(
             stream=False, num_ctx=get_context_length(url, model),
         )
     else:
-        target_url = url
+        target_url = _normalize_openai_chat_url(url)
         h = _provider_headers(provider, headers)
         if provider == "copilot":
             from src.copilot import apply_request_headers
@@ -1638,6 +1810,8 @@ async def llm_call_async(
         # Suppress thinking for qwen3/gemma4 on Ollama /v1 — same as stream_llm.
         if _is_ollama_openai_compat_url(url) and _supports_thinking(model):
             payload["think"] = False
+        if provider == "mistral" and _supports_thinking(model):
+            payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
         _apply_local_cache_affinity(payload, url, session_id)
 
     if _is_host_dead(target_url):
@@ -1696,7 +1870,8 @@ async def llm_call_async(
 async def stream_llm(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
                      max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                      timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
-                     tools: Optional[List[Dict]] = None, session_id: Optional[str] = None):
+                     tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
+                     tool_choice_none: bool = False):
     """Stream LLM responses with improved error handling.
 
     Yields SSE chunks:
@@ -1740,7 +1915,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         h = _provider_headers(provider, headers)
         payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
     else:
-        target_url = url
+        target_url = _normalize_openai_chat_url(url)
         payload = {
             "model": model,
             "messages": messages_copy,
@@ -1756,6 +1931,14 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             payload[tok_key] = max_tokens
         if tools:
             payload["tools"] = tools
+        elif tool_choice_none:
+            payload["tool_choice"] = "none"
+        # Mistral thinking-capable models — send reasoning_effort so Mistral
+        # activates thinking mode and returns structured reasoning_content.
+        # Effort level is configurable via ODYSSEUS_MISTRAL_REASONING_EFFORT
+        # (high / medium / low / none); default "high".
+        if provider == "mistral" and _supports_thinking(model):
+            payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
         # For Ollama's OpenAI-compat /v1 endpoint with thinking models (qwen3,
         # gemma4, etc.), suppress thinking so tool calls aren't swallowed inside
         # <think> blocks. Ollama /v1 accepts "think": false as a top-level param.
@@ -2134,10 +2317,21 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                         # Text content
                                         # Reasoning tokens (VLLM --reasoning-parser, e.g. Qwen3/DeepSeek-R1, Nemotron). vLLM 0.20.2 / NIM emit the field as `reasoning`; older builds use `reasoning_content`. Some OpenAI-compatible Ollama builds use `thinking`.
                                         reasoning = delta.get("reasoning_content") or delta.get("reasoning") or delta.get("thinking") or ""
+                                        content = delta.get("content") or ""
+                                        # Mistral structured content: content is a list of typed blocks
+                                        # ({"type": "thinking", ...}, {"type": "text", ...}). Split into
+                                        # reasoning + text so thinking streams into the thinking panel.
+                                        if isinstance(content, list):
+                                            text_part, thinking_part = _normalize_mistral_content(content)
+                                            if thinking_part:
+                                                reasoning = (reasoning + thinking_part) if reasoning else thinking_part
+                                            content = text_part
                                         if reasoning:
                                             yield _stream_delta_event(reasoning, thinking=True)
-                                        content = delta.get("content") or ""
                                         if content:
+                                            content = _strip_visible_chat_template_artifacts(content)
+                                            if not content:
+                                                continue
                                             content = re.sub(r"<mm:think(\s+[^>]*)?>", r"<think\1>", content, flags=re.IGNORECASE)
                                             content = re.sub(r"</mm:think>", "</think>", content, flags=re.IGNORECASE)
                                             stripped = content.lstrip()

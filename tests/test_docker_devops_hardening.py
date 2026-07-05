@@ -17,6 +17,7 @@ COMPOSE_FILES = [
     ROOT / "docker-compose.gpu-nvidia.yml",
     ROOT / "docker-compose.gpu-amd.yml",
 ]
+HOST_DOCKER_OVERLAY = ROOT / "docker" / "host-docker.yml"
 TEST_DOCS = [
     ROOT / "tests" / "README.md",
     ROOT / "tests" / "TESTING_STANDARD.md",
@@ -52,6 +53,38 @@ def test_compose_files_forward_every_upload_limit_env_var():
     assert expected
     for path in COMPOSE_FILES:
         assert expected <= _compose_env_names(path), path.name
+
+
+def test_default_compose_files_do_not_mount_host_docker_socket():
+    for path in COMPOSE_FILES:
+        text = path.read_text(encoding="utf-8")
+        assert "/var/run/docker.sock" not in text, path.name
+
+
+def test_host_docker_overlay_mounts_socket_and_adds_docker_group():
+    overlay = yaml.safe_load(HOST_DOCKER_OVERLAY.read_text(encoding="utf-8"))
+    service = overlay["services"]["odysseus"]
+
+    assert "/var/run/docker.sock:/var/run/docker.sock" in service["volumes"]
+    assert "${DOCKER_GID:-963}" in service["group_add"]
+    assert "ODYSSEUS_ENABLE_HOST_DOCKER=true" in service["environment"]
+
+
+def test_docker_entrypoint_gates_socket_group_plumbing_on_explicit_opt_in():
+    script = (ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
+    block_start = script.index("DOCKER_SOCK=\"${DOCKER_SOCK:-/var/run/docker.sock}\"")
+    block_end = script.index("\nmount_root_for()", block_start)
+    socket_group_block = script[block_start:block_end]
+
+    opt_in_check = socket_group_block.index(
+        "[ \"${ODYSSEUS_ENABLE_HOST_DOCKER:-}\" = \"true\" ]"
+    )
+    socket_check = socket_group_block.index("[ -S \"$DOCKER_SOCK\" ]")
+    stat_socket = socket_group_block.index("stat -c")
+    add_group = socket_group_block.index("groupadd -g")
+    add_user_group = socket_group_block.index("usermod -aG")
+
+    assert opt_in_check < socket_check < stat_socket < add_group < add_user_group
 
 
 def test_docker_entrypoint_does_not_resolve_root_commands_from_app_local_path():

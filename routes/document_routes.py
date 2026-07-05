@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, 
 from sqlalchemy import case, func, or_
 from core.database import SessionLocal, Document, DocumentVersion
 from core.database import Session as DbSession
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, _auth_disabled
 from src.constants import MAIL_ATTACHMENTS_DIR
 
 logger = logging.getLogger(__name__)
@@ -388,7 +388,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         db = SessionLocal()
         try:
             if not user:
-                raise HTTPException(403, "Authentication required")
+                if not _auth_disabled():
+                    raise HTTPException(403, "Authentication required")
             # v2 review HIGH-9: raise 403 explicitly when the caller
             # can't see this session, instead of returning [] which the
             # UI treats identically to "no docs" and silently masks
@@ -569,8 +570,9 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 raise HTTPException(404, "Document not found")
             _verify_doc_owner(db, doc, user)
 
-            # Skip if content is identical
-            if doc.current_content == req.content:
+            # Skip if content is identical unless the caller explicitly wants
+            # a checkpoint version from the current editor state.
+            if doc.current_content == req.content and not req.force_version:
                 return _doc_to_dict(doc)
 
             _assert_pdf_marker_upload_owned(request, req.content, user, upload_handler)
@@ -582,7 +584,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
             now = datetime.now(timezone.utc)
             coalesced = False
-            if latest_ver and latest_ver.source == "user":
+            if latest_ver and latest_ver.source == "user" and not req.force_version:
                 ver_time = latest_ver.created_at
                 if ver_time.tzinfo is None:
                     ver_time = ver_time.replace(tzinfo=timezone.utc)
@@ -798,10 +800,26 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             from src.document_actions import _JUNK_TITLES
 
             to_delete = []
+            now = datetime.now(timezone.utc)
             for doc in docs:
+                created = doc.created_at
+                if created and created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+
+                # Skip freshly created documents to avoid deleting them while the user is actively editing
+                if created and (now - created).total_seconds() < 900:  # 15 minutes
+                    continue
+
                 content = (doc.current_content or "").strip()
                 title_raw = (doc.title or "").strip()
                 title = title_raw.lower()
+                is_fresh_empty = (
+                    not content
+                    and created is not None
+                    and (now - created).total_seconds() < 1800
+                )
+                if is_fresh_empty:
+                    continue
 
                 # Strip markdown noise to get a "real" character count
                 stripped = _re.sub(r"^#{1,6}\s+", "", content, flags=_re.MULTILINE)
@@ -835,10 +853,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 if _is_email_stub:
                     to_delete.append(doc); deleted += 1; continue
                 if title in _JUNK_TITLES:
-                    to_delete.append(doc); deleted += 1; continue
-                if real_len < 30:
-                    to_delete.append(doc); deleted += 1; continue
-                if "\n" not in content and real_len < 50:
                     to_delete.append(doc); deleted += 1; continue
 
                 # Fix empty or placeholder titles on survivors

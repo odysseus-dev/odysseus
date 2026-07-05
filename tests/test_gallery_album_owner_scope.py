@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 def _function_sources():
-    source = Path("routes/gallery_routes.py").read_text(encoding="utf-8")
+    source = Path("routes/gallery/gallery_routes.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     return {
         node.name: ast.get_source_segment(source, node) or ""

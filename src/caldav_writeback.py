@@ -33,7 +33,8 @@ def build_event_ical(ev: dict) -> str:
     """Serialize a local event dict to a VCALENDAR/VEVENT iCalendar string.
 
     ``ev`` keys: uid, summary, description, location, dtstart (datetime),
-    dtend (datetime), all_day (bool), is_utc (bool), rrule (str).
+    dtend (datetime), all_day (bool), is_utc (bool), rrule (str),
+    recurrence_exdates (list[str]).
     Mirrors how the pull path interprets is_utc/all_day so a round-trip is stable.
     """
     from icalendar import Calendar, Event as iEvent
@@ -70,6 +71,15 @@ def build_event_ical(ev: dict) -> str:
             ve.add("rrule", vRecur.from_ical(ev["rrule"]))
         except Exception:
             logger.debug("CalDAV write-back: skipping unparseable rrule %r", ev.get("rrule"))
+    for exdate in ev.get("recurrence_exdates") or []:
+        try:
+            if ev.get("all_day"):
+                ve.add("exdate", datetime.strptime(exdate[:10], "%Y-%m-%d").date())
+            else:
+                dt = datetime.strptime(exdate[:16], "%Y-%m-%dT%H:%M")
+                ve.add("exdate", dt.replace(tzinfo=timezone.utc) if ev.get("is_utc") else dt)
+        except Exception:
+            logger.debug("CalDAV write-back: skipping unparseable exdate %r", exdate)
 
     cal.add_component(ve)
     return cal.to_ical().decode("utf-8")

@@ -8,6 +8,7 @@ import uiModule from './ui.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
 import { registerMenuDismiss } from './escMenuStack.js';
 import { computeProgressSignal } from './cookbookProgressSignal.js';
+import { portOf, nextFreePort } from './cookbookPorts.js';
 
 // Human-friendly badge label for a task's internal status. Avoids surfacing
 // the word "error" in the sidebar — a server the user stopped or one that
@@ -28,7 +29,8 @@ function _statusLabel(status, type) {
 function _taskBadge(task) {
   if (task._unreachable && task.status === 'running') return { text: 'unreachable', cls: 'cookbook-task-error' };
   if (task.type === 'download' && task.status === 'running') {
-    return { text: _statusLabel(task.status, task.type), cls: 'cookbook-task-downloading' };
+    const progress = String(task.progress || '').trim();
+    return { text: progress || _statusLabel(task.status, task.type), cls: 'cookbook-task-downloading' };
   }
   if (task.type === 'serve' && task.status === 'running' && task.progress) {
     // Same green "running" pill — just with dynamic phase text, so it doesn't
@@ -266,9 +268,7 @@ function _taskHostLabel(task) {
 }
 
 function _taskPort(task) {
-  const cmd = task?.payload?._cmd || '';
-  const match = cmd.match(/--port\s+(\d+)/);
-  return match ? match[1] : '';
+  return portOf(task?.payload?._cmd || '');
 }
 
 function _buildCrashReport(task, outputText) {
@@ -369,7 +369,7 @@ const SERVE_STATE_KEY = 'cookbook-serve-state';
 
 // Polling / timeout intervals
 const TASK_POLL_INTERVAL_MS = 3000;       // delay between reconnect-loop iterations
-const BG_MONITOR_INTERVAL_MS = 5000;      // background task status poll
+const BG_MONITOR_INTERVAL_MS = 10000;     // background task status poll
 const STALE_PROGRESS_MS = 5 * 60 * 1000;  // download with no progress this long = stale
 const STARTUP_STALE_PROGRESS_MS = 45 * 1000; // 0%-forever startup stall: retry much sooner
 
@@ -455,16 +455,14 @@ function _nextAvailablePort() {
   const usedPorts = new Set();
   tasks.forEach(t => {
     if (t.type === 'serve' && (t.status === 'running' || t.status === 'queued')) {
-      const m = t.payload?._cmd?.match(/--port\s+(\d+)/);
-      if (m) usedPorts.add(parseInt(m[1]));
+      const p = _taskPort(t);
+      if (p) usedPorts.add(parseInt(p));
     }
   });
   presets.forEach(p => {
     if (p.port) usedPorts.add(parseInt(p.port));
   });
-  let port = 8000;
-  while (usedPorts.has(port)) port++;
-  return String(port);
+  return nextFreePort(usedPorts);
 }
 
 // ── Endpoint cleanup ──
@@ -766,6 +764,11 @@ function _redactStoredText(value) {
     .replace(/((?:api[_-]?key|token|authorization|password|passwd|secret)\s*[=:]\s*)(["']?)[^\s"']+/gi, '$1$2[redacted]');
 }
 
+function _isServeOutputPlaceholder(value) {
+  const text = String(value || '').trim();
+  return !text || /^Launched via agent\s+—\s+waiting for tmux output/i.test(text);
+}
+
 function _redactTaskForStorage(task) {
   if (!task || typeof task !== 'object') return task;
   const safe = { ...task };
@@ -784,6 +787,7 @@ function _stripStateSecrets(state) {
   const safe = { ...state };
   if (safe.env && typeof safe.env === 'object') {
     const { hfToken, ...env } = safe.env;
+    delete env.hostPlatform;
     safe.env = env;
   }
   if (Array.isArray(safe.tasks)) safe.tasks = safe.tasks.map(_redactTaskForStorage);
@@ -883,18 +887,23 @@ function _animateOutThenRemove(el, sessionId) {
 
 // ── tmux / Windows session commands ──
 
+function _taskRemoteHost(task) {
+  return task?.remoteHost || task?.payload?.remote_host || '';
+}
+
 export function _tmuxCmd(task, tmuxArgs) {
   if (_isWindows(task)) {
     return _winSessionCmd(task, tmuxArgs);
   }
-  if (task.remoteHost) {
-    return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} 'tmux ${tmuxArgs}' 2>/dev/null`;
+  const host = _taskRemoteHost(task);
+  if (host) {
+    return `ssh ${_sshPrefix(_getPort(task))}${host} 'tmux ${tmuxArgs}' 2>/dev/null`;
   }
   return `tmux ${tmuxArgs} 2>/dev/null`;
 }
 
 function _winSessionCmd(task, tmuxArgs) {
-  const host = task.remoteHost;
+  const host = _taskRemoteHost(task);
   const sd = host ? '$env:TEMP\\odysseus-sessions' : '$env:TEMP\\odysseus-tmux';
   const sid = task.sessionId;
   const pf = _sshPrefix(_getPort(task));
@@ -926,12 +935,13 @@ function _winSessionCmd(task, tmuxArgs) {
 
 function _winPowerShellCmd(task, ps) {
   const command = `powershell -Command "${ps}"`;
-  if (!task.remoteHost) return command;
-  return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} ${_shQuote(command)}`;
+  const host = _taskRemoteHost(task);
+  if (!host) return command;
+  return `ssh ${_sshPrefix(_getPort(task))}${host} ${_shQuote(command)}`;
 }
 
 function _winSessionStopTreePs(task) {
-  const host = task.remoteHost;
+  const host = _taskRemoteHost(task);
   const sd = host ? '$env:TEMP\\odysseus-sessions' : '$env:TEMP\\odysseus-tmux';
   const sid = task.sessionId;
   const stopTree = `function Stop-Tree([int]$Id) { Get-CimInstance Win32_Process -Filter ('ParentProcessId = ' + $Id) -ErrorAction SilentlyContinue | ForEach-Object { Stop-Tree ([int]$_.ProcessId) }; Stop-Process -Id $Id -Force -ErrorAction SilentlyContinue }`;
@@ -945,8 +955,9 @@ export function _tmuxGracefulKill(task) {
     const ps = _winSessionStopTreePs(task);
     return _winPowerShellCmd(task, ps);
   }
-  if (task.remoteHost) {
-    return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} 'tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null'`;
+  const host = _taskRemoteHost(task);
+  if (host) {
+    return `ssh ${_sshPrefix(_getPort(task))}${host} 'tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null'`;
   }
   return `tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null`;
 }
@@ -971,8 +982,9 @@ export function _tmuxForceKill(task) {
     `  done; ` +
     `fi; ` +
     `tmux kill-session -t ${sid} 2>/dev/null`;
-  if (task.remoteHost) {
-    return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} ${_shQuote(inner)}`;
+  const host = _taskRemoteHost(task);
+  if (host) {
+    return `ssh ${_sshPrefix(_getPort(task))}${host} ${_shQuote(inner)}`;
   }
   return inner;
 }
@@ -987,8 +999,9 @@ export function _tmuxIsAliveCheck(task) {
   }
   const sid = task.sessionId;
   const inner = `if tmux has-session -t ${sid} 2>/dev/null; then echo ALIVE; else echo DEAD; fi`;
-  if (task.remoteHost) {
-    return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} ${_shQuote(inner)}`;
+  const host = _taskRemoteHost(task);
+  if (host) {
+    return `ssh ${_sshPrefix(_getPort(task))}${host} ${_shQuote(inner)}`;
   }
   return inner;
 }
@@ -1023,8 +1036,9 @@ function _ollamaUnloadCommand(task, outputText = '') {
   const base = _ollamaBaseUrlForTask(task, outputText);
   const body = JSON.stringify({ model, prompt: '', keep_alive: 0, stream: false });
   const inner = `curl -sf -X POST ${_shQuote(base + '/api/generate')} -H 'Content-Type: application/json' -d ${_shQuote(body)} >/dev/null 2>&1 || true`;
-  if (task.remoteHost) {
-    return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} ${_shQuote(inner)}`;
+  const host = _taskRemoteHost(task);
+  if (host) {
+    return `ssh ${_sshPrefix(_getPort(task))}${host} ${_shQuote(inner)}`;
   }
   return inner;
 }
@@ -1033,7 +1047,7 @@ function _endpointUrlForTask(task, outputText = '') {
   if (_taskLooksOllama(task, outputText)) {
     return _ollamaBaseUrlForTask(task, outputText) + '/v1';
   }
-  const host = _connectHostFromRemote(task.remoteHost);
+  const host = _connectHostFromRemote(_taskRemoteHost(task));
   const portMatch = task.payload?._cmd?.match(/--port\s+(\d+)/);
   const port = portMatch ? portMatch[1] : '8000';
   return `http://${host}:${port}/v1`;
@@ -1676,7 +1690,7 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
     || _envState.servers.find(s => s.host === _host) || {};
   const _serverMetaKey = _targetKey || (_hsrv && _serverKey ? _serverKey(_hsrv) : '') || (_host || 'local');
   const _serverMetaName = targetMeta?.serverName || _hsrv.name || (_host ? _host : 'Local');
-  const _hplatform = _host ? (_hsrv.platform || '') : (_envState.platform || '');
+  const _hplatform = _host ? (_hsrv.platform || '') : (_envState.hostPlatform || '');
   const _replaceTaskId = fields?._replaceTaskId || '';
   if (_replaceTaskId) {
     try {
@@ -1691,7 +1705,6 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
       }
     } catch {}
   }
-
   // Replace any serve already targeting this same host:port — you can't run two
   // servers on one port, so re-serving (or retrying) should stop & remove the
   // old one instead of leaving a dead duplicate behind. (The retry buttons
@@ -1862,6 +1875,7 @@ export function _renderRunningTab() {
       body.querySelectorAll('.cookbook-group').forEach(g => {
         g.classList.toggle('hidden', g.dataset.backendGroup !== 'Running');
       });
+      setTimeout(() => _renderRunningTab(), 0);
     });
   } else if (runTab) {
     const _errCount2 = tasks.filter(t => t.status === 'error' || t.status === 'crashed').length;
@@ -2108,6 +2122,12 @@ export function _renderRunningTab() {
       }
       const startNow = el.querySelector('.cookbook-task-start-now');
       if (startNow) startNow.style.display = (task.type === 'download' && task.status === 'queued') ? '' : 'none';
+      const pre = el.querySelector('.cookbook-output-pre');
+      if (pre && typeof task.output === 'string' && task.output && pre.textContent !== task.output) {
+        const atBottom = (pre.scrollHeight - pre.scrollTop - pre.clientHeight) < 40;
+        pre.textContent = task.output;
+        if (atBottom) pre.scrollTop = pre.scrollHeight;
+      }
       const terminalDiag = _terminalServeDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
       if (terminalDiag) {
         _showDiagnosis(el, terminalDiag, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
@@ -2712,7 +2732,7 @@ export function _renderRunningTab() {
     // responds; without this, the user opens the Running tab and sees
     // only the placeholder ("Launched by scheduled task …") because
     // _reconnectTask never fires for status 'ready'/'loading'/'warming'.
-    if (['running', 'ready', 'loading', 'warming', 'starting'].includes(task.status)) {
+    if (_isRunningTabVisible() && ['running', 'ready', 'loading', 'warming', 'starting'].includes(task.status)) {
       _reconnectTask(el, task);
     }
   }
@@ -2758,7 +2778,7 @@ async function _reconnectTask(el, task) {
       const res = await fetch('/api/shell/exec', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: _tmuxCmd(task, `capture-pane -t ${task.sessionId} -p -S -200`), timeout: 15 }),
+        body: JSON.stringify({ command: _tmuxCmd(task, `capture-pane -t ${task.sessionId} -p -S -500`), timeout: 15 }),
       });
       const data = await res.json();
 
@@ -3437,68 +3457,144 @@ async function _reconnectTask(el, task) {
 // ── Background monitor ──
 
 let _bgMonitorInterval = null;
+let _bgPollInFlight = false;
+const BG_LEADER_KEY = 'odysseus-cookbook-bg-leader';
+const BG_LEADER_ID = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const BG_LEADER_TTL_MS = 15000;
+
+function _hasLiveTasks(tasks = null) {
+  const list = tasks || _loadTasks();
+  return list.some(t =>
+    t.status === 'running'
+    || t.status === 'queued'
+    || t.status === 'ready'
+    || _downloadOutputLooksActive(t)
+  );
+}
+
+function _isRunningTabVisible() {
+  const modal = document.getElementById('cookbook-modal');
+  if (!modal || modal.classList.contains('hidden')) return false;
+  const activeTab = modal.querySelector('.cookbook-tab.active')?.dataset?.backend || '';
+  return activeTab === 'Running';
+}
+
+function _foregroundChatBusy() {
+  try {
+    return !!window.__odysseusChatBusy || Date.now() < (window.__odysseusChatBusyUntil || 0);
+  } catch {
+    return false;
+  }
+}
+
+function _claimBackgroundLeader() {
+  if (document.visibilityState !== 'visible') return false;
+  const now = Date.now();
+  try {
+    const raw = localStorage.getItem(BG_LEADER_KEY);
+    const current = raw ? JSON.parse(raw) : null;
+    if (
+      !current
+      || !current.id
+      || current.id === BG_LEADER_ID
+      || now - Number(current.ts || 0) > BG_LEADER_TTL_MS
+    ) {
+      localStorage.setItem(BG_LEADER_KEY, JSON.stringify({ id: BG_LEADER_ID, ts: now }));
+      return true;
+    }
+    return current.id === BG_LEADER_ID;
+  } catch (_) {
+    return true;
+  }
+}
+
+function _canBackgroundPoll() {
+  if (_foregroundChatBusy()) return false;
+  if (document.visibilityState !== 'visible') return false;
+  return _claimBackgroundLeader();
+}
 
 // Reachability check for running serve tasks. The tmux pane can stay alive
 // while the model server inside it has crashed (so no "Process exited" line
 // ever appears) — leaving the card showing "running" forever. So we actively
 // probe the registered endpoint (same /probe-local the model picker uses) and
 // flag the card "unreachable" (red) when the server stops answering.
+let _serveReachabilityInFlight = false;
+let _serveReachabilityLastAt = 0;
 async function _checkServeReachability() {
+  // This reaches out to local model servers. Keep it out of the normal chat
+  // path unless the user is actively looking at the Running tab.
+  if (_foregroundChatBusy()) return;
+  if (!_isRunningTabVisible()) return;
+  const now = Date.now();
+  if (_serveReachabilityInFlight || now - _serveReachabilityLastAt < 10000) return;
+  _serveReachabilityInFlight = true;
+  _serveReachabilityLastAt = now;
   let serveTasks;
   try {
     serveTasks = _loadTasks().filter(t => t.type === 'serve' && t.status === 'running');
-  } catch { return; }
-  if (!serveTasks.length) return;
+  } catch {
+    _serveReachabilityInFlight = false;
+    return;
+  }
+  if (!serveTasks.length) {
+    _serveReachabilityInFlight = false;
+    return;
+  }
   let eps = [], probe = {};
   try {
     [eps, probe] = await Promise.all([
       fetch('/api/model-endpoints', { credentials: 'same-origin' }).then(r => r.json()).catch(() => []),
       fetch('/api/model-endpoints/probe-local', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
     ]);
-  } catch { return; }
-  for (const task of serveTasks) {
-    const host = _connectHostFromRemote(task.remoteHost);
-    const portMatch = task.payload?._cmd?.match(/--port\s+(\d+)/);
-    const port = portMatch ? portMatch[1] : '8000';
-    const baseUrl = `http://${host}:${port}/v1`;
-    const ep = (eps || []).find(e => e.base_url === baseUrl);
-    if (!ep) continue;                       // not registered yet — can't judge
-    const pr = probe[ep.id];
-    if (!pr || pr.alive === undefined) continue;  // not probed (non-local) — skip
-    // Record the first time it actually answers. Until then the server is still
-    // LOADING/warming (the endpoint can get registered on the 300s timeout for a
-    // big model that hasn't finished loading), and a not-yet-answering server is
-    // not "unreachable" — flagging it as such while you're launching is a false
-    // alarm. Only treat it as unreachable once it has been reachable at least once.
-    if (pr.alive === true && !task._everReachable) {
-      task._everReachable = true;
-      _updateTask(task.sessionId, { _everReachable: true });
-    }
-    const unreachable = pr.alive === false;
-    if (unreachable && !task._everReachable) continue;  // still coming up, not crashed
-    if (!!task._unreachable !== unreachable) {
-      _updateTask(task.sessionId, { _unreachable: unreachable });
-    }
-    const el = document.querySelector(`.cookbook-task[data-task-id="${task.sessionId}"]`);
-    if (el) {
-      el.classList.toggle('cookbook-task-unreachable', unreachable);
-      const badge = el.querySelector('.cookbook-task-status');
-      if (badge) {
-        if (unreachable) {
-          badge.textContent = 'unreachable';
-          badge.className = 'cookbook-task-status cookbook-task-error';
-          badge.title = pr.error || 'Server not responding — it may have crashed';
-        } else if (badge.textContent === 'unreachable') {
-          // Recovered — restore the normal running label.
-          badge.textContent = _statusLabel('running', task.type);
-          badge.className = 'cookbook-task-status cookbook-task-running';
-          badge.title = '';
+    for (const task of serveTasks) {
+      const host = _connectHostFromRemote(task.remoteHost);
+      const portMatch = task.payload?._cmd?.match(/--port\s+(\d+)/);
+      const port = portMatch ? portMatch[1] : '8000';
+      const baseUrl = `http://${host}:${port}/v1`;
+      const ep = (eps || []).find(e => e.base_url === baseUrl);
+      if (!ep) continue;                       // not registered yet — can't judge
+      const pr = probe[ep.id];
+      if (!pr || pr.alive === undefined) continue;  // not probed (non-local) — skip
+      // Record the first time it actually answers. Until then the server is still
+      // LOADING/warming (the endpoint can get registered on the 300s timeout for a
+      // big model that hasn't finished loading), and a not-yet-answering server is
+      // not "unreachable" — flagging it as such while you're launching is a false
+      // alarm. Only treat it as unreachable once it has been reachable at least once.
+      if (pr.alive === true && !task._everReachable) {
+        task._everReachable = true;
+        _updateTask(task.sessionId, { _everReachable: true });
+      }
+      const unreachable = pr.alive === false;
+      if (unreachable && !task._everReachable) continue;  // still coming up, not crashed
+      if (!!task._unreachable !== unreachable) {
+        _updateTask(task.sessionId, { _unreachable: unreachable });
+      }
+      const el = document.querySelector(`.cookbook-task[data-task-id="${task.sessionId}"]`);
+      if (el) {
+        el.classList.toggle('cookbook-task-unreachable', unreachable);
+        const badge = el.querySelector('.cookbook-task-status');
+        if (badge) {
+          if (unreachable) {
+            badge.textContent = 'unreachable';
+            badge.className = 'cookbook-task-status cookbook-task-error';
+            badge.title = pr.error || 'Server not responding — it may have crashed';
+          } else if (badge.textContent === 'unreachable') {
+            // Recovered — restore the normal running label.
+            badge.textContent = _statusLabel('running', task.type);
+            badge.className = 'cookbook-task-status cookbook-task-running';
+            badge.title = '';
+          }
         }
       }
+      if (unreachable) _showCookbookNotif(true);
     }
-    if (unreachable) _showCookbookNotif(true);
+    _refreshServerDots();
+  } catch {
+    // Non-fatal: the normal task status poll continues separately.
+  } finally {
+    _serveReachabilityInFlight = false;
   }
-  _refreshServerDots();
 }
 
 function _serveTaskFailed(task) {
@@ -3650,16 +3746,21 @@ export async function _selfHealStaleTasks(opts = {}) {
 export function _startBackgroundMonitor() {
   if (_bgMonitorInterval) return;
   _bgMonitorInterval = setInterval(() => {
+    if (!_canBackgroundPoll()) return;
     _pollBackgroundStatus();
     _checkServeReachability();
     // Auto-reconnect: every cycle, look for download tasks marked finished/
     // crashed/etc. whose tmux session is actually still running, and flip
     // them back to running. Internally throttled to 8s so a manual call from
     // the open path or a fast invocation doesn't double up.
-    _selfHealStaleTasks().catch(() => {});
+    if (_hasLiveTasks() || _isRunningTabVisible()) {
+      _selfHealStaleTasks().catch(() => {});
+    }
   }, BG_MONITOR_INTERVAL_MS);
-  _pollBackgroundStatus();
-  _checkServeReachability();
+  if (_canBackgroundPoll()) {
+    _pollBackgroundStatus();
+    _checkServeReachability();
+  }
 }
 
 function _stopBackgroundMonitor() {
@@ -3709,6 +3810,8 @@ async function _probeEndpointUntilOnline(epId, host, port) {
 }
 
 async function _pollBackgroundStatus() {
+  if (!_canBackgroundPoll() || _bgPollInFlight) return;
+  _bgPollInFlight = true;
   try {
     // Pull any tasks the server knows about that aren't in localStorage
     // yet (e.g. agent-spawned downloads/serves). Without this merge,
@@ -3752,6 +3855,34 @@ async function _pollBackgroundStatus() {
       const localTasks = _loadTasks();
       let changed = false;
       const completedDeps = [];
+      const localIds = new Set(localTasks.map(t => t.sessionId).filter(Boolean));
+      for (const live of tasks) {
+        const sid = live?.session_id;
+        if (!sid || localIds.has(sid) || _isTombstoned(sid)) continue;
+        const liveType = live.type || 'download';
+        const liveStatus = live.status === 'completed' ? 'done' : (live.status || 'running');
+        const name = live.model || sid;
+        const remoteHost = live.remote && live.remote !== 'local' ? live.remote : '';
+        localTasks.push(_redactTaskForStorage({
+          id: sid,
+          sessionId: sid,
+          name,
+          type: liveType,
+          status: liveStatus,
+          progress: live.progress || '',
+          output: live.output_tail || '',
+          ts: Date.now(),
+          payload: {
+            repo_id: name,
+            remote_host: remoteHost,
+            _cmd: live.cmd || '(adopted from live tmux status)',
+          },
+          remoteHost,
+          _adoptedExternally: true,
+        }));
+        localIds.add(sid);
+        changed = true;
+      }
       for (const task of localTasks) {
         const live = statusById.get(task.sessionId);
         if (!live) continue;
@@ -3791,7 +3922,9 @@ async function _pollBackgroundStatus() {
           const previous = String(task.output || '');
           const tail = String(live.output_tail || '');
           if (tail && !previous.endsWith(tail)) {
-            updates.output = `${previous ? `${previous}\n` : ''}${tail}`.slice(-5000);
+            updates.output = _isServeOutputPlaceholder(previous)
+              ? tail.slice(-5000)
+              : `${previous ? `${previous}\n` : ''}${tail}`.slice(-5000);
           }
         }
         if (live.diagnosis && !task._diagnosisDismissed) {
@@ -3944,6 +4077,8 @@ async function _pollBackgroundStatus() {
     }
   } catch (e) {
     // Silent fail
+  } finally {
+    _bgPollInFlight = false;
   }
 }
 
@@ -3972,19 +4107,17 @@ export function initRunning(shared) {
   _detectModelOptimizations = shared._detectModelOptimizations;
   _buildServeCmd = shared._buildServeCmd;
 
-  // App boot: pull authoritative state from server, then auto-start
-  // the background monitor unconditionally. Used to gate on "already
-  // has running tasks" but that meant when the agent (or anyone)
-  // added a task after boot, the UI never noticed. 10s poll of a
-  // small status endpoint is cheap and gives the agent + the UI a
-  // shared live picture.
+  // App boot: pull authoritative state from server, but don't start the
+  // running-task monitor unless there is real work to watch. Starting it
+  // unconditionally made a plain Cookbook open keep probing stale tmux/SSH
+  // sessions, which is expensive when a saved remote host is unreachable.
   (async () => {
     try {
       await _syncFromServer();
     } catch {}
-    _startBackgroundMonitor();
+    if (_hasLiveTasks()) _startBackgroundMonitor();
   })();
 }
 
 // Also export _retryDownload and _nextAvailablePort for use by other modules
-export { _retryDownload, _nextAvailablePort, _processQueue };
+export { _retryDownload, _nextAvailablePort, _processQueue, _taskPort };

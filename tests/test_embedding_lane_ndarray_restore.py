@@ -13,7 +13,7 @@ in test_embedding_lanes.py, but the preserved embeddings come back as ndarray.
 import numpy as np
 
 from src.embedding_lanes import build_embedding_lanes
-from tests.test_embedding_lanes import FakeChroma, FakeEmbedder, _patch_chroma
+from tests.helpers.embedding_lanes import FakeChroma, FakeEmbedder, patch_chroma
 
 
 def test_lane_reset_restores_when_chroma_returns_numpy_embeddings(monkeypatch):
@@ -46,7 +46,7 @@ def test_lane_reset_restores_when_chroma_returns_numpy_embeddings(monkeypatch):
 
     # Force the post-reset rewrite to fail so the restore branch runs.
     fake.fail_next_add_for["odysseus_memories_custom"] = 1
-    _patch_chroma(monkeypatch, fake)
+    patch_chroma(monkeypatch, fake)
 
     import src.embedding_lanes as lanes
 

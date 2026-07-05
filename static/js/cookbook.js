@@ -33,6 +33,9 @@ import {
   _fetchCachedModels, _cachedAllModels, _filterCachedList, _rerenderCachedModels, _deleteCachedModel,
 } from './cookbookServe.js';
 
+import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
+import { topPortalZ } from './toolWindowZOrder.js';
+
 const STORAGE_KEY = 'cookbook-presets';
 const LAST_STATE_KEY = 'cookbook-last-state';
 const SERVE_STATE_KEY = 'cookbook-serve-state';
@@ -73,7 +76,7 @@ function _platformIcon(platform) {
   return '';
 }
 
-export let _envState = { env: 'none', envPath: '', hfToken: '', hfTokenConfigured: false, hfTokenMasked: '', gpus: '', remoteHost: '', servers: [], modelPaths: [], platform: '', defaultServer: '' };
+export let _envState = { env: 'none', envPath: '', hfToken: '', hfTokenConfigured: false, hfTokenMasked: '', gpus: '', remoteHost: '', servers: [], modelPaths: [], platform: '', hostPlatform: '', defaultServer: '' };
 let _lastCacheHostVal = null;
 let _cookbookOpeningSpinners = [];
 export function _lastCacheHost() { return _lastCacheHostVal; }
@@ -202,7 +205,7 @@ export function _sshCmd(host, cmd, port) {
 /** Get SSH port for a given host (or task object) */
 function _getPort(hostOrTask) {
   if (!hostOrTask) return '';
-  if (typeof hostOrTask === 'object') return hostOrTask.sshPort || _getPort(hostOrTask.remoteServerKey || hostOrTask.remoteHost);
+  if (typeof hostOrTask === 'object') return hostOrTask.sshPort || _getPort(hostOrTask.remoteServerKey || hostOrTask.remoteHost || hostOrTask.payload?.remote_host);
   const selected = hostOrTask === _envState.remoteHost ? _selectedServer() : null;
   const srv = selected || _serverByVal(hostOrTask);
   return srv?.port || '';
@@ -210,8 +213,13 @@ function _getPort(hostOrTask) {
 
 /** Get platform for a given host (or task object). Returns 'windows', 'termux', 'linux', or '' */
 export function _getPlatform(hostOrTask) {
-  if (!hostOrTask) return _envState.platform || '';
-  if (typeof hostOrTask === 'object') return hostOrTask.platform || _getPlatform(hostOrTask.remoteServerKey || hostOrTask.remoteHost);
+  if (hostOrTask === 'local') return _envState.hostPlatform || '';
+  if (!hostOrTask) return _envState.remoteHost ? (_envState.platform || '') : (_envState.hostPlatform || '');
+  if (typeof hostOrTask === 'object') {
+    const taskHost = hostOrTask.remoteServerKey || hostOrTask.remoteHost || '';
+    if (!taskHost || taskHost === 'local') return _envState.hostPlatform || '';
+    return hostOrTask.platform || _getPlatform(taskHost);
+  }
   const selected = hostOrTask === _envState.remoteHost ? _selectedServer() : null;
   const srv = selected || _serverByVal(hostOrTask);
   return srv?.platform || '';
@@ -635,7 +643,12 @@ export function _buildServeCmd(f, modelName, backend) {
     // GPU list — read from gpus (button strip); fall back to gpu_id for
     // backward-compat with older saved presets that pre-date the removal.
     const gpuId = (f.gpus || f.gpu_id || '').toString().trim();
-    const py = _isWindows() ? 'python' : 'python3';
+    const _targetHost = Object.prototype.hasOwnProperty.call(f, 'host')
+      ? String(f.host || '').trim()
+      : String(_envState.remoteHost || '').trim();
+    const _isWin = _targetHost ? _isWindows(_targetHost) : _isWindows('local');
+    const _localWindows = _isWin && !_targetHost;
+    const py = _isWin ? 'python' : 'python3';
     // CPU-only serve (-ngl 0): drop the GPU-only flags, otherwise the command
     // mixes "zero GPU layers" with CUDA unified-memory + flash-attn and fails to
     // start (issue #1291). Only affects the ngl=0 path; GPU serving is unchanged.
@@ -657,19 +670,19 @@ export function _buildServeCmd(f, modelName, backend) {
     // with misleading prefixes.
     const _sb = String(_hwfitCache?.system?.backend || '').toLowerCase();
     const _hwfitHost = String(_hwfitCache?._scannedHost || '');
-    const _curHost = String(_envState.remoteHost || '');
+    const _curHost = _targetHost;
     const _isCudaTarget = (_sb === 'cuda') && (_hwfitHost === _curHost);
     const lcPrefix = (() => {
       let p = '';
-      if (f.unified_mem && !_cpuOnly && !_isWindows() && _isCudaTarget) p += `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 `;
-      // No GPU env var in CPU mode — `-ngl 0` already disables offload
+      if (f.unified_mem && !_cpuOnly && (!_isWin || _localWindows) && _isCudaTarget) p += `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 `;
+      // No GPU env var in CPU mode - `-ngl 0` already disables offload
       // so CUDA_VISIBLE_DEVICES / HIP_VISIBLE_DEVICES would be misleading
       // clutter ("why is CUDA pinned for a CPU run?").
-      if (!_isWindows() && !_cpuOnly) p += _gpuEnvPrefix(gpuId);
+      if ((!_isWin || _localWindows) && !_cpuOnly) p += _gpuEnvPrefix(gpuId);
       return p;
     })();
-    if (f.unified_mem && !_cpuOnly && _isWindows() && _isCudaTarget) cmd += `$env:GGML_CUDA_ENABLE_UNIFIED_MEMORY="1"; `;
-    if (_isWindows() && !_cpuOnly) cmd += _gpuEnvPrefix(gpuId, true);
+    if (f.unified_mem && !_cpuOnly && _isWin && !_localWindows && _isCudaTarget) cmd += `$env:GGML_CUDA_ENABLE_UNIFIED_MEMORY="1"; `;
+    if (_isWin && !_localWindows && !_cpuOnly) cmd += _gpuEnvPrefix(gpuId, true);
     const needsGgufPrelude = /^\$\(\{\s*find\s/.test(String(ggufPath || ''));
     const modelArg = needsGgufPrelude ? '"$MODEL_FILE"' : `"${ggufPath}"`;
     // Prefer native llama-server. The backend bootstrap resolves/builds the
@@ -741,11 +754,16 @@ export function _buildServeCmd(f, modelName, backend) {
       // llama-cpp-python takes the projector via --clip_model_path.
       _lcpExtra += ` --clip_model_path "${f._mmproj_path}"`;
     }
-    if (_isWindows()) {
-      const _lcpServer = `${lcPrefix}${py} -m llama_cpp.server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} --n_gpu_layers ${f.ngl || '99'} --n_ctx ${f.ctx || '8192'}${_lcpExtra}`;
+    const _lcServer = `${lcPrefix}llama-server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} -ngl ${f.ngl || '99'} -c ${f.ctx || '8192'}${_lcExtra}`;
+    const _lcpServer = `${lcPrefix}${py} -m llama_cpp.server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} --n_gpu_layers ${f.ngl || '99'} --n_ctx ${f.ctx || '8192'}${_lcpExtra}`;
+    if (_localWindows) {
+      // Local Windows serve is launched through Git Bash, so use the native
+      // llama-server shape and let PATH resolve the CUDA Release wrapper.
+      cmd += _lcServer;
+    } else if (_isWin) {
       cmd += _lcpServer;
     } else {
-      cmd += `${lcPrefix}llama-server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} -ngl ${f.ngl || '99'} -c ${f.ctx || '8192'}${_lcExtra}`;
+      cmd += _lcServer;
     }
     if (needsGgufPrelude) {
       cmd = `MODEL_FILE=${ggufPath} && { [ -n "$MODEL_FILE" ] && [ -f "$MODEL_FILE" ]; } || { echo "ERROR: No GGUF found on this host"; exit 1; } && ${cmd}`;
@@ -873,8 +891,9 @@ async function _fetchDependencies() {
   let _spin = null;
   try {
     const sp = (await import('./spinner.js')).default;
-    _spin = sp.createWhirlpool(28);
-    _spin.element.style.cssText = 'margin:24px auto 0;display:block;';
+    _spin = sp.createWhirlpool(22);
+    _spin.element.classList.add('cookbook-section-loading-wp');
+    _spin.element.style.cssText = 'margin:24px auto 0;display:block;width:22px;height:22px;';
     list.appendChild(_spin.element);
     const label = document.createElement('div');
     label.className = 'hwfit-loading';
@@ -1514,7 +1533,7 @@ async function _fetchDependencies() {
 
     // Wire the installed-package menu.
     function _showDepMenu(anchor) {
-      document.querySelectorAll('.cookbook-dep-menu').forEach(d => d.remove());
+      document.querySelectorAll('.cookbook-dep-menu').forEach(dismissOrRemove);
       const row = anchor.closest('.cookbook-dep-row');
       if (!row) return;
       const pipName = row.dataset.depPip;
@@ -1527,7 +1546,7 @@ async function _fetchDependencies() {
       const minW = 150;
       let left = Math.min(rect.right - minW, window.innerWidth - minW - 8);
       left = Math.max(8, left);
-      dropdown.style.cssText = `position:fixed;display:block;z-index:10001;top:${rect.bottom + 6}px;left:${left}px;right:auto;min-width:${minW}px;max-width:calc(100vw - 16px);background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:6px;font-size:11px;`;
+      dropdown.style.cssText = `position:fixed;display:block;z-index:${topPortalZ()};top:${rect.bottom + 6}px;left:${left}px;right:auto;min-width:${minW}px;max-width:calc(100vw - 16px);background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:6px;font-size:11px;`;
       const upIco = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>';
       const it = document.createElement('div');
       it.className = 'dropdown-item-compact';
@@ -1535,7 +1554,7 @@ async function _fetchDependencies() {
       it.title = `Update ${pkgName} to the latest version (pip install -U)`;
       it.addEventListener('click', async (e) => {
         e.stopPropagation();
-        dropdown.remove();
+        close();
         await _installDep(pipName, pkgName, isLocalOnly, true, null);
       });
       dropdown.appendChild(it);
@@ -1563,19 +1582,14 @@ async function _fetchDependencies() {
         dropdown.appendChild(source);
       }
       document.body.appendChild(dropdown);
-      const close = (ev) => {
-        if (!dropdown.contains(ev.target) && ev.target !== anchor && !anchor.contains(ev.target)) {
-          dropdown.remove();
-          document.removeEventListener('click', close, true);
-        }
-      };
-      setTimeout(() => document.addEventListener('click', close, true), 10);
+      const close = bindMenuDismiss(dropdown, () => { dropdown.remove(); }, (ev) =>
+        !dropdown.contains(ev.target) && ev.target !== anchor && !anchor.contains(ev.target));
     }
     list.querySelectorAll('.cookbook-dep-installed-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         if (document.querySelector('.cookbook-dep-menu')) {
-          document.querySelectorAll('.cookbook-dep-menu').forEach(d => d.remove());
+          document.querySelectorAll('.cookbook-dep-menu').forEach(dismissOrRemove);
           return;
         }
         _showDepMenu(btn);
@@ -1639,10 +1653,10 @@ function _wireTabEvents(body) {
       });
       if (backend === 'Search') {
         _hwfitInit();
-        _hwfitFetch();
+        _hwfitFetch(false, { allowNetwork: false });
       }
       if (backend === 'Serve') {
-        _fetchCachedModels();
+        _fetchCachedModels(false, { allowNetwork: false });
       }
       if (backend === 'Dependencies') {
         _fetchDependencies();
@@ -1745,7 +1759,7 @@ function _wireTabEvents(body) {
       _applyServerSelection(dlServer.value);
       // Reset toggle state (no flicker) so the new server's hardware re-renders.
       _resetGpuToggleState();
-      _hwfitFetch();
+      _hwfitFetch(false, { allowNetwork: false });
     });
   }
 
@@ -1782,13 +1796,13 @@ function _wireTabEvents(body) {
           if (settingsTab) settingsTab.click();
         });
       }
-      _fetchCachedModels();
+      _fetchCachedModels(false, { allowNetwork: false });
     });
   }
 
   const scanBtn = document.getElementById('hwfit-cache-scan');
   if (scanBtn) {
-    scanBtn.addEventListener('click', () => _fetchCachedModels());
+    scanBtn.addEventListener('click', () => _fetchCachedModels(true));
   }
 
   const editDirsLink = document.querySelector('.cookbook-serve-dir-edit');
@@ -2286,8 +2300,9 @@ function _wireTabEvents(body) {
       hfList.innerHTML = '';
       try {
         const sp = (await import('./spinner.js')).default;
-        const _spin = sp.createWhirlpool(28);
-        _spin.element.style.cssText = 'margin:24px auto 0;display:block;';
+        const _spin = sp.createWhirlpool(22);
+        _spin.element.classList.add('cookbook-section-loading-wp');
+        _spin.element.style.cssText = 'margin:24px auto 0;display:block;width:22px;height:22px;';
         hfList.appendChild(_spin.element);
         const lbl = document.createElement('div');
         lbl.className = 'hwfit-loading';
@@ -2509,7 +2524,7 @@ function _wireTabEvents(body) {
 // (a new server's host is empty, which would otherwise read as "Local").
 export function _serverEntryHtml(s, i, defaultServer, forceRemote, isNew) {
   const isLocal = (forceRemote || isNew) ? false : (!s.host || s.host === 'local');
-  const envOpts = ['none', 'venv'].map(e => `<option value="${e}"${s.env === e ? ' selected' : ''}>${e === 'none' ? 'None' : e}</option>`).join('');
+  const envOpts = [['none', 'None'], ['venv', 'venv'], ['conda', 'conda']].map(([value, label]) => `<option value="${value}"${s.env === value ? ' selected' : ''}>${label}</option>`).join('');
   let html = '';
   html += `<div class="cookbook-server-entry" data-idx="${i}" data-platform="${esc(s.platform || '')}">`;
   const _srvTitle = s.name || (isLocal ? 'Local' : (s.host || `Server ${i + 1}`));
@@ -2535,7 +2550,7 @@ export function _serverEntryHtml(s, i, defaultServer, forceRemote, isNew) {
   html += `<input type="text" class="hwfit-sf cookbook-srv-host" value="${isLocal ? '' : esc(s.host || '')}" placeholder="e.g. user@ip" style="width:214.5px;flex-shrink:0;box-sizing:border-box;" ${isLocal ? 'readonly' : ''} />`;
   html += `<input type="text" class="hwfit-sf cookbook-srv-port" value="${esc(s.port || '')}" placeholder="Port" title="SSH port (default 22)" style="width:48px;flex-shrink:0;" ${isLocal ? 'readonly' : ''} />`;
   html += `<select class="hwfit-sf cookbook-srv-env">${envOpts}</select>`;
-  html += `<input type="text" class="hwfit-sf cookbook-srv-path" value="${esc(s.envPath || '')}" placeholder="${s.platform === 'windows' ? 'venv path' : '~/venv'}" />`;
+  html += `<input type="text" class="hwfit-sf cookbook-srv-path" value="${esc(s.envPath || '')}" placeholder="${s.platform === 'windows' ? 'venv/conda env' : '~/venv or conda-env'}" />`;
   html += `<span class="cookbook-dep-tag cookbook-dep-target" style="font-size:8px;flex-shrink:0;min-width:46px;text-align:center;visibility:hidden;">placeholder</span>`;
   html += `<span class="cookbook-srv-actions" style="display:inline-flex;gap:4px;align-items:center;width:78px;flex-shrink:0;justify-content:flex-end;"></span>`;
   html += `</div>`;
@@ -2614,13 +2629,14 @@ function _renderRecipes() {
     const isLocal = !s.host || s.host.toLowerCase() === 'local';
     if (isLocal) {
       s.host = '';
+      s.platform = _envState.hostPlatform || '';
       if (_localSeen) return false;
       _localSeen = true;
     }
     return true;
   });
   if (!_localSeen) {
-    _es.servers.unshift({ host: '', env: _es.env || 'none', envPath: _es.envPath || '', modelDir: '~/.cache/huggingface/hub' });
+    _es.servers.unshift({ host: '', env: _es.env || 'none', envPath: _es.envPath || '', modelDir: '~/.cache/huggingface/hub', platform: _envState.hostPlatform || '' });
   }
   if (_es.remoteHost && !_es.servers.some(s => s.host === _es.remoteHost)) {
     _es.servers.push({ host: _es.remoteHost, env: _es.env || 'none', envPath: _es.envPath || '', modelDir: '~/.cache/huggingface/hub' });
@@ -2680,8 +2696,7 @@ function _renderRecipes() {
   html += '<p class="memory-desc doclib-desc" style="margin-top:6px;">Scans your hardware for what models you can run. Hardware is cached; hit the scan button to re-probe after changing GPUs.</p>';
   html += '<div class="hwfit-toolbar" style="margin-top:9px;">';
   html += '<select class="cookbook-field-input hwfit-usecase" id="hwfit-usecase" style="height:28px;">';
-  html += '<option value="general" selected>Standard</option><option value="coding">Coding</option>';
-  html += '<option value="reasoning">Reasoning</option><option value="chat">Chat</option>';
+  html += '<option value="general" selected>Standard</option>';
   // Image tab removed — text→image gen is gone from this build (only inpaint
    // remains, which uses its own settings panel). Vision (multimodal) stays.
   html += '<option value="multimodal">Vision</option></select>';
@@ -2690,13 +2705,20 @@ function _renderRecipes() {
   // levers (Engine / Quant / Context) live to the right.
   html += '<input type="text" class="cookbook-field-input hwfit-search" id="hwfit-search" placeholder="Search models..." style="flex:1;" />';
   html += '<span class="hwfit-engine-wrap">';
-  html += '<select class="cookbook-field-input hwfit-engine" id="hwfit-engine" style="height:28px;" title="Filter by serving engine">';
+  html += '<select class="cookbook-field-input hwfit-engine" id="hwfit-engine" style="display:none;" title="Filter by serving engine">';
   html += '<option value="">Engine</option>';
   html += '<option value="llamacpp">llama.cpp</option>';
   html += '<option value="ollama">Ollama</option>';
   html += '<option value="vllm">vLLM</option>';
   html += '<option value="sglang">SGLang</option>';
+  html += '<option value="diffusers">Diffusers</option>';
   html += '</select>';
+  html += '<button type="button" class="cookbook-field-input hwfit-engine-btn" data-hwfit-engine-btn aria-haspopup="listbox" aria-expanded="false" title="Filter by serving engine">';
+  html += '<span class="hwfit-engine-btn-icon" data-hwfit-engine-icon aria-hidden="true"></span>';
+  html += '<span class="hwfit-engine-btn-label" data-hwfit-engine-label>Engine</span>';
+  html += '<svg class="hwfit-engine-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>';
+  html += '</button>';
+  html += '<div class="hwfit-engine-menu" data-hwfit-engine-menu role="listbox" hidden></div>';
   html += '<span class="hwfit-help-chip hwfit-help-chip-inline hwfit-engine-help" title="Rule of thumb: GGUF on single GPU / CPU+RAM → llama.cpp (or Ollama). Safetensors on multi-GPU NVIDIA → vLLM. SGLang is a vLLM-class alternative, sometimes faster on big-MoE / long-context.">?</span>';
   html += '</span>';
   // Quant (Q4/Q8/…). Default is "All" so the list shows the best-scoring
@@ -2861,7 +2883,7 @@ function _renderRecipes() {
 
   // Auto-init What Fits
   _hwfitInit();
-  _hwfitFetch();
+  _hwfitFetch(false, { allowNetwork: false });
 }
 
 // ── Public API ──
@@ -3073,8 +3095,48 @@ export function isVisible() {
 
 let _sharedSyncInFlight = false;
 let _sharedSyncLast = 0;
+const SHARED_STATE_LEADER_KEY = 'odysseus-cookbook-shared-state-leader';
+const SHARED_STATE_LEADER_ID = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const SHARED_STATE_LEADER_TTL_MS = 12000;
+
+function _foregroundChatBusy() {
+  try {
+    return !!window.__odysseusChatBusy || Date.now() < (window.__odysseusChatBusyUntil || 0);
+  } catch (_) {
+    return false;
+  }
+}
+
+function _claimSharedStateLeader() {
+  if (document.visibilityState !== 'visible') return false;
+  const now = Date.now();
+  try {
+    const raw = localStorage.getItem(SHARED_STATE_LEADER_KEY);
+    const current = raw ? JSON.parse(raw) : null;
+    if (
+      !current
+      || !current.id
+      || current.id === SHARED_STATE_LEADER_ID
+      || now - Number(current.ts || 0) > SHARED_STATE_LEADER_TTL_MS
+    ) {
+      localStorage.setItem(SHARED_STATE_LEADER_KEY, JSON.stringify({ id: SHARED_STATE_LEADER_ID, ts: now }));
+      return true;
+    }
+    return current.id === SHARED_STATE_LEADER_ID;
+  } catch (_) {
+    return true;
+  }
+}
+
+function _canRefreshSharedCookbookState() {
+  if (!isVisible() || _sharedSyncInFlight) return false;
+  if (document.visibilityState !== 'visible') return false;
+  if (_foregroundChatBusy()) return false;
+  return _claimSharedStateLeader();
+}
+
 async function _refreshSharedCookbookState(reason = '') {
-  if (!isVisible() || _sharedSyncInFlight) return;
+  if (!_canRefreshSharedCookbookState()) return;
   const now = Date.now();
   if (now - _sharedSyncLast < 1500) return;
   _sharedSyncInFlight = true;

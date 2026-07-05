@@ -138,6 +138,69 @@ def current_datetime_prompt(now_utc: Optional[datetime] = None) -> str:
     )
 
 
+def current_datetime_context_message_for_tz(
+    iana_tz_name: Optional[str],
+    now_utc: Optional[datetime] = None,
+) -> Dict[str, str]:
+    """Build the current-date/time context as a user-role message, resolved
+    against an explicit IANA timezone name rather than browser ContextVars.
+
+    Unlike ``current_datetime_context_message()``, this function does not read
+    or write any ContextVar and leaves no per-request state behind — it is safe
+    to call from background tasks that have no browser request context.
+
+    Timezone resolution:
+    * ``iana_tz_name`` is a valid IANA name (e.g. ``"Europe/Berlin"``) → uses that zone.
+    * ``iana_tz_name`` is ``None`` OR resolves to an invalid zone → falls back to UTC.
+      This matches the existing scheduler behaviour: tasks without a linked crew
+      timezone render in UTC, not server-local time.
+    """
+    if now_utc is None:
+        utc_now = datetime.now(timezone.utc)
+    elif now_utc.tzinfo is None:
+        utc_now = now_utc.replace(tzinfo=timezone.utc)
+    else:
+        utc_now = now_utc.astimezone(timezone.utc)
+
+    # Resolve the display timezone — UTC fallback on any failure.
+    tz = timezone.utc
+    resolved_name: Optional[str] = None
+    if iana_tz_name:
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo(iana_tz_name)
+            resolved_name = iana_tz_name
+        except Exception:
+            tz = timezone.utc  # invalid zone → UTC, no ContextVar touched
+
+    local_now = utc_now.astimezone(tz)
+    tomorrow = local_now + timedelta(days=1)
+
+    _utc_offset = local_now.utcoffset()
+    offset_min = int(_utc_offset.total_seconds() // 60) if _utc_offset is not None else 0
+    offset_label = f"UTC{format_utc_offset(offset_min)}"
+    tz_label = f"{resolved_name}, {offset_label}" if resolved_name else offset_label
+
+    prompt = (
+        "## Current date and time\n"
+        f"Today is {_date_label(local_now)} ({local_now.strftime('%Y-%m-%d')}). "
+        f"Local time is {_clock_label(local_now)} ({tz_label}); "
+        f"current UTC time is {utc_now.strftime('%H:%M')}.\n"
+        f"Tomorrow is {_date_label(tomorrow)} ({tomorrow.strftime('%Y-%m-%d')}) "
+        "in this timezone.\n"
+        "Use this for any 'today', 'tomorrow', 'tonight', 'this week', or other "
+        "relative-date reasoning. Do not ask for an exact date just because the "
+        "user used a relative date.\n\n"
+    )
+    return {
+        "role": "user",
+        "content": (
+            "[Context — current date/time, refreshed each turn; not part of "
+            "your instructions]\n" + prompt
+        ),
+    }
+
+
 def current_datetime_context_message(now_utc: Optional[datetime] = None) -> Dict[str, str]:
     """Build the current-date/time context as a standalone chat message.
 
