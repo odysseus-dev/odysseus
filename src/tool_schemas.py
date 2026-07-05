@@ -1491,3 +1491,128 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         content = json.dumps(args)
 
     return ToolBlock(tool_type, content)
+
+
+# ---------------------------------------------------------------------------
+# Schema compression for small-context models
+# ---------------------------------------------------------------------------
+
+def _first_sentence(text: str) -> str:
+    """Extract the first sentence from a description string."""
+    if not text:
+        return ""
+    # Split on sentence-ending punctuation followed by space or end
+    for i, ch in enumerate(text):
+        if ch in ".!?" and (i + 1 >= len(text) or text[i + 1] == " "):
+            return text[: i + 1]
+    # No sentence boundary found — return first 120 chars
+    return text[:120].rstrip() + ("…" if len(text) > 120 else "")
+
+
+def _compress_parameters(params: dict, *, strip_descriptions: bool = False) -> dict:
+    """Compress a parameters object by removing optional detail.
+
+    - Strips descriptions from non-required properties when strip_descriptions
+    - Flattens nested objects (replaces their full schema with just type+desc)
+    - Removes enum lists longer than 5 entries (keeps the first 5 + hint)
+    """
+    if not isinstance(params, dict):
+        return params
+
+    out = dict(params)
+    props = out.get("properties")
+    if not isinstance(props, dict):
+        return out
+
+    required = set(out.get("required", []))
+    new_props = {}
+
+    for key, prop in props.items():
+        if not isinstance(prop, dict):
+            new_props[key] = prop
+            continue
+
+        p = dict(prop)
+
+        # Flatten nested objects — replace with type + short description
+        if p.get("type") == "object" and "properties" in p:
+            desc = p.get("description", f"{key} object")
+            p = {"type": "object", "description": desc}
+
+        # Flatten nested arrays of objects — keep only the item type hint
+        if p.get("type") == "array" and isinstance(p.get("items"), dict):
+            items = p["items"]
+            if items.get("type") == "object" and "properties" in items:
+                desc = items.get("description", p.get("description", f"Array of {key} items"))
+                p = {"type": "array", "description": desc, "items": {"type": "object"}}
+
+        # Trim long enum lists
+        enum = p.get("enum")
+        if isinstance(enum, list) and len(enum) > 5:
+            p["enum"] = enum[:5]
+            p["description"] = (p.get("description", "") + f" (+{len(enum) - 5} more)").strip()
+
+        # Strip descriptions from optional parameters
+        if strip_descriptions and key not in required:
+            p.pop("description", None)
+
+        new_props[key] = p
+
+    out["properties"] = new_props
+    return out
+
+
+def compress_schemas(
+    schemas: list,
+    *,
+    context_length: int = 0,
+) -> list:
+    """Produce compressed tool schemas for small-context models.
+
+    Compression levels based on context_length:
+      - ≤8K  (micro):  first-sentence descriptions, strip optional param descs,
+                        flatten nested objects
+      - ≤16K (small):  first-sentence descriptions, flatten nested objects
+      - ≤32K (medium): flatten nested objects only
+      - >32K:          no compression (return as-is)
+
+    The required parameters, their types, and function names are ALWAYS preserved
+    so the model can still construct valid tool calls.
+    """
+    if context_length > 32768 or context_length <= 0:
+        return schemas
+
+    micro = context_length <= 8192
+    small = context_length <= 16384
+
+    compressed = []
+    for schema in schemas:
+        if not isinstance(schema, dict):
+            compressed.append(schema)
+            continue
+
+        s = dict(schema)
+        fn = s.get("function")
+        if not isinstance(fn, dict):
+            compressed.append(s)
+            continue
+
+        fn = dict(fn)
+
+        # Shorten function description
+        desc = fn.get("description", "")
+        if micro or small:
+            fn["description"] = _first_sentence(desc)
+
+        # Compress parameters
+        params = fn.get("parameters")
+        if isinstance(params, dict):
+            fn["parameters"] = _compress_parameters(
+                params,
+                strip_descriptions=micro,
+            )
+
+        s["function"] = fn
+        compressed.append(s)
+
+    return compressed

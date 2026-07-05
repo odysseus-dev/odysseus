@@ -40,6 +40,38 @@ COMPACT_THRESHOLD = 0.85  # Trigger compaction at 85% of context window
 SUMMARY_MAX_TOKENS = 1024
 SMALL_CONTEXT_LIMIT = 8192  # Models with context <= this get aggressive trimming
 
+
+def get_compact_threshold(context_length: int) -> float:
+    """Lower compaction threshold for smaller context windows.
+
+    Small models lose coherence well before 85% — by then the useful
+    conversation history is already being crowded out by system prompt
+    and tool schema overhead.  Compact earlier so the model keeps more
+    room for the actual user interaction.
+    """
+    if context_length <= SMALL_CONTEXT_LIMIT:
+        return 0.60
+    if context_length <= 16384:
+        return 0.70
+    if context_length <= 32768:
+        return 0.75
+    return COMPACT_THRESHOLD
+
+
+def _protect_recent_for_context(context_length: int) -> int:
+    """Scale the number of recent messages protected from trimming.
+
+    For a 4K model, protecting 10 messages could be the entire context.
+    Scale down so the trimmer can actually free space.
+    """
+    if context_length <= SMALL_CONTEXT_LIMIT:
+        return 4
+    if context_length <= 16384:
+        return 6
+    if context_length <= 32768:
+        return 8
+    return 10
+
 # Cursor-style self-summarization prompt — produces structured, dense summaries
 SELF_SUMMARY_SYSTEM_PROMPT = """You are summarizing a conversation to preserve context after compaction. Produce a structured summary that lets the conversation continue seamlessly.
 
@@ -283,7 +315,7 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
     # that message with a visible notice instead of dropping it; otherwise the
     # model appears to "ignore" large pastes because it never receives them.
     # Hermes-style: recent context matters more than old context.
-    PROTECT_RECENT = 10
+    PROTECT_RECENT = _protect_recent_for_context(context_length)
     current_msg = convo_msgs[-1:] if convo_msgs else []
     prior_convo = convo_msgs[:-1] if convo_msgs else []
     if len(prior_convo) >= PROTECT_RECENT:
@@ -325,7 +357,8 @@ async def maybe_compact(
     used = estimate_tokens(messages)
     pct = (used / context_length) * 100 if context_length else 0
 
-    if pct < COMPACT_THRESHOLD * 100:
+    threshold = get_compact_threshold(context_length)
+    if pct < threshold * 100:
         return messages, context_length, False
 
     logger.info(

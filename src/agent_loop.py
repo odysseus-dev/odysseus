@@ -204,6 +204,14 @@ _API_AGENT_RULES = """\
 - User identity facts/preferences ("my name is X", "call me X", "I live in X") use `manage_memory`, not contacts.
 """
 
+_MICRO_RULES = """\
+## Rules
+- Use tools to act. Do not narrate what you would do.
+- Keep answers concise.
+- After a tool succeeds, confirm briefly and move on.
+- After a tool fails, retry or state what is blocking.
+"""
+
 _LINK_RULES = """\
 ## Link conventions
 When referencing app entities by id, use clickable markdown anchors:
@@ -547,40 +555,31 @@ def _section_text(name: str, default: str) -> str:
     return val if isinstance(val, str) and val.strip() else default
 
 
-def _compact_tool_line(name: str, section: str) -> str:
-    """One-line fenced-tool usage hint for compact/local prompts."""
-    text = (section or "").strip()
-    if not text:
-        return f"- `{name}`"
-    if text.startswith("- "):
-        return text
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    usage = []
-    in_fence = False
-    for ln in lines:
-        if ln.startswith("```"):
-            usage.append(ln)
-            in_fence = not in_fence
-            if len(usage) >= 3:
-                break
-            continue
-        if in_fence and len(usage) < 3:
-            usage.append(ln)
-    if usage:
-        return f"- `{name}` — " + " ".join(usage)
-    return f"- `{name}` — " + lines[0][:160]
+def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool = False, context_length: int = 0) -> str:
+    """Build the system prompt with only the specified tools included.
 
-
-def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool = False) -> str:
-    """Build the system prompt with only the specified tools included."""
+    Prompt tiers (driven by context_length when compact=True):
+      - micro  (≤8K):   tool list + _MICRO_RULES only, no domain rules
+      - small  (≤16K):  tool list + _API_AGENT_RULES, no domain rules
+      - medium (≤32K):  tool list + _API_AGENT_RULES + domain rules
+      - large  (>32K):  same as medium (compact API path)
+    """
     disabled = disabled_tools or set()
     included = tool_names - disabled
 
     if compact:
-        tool_lines = []
-        for name, _default_section in TOOL_SECTIONS.items():
-            if name in included:
-                tool_lines.append(f"- `{name}`")
+        tool_list = ", ".join(sorted(included)) if included else "none"
+        _is_micro = 0 < context_length <= 8192
+        _is_small = 0 < context_length <= 16384
+
+        if _is_micro:
+            # Ultra-compact: minimal rules, no domain packs
+            parts = [
+                f"You are an AI assistant. Available tools: {tool_list}.",
+                _MICRO_RULES,
+            ]
+            return "\n\n".join(parts)
+
         parts = [
             "You are an AI assistant with native tool/function calling. "
             "Only the tool schemas provided by the API are available for this turn. "
@@ -588,7 +587,9 @@ def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool 
             "## Available tools\n" + ("\n".join(tool_lines) if tool_lines else "none"),
             _API_AGENT_RULES,
         ]
-        parts.extend(_domain_rules_for_tools(included))
+        if not _is_small:
+            # medium/large: include domain rules
+            parts.extend(_domain_rules_for_tools(included))
         return "\n\n".join(parts)
 
     parts = [_AGENT_PREAMBLE]
@@ -1305,6 +1306,7 @@ def _build_system_prompt(
     suppress_local_context: bool = False,
     suppress_skills: bool = False,
     active_email: Optional[Dict[str, str]] = None,
+    context_length: int = 0,
 ) -> List[Dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
     global _cached_base_prompt, _cached_base_prompt_key
@@ -1321,7 +1323,9 @@ def _build_system_prompt(
         _ov_sig = _hl.sha256(_json.dumps(get_builtin_overrides() or {}, sort_keys=True).encode()).hexdigest()
     except Exception:
         _ov_sig = ""
-    cache_key = (frozenset(disabled_tools or []), bool(mcp_mgr), needs_admin, _rt_key, compact, _ov_sig, owner, suppress_local_context, suppress_skills)
+    # Include context_length in cache key so prompt tier changes bust the cache
+    _ctx_tier = "micro" if 0 < context_length <= 8192 else ("small" if 0 < context_length <= 16384 else ("medium" if 0 < context_length <= 32768 else "large"))
+    cache_key = (frozenset(disabled_tools or []), bool(mcp_mgr), needs_admin, _rt_key, compact, _ov_sig, owner, suppress_local_context, _ctx_tier)
     if _cached_base_prompt and _cached_base_prompt_key == cache_key and not active_document:
         agent_prompt = _cached_base_prompt
         # Skill index is user-editable (name + description), so it must never
@@ -1332,6 +1336,7 @@ def _build_system_prompt(
             mcp_disabled_map=mcp_disabled_map, compact=compact, owner=owner,
             suppress_local_context=suppress_local_context,
             suppress_skills=suppress_skills,
+            context_length=context_length,
         )
     else:
         agent_prompt, _skill_index_block = _build_base_prompt(
@@ -1344,6 +1349,7 @@ def _build_system_prompt(
             owner=owner,
             suppress_local_context=suppress_local_context,
             suppress_skills=suppress_skills,
+            context_length=context_length,
         )
         if not active_document:
             _cached_base_prompt = agent_prompt
@@ -1854,6 +1860,7 @@ def _build_base_prompt(
     owner: Optional[str] = None,
     suppress_local_context: bool = False,
     suppress_skills: bool = False,
+    context_length: int = 0,
 ):
     """Build the agent prompt with only relevant tools included.
 
@@ -1877,7 +1884,7 @@ def _build_base_prompt(
         tool_names = set(relevant_tools) | {"ask_user", "update_plan"}
         if needs_admin:
             tool_names |= _ADMIN_TOOLS
-        agent_prompt = _assemble_prompt(tool_names, disabled, compact=compact)
+        agent_prompt = _assemble_prompt(tool_names, disabled, compact=compact, context_length=context_length)
     else:
         # Fallback: full prompt (RAG unavailable)
         agent_prompt = AGENT_SYSTEM_PROMPT
@@ -1888,10 +1895,10 @@ def _build_base_prompt(
                 "chat_with_model", "ask_teacher", "list_models",
             }
             agent_prompt = _assemble_prompt(
-                set(TOOL_SECTIONS.keys()) - mgmt_tools, disabled, compact=compact
+                set(TOOL_SECTIONS.keys()) - mgmt_tools, disabled, compact=compact, context_length=context_length
             )
         elif compact:
-            agent_prompt = _assemble_prompt(set(TOOL_SECTIONS.keys()), disabled, compact=True)
+            agent_prompt = _assemble_prompt(set(TOOL_SECTIONS.keys()), disabled, compact=True, context_length=context_length)
 
     # Inject the Level-0 skill index — one line per skill so the agent
     # knows what canonical procedures exist. Includes published skills
@@ -2743,16 +2750,22 @@ async def stream_agent_loop(
         _is_api_model = False
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
-    _compact_agent_prompt = _is_api_model or _is_ollama_native or _ollama_openai_compat
+    # Context-aware compaction: local models with small context windows get
+    # the compact prompt tier (same format API models use) instead of the
+    # verbose fenced-block descriptions.  This is the single biggest token
+    # savings for small models.
+    _is_small_context = context_length > 0 and context_length <= 32768
+    _use_compact = _is_api_model or _is_small_context
     messages, mcp_schemas = _build_system_prompt(
         messages, model, _prompt_active_document, mcp_mgr, disabled_tools,
         needs_admin=_needs_admin, relevant_tools=_relevant_tools,
         mcp_disabled_map=_mcp_disabled_map,
-        compact=_compact_agent_prompt,
+        compact=_use_compact,
         owner=owner,
         suppress_local_context=guide_only,
         suppress_skills=_low_signal_turn,
         active_email=active_email,
+        context_length=context_length,
     )
     if _ody_doc_finetune_mode and not plan_mode and not approved_plan and not guide_only:
         messages = _minimal_odysseus_doc_messages(
@@ -2850,15 +2863,23 @@ async def stream_agent_loop(
     # Strip internal metadata keys before sending to the LLM API
     messages = [{k: v for k, v in msg.items() if k != "_protected"} for msg in messages]
 
-    agent_prompt_tokens = estimate_tokens(messages)
-    logger.info(
-        "[agent-timing] prep_done model=%s prompt_tokens=%s context_length=%s prep=%s",
-        model,
-        agent_prompt_tokens,
-        context_length,
-        {k: round(v, 3) for k, v in prep_timings.items()},
-    )
-    yield f"data: {json.dumps({'type': 'agent_prep', 'data': {k: round(v, 3) for k, v in prep_timings.items()}})}\n\n"
+    # Compute context budget report for UI visibility
+    _budget_report = None
+    if context_length > 0:
+        try:
+            from src.context_budget import context_budget_report as _ctx_report
+            _sys_tokens = sum(estimate_tokens([m]) for m in messages if m.get("role") == "system")
+            _hist_tokens = sum(estimate_tokens([m]) for m in messages if m.get("role") != "system")
+            # Schema tokens estimated from the first round's schema set
+            _schema_tokens = 0  # will be updated after first round
+            _budget_report = _ctx_report(_sys_tokens, _schema_tokens, _hist_tokens, context_length)
+        except Exception as _e:
+            logger.debug("[agent] context budget report skipped: %s", _e)
+
+    _prep_data = {k: round(v, 3) for k, v in prep_timings.items()}
+    if _budget_report:
+        _prep_data["context_budget"] = _budget_report
+    yield f"data: {json.dumps({'type': 'agent_prep', 'data': _prep_data})}\n\n"
 
     full_response = ""
     total_start = time.time()
@@ -2994,7 +3015,13 @@ async def stream_agent_loop(
         agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
 
         _tool_names_sent = [t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")]
-        logger.info(f"[agent-debug] round={round_num} model={model} _is_api_model={_is_api_model} tools_sent={len(_tool_names_sent)} tool_names={_tool_names_sent[:15]} relevant_tools={sorted(_relevant_tools)[:15] if _relevant_tools else 'ALL'}")
+
+        # Compress schemas for small-context models to save tokens
+        if all_tool_schemas and _is_small_context:
+            from src.tool_schemas import compress_schemas as _compress_schemas
+            all_tool_schemas = _compress_schemas(all_tool_schemas, context_length=context_length)
+
+        logger.info(f"[agent-debug] round={round_num} model={model} _is_api_model={_is_api_model} compact={_use_compact} tools_sent={len(_tool_names_sent)} tool_names={_tool_names_sent[:15]} relevant_tools={sorted(_relevant_tools)[:15] if _relevant_tools else 'ALL'}")
 
         # Primary target + any configured fallback models. stream_llm_with_fallback
         # only switches on a pre-content failure, so streamed output is never
