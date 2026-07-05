@@ -3,24 +3,15 @@
 # which raises KeyError on Python 3.13+ (PEP 667). Build patched wheels here so
 # the final image / Cookbook never has to compile the broken sdists. See
 # docker/build-realesrgan-wheels.sh for the full rationale.
-FROM python:3.14-slim AS realesrgan-wheels
+ARG PYTHON_VERSION=3.12
+FROM python:${PYTHON_VERSION}-slim AS realesrgan-wheels
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 COPY docker/build-realesrgan-wheels.sh /usr/local/bin/build-realesrgan-wheels.sh
 RUN bash /usr/local/bin/build-realesrgan-wheels.sh /wheels
 
-# ---- builder: speech wheels on Python 3.12 (spacy/thinc/blis broken on 3.14) ----
-ARG INSTALL_SPEECH=false
-FROM python:3.12-slim AS speech-wheels
-RUN mkdir -p /speech-wheels && \
-    if [ "$INSTALL_SPEECH" = "true" ]; then \
-        apt-get update && apt-get install -y --no-install-recommends build-essential && \
-        rm -rf /var/lib/apt/lists/* && \
-        pip install --no-cache-dir wheel && \
-        pip wheel --no-cache-dir -w /speech-wheels faster-whisper kokoro soundfile spacy; \
-    fi
-
-FROM python:3.14-slim
+# Final image: Python 3.12 (spacy/thinc/blis don't compile on 3.14).
+FROM python:${PYTHON_VERSION}-slim
 
 # System deps. tmux is required by Cookbook for background downloads/serves.
 # openssh-client is required for Cookbook remote server tests, setup, probes,
@@ -89,14 +80,11 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 # Local speech-to-text and text-to-speech.
 # STT: faster-whisper (CTranslate2, CPU by default, optional CUDA via torch).
-# TTS: Kokoro-82M (requires torch + spacy; GPU preferred but CPU works).
-# spacy/thinc/blis don't compile on Python 3.14, so wheels are pre-built
-# on Python 3.12 in the speech-wheels builder stage above.
+# TTS: Kokoro-82M (requires torch; GPU preferred but CPU works).
 ARG INSTALL_SPEECH=false
 ARG INSTALL_SPEECH_GPU=false
-COPY --from=speech-wheels /speech-wheels /tmp/speech-wheels
 RUN if [ "$INSTALL_SPEECH" = "true" ]; then \
-        pip install --no-cache-dir -f /tmp/speech-wheels faster-whisper kokoro soundfile; \
+        pip install --no-cache-dir faster-whisper kokoro soundfile; \
     fi && \
     if [ "$INSTALL_SPEECH_GPU" = "true" ]; then \
         pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu121; \
