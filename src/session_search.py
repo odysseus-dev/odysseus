@@ -95,7 +95,10 @@ def _sanitize_fts_query(query: str) -> str | None:
         token = match.group(0).strip("._-")
         if not token:
             continue
-        if any(ch in token for ch in "._-"):
+        # A bareword that is a reserved FTS5 boolean operator (AND/OR/NOT) still
+        # raises sqlite3.OperationalError, which this function exists to prevent.
+        # Quote it so it is matched as a literal word like any other token.
+        if any(ch in token for ch in "._-") or token in ("AND", "OR", "NOT"):
             parts.append('"' + token.replace('"', '""') + '"')
         else:
             parts.append(token)
