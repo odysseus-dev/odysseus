@@ -95,6 +95,7 @@ def test_agent_system_prompt_includes_shared_current_time(monkeypatch):
     set_user_tz_offset(600)
     set_user_tz_name("Australia/Brisbane")
     monkeypatch.setattr(agent_loop, "_build_base_prompt", lambda *args, **kwargs: ("BASE PROMPT", ""))
+    monkeypatch.setattr(agent_loop, "build_seed_order_context", lambda: None)
     monkeypatch.setattr(agent_loop, "set_active_model", lambda model: None)
     monkeypatch.setattr(agent_loop, "get_builtin_overrides", lambda: {})
     monkeypatch.setattr(agent_loop, "_cached_base_prompt", None)

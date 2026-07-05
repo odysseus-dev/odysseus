@@ -132,6 +132,9 @@ DEFAULT_SETTINGS = {
     "utility_model_fallbacks": [],
     "teacher_model": "",
     "teacher_enabled": False,
+    # Optional read-only path to the canonical Misumi/flat-knowledgebase clone.
+    # When present, prompt assembly loads the Seed Order before persona/tools.
+    "misumi_seed_order_root": "",
     # Skills: minimum self-reported confidence for an auto-written (LLM-authored)
     # DRAFT skill to be injected into the agent prompt. Published skills always
     # qualify. Keeps low-confidence auto-skills out of context until they're

@@ -9,6 +9,7 @@ from src.chat_helpers import extract_urls
 from src.youtube_handler import is_youtube_url
 from src.search import comprehensive_web_search, fetch_webpage_content
 from src.prompt_security import UNTRUSTED_CONTEXT_POLICY, untrusted_context_message
+from src.seed_order_context import build_seed_order_context
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,13 @@ class ChatProcessor:
         """
         preface = []
         rag_sources = []
+
+        seed_order_context = build_seed_order_context()
+        if seed_order_context:
+            preface.append({
+                "role": "system",
+                "content": seed_order_context,
+            })
 
         # Add preset system prompt if specified
         if preset_system_prompt:
