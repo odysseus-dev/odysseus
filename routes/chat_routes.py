@@ -781,11 +781,9 @@ def setup_chat_routes(
         # by default without having to send allow_bash in every request.
         if allow_bash is not None and str(allow_bash).lower() != "true":
             disabled_tools.add("bash")
-        _explicit_web_intent = bool(_tool_intent and _tool_intent.category == "web")
         if (
             allow_web_search is not None
             and str(allow_web_search).lower() != "true"
-            and not _explicit_web_intent
         ):
             disabled_tools.add("web_search")
             disabled_tools.add("web_fetch")

@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from src.action_intents import classify_tool_intent
+
 _CHAT_ROUTES = Path(__file__).resolve().parent.parent / "routes" / "chat_routes.py"
 
 
@@ -73,7 +75,7 @@ def test_allow_web_search_reads_from_body_as_fallback():
     )
 
 
-def test_disabled_tools_does_not_bash_when_allow_bash_is_none():
+def test_disabled_tools_respects_missing_vs_explicit_toggles():
     """When allow_bash is not set (None), bash must NOT be unconditionally
     added to disabled_tools.  The per-user privilege check handles it.
     """
@@ -89,8 +91,8 @@ def test_disabled_tools_does_not_bash_when_allow_bash_is_none():
     assert "allow_web_search is not None" in source, (
         "disabled_tools check must guard against allow_web_search being None"
     )
-    assert "_explicit_web_intent" in source and "not _explicit_web_intent" in source, (
-        "explicit web-search requests must override an off web toggle for that turn"
+    assert "and not _explicit_web_intent" not in source, (
+        "explicit allow_web_search=false must not be overridden by prompt web intent"
     )
 
 
@@ -116,7 +118,6 @@ def _build_disabled_tools(
     if (
         allow_web_search is not None
         and str(allow_web_search).lower() != "true"
-        and not explicit_web_intent
     ):
         disabled_tools.add("web_search")
         disabled_tools.add("web_fetch")
@@ -156,15 +157,27 @@ def test_json_body_allow_web_search_false_disables_web():
     assert "web_fetch" in disabled
 
 
-def test_explicit_web_intent_overrides_false_web_toggle_for_turn():
-    """A stale/off web toggle must not remove web tools when the message
-    explicitly asks to use web search."""
+@pytest.mark.parametrize(
+    "message",
+    [
+        "please use web search for current CVEs",
+        "search the web for current CVEs",
+        "can you look up the latest docs",
+    ],
+)
+def test_explicit_false_disables_web_despite_prompt_web_intent(message):
+    """Explicit allow_web_search=false is a hard deny even when the prompt
+    asks for web search."""
+    intent = classify_tool_intent(message)
+    assert intent is not None
+    assert intent.category == "web"
+
     disabled = _build_disabled_tools(
         allow_web_search="false",
         explicit_web_intent=True,
     )
-    assert "web_search" not in disabled
-    assert "web_fetch" not in disabled
+    assert "web_search" in disabled
+    assert "web_fetch" in disabled
 
 
 def test_admin_user_gets_bash_enabled_by_default():

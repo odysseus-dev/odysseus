@@ -349,7 +349,7 @@ def _assert_owns_account(account_id: str, owner: str) -> None:
             row = db.query(_EA).filter(_EA.id == account_id).first()
             if row is None:
                 raise HTTPException(404, "Account not found")
-            if row.owner and row.owner != owner:
+            if not _account_visible_to_owner(row, owner):
                 # Treat as 404 (not 403) so we don't leak existence.
                 raise HTTPException(404, "Account not found")
         finally:
@@ -361,6 +361,26 @@ def _assert_owns_account(account_id: str, owner: str) -> None:
         # through. 503 tells the caller to retry; logs preserve detail.
         logger.error(f"Account-owner check failed: {e}")
         raise HTTPException(503, "Account check failed")
+
+
+def _account_visible_to_owner(row, owner: str) -> bool:
+    """Whether an authenticated `owner` may act on this EmailAccount row.
+
+    Mirrors the SQL predicate in `_get_email_config`'s
+    `_owner_or_matching_legacy_account`: a caller sees an account they own, or a
+    legacy owner-less account (owner NULL/"") only when its own mailbox
+    (`imap_user` / `from_address`) is the caller's. `email_accounts` is the one
+    owner-scoped table deliberately left out of the legacy-owner migration
+    backfill, so ownerless rows persist on multi-user deploys — making this the
+    gate that keeps one tenant off another's imported mailbox and its decrypted
+    IMAP/SMTP credentials."""
+    row_owner = getattr(row, "owner", None) or ""
+    if row_owner:
+        return row_owner == owner
+    return owner in {
+        getattr(row, "imap_user", None) or "",
+        getattr(row, "from_address", None) or "",
+    }
 
 def _q(name: str) -> str:
     """Quote an IMAP mailbox name. Defensive: escapes `\\` and `"` and wraps
@@ -903,12 +923,13 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
         try:
             if account_id:
                 row = db.query(_EA).filter(_EA.id == account_id, _EA.enabled == True).first()  # noqa: E712
-                # If the resolved row belongs to a different owner, treat as
+                # If the resolved row isn't visible to this owner, treat as
                 # not-found rather than silently serving it. This is a defense
                 # in depth — `require_owner` already calls `_assert_owns_account`
                 # for query-param account_ids, but other callers (cookbook
-                # rules, scheduled poller) may not.
-                if row is not None and owner and row.owner and row.owner != owner:
+                # rules, scheduled poller) may not. Ownerless legacy rows are
+                # only visible on a mailbox match, same as the fallback below.
+                if row is not None and owner and not _account_visible_to_owner(row, owner):
                     row = None
             # Fallback path — restrict to this owner's accounts so we don't
             # leak another user's default mailbox to an unconfigured user.
