@@ -196,10 +196,11 @@ async def test_run_teacher_inline_triggers_tier2_escalation(monkeypatch):
         return '```json\n{"action": "add", "name": "test-skill"}\n```'
     monkeypatch.setattr("src.teacher_escalation._call_teacher", fake_call_teacher)
 
-    # Mock do_manage_skills
-    async def fake_do_manage_skills(skill_json, owner=None):
-        return {"success": True}
-    monkeypatch.setattr("src.tool_implementations.do_manage_skills", fake_do_manage_skills)
+    # Mock ManageSkillsTool.execute (used by run_teacher_inline to save the skill).
+    # Patched on the class (unbound), so self is passed as the first argument.
+    async def fake_manage_skills_execute(self, content, ctx):
+        return {"results": "skill saved"}
+    monkeypatch.setattr("src.agent_tools.skill_tools.ManageSkillsTool.execute", fake_manage_skills_execute)
 
     events = []
     async for evt in teacher_escalation.run_teacher_inline(

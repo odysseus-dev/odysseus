@@ -779,21 +779,6 @@ async def _execute_tool_block_impl(
     elif tool == "manage_settings":
         desc = "manage_settings"
         result = await do_manage_settings(content, owner=owner)
-    elif tool == "manage_tasks":
-        desc = "manage_tasks"
-        result = await do_manage_tasks(content, owner=owner)
-    elif tool == "manage_skills":
-        desc = "manage_skills"
-        result = await do_manage_skills(content, owner=owner)
-    elif tool == "api_call":
-        first_line = content.split("\n")[0].strip()[:60]
-        desc = f"api_call: {first_line}"
-        result = await do_api_call(content)
-    elif tool in ("manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "manage_settings"):
-        # Registry-dispatched (agent_tools.admin_tools); owner threaded for ownership/admin checks.
-        desc = tool
-        result = await _direct_fallback(tool, content, owner=owner) \
-            or {"error": f"{tool}: execution failed", "exit_code": 1}
     elif tool == "manage_notes":
         desc = "manage_notes"
         result = await do_manage_notes(content, owner=owner)
@@ -852,15 +837,6 @@ async def _execute_tool_block_impl(
         desc = tool
         from src.agent_tools import TOOL_HANDLERS
         result = await TOOL_HANDLERS[tool](content, {"session_id": session_id, "owner": owner})
-    elif tool == "vault_search":
-        desc = "vault_search"
-        result = await do_vault_search(content, owner=owner)
-    elif tool == "vault_get":
-        desc = "vault_get"
-        result = await do_vault_get(content, owner=owner)
-    elif tool == "vault_unlock":
-        desc = "vault_unlock"
-        result = await do_vault_unlock(content, owner=owner)
     elif tool in BUILTIN_EMAIL_TOOLS:
         # Bare email tool name from fenced-block models (e.g. Ollama) — route to MCP email server.
         # Non-admin owners never reach here: BUILTIN_EMAIL_TOOLS ⊆ NON_ADMIN_BLOCKED_TOOLS,

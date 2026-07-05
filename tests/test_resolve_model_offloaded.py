@@ -2,9 +2,12 @@
 directly from an async handler stalls the whole event loop for the duration of
 the probe. The async call sites now wrap it in asyncio.to_thread.
 
-do_pipeline is used as the representative handler: _resolve_model is the first
-real work it does, and a ValueError returns early before any LLM call, so these
-tests drive the offload path without a live model endpoint.
+chat_with_model is used as the representative handler: _resolve_model is the
+first real work it does, and a ValueError returns early before any LLM call, so
+these tests drive the offload path without a live model endpoint.
+
+(Previously used do_pipeline, which was refactored into PipelineTool as part
+of the tool -> agent_tools migration #3629.)
 """
 
 import asyncio
@@ -12,9 +15,10 @@ import threading
 import time
 
 import src.ai_interaction as ai
+from src.agent_tools.model_interaction_tools import chat_with_model
 
 
-async def test_do_pipeline_resolves_model_off_the_event_loop(monkeypatch):
+async def test_chat_with_model_resolves_model_off_the_event_loop(monkeypatch):
     # A deliberately blocking _resolve_model that records how many copies run
     # at once. If it ran on the event loop, the first call would block the loop
     # and the second could not start — peak concurrency would be 1.
@@ -32,17 +36,17 @@ async def test_do_pipeline_resolves_model_off_the_event_loop(monkeypatch):
 
     monkeypatch.setattr(ai, "_resolve_model", slow_resolve)
 
-    content = '[{"model": "m", "instruction": "go"}]'
+    content = "m\nmessage body"  # first line = model spec, rest = message
     results = await asyncio.gather(
-        ai.do_pipeline(content, owner="u"),
-        ai.do_pipeline(content, owner="u"),
+        chat_with_model(content, owner="u"),
+        chat_with_model(content, owner="u"),
     )
 
     assert all("error" in r for r in results)
     assert state["peak"] == 2, "resolutions did not overlap — call still blocks the loop"
 
 
-async def test_do_pipeline_uses_offloaded_resolution_result(monkeypatch):
+async def test_chat_with_model_uses_offloaded_resolution_result(monkeypatch):
     # The offload must also return the resolved tuple, not just propagate errors.
     monkeypatch.setattr(
         ai, "_resolve_model",
@@ -54,7 +58,7 @@ async def test_do_pipeline_uses_offloaded_resolution_result(monkeypatch):
 
     monkeypatch.setattr("src.llm_core.llm_call_async", fake_llm)
 
-    result = await ai.do_pipeline('[{"model": "m", "instruction": "go"}]', owner="u")
+    result = await chat_with_model("m\nhello", owner="u")
 
     assert "error" not in result, result
     # The model the offloaded _resolve_model returned made it through to the call.
