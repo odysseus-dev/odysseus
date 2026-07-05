@@ -23,6 +23,7 @@ import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
 import galleryModule from './js/gallery.js';
 import tasksModule from './js/tasks.js?v=20260723tasksbulkfeedback1';
+import notificationsModule from './js/notifications.js';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
 import adminModule from './js/admin.js?v=20260716openrouter3';
@@ -3736,6 +3737,9 @@ function startOdysseusApp() {
   // Initialize compare module
   if (compareModule) {
     compareModule.init(API_BASE);
+  }
+  if (notificationsModule) {
+    notificationsModule.init(API_BASE);
   }
   researchPanelModule.init(API_BASE, markdownModule, sessionModule);
   // Initialize document editor module

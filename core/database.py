@@ -743,6 +743,65 @@ class TaskRun(Base):
     )
 
 
+class NotificationEvent(Base):
+    """Durable notification/audit event.
+
+    System events are logged here even when they do not deserve a visible UI
+    entry. Events that should appear in the notification inbox are paired with
+    one or more NotificationInboxItem rows.
+    """
+    __tablename__ = "notification_events"
+
+    id = Column(String, primary_key=True, index=True)
+    owner = Column(String, nullable=True, index=True)
+    event_class = Column(String, nullable=False, default="system_event", index=True)
+    title = Column(String, nullable=False, default="")
+    body = Column(Text, nullable=True)
+    source_type = Column(String, nullable=True, index=True)
+    source_id = Column(String, nullable=True, index=True)
+    source_url = Column(Text, nullable=True)
+    severity = Column(String, nullable=False, default="info", index=True)
+    category = Column(String, nullable=True, index=True)
+    dedupe_key = Column(String, nullable=True, index=True)
+    metadata_json = Column(JSON, nullable=True)
+    retention_expires_at = Column(DateTime, nullable=True, index=True)
+    created_at = Column(DateTime, nullable=False, default=utcnow_naive, index=True)
+
+    __table_args__ = (
+        Index('ix_notification_events_owner_created', 'owner', 'created_at'),
+        Index('ix_notification_events_owner_class_created', 'owner', 'event_class', 'created_at'),
+        Index('ix_notification_events_owner_dedupe', 'owner', 'dedupe_key'),
+    )
+
+
+class NotificationInboxItem(Base):
+    """Visible/dismissible notification inbox entry derived from an event."""
+    __tablename__ = "notification_inbox_items"
+
+    id = Column(String, primary_key=True, index=True)
+    owner = Column(String, nullable=True, index=True)
+    event_id = Column(String, ForeignKey("notification_events.id", ondelete="CASCADE"), nullable=False, index=True)
+    notification_kind = Column(String, nullable=False, default="inbox_record", index=True)
+    primary_action = Column(String, nullable=True)
+    action_url = Column(Text, nullable=True)
+    is_read = Column(Boolean, default=False, nullable=False, index=True)
+    read_at = Column(DateTime, nullable=True)
+    dismissed_at = Column(DateTime, nullable=True, index=True)
+    archived_at = Column(DateTime, nullable=True, index=True)
+    created_at = Column(DateTime, nullable=False, default=utcnow_naive, index=True)
+
+    event = relationship(
+        "NotificationEvent",
+        backref=backref("inbox_items", cascade="all, delete-orphan"),
+    )
+
+    __table_args__ = (
+        Index('ix_notification_inbox_owner_created', 'owner', 'created_at'),
+        Index('ix_notification_inbox_owner_unread', 'owner', 'is_read', 'created_at'),
+        Index('ix_notification_inbox_owner_visible', 'owner', 'archived_at', 'dismissed_at', 'created_at'),
+    )
+
+
 class Memory(Base):
     """
     SQLAlchemy model for Memory table.
