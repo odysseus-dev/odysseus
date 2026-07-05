@@ -29,6 +29,7 @@ export default {
   "sidebar.extractMemories": "Извлечь воспоминания из этой сессии",
   "sidebar.unsorted": "Без сортировки",
   "sidebar.newChat": "Новый чат",
+  "sidebar.search": "Поиск",
   "sidebar.restore": "Восстановить",
   "sidebar.archive": "Архив",
   "sidebar.openReport": "Открыть отчёт",

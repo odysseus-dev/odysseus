@@ -29,6 +29,7 @@ export default {
   "sidebar.extractMemories": "Extract memories from this session",
   "sidebar.unsorted": "Unsorted",
   "sidebar.newChat": "New Chat",
+  "sidebar.search": "Search",
   "sidebar.restore": "Restore",
   "sidebar.archive": "Archive",
   "sidebar.openReport": "Open Report",
