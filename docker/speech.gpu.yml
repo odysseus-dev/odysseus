@@ -1,0 +1,9 @@
+# GPU speech overlay — adds CUDA torch for GPU-accelerated STT/TTS.
+# Stack with speech.yml + a GPU overlay:
+#   COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml:docker/speech.yml:docker/speech.gpu.yml
+services:
+  odysseus:
+    build:
+      args:
+        INSTALL_SPEECH: "true"
+        INSTALL_SPEECH_GPU: "true"

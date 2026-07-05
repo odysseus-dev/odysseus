@@ -382,6 +382,56 @@ def providers_health(endpoints: List[Dict[str, Any]],
     return _rollup_items("providers", "endpoint(s)", per_endpoint, key="endpoints")
 
 
+# ── STT (Speech-to-Text) ──
+
+def stt_health(settings: Dict[str, Any]) -> Dict[str, Any]:
+    stt_enabled = settings.get("stt_enabled", False)
+    stt_provider = settings.get("stt_provider", "disabled")
+    if not stt_enabled or stt_provider == "disabled":
+        return _svc("stt", "ok", "Speech-to-text is disabled.")
+    if stt_provider == "browser":
+        return _svc("stt", "ok", "Browser-based STT (client-side).", provider="browser")
+    if stt_provider == "local":
+        try:
+            from faster_whisper import WhisperModel  # noqa: F401
+            return _svc("stt", "ok", "Local STT available (faster-whisper installed).",
+                        provider="local", model=settings.get("stt_model", "base"))
+        except ImportError:
+            return _svc("stt", "down", "Local STT requested but faster-whisper not installed.",
+                        provider="local", error="import_error")
+    if stt_provider.startswith("endpoint:"):
+        return _svc("stt", "ok", "API-based STT configured.", provider=stt_provider)
+    return _svc("stt", "down", f"Unknown STT provider: {stt_provider}")
+
+
+# ── TTS (Text-to-Speech) ──
+
+def tts_health(settings: Dict[str, Any]) -> Dict[str, Any]:
+    tts_enabled = settings.get("tts_enabled", True)
+    tts_provider = settings.get("tts_provider", "disabled")
+    if not tts_enabled or tts_provider == "disabled":
+        return _svc("tts", "ok", "Text-to-speech is disabled.")
+    if tts_provider == "browser":
+        return _svc("tts", "ok", "Browser-based TTS (client-side).", provider="browser")
+    if tts_provider == "local":
+        try:
+            from services.tts.tts_service import get_tts_service
+            tts = get_tts_service()
+            kokoro = tts._get_kokoro()
+            if kokoro and kokoro.available:
+                return _svc("tts", "ok",
+                            f"Local TTS available (Kokoro-82M on {kokoro._device_label}).",
+                            provider="local", device=kokoro._device_label)
+            return _svc("tts", "down", "Local TTS requested but Kokoro not loaded.",
+                        provider="local", error="not_loaded")
+        except Exception:
+            return _svc("tts", "down", "Local TTS requested but kokoro not installed.",
+                        provider="local", error="import_error")
+    if tts_provider.startswith("endpoint:"):
+        return _svc("tts", "ok", "API-based TTS configured.", provider=tts_provider)
+    return _svc("tts", "down", f"Unknown TTS provider: {tts_provider}")
+
+
 def _rollup_items(name: str, noun: str, items: List[Dict[str, Any]],
                   key: str = "accounts") -> Dict[str, Any]:
     """Shared ok/degraded/down rollup for a list of per-item probe results."""
@@ -481,12 +531,14 @@ async def collect_service_health(rag_manager: Any = None,
     # ChromaDB is in-process and synchronous (just reads flags).
     chroma = chromadb_health(rag_manager, memory_vector)
 
-    names = ["searxng", "ntfy", "email", "providers"]
+    names = ["searxng", "ntfy", "email", "providers", "stt", "tts"]
     coros = [
         _run_subsystem("searxng", searxng_health, settings),
         _run_subsystem("ntfy", ntfy_health, inputs["integrations"], settings),
         _run_subsystem("email", email_health, inputs["accounts"]),
         _run_subsystem("providers", providers_health, inputs["endpoints"]),
+        _run_subsystem("stt", stt_health, settings),
+        _run_subsystem("tts", tts_health, settings),
     ]
     try:
         results = await asyncio.wait_for(asyncio.gather(*coros),
