@@ -91,7 +91,7 @@ RUN if [ "$INSTALL_SPEECH" = "true" ]; then \
         python3 -m spacy download en_core_web_sm && \
         mkdir -p /app/data/piper_voices && \
         cd /app/data/piper_voices && \
-        python3 -c "from piper import PiperVoice; import subprocess; subprocess.run(['python3', '-m', 'piper.download_voices', '--output_dir', '.', 'ru_RU-irina-medium', 'en_US-lessac-medium'], check=True)"; \
+        python3 -c "from piper import PiperVoice; import subprocess; subprocess.run(['python3', '-m', 'piper.download_voices', '--download-dir', '/app/data/piper_voices', 'ru_RU-irina-medium', 'en_US-lessac-medium'], check=True)"; \
     fi && \
     if [ "$INSTALL_SPEECH_GPU" = "true" ]; then \
         pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu121; \
