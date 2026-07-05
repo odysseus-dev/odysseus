@@ -76,6 +76,55 @@ def test_list_sessions_excludes_other_users_sessions(monkeypatch):
     assert bob_id not in returned_ids
 
 
+def test_incognito_purge_spares_actively_used_session(monkeypatch):
+    """GET /api/sessions purges idle incognito ghosts but must NOT delete an
+    incognito ("Nobody") session that has recent activity — otherwise a temp
+    chat vanishes mid-conversation once it ages past the 10-min window.
+    The guard keys on last activity, not creation time.
+    """
+    import routes.session_routes as sr
+    from unittest.mock import MagicMock
+
+    _stub_multipart_if_missing(monkeypatch)
+    monkeypatch.setattr(sr, "SessionLocal", _TS)
+    monkeypatch.setattr(sr, "effective_user", lambda request: None)
+
+    old = cdb.utcnow_naive() - timedelta(minutes=30)
+    recent = cdb.utcnow_naive() - timedelta(minutes=1)
+    active_id = str(uuid.uuid4())
+    idle_id = str(uuid.uuid4())
+    db = _TS()
+    try:
+        db.query(DbMessage).delete()
+        db.query(DbSession).delete()
+        # Both created 30 min ago (past the window); differ only in last activity.
+        db.add(DbSession(id=active_id, owner=None, name="Nobody",
+                         endpoint_url="", model="", archived=False,
+                         created_at=old, updated_at=recent, last_message_at=recent))
+        db.add(DbSession(id=idle_id, owner=None, name="Nobody",
+                         endpoint_url="", model="", archived=False,
+                         created_at=old, updated_at=old, last_message_at=old))
+        db.commit()
+    finally:
+        db.close()
+
+    sm = MagicMock()
+    sm.get_sessions_for_user.return_value = {}
+    router = sr.setup_session_routes(sm, {})
+    endpoint = next(r.endpoint for r in router.routes
+                    if getattr(r, "path", "") == "/api/sessions"
+                    and "GET" in getattr(r, "methods", set()))
+    endpoint(request=MagicMock())
+
+    db = _TS()
+    try:
+        remaining = {s.id for s in db.query(DbSession).all()}
+    finally:
+        db.close()
+    assert active_id in remaining, "actively-used incognito session was wrongly purged"
+    assert idle_id not in remaining, "idle incognito ghost should have been purged"
+
+
 def test_auto_sort_skip_llm_cleans_owner_stamped_sessions_when_auth_disabled(monkeypatch):
     import routes.session_routes as sr
     from unittest.mock import MagicMock

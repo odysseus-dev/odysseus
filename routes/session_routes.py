@@ -215,22 +215,30 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         user = effective_user(request)
         # Lazy purge: incognito sessions are ephemeral by design — wipe leftovers
         # from the DB and session_manager so they vanish on the next page refresh.
-        # BUT: skip sessions that were created within the last 10 minutes.
-        # Without that guard, the purge nukes the active "Nobody" session on the
-        # very first /api/sessions call after creation, killing the in-flight
-        # chat. The frontend's own _cleanupIncognitoSessions handler knows which
-        # session is current and won't delete the live one — this server-side
-        # purge exists only to catch ghosts the frontend missed (tab close,
-        # crash). Only clean up rows old enough to be definitely orphaned.
+        # Purge only sessions that have been IDLE past the cutoff, gauged by last
+        # activity (last_message_at → updated_at → created_at), NOT creation time.
+        # Guarding on created_at alone deleted actively-used "Nobody" chats
+        # mid-conversation once they aged past the 10-minute window: the session
+        # vanished from the sidebar while the user was still typing, and the next
+        # send 404'd. The frontend's own _cleanupIncognitoSessions handler
+        # protects the current session; this server-side purge only needs to
+        # catch genuinely orphaned ghosts (tab close, crash), which by definition
+        # have had no recent activity.
         try:
             from datetime import timedelta as _td
+            from sqlalchemy import func as _func
             _cutoff = utcnow_naive() - _td(minutes=10)
             _purge_db = SessionLocal()
             try:
                 from core.database import ChatMessage as _DbMsg
+                _last_activity = _func.coalesce(
+                    DbSession.last_message_at,
+                    DbSession.updated_at,
+                    DbSession.created_at,
+                )
                 _ghosts = _purge_db.query(DbSession).filter(
                     DbSession.name.in_(("Nobody", "Incognito")),
-                    DbSession.created_at < _cutoff,
+                    _last_activity < _cutoff,
                 ).all()
                 for _g in _ghosts:
                     _purge_db.query(_DbMsg).filter(_DbMsg.session_id == _g.id).delete()
