@@ -2483,25 +2483,35 @@ def setup_model_routes(model_discovery):
 
     @router.get("/tools")
     def list_tools():
-        """List all available tools with their enabled/disabled status."""
+        """List all available tools with their enabled/disabled status and whether they are active by default."""
         from src.agent_tools import TOOL_TAGS
+        from src.settings import DEFAULT_SETTINGS
         settings = _load_settings()
         disabled = set(settings.get("disabled_tools", []))
+        enabled_tools = set(settings.get("enabled_tools", DEFAULT_SETTINGS["enabled_tools"]))
         tools = []
         for tag in sorted(TOOL_TAGS):
-            tools.append({"id": tag, "enabled": tag not in disabled})
+            tools.append({
+                "id": tag,
+                "enabled": tag not in disabled,
+                "is_default": tag in enabled_tools
+            })
         return {"tools": tools}
 
     class ToolsUpdate(BaseModel):
-        disabled: list = []
+        disabled: list | None = None
+        enabled_tools: list | None = None
 
     @router.post("/tools")
     def update_tools(body: ToolsUpdate, request: Request):
-        """Update which tools are disabled."""
+        """Update which tools are disabled and which are active by default."""
         require_admin(request)
         settings = _load_settings()
-        settings["disabled_tools"] = body.disabled
+        if body.disabled is not None:
+            settings["disabled_tools"] = body.disabled
+        if body.enabled_tools is not None:
+            settings["enabled_tools"] = body.enabled_tools
         _save_settings(settings)
-        return {"ok": True, "disabled": body.disabled}
+        return {"ok": True, "disabled": body.disabled, "enabled_tools": body.enabled_tools}
 
     return router

@@ -1909,7 +1909,13 @@ async function loadBuiltinTools() {
             <span class="admin-tool-desc">${esc(t.desc)}</span>
           </div>
           <span class="admin-tool-ctx" title="Approximate context tokens used">${esc(t.ctx)}</span>
-          <label class="admin-switch" style="flex-shrink:0;">
+          <label class="admin-switch" style="flex-shrink:0; margin-right:8px;" title="Active by default">
+            <span style="font-size:10px; margin-right: 4px;">Default</span>
+            <input type="checkbox" data-tool-default="${esc(t.id)}" ${t.is_default ? 'checked' : ''}>
+            <span class="admin-slider"></span>
+          </label>
+          <label class="admin-switch" style="flex-shrink:0;" title="Enable/Disable globally">
+            <span style="font-size:10px; margin-right: 4px;">Enabled</span>
             <input type="checkbox" data-tool-id="${esc(t.id)}" ${t.enabled ? 'checked' : ''}>
             <span class="admin-slider"></span>
           </label>
@@ -1942,12 +1948,18 @@ async function loadBuiltinTools() {
     // Helper: save disabled tools + update counters
     async function _saveToolState() {
       const allChecks = list.querySelectorAll('input[data-tool-id]');
+      const defaultChecks = list.querySelectorAll('input[data-tool-default]');
+      
       const disabled = [];
+      const enabled_tools = [];
+      
       allChecks.forEach(c => { if (!c.checked) disabled.push(c.dataset.toolId); });
+      defaultChecks.forEach(c => { if (c.checked) enabled_tools.push(c.dataset.toolDefault); });
+      
       await fetch('/api/tools', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ disabled }),
+        body: JSON.stringify({ disabled, enabled_tools }),
         credentials: 'same-origin',
       });
     }
@@ -1966,6 +1978,12 @@ async function loadBuiltinTools() {
       chk.addEventListener('change', async () => {
         await _saveToolState();
         _updateCatCounter(chk.closest('.admin-tool-category'));
+      });
+    });
+
+    list.querySelectorAll('input[data-tool-default]').forEach(chk => {
+      chk.addEventListener('change', async () => {
+        await _saveToolState();
       });
     });
 
