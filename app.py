@@ -813,7 +813,7 @@ from routes.vault_routes import setup_vault_routes
 app.include_router(setup_vault_routes())
 
 # Contacts (CardDAV)
-from routes.contacts_routes import setup_contacts_routes
+from routes.contacts.contacts_routes import setup_contacts_routes
 app.include_router(setup_contacts_routes())
 
 from companion import setup_companion_routes
