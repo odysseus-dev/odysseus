@@ -20,15 +20,16 @@ def test_model_resolver_applies_owner_filter():
 
 def test_model_listing_and_image_fallback_are_owner_scoped():
     from src.agent_tools.image_tools import GenerateImageTool
-    list_body = _source(ai_interaction.do_list_models)
+    from src.agent_tools.model_interaction_tools import list_models as do_list_models
+    list_body = _source(do_list_models)
     image_body = _source(GenerateImageTool.execute)
 
     assert "owner: Optional[str] = None" in list_body
     assert "owner_filter(query, ModelEndpoint, owner)" in list_body
-    # _resolve_model is offloaded to a worker thread (#4589) but stays owner-scoped.
-    assert "asyncio.to_thread(_resolve_model, candidate, owner=owner)" in image_body
+    # _resolve_model calls are owner-scoped (no longer wrapped in asyncio.to_thread).
+    assert "_resolve_model(candidate, owner=owner)" in image_body
     assert "owner_filter(_img_q, ModelEndpoint, owner)" in image_body
-    assert "asyncio.to_thread(_resolve_model, model_spec, owner=owner)" in image_body
+    assert "_resolve_model(model_spec, owner=owner)" in image_body
 
 
 # Tools moved to the registry (#3629) — dispatch_ai_tool now delegates to
