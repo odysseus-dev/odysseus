@@ -79,21 +79,16 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && if [ "$INSTALL_OPTIONAL" = "true" ]; then pip install --no-cache-dir -r requirements-optional.txt; fi
 
 # Local speech-to-text and text-to-speech.
-# STT: faster-whisper (CTranslate2, CPU by default, optional CUDA via torch).
-# TTS: Kokoro-82M (English only) or Piper (multilingual incl. Russian).
-# CPU-only torch first (~200MB) to avoid pulling ~2GB CUDA packages.
-# GPU users set INSTALL_SPEECH_GPU=true to override with CUDA torch.
-ARG INSTALL_SPEECH=false
+# STT: faster-whisper (CPU by default).
+# TTS: Kokoro-82M (English) + Piper (multilingual incl. Russian).
+# Installed by default. Set INSTALL_SPEECH_GPU=true to add CUDA torch instead of CPU.
 ARG INSTALL_SPEECH_GPU=false
-RUN if [ "$INSTALL_SPEECH" = "true" ]; then \
-        pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
-        pip install --no-cache-dir faster-whisper kokoro soundfile piper-tts && \
-        python3 -m spacy download en_core_web_sm && \
-        mkdir -p /app/data/piper_voices && \
-        cd /app/data/piper_voices && \
-        python3 -m piper.download_voices --download-dir /app/data/piper_voices ru_RU-irina-medium en_US-lessac-medium; \
-    fi && \
-    if [ "$INSTALL_SPEECH_GPU" = "true" ]; then \
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir faster-whisper kokoro soundfile piper-tts && \
+    python3 -m spacy download en_core_web_sm && \
+    mkdir -p /app/data/piper_voices && \
+    python3 -m piper.download_voices --download-dir /app/data/piper_voices ru_RU-irina-medium en_US-lessac-medium
+RUN if [ "$INSTALL_SPEECH_GPU" = "true" ]; then \
         pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu121; \
     fi
 
