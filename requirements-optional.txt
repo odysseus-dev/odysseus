@@ -16,8 +16,16 @@ faster-whisper
 # Runs on GPU with CUDA (preferred, ~1GB VRAM) or CPU (~2GB RAM, slower).
 # Install if you want server-side TTS without sending text to an external endpoint.
 # Also requires torch (pulled automatically as kokoro dependency).
+# Note: Kokoro-82M only supports English. For Russian, use piper-tts instead.
 kokoro
 soundfile
+
+# Local text-to-speech (text -> audio) via Piper.
+# Multilingual TTS engine supporting 100+ languages including Russian.
+# Uses ONNX models — no torch required, very fast on CPU.
+# Install for multilingual TTS (Russian, English, German, etc.).
+# Voice models downloaded separately to data/piper_voices/.
+piper-tts
 
 # DuckDuckGo as a search provider option.
 # Install if you want DDG in the search-provider dropdown.

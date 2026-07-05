@@ -963,6 +963,7 @@ async function initTtsSettings() {
   provSel.addEventListener('change', function() {
     var prov = provSel.value;
     if (prov === 'local') voiceInput.value = 'af_heart';
+    else if (prov === 'piper') voiceInput.value = 'en_US-lessac-medium';
     else if (isEndpoint()) { voiceSelect.value = 'alloy'; modelSelect.value = 'tts-1'; }
     else if (prov === 'browser') { voiceInput.value = ''; voiceInput.placeholder = (window.__t || (k=>k))('settings.osDefaultVoice'); }
     updateVisibility();

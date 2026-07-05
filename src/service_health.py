@@ -427,6 +427,20 @@ def tts_health(settings: Dict[str, Any]) -> Dict[str, Any]:
         except Exception:
             return _svc("tts", "down", "Local TTS requested but kokoro not installed.",
                         provider="local", error="import_error")
+    if tts_provider == "piper":
+        try:
+            from services.tts.tts_service import get_tts_service
+            tts = get_tts_service()
+            piper = tts._get_piper()
+            if piper and piper.available:
+                return _svc("tts", "ok",
+                            f"Local TTS available (Piper on {piper._device_label}).",
+                            provider="piper", device=piper._device_label)
+            return _svc("tts", "down", "Local TTS requested but Piper not loaded.",
+                        provider="piper", error="not_loaded")
+        except Exception:
+            return _svc("tts", "down", "Local TTS requested but piper-tts not installed.",
+                        provider="piper", error="import_error")
     if tts_provider.startswith("endpoint:"):
         return _svc("tts", "ok", "API-based TTS configured.", provider=tts_provider)
     return _svc("tts", "down", f"Unknown TTS provider: {tts_provider}")
