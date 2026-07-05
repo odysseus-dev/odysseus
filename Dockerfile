@@ -96,9 +96,7 @@ ARG INSTALL_SPEECH=false
 ARG INSTALL_SPEECH_GPU=false
 COPY --from=speech-wheels /speech-wheels /tmp/speech-wheels
 RUN if [ "$INSTALL_SPEECH" = "true" ]; then \
-        pip install --no-cache-dir --no-deps /tmp/speech-wheels/*.whl && \
-        pip install --no-cache-dir --no-deps faster-whisper kokoro soundfile spacy \
-            -f /tmp/speech-wheels --only-binary=:all: 2>/dev/null; \
+        pip install --no-cache-dir -f /tmp/speech-wheels faster-whisper kokoro soundfile; \
     fi && \
     if [ "$INSTALL_SPEECH_GPU" = "true" ]; then \
         pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu121; \
