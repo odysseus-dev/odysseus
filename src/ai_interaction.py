@@ -709,45 +709,19 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
 async def dispatch_ai_tool(
     tool: str, content: str, session_id: Optional[str] = None, owner: Optional[str] = None
 ) -> Tuple[str, Dict]:
-    """Dispatch an AI interaction tool. Returns (description, result_dict)."""
+    """Dispatch an AI interaction tool. Returns (description, result_dict).
 
-    if tool == "chat_with_model":
-        model_spec = content.split("\n")[0].strip()[:60]
-        desc = f"chat_with_model: {model_spec}"
-        result = await do_chat_with_model(content, session_id, owner=owner)
+    Delegates to TOOL_HANDLERS (registry-based dispatch, #3629).  Kept as a
+    convenience wrapper used by stream_ai_tool and for backward compatibility.
+    """
+    from src.agent_tools import TOOL_HANDLERS
 
-    elif tool == "create_session":
-        name = content.split("\n")[0].strip()[:60]
-        desc = f"create_session: {name}"
-        result = await do_create_session(content, session_id, owner=owner)
+    if tool in TOOL_HANDLERS:
+        result = await TOOL_HANDLERS[tool](content, {"session_id": session_id, "owner": owner})
+        first_line = (content or "").split("\n")[0].strip()[:60]
+        desc = f"{tool}: {first_line}" if first_line else tool
+        return desc, result
 
-    elif tool == "list_sessions":
-        keyword = content.strip()[:40]
-        desc = f"list_sessions{': ' + keyword if keyword else ''}"
-        result = await do_list_sessions(content, session_id, owner=owner)
-
-    elif tool == "send_to_session":
-        sid = content.split("\n")[0].strip()[:20]
-        desc = f"send_to_session: {sid}"
-        result = await do_send_to_session(content, session_id, owner=owner)
-
-    elif tool == "manage_session":
-        action = content.split("\n")[0].strip()[:40]
-        desc = f"manage_session: {action}"
-        result = await do_manage_session(content, session_id, owner=owner)
-
-    elif tool == "list_models":
-        keyword = content.strip()[:40]
-        desc = f"list_models{': ' + keyword if keyword else ''}"
-        result = await do_list_models(content, session_id, owner=owner)
-
-    elif tool == "ask_teacher":
-        problem = content.split("\n", 1)[-1].strip()[:60]
-        desc = f"ask_teacher: {problem}"
-        result = await do_ask_teacher(content, session_id, owner=owner)
-
-    else:
-        desc = f"unknown ai tool: {tool}"
-        result = {"error": f"Unknown AI interaction tool: {tool}"}
-
+    desc = f"unknown ai tool: {tool}"
+    result = {"error": f"Unknown AI interaction tool: {tool}"}
     return desc, result

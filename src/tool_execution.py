@@ -748,12 +748,14 @@ async def _execute_tool_block_impl(
         desc = f"search_chats: {query[:80]}"
         from src.agent_tools import TOOL_HANDLERS
         result = await TOOL_HANDLERS[tool](content, {"session_id": session_id, "owner": owner})
-    elif tool in ("chat_with_model", "create_session", "list_sessions",
-                  "send_to_session",
-                  "manage_session", "list_models",
-                  "ask_teacher"):
-        from src.ai_interaction import dispatch_ai_tool
-        desc, result = await dispatch_ai_tool(tool, content, session_id, owner=owner)
+    elif tool in ("chat_with_model", "ask_teacher", "list_models"):
+        desc = f"{tool}: {content.split(chr(10))[0][:80]}"
+        from src.agent_tools import TOOL_HANDLERS
+        result = await TOOL_HANDLERS[tool](content, {"session_id": session_id, "owner": owner})
+    elif tool in ("create_session", "list_sessions", "send_to_session", "manage_session"):
+        desc = f"{tool}: {content.split(chr(10))[0][:80]}"
+        from src.agent_tools import TOOL_HANDLERS
+        result = await TOOL_HANDLERS[tool](content, {"session_id": session_id, "owner": owner})
     elif tool in ("manage_tasks", "manage_skills", "manage_memory",
                   "manage_rag", "pipeline", "ui_control",
                   "trigger_research", "manage_research",

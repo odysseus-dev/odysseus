@@ -187,12 +187,10 @@ def test_send_to_session_blocks_null_owner_for_authenticated_caller(monkeypatch)
 
 
 def test_dispatched_via_registry_not_dispatch_ai_tool():
+    """The session tools route through the registry, and tool_execution.py no
+    longer imports dispatch_ai_tool (the legacy elif chain is gone, #3629)."""
     source = (Path(__file__).resolve().parent.parent / "src" / "tool_execution.py").read_text(encoding="utf-8")
     assert 'elif tool in ("create_session", "list_sessions", "send_to_session", "manage_session"):' in source
 
-    marker = "from src.ai_interaction import dispatch_ai_tool"
-    idx = source.index(marker)
-    branch_head = source.rfind("elif tool in (", 0, idx)
-    legacy_tuple = source[branch_head:idx]
-    for name in _SESSION_TOOLS:
-        assert f'"{name}"' not in legacy_tuple, f"{name} still routed via dispatch_ai_tool"
+    # dispatch_ai_tool is no longer imported — the legacy tuple was removed.
+    assert "from src.ai_interaction import dispatch_ai_tool" not in source

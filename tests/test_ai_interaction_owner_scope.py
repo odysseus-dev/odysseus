@@ -31,48 +31,35 @@ def test_model_listing_and_image_fallback_are_owner_scoped():
     assert "asyncio.to_thread(_resolve_model, model_spec, owner=owner)" in image_body
 
 
-# chat_with_model, list_models and ask_teacher moved to the registry (#3629)
-# and no longer route through dispatch_ai_tool; their owner threading is covered
-# by tests/test_model_interaction_registry.py. The remaining model-ish tools
-# still dispatched here:
+# Tools moved to the registry (#3629) — dispatch_ai_tool now delegates to
+# TOOL_HANDLERS. These tests verify owner / session_id are threaded through
+# the registry wrapper correctly.
 @pytest.mark.parametrize("tool,content", [
     ("chat_with_model", "gpt-test\nhello"),
     ("list_models", ""),
     ("ask_teacher", "gpt-test\nhelp me"),
-    ("pipeline", "gpt-test | summarize this"),
-    ("ui_control", "switch_model gpt-test"),
+    ("create_session", "My Chat\ngpt-test"),
+    ("list_sessions", ""),
 ])
 async def test_dispatch_passes_owner_to_model_tools(monkeypatch, tool, content):
     seen = {}
 
-    async def capture(name, content, session_id=None, owner=None):
-        seen[name] = {"content": content, "session_id": session_id, "owner": owner}
+    async def capture(content_str, ctx):
+        seen[tool] = {"content": content_str, "session_id": ctx.get("session_id"), "owner": ctx.get("owner")}
         return {"ok": True}
 
-    monkeypatch.setattr(
-        ai_interaction,
-        "do_chat_with_model",
-        lambda content, session_id=None, owner=None: capture("chat_with_model", content, session_id, owner),
-    )
-    monkeypatch.setattr(
-        ai_interaction,
-        "do_list_models",
-        lambda content, session_id=None, owner=None: capture("list_models", content, session_id, owner),
-    )
-    monkeypatch.setattr(
-        ai_interaction,
-        "do_ask_teacher",
-        lambda content, session_id=None, owner=None: capture("ask_teacher", content, session_id, owner),
-        "do_pipeline",
-        lambda content, session_id=None, owner=None: capture("pipeline", content, session_id, owner),
-    )
-    monkeypatch.setattr(
-        ai_interaction,
-        "do_ui_control",
-        lambda content, session_id=None, owner=None: capture("ui_control", content, session_id, owner),
-    )
+    # Patch the TOOL_HANDLERS entry — dispatch_ai_tool delegates to the registry.
+    from src.agent_tools import TOOL_HANDLERS
+    original = TOOL_HANDLERS.get(tool)
+    monkeypatch.setitem(TOOL_HANDLERS, tool, capture)
 
-    _desc, result = await ai_interaction.dispatch_ai_tool(tool, content, session_id="sid1", owner="alice")
+    try:
+        _desc, result = await ai_interaction.dispatch_ai_tool(tool, content, session_id="sid1", owner="alice")
+    finally:
+        if original is not None:
+            TOOL_HANDLERS[tool] = original
+        elif tool in TOOL_HANDLERS:
+            del TOOL_HANDLERS[tool]
 
     assert result == {"ok": True}
     assert seen[tool]["owner"] == "alice"
