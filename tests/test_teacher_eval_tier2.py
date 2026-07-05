@@ -198,9 +198,13 @@ async def test_run_teacher_inline_triggers_tier2_escalation(monkeypatch):
 
     # Mock ManageSkillsTool.execute (used by run_teacher_inline to save the skill).
     # Patched on the class (unbound), so self is passed as the first argument.
+    # Use object-reference patching rather than dotted string to avoid
+    # module-traversal issues on CI (see skill_tools submodule resolution).
+    from src.agent_tools.skill_tools import ManageSkillsTool
+
     async def fake_manage_skills_execute(self, content, ctx):
         return {"results": "skill saved"}
-    monkeypatch.setattr("src.agent_tools.skill_tools.ManageSkillsTool.execute", fake_manage_skills_execute)
+    monkeypatch.setattr(ManageSkillsTool, "execute", fake_manage_skills_execute)
 
     events = []
     async for evt in teacher_escalation.run_teacher_inline(
