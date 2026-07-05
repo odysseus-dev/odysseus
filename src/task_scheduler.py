@@ -338,6 +338,7 @@ class TaskScheduler:
         # tasks could be double-dispatched.
         self._executing_lock = asyncio.Lock()
         self._pending_notifications = []  # completed task notifications
+        self._durable_notifications_enabled = True
         self._task_defer_counts = {}
         # Strict serial execution — exactly one task runs at a time. Anything
         # else (manual trigger, scheduled dispatch, task chain) waits behind
@@ -393,12 +394,35 @@ class TaskScheduler:
             logger.debug("Task abort marker failed for %s", task_id, exc_info=True)
             return False
 
-    def add_notification(self, task_name: str, status: str, task_id: str = None, owner: str = None, body: str = None):
+    def add_notification(
+        self,
+        task_name: str,
+        status: str,
+        task_id: str = None,
+        owner: str = None,
+        body: str = None,
+        run_id: str = None,
+        output_target: str = None,
+    ):
         """Store a notification about a completed task run. Tagged with the
         task's owner so `pop_notifications` can return only that user's
         notifications and prevent cross-tenant drain. `body` is the result
         text — populated when output_target='notification' so the client can
         show a rich browser Notification, not just a toast."""
+        if getattr(self, "_durable_notifications_enabled", False):
+            try:
+                from src.notifications import record_task_notification
+                record_task_notification(
+                    task_name=task_name,
+                    status=status,
+                    task_id=task_id,
+                    owner=owner,
+                    body=body,
+                    run_id=run_id,
+                    output_target=output_target,
+                )
+            except Exception:
+                logger.debug("Durable task notification write failed", exc_info=True)
         self._pending_notifications.append({
             "task_name": task_name,
             "status": status,
@@ -1016,6 +1040,8 @@ class TaskScheduler:
                     task_id,
                     owner=task.owner,
                     body=run.result if output == "notification" else None,
+                    run_id=run_id,
+                    output_target=output,
                 )
             elif run.status == "error":
                 self.add_notification(
@@ -1024,6 +1050,8 @@ class TaskScheduler:
                     task_id,
                     owner=task.owner,
                     body=run.error or run.result,
+                    run_id=run_id,
+                    output_target=output,
                 )
 
             # Log result to the assistant chat so all task activity is visible.
@@ -1069,7 +1097,14 @@ class TaskScheduler:
             except Exception:
                 _should_notify_error = False
             if _should_notify_error:
-                self.add_notification(f"Task {task_id}", "error", task_id, owner=_owner)
+                self.add_notification(
+                    f"Task {task_id}",
+                    "error",
+                    task_id,
+                    owner=_owner,
+                    body=f"{type(exec_exc).__name__}: {exec_exc}",
+                    run_id=run_id,
+                )
             try:
                 # Persist the actual exception message so the UI can show it
                 err_text = f"{type(exec_exc).__name__}: {exec_exc}"
