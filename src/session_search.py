@@ -67,12 +67,17 @@ def _snippet(content: str, query: str, radius: int = 60) -> str:
     if not query:
         return content[: radius * 2]
 
-    idx = content.lower().find(query.lower())
-    if idx == -1:
+    # Locate the match with an index-preserving search on `content` itself.
+    # content.lower() is not length-preserving (e.g. Turkish "İ" U+0130 ->
+    # "i" + combining dot), so an index from the lowercased copy is shifted
+    # relative to the original string we slice, and the snippet can drop the
+    # matched term. re.IGNORECASE agrees with .lower() on ASCII.
+    match = re.search(re.escape(query), content, re.IGNORECASE)
+    if match is None:
         return content[: radius * 2]
 
-    start = max(0, idx - radius)
-    end = min(len(content), idx + len(query) + radius)
+    start = max(0, match.start() - radius)
+    end = min(len(content), match.end() + radius)
     return ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
 
 
