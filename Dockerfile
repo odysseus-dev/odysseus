@@ -12,7 +12,8 @@ RUN bash /usr/local/bin/build-realesrgan-wheels.sh /wheels
 # ---- builder: speech wheels on Python 3.12 (spacy/thinc/blis broken on 3.14) ----
 ARG INSTALL_SPEECH=false
 FROM python:3.12-slim AS speech-wheels
-RUN if [ "$INSTALL_SPEECH" = "true" ]; then \
+RUN mkdir -p /speech-wheels && \
+    if [ "$INSTALL_SPEECH" = "true" ]; then \
         apt-get update && apt-get install -y --no-install-recommends build-essential && \
         rm -rf /var/lib/apt/lists/* && \
         pip install --no-cache-dir wheel && \
