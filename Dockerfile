@@ -9,6 +9,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
 COPY docker/build-realesrgan-wheels.sh /usr/local/bin/build-realesrgan-wheels.sh
 RUN bash /usr/local/bin/build-realesrgan-wheels.sh /wheels
 
+# ---- builder: speech wheels on Python 3.12 (spacy/thinc/blis broken on 3.14) ----
+ARG INSTALL_SPEECH=false
+FROM python:3.12-slim AS speech-wheels
+RUN if [ "$INSTALL_SPEECH" = "true" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends build-essential && \
+        rm -rf /var/lib/apt/lists/* && \
+        pip install --no-cache-dir wheel && \
+        pip wheel --no-cache-dir -w /speech-wheels faster-whisper kokoro soundfile spacy; \
+    fi
+
 FROM python:3.14-slim
 
 # System deps. tmux is required by Cookbook for background downloads/serves.
@@ -79,12 +89,15 @@ RUN pip install --no-cache-dir -r requirements.txt \
 # Local speech-to-text and text-to-speech.
 # STT: faster-whisper (CTranslate2, CPU by default, optional CUDA via torch).
 # TTS: Kokoro-82M (requires torch + spacy; GPU preferred but CPU works).
-# --only-binary :all: for spacy avoids C compilation on Python 3.14+.
+# spacy/thinc/blis don't compile on Python 3.14, so wheels are pre-built
+# on Python 3.12 in the speech-wheels builder stage above.
 ARG INSTALL_SPEECH=false
 ARG INSTALL_SPEECH_GPU=false
+COPY --from=speech-wheels /speech-wheels /tmp/speech-wheels
 RUN if [ "$INSTALL_SPEECH" = "true" ]; then \
-        pip install --no-cache-dir --only-binary :all: spacy && \
-        pip install --no-cache-dir faster-whisper kokoro soundfile; \
+        pip install --no-cache-dir --no-deps /tmp/speech-wheels/*.whl && \
+        pip install --no-cache-dir --no-deps faster-whisper kokoro soundfile spacy \
+            -f /tmp/speech-wheels --only-binary=:all: 2>/dev/null; \
     fi && \
     if [ "$INSTALL_SPEECH_GPU" = "true" ]; then \
         pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu121; \
