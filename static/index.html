@@ -1530,10 +1530,8 @@
               <div id="set-imgSettingsMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
-          <!-- TTS panel hidden — user opted out of read-aloud entirely. Kept
-               in DOM so the JS that wires set-ttsProviderSelect etc. doesn't
-               throw on missing nodes; not visible to anyone. -->
-          <div class="admin-card" hidden style="display:none">
+          <!-- TTS panel: voice output settings (Kokoro-82M / Piper / Browser / API) -->
+          <div class="admin-card">
             <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg><span data-i18n="settings.textToSpeech">Text to Speech</span><span style="flex:1"></span><label class="admin-switch"><input type="checkbox" id="set-ttsEnabledToggle" checked><span class="admin-slider"></span></label></h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px" data-i18n="settings.desc.ttsEnabled">Configure TTS provider for assistant message read-aloud.</div>
             <div style="display:flex;flex-direction:column;gap:0.5rem;">
@@ -1583,6 +1581,36 @@
               </div>
               <button type="button" id="set-ttsPreviewBtn" class="admin-btn-sm" style="margin-top:4px;padding:5px 16px;font-size:12px;">Preview</button>
               <div id="set-ttsSettingsMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+            </div>
+          </div>
+          <!-- STT panel: voice input settings (faster-whisper / Browser / API) -->
+          <div class="admin-card">
+            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg><span data-i18n="settings.speechToText">Speech to Text</span><span style="flex:1"></span><label class="admin-switch"><input type="checkbox" id="set-sttEnabledToggle"><span class="admin-slider"></span></label></h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px" data-i18n="settings.desc.sttEnabled">Configure speech-to-text provider for voice input (microphone).</div>
+            <div id="set-sttConfigWrap" style="display:none;flex-direction:column;gap:0.5rem;">
+              <div style="display:flex;align-items:center;gap:0.75rem;">
+                <label class="settings-label">Provider</label>
+                <select id="set-sttProviderSelect" class="settings-select">
+                  <option value="disabled">Disabled</option>
+                  <option value="browser">Browser (built-in)</option>
+                  <option value="local">Local (faster-whisper)</option>
+                </select>
+              </div>
+              <div id="set-sttModelRow" style="display:flex;align-items:center;gap:0.75rem;">
+                <label class="settings-label">Model</label>
+                <select id="set-sttModelSelect" class="settings-select">
+                  <option value="base">base (fast)</option>
+                  <option value="small">small (balanced)</option>
+                  <option value="medium">medium (quality)</option>
+                  <option value="large-v3">large-v3 (best)</option>
+                </select>
+                <input id="set-sttModelInput" type="text" placeholder="model name" style="flex:1;padding:5px;display:none;">
+              </div>
+              <div id="set-sttLangRow" style="display:flex;align-items:center;gap:0.75rem;">
+                <label class="settings-label">Language</label>
+                <input id="set-sttLangInput" type="text" placeholder="auto-detect" style="flex:1;padding:5px;" data-i18n-placeholder="settings.autoDetect">
+              </div>
+              <div id="set-sttSettingsMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
           <!-- Teacher Model settings card hidden as part of the 2.0
