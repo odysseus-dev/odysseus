@@ -53,7 +53,7 @@ def test_http_calendar_writes_mark_pending_and_push_after_commit():
 
 
 def test_agent_calendar_writes_share_caldav_push_path():
-    source = Path("src/tool_implementations.py").read_text()
+    source = Path("src/tools/calendar.py").read_text()
 
     assert "_push_caldav_event_after_commit" in source
     assert 'caldav_sync_pending="create" if cal.source == "caldav" else None' in source

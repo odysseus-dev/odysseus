@@ -10,6 +10,7 @@ Shared helpers that still live in ``src.ai_interaction`` and are used by tools
 not yet migrated (``_resolve_model``, ``AI_CHAT_TIMEOUT``) are imported lazily
 inside the functions to avoid an import cycle at module load.
 """
+import asyncio
 import logging
 from typing import Dict, Optional
 
@@ -46,7 +47,7 @@ async def chat_with_model(content: str, session_id: Optional[str] = None, owner:
         return {"error": "No message provided (line 2+ is the message)"}
 
     try:
-        url, model, headers = _resolve_model(model_spec, owner=owner)
+        url, model, headers = await asyncio.to_thread(_resolve_model, model_spec, owner=owner)
     except ValueError as e:
         return {"error": str(e)}
 
@@ -90,7 +91,7 @@ async def ask_teacher(content: str, session_id: Optional[str] = None, owner: Opt
             return {"error": "No teacher model configured. Specify a model name or set teacher_model in settings."}
 
     try:
-        url, model, headers = _resolve_model(model_spec, owner=owner)
+        url, model, headers = await asyncio.to_thread(_resolve_model, model_spec, owner=owner)
     except ValueError as e:
         return {"error": str(e)}
 

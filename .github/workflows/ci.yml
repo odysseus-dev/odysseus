@@ -15,6 +15,60 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  focused-test-guidance:
+    name: Focused test guidance (report-only)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Report changed test paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          report_file="$RUNNER_TEMP/focused-test-guidance.md"
+          publish_report() {
+            cat "$report_file"
+            if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+              cat "$report_file" >> "$GITHUB_STEP_SUMMARY" || true
+            fi
+            return 0
+          }
+
+          report_unavailable() {
+            {
+              printf '%s\n\n' '## Focused test guidance unavailable (report-only)'
+              printf '%s\n\n' "$1"
+              printf '%s\n' 'Existing blocking CI remains the source of truth.'
+            } > "$report_file"
+            publish_report
+            exit 0
+          }
+
+          if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
+            report_unavailable "Pull request base/head metadata is missing."
+          fi
+
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            report_unavailable "The pull request base commit is unavailable locally."
+          fi
+
+          if ! git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null; then
+            report_unavailable "The pull request head commit is unavailable locally."
+          fi
+
+          if ! python3 .github/scripts/focused_test_guidance.py \
+            --base-sha "$BASE_SHA" \
+            --head-sha "$HEAD_SHA" > "$report_file"; then
+            report_unavailable "The focused test guidance helper could not produce a report."
+          fi
+
+          publish_report
+
   python-syntax:
     name: Python syntax (compileall)
     runs-on: ubuntu-latest

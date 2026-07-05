@@ -186,6 +186,21 @@ class WriteFileTool:
         lines = content.split("\n", 1)
         raw_path = lines[0].strip()
         body = lines[1] if len(lines) > 1 else ""
+        # Decode JSON-object args (the fenced inline-args shape
+        # ```write_file {"path": "...", "content": "..."}```), matching
+        # ReadFileTool above. Without this the whole JSON string becomes the
+        # path and the file is written under a garbage name. This is the live
+        # path: there is no filesystem MCP server, so write_file always runs
+        # here via _direct_fallback, not through _build_mcp_args.
+        _stripped = content.strip()
+        if _stripped.startswith("{"):
+            try:
+                _a = json.loads(_stripped)
+                if isinstance(_a, dict) and "path" in _a:
+                    raw_path = str(_a.get("path", "")).strip()
+                    body = str(_a.get("content", ""))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
         try:
             path = _resolve_tool_path(raw_path)
         except ValueError as e:
@@ -266,7 +281,13 @@ class LsTool:
 
 class GlobTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
+        from src.tool_execution import (
+            _SENSITIVE_BASENAMES,
+            _is_sensitive_path,
+            _resolve_tool_path,
+            _resolve_search_root,
+            _truncate,
+        )
         args = {}
         _s = (content or "").strip()
         if _s.startswith("{"):
@@ -288,11 +309,30 @@ class GlobTool:
             base = os.path.abspath(root)
             if not os.path.isdir(base):
                 return None, f"glob: {root}: not a directory"
+            rbase = os.path.realpath(base)
             norm_pat = pattern.replace("\\", "/")
             # Fast path: literal pattern (no wildcards) → direct path lookup.
             if not any(c in norm_pat for c in "*?["):
-                cand = os.path.normpath(os.path.join(base, norm_pat))
-                if os.path.exists(cand):
+                cand = os.path.realpath(os.path.join(base, norm_pat))
+                # Keep the literal lookup inside the search root. os.path.join
+                # lets an absolute pattern (or one containing ../) escape `base`,
+                # which would turn glob into an existence/path oracle for
+                # arbitrary host files — bypassing the workspace/allowlist
+                # confinement that _resolve_search_root applies to the root.
+                # An escaping literal falls through to the walk, which only ever
+                # yields paths under base.
+                nbase = os.path.normcase(rbase)
+                try:
+                    inside = cand == rbase or os.path.commonpath(
+                        [os.path.normcase(cand), nbase]
+                    ) == nbase
+                except ValueError:
+                    inside = False
+                # A literal that names a deny-listed sensitive file (.env,
+                # .ssh/id_rsa, …) falls through to the walk, which skips it —
+                # otherwise glob would surface secret paths that read_file /
+                # grep already refuse to touch.
+                if inside and os.path.exists(cand) and not _is_sensitive_path(cand):
                     return [cand], None
                 # Literal not at exact path — fall through to walk so
                 # e.g. "foo.py" still matches at any depth (like rglob).
@@ -304,11 +344,20 @@ class GlobTool:
                 for dp, dns, fns in os.walk(base):
                     # Prune skipped dirs before descending (unlike rglob which
                     # descends first then filters — fatal on large node_modules).
-                    dns[:] = [d for d in dns if d not in _CODENAV_SKIP_DIRS]
+                    # Sensitive dirs (.ssh, .gnupg, …) are pruned too so glob
+                    # never enumerates the keys/tokens inside them.
+                    dns[:] = [
+                        d for d in dns
+                        if d not in _CODENAV_SKIP_DIRS and d not in _SENSITIVE_BASENAMES
+                    ]
                     for name in fns + dns:
                         full = os.path.join(dp, name)
                         rel = os.path.relpath(full, base).replace(os.sep, "/")
                         if regex.fullmatch(rel) or regex.fullmatch(name):
+                            # Skip deny-listed sensitive files (.env, id_rsa,
+                            # known_hosts, …) the same way grep does.
+                            if _is_sensitive_path(os.path.realpath(full)):
+                                continue
                             try:
                                 mtime = os.stat(full).st_mtime
                             except OSError:
@@ -333,7 +382,13 @@ class GlobTool:
 
 class GrepTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
+        from src.tool_execution import (
+            _SENSITIVE_FILE_PATTERNS,
+            _is_sensitive_path,
+            _resolve_tool_path,
+            _resolve_search_root,
+            _truncate,
+        )
         args: Dict[str, Any] = {}
         _s = (content or "").strip()
         if _s.startswith("{"):
@@ -369,6 +424,12 @@ class GrepTool:
                     cmd.append("--ignore-case")
                 if glob_pat:
                     cmd += ["--glob", glob_pat]
+                # --iglob (not --glob) so the exclusion is case-insensitive:
+                # on a case-insensitive filesystem "ID_RSA"/"Known_Hosts"
+                # resolve to the same secret as their lowercase forms, and the
+                # Python fallback below already folds case via _is_sensitive_path.
+                for _pat in _SENSITIVE_FILE_PATTERNS:
+                    cmd += ["--iglob", f"!*{_pat}*"]
                 for _d in _CODENAV_SKIP_DIRS:
                     cmd += ["--glob", f"!**/{_d}/**"]
                 cmd += ["--regexp", pattern, root]
@@ -399,6 +460,8 @@ class GrepTool:
             for fp in file_iter:
                 if len(hits) >= max_hits:
                     break
+                if _is_sensitive_path(os.path.realpath(fp)):
+                    continue
                 try:
                     with open(fp, "r", encoding="utf-8", errors="strict") as f:
                         for i, line in enumerate(f, 1):

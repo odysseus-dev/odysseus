@@ -22,7 +22,7 @@ import memoryModule from './js/memory.js';
 import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
 import galleryModule from './js/gallery.js';
-import tasksModule from './js/tasks.js';
+import tasksModule from './js/tasks.js?v=20260630tasksactivity';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
 import adminModule from './js/admin.js';
@@ -39,7 +39,7 @@ import themeModule from './js/theme.js';
 // unversioned so this can't recur.
 import cookbookModule from './js/cookbook.js';
 import groupModule from './js/group.js';
-import * as researchPanelModule from './js/research/panel.js';
+import * as researchPanelModule from './js/research/panel.js?v=20260630researchthumb';
 import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
@@ -52,6 +52,71 @@ window.sessionModule = sessionModule;
 window.uiModule = uiModule;
 window.adminModule = adminModule;
 window.cookbookModule = cookbookModule;
+
+function initForegroundActivityHeartbeat() {
+  let lastSent = 0;
+  const minGapMs = 12000;
+  const send = (force = false) => {
+    if (document.visibilityState === 'hidden') return;
+    const now = Date.now();
+    if (!force && now - lastSent < minGapMs) return;
+    lastSent = now;
+    try {
+      if (navigator.sendBeacon) {
+        const body = new Blob(['{}'], { type: 'application/json' });
+        if (navigator.sendBeacon('/api/activity/heartbeat', body)) return;
+      }
+    } catch (_) {}
+    fetch('/api/activity/heartbeat', {
+      method: 'POST',
+      credentials: 'same-origin',
+      keepalive: true,
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    }).catch(() => {});
+  };
+  send(true);
+  window.addEventListener('focus', () => send(true));
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'hidden') send(true);
+  });
+  ['pointerdown', 'keydown', 'touchstart', 'scroll'].forEach(type => {
+    window.addEventListener(type, () => send(false), { passive: true, capture: true });
+  });
+  setInterval(() => send(false), 15000);
+}
+initForegroundActivityHeartbeat();
+
+function initRailHoverLabels() {
+  const labels = {
+    'rail-search-btn': 'Search',
+    'rail-new-session': 'New',
+    'rail-delete-session': 'Delete',
+    'rail-chats': 'Chat',
+    'rail-documents': 'Docs',
+    'rail-calendar': 'Calendar',
+    'rail-compare': 'Compare',
+    'rail-cookbook': 'Cookbook',
+    'rail-research': 'Research',
+    'rail-email': 'Email',
+    'rail-gallery': 'Gallery',
+    'rail-archive': 'Library',
+    'rail-memory': 'Brain',
+    'rail-notes': 'Notes',
+    'rail-tasks': 'Tasks',
+    'rail-theme': 'Theme',
+    'rail-settings': 'Settings',
+  };
+  document.querySelectorAll('#icon-rail .icon-rail-btn').forEach(btn => {
+    if (btn.querySelector('.rail-hover-label')) return;
+    const label = labels[btn.id] || btn.getAttribute('aria-label') || btn.getAttribute('title') || '';
+    if (!label) return;
+    const span = document.createElement('span');
+    span.className = 'rail-hover-label';
+    span.textContent = String(label).replace(/\s*\([^)]*\)\s*/g, '').trim();
+    btn.appendChild(span);
+  });
+}
 
 // Redirect to login on 401 from any fetch
 const _origFetch = window.fetch;
@@ -91,7 +156,7 @@ async function _createDirectChatFromPreferredModel() {
   if (!sessionModule) return false;
 
   const pending = sessionModule.getPendingChat && sessionModule.getPendingChat();
-  if (pending && pending.url && pending.modelId) {
+  if (pending && pending.url && pending.modelId && pending.endpointId) {
     sessionModule.createDirectChat(pending.url, pending.modelId, pending.endpointId);
     return true;
   }
@@ -99,7 +164,7 @@ async function _createDirectChatFromPreferredModel() {
   const sessions = sessionModule.getSessions();
   const currentId = sessionModule.getCurrentSessionId();
   const current = sessions.find(s => s.id === currentId);
-  if (current && current.endpoint_url && current.model) {
+  if (current && current.endpoint_url && current.model && current.endpoint_id) {
     sessionModule.createDirectChat(current.endpoint_url, current.model, current.endpoint_id);
     return true;
   }
@@ -1617,6 +1682,7 @@ function initializeEventListeners() {
       // Delay tool glow-up for a staggered effect
       setTimeout(() => applyModeToToggles(mode), 500);
     }
+    window.__odysseusSetChatMode = setMode;
     agentBtn.addEventListener('click', () => {
       // Agent mode turns off research if active
       const resChk = el('research-toggle');
@@ -1692,10 +1758,29 @@ function initializeEventListeners() {
   try { workspaceModule.initWorkspace(); } catch (_) {}
 
   // Document editor toggle (special: uses module panel, not a checkbox)
+  function bringOpenDocumentToFrontOnMobile() {
+    if (window.innerWidth > 768) return false;
+    if (!documentModule || !documentModule.isPanelOpen || !documentModule.isPanelOpen()) return false;
+    if (!document.body.classList.contains('email-front')) return false;
+    document.body.classList.remove('email-front', 'email-doc-split-active');
+    document.documentElement.style.removeProperty('--email-doc-split-left-x');
+    document.documentElement.style.removeProperty('--email-doc-split-email-w');
+    document.documentElement.style.removeProperty('--email-doc-split-right-x');
+    const docPane = document.getElementById('doc-editor-pane');
+    if (docPane) docPane.style.setProperty('z-index', '10010', 'important');
+    const overflow = el('overflow-doc-btn');
+    if (overflow) overflow.classList.add('active');
+    const indicator = el('doc-indicator-btn');
+    if (indicator) indicator.classList.add('active');
+    const st = loadToggleState(); st.doc = true; saveToggleState(st);
+    return true;
+  }
+
   const overflowDocBtn = el('overflow-doc-btn');
   if (overflowDocBtn) {
     overflowDocBtn.addEventListener('click', async () => {
       if (!documentModule) return;
+      if (bringOpenDocumentToFrontOnMobile()) return;
       if (documentModule.isPanelOpen()) {
         documentModule.closePanel();
         overflowDocBtn.classList.remove('active');
@@ -2101,7 +2186,7 @@ function initializeEventListeners() {
     const pickerWrap = el('model-picker-wrap');
     if (!inputTop || !pickerWrap) return;
 
-    const PLACEHOLDER_HIDE_WIDTH = 400;
+    const PLACEHOLDER_COMPACT_WIDTH = 400;
     const PICKER_HIDE_WIDTH = 220;
     const TOOLBAR_HIDE_WIDTH = 160;
     const textarea = el('message');
@@ -2114,9 +2199,10 @@ function initializeEventListeners() {
       const w = inputTop.clientWidth;
       // Hide model picker
       pickerWrap.classList.toggle('picker-auto-hidden', w < PICKER_HIDE_WIDTH);
-      // Hide placeholder text
+      // Keep a prompt inside the composer even when the picker crowds the row.
+      // A blank placeholder makes the mobile/compact empty state feel broken.
       if (textarea) {
-        textarea.setAttribute('placeholder', w < PLACEHOLDER_HIDE_WIDTH ? '' : 'Message Odysseus...');
+        textarea.setAttribute('placeholder', w < PLACEHOLDER_COMPACT_WIDTH ? 'Message...' : 'Message Odysseus...');
       }
       // Hide entire bottom toolbar (tools, mode toggle) — only send button remains
       if (inputBottom) {
@@ -2304,14 +2390,32 @@ function initializeEventListeners() {
         // IMPORTANT: don't overwrite the user's persisted per-mode tool prefs
         // (`web_agent`, `bash_agent`, `web_chat`, `bash_chat`). Nobody mode is
         // ephemeral — their agent-mode defaults must come back on toggle-off.
+        const beforeNobody = Storage.getJSON(Storage.KEYS.TOGGLES, {}) || {};
+        if (!beforeNobody.nobody_prev_mode) beforeNobody.nobody_prev_mode = beforeNobody.mode || 'agent';
+        Storage.setJSON(Storage.KEYS.TOGGLES, beforeNobody);
         const _offIds = ['web-toggle', 'bash-toggle', 'research-toggle'];
         _offIds.forEach(id => { const c = el(id); if (c) c.checked = false; });
         ['web-toggle-btn', 'bash-toggle-btn'].forEach(id => { const b = el(id); if (b) b.classList.remove('active'); });
-        const _ab = el('mode-agent-btn'), _cb = el('mode-chat-btn');
-        if (_ab) _ab.classList.remove('active');
-        if (_cb) _cb.classList.add('active');
+        if (typeof window.__odysseusSetChatMode === 'function') {
+          window.__odysseusSetChatMode('chat');
+        } else {
+          const _ab = el('mode-agent-btn'), _cb = el('mode-chat-btn');
+          if (_ab) {
+            _ab.classList.remove('active');
+            _ab.setAttribute('aria-pressed', 'false');
+          }
+          if (_cb) {
+            _cb.classList.add('active');
+            _cb.setAttribute('aria-pressed', 'true');
+          }
+          const _toggle = _ab?.closest('.mode-toggle') || _cb?.closest('.mode-toggle');
+          if (_toggle) _toggle.classList.add('mode-chat');
+          const ts = Storage.getJSON(Storage.KEYS.TOGGLES, {});
+          ts.mode = 'chat';
+          Storage.setJSON(Storage.KEYS.TOGGLES, ts);
+        }
         const ts = Storage.getJSON(Storage.KEYS.TOGGLES, {});
-        ts.research = false; ts.mode = 'chat';
+        ts.research = false;
         Storage.setJSON(Storage.KEYS.TOGGLES, ts);
       } else {
         incognitoBtn.innerHTML = INCOGNITO_EYE_OPEN + '<span class="incognito-label">Nobody</span>';
@@ -2335,11 +2439,15 @@ function initializeEventListeners() {
         // Heal any previously-persisted false values from the old Nobody bug
         // so agent-mode defaults (web/bash ON) come back.
         const _ts = Storage.getJSON(Storage.KEYS.TOGGLES, {});
-        let _dirty = false;
+        const _restoreMode = _ts.nobody_prev_mode || 'agent';
+        delete _ts.nobody_prev_mode;
         ['web_agent', 'bash_agent', 'web_chat', 'bash_chat'].forEach(k => {
-          if (_ts[k] === false) { delete _ts[k]; _dirty = true; }
+          if (_ts[k] === false) delete _ts[k];
         });
-        if (_dirty) Storage.setJSON(Storage.KEYS.TOGGLES, _ts);
+        Storage.setJSON(Storage.KEYS.TOGGLES, _ts);
+        if (typeof window.__odysseusSetChatMode === 'function') {
+          window.__odysseusSetChatMode(_restoreMode === 'chat' ? 'chat' : 'agent');
+        }
         // Reapply the current mode's real defaults to the visible toggles
         const _curMode = (Storage.getJSON(Storage.KEYS.TOGGLES, {}) || {}).mode || 'chat';
         try { applyModeToToggles(_curMode); } catch (_) {}
@@ -2418,7 +2526,7 @@ function initializeEventListeners() {
   };
 
   // Keys hidden by default on first run (no localStorage yet)
-  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn', 'text-emojis']);
+  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn', 'text-emojis', 'chat-fullwidth']);
 
   // Keys that need admin to toggle off (reserved for future use)
   const UI_VIS_ADMIN_ONLY = new Set([]);
@@ -2451,6 +2559,8 @@ function initializeEventListeners() {
     applyTextEmojis(state['text-emojis'] === true);
     // Hide thinking sections toggle (show-thinking: checked=show, unchecked=hide)
     document.body.classList.toggle('hide-thinking', state['show-thinking'] === false);
+    // Fullwidth chat toggle (chat-fullwidth: checked=fullwidth, unchecked=big-padding
+    document.body.classList.toggle('fullwidth-chat', state['chat-fullwidth'] === true);
   }
 
   // Rearrange toggles in session/model sort dropdowns
@@ -3340,8 +3450,15 @@ function initializeEventListeners() {
 function startOdysseusApp() {
   if (window.__odysseusAppStarted) return;
   window.__odysseusAppStarted = true;
+  const _bumpChatPriority = (ms = 10000) => {
+    try {
+      window.__odysseusChatBusyUntil = Math.max(window.__odysseusChatBusyUntil || 0, Date.now() + ms);
+    } catch (_) {}
+  };
+  _bumpChatPriority(10000);
   // Set CSS variables
   document.documentElement.style.setProperty('--line-height', '20px');
+  initRailHoverLabels();
 
   // Smooth keyboard open/close on mobile — keep chat scrolled to bottom
   if (window.visualViewport && 'ontouchstart' in window) {
@@ -3507,9 +3624,16 @@ function startOdysseusApp() {
   const chatForm = document.getElementById('chat-form');
   const originalSubmit = chatModule.handleChatSubmit;
   let _submitting = false;
+  const _messageInput = document.getElementById('message') || document.getElementById('message-input');
+  if (_messageInput) {
+    _messageInput.addEventListener('focus', () => _bumpChatPriority(15000));
+    _messageInput.addEventListener('input', () => _bumpChatPriority(15000));
+    _messageInput.addEventListener('pointerdown', () => _bumpChatPriority(15000), { passive: true });
+  }
 
   function handleSubmit(e) {
     if (e) e.preventDefault();
+    _bumpChatPriority(30000);
     // Debounce: prevent double-submit while a request is being initiated
     if (_submitting) return;
     _submitting = true;
@@ -3926,7 +4050,8 @@ function startOdysseusApp() {
   }
 
   // Non-critical: load in parallel, resolve silently
-  modelsModule.refreshModels(true).then(() => {
+  modelsModule.refreshModels(false).then(() => {
+    try { sessionModule.updateModelPicker(); } catch (_) {}
     const modelsBox = document.getElementById('models');
     const hasModels = modelsBox && modelsBox.querySelector('.models-row');
     if (!hasModels) {

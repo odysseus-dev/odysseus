@@ -14,6 +14,7 @@ Sub-modules:
 import logging
 from collections import namedtuple
 
+from src.tool_security import BUILTIN_EMAIL_TOOLS
 from src.tool_utils import _truncate, get_mcp_manager, set_mcp_manager
 
 logger = logging.getLogger(__name__)
@@ -33,9 +34,15 @@ from .vault_tools import VaultSearchTool, VaultGetTool, VaultUnlockTool
 from .research_tools import TriggerResearchTool, ManageResearchTool
 from .api_integration_tools import ApiCallTool, AppApiTool
 from .image_tools import EditImageTool, GenerateImageTool
+from .interaction_tools import AskUserTool, UpdatePlanTool
 from .model_interaction_tools import ChatWithModelTool, AskTeacherTool, ListModelsTool
 from .bg_job_tools import ManageBgJobsTool
 from .session_tools import CreateSessionTool, ListSessionsTool, SendToSessionTool, ManageSessionTool
+from .admin_tools import (
+    ADMIN_TOOL_HANDLERS,
+    do_manage_endpoints, do_manage_mcp, do_manage_webhooks,
+    do_manage_tokens, do_manage_settings,
+)
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -70,6 +77,8 @@ TOOL_HANDLERS = {
     "edit_image": EditImageTool().execute,
     "generate_image": GenerateImageTool().execute,
     "get_workspace": GetWorkspaceTool().execute,
+    "ask_user": AskUserTool().execute,
+    "update_plan": UpdatePlanTool().execute,
     "chat_with_model": ChatWithModelTool().execute,
     "ask_teacher": AskTeacherTool().execute,
     "list_models": ListModelsTool().execute,
@@ -79,6 +88,8 @@ TOOL_HANDLERS = {
     "send_to_session": SendToSessionTool().execute,
     "manage_session": ManageSessionTool().execute,
 }
+# Config/integration admin tools (manage_endpoints/mcp/webhooks/tokens/settings).
+TOOL_HANDLERS.update(ADMIN_TOOL_HANDLERS)
 
 # ---------------------------------------------------------------------------
 # Constants (re-exported for backward compatibility — single source of truth
@@ -103,9 +114,10 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              "manage_endpoints", "manage_mcp", "manage_webhooks",
              "manage_tokens", "manage_documents", "manage_settings",
              "manage_notes", "manage_calendar",
-             "resolve_contact", "manage_contact", "list_email_accounts", "send_email", "list_emails",
-             "read_email", "reply_to_email", "bulk_email", "archive_email",
-             "delete_email", "mark_email_read",
+             "resolve_contact", "manage_contact",
+             # Email tool names come from BUILTIN_EMAIL_TOOLS (unioned below)
+             # so the fence regex, dispatch, and non-admin blocklist all cover
+             # the same set.
              # Cookbook tools (LLM serving + downloads). Without these
              # entries, native function calls to e.g. list_served_models
              # are rejected as "Unknown function call" before reaching
@@ -122,7 +134,7 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              # Generic loopback to any UI-button endpoint (cookbook,
              # gallery, email folders, etc.) — agent uses this when
              # there's no named tool wrapper for the action.
-             "app_api"}
+             "app_api"} | BUILTIN_EMAIL_TOOLS
 
 ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
 
@@ -166,4 +178,8 @@ from src.tool_implementations import (  # noqa: E402, F401
     do_manage_webhooks,
     do_manage_tokens,
     do_manage_settings,
+    do_search_chats,
+    do_manage_skills,
+    do_manage_tasks,
+    do_api_call,
 )

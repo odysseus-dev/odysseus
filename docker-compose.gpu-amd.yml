@@ -28,14 +28,6 @@ services:
       # land under /app/.local for the odysseus user. Persist them so a
       # container recreate does not silently remove installed serve engines.
       - ${APP_DATA_DIR:-./data}/local:/app/.local:z
-      # Docker socket — lets Cookbook launch commands like
-      # `docker exec ollama-rocm ollama show <tag>` reach the host's
-      # Docker daemon (and sibling containers like ollama-rocm /
-      # ollama-test). The in-container user needs to be in the
-      # socket's owning group — see `group_add` below; the GID
-      # there must match the host's `docker` group (defaults to 963
-      # on Debian, 999 on Ubuntu — override via env if yours differs).
-      - /var/run/docker.sock:/var/run/docker.sock
     extra_hosts:
       # Lets the container reach local services on the Docker host, including
       # Ollama at http://host.docker.internal:11434.
@@ -101,7 +93,6 @@ services:
       - /dev/kfd
       - /dev/dri
     group_add:
-      - "${DOCKER_GID:-963}"
       - video
       - ${RENDER_GID:-render}
 

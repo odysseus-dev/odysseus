@@ -11,10 +11,14 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from core.database import SessionLocal, ScheduledTask, TaskRun
-from core.middleware import INTERNAL_TOOL_USER
 from core.constants import internal_api_base
 from src.auth_helpers import get_current_user
 from src.constants import DATA_DIR, EMAIL_URGENCY_CACHE_DIR
+from src.task_action_policy import (
+    ADMIN_ONLY_TASK_ACTIONS,
+    is_admin_only_task_action,
+    owner_has_admin_task_privileges,
+)
 from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
 from routes.prefs_routes import _load_for_user, _save_for_user
 
@@ -417,28 +421,18 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 db.close()
         return {"ok": True, "opened": True, "enabled": bool(prefs.get("tasks_enabled")), "resumed": resumed}
 
-    # Actions that execute shell/SSH commands — restricted to admins.
+    # Actions that execute shell/SSH commands or cross into admin-only
+    # Cookbook serving surfaces — restricted to admins.
     # Non-admin users cannot create tasks with these action types via the
     # API. See review CRIT-C.
-    _ADMIN_ONLY_ACTIONS = {"run_local", "run_script", "ssh_command"}
+    _ADMIN_ONLY_ACTIONS = ADMIN_ONLY_TASK_ACTIONS
 
     def _is_admin(user: str | None) -> bool:
-        if not user:
-            return False
-        # In-process tool-loopback marker — AuthMiddleware validated
-        # the internal token + loopback client before stamping this,
-        # so treat as admin-equivalent.
-        if user == INTERNAL_TOOL_USER:
-            return True
-        try:
-            from core.auth import AuthManager
-            auth = AuthManager()
-            if not auth.is_configured:
-                # Unconfigured single-user deploy: trust the local owner.
-                return True
-            return bool(auth.is_admin(user))
-        except Exception:
-            return False
+        return owner_has_admin_task_privileges(user)
+
+    def _require_admin_for_task_action(user: str | None, task_type: str | None, action: str | None) -> None:
+        if is_admin_only_task_action(task_type, action) and not _is_admin(user):
+            raise HTTPException(403, f"Action '{action}' requires admin privileges")
 
     def _validate_then_task_id(db, then_task_id: Optional[str], user: Optional[str], current_task_id: Optional[str] = None) -> Optional[str]:
         target_id = (then_task_id or "").strip()
@@ -466,8 +460,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         # Block shell-executing action types for non-admins. action_run_local
         # uses subprocess.run(shell=True) and ssh_command / run_script run
         # arbitrary commands.
-        if req.task_type == "action" and req.action in _ADMIN_ONLY_ACTIONS and not _is_admin(user):
-            raise HTTPException(403, f"Action '{req.action}' requires admin privileges")
+        _require_admin_for_task_action(user, req.task_type, req.action)
         if req.trigger_type == "schedule" and not req.schedule:
             raise HTTPException(400, "Schedule is required for schedule-triggered tasks")
         if req.trigger_type == "schedule" and req.schedule == "cron" and not req.cron_expression:
@@ -594,6 +587,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         cache_tables = {
             "summarize_emails": ("email_summaries",),
             "draft_email_replies": ("email_ai_replies",),
+            "email_auto_translate": ("email_translations",),
             "extract_email_events": ("email_calendar_extractions",),
             "learn_sender_signatures": ("sender_signatures",),
             "check_email_urgency": ("email_tags", "email_urgency_alerts"),
@@ -680,6 +674,10 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             if user and task.owner != user:
                 raise HTTPException(403, "Access denied")
 
+            next_task_type = req.task_type if req.task_type is not None else task.task_type
+            next_action = req.action if req.action is not None else task.action
+            _require_admin_for_task_action(user, next_task_type, next_action)
+
             if req.name is not None:
                 task.name = req.name
             if req.prompt is not None:
@@ -687,9 +685,6 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             if req.task_type is not None:
                 task.task_type = req.task_type
             if req.action is not None:
-                # Same admin-only gate as create — see CRIT-C.
-                if req.action in _ADMIN_ONLY_ACTIONS and not _is_admin(user):
-                    raise HTTPException(403, f"Action '{req.action}' requires admin privileges")
                 task.action = req.action
             if req.output_target is not None:
                 task.output_target = req.output_target
@@ -806,6 +801,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 raise HTTPException(404, "Task not found")
             if user and task.owner != user:
                 raise HTTPException(403, "Access denied")
+            _require_admin_for_task_action(user, task.task_type, task.action)
             task.status = "active"
             if (task.trigger_type or "schedule") == "schedule":
                 task.next_run = compute_next_run(
@@ -868,6 +864,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 raise HTTPException(404, "Task not found")
             if user and task.owner != user:
                 raise HTTPException(403, "Access denied")
+            _require_admin_for_task_action(user, task.task_type, task.action)
         finally:
             db.close()
         started = await task_scheduler.run_task_now(task_id, force=force)
@@ -893,10 +890,11 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         return {"ok": True, "message": "Task stopped"}
 
     @router.get("/runs/recent")
-    async def list_recent_runs(request: Request, limit: int = 50):
+    async def list_recent_runs(request: Request, limit: int = 50, max_result_chars: int = 6000):
         """Recent task runs across ALL tasks for this owner. Drives the Activity view."""
         user = _owner(request)
         limit = max(1, min(limit, 200))
+        max_result_chars = max(500, min(max_result_chars, 20000))
         db = SessionLocal()
         try:
             q = db.query(TaskRun, ScheduledTask).join(
@@ -930,10 +928,20 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 deduped.append((r, t))
                 if len(deduped) >= limit:
                     break
+
+            def _clip_run(r: TaskRun) -> dict:
+                d = _run_to_dict(r)
+                for key in ("result", "error"):
+                    val = d.get(key)
+                    if isinstance(val, str) and len(val) > max_result_chars:
+                        d[key] = val[:max_result_chars].rstrip() + "\n\n[Activity preview truncated]"
+                return d
+
             return {
+                "has_more": len(rows) > len(deduped),
                 "runs": [
                     {
-                        **_run_to_dict(r),
+                        **_clip_run(r),
                         "task_name": _display_task_name(t),
                         "task_type": t.task_type or "llm",
                         "action": t.action,
@@ -1046,6 +1054,14 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             ).first()
             if not task:
                 raise HTTPException(404, "Not found")
+            if (
+                is_admin_only_task_action(task.task_type, task.action)
+                and not owner_has_admin_task_privileges(task.owner)
+            ):
+                task.status = "paused"
+                task.next_run = None
+                db.commit()
+                raise HTTPException(403, f"Action '{task.action}' requires admin privileges")
         finally:
             db.close()
         started = await task_scheduler.run_task_now(task_id)
