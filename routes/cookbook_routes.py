@@ -25,7 +25,6 @@ from routes._validators import (
     validate_remote_host,
     validate_ssh_port,
     _REMOTE_HOST_RE,
-    _SSH_PORT_RE,
 )
 from core.platform_compat import (
     IS_WINDOWS,
@@ -265,10 +264,20 @@ def _cmdline_references_hf_repo(text: str, repo_id: str) -> bool:
     boundary = r"(?![A-Za-z0-9._-])"
     escaped = re.escape(repo_id)
     patterns = (
-        rf"\bhf\s+download\s+{escaped}{boundary}",
-        rf"\bhf_download\.py\s+{escaped}{boundary}",
+        # hf or hf.exe download — optional path prefix (e.g. C:\...\hf.exe download org/model)
+        rf"\bhf(?:\.exe)?\s+download\s+{escaped}{boundary}",
+        # hf_download.py script arg — quoted/unquoted, optional python -u prefix
+        rf"\bhf_download\.py['\"]?\s+{escaped}{boundary}",
     )
-    return any(re.search(p, text) for p in patterns)
+    return any(re.search(p, text, re.IGNORECASE) for p in patterns)
+
+
+def _coerce_ssh_port(v: str | None) -> str | None:
+    """Non-throwing ssh port check; returns normalized port or None."""
+    try:
+        return validate_ssh_port(None if v in (None, "") else str(v))
+    except HTTPException:
+        return None
 
 
 def setup_cookbook_routes() -> APIRouter:
@@ -983,33 +992,50 @@ def setup_cookbook_routes() -> APIRouter:
         sport = ssh_port or ""
         is_win = (platform or "").strip().lower() == "windows"
         if remote:
-            _pf = f"-p {sport} " if sport and sport != "22" else ""
             if is_win:
-                sd = "$env:TEMP\\odysseus-sessions"
+                sd = "Join-Path $env:TEMP 'odysseus-sessions'"
                 ps = (
-                    f"$p = Get-Content '{sd}\\{session_id}.pid' -ErrorAction SilentlyContinue; "
+                    f"$sd = {sd}; "
+                    f"$pidPath = Join-Path $sd '{session_id}.pid'; "
+                    f"$p = Get-Content $pidPath -ErrorAction SilentlyContinue; "
                     f"if ($p) {{ taskkill /F /T /PID $p 2>$null | Out-Null }}; "
-                    f"Remove-Item '{sd}\\{session_id}.*' -Force -ErrorAction SilentlyContinue"
+                    f"Remove-Item (Join-Path $sd '{session_id}.*') -Force -ErrorAction SilentlyContinue"
                 )
-                cmd = (
-                    f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "
-                    f"{_pf}{shlex.quote(remote)} "
-                    f"\"powershell -Command \\\"{ps}\\\"\""
+                ssh_args = [
+                    "ssh",
+                    "-o", "ConnectTimeout=5",
+                    "-o", "StrictHostKeyChecking=no",
+                ]
+                safe_port = _coerce_ssh_port(sport)
+                if safe_port and safe_port != "22":
+                    ssh_args.extend(["-p", safe_port])
+                ssh_args.extend([remote, "powershell", "-NoProfile", "-Command", ps])
+                proc = await asyncio.create_subprocess_exec(
+                    *ssh_args,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
                 )
             else:
                 sid = shlex.quote(session_id)
-                cmd = (
-                    f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "
-                    f"{_pf}{shlex.quote(remote)} "
-                    f"'tmux has-session -t {sid} 2>/dev/null || exit 0; "
+                ssh_args = [
+                    "ssh",
+                    "-o", "ConnectTimeout=5",
+                    "-o", "StrictHostKeyChecking=no",
+                ]
+                safe_port = _coerce_ssh_port(sport)
+                if safe_port and safe_port != "22":
+                    ssh_args.extend(["-p", safe_port])
+                ssh_args.append(remote)
+                ssh_args.append(
+                    f"tmux has-session -t {sid} 2>/dev/null || exit 0; "
                     f"tmux send-keys -t {sid} C-c 2>/dev/null; "
-                    f"sleep 2; tmux kill-session -t {sid}'"
+                    f"sleep 2; tmux kill-session -t {sid}"
                 )
-            proc = await asyncio.create_subprocess_shell(
-                cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
+                proc = await asyncio.create_subprocess_exec(
+                    *ssh_args,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
             _stdout, stderr = await proc.communicate()
             ok = _tmux_stop_succeeded(proc.returncode, stderr)
             return {"ok": ok, "exit_code": proc.returncode}
@@ -1431,8 +1457,7 @@ def setup_cookbook_routes() -> APIRouter:
         # `host`/`ssh_port` are interpolated into an ssh command below, so an
         # unvalidated value (e.g. "x'; rm -rf ~ #") would be command injection.
         host = validate_remote_host(host)
-        if ssh_port is not None and ssh_port != "" and not _SSH_PORT_RE.fullmatch(ssh_port):
-            raise HTTPException(400, "Invalid ssh_port")
+        ssh_port = validate_ssh_port(ssh_port)
         TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
         model_dirs = []
@@ -1589,10 +1614,9 @@ def setup_cookbook_routes() -> APIRouter:
             # Probe over SSH. Bash's /dev/tcp gives a portable "is anything
             # listening" check without requiring ss/netstat/nmap.
             ssh_base = ["ssh", "-o", "ConnectTimeout=4", "-o", "StrictHostKeyChecking=no"]
-            if ssh_port and str(ssh_port) != "22":
-                if not _SSH_PORT_RE.match(str(ssh_port)):
-                    return None
-                ssh_base.extend(["-p", str(ssh_port)])
+            safe_port = _coerce_ssh_port(str(ssh_port) if ssh_port else None)
+            if safe_port and safe_port != "22":
+                ssh_base.extend(["-p", safe_port])
             host_arg = remote
             if not _REMOTE_HOST_RE.match(host_arg):
                 return None
@@ -2819,8 +2843,7 @@ def setup_cookbook_routes() -> APIRouter:
         """
         require_admin(request)
         host = validate_remote_host(host)
-        if ssh_port is not None and ssh_port != "" and not _SSH_PORT_RE.fullmatch(ssh_port):
-            raise HTTPException(400, "Invalid ssh_port")
+        ssh_port = validate_ssh_port(ssh_port)
         gpu_query = "nvidia-smi --query-gpu=index,name,memory.free,memory.total,memory.used,utilization.gpu,uuid --format=csv,noheader,nounits"
         nvidia_error = None
         try:
@@ -3013,8 +3036,7 @@ def setup_cookbook_routes() -> APIRouter:
         if sig not in ("TERM", "KILL", "INT"):
             raise HTTPException(400, "signal must be TERM, KILL, or INT")
         host = validate_remote_host(req.host)
-        if req.ssh_port and not _SSH_PORT_RE.fullmatch(req.ssh_port):
-            raise HTTPException(400, "Invalid ssh_port")
+        req.ssh_port = validate_ssh_port(req.ssh_port)
         kill_cmd = f"kill -{sig} {req.pid}"
         try:
             if host:
@@ -3392,10 +3414,9 @@ def setup_cookbook_routes() -> APIRouter:
                 continue
             sport = str(srv.get("port") or "").strip()
             ssh_base = ["ssh", "-o", "ConnectTimeout=4", "-o", "StrictHostKeyChecking=no"]
-            if sport and sport != "22":
-                if not _SSH_PORT_RE.match(sport):
-                    continue
-                ssh_base.extend(["-p", sport])
+            safe_port = _coerce_ssh_port(sport)
+            if safe_port and safe_port != "22":
+                ssh_base.extend(["-p", safe_port])
 
             try:
                 ls = subprocess.run(
@@ -4028,7 +4049,7 @@ def setup_cookbook_routes() -> APIRouter:
             if remote and not _REMOTE_HOST_RE.match(remote):
                 logger.warning(f"Skipping task with unsafe remoteHost: {remote!r}")
                 continue
-            if _tport and not _SSH_PORT_RE.match(str(_tport)):
+            if _tport and not _coerce_ssh_port(str(_tport)):
                 logger.warning(f"Skipping task with unsafe sshPort: {_tport!r}")
                 continue
             if task_platform == "windows" and remote:

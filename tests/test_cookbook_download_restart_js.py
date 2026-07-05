@@ -51,7 +51,31 @@ def test_local_windows_download_uses_detached_log_path():
     idx = source.index("export function _tmuxCmd")
     block = source[idx:idx + 500]
     assert "const localWin = !_taskRemoteHost(task)" in block
+    assert "navigator.userAgent" not in block
     assert "Get-Content (Join-Path $env:TEMP 'odysseus-tmux" in source
+
+
+def test_tmux_cmd_uses_server_platform_not_browser_os():
+    source = RUNNING_JS.read_text(encoding="utf-8")
+    idx = source.index("export function _tmuxCmd")
+    block = source[idx:idx + 400]
+    assert "_isWindows(task) || _isWindows('local')" in block
+    assert "navigator" not in block
+
+
+def test_download_stopped_is_terminal_for_active_output():
+    source = RUNNING_JS.read_text(encoding="utf-8")
+    idx = source.index("function _downloadOutputLooksActive")
+    block = source[idx:idx + 450]
+    assert "DOWNLOAD_STOPPED" in block
+
+
+def test_failed_stop_rolls_back_live_serve_statuses():
+    source = RUNNING_JS.read_text(encoding="utf-8")
+    idx = source.index("async function _onTaskStop")
+    block = source[idx:idx + 700]
+    assert "_RECONNECT_STATUSES.includes(priorStatus)" in block
+    assert "el.dataset.status = priorStatus" in block
 
 
 def test_running_tab_reconnect_survives_rerender():

@@ -10,6 +10,8 @@ import { registerMenuDismiss } from './escMenuStack.js';
 import { computeProgressSignal } from './cookbookProgressSignal.js';
 import { portOf, nextFreePort } from './cookbookPorts.js';
 
+const _RECONNECT_STATUSES = ['running', 'ready', 'loading', 'warming', 'starting'];
+
 // Human-friendly badge label for a task's internal status. Avoids surfacing
 // the word "error" in the sidebar — a server the user stopped or one that
 // quit cleanly reads as "stopped", not "error".
@@ -97,7 +99,7 @@ function _downloadOutputLooksActive(task) {
   if (!task || task.type !== 'download') return false;
   const out = task.output || '';
   if (!out) return false;
-  if (out.includes('DOWNLOAD_OK') || out.includes('DOWNLOAD_FAILED')) return false;
+  if (out.includes('DOWNLOAD_OK') || out.includes('DOWNLOAD_FAILED') || out.includes('DOWNLOAD_STOPPED')) return false;
   // An active shard line: filename + a colon + a percentage that isn't 100%.
   // We catch any in-flight shard or "Downloading 'X' to ..." line (no %).
   return /model-\d+-of-\d+\.[a-z]+:\s+(?!100%)\d+%/i.test(out)
@@ -975,15 +977,17 @@ async function _executeTaskStop(el, task) {
 }
 
 async function _onTaskStop(el, task, { removeAfter = false } = {}) {
-  const wasRunning = task.status === 'running';
+  const priorStatus = task.status;
+  const wasActiveServe = task.type === 'serve' && _RECONNECT_STATUSES.includes(priorStatus);
+  const wasActiveDownload = task.type === 'download' && priorStatus === 'running';
   const badge = el.querySelector('.cookbook-task-status');
   const stopOk = await _executeTaskStop(el, task);
   if (!stopOk) {
     try { uiModule.showToast('Stop failed — download may still be running in the background', 'error'); } catch (_) {}
-    if (wasRunning) {
+    if (wasActiveServe || wasActiveDownload) {
       if (badge) _applyTaskBadge(badge, task);
-      el.dataset.status = 'running';
-      _updateTask(task.sessionId, { _userStopped: false, status: 'running' });
+      el.dataset.status = priorStatus;
+      _updateTask(task.sessionId, { _userStopped: false, status: priorStatus });
       _reconnectTask(el, task);
     }
     return false;
@@ -1004,8 +1008,7 @@ function _taskRemoteHost(task) {
 
 export function _tmuxCmd(task, tmuxArgs) {
   const localWin = !_taskRemoteHost(task)
-    && (_isWindows(task) || _isWindows('local')
-      || (typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent)));
+    && (_isWindows(task) || _isWindows('local'));
   if (_isWindows(task) || localWin) {
     return _winSessionCmd(task, tmuxArgs);
   }
@@ -2938,8 +2941,6 @@ export function _renderRunningTab() {
 }
 
 // ── Reconnect task (polling loop) ──
-
-const _RECONNECT_STATUSES = ['running', 'ready', 'loading', 'warming', 'starting'];
 
 function _activateRunningTab() {
   const body = document.querySelector('#cookbook-modal .cookbook-body');
