@@ -4,6 +4,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import unquote, urlparse
 from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.types import TypeDecorator
@@ -72,17 +73,37 @@ def _sqlite_db_path(url) -> Optional[str]:
     """On-disk path of a file-backed SQLite DB for ``url``, else ``None``.
 
     Derived from SQLAlchemy's parsed URL rather than ``str.replace`` so it stays
-    correct for driver-qualified URLs (``sqlite+pysqlite://``) and URLs carrying
-    query args (``?cache=shared``) — both of which slip past a naive
-    ``replace("sqlite:///", "")`` and would leave the file unprotected. Returns
-    ``None`` for Postgres, in-memory, and anonymous (``sqlite://``) databases.
+    correct for driver-qualified URLs, URLs carrying query args, and SQLite URI
+    filenames such as ``file:/tmp/app.db?mode=rwc&uri=true``. Returns ``None``
+    for Postgres, in-memory, anonymous, and URI memory databases.
     """
     if url.get_backend_name() != "sqlite":
         return None
+
     db_path = url.database
     if not db_path or db_path == ":memory:":
         return None
-    return db_path
+
+    query = dict(getattr(url, "query", {}) or {})
+    if str(query.get("mode", "")).lower() == "memory":
+        return None
+
+    db_path = str(db_path)
+    if not db_path.startswith("file:"):
+        return db_path
+
+    if db_path.startswith("file::memory:"):
+        return None
+
+    parsed = urlparse(db_path)
+    fs_path = parsed.path or ""
+    if not fs_path or fs_path == ":memory:":
+        return None
+
+    if parsed.netloc:
+        fs_path = f"//{parsed.netloc}{fs_path}"
+
+    return unquote(fs_path)
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

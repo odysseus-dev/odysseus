@@ -109,3 +109,55 @@ def test_app_db_sidecars_relocked(tmp_path):
     assert db_file.stat().st_mode & 0o777 == 0o600
     for s in sidecars:
         assert s.stat().st_mode & 0o777 == 0o600, f"{s.name} not re-locked on startup"
+
+
+def test_sqlite_db_path_handles_file_uri_forms(tmp_path):
+    """SQLite URI filenames must chmod the real filesystem path, not the
+    literal file: URI string. Memory URI databases should still be skipped."""
+    from sqlalchemy.engine import make_url
+
+    from core.database import _sqlite_db_path
+
+    db_file = tmp_path / "uri-app.db"
+
+    assert (
+        _sqlite_db_path(make_url(f"sqlite+pysqlite:///file:{db_file}?mode=rwc&uri=true"))
+        == str(db_file)
+    )
+    assert (
+        _sqlite_db_path(make_url(f"sqlite:///file:{db_file}?cache=shared&uri=true"))
+        == str(db_file)
+    )
+    assert (
+        _sqlite_db_path(make_url("sqlite+pysqlite:///file::memory:?cache=shared&uri=true"))
+        is None
+    )
+    assert (
+        _sqlite_db_path(make_url("sqlite+pysqlite:///file:memdb1?mode=memory&cache=shared&uri=true"))
+        is None
+    )
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX mode bits (0o600) don't exist on Windows; safe_chmod no-ops there.",
+)
+def test_app_db_file_uri_created_with_0600(tmp_path):
+    """Import-time DB initialization must lock SQLite file: URI databases too."""
+    db_file = tmp_path / "uri-app.db"
+    env = {
+        **os.environ,
+        "DATABASE_URL": f"sqlite+pysqlite:///file:{db_file}?mode=rwc&uri=true",
+    }
+    repo_root = Path(__file__).resolve().parents[1]
+
+    subprocess.run(
+        [sys.executable, "-c", "import core.database"],
+        env=env,
+        cwd=repo_root,
+        check=True,
+    )
+
+    assert db_file.exists()
+    mode = db_file.stat().st_mode & 0o777
+    assert mode == 0o600, f"expected 0o600, got 0o{mode:o}"
