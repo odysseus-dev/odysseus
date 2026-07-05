@@ -2,7 +2,12 @@ import json
 
 import pytest
 
-from src import tool_implementations as tools
+from src.agent_tools.cookbook_tools import (
+    StopServedModelTool,
+    CancelDownloadTool,
+    TailServeOutputTool,
+    AdoptServedModelTool,
+)
 
 
 class FakeResponse:
@@ -48,8 +53,9 @@ def _install_httpx_client(monkeypatch, *, state=None, posts=None):
 async def test_stop_served_model_rejects_invalid_remote_host_before_shell(monkeypatch):
     posts = _install_httpx_client(monkeypatch)
 
-    result = await tools.do_stop_served_model(
-        json.dumps({"session_id": "serve-abc123", "remote_host": "-bad"})
+    result = await StopServedModelTool().execute(
+        json.dumps({"session_id": "serve-abc123", "remote_host": "-bad"}),
+        {"owner": None},
     )
 
     assert result["exit_code"] == 1
@@ -72,8 +78,9 @@ async def test_stop_served_model_rejects_invalid_state_host_before_shell(monkeyp
         },
     )
 
-    result = await tools.do_stop_served_model(
-        json.dumps({"session_id": "serve-abc123"})
+    result = await StopServedModelTool().execute(
+        json.dumps({"session_id": "serve-abc123"}),
+        {"owner": None},
     )
 
     assert result["exit_code"] == 1
@@ -85,14 +92,15 @@ async def test_stop_served_model_rejects_invalid_state_host_before_shell(monkeyp
 async def test_stop_served_model_rejects_invalid_ssh_port_before_shell(monkeypatch):
     posts = _install_httpx_client(monkeypatch)
 
-    result = await tools.do_stop_served_model(
+    result = await StopServedModelTool().execute(
         json.dumps(
             {
                 "session_id": "serve-abc123",
                 "remote_host": "gpu-box",
                 "ssh_port": "not-a-port",
             }
-        )
+        ),
+        {"owner": None},
     )
 
     assert result["exit_code"] == 1
@@ -104,14 +112,15 @@ async def test_stop_served_model_rejects_invalid_ssh_port_before_shell(monkeypat
 async def test_stop_served_model_uses_validated_remote_target(monkeypatch):
     posts = _install_httpx_client(monkeypatch)
 
-    result = await tools.do_stop_served_model(
+    result = await StopServedModelTool().execute(
         json.dumps(
             {
                 "session_id": "serve-abc123",
                 "remote_host": "user@gpu-box",
                 "ssh_port": 2222,
             }
-        )
+        ),
+        {"owner": None},
     )
 
     assert result["exit_code"] == 0
@@ -126,8 +135,9 @@ async def test_stop_served_model_uses_validated_remote_target(monkeypatch):
 async def test_cancel_download_rejects_invalid_remote_host_before_shell(monkeypatch):
     posts = _install_httpx_client(monkeypatch)
 
-    result = await tools.do_cancel_download(
-        json.dumps({"session_id": "cookbook-abc123", "remote_host": "-bad"})
+    result = await CancelDownloadTool().execute(
+        json.dumps({"session_id": "cookbook-abc123", "remote_host": "-bad"}),
+        {"owner": None},
     )
 
     assert result["exit_code"] == 1
@@ -150,8 +160,9 @@ async def test_cancel_download_rejects_invalid_state_host_before_shell(monkeypat
         },
     )
 
-    result = await tools.do_cancel_download(
-        json.dumps({"session_id": "cookbook-abc123"})
+    result = await CancelDownloadTool().execute(
+        json.dumps({"session_id": "cookbook-abc123"}),
+        {"owner": None},
     )
 
     assert result["exit_code"] == 1
@@ -163,8 +174,9 @@ async def test_cancel_download_rejects_invalid_state_host_before_shell(monkeypat
 async def test_tail_serve_output_rejects_invalid_remote_host_before_shell(monkeypatch):
     posts = _install_httpx_client(monkeypatch)
 
-    result = await tools.do_tail_serve_output(
-        json.dumps({"session_id": "serve-abc123", "remote_host": "-bad"})
+    result = await TailServeOutputTool().execute(
+        json.dumps({"session_id": "serve-abc123", "remote_host": "-bad"}),
+        {"owner": None},
     )
 
     assert result["exit_code"] == 1
@@ -187,8 +199,9 @@ async def test_tail_serve_output_rejects_invalid_state_host_before_shell(monkeyp
         },
     )
 
-    result = await tools.do_tail_serve_output(
-        json.dumps({"session_id": "serve-abc123"})
+    result = await TailServeOutputTool().execute(
+        json.dumps({"session_id": "serve-abc123"}),
+        {"owner": None},
     )
 
     assert result["exit_code"] == 1
@@ -200,14 +213,15 @@ async def test_tail_serve_output_rejects_invalid_state_host_before_shell(monkeyp
 async def test_adopt_served_model_rejects_invalid_remote_host_before_shell(monkeypatch):
     posts = _install_httpx_client(monkeypatch)
 
-    result = await tools.do_adopt_served_model(
+    result = await AdoptServedModelTool().execute(
         json.dumps(
             {
                 "tmux_session": "serve_abc123",
                 "model": "org/model",
                 "host": "-bad",
             }
-        )
+        ),
+        {"owner": None},
     )
 
     assert result["exit_code"] == 1

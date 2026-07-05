@@ -14,6 +14,8 @@ import re
 import shlex
 from typing import Any, Dict, List, Optional
 
+from fastapi import HTTPException
+
 from core.constants import internal_api_base
 from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
 
@@ -26,6 +28,7 @@ from src.tool_implementations import (
     _cookbook_register_task,
     _cookbook_apply_retry_suggestion,
     _scan_running_model_processes,
+    _validate_cookbook_ssh_target,
 )
 
 logger = logging.getLogger(__name__)
@@ -117,6 +120,12 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
             if not sport:
                 sport = t.get("sshPort") or ""
             break
+
+    if remote:
+        try:
+            remote, sport = _validate_cookbook_ssh_target(remote, sport)
+        except HTTPException as e:
+            return {"error": str(getattr(e, "detail", e)), "exit_code": 1}
 
     if remote:
         _pf = f"-p {shlex.quote(str(sport))} " if sport and str(sport) != "22" else ""
@@ -469,6 +478,11 @@ class TailServeOutputTool:
                         if not sport:
                             sport = t.get("sshPort") or ""
                         break
+        if remote:
+            try:
+                remote, sport = _validate_cookbook_ssh_target(remote, sport)
+            except HTTPException as e:
+                return {"error": str(getattr(e, "detail", e)), "exit_code": 1}
         log_path = f"/tmp/odysseus-tmux/{session_id}.log"
         pane_inner = f"tmux capture-pane -t {shlex.quote(session_id)} -p -S -{tail} 2>/dev/null"
         file_inner = f"tail -n {tail} {shlex.quote(log_path)} 2>/dev/null"
@@ -636,6 +650,12 @@ class AdoptServedModelTool:
 
         if not sess or not model:
             return {"error": "tmux_session and model are required", "exit_code": 1}
+
+        if host:
+            try:
+                host, _ = _validate_cookbook_ssh_target(host)
+            except HTTPException as e:
+                return {"error": str(getattr(e, "detail", e)), "exit_code": 1}
 
         headers = _internal_headers()
         if host:
