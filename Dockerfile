@@ -87,7 +87,8 @@ ARG INSTALL_SPEECH=false
 ARG INSTALL_SPEECH_GPU=false
 RUN if [ "$INSTALL_SPEECH" = "true" ]; then \
         pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
-        pip install --no-cache-dir faster-whisper kokoro soundfile; \
+        pip install --no-cache-dir faster-whisper kokoro soundfile && \
+        python3 -m spacy download en_core_web_sm; \
     fi && \
     if [ "$INSTALL_SPEECH_GPU" = "true" ]; then \
         pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu121; \
