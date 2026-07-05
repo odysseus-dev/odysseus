@@ -222,6 +222,137 @@ async def test_native_local_unreachable_daemon_defers_pin(monkeypatch, tmp_path)
         db.close()
 
 
+@pytest.mark.asyncio
+async def test_native_local_no_ollama_host_verifies_rewritten_port(monkeypatch, tmp_path):
+    """Finding #1: with no OLLAMA_HOST supplied, the port-scan can move the bind
+    off a busy 11434 onto a free port. The tag probe must run AGAINST the port we
+    finally register — not the stale default — so we never verify one daemon and
+    pin a different one.
+
+    Simulate 11434 busy / 11435 free, and assert the probe URL and the registered
+    endpoint both use 11435.
+    """
+    mr = pytest.importorskip("routes.model_routes")
+    from core.database import SessionLocal, ModelEndpoint
+    import json
+    import socket as _socket_mod
+
+    _prepare_native_local_launch(monkeypatch, tmp_path)
+
+    # Fake socket: connecting to 11434 "succeeds" (busy) so the scan skips it;
+    # 11435 refuses (free) so the scan binds there and rewrites the command.
+    # `_pick_free_port_for_ollama` does a local `import socket`, so patch the
+    # stdlib module itself, not a module-level alias on cookbook_routes.
+    class _FakeSock:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def settimeout(self, *a):
+            pass
+
+        def connect(self, addr):
+            _host, port = addr
+            if port == 11434:
+                return  # something listening → busy
+            raise ConnectionRefusedError
+
+    monkeypatch.setattr(_socket_mod, "socket", _FakeSock)
+
+    probed_urls = []
+
+    def _record_probe(url, *a, **k):
+        probed_urls.append(url)
+        return ["qwen3:latest"]
+
+    monkeypatch.setattr(mr, "_probe_ollama_tags", _record_probe)
+
+    resp = await _model_serve_endpoint()(
+        _admin_request(),
+        # No OLLAMA_HOST → the scan runs and should rewrite to the free 11435.
+        ServeRequest(repo_id="qwen3", cmd="ollama serve"),
+    )
+
+    assert resp["ok"] is True
+    # The tag probe must have targeted the rewritten port, not the busy default.
+    assert probed_urls, "tag probe never ran"
+    assert probed_urls[-1] == "http://127.0.0.1:11435", probed_urls
+    db = SessionLocal()
+    try:
+        # Endpoint registered at the SAME port we verified.
+        ep = db.query(ModelEndpoint).filter(
+            ModelEndpoint.base_url == "http://localhost:11435/v1"
+        ).first()
+        assert ep is not None
+        assert json.loads(ep.pinned_models) == ["qwen3"]
+        # And nothing registered at the stale default we did NOT verify.
+        assert db.query(ModelEndpoint).filter(
+            ModelEndpoint.base_url == "http://localhost:11434/v1"
+        ).first() is None
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_native_local_defer_pin_clears_stale_pins_on_reused_endpoint(monkeypatch, tmp_path):
+    """Finding #2: a reused endpoint that pinned a model on an earlier launch must
+    not keep that stale pin when this launch defers pinning (daemon unreachable,
+    skip_pin). Otherwise a phantom picker entry survives even though the new path
+    couldn't confirm the tag.
+    """
+    mr = pytest.importorskip("routes.model_routes")
+    from core.database import SessionLocal, ModelEndpoint
+    import json
+
+    _prepare_native_local_launch(monkeypatch, tmp_path)
+
+    base_url = "http://localhost:15563/v1"
+    # Seed a pre-existing endpoint at this URL with a stale pin from an earlier run.
+    db = SessionLocal()
+    try:
+        db.query(ModelEndpoint).filter(ModelEndpoint.base_url == base_url).delete()
+        db.add(ModelEndpoint(
+            id="local-stalepin",
+            name="qwen3",
+            base_url=base_url,
+            api_key=None,
+            is_enabled=True,
+            model_type="llm",
+            endpoint_kind="ollama",
+            model_refresh_mode="auto",
+            cached_models=json.dumps(["old-model:latest"]),
+            pinned_models=json.dumps(["old-model:latest"]),
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    # Daemon unreachable → gate defers the pin (skip_pin), and the post-launch
+    # re-probe (patched empty in _prepare_native_local_launch) confirms nothing.
+    monkeypatch.setattr(mr, "_probe_ollama_tags", lambda *a, **k: [])
+
+    resp = await _model_serve_endpoint()(
+        _admin_request(),
+        ServeRequest(repo_id="qwen3", cmd="OLLAMA_HOST=127.0.0.1:15563 ollama serve"),
+    )
+
+    assert resp["ok"] is True
+    db = SessionLocal()
+    try:
+        ep = db.query(ModelEndpoint).filter(ModelEndpoint.base_url == base_url).first()
+        assert ep is not None
+        # Stale pin/cache cleared — no phantom entry survives the deferred pin.
+        assert ep.pinned_models is None
+        assert ep.cached_models is None
+    finally:
+        db.close()
+
+
 def _prepare_native_local_launch(monkeypatch, tmp_path):
     """Mock everything the native-local serve handler touches after the gate so
     the launch + auto-register runs without a real tmux/daemon/network."""

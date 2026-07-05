@@ -1450,6 +1450,15 @@ def setup_cookbook_routes() -> APIRouter:
                     if pinned_models:
                         existing.cached_models = json.dumps(pinned_models)
                         existing.pinned_models = json.dumps(pinned_models)
+                    elif skip_pin:
+                        # Deferred pin (tag unverified — daemon wasn't reachable
+                        # on the port we'll register). Clear any stale pin/cache
+                        # from an earlier launch so a reused endpoint doesn't keep
+                        # showing a phantom picker entry for a model this launch
+                        # couldn't confirm. The live re-probe below repopulates
+                        # cached_models if the daemon actually serves anything.
+                        existing.pinned_models = None
+                        existing.cached_models = None
                 if supports_tools is not None:
                     existing.supports_tools = supports_tools
                 db.commit()
@@ -1622,6 +1631,23 @@ def setup_cookbook_routes() -> APIRouter:
         # were native `ollama serve`, prepending OLLAMA_HOST=… and then
         # running the ollama-not-found preflight which exits 127.
         _serve_in_container = not remote and os.path.exists("/.dockerenv")
+        # Resolve the final Ollama bind port BEFORE verifying the tag, so the
+        # tag probe and the endpoint we later register point at the SAME daemon.
+        # If the user didn't pin OLLAMA_HOST and 11434 is busy, the port-scan
+        # picks a different free port and rewrites the command to bind there;
+        # probing 11434 in that case would verify a daemon we won't register.
+        # (Container mode skips the scan: it probes 127.0.0.1 = container
+        # loopback, not the host, so it always finds ports "free" and the
+        # result is meaningless — the container path talks to host.docker.internal.)
+        if (re.search(r"\bollama\s+serve\b", req.cmd) and "OLLAMA_HOST=" not in req.cmd
+                and not _serve_in_container):
+            _ollama_bind_host = "0.0.0.0" if remote else "127.0.0.1"
+            _ollama_chosen_port = _pick_free_port_for_ollama(
+                remote, req.ssh_port, start_port=11434, max_offset=10,
+            )
+            if _ollama_chosen_port:
+                req.cmd = f"OLLAMA_HOST={_ollama_bind_host}:{_ollama_chosen_port} {req.cmd}"
+
         # A local `ollama serve` (in-container or native) can only serve tags the
         # target daemon already has — it never imports an HF-GGUF repo or pulls a
         # missing tag. Verify against the daemon's native /api/tags before pinning,
@@ -1631,7 +1657,8 @@ def setup_cookbook_routes() -> APIRouter:
         # unverified bare tags. (Remote hosts use the `docker exec … ollama-import`
         # helper in cookbook.js, which does import the GGUF, so they skip this
         # gate.) See branches for why the container / native-reachable /
-        # native-unreachable cases differ.
+        # native-unreachable cases differ. This runs AFTER the port rewrite above
+        # so `_ollama_bind_from_cmd` reads the port we'll actually bind/register.
         _skip_ollama_pin = False
         if (not remote and re.search(r"\bollama\s+serve\b", req.cmd)):
             _host_port = _ollama_bind_from_cmd(req.cmd, default_host="127.0.0.1")[1]
@@ -1669,9 +1696,10 @@ def setup_cookbook_routes() -> APIRouter:
                         f"for a GGUF instead.",
                     )
                 elif _served:
-                    # Native local, daemon reachable, tag genuinely absent →
-                    # `ollama serve` will never import/pull it, so reject with
-                    # pull guidance instead of pinning a model chat can't use.
+                    # Native local, daemon reachable on the port we'll register,
+                    # tag genuinely absent → `ollama serve` will never import/pull
+                    # it, so reject with pull guidance instead of pinning a model
+                    # chat can't use.
                     raise HTTPException(
                         400,
                         f"'{req.repo_id}' is not available in your local Ollama. "
@@ -1682,25 +1710,16 @@ def setup_cookbook_routes() -> APIRouter:
                         f"instead.",
                     )
                 else:
-                    # Native local, daemon not reachable yet → can't verify; let
-                    # the launch proceed but don't pin the unverified tag.
+                    # Native local, nothing listening on the port we'll bind/
+                    # register yet (either the daemon isn't up, or the port-scan
+                    # moved us to a fresh free port) → can't verify; let the launch
+                    # proceed but don't pin the unverified tag.
                     _skip_ollama_pin = True
                     logger.info(
                         f"Native-local Ollama daemon unreachable at "
                         f"{_host_tags_url}; deferring pin of {req.repo_id!r} to "
                         f"the post-launch model re-probe."
                     )
-        if (re.search(r"\bollama\s+serve\b", req.cmd) and "OLLAMA_HOST=" not in req.cmd
-                and not _serve_in_container):
-            # Skip port-scan rewrite in container mode: the scan probes
-            # 127.0.0.1 (container loopback), not the host — always finds
-            # ports "free" and the result is ignored by the container path.
-            _ollama_bind_host = "0.0.0.0" if remote else "127.0.0.1"
-            _ollama_chosen_port = _pick_free_port_for_ollama(
-                remote, req.ssh_port, start_port=11434, max_offset=10,
-            )
-            if _ollama_chosen_port:
-                req.cmd = f"OLLAMA_HOST={_ollama_bind_host}:{_ollama_chosen_port} {req.cmd}"
         # LOCAL execution on a native-Windows host never uses tmux (detached
         # process path below), regardless of the UI-supplied platform.
         local_windows = IS_WINDOWS and not remote
