@@ -1780,6 +1780,12 @@ def setup_model_routes(model_discovery):
                     "model_refresh_mode": _endpoint_refresh_mode(r, kind),
                     "model_refresh_interval": getattr(r, "model_refresh_interval", None),
                     "model_refresh_timeout": getattr(r, "model_refresh_timeout", None),
+                    # NULL = shared (visible to every user); non-null scopes
+                    # the endpoint to that one account. Surfaced here so the
+                    # admin UI can show ownership and offer a toggle instead
+                    # of forcing a delete+recreate to fix a mis-scoped
+                    # endpoint (#590).
+                    "owner": getattr(r, "owner", None),
                 })
             return results
         finally:
@@ -2349,6 +2355,18 @@ def setup_model_routes(model_discovery):
                     _new_base = _normalize_base(_new_base)
                     if _new_base:
                         ep.base_url = _new_base
+                # Flip an endpoint between shared (owner=NULL, visible to
+                # every user) and private (owner=the admin who requested the
+                # change). Without this, an endpoint that ended up scoped to
+                # one admin — e.g. added before the `shared` default existed,
+                # or with `shared=false` — could only be fixed by deleting
+                # and recreating it, which drops pinned/hidden models and
+                # any refresh tuning (#590).
+                if "shared" in body:
+                    from src.auth_helpers import get_current_user as _gcu_toggle
+                    v_shared = body["shared"]
+                    is_shared = v_shared.lower() in ("true", "1", "yes") if isinstance(v_shared, str) else bool(v_shared)
+                    ep.owner = None if is_shared else (_gcu_toggle(request) or None)
             else:
                 ep.is_enabled = not ep.is_enabled
             db.commit()
@@ -2366,6 +2384,7 @@ def setup_model_routes(model_discovery):
                 "model_refresh_mode": getattr(ep, "model_refresh_mode", None) or "auto",
                 "model_refresh_interval": getattr(ep, "model_refresh_interval", None),
                 "model_refresh_timeout": getattr(ep, "model_refresh_timeout", None),
+                "owner": getattr(ep, "owner", None),
             }
         finally:
             db.close()

@@ -527,9 +527,11 @@ async function loadEndpoints() {
               ${kindLabel ? `<span class="admin-badge">${esc(kindLabel)}</span>` : ''}
               ${statusBadge}
               ${ep.is_enabled ? '' : '<span class="admin-badge admin-badge-off">disabled</span>'}
+              <span class="admin-badge" title="${ep.owner ? 'Only visible to ' + esc(ep.owner) : 'Visible to every user'}">${ep.owner ? `Private (${esc(ep.owner)})` : 'Shared'}</span>
               ${hasModels ? `<span style="font-size:10px;opacity:0.4;${category === 'api' ? 'flex-basis:100%;' : ''}">Click to manage models</span>` : ''}
             </div>
             <div style="display:flex;gap:4px;align-items:center;">
+              <button class="admin-btn-sm" data-adm-share-ep="${ep.id}" data-adm-ep-shared="${ep.owner ? '0' : '1'}" title="${ep.owner ? 'Make visible to every user' : 'Restrict to your account only'}">${ep.owner ? 'Make Shared' : 'Make Private'}</button>
               <button class="admin-btn-sm" data-adm-toggle-ep="${ep.id}">${ep.is_enabled ? 'Disable' : 'Enable'}</button>
               <button class="admin-btn-delete" data-adm-del-ep="${ep.id}" data-adm-ep-online="${ep.online ? '1' : '0'}">Delete</button>
               ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
@@ -573,6 +575,27 @@ async function loadEndpoints() {
     };
     queryAll('[data-adm-toggle-ep]').forEach(btn => {
       btn.addEventListener('click', async (e) => { e.stopPropagation(); await fetch(`/api/model-endpoints/${btn.dataset.admToggleEp}`, { method: 'PATCH' }); loadEndpoints(); });
+    });
+    // Flip an endpoint between shared (every user sees it) and private
+    // (only the admin who owns it). Fixes endpoints that ended up
+    // admin-scoped with no way to correct it short of delete+recreate (#590).
+    queryAll('[data-adm-share-ep]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const epId = btn.dataset.admShareEp;
+        const makeShared = btn.dataset.admEpShared === '1';
+        btn.disabled = true;
+        try {
+          await fetch(`/api/model-endpoints/${epId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ shared: makeShared }),
+            credentials: 'same-origin',
+          });
+        } finally {
+          loadEndpoints();
+        }
+      });
     });
     queryAll('[data-adm-copy-url]').forEach(btn => {
       btn.addEventListener('click', (e) => {
