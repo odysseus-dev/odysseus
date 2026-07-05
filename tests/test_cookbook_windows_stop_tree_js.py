@@ -56,3 +56,27 @@ def test_remote_windows_stop_tree_payload_survives_shell_parsing():
     assert "$_.ProcessId" in argv[-1]
     assert "$env:TEMP" in argv[-1]
     assert "$p" in argv[-1]
+
+
+def test_retry_replacement_tombstones_only_superseded_download_sessions():
+    source = RUNNING_JS.read_text(encoding="utf-8")
+    retry = _between(source, "async function _retryDownload", "// ── Serve auto-fix")
+
+    assert "const sameSession = data.session_id === replaceSessionId" in retry
+    assert "if (!sameSession) _tombstoneTask(replaceSessionId)" in retry
+    assert "task.id = data.session_id" in retry
+    assert "task.sessionId = data.session_id" in retry
+    assert "task._userStopped = false" in retry
+
+
+def test_stale_progress_restart_uses_retry_replacement_bookkeeping():
+    source = RUNNING_JS.read_text(encoding="utf-8")
+    stale_restart = _between(
+        source,
+        "badge.textContent = _startupStalled ? '0% stall — retrying' : 'stale — restarting'",
+        "badge.textContent = 'stale — restart failed'",
+    )
+
+    assert "await _retryDownload(task.name, dlPayload, task.sessionId)" in stale_restart
+    assert "fetch('/api/model/download'" not in stale_restart
+    assert "_updateTask(task.sessionId, { sessionId:" not in stale_restart

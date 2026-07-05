@@ -52,7 +52,7 @@ from routes.cookbook_helpers import (
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase, OLLAMA_MISSING_HINT,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
-    load_stored_hf_token,
+    load_stored_hf_token, _git_bash_path,
     _append_vllm_linux_preflight_lines, _ollama_bind_from_cmd, _pip_install_fallback_chain,
     _pip_install_no_cache, _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     _diagnose_serve_output, run_ssh_command_async,
@@ -641,6 +641,7 @@ def setup_cookbook_routes() -> APIRouter:
         directly (simple commands only). Returns the launched job record."""
         log_path = TMUX_LOG_DIR / f"{session_id}.log"
         pid_path = TMUX_LOG_DIR / f"{session_id}.pid"
+        wrapper_pid_path = TMUX_LOG_DIR / f"{session_id}.wrapper.pid"
         bash = find_bash()
         if bash:
             # Run the existing bash wrapper verbatim through Git Bash, redirecting
@@ -683,8 +684,55 @@ def setup_cookbook_routes() -> APIRouter:
             env=env,
             **detached_popen_kwargs(),
         )
-        pid_path.write_text(str(proc.pid), encoding="utf-8")
+        if bash:
+            # The stoppable session PID is the inner bash process that owns the
+            # retry loop and hf/python children. Keep the outer Git Bash wrapper
+            # PID separate; overwriting <session>.pid with it lets Stop kill only
+            # the wrapper while the real download keeps holding HF cache locks.
+            wrapper_pid_path.write_text(str(proc.pid), encoding="utf-8")
+            deadline = time.monotonic() + 1.0
+            while not pid_path.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+        else:
+            pid_path.write_text(str(proc.pid), encoding="utf-8")
         return {"pid": proc.pid, "log_path": str(log_path)}
+
+    def _active_local_windows_download_session(req: ModelDownloadRequest) -> str | None:
+        if not IS_WINDOWS or req.remote_host:
+            return None
+        try:
+            state = json.loads(_cookbook_state_path.read_text(encoding="utf-8")) if _cookbook_state_path.exists() else {}
+        except Exception:
+            return None
+        saved = state.get("tasks") if isinstance(state, dict) else []
+        tasks = saved if isinstance(saved, list) else list(saved.values()) if isinstance(saved, dict) else []
+        for task in tasks:
+            if not isinstance(task, dict) or task.get("type") != "download":
+                continue
+            if task.get("status") != "running" or task.get("_userStopped"):
+                continue
+            payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+            task_repo = payload.get("repo_id") or task.get("repoId") or task.get("repo") or task.get("name")
+            if task_repo != req.repo_id:
+                continue
+            if (payload.get("local_dir") or "") != (req.local_dir or ""):
+                continue
+            task_backend = str(payload.get("backend") or "hf").strip().lower() or "hf"
+            req_backend = str(req.backend or "hf").strip().lower() or "hf"
+            if task_backend != req_backend:
+                continue
+            if payload.get("remote_host") or task.get("remoteHost"):
+                continue
+            sid = task.get("sessionId") or task.get("id") or ""
+            if not _SESSION_ID_RE.match(str(sid)):
+                continue
+            try:
+                pid = int((TMUX_LOG_DIR / f"{sid}.pid").read_text(encoding="utf-8").strip())
+            except Exception:
+                continue
+            if pid_alive(pid):
+                return str(sid)
+        return None
 
     @router.post("/api/model/download")
     async def model_download(request: Request, req: ModelDownloadRequest):
@@ -778,6 +826,15 @@ def setup_cookbook_routes() -> APIRouter:
         # detached-process path below), regardless of the UI-supplied platform.
         local_windows = IS_WINDOWS and not remote
         logger.info(f"Download request: repo={req.repo_id}, remote={remote}, ssh_port={req.ssh_port}, platform={req.platform}")
+
+        existing_session = _active_local_windows_download_session(req)
+        if existing_session:
+            return {
+                "ok": True,
+                "session_id": existing_session,
+                "remote": "local",
+                "deduped": True,
+            }
 
         if not is_windows and not local_windows and not await _binary_available("tmux", remote, req.ssh_port):
             return {
@@ -967,7 +1024,19 @@ def setup_cookbook_routes() -> APIRouter:
             if not is_ollama_download:
                 lines.append(_HF_TOKEN_STATUS_SNIPPET)
             # Retry loop — same rationale as the remote-bash path. Issue #2722.
-            _hf_invoke = 'eval "$ODYSSEUS_OLLAMA_PULL_CMD" < /dev/null' if is_ollama_download else (hf_cmd if IS_WINDOWS else f"{hf_cmd} < /dev/null")
+            if is_ollama_download:
+                _hf_invoke = 'eval "$ODYSSEUS_OLLAMA_PULL_CMD" < /dev/null'
+            elif IS_WINDOWS:
+                _hf_script = Path(__file__).resolve().parents[1] / "scripts" / "hf_download.py"
+                _hf_invoke = (
+                    f"{shlex.quote(_git_bash_path(sys.executable))} "
+                    f"{shlex.quote(_git_bash_path(str(_hf_script)))} "
+                    f"{shlex.quote(req.repo_id)}"
+                )
+                if req.include:
+                    _hf_invoke += f" --include {shlex.quote(req.include)}"
+            else:
+                _hf_invoke = f"{hf_cmd} < /dev/null"
             lines.append('_max_retries=10; _attempt=0; _ec=0')
             lines.append('while [ $_attempt -lt $_max_retries ]; do')
             lines.append('  _attempt=$((_attempt+1))')

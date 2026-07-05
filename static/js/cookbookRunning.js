@@ -1352,6 +1352,7 @@ async function _retryTask(el, task) {
         status: 'running',
         output: `${task.output || ''}\n\n[odysseus] Retrying download. Progress may briefly look like a fresh download while HuggingFace checks cached/incomplete files; cached partial files will be reused when available.`.trim(),
         _retrying: true,
+        _userStopped: false,
       });
       _retryDownload(task.name, task.payload, task.sessionId);
     }
@@ -1384,6 +1385,8 @@ async function _retryDownload(name, payload, replaceSessionId = '') {
       const tasks = _loadTasks();
       const task = tasks.find(t => t.sessionId === replaceSessionId);
       if (task) {
+        const sameSession = data.session_id === replaceSessionId;
+        if (!sameSession) _tombstoneTask(replaceSessionId);
         task.id = data.session_id;
         task.sessionId = data.session_id;
         task.status = 'running';
@@ -1391,6 +1394,7 @@ async function _retryDownload(name, payload, replaceSessionId = '') {
         task.ts = Date.now();
         task.payload = _payload;
         task._retrying = false;
+        task._userStopped = false;
         _saveTasks(tasks);
         _soloExpandTaskId = data.session_id;
         _renderRunningTab();
@@ -3086,6 +3090,10 @@ async function _reconnectTask(el, task) {
             if (curProgress !== el._lastProgress) {
               el._lastProgress = curProgress;
               el._lastProgressTime = Date.now();
+            } else if (task._userStopped) {
+              badge.textContent = 'stopped';
+              badge.className = 'cookbook-task-status cookbook-task-stopped';
+              break;
             } else if (!isPipDep && Date.now() - (el._lastProgressTime || 0) > _STALE_TIMEOUT && task._autoRestarted) {
               const mins = Math.floor((Date.now() - (el._lastProgressTime || 0)) / 60000);
               // Already auto-restarted once and stalled again — make the badge a
@@ -3124,21 +3132,8 @@ async function _reconnectTask(el, task) {
                 // Don't overwrite env_prefix — task.payload already has the correct
                 // "source <path>" form. The bare envPath would miss the `source` and
                 // the venv never activates (so hf CLI falls off PATH).
-                const res = await fetch('/api/model/download', {
-                  method: 'POST', credentials: 'same-origin',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(dlPayload),
-                });
-                const data = await res.json();
-                if (data.ok && data.session_id) {
-                  _updateTask(task.sessionId, { sessionId: data.session_id, status: 'running', output: '' });
-                  task.sessionId = data.session_id;
-                  el._lastProgress = null;
-                  el._lastProgressTime = Date.now();
-                  badge.textContent = 'restarted';
-                  badge.className = 'cookbook-task-status cookbook-task-running';
-                  continue;
-                }
+                await _retryDownload(task.name, dlPayload, task.sessionId);
+                break;
               } catch {}
               badge.textContent = 'stale — restart failed';
               badge.className = 'cookbook-task-status cookbook-task-error';
@@ -3212,7 +3207,7 @@ async function _reconnectTask(el, task) {
               const _accessDenied = /Access to model.*is restricted|gated repo|GatedRepoError|401 Unauthorized|403 Forbidden|not in the authorized list|awaiting a review|must (?:be authenticated|have access)/i.test(snapshot);
               const _dlKey = task.payload?.repo_id || task.name;
               const _dlN = _dlRetryCount.get(_dlKey) || 0;
-              if (!controller.signal.aborted && !_accessDenied && task.type === 'download' && task.payload && _dlN < _DL_MAX_AUTO_RETRY) {
+              if (!controller.signal.aborted && !task._userStopped && !_accessDenied && task.type === 'download' && task.payload && _dlN < _DL_MAX_AUTO_RETRY) {
                 // Auto-retry: kill the dead session and re-launch (resumes from
                 // the cached .incomplete files) after a short delay.
                 _dlRetryCount.set(_dlKey, _dlN + 1);

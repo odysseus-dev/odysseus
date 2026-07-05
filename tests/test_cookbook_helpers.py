@@ -724,9 +724,18 @@ def test_local_windows_download_pid_tracks_inner_bash_and_stop_kills_tree():
     running_src = (Path(__file__).resolve().parents[1] / "static" / "js" / "cookbookRunning.js").read_text(encoding="utf-8")
 
     assert 'printf \'%s\\\\n\' \\"$$\\" > {pp}' in routes_src
+    assert "wrapper_pid_path" in routes_src
+    assert "wrapper_pid_path.write_text(str(proc.pid)" in routes_src
+    assert "overwriting <session>.pid" in routes_src
+    assert "_active_local_windows_download_session(req)" in routes_src
+    assert 'payload.get("backend") or "hf"' in routes_src
+    assert 'req.backend or "hf"' in routes_src
+    assert "scripts\" / \"hf_download.py" in routes_src
     assert "function Stop-Tree([int]$Id)" in running_src
     assert "('ParentProcessId = ' + $Id)" in running_src
     assert "Stop-Tree ([int]$p)" in running_src
+    assert "!task._userStopped" in running_src
+    assert "_userStopped: false" in running_src
 
 
 def test_llama_cpp_rebuild_cmd_runs_clean_on_a_fresh_home(tmp_path):
