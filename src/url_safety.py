@@ -79,12 +79,18 @@ def check_outbound_url(
     if not raw_ips:
         return False, "host does not resolve"
 
+    saw_ip = False
     for raw in raw_ips:
+        if not isinstance(raw, str):
+            continue
         try:
             ip = ipaddress.ip_address(raw.split("%")[0])  # strip IPv6 zone id
         except ValueError:
             continue
+        saw_ip = True
         reason = _classify(ip, block_private=block_private)
         if reason:
             return False, reason
+    if not saw_ip:
+        return False, "host does not resolve to an IP"
     return True, "ok"

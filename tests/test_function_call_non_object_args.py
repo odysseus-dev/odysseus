@@ -53,6 +53,13 @@ def test_non_object_arguments_do_not_crash(arguments):
     assert block.content == ""
 
 
+@pytest.mark.parametrize("tool_name", ["list_emails", "mcp__email__list_emails"])
+def test_email_mcp_non_object_arguments_are_rejected(tool_name):
+    block = function_call_to_tool_block(tool_name, '["INBOX"]')
+
+    assert block is None
+
+
 def test_edit_document_skips_non_object_edit_items():
     block = function_call_to_tool_block(
         "edit_document",
@@ -75,3 +82,14 @@ def test_suggest_document_skips_non_object_suggestion_items():
     assert block.content == (
         "<<<FIND>>>\nold\n<<<SUGGEST>>>\nnew\n<<<REASON>>>\nclearer\n<<<END>>>"
     )
+
+
+def test_ui_control_open_email_reply_preserves_structured_body():
+    block = function_call_to_tool_block(
+        "ui_control",
+        '{"action":"open_email_reply","uid":"3228","folder":"INBOX","mode":"reply","body":"Hi Andy,\\n\\nNo thank you.\\n\\nBest,"}',
+    )
+
+    assert block is not None
+    assert block.tool_type == "ui_control"
+    assert block.content == "open_email_reply 3228 INBOX reply Hi Andy,\n\nNo thank you.\n\nBest,"

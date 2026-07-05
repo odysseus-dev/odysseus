@@ -70,12 +70,20 @@ def rename_endpoint(monkeypatch, tmp_path):
     return _route(ar.setup_auth_routes(am), "rename_user"), am, tmp_path
 
 
-def _request(tmp_path, session_manager=None, token="t", research_handler=None, upload_handler=None):
+def _request(
+    tmp_path,
+    session_manager=None,
+    token="t",
+    research_handler=None,
+    upload_handler=None,
+    personal_docs_manager=None,
+):
     state = SimpleNamespace(
         invalidate_token_cache=lambda: None,
         session_manager=session_manager,
         research_handler=research_handler,
         upload_handler=upload_handler,
+        personal_docs_manager=personal_docs_manager,
     )
     return SimpleNamespace(
         cookies={"odysseus_session": token},
@@ -465,6 +473,52 @@ def test_rename_updates_upload_metadata_owner(rename_endpoint):
     assert updated["alice2:hash-alice"]["owner"] == "alice2"
     assert handler.resolve_upload(upload_id, owner="alice2")["path"] == str(upload_path)
     assert handler.resolve_upload(upload_id, owner="alice") is None
+
+
+def test_rename_updates_personal_rag_upload_owner(rename_endpoint, monkeypatch):
+    endpoint, _am, tmp_path = rename_endpoint
+    from routes import personal_routes
+
+    monkeypatch.setattr(personal_routes, "UPLOADS_DIR", str(tmp_path / "personal_uploads"))
+    old_dir = Path(personal_routes._personal_upload_dir_for_owner("alice"))
+    old_file = old_dir / "note.txt"
+    old_file.write_text("private RAG note", encoding="utf-8")
+
+    manager_calls = []
+    rag_calls = []
+    rag = SimpleNamespace(
+        rename_owner=lambda old, new, path_map=None, path_prefixes=None: rag_calls.append(
+            (old, new, dict(path_map or {}), list(path_prefixes or []))
+        ) or {"success": True, "updated_count": 1},
+    )
+    personal_docs_manager = SimpleNamespace(
+        rag_manager=rag,
+        rename_directory=lambda old, new, path_map=None: manager_calls.append(
+            (old, new, dict(path_map or {}))
+        ),
+    )
+
+    asyncio.run(
+        endpoint(
+            "alice",
+            SimpleNamespace(username="alice2"),
+            _request(tmp_path, personal_docs_manager=personal_docs_manager),
+        )
+    )
+
+    new_dir = Path(personal_routes._personal_upload_dir_for_owner("alice2"))
+    new_file = new_dir / "note.txt"
+    assert old_file.exists() is False
+    assert new_file.read_text(encoding="utf-8") == "private RAG note"
+    assert manager_calls == [(str(old_dir), str(new_dir), {str(old_file): str(new_file)})]
+    assert rag_calls == [
+        (
+            "alice",
+            "alice2",
+            {str(old_file): str(new_file)},
+            [(str(old_dir), str(new_dir))],
+        )
+    ]
 
 
 # ---------------------------------------------------------------------------

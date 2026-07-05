@@ -33,6 +33,11 @@ def test_unknown_window_falls_back_to_configured():
     assert compute_input_token_budget(0, 0, explicit=False) == 6000  # default
 
 
+def test_invalid_numeric_inputs_fall_back_cleanly():
+    assert compute_input_token_budget("bad", "also bad", explicit=False) == 6000
+    assert compute_input_token_budget("bad", 128000, explicit=True) == int(128000 * 0.85)
+
+
 def test_is_setting_overridden_reads_raw_saved_file(tmp_path, monkeypatch):
     import src.settings as settings
 
@@ -86,7 +91,8 @@ def test_default_settings_registers_hard_max_key():
 def test_alias_map_registers_friendly_names():
     """`manage_settings` should accept 'hard max' and friends."""
     from pathlib import Path
-    src = Path("src/tool_implementations.py").read_text()
+    # manage_settings (and its alias map) moved to agent_tools/admin_tools.py in #3629.
+    src = Path("src/agent_tools/admin_tools.py").read_text()
     assert '"hard max": "agent_input_token_hard_max"' in src
     assert '"token budget cap": "agent_input_token_hard_max"' in src
     assert '"input budget cap": "agent_input_token_hard_max"' in src

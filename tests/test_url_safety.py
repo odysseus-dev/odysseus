@@ -68,3 +68,23 @@ def test_unresolvable_host_blocked():
     ok, reason = check_outbound_url("http://does-not-resolve.invalid", resolver=PUBLIC)
     assert ok is False
     assert "resolve" in reason
+
+
+def test_resolver_values_must_include_a_parseable_ip():
+    ok, reason = check_outbound_url(
+        "https://example.test",
+        resolver=lambda _host: [None, 123, "not-an-ip"],
+    )
+
+    assert ok is False
+    assert "does not resolve to an IP" in reason
+
+
+def test_resolver_skips_invalid_values_but_accepts_public_ip():
+    ok, reason = check_outbound_url(
+        "https://example.test",
+        resolver=lambda _host: [None, "not-an-ip", "93.184.216.34"],
+    )
+
+    assert ok is True
+    assert reason == "ok"

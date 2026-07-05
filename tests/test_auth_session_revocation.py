@@ -80,6 +80,16 @@ def test_password_change_allows_new_password_and_blocks_old_password(tmp_path):
     assert mgr.create_session("alice", "new-password") is not None
 
 
+def test_create_session_trusted_rejects_username_renamed_after_verification(tmp_path):
+    mgr = _make_manager(tmp_path)
+    assert mgr.create_user("admin", "admin-password", is_admin=True)
+
+    assert mgr.verify_password("alice", "old-password") is True
+    assert mgr.rename_user("alice", "alice2", "admin") is True
+
+    assert mgr.create_session_trusted("alice") is None
+
+
 def _change_password_endpoint(auth_manager):
     sys.modules.pop("routes.auth_routes", None)
     _real_core_package()
@@ -90,6 +100,39 @@ def _change_password_endpoint(auth_manager):
         if getattr(route, "path", None) == "/api/auth/change-password":
             return route.endpoint, ChangePasswordRequest
     raise AssertionError("change-password route not found")
+
+
+def _login_endpoint(auth_manager):
+    sys.modules.pop("routes.auth_routes", None)
+    _real_core_package()
+    from routes.auth_routes import LoginRequest, setup_auth_routes
+
+    router = setup_auth_routes(auth_manager)
+    for route in router.routes:
+        if getattr(route, "path", None) == "/api/auth/login":
+            return route.endpoint, LoginRequest
+    raise AssertionError("login route not found")
+
+
+def test_login_route_does_not_set_cookie_when_trusted_session_rejects_stale_user(monkeypatch):
+    auth = MagicMock()
+    auth.verify_password.return_value = True
+    auth.totp_enabled.return_value = False
+    auth.create_session_trusted.return_value = None
+    endpoint, LoginRequest = _login_endpoint(auth)
+    monkeypatch.setattr(
+        "routes.auth_routes.asyncio.to_thread",
+        lambda fn, *args, **kwargs: _immediate_to_thread(fn, *args, **kwargs),
+    )
+    request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+    response = MagicMock()
+    body = LoginRequest(username="alice", password="old-password")
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(endpoint(body=body, request=request, response=response))
+
+    assert exc.value.status_code == 401
+    response.set_cookie.assert_not_called()
 
 
 def test_change_password_route_revokes_other_sessions_after_success(monkeypatch):
