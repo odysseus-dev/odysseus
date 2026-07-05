@@ -758,11 +758,9 @@ export function _buildServeCmd(f, modelName, backend) {
     }
     const _lcServer = `${lcPrefix}llama-server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} -ngl ${f.ngl || '99'} -c ${f.ctx || '8192'}${_lcExtra}`;
     const _lcpServer = `${lcPrefix}${py} -m llama_cpp.server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} --n_gpu_layers ${f.ngl || '99'} --n_ctx ${f.ctx || '8192'}${_lcpExtra}`;
-    if (_localWindows) {
-      // Local Windows serve is launched through Git Bash, so use the native
-      // llama-server shape and let PATH resolve the CUDA Release wrapper.
-      cmd += _lcServer;
-    } else if (_isWin) {
+    if (_isWin) {
+      // Windows (local Git Bash or remote PowerShell): pip llama-cpp-python does
+      // not always expose llama-server on PATH — use the Python server module.
       cmd += _lcpServer;
     } else {
       cmd += _lcServer;
@@ -1658,7 +1656,7 @@ function _wireTabEvents(body) {
         _hwfitFetch(false, { allowNetwork: false });
       }
       if (backend === 'Serve') {
-        _fetchCachedModels(false, { allowNetwork: false });
+        _fetchCachedModels();
       }
       if (backend === 'Dependencies') {
         _fetchDependencies();
@@ -1798,7 +1796,7 @@ function _wireTabEvents(body) {
           if (settingsTab) settingsTab.click();
         });
       }
-      _fetchCachedModels(false, { allowNetwork: false });
+      _fetchCachedModels(true);
     });
   }
 

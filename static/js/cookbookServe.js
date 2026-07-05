@@ -60,6 +60,10 @@ function _readCachedModelScan(sig) {
 
 function _writeCachedModelScan(sig, data) {
   try {
+    // Don't cache empty scans for hours — a pre-download scan would hide models
+    // that finish downloading later until the TTL expires.
+    const models = data?.models;
+    if (!Array.isArray(models) || models.length === 0) return;
     const all = JSON.parse(localStorage.getItem(_CACHED_MODELS_SCAN_KEY) || '{}');
     all[sig] = { ts: Date.now(), data };
     const keys = Object.keys(all);
@@ -134,13 +138,13 @@ function _renderEmptyCachedModelsList(list, host) {
   if (tagContainer) tagContainer.innerHTML = '';
   if (!list) return;
   if (!host) {
-    list.innerHTML = '<div class="hwfit-loading" style="flex-direction:column;gap:6px;text-align:center;"><div>No cached models found</div><div style="font-size:11px;opacity:0.55;max-width:420px;line-height:1.4;">Docker Local uses Odysseus’s cache in <code>data/huggingface</code>. Download a model here, or copy an existing host HuggingFace cache into that folder once.</div></div>';
+    list.innerHTML = '<div class="hwfit-loading" style="flex-direction:column;gap:8px;text-align:center;"><div>No cached models found</div><div style="font-size:11px;opacity:0.55;max-width:420px;line-height:1.4;">Docker Local uses Odysseus’s cache in <code>data/huggingface</code>. Download a model here, or copy an existing host HuggingFace cache into that folder once.</div><button type="button" class="hwfit-gpu-btn serve-empty-scan-btn" style="height:26px;padding:3px 10px;">Refresh</button></div>';
   } else {
     list.innerHTML = '<div class="hwfit-loading" style="flex-direction:column;gap:8px;text-align:center;"><div>No cached models found</div><div style="font-size:11px;opacity:0.55;max-width:420px;line-height:1.4;">No complete model folders were found on this server.</div><button type="button" class="hwfit-gpu-btn serve-empty-scan-btn" style="height:26px;padding:3px 10px;">Refresh</button></div>';
-    list.querySelector('.serve-empty-scan-btn')?.addEventListener('click', () => {
-      _fetchCachedModels(true);
-    });
   }
+  list.querySelector('.serve-empty-scan-btn')?.addEventListener('click', () => {
+    _fetchCachedModels(true);
+  });
 }
 
 function _loadServeFavorites() {
@@ -3506,19 +3510,48 @@ function _localWinPowerShellCmd(ps) {
 
 function _deleteShellAlreadyGone(data) {
   const text = `${data?.stderr || ''}\n${data?.stdout || ''}`.toLowerCase();
-  return /cannot find path|does not exist|no such file|itemnotfoundexception/.test(text);
+  return /cannot find path|does not exist|no such file|itemnotfoundexception|model.*not found|no such model/.test(text);
+}
+
+function _isOllamaCachedModel(m) {
+  return !!(m && (m.is_ollama || m.backend === 'ollama' || m.path === 'ollama'));
+}
+
+function _ollamaDeleteCmd(modelName, host = '') {
+  const name = String(modelName || '').trim();
+  if (!name) return '';
+  const _psSingleQuote = (value) => `'${String(value || '').replace(/'/g, "''")}'`;
+  if (_isWindows()) {
+    const ps = [
+      'if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) { Write-Error \'Ollama not found\'; exit 127 }',
+      `$null | ollama rm ${_psSingleQuote(name)}`,
+      'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }',
+    ].join('; ');
+    if (host) {
+      const pf = _sshPrefix(_getPort(host));
+      return `ssh ${pf}${host} "powershell -Command \\"${ps.replace(/"/g, '\\"')}\\""`;
+    }
+    return _localWinPowerShellCmd(ps);
+  }
+  let cmd = `ollama rm ${_shellQuote(name)}`;
+  if (host) cmd = _sshCmd(host, cmd, _getPort(host));
+  return cmd;
 }
 
 async function _deleteCachedModel(repo, itemEl, skipConfirm = false, model = null) {
   const m = model || _cachedAllModels.find(x => x.repo_id === repo);
+  const isOllama = _isOllamaCachedModel(m);
   // Delete the EXACT on-disk path the scan reported. Models in a custom
   // model dir live at <path>/<repo>; HF-cache models at
   // <path>/models--<org>--<name>. The old code always rm'd the hardcoded
   // ~/.cache/huggingface/hub path, so models in a custom dir were never
   // removed and reappeared on the next scan. m.path is already absolute
   // (os.path.expanduser ran on the host); only the bare fallback uses ~.
+  // Ollama models use path='ollama' — remove via `ollama rm`, not filesystem.
   let target;
-  if (m && m.is_local_dir && m.path) {
+  if (isOllama) {
+    target = '';
+  } else if (m && m.is_local_dir && m.path) {
     target = `${m.path}/${repo}`;
   } else if (m && m.path) {
     target = `${m.path}/models--${repo.replace(/\//g, '--')}`;
@@ -3528,16 +3561,22 @@ async function _deleteCachedModel(repo, itemEl, skipConfirm = false, model = nul
   let deleteChoice = { mode: 'repo' };
   const ggufFiles = _ggufFilesForModel(m);
   if (!skipConfirm) {
-    if (ggufFiles.length > 1) {
+    if (!isOllama && ggufFiles.length > 1) {
       deleteChoice = await _ggufDeleteChoice(repo, ggufFiles);
       if (!deleteChoice) return;
-    } else if (!(await uiModule.styledConfirm(`Delete ${repo} from cache?`, { confirmText: 'Delete', danger: true }))) {
+    } else if (!(await uiModule.styledConfirm(
+      isOllama ? `Delete ${repo} from Ollama?` : `Delete ${repo} from cache?`,
+      { confirmText: 'Delete', danger: true },
+    ))) {
       return;
     }
   }
   const host = _resolveCacheHost();
   let cmd;
-  if (_isWindows()) {
+  if (isOllama) {
+    cmd = _ollamaDeleteCmd(repo, host);
+    if (!cmd) return;
+  } else if (_isWindows()) {
     const _psSingleQuote = (value) => `'${String(value || '').replace(/'/g, "''")}'`;
     const winTarget = target.startsWith('~')
       ? target.replace(/^~/, '$env:USERPROFILE').replace(/\//g, '\\')
@@ -3817,6 +3856,14 @@ function _renderCachedModelsData(list, data, host) {
   }
 
   _rerenderCachedModels();
+}
+
+export async function refreshCachedModelsAfterDownload() {
+  _invalidateCachedModelScan();
+  const serveTab = document.querySelector('#cookbook-modal .cookbook-tab[data-backend="Serve"]');
+  if (serveTab?.classList.contains('active')) {
+    try { await _fetchCachedModels(true); } catch {}
+  }
 }
 
 export async function _fetchCachedModels(fresh = false, opts = {}) {

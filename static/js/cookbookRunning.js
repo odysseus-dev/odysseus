@@ -22,6 +22,12 @@ function _statusLabel(status, type) {
   return status || '';
 }
 
+function _refreshCachedModelsAfterDownload() {
+  import('./cookbookServe.js')
+    .then((m) => m.refreshCachedModelsAfterDownload?.())
+    .catch(() => {});
+}
+
 // Single source of truth for what a task's status badge shows + its style class.
 // Crucially, a serve task that's still coming up shows its live phase
 // ("loading 45%", "warming up", …) rather than the generic "running" — they're
@@ -3168,6 +3174,7 @@ async function _reconnectTask(el, task) {
               const _sb = el.querySelector('.cookbook-task-serve-btn'); if (_sb) _sb.style.display = '';
               _showCookbookNotif();
               _refreshDepsAfterInstall(task);
+              _refreshCachedModelsAfterDownload();
               _renderRunningTab();
               _processQueue();
               break;
@@ -3222,6 +3229,7 @@ async function _reconnectTask(el, task) {
                   }
                   _showCookbookNotif();
                   _refreshDepsAfterInstall(task);
+                  _refreshCachedModelsAfterDownload();
                   _renderRunningTab();
                   _processQueue();
                 } catch { /* swallow — next polling cycle will retry */ }
@@ -3463,6 +3471,7 @@ async function _reconnectTask(el, task) {
               const _sb2 = el.querySelector('.cookbook-task-serve-btn'); if (_sb2) _sb2.style.display = '';
               _showCookbookNotif();
               _refreshDepsAfterInstall(task);
+              _refreshCachedModelsAfterDownload();
               fetch('/api/shell/exec', {
                 method: 'POST', credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/json' },

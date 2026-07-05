@@ -59,6 +59,10 @@ from routes.cookbook_helpers import (
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase, OLLAMA_MISSING_HINT,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
+    _append_llama_server_python_shim_lines,
+    _hf_download_cache_env,
+    _hf_download_dir_pair,
+    _ps_path_expr,
     load_stored_hf_token,
     _append_vllm_linux_preflight_lines,
     _ollama_bind_from_cmd,
@@ -1118,7 +1122,9 @@ def setup_cookbook_routes() -> APIRouter:
         # also breaks robust resume on flaky transfers — the blob-based hub
         # cache survives SSL ReadError mid-stream by reusing <sha>.incomplete,
         # local_dir does not. See issue #2722.
-        _dl_hf_home_shell = _shell_path(req.local_dir.rstrip("/")) if req.local_dir else None
+        _dl_hf_home_shell, _dl_hf_hub_shell = (
+            _hf_download_cache_env(req.local_dir) if req.local_dir else (None, None)
+        )
         _dl_pyarg = ""  # snapshot_download honors the env vars too — no kwarg needed
 
         # Build the hf download command. Redirection to suppress the interactive
@@ -1140,8 +1146,8 @@ def setup_cookbook_routes() -> APIRouter:
             # standard HF cache (gives us the models--org--name/blobs/... layout
             # with resumable .incomplete blobs).
             lines.append(f"export HF_HOME={_dl_hf_home_shell}")
-            lines.append(f"export HUGGINGFACE_HUB_CACHE={_dl_hf_home_shell}/hub")
-            lines.append(f"export HF_HUB_CACHE={_dl_hf_home_shell}/hub")
+            lines.append(f"export HUGGINGFACE_HUB_CACHE={_dl_hf_hub_shell}")
+            lines.append(f"export HF_HUB_CACHE={_dl_hf_hub_shell}")
         # Ensure pip-user scripts (e.g. hf CLI installed via --user) are on PATH
         lines.append('export PATH="$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"')
         # When Odysseus runs from a venv (e.g. native macOS install), put its bin
@@ -1197,10 +1203,10 @@ def setup_cookbook_routes() -> APIRouter:
                 # Mirror the bash branch — point the HF cache at the user's dir
                 # via env vars instead of --local-dir, so resume works on flaky
                 # transfers (issue #2722).
-                _dl_ps = _ps_squote(req.local_dir.rstrip("/"))
-                ps_lines.append(f"$env:HF_HOME = '{_dl_ps}'")
-                ps_lines.append(f"$env:HUGGINGFACE_HUB_CACHE = '{_dl_ps}/hub'")
-                ps_lines.append(f"$env:HF_HUB_CACHE = '{_dl_ps}/hub'")
+                _dl_hf_home_ps, _dl_hf_hub_ps = _hf_download_dir_pair(req.local_dir)
+                ps_lines.append(f"$env:HF_HOME = {_ps_path_expr(_dl_hf_home_ps)}")
+                ps_lines.append(f"$env:HUGGINGFACE_HUB_CACHE = {_ps_path_expr(_dl_hf_hub_ps)}")
+                ps_lines.append(f"$env:HF_HUB_CACHE = {_ps_path_expr(_dl_hf_hub_ps)}")
             if req.env_prefix:
                 ps_lines.append(_safe_env_prefix(req.env_prefix))
             if is_ollama_download:
@@ -1265,8 +1271,8 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append(f"export HF_TOKEN='{_bash_squote(req.hf_token)}'")
             if _dl_hf_home_shell and not is_ollama_download:
                 runner_lines.append(f"export HF_HOME={_dl_hf_home_shell}")
-                runner_lines.append(f"export HUGGINGFACE_HUB_CACHE={_dl_hf_home_shell}/hub")
-                runner_lines.append(f"export HF_HUB_CACHE={_dl_hf_home_shell}/hub")
+                runner_lines.append(f"export HUGGINGFACE_HUB_CACHE={_dl_hf_hub_shell}")
+                runner_lines.append(f"export HF_HUB_CACHE={_dl_hf_hub_shell}")
             if req.env_prefix:
                 runner_lines.append(_safe_env_prefix(req.env_prefix))
             else:
@@ -2143,6 +2149,12 @@ def setup_cookbook_routes() -> APIRouter:
             handled_ollama_serve = False
             # Auto-install inference engine if missing
             local_windows_llama_cmd = local_windows and ("llama_cpp" in req.cmd or "llama-server" in req.cmd)
+            if local_windows_llama_cmd:
+                # Git Bash on Windows: pip llama-cpp-python does not put
+                # llama-server.exe on PATH. Drop the same shim remote Linux uses.
+                runner_lines.append('# Windows local: shim llama-server when only pip bindings exist')
+                runner_lines.append('export PATH="$HOME/.local/bin:$HOME/bin:$PATH"')
+                _append_llama_server_python_shim_lines(runner_lines, python_cmd='python', indent='')
             if ("llama_cpp" in req.cmd or "llama-server" in req.cmd) and not local_windows_llama_cmd:
                 # Prefer the NATIVE llama-server binary — its minja templating
                 # renders modern GGUF chat templates that the Python bindings'
@@ -2211,40 +2223,7 @@ def setup_cookbook_routes() -> APIRouter:
                 # no second install. This is the path that unblocks every
                 # remote where pip-installed llama-cpp-python is already
                 # working but Cookbook used to insist on a native binary.
-                runner_lines.append('  if ! command -v llama-server >/dev/null 2>&1 && python3 -c "import llama_cpp" 2>/dev/null; then')
-                runner_lines.append('    mkdir -p ~/bin')
-                runner_lines.append('    cat > ~/bin/llama-server <<\'_ODY_LLAMA_SHIM_EOF\'')
-                runner_lines.append('#!/usr/bin/env bash')
-                runner_lines.append('# Auto-generated by Odysseus Cookbook: a `llama-server` lookalike')
-                runner_lines.append('# that translates the native CLI to `python -m llama_cpp.server`.')
-                runner_lines.append('# Lets cookbook-generated launch commands run unchanged on hosts')
-                runner_lines.append('# where only the pip llama-cpp-python package is installed.')
-                runner_lines.append('ARGS=()')
-                runner_lines.append('while [ $# -gt 0 ]; do')
-                runner_lines.append('  case "$1" in')
-                runner_lines.append('    -ngl|--gpu-layers|--n-gpu-layers) ARGS+=(--n_gpu_layers "$2"); shift 2 ;;')
-                runner_lines.append('    -c|--ctx-size) ARGS+=(--n_ctx "$2"); shift 2 ;;')
-                runner_lines.append('    -b|--batch-size) ARGS+=(--n_batch "$2"); shift 2 ;;')
-                runner_lines.append('    -ub|--ubatch-size) shift 2 ;;  # llama-cpp-python has no separate ubatch')
-                runner_lines.append('    --flash-attn) ARGS+=(--flash_attn true); shift 2 ;;')
-                runner_lines.append('    --cache-type-k) ARGS+=(--type_k "$2"); shift 2 ;;')
-                runner_lines.append('    --cache-type-v) ARGS+=(--type_v "$2"); shift 2 ;;')
-                runner_lines.append('    --n-cpu-moe) ARGS+=(--n_cpu_moe "$2"); shift 2 ;;')
-                runner_lines.append('    --mmproj) ARGS+=(--clip_model_path "$2"); shift 2 ;;')
-                runner_lines.append('    --image-max-tokens) shift 2 ;;  # native-only')
-                runner_lines.append('    --no-mmap) ARGS+=(--no_mmap true); shift ;;')
-                runner_lines.append('    --no-warmup) shift ;;  # native-only')
-                runner_lines.append('    --chat-template) ARGS+=(--chat_format "$2"); shift 2 ;;')
-                runner_lines.append('    --fit|--split-mode|--tensor-split|--main-gpu|--parallel) shift 2 ;;  # native-only')
-                runner_lines.append('    --mlock) ARGS+=(--use_mlock true); shift ;;')
-                runner_lines.append('    *) ARGS+=("$1"); shift ;;')
-                runner_lines.append('  esac')
-                runner_lines.append('done')
-                runner_lines.append('exec python3 -m llama_cpp.server "${ARGS[@]}"')
-                runner_lines.append('_ODY_LLAMA_SHIM_EOF')
-                runner_lines.append('    chmod +x ~/bin/llama-server')
-                runner_lines.append('    echo "[odysseus] Created llama-server shim → python -m llama_cpp.server (no native binary needed)"')
-                runner_lines.append('  fi')
+                _append_llama_server_python_shim_lines(runner_lines, python_cmd='python3', indent='  ')
                 runner_lines.append('  # If the native build failed, fall back to the Python bindings.')
                 runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
                 runner_lines.append('    echo "llama-server build failed — installing Python bindings as fallback..."')

@@ -117,7 +117,7 @@ def test_local_serve_payload_ignores_stale_env_platform():
     assert "const _hplatform = _host ? (_hsrv.platform || '') : (_envState.platform || '');" not in running
 
 
-def test_local_windows_llamacpp_prefers_native_llama_server():
+def test_local_windows_llamacpp_uses_python_server_module():
     text = SRC.read_text(encoding="utf-8")
     helpers = (ROOT / "routes/cookbook_helpers.py").read_text(encoding="utf-8")
 
@@ -125,12 +125,11 @@ def test_local_windows_llamacpp_prefers_native_llama_server():
     assert "const _isWin = _targetHost ? _isWindows(_targetHost) : _isWindows('local');" in text
     assert "const _localWindows = _isWin && !_targetHost;" in text
     assert "const _curHost = _targetHost;" in text
-    assert "const _localWindows = _isWin && !_envState.remoteHost;" not in text
-    assert "const gpuId = (f.gpus || f.gpu_id || '').toString().trim();" in text
     assert "const _lcServer = `${lcPrefix}llama-server --model" in text
-    assert "if (_localWindows) {" in text
-    assert "cmd += _lcServer;" in text
+    assert "if (_isWin) {" in text
+    assert "cmd += _lcpServer;" in text
     assert '"llama-server.exe"' in helpers
+    assert "def _append_llama_server_python_shim_lines" in helpers
 
 
 
@@ -144,10 +143,12 @@ def test_serve_command_preview_uses_selected_target_host():
     assert "if (hostField) hostField.value = f.host;" in text
 
 
-def test_local_windows_llama_server_skips_source_bootstrap():
+def test_local_windows_llama_server_shim_when_pip_only():
     routes = ROUTES_SRC.read_text(encoding="utf-8")
 
     assert 'local_windows_llama_cmd = local_windows and ("llama_cpp" in req.cmd or "llama-server" in req.cmd)' in routes
+    assert 'if local_windows_llama_cmd:' in routes
+    assert "_append_llama_server_python_shim_lines(runner_lines, python_cmd='python', indent='')" in routes
     assert 'if ("llama_cpp" in req.cmd or "llama-server" in req.cmd) and not local_windows_llama_cmd:' in routes
 
 
@@ -187,8 +188,11 @@ def test_llamacpp_vision_uses_scanned_projector_instead_of_runtime_find():
 def test_local_windows_cached_model_delete_uses_powershell():
     text = SERVE_SRC.read_text(encoding="utf-8")
     idx = text.index("async function _deleteCachedModel")
-    block = text[idx:idx + 3200]
+    block = text[idx:idx + 3600]
     assert "function _localWinPowerShellCmd(ps)" in text
+    assert "function _isOllamaCachedModel(m)" in text
+    assert "function _ollamaDeleteCmd(modelName, host = '')" in text
+    assert "ollama rm" in text
     assert "cmd = _localWinPowerShellCmd(ps);" in block
     assert "if (Test-Path" in block
     assert "-ErrorAction Stop" in block
@@ -196,6 +200,9 @@ def test_local_windows_cached_model_delete_uses_powershell():
     assert "_invalidateCachedModelScan(_cachedModelScanSig())" in text
     assert "function _modelMatchesServeFilter" in text
     assert "function _renderEmptyCachedModelsList" in text
+    assert "serve-empty-scan-btn" in text
+    assert "export async function refreshCachedModelsAfterDownload" in text
+    assert "!Array.isArray(models) || models.length === 0) return" in text
     assert "Remove-Item -Recurse -Force" in block
     # Remote Windows still goes through ssh + powershell; local must not rely on bash.
     assert 'ssh ${pf}${host} "powershell -Command' in block

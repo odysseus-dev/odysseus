@@ -893,6 +893,22 @@ def test_pip_install_no_cache_is_idempotent_and_scoped():
     assert _pip_install_no_cache("") == ""
 
 
+def test_hf_download_cache_env_default_hub_leaf():
+    from routes.cookbook_helpers import _hf_download_cache_env, _hf_download_dir_pair
+
+    hf_home, hub = _hf_download_dir_pair("~/.cache/huggingface/hub")
+    assert hf_home == "~/.cache/huggingface"
+    assert hub == "~/.cache/huggingface/hub"
+
+    sh_home, sh_hub = _hf_download_cache_env("~/.cache/huggingface/hub")
+    assert sh_home == '"$HOME/.cache/huggingface"'
+    assert sh_hub == '"$HOME/.cache/huggingface/hub"'
+
+    custom_home, custom_hub = _hf_download_cache_env("~/models")
+    assert custom_home == '"$HOME/models"'
+    assert custom_hub == '"$HOME/models/hub"'
+
+
 def test_cached_model_scan_runs_additional_hf_cache(tmp_path):
     extra_cache = tmp_path / "extra_hf_cache"
     model_dir = extra_cache / "models--acme--sample-7b"
