@@ -19,6 +19,7 @@ from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native
 from src.model_context import estimate_tokens
 from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
+from src.seed_order_context import build_seed_order_context
 from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
 from src.tool_policy import GUIDE_ONLY_DIRECTIVE, ToolPolicy
 from src.tool_utils import _truncate, get_mcp_manager
@@ -1217,6 +1218,9 @@ def _build_system_prompt(
             break
 
     messages = messages[:insert_idx] + [agent_msg] + messages[insert_idx:]
+    seed_order_context = build_seed_order_context()
+    if seed_order_context:
+        messages = [{"role": "system", "content": seed_order_context}] + messages
 
     # Merge consecutive system messages — but skip _protected doc messages
     merged = []
