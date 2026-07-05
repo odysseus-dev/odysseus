@@ -60,11 +60,29 @@ from routes.document_helpers import (
     _verify_doc_owner, _owner_session_filter,
     _slug, _resolve_user_upload_path, _assert_pdf_marker_upload_owned, _derive_title,
     _PDF_RENDER_SCALE,
+    sync_document_to_rag, delete_document_from_rag,
 )
 
 
 def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     router = APIRouter(tags=["documents"])
+
+    def _sync_rag_for_doc(doc: Document, context: str) -> None:
+        try:
+            sync_document_to_rag(
+                doc_id=doc.id,
+                content=doc.current_content,
+                title=doc.title,
+                owner=doc.owner,
+            )
+        except Exception:
+            logger.warning("Failed to sync %s document to RAG", context, exc_info=True)
+
+    def _delete_rag_for_doc(doc_id: str, context: str) -> None:
+        try:
+            delete_document_from_rag(doc_id)
+        except Exception:
+            logger.warning("Failed to delete %s document from RAG", context, exc_info=True)
 
     def _locate_current_user_upload(request: Request, upload_id: str, user: Optional[str]):
         if upload_handler is None:
@@ -142,6 +160,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             db.add(ver)
             db.commit()
             db.refresh(doc)
+            _sync_rag_for_doc(doc, "new")
             try:
                 from src.event_bus import fire_event
                 fire_event("document_created", doc.owner)
@@ -255,6 +274,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 doc.owner = user
                 db.commit()
                 db.refresh(doc)
+            _sync_rag_for_doc(doc, "imported PDF")
             return _doc_to_dict(doc)
         finally:
             db.close()
@@ -431,6 +451,10 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             _verify_doc_owner(db, doc, user)
             doc.archived = bool(archived)
             db.commit()
+            if doc.archived:
+                _delete_rag_for_doc(doc_id, "archived")
+            else:
+                _sync_rag_for_doc(doc, "unarchived")
             return {"ok": True, "id": doc_id, "archived": doc.archived}
         finally:
             db.close()
@@ -491,6 +515,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 source="ocr",
             ))
             db.commit()
+            _sync_rag_for_doc(doc, "re-extracted PDF")
             return {"ok": True, "id": doc_id, "extracted": True, "chars": len(body_text)}
         finally:
             db.close()
@@ -613,6 +638,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             doc.current_content = req.content
             db.commit()
             db.refresh(doc)
+            _sync_rag_for_doc(doc, "updated")
             return _doc_to_dict(doc)
         except HTTPException:
             raise
@@ -652,6 +678,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                         logger.warning("Failed to clear active document %r on detach", doc_id, exc_info=e)
             db.commit()
             db.refresh(doc)
+            _sync_rag_for_doc(doc, "patched")
             return _doc_to_dict(doc)
         except HTTPException:
             raise
@@ -680,6 +707,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             except Exception:
                 pass
             db.commit()
+            _delete_rag_for_doc(doc_id, "deleted")
             return {"status": "deleted", "id": doc_id}
         except HTTPException:
             raise
@@ -767,6 +795,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             db.add(ver)
             db.commit()
             db.refresh(doc)
+            _sync_rag_for_doc(doc, "restored version")
             return _doc_to_dict(doc)
         except HTTPException:
             raise
@@ -875,6 +904,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             inactive_q = _owner_session_filter(inactive_q, user)
             inactive_docs = inactive_q.all()
             for doc in inactive_docs:
+                _delete_rag_for_doc(doc.id, "tidied")
                 db.delete(doc)
             deleted += len(inactive_docs)
 
@@ -966,6 +996,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 verdict = str(verdicts[i] or "").lower().strip()
                 if verdict == "junk":
                     doc.tidy_verdict = "junk"
+                    _delete_rag_for_doc(doc.id, "AI tidied")
                     db.delete(doc)
                     deleted += 1
                 else:

@@ -241,3 +241,72 @@ def _derive_title(content: str) -> str:
             return title or "Untitled"
 
     return "Untitled"
+
+
+def sync_document_to_rag(doc_id: str, content: str, title: str, owner: Optional[str]) -> bool:
+    """Sync a library document's content to the RAG vector store."""
+    from src.rag_singleton import get_rag_manager
+    rag = get_rag_manager()
+    if not rag:
+        logger.debug("RAG manager is not available, skipping RAG sync for doc %s", doc_id)
+        return False
+
+    source_uri = f"document:{doc_id}"
+
+    # First, clean up any existing chunks for this document
+    try:
+        rag.delete_by_source(source_uri)
+    except Exception as e:
+        logger.warning("Failed to delete existing RAG chunks for doc %s: %s", doc_id, e)
+
+    if not content or not content.strip():
+        return True
+
+    # Split into chunks and index them
+    try:
+        chunks = rag._split_into_chunks(content, chunk_size=500)
+        failed = 0
+        for i, chunk in enumerate(chunks):
+            metadata = {
+                "source": source_uri,
+                "filename": title,
+                "stored_filename": f"{doc_id}.md",
+                "directory": "library",
+                "type": ".md",
+                "chunk_id": i,
+            }
+            if owner:
+                metadata["owner"] = owner
+            if not rag.add_document(chunk, metadata):
+                failed += 1
+        
+        if failed:
+            logger.warning(
+                "Synced document %s to RAG with %d failed chunk(s) out of %d",
+                doc_id,
+                failed,
+                len(chunks),
+            )
+            return False
+
+        logger.info("Successfully synced document %s to RAG (%d chunks)", doc_id, len(chunks))
+        return True
+    except Exception as e:
+        logger.error("Failed to sync document %s to RAG: %s", doc_id, e)
+        return False
+
+
+def delete_document_from_rag(doc_id: str) -> bool:
+    """Remove a library document from the RAG vector store."""
+    from src.rag_singleton import get_rag_manager
+    rag = get_rag_manager()
+    if not rag:
+        return False
+    source_uri = f"document:{doc_id}"
+    try:
+        rag.delete_by_source(source_uri)
+        logger.info("Successfully deleted RAG chunks for doc %s", doc_id)
+        return True
+    except Exception as e:
+        logger.error("Failed to delete document %s from RAG: %s", doc_id, e)
+        return False
