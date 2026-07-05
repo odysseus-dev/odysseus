@@ -40,7 +40,24 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Detect dependency manifest changes
+        id: dependency-files
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_sha="${{ github.event.pull_request.base.sha }}"
+          head_sha="${{ github.event.pull_request.head.sha }}"
+          git fetch --no-tags --depth=1 origin "$base_sha" "$head_sha"
+          changed_files="$(git diff --name-only "$base_sha" "$head_sha")"
+          if printf '%s\n' "$changed_files" | grep -Eq '(^|/)(requirements[^/]*\.txt|pyproject\.toml|poetry\.lock|Pipfile(\.lock)?|package(-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|uv\.lock|Cargo\.(toml|lock)|go\.(mod|sum))$'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No dependency manifest changes detected; skipping dependency-review."
+          fi
+
       - name: Review dependency changes
+        if: steps.dependency-files.outputs.changed == 'true'
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294  # v5.0.0
         with:
           # Fail the PR on any newly introduced moderate-or-worse advisory.
