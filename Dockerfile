@@ -78,10 +78,12 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 # Local speech-to-text and text-to-speech.
 # STT: faster-whisper (CTranslate2, CPU by default, optional CUDA via torch).
-# TTS: Kokoro-82M (requires torch; GPU preferred but CPU works).
+# TTS: Kokoro-82M (requires torch + spacy; GPU preferred but CPU works).
+# --only-binary :all: for spacy avoids C compilation on Python 3.14+.
 ARG INSTALL_SPEECH=false
 ARG INSTALL_SPEECH_GPU=false
 RUN if [ "$INSTALL_SPEECH" = "true" ]; then \
+        pip install --no-cache-dir --only-binary :all: spacy && \
         pip install --no-cache-dir faster-whisper kokoro soundfile; \
     fi && \
     if [ "$INSTALL_SPEECH_GPU" = "true" ]; then \
