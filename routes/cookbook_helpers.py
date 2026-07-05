@@ -559,6 +559,18 @@ def _bash_squote(v: str) -> str:
     return v.replace("'", "'\\''")
 
 
+# Shown by generated runner scripts when the ollama binary is missing on the
+# target host. Must stay free of backticks/$( ) and be emitted single-quoted:
+# an earlier version wrapped the install one-liner in backticks inside a
+# double-quoted echo, which bash executed as command substitution and ran the
+# system-wide installer (including on remote SSH hosts) instead of printing
+# the hint.
+OLLAMA_MISSING_HINT = (
+    "ERROR: Ollama not found on this server. Install it from "
+    "https://ollama.com/download or run: curl -fsSL https://ollama.com/install.sh | sh"
+)
+
+
 # Allow-list of binaries permitted as the leading token of `req.cmd` for /api/model/serve.
 # Anything else is rejected before the cmd is interpolated into a tmux/PowerShell wrapper.
 _SERVE_CMD_ALLOWLIST = {

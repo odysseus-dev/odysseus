@@ -67,3 +67,8 @@ def test_parse_tool_args_lives_in_tool_utils_single_source():
     assert _parse_tool_args('{"action":"add"}') == {"action": "add"}
     # body-envelope unwrap still works
     assert _parse_tool_args('{"body":{"action":"x"}}') == {"action": "x"}
+
+    # non-dict JSON values should return {}
+    assert _parse_tool_args('[1, 2]') == {}
+    assert _parse_tool_args('42') == {}
+    assert _parse_tool_args('"hello"') == {}

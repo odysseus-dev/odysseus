@@ -645,7 +645,7 @@ from routes.research.research_routes import setup_research_routes
 app.include_router(setup_research_routes(research_handler, session_manager=session_manager))
 
 # History
-from routes.history_routes import setup_history_routes
+from routes.history.history_routes import setup_history_routes
 app.include_router(setup_history_routes(session_manager))
 
 # Search
@@ -813,7 +813,7 @@ from routes.vault_routes import setup_vault_routes
 app.include_router(setup_vault_routes())
 
 # Contacts (CardDAV)
-from routes.contacts_routes import setup_contacts_routes
+from routes.contacts.contacts_routes import setup_contacts_routes
 app.include_router(setup_contacts_routes())
 
 from companion import setup_companion_routes

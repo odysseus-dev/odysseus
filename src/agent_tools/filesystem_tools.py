@@ -281,7 +281,13 @@ class LsTool:
 
 class GlobTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
+        from src.tool_execution import (
+            _SENSITIVE_BASENAMES,
+            _is_sensitive_path,
+            _resolve_tool_path,
+            _resolve_search_root,
+            _truncate,
+        )
         args = {}
         _s = (content or "").strip()
         if _s.startswith("{"):
@@ -322,7 +328,11 @@ class GlobTool:
                     ) == nbase
                 except ValueError:
                     inside = False
-                if inside and os.path.exists(cand):
+                # A literal that names a deny-listed sensitive file (.env,
+                # .ssh/id_rsa, …) falls through to the walk, which skips it —
+                # otherwise glob would surface secret paths that read_file /
+                # grep already refuse to touch.
+                if inside and os.path.exists(cand) and not _is_sensitive_path(cand):
                     return [cand], None
                 # Literal not at exact path — fall through to walk so
                 # e.g. "foo.py" still matches at any depth (like rglob).
@@ -334,11 +344,20 @@ class GlobTool:
                 for dp, dns, fns in os.walk(base):
                     # Prune skipped dirs before descending (unlike rglob which
                     # descends first then filters — fatal on large node_modules).
-                    dns[:] = [d for d in dns if d not in _CODENAV_SKIP_DIRS]
+                    # Sensitive dirs (.ssh, .gnupg, …) are pruned too so glob
+                    # never enumerates the keys/tokens inside them.
+                    dns[:] = [
+                        d for d in dns
+                        if d not in _CODENAV_SKIP_DIRS and d not in _SENSITIVE_BASENAMES
+                    ]
                     for name in fns + dns:
                         full = os.path.join(dp, name)
                         rel = os.path.relpath(full, base).replace(os.sep, "/")
                         if regex.fullmatch(rel) or regex.fullmatch(name):
+                            # Skip deny-listed sensitive files (.env, id_rsa,
+                            # known_hosts, …) the same way grep does.
+                            if _is_sensitive_path(os.path.realpath(full)):
+                                continue
                             try:
                                 mtime = os.stat(full).st_mtime
                             except OSError:
@@ -405,8 +424,12 @@ class GrepTool:
                     cmd.append("--ignore-case")
                 if glob_pat:
                     cmd += ["--glob", glob_pat]
+                # --iglob (not --glob) so the exclusion is case-insensitive:
+                # on a case-insensitive filesystem "ID_RSA"/"Known_Hosts"
+                # resolve to the same secret as their lowercase forms, and the
+                # Python fallback below already folds case via _is_sensitive_path.
                 for _pat in _SENSITIVE_FILE_PATTERNS:
-                    cmd += ["--glob", f"!*{_pat}*"]
+                    cmd += ["--iglob", f"!*{_pat}*"]
                 for _d in _CODENAV_SKIP_DIRS:
                     cmd += ["--glob", f"!**/{_d}/**"]
                 cmd += ["--regexp", pattern, root]

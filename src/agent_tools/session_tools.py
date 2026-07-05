@@ -184,8 +184,12 @@ async def send_to_session(content: str, session_id: Optional[str] = None, owner:
     if not sess:
         return {"error": f"Session '{target_sid}' not found"}
 
-    # Owner-scope: reject access to another user's session
-    if owner and getattr(sess, "owner", None) and sess.owner != owner:
+    # Owner-scope: reject access to another user's session. When the caller is
+    # authenticated, a null-owner (legacy / auth-was-off) session is not theirs
+    # either — list_sessions (get_sessions_for_user) and manage_session already
+    # exclude those, so treating it as reachable here let an authenticated agent
+    # read/write a session the other tools hide. Require an exact owner match.
+    if owner and getattr(sess, "owner", None) != owner:
         return {"error": f"Session '{target_sid}' not found"}
 
     if not message:
