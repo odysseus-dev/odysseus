@@ -76,6 +76,18 @@ COPY requirements.txt requirements-optional.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
     && if [ "$INSTALL_OPTIONAL" = "true" ]; then pip install --no-cache-dir -r requirements-optional.txt; fi
 
+# Local speech-to-text and text-to-speech.
+# STT: faster-whisper (CTranslate2, CPU by default, optional CUDA via torch).
+# TTS: Kokoro-82M (requires torch; GPU preferred but CPU works).
+ARG INSTALL_SPEECH=false
+ARG INSTALL_SPEECH_GPU=false
+RUN if [ "$INSTALL_SPEECH" = "true" ]; then \
+        pip install --no-cache-dir faster-whisper kokoro soundfile; \
+    fi && \
+    if [ "$INSTALL_SPEECH_GPU" = "true" ]; then \
+        pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu121; \
+    fi
+
 # python-magic powers content-based MIME sniffing in src/upload_handler.py.
 # Image-only (not in requirements.txt) because it needs the libmagic1 system
 # lib installed above; see the apt note near the top of this stage.

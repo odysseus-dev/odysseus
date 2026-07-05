@@ -12,6 +12,13 @@
 # GPU-accelerated transcription — it's auto-detected, CPU is used otherwise.
 faster-whisper
 
+# Local text-to-speech (text -> audio) via Kokoro-82M.
+# Runs on GPU with CUDA (preferred, ~1GB VRAM) or CPU (~2GB RAM, slower).
+# Install if you want server-side TTS without sending text to an external endpoint.
+# Also requires torch (pulled automatically as kokoro dependency).
+kokoro
+soundfile
+
 # DuckDuckGo as a search provider option.
 # Install if you want DDG in the search-provider dropdown.
 # Alternatives: SearXNG, Brave, Tavily, Serper, Google PSE.

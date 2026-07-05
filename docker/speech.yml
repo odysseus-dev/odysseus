@@ -1,0 +1,13 @@
+# Speech overlay — installs local STT/TTS dependencies at build time.
+# Enable by setting COMPOSE_FILE in .env:
+#   COMPOSE_FILE=docker-compose.yml:docker/speech.yml
+# Or for GPU speech:
+#   COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml:docker/speech.yml
+#
+# First build will be slow as it downloads torch + models.
+# Models (whisper, Kokoro) are cached in data/huggingface and data/ directories.
+services:
+  odysseus:
+    build:
+      args:
+        INSTALL_SPEECH: "true"
