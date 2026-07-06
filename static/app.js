@@ -26,6 +26,7 @@ import tasksModule from './js/tasks.js?v=20260630tasksactivity';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
 import fileBrowserModule from './js/fileBrowser.js';
+import codeServerModule from './js/codeServer.js';
 import adminModule from './js/admin.js';
 import settingsModule from './js/settings.js';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
@@ -992,6 +993,15 @@ function initializeEventListeners() {
       }
     });
   }
+  // Code Server tool button
+  const toolCodeServerBtn = el('tool-codeserver-btn');
+  if (toolCodeServerBtn) {
+    toolCodeServerBtn.addEventListener('click', () => {
+      if (codeServerModule) {
+        codeServerModule.togglePanel();
+      }
+    });
+  }
   // Refresh notes due-reminder badge on load and every 5 minutes
   if (notesModule && notesModule.refreshDueBadge) {
     notesModule.refreshDueBadge();
@@ -1124,6 +1134,11 @@ function initializeEventListeners() {
     '/files':    () => {
       if (fileBrowserModule) {
         fileBrowserModule.openPanel();
+      }
+    },
+    '/code-editor': () => {
+      if (codeServerModule) {
+        codeServerModule.openPanel();
       }
     },
   };
@@ -2523,6 +2538,7 @@ function initializeEventListeners() {
     'tool-memory':         '#tool-memory-btn',
     'tool-notes':          '#tool-notes-btn',
     'tool-filebrowser':    '#tool-filebrowser-btn',
+    'tool-codeserver':     '#tool-codeserver-btn',
     'tool-tasks':          '#tool-tasks-btn',
     'tool-theme':          '#tool-theme-btn',
     'user-bar':            '#user-bar-profile',
@@ -3563,6 +3579,7 @@ async function startOdysseusApp() {
     'rail-calendar':  'tool-calendar-btn',
     'rail-notes':     'tool-notes-btn',
     'rail-filebrowser': 'tool-filebrowser-btn',
+    'rail-codeserver':  'tool-codeserver-btn',
     'rail-memory':    'tool-memory-btn',
     'rail-theme':     'tool-theme-btn',
     'rail-email':     'email-section-title',

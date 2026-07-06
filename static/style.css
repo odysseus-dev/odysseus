@@ -5238,7 +5238,8 @@ body.bg-pattern-sparkles {
       #theme-modal,
       #settings-modal,
       #email-lib-modal,
-      #filebrowser-modal {
+      #filebrowser-modal,
+      #codeserver-modal {
         left: calc(var(--icon-rail-w, 48px) + var(--sidebar-w, 0px));
         width: calc(100% - (var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)));
         box-sizing: border-box;
@@ -39921,4 +39922,26 @@ body.theme-frosted .modal {
   .fb-modal-content { width: 100vw; max-height: 100vh; }
   .fb-body { flex-direction: column; }
   .fb-preview { max-height: 30vh; }
+}
+
+/* ── Code Server Modal ── */
+.cs-modal-content {
+  width: 85vw;
+  max-width: 1400px;
+  height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+.cs-modal-content .modal-body {
+  flex: 1;
+  overflow: hidden;
+  padding: 0;
+}
+.cs-modal-body iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+@media (max-width: 768px) {
+  .cs-modal-content { width: 100vw; height: 100vh; max-height: 100vh; }
 }

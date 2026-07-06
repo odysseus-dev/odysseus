@@ -148,6 +148,15 @@ services:
       - NTFY_BASE_URL=${NTFY_BASE_URL:-http://localhost:8091}
     restart: unless-stopped
 
+  code-server:
+    image: docker.io/codercom/code-server:latest
+    volumes:
+      - ${APP_DATA_DIR:-./data}:/home/coder/project:z
+    environment:
+      - DEFAULT_WORKSPACE=/home/coder/project
+    command: --auth none --bind-addr 0.0.0.0:8443 /home/coder/project
+    restart: unless-stopped
+
 volumes:
   searxng-data:
   chromadb-data:

@@ -743,6 +743,10 @@ app.include_router(setup_workspace_routes())
 from routes.filebrowser_routes import setup_filebrowser_routes
 app.include_router(setup_filebrowser_routes())
 
+# Code Server (VS Code in browser) — reverse proxy
+from routes.code_server_routes import setup_code_server_routes
+app.include_router(setup_code_server_routes(), prefix="/api/code-server")
+
 # Hardware model fitting (cookbook "What Fits?" tab)
 from routes.hwfit_routes import setup_hwfit_routes
 app.include_router(setup_hwfit_routes())
