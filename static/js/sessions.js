@@ -1257,6 +1257,22 @@ function _renderSessionListImpl() {
     countSpan.textContent = `(${folders[folderName].length})`;
     header.appendChild(countSpan);
 
+    // New chat button — only for project folders
+    if (_isProject) {
+      const newChatBtn = document.createElement('button');
+      newChatBtn.className = 'folder-new-chat-btn';
+      newChatBtn.textContent = '+';
+      newChatBtn.title = 'New chat in this project';
+      newChatBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        // Store the target folder so the brand button handler picks it up
+        sessionStorage.setItem('ody-pending-folder', folderName);
+        const brandBtn = document.getElementById('sidebar-brand-btn');
+        if (brandBtn) brandBtn.click();
+      });
+      header.appendChild(newChatBtn);
+    }
+
     // Delete folder button — only for non-project folders
     if (!_isProject) {
       const deleteBtn = document.createElement('button');

@@ -1643,6 +1643,32 @@ body.bg-pattern-sparkles {
       background: var(--red);
       opacity: 0.5;
     }
+    .folder-new-chat-btn {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      width: 22px; height: 22px;
+      margin-left: auto;
+      padding: 0;
+      border: none;
+      border-radius: 5px;
+      background: color-mix(in srgb, var(--red) 25%, transparent);
+      color: color-mix(in srgb, var(--red) 70%, var(--fg));
+      font-size: 15px;
+      font-weight: 600;
+      line-height: 1;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, opacity 0.15s;
+      opacity: 0;
+    }
+    .session-folder-header:hover .folder-new-chat-btn { opacity: 0.5; }
+    .folder-new-chat-btn:hover {
+      opacity: 1 !important;
+      background: color-mix(in srgb, var(--red) 40%, transparent);
+      color: var(--red);
+    }
+    .project-folder .folder-new-chat-btn { display: inline-flex; }
     .session-show-more-btn {
       display: block;
       width: 100%;
