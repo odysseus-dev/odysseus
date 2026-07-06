@@ -9,10 +9,11 @@ Fix: (1) Read from JSON body as fallback.
          falsy value; when unset (None), defer to per-user privilege checks.
 """
 
-import ast
 from pathlib import Path
 
 import pytest
+
+from src.chat_stream_payload import parse_chat_stream_payload
 
 _CHAT_ROUTES = Path(__file__).resolve().parent.parent / "routes" / "chat_routes.py"
 
@@ -21,56 +22,17 @@ _CHAT_ROUTES = Path(__file__).resolve().parent.parent / "routes" / "chat_routes.
 
 
 def test_allow_bash_reads_from_body_as_fallback():
-    """chat_stream must read allow_bash from the JSON body, not just form_data."""
-    source = _CHAT_ROUTES.read_text(encoding="utf-8")
-    tree = ast.parse(source)
+    """chat_stream must read allow_bash from JSON, not just FormData."""
+    payload = parse_chat_stream_payload({}, {"message": "hi", "session": "s1", "allow_bash": True})
 
-    # Find the chat_stream function
-    chat_stream_func = None
-    for node in ast.walk(tree):
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "chat_stream":
-            chat_stream_func = node
-            break
-    assert chat_stream_func is not None, "chat_stream function not found"
-
-    # Look for an assignment to allow_bash that references 'body'
-    found_body_fallback = False
-    for node in ast.walk(chat_stream_func):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "allow_bash":
-                    # Check if 'body' appears in the value
-                    src_segment = ast.get_source_segment(source, node)
-                    if src_segment and "body" in src_segment:
-                        found_body_fallback = True
-    assert found_body_fallback, (
-        "allow_bash assignment in chat_stream must fall back to JSON body"
-    )
+    assert payload.allow_bash is True
 
 
 def test_allow_web_search_reads_from_body_as_fallback():
-    """chat_stream must read allow_web_search from the JSON body, not just form_data."""
-    source = _CHAT_ROUTES.read_text(encoding="utf-8")
-    tree = ast.parse(source)
+    """chat_stream must read allow_web_search from JSON, not just FormData."""
+    payload = parse_chat_stream_payload({}, {"message": "hi", "session": "s1", "allow_web_search": True})
 
-    chat_stream_func = None
-    for node in ast.walk(tree):
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "chat_stream":
-            chat_stream_func = node
-            break
-    assert chat_stream_func is not None
-
-    found_body_fallback = False
-    for node in ast.walk(chat_stream_func):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "allow_web_search":
-                    src_segment = ast.get_source_segment(source, node)
-                    if src_segment and "body" in src_segment:
-                        found_body_fallback = True
-    assert found_body_fallback, (
-        "allow_web_search assignment in chat_stream must fall back to JSON body"
-    )
+    assert payload.allow_web_search is True
 
 
 def test_disabled_tools_does_not_bash_when_allow_bash_is_none():

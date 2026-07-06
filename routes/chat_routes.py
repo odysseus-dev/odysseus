@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from core.models import ChatMessage
 from src.request_models import ChatRequest
+from src.chat_stream_payload import parse_chat_stream_payload
 from src.llm_core import llm_call_async, stream_llm, stream_llm_with_fallback
 from src.agent_loop import stream_agent_loop
 from src import agent_runs
@@ -467,29 +468,31 @@ def setup_chat_routes(
         _set_user_time_from_request(request)
 
         form_data = await request.form()
-        message = form_data.get("message")
-        session = form_data.get("session")
-        attachments = form_data.get("attachments")
-        use_web = form_data.get("use_web")
-        use_research = form_data.get("use_research")
-        time_filter = form_data.get("time_filter")
-        preset_id = form_data.get("preset_id")
-        # Issue #3229: API callers send JSON, not FormData.  Read from the
-        # JSON body as fallback so callers who send {"allow_bash": true}
-        # actually get bash enabled.
-        allow_bash = form_data.get("allow_bash") or (body or {}).get("allow_bash")
-        allow_web_search = form_data.get("allow_web_search") or (body or {}).get("allow_web_search")
-        use_rag = form_data.get("use_rag")
-        search_context = form_data.get("search_context")  # pre-fetched web search results (compare mode)
-        compare_mode = str(form_data.get("compare_mode", "")).lower() == "true"
-        incognito = str(form_data.get("incognito", "")).lower() == "true"
+        try:
+            payload = parse_chat_stream_payload(form_data, body)
+        except ValueError as e:
+            raise HTTPException(400, f"Invalid request parameters: {e}")
+
+        message = payload.message
+        session = payload.session
+        att_ids = payload.attachments
+        use_web = payload.use_web
+        use_research = payload.use_research
+        time_filter = payload.time_filter
+        preset_id = payload.preset_id
+        allow_bash = payload.allow_bash
+        allow_web_search = payload.allow_web_search
+        use_rag = payload.use_rag
+        search_context = payload.search_context  # pre-fetched web search results (compare mode)
+        compare_mode = payload.compare_mode
+        incognito = payload.incognito
         # Plan mode is not part of the merge-ready UI. Ignore stale clients or
         # manual form posts that still send plan_mode=true.
         plan_mode = False
-        chat_mode = str(form_data.get("mode", "")).lower()  # 'chat' or 'agent'
+        chat_mode = payload.chat_mode
         # Workspace: confine the agent's file/shell tools to this folder.
         workspace, workspace_rejected = _resolve_request_workspace(
-            request, form_data.get("workspace")
+            request, payload.workspace
         )
         # Plan mode is a modifier on agent mode — it only makes sense with tools.
         if plan_mode:
@@ -499,9 +502,7 @@ def setup_chat_routes(
         # weak model survives history truncation — the agent can always re-read
         # the plan. Ignored while still proposing (plan_mode on). Capped so a
         # huge plan can't blow the prompt.
-        approved_plan = ""
-        if not plan_mode:
-            approved_plan = (form_data.get("approved_plan") or "").strip()[:8192]
+        approved_plan = payload.approved_plan if not plan_mode else ""
         # Did the USER explicitly pick agent mode? (vs. us auto-escalating
         # below). Skill extraction should only learn from real agent sessions,
         # not chats we quietly promoted for a notes/calendar intent.
@@ -523,18 +524,14 @@ def setup_chat_routes(
                 _tool_intent.category,
                 _tool_intent.reason,
             )
-        active_doc_id = form_data.get("active_doc_id", "").strip()
+        active_doc_id = payload.active_doc_id
         logger.info(f"[doc-inject] chat_mode={chat_mode}, active_doc_id={active_doc_id!r}")
 
         try:
             # Attachment-only sends: skip the message-required check when the
             # user has attached one or more files (the attachment IS the action).
-            _has_atts = (
-                bool(body and isinstance(body.get("attachments"), list) and body["attachments"])
-                or bool(form_data.get("attachments"))
-            )
             message, session = coerce_message_and_session(
-                body, message, session, session_manager, allow_empty=_has_atts,
+                body, message, session, session_manager, allow_empty=bool(att_ids),
             )
             # Verify ownership AFTER coerce (which may resolve a default session)
             # but BEFORE loading. Prevents cross-user session hijack.
@@ -580,16 +577,7 @@ def setup_chat_routes(
                 do_research = True
                 logger.info(f"Session {session} in research_pending — auto-triggering research")
 
-        att_ids = []
-        if body and isinstance(body.get("attachments"), list):
-            att_ids = [str(x) for x in body["attachments"]]
-        elif attachments:
-            try:
-                att_ids = [str(x) for x in json.loads(attachments)]
-            except Exception:
-                pass
-
-        no_memory = str(form_data.get("no_memory", "")).lower() == "true"
+        no_memory = payload.no_memory
         pre_context_tool_policy = build_effective_tool_policy(
             last_user_message=message,
         )
