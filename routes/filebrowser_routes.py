@@ -63,8 +63,20 @@ def _require_admin(request: Request):
 def _get_user_root(request: Request) -> str:
     """Return the filesystem root the caller may browse.
 
-    Admins get /app (the container workspace).  Non-admins are confined to
-    their personal workspace directory.
+    Admins get / (full container filesystem).  Non-admins are confined to their
+    personal workspace directory.
+    """
+    owner = get_current_user(request)
+    if owner_is_admin_or_single_user(owner):
+        return "/"
+    safe = owner.replace("/", "_").replace("\\", "_") if owner else "default"
+    return os.path.realpath(os.path.join("data", "workspaces", safe))
+
+
+def _get_write_root(request: Request) -> str:
+    """Return the filesystem root the caller may write to.
+
+    Admins get /app (project + data).  Non-admins get their workspace.
     """
     owner = get_current_user(request)
     if owner_is_admin_or_single_user(owner):
@@ -100,6 +112,33 @@ def _resolve_path(request: Request, raw_path: str) -> str:
     # Sensitive-file gate (reuses tool_execution logic).
     if _is_sensitive_path(resolved):
         raise HTTPException(403, "Access to sensitive path denied")
+
+    return resolved
+
+
+def _resolve_write_path(request: Request, raw_path: str) -> str:
+    """Resolve and confine *raw_path* under the caller's write root.
+
+    Same as _resolve_path but uses _get_write_root (which is /app for admin,
+    not /).  This prevents writes outside the project directory.
+    """
+    root = _get_write_root(request)
+    if not raw_path or not raw_path.strip():
+        raise HTTPException(400, "Path is required for write operation")
+
+    expanded = os.path.expanduser(raw_path.strip())
+    if not os.path.isabs(expanded):
+        expanded = os.path.join(root, expanded)
+    resolved = os.path.realpath(expanded)
+
+    try:
+        if os.path.commonpath([resolved, root]) != root:
+            raise HTTPException(403, "Write access is restricted to the project directory")
+    except ValueError:
+        raise HTTPException(403, "Write access is restricted to the project directory")
+
+    if _is_sensitive_path(resolved):
+        raise HTTPException(403, "Cannot write to sensitive path")
 
     return resolved
 
@@ -206,7 +245,7 @@ def setup_filebrowser_routes() -> APIRouter:
     def write_file(request: Request, body: WriteBody):
         """Create or overwrite a file."""
         _require_admin(request)
-        resolved = _resolve_path(request, body.path)
+        resolved = _resolve_write_path(request, body.path)
 
         try:
             resolved_obj = Path(resolved)
@@ -222,7 +261,7 @@ def setup_filebrowser_routes() -> APIRouter:
     def mkdir(request: Request, body: MkdirBody):
         """Create a directory (including parents)."""
         _require_admin(request)
-        resolved = _resolve_path(request, body.path)
+        resolved = _resolve_write_path(request, body.path)
 
         try:
             os.makedirs(resolved, exist_ok=True)
@@ -236,7 +275,7 @@ def setup_filebrowser_routes() -> APIRouter:
     def delete(request: Request, body: DeleteBody):
         """Delete a file or an *empty* directory."""
         _require_admin(request)
-        resolved = _resolve_path(request, body.path)
+        resolved = _resolve_write_path(request, body.path)
 
         if not os.path.exists(resolved):
             raise HTTPException(404, "Path not found")
@@ -282,7 +321,7 @@ def setup_filebrowser_routes() -> APIRouter:
         """Upload a file into the directory at *path*."""
         _require_admin(request)
         # Validate the target directory.
-        resolved_dir = _resolve_path(request, path)
+        resolved_dir = _resolve_write_path(request, path)
 
         # Read the upload in chunks to enforce the size limit.
         total = 0
@@ -300,7 +339,7 @@ def setup_filebrowser_routes() -> APIRouter:
         # the uploaded filename itself.
         dest = os.path.join(resolved_dir, file.filename or "upload")
         dest = os.path.realpath(dest)
-        root = _get_user_root(request)
+        root = _get_write_root(request)
         try:
             if os.path.commonpath([dest, root]) != root:
                 raise HTTPException(403, "Upload destination outside allowed root")

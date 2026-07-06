@@ -1,9 +1,12 @@
 // static/js/fileBrowser.js
-// File Browser Panel — browse, read, edit, upload, download server files.
+// File Browser Modal — browse, read, edit, upload, download server files.
 import uiModule from './ui.js';
 import markdownModule from './markdown.js';
+import { makeWindowDraggable } from './windowDrag.js';
+import * as Modals from './modalManager.js';
 
 const API_BASE = window.location.origin;
+const _t = (k, v) => (window.__t || (kk => kk))(k, v);
 
 // State
 let _open = false;
@@ -18,10 +21,10 @@ let _sortAsc = true;
 let _previewContent = null;
 let _contextMenuEl = null;
 let _dragCounter = 0;
+let _escHandler = null;
 
 // DOM references
-let _pane = null;
-let _backdrop = null;
+let _modal = null;
 let _listEl = null;
 let _previewEl = null;
 let _breadcrumbEl = null;
@@ -51,26 +54,28 @@ function _formatDate(dateStr) {
   if (isNaN(d)) return '';
   const now = new Date();
   const diff = now - d;
-  if (diff < 60000) return 'just now';
+  if (diff < 60000) return _t('files.justNow', 'just now');
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
   if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
   return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
 }
 
 function _getFileIcon(entry) {
-  if (entry.is_dir) return '<span class="fb-icon fb-icon-folder">📁</span>';
+  const svgOpen = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px">';
+  const svgClose = '</svg>';
+  if (entry.is_dir) return `${svgOpen}<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
   const ext = (entry.name || '').split('.').pop().toLowerCase();
-  const codeExts = ['js', 'ts', 'jsx', 'tsx', 'py', 'rb', 'go', 'rs', 'java', 'c', 'cpp', 'h', 'css', 'html', 'json', 'yaml', 'yml', 'toml', 'sh', 'bash', 'zsh'];
+  const codeExts = ['js', 'ts', 'jsx', 'tsx', 'py', 'rb', 'go', 'rs', 'java', 'c', 'cpp', 'h', 'css', 'scss', 'less', 'html', 'xml', 'json', 'yaml', 'yml', 'toml', 'sh', 'bash', 'zsh'];
   const imgExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'];
   const docExts = ['md', 'txt', 'rtf', 'doc', 'docx', 'pdf'];
-  if (codeExts.includes(ext)) return '<span class="fb-icon fb-icon-code">💻</span>';
-  if (imgExts.includes(ext)) return '<span class="fb-icon fb-icon-image">🖼️</span>';
-  if (docExts.includes(ext)) return '<span class="fb-icon fb-icon-doc">📄</span>';
-  return '<span class="fb-icon fb-icon-file">📄</span>';
+  if (codeExts.includes(ext)) return `${svgOpen}<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`;
+  if (imgExts.includes(ext)) return `${svgOpen}<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>`;
+  if (docExts.includes(ext)) return `${svgOpen}<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>`;
+  return `${svgOpen}<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
 }
 
 function _isTextFile(name) {
-  const textExts = ['txt', 'md', 'json', 'js', 'ts', 'jsx', 'tsx', 'py', 'rb', 'go', 'rs', 'java', 'c', 'cpp', 'h', 'css', 'scss', 'less', 'html', 'xml', 'yaml', 'yml', 'toml', 'sh', 'bash', 'zsh', 'sql', 'csv', 'log', 'ini', 'cfg', 'conf', 'env', 'gitignore', 'dockerignore', 'dockerfile', 'makefile', 'readme', 'license', 'cfg', 'pyc'];
+  const textExts = ['txt', 'md', 'json', 'js', 'ts', 'jsx', 'tsx', 'py', 'rb', 'go', 'rs', 'java', 'c', 'cpp', 'h', 'css', 'scss', 'less', 'html', 'xml', 'yaml', 'yml', 'toml', 'sh', 'bash', 'zsh', 'sql', 'csv', 'log', 'ini', 'cfg', 'conf', 'env', 'gitignore', 'dockerignore', 'dockerfile', 'makefile', 'readme', 'license'];
   const ext = (name || '').split('.').pop().toLowerCase();
   return textExts.includes(ext) || !ext;
 }
@@ -156,7 +161,7 @@ async function _readFile(path) {
 async function _writeFile(path, content) {
   try {
     const res = await fetch(`${API_BASE}/api/files/write`, {
-      method: 'POST',
+      method: 'PUT',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path, content }),
@@ -196,7 +201,7 @@ async function _createDir(path) {
 async function _deleteEntry(path) {
   try {
     const res = await fetch(`${API_BASE}/api/files/delete`, {
-      method: 'POST',
+      method: 'DELETE',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path }),
@@ -250,7 +255,7 @@ function _downloadFile(path) {
 function _renderBreadcrumb() {
   if (!_breadcrumbEl) return;
   const parts = _currentPath.split('/').filter(Boolean);
-  let html = `<button class="fb-breadcrumb-item fb-breadcrumb-home" data-path="/" title="Home">🏠</button>`;
+  let html = `<button class="fb-breadcrumb-item fb-breadcrumb-home" data-path="/" title="Home"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></button>`;
   let accumulated = '';
   for (let i = 0; i < parts.length; i++) {
     accumulated += '/' + parts[i];
@@ -264,7 +269,7 @@ function _renderFileList() {
   if (!_listEl) return;
   const filtered = _getFilteredEntries();
   if (!filtered.length) {
-    _listEl.innerHTML = `<div class="fb-empty">${_searchQuery ? 'No matching files' : 'Empty folder'}</div>`;
+    _listEl.innerHTML = `<div class="fb-empty">${_searchQuery ? _t('files.noMatch', 'No matching files') : _t('files.emptyFolder', 'Empty folder')}</div>`;
     return;
   }
   const rows = filtered.map(e => {
@@ -288,9 +293,9 @@ function _renderFileList() {
   _listEl.innerHTML = `<table class="fb-table">
     <thead><tr>
       <th class="fb-th-icon"></th>
-      <th class="fb-th-name" data-sort="name">Name${sortIndicator('name')}</th>
-      <th class="fb-th-size" data-sort="size">Size${sortIndicator('size')}</th>
-      <th class="fb-th-mtime" data-sort="mtime">Modified${sortIndicator('mtime')}</th>
+      <th class="fb-th-name" data-sort="name">${_t('files.name', 'Name')}${sortIndicator('name')}</th>
+      <th class="fb-th-size" data-sort="size">${_t('files.size', 'Size')}${sortIndicator('size')}</th>
+      <th class="fb-th-mtime" data-sort="mtime">${_t('files.modified', 'Modified')}${sortIndicator('mtime')}</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
@@ -299,17 +304,17 @@ function _renderFileList() {
 async function _renderPreview(path, isDir) {
   if (!_previewEl) return;
   if (isDir) {
-    _previewEl.innerHTML = `<div class="fb-preview-empty">Select a file to preview</div>`;
+    _previewEl.innerHTML = `<div class="fb-preview-empty">${_t('files.selectFile', 'Select a file to preview')}</div>`;
     return;
   }
   if (!_isTextFile(path)) {
-    _previewEl.innerHTML = `<div class="fb-preview-empty">Preview not available for this file type</div>`;
+    _previewEl.innerHTML = `<div class="fb-preview-empty">${_t('files.noPreview', 'Preview not available for this file type')}</div>`;
     return;
   }
-  _previewEl.innerHTML = `<div class="fb-preview-loading">Loading...</div>`;
+  _previewEl.innerHTML = `<div class="fb-preview-loading">${_t('files.loading', 'Loading...')}</div>`;
   const content = await _readFile(path);
   if (content === null) {
-    _previewEl.innerHTML = `<div class="fb-preview-empty">Failed to load preview</div>`;
+    _previewEl.innerHTML = `<div class="fb-preview-empty">${_t('files.loadFailed', 'Failed to load preview')}</div>`;
     return;
   }
   _previewContent = content;
@@ -325,8 +330,8 @@ function _renderEditor() {
   _previewEl.innerHTML = `<div class="fb-editor">
     <textarea class="fb-editor-textarea">${_esc(_editContent)}</textarea>
     <div class="fb-editor-actions">
-      <button class="fb-btn fb-btn-primary" id="fb-save-btn">Save</button>
-      <button class="fb-btn fb-btn-secondary" id="fb-cancel-btn">Cancel</button>
+      <button class="fb-btn fb-btn-primary" id="fb-save-btn">${_t('files.save', 'Save')}</button>
+      <button class="fb-btn fb-btn-secondary" id="fb-cancel-btn">${_t('files.cancel', 'Cancel')}</button>
     </div>
   </div>`;
   const textarea = _previewEl.querySelector('.fb-editor-textarea');
@@ -399,12 +404,12 @@ function _showContextMenu(x, y, path, isDir) {
   _dismissContextMenu();
   const menu = document.createElement('div');
   menu.className = 'fb-context-menu';
-  let html = `<button class="fb-ctx-item" data-action="open">Open</button>`;
+  let html = `<button class="fb-ctx-item" data-action="open">${_t('files.open', 'Open')}</button>`;
   if (!isDir) {
-    html += `<button class="fb-ctx-item" data-action="edit">Edit</button>`;
-    html += `<button class="fb-ctx-item" data-action="download">Download</button>`;
+    html += `<button class="fb-ctx-item" data-action="edit">${_t('files.edit', 'Edit')}</button>`;
+    html += `<button class="fb-ctx-item" data-action="download">${_t('files.download', 'Download')}</button>`;
   }
-  html += `<button class="fb-ctx-item fb-ctx-danger" data-action="delete">Delete</button>`;
+  html += `<button class="fb-ctx-item fb-ctx-danger" data-action="delete">${_t('files.delete', 'Delete')}</button>`;
   menu.innerHTML = html;
   menu.style.left = `${x}px`;
   menu.style.top = `${y}px`;
@@ -475,7 +480,7 @@ async function _handleSave() {
   const content = textarea.value;
   const ok = await _writeFile(_selectedFile, content);
   if (ok) {
-    uiModule.showToast('File saved');
+    uiModule.showToast(_t('files.saved', 'File saved'));
     _editMode = false;
     _editContent = '';
     _renderPreview(_selectedFile, false);
@@ -490,11 +495,11 @@ function _handleCancelEdit() {
 
 async function _handleDelete(path) {
   const name = path.split('/').pop();
-  const confirmed = await uiModule.styledConfirm(`Delete "${name}"?`, { danger: true, confirmText: 'Delete' });
+  const confirmed = await uiModule.styledConfirm(_t('files.confirmDelete', 'Delete "{name}"?').replace('{name}', name), { danger: true, confirmText: _t('files.delete', 'Delete') });
   if (!confirmed) return;
   const ok = await _deleteEntry(path);
   if (ok) {
-    uiModule.showToast('Deleted');
+    uiModule.showToast(_t('files.deleted', 'Deleted'));
     if (_selectedFile === path) {
       _selectedFile = null;
       _editMode = false;
@@ -505,24 +510,24 @@ async function _handleDelete(path) {
 }
 
 async function _handleNewFolder() {
-  const name = await uiModule.styledPrompt('Folder name:', { title: 'New Folder', placeholder: 'folder-name' });
+  const name = await uiModule.styledPrompt(_t('files.folderName', 'Folder name:'), { title: _t('files.newFolder', 'New Folder'), placeholder: 'folder-name' });
   if (!name) return;
   const path = _currentPath === '/' ? `/${name}` : `${_currentPath}/${name}`;
   const ok = await _createDir(path);
   if (ok) {
-    uiModule.showToast('Folder created');
+    uiModule.showToast(_t('files.folderCreated', 'Folder created'));
     await _fetchEntries(_currentPath);
     _render();
   }
 }
 
 async function _handleNewFile() {
-  const name = await uiModule.styledPrompt('File name:', { title: 'New File', placeholder: 'file.txt' });
+  const name = await uiModule.styledPrompt(_t('files.fileName', 'File name:'), { title: _t('files.newFile', 'New File'), placeholder: 'file.txt' });
   if (!name) return;
   const path = _currentPath === '/' ? `/${name}` : `${_currentPath}/${name}`;
   const ok = await _writeFile(path, '');
   if (ok) {
-    uiModule.showToast('File created');
+    uiModule.showToast(_t('files.fileCreated', 'File created'));
     _selectedFile = path;
     await _fetchEntries(_currentPath);
     await _startEdit();
@@ -542,7 +547,7 @@ function _handleUploadClick() {
     }
     input.remove();
     if (input.files?.length) {
-      uiModule.showToast(`Uploaded ${input.files.length} file(s)`);
+      uiModule.showToast(_t('files.uploaded', 'Uploaded {n} file(s)').replace('{n}', input.files.length));
       await _fetchEntries(_currentPath);
       _render();
     }
@@ -578,7 +583,7 @@ function _handleDragEnter(e) {
   e.preventDefault();
   e.stopPropagation();
   _dragCounter++;
-  if (_pane) _pane.classList.add('fb-drag-over');
+  if (_modal) _modal.querySelector('.modal-content')?.classList.add('fb-drag-over');
 }
 
 function _handleDragLeave(e) {
@@ -587,7 +592,7 @@ function _handleDragLeave(e) {
   _dragCounter--;
   if (_dragCounter <= 0) {
     _dragCounter = 0;
-    if (_pane) _pane.classList.remove('fb-drag-over');
+    if (_modal) _modal.querySelector('.modal-content')?.classList.remove('fb-drag-over');
   }
 }
 
@@ -600,25 +605,26 @@ async function _handleDrop(e) {
   e.preventDefault();
   e.stopPropagation();
   _dragCounter = 0;
-  if (_pane) _pane.classList.remove('fb-drag-over');
+  if (_modal) _modal.querySelector('.modal-content')?.classList.remove('fb-drag-over');
   const files = e.dataTransfer?.files;
   if (!files?.length) return;
   for (const file of files) {
     await _uploadFile(_currentPath, file);
   }
-  uiModule.showToast(`Uploaded ${files.length} file(s)`);
+  uiModule.showToast(_t('files.uploaded', 'Uploaded {n} file(s)').replace('{n}', files.length));
   await _fetchEntries(_currentPath);
   _render();
 }
 
-// ---- Panel Management ----
+// ---- Modal Management ----
 
 function _wireEvents() {
-  if (!_pane) return;
-  _listEl = _pane.querySelector('.fb-list');
-  _previewEl = _pane.querySelector('.fb-preview');
-  _breadcrumbEl = _pane.querySelector('.fb-breadcrumb');
-  _searchInput = _pane.querySelector('.fb-search-input');
+  if (!_modal) return;
+  const content = _modal.querySelector('.modal-content');
+  _listEl = content?.querySelector('.fb-list');
+  _previewEl = content?.querySelector('.fb-preview');
+  _breadcrumbEl = content?.querySelector('.fb-breadcrumb');
+  _searchInput = content?.querySelector('.fb-search-input');
 
   _listEl?.addEventListener('click', _handleRowClick);
   _listEl?.addEventListener('dblclick', _handleRowDblClick);
@@ -627,11 +633,11 @@ function _wireEvents() {
 
   _searchInput?.addEventListener('input', _handleSearchInput);
 
-  _pane.querySelector('.fb-upload-btn')?.addEventListener('click', _handleUploadClick);
-  _pane.querySelector('.fb-new-folder-btn')?.addEventListener('click', _handleNewFolder);
-  _pane.querySelector('.fb-new-file-btn')?.addEventListener('click', _handleNewFile);
-  _pane.querySelector('.fb-refresh-btn')?.addEventListener('click', _handleRefresh);
-  _pane.querySelector('.fb-close-btn')?.addEventListener('click', closePanel);
+  content?.querySelector('.fb-upload-btn')?.addEventListener('click', _handleUploadClick);
+  content?.querySelector('.fb-new-folder-btn')?.addEventListener('click', _handleNewFolder);
+  content?.querySelector('.fb-new-file-btn')?.addEventListener('click', _handleNewFile);
+  content?.querySelector('.fb-refresh-btn')?.addEventListener('click', _handleRefresh);
+  document.getElementById('fb-close-btn')?.addEventListener('click', closePanel);
 
   _breadcrumbEl?.addEventListener('click', async (e) => {
     const item = e.target.closest('.fb-breadcrumb-item');
@@ -645,13 +651,13 @@ function _wireEvents() {
   });
 
   // Drag & drop
-  _pane.addEventListener('dragenter', _handleDragEnter);
-  _pane.addEventListener('dragleave', _handleDragLeave);
-  _pane.addEventListener('dragover', _handleDragOver);
-  _pane.addEventListener('drop', _handleDrop);
+  content?.addEventListener('dragenter', _handleDragEnter);
+  content?.addEventListener('dragleave', _handleDragLeave);
+  content?.addEventListener('dragover', _handleDragOver);
+  content?.addEventListener('drop', _handleDrop);
 
   // Keyboard
-  _pane.addEventListener('keydown', (e) => {
+  _escHandler = (e) => {
     if (e.key === 'Escape') {
       if (_editMode) {
         _handleCancelEdit();
@@ -659,53 +665,58 @@ function _wireEvents() {
         closePanel();
       }
     }
-  });
+  };
+  document.addEventListener('keydown', _escHandler);
 }
 
-function _createPanel() {
-  const backdrop = document.createElement('div');
-  backdrop.className = 'fb-backdrop';
-  backdrop.id = 'filebrowser-backdrop';
-  backdrop.addEventListener('click', (e) => {
-    if (e.target === backdrop) closePanel();
+function _createModal() {
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.id = 'filebrowser-modal';
+  modal.innerHTML = `
+    <div class="modal-content fb-modal-content">
+      <div class="modal-header">
+        <h4>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          ${_t('nav.files', 'Files')}
+        </h4>
+        <span style="flex:1"></span>
+        <button class="close-btn" id="fb-close-btn" title="${_t('common.close', 'Close')}">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="fb-breadcrumb"></div>
+        <div class="fb-toolbar">
+          <button class="fb-btn fb-upload-btn" title="${_t('files.uploadFiles', 'Upload files')}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>${_t('files.upload', 'Upload')}</button>
+          <button class="fb-btn fb-new-folder-btn" title="${_t('files.newFolder', 'New folder')}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>${_t('files.newFolder', 'New Folder')}</button>
+          <button class="fb-btn fb-new-file-btn" title="${_t('files.newFile', 'New file')}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>${_t('files.newFile', 'New File')}</button>
+          <button class="fb-btn fb-refresh-btn" title="${_t('files.refresh', 'Refresh')}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>
+          <div class="fb-search">
+            <input type="text" class="fb-search-input" placeholder="${_t('files.search', 'Search files...')}" autocomplete="off" />
+          </div>
+        </div>
+        <div class="fb-body">
+          <div class="fb-list"></div>
+          <div class="fb-preview"></div>
+        </div>
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+
+  // Make draggable
+  const content = modal.querySelector('.modal-content');
+  const header = modal.querySelector('.modal-header');
+  if (content && header) {
+    makeWindowDraggable(modal, { content, header });
+  }
+
+  // Close on backdrop click
+  modal.addEventListener('click', (e) => {
+    if (uiModule.isTouchInsideModal && uiModule.isTouchInsideModal()) return;
+    if (e.target === modal) closePanel();
   });
 
-  const pane = document.createElement('div');
-  pane.id = 'filebrowser-pane';
-  pane.className = 'fb-pane';
-  pane.tabIndex = 0;
-  pane.innerHTML = `
-    <div class="fb-header">
-      <h4 class="fb-title">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2.5px;margin-right:6px"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-        Files
-      </h4>
-      <span style="flex:1"></span>
-      <button class="fb-close-btn doc-action-icon-btn" title="Close" aria-label="Close">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
-      </button>
-    </div>
-    <div class="fb-breadcrumb"></div>
-    <div class="fb-toolbar">
-      <button class="fb-btn fb-upload-btn" title="Upload files">⬆ Upload</button>
-      <button class="fb-btn fb-new-folder-btn" title="New folder">📁 New Folder</button>
-      <button class="fb-btn fb-new-file-btn" title="New file">📄 New File</button>
-      <button class="fb-btn fb-refresh-btn" title="Refresh">🔄</button>
-      <div class="fb-search">
-        <input type="text" class="fb-search-input" placeholder="Search files..." autocomplete="off" />
-      </div>
-    </div>
-    <div class="fb-body">
-      <div class="fb-list"></div>
-      <div class="fb-preview"></div>
-    </div>
-  `;
-
-  backdrop.appendChild(pane);
-  document.body.appendChild(backdrop);
-  _pane = pane;
-  _backdrop = backdrop;
-  return pane;
+  return modal;
 }
 
 export function openPanel() {
@@ -718,11 +729,9 @@ export function openPanel() {
   _sortField = 'name';
   _sortAsc = true;
 
-  _createPanel();
-  document.body.classList.add('filebrowser-view');
+  _modal = _createModal();
   _wireEvents();
-  _fetchEntries('/').then(_render);
-  _pane?.focus();
+  _fetchEntries('').then(_render);
 }
 
 export function closePanel() {
@@ -731,10 +740,22 @@ export function closePanel() {
   _editMode = false;
   _editContent = '';
   _dismissContextMenu();
-  document.body.classList.remove('filebrowser-view');
-  _backdrop?.remove();
-  _pane = null;
-  _backdrop = null;
+  if (_escHandler) {
+    document.removeEventListener('keydown', _escHandler);
+    _escHandler = null;
+  }
+  if (_modal) {
+    const content = _modal.querySelector('.modal-content');
+    const modal = _modal;
+    if (content) {
+      content.classList.add('modal-closing');
+      content.addEventListener('animationend', () => modal.remove(), { once: true });
+      setTimeout(() => { if (modal.parentElement) modal.remove(); }, 250);
+    } else {
+      modal.remove();
+    }
+  }
+  _modal = null;
   _listEl = null;
   _previewEl = null;
   _breadcrumbEl = null;
