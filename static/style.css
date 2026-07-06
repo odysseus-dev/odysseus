@@ -1621,6 +1621,28 @@ body.bg-pattern-sparkles {
     .session-folder-content { padding-left: 4px; }
     .session-folder-content .list-item { border-bottom: 1px solid color-mix(in srgb, var(--fg) 7%, transparent); }
     .session-folder-content .list-item:last-child { border-bottom: none; }
+    /* ── Project folder distinction ── */
+    .project-folder .session-folder-header {
+      color: color-mix(in srgb, var(--red) 60%, var(--fg));
+      font-weight: 700;
+    }
+    .project-folder .session-folder-header:hover {
+      color: var(--red);
+      background: color-mix(in srgb, var(--red) 6%, transparent);
+    }
+    .project-folder-icon {
+      display: inline-flex; align-items: center; margin-right: 2px;
+      opacity: 0.7; color: var(--red);
+    }
+    .project-folder .folder-drag-handle { cursor: default; opacity: 0; }
+    .project-folder .folder-delete-btn { display: none; }
+    .project-folder .session-folder-header::after {
+      content: '';
+      flex-shrink: 0;
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--red);
+      opacity: 0.5;
+    }
     .session-show-more-btn {
       display: block;
       width: 100%;

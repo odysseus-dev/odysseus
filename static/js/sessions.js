@@ -373,6 +373,82 @@ function getFolderNames() {
   return Array.from(names).sort();
 }
 
+// ── Project state & API helpers ──
+let _projectsCache = [];          // all project objects from /api/projects/
+let _projectsCacheReady = false;  // whether the cache has been populated
+let _currentProjectFolder = null; // folder slug the user clicked "new chat in"
+
+/** Fetch the project list from the API (cached). */
+export async function loadProjects() {
+  if (_projectsCacheReady) return;
+  try {
+    const res = await fetch(`${API_BASE}/api/projects/`);
+    if (res.ok) _projectsCache = await res.json();
+  } catch (e) {
+    console.warn('Failed to load projects:', e);
+  }
+  _projectsCacheReady = true;
+  // Expose cache on window for other modules (e.g., export dropdown handler)
+  window._projectsCache = _projectsCache;
+  // Update visibility of "Move to Project" in the export dropdown
+  updateMoveToProjectVisibility();
+}
+
+/** Show the "Move to Project" export button when projects exist and a session is active. */
+function updateMoveToProjectVisibility() {
+  const btn = document.getElementById('export-move-to-project-btn');
+  if (!btn) return;
+  const hasProjects = (_projectsCache && _projectsCache.length > 0);
+  const hasSession = currentSessionId != null;
+  btn.style.display = (hasProjects && hasSession) ? '' : 'none';
+}
+
+/** Create a new project and return it. */
+export async function createProject(name, description = '') {
+  const res = await fetch(`${API_BASE}/api/projects/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, description }),
+  });
+  const data = await res.json();
+  // Refresh projects cache so the new project appears immediately
+  _projectsCacheReady = false;
+  await loadProjects();
+  updateMoveToProjectVisibility();
+  return data;
+}
+
+/** Assign a session to a project by project ID. */
+export async function assignSessionToProject(projectId, sessionId) {
+  const res = await fetch(`${API_BASE}/api/projects/${projectId}/assign`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId }),
+  });
+  return res.json();
+}
+
+/** Resolve a folder string like "project:my-slug" to a friendly project name. */
+function resolveFolderName(folder) {
+  if (!folder || !folder.startsWith('project:')) return folder;
+  const slug = folder.slice(8); // strip "project:"
+  const project = _projectsCache.find(p => p.slug === slug);
+  return project ? project.name : folder;
+}
+
+/** Check whether a folder is a project folder. */
+function isProjectFolder(folder) {
+  return folder && folder.startsWith('project:');
+}
+
+/** Get the project ID for a given project folder string. */
+function getProjectIdForFolder(folder) {
+  if (!isProjectFolder(folder)) return null;
+  const slug = folder.slice(8);
+  const project = _projectsCache.find(p => p.slug === slug);
+  return project ? project.id : null;
+}
+
 /** Move a session to a folder via the API. */
 async function moveToFolder(sessionId, folderName) {
   const fd = new FormData();
@@ -415,7 +491,10 @@ function buildFolderSubmenu(sessionId, currentFolder, dropdown) {
     const opt = document.createElement('div');
     opt.className = 'dropdown-item-compact';
     if (f === currentFolder) opt.style.opacity = '0.5';
-    opt.textContent = f;
+    opt.textContent = resolveFolderName(f) || f;
+    if (isProjectFolder(f)) {
+      opt.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;vertical-align:-1px;opacity:0.7;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>' + resolveFolderName(f);
+    }
     opt.addEventListener('click', async (e) => {
       e.stopPropagation();
       await moveToFolder(sessionId, f);
@@ -1156,9 +1235,21 @@ function _renderSessionListImpl() {
     toggle.textContent = collapsed ? '\u25B6' : '\u25BC';
     header.appendChild(toggle);
 
+    // Mark project folders with a data attribute and CSS class
+    const _isProject = isProjectFolder(folderName);
+    if (_isProject) folderDiv.classList.add('project-folder');
+
     const nameSpan = document.createElement('span');
     nameSpan.className = 'folder-name';
-    nameSpan.textContent = folderName;
+    // Show project icon + friendly name for project folders
+    const displayName = _isProject ? resolveFolderName(folderName) : folderName;
+    if (_isProject) {
+      const projIcon = document.createElement('span');
+      projIcon.className = 'project-folder-icon';
+      projIcon.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
+      header.appendChild(projIcon);
+    }
+    nameSpan.textContent = displayName;
     header.appendChild(nameSpan);
 
     const countSpan = document.createElement('span');
@@ -1166,26 +1257,28 @@ function _renderSessionListImpl() {
     countSpan.textContent = `(${folders[folderName].length})`;
     header.appendChild(countSpan);
 
-    // Delete folder button
-    const deleteBtn = document.createElement('button');
-    deleteBtn.className = 'folder-delete-btn';
-    deleteBtn.textContent = '\u00d7';
-    deleteBtn.title = 'Delete folder and all sessions';
-    deleteBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const count = folders[folderName].length;
-      if (!await uiModule.styledConfirm(`Delete folder "${folderName}" and all ${count} session(s) inside it?`, { confirmText: 'Delete', danger: true })) return;
-      for (const s of folders[folderName]) {
-        try {
-          await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' });
-          _deselectCurrentSession(s.id);
-        } catch (err) {
-          console.error('Failed to delete session:', s.id, err);
+    // Delete folder button — only for non-project folders
+    if (!_isProject) {
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'folder-delete-btn';
+      deleteBtn.textContent = '\u00d7';
+      deleteBtn.title = 'Delete folder and all sessions';
+      deleteBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const count = folders[folderName].length;
+        if (!await uiModule.styledConfirm(`Delete folder "${folderName}" and all ${count} session(s) inside it?`, { confirmText: 'Delete', danger: true })) return;
+        for (const s of folders[folderName]) {
+          try {
+            await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' });
+            _deselectCurrentSession(s.id);
+          } catch (err) {
+            console.error('Failed to delete session:', s.id, err);
+          }
         }
-      }
-      await loadSessions();
-    });
-    header.appendChild(deleteBtn);
+        await loadSessions();
+      });
+      header.appendChild(deleteBtn);
+    }
 
     let _folderTouchMoved = false;
     header.addEventListener('touchstart', () => { _folderTouchMoved = false; }, { passive: true });
@@ -1201,19 +1294,30 @@ function _renderSessionListImpl() {
       renderSessionList();
     });
 
-    // Allow renaming folder via double-click
-    header.addEventListener('dblclick', async (e) => {
-      e.stopPropagation();
-      if (e.target.closest('.folder-delete-btn')) return;
-      const newName = await styledPrompt('Rename folder:', {
-        title: 'Rename folder',
-        defaultValue: folderName,
-        confirmText: 'Rename',
+    // Allow renaming folder via double-click — not project folders
+    if (!_isProject) {
+      header.addEventListener('dblclick', async (e) => {
+        e.stopPropagation();
+        if (e.target.closest('.folder-delete-btn')) return;
+        const newName = await styledPrompt('Rename folder:', {
+          title: 'Rename folder',
+          defaultValue: folderName,
+          confirmText: 'Rename',
+        });
+        if (!newName || !newName.trim() || newName.trim() === folderName) return;
+        const promises = folders[folderName].map(s => moveToFolder(s.id, newName.trim()));
+        Promise.all(promises).then(() => loadSessions());
       });
-      if (!newName || !newName.trim() || newName.trim() === folderName) return;
-      const promises = folders[folderName].map(s => moveToFolder(s.id, newName.trim()));
-      Promise.all(promises).then(() => loadSessions());
-    });
+    } else {
+      // Double-click a project folder → create a new chat inside it
+      header.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        // Store the target folder so the brand button handler picks it up
+        sessionStorage.setItem('ody-pending-folder', folderName);
+        const brandBtn = document.getElementById('sidebar-brand-btn');
+        if (brandBtn) brandBtn.click();
+      });
+    }
 
     folderDiv.appendChild(header);
 
@@ -1625,6 +1729,8 @@ export async function loadSessions() {
       fetched = await res.json();
     }
     sessions = _normalizeSessionsList(fetched);
+    // Load projects cache so we can resolve folder names during render
+    await loadProjects();
     renderSessionList();
 
     const sessionsSection = uiModule.el('sessions-section');
@@ -2077,7 +2183,7 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
 // Pending session — stored locally until the first message is sent
 let _pendingChat = null; // { url, modelId, endpointId }
 
-export function createDirectChat(url, modelId, endpointId) {
+export function createDirectChat(url, modelId, endpointId, folder = null) {
   _sessionNavToken++;
   // Detach any active stream so it doesn't interfere with the new chat
   if (window.chatModule && window.chatModule.detachCurrentStream) {
@@ -2091,7 +2197,9 @@ export function createDirectChat(url, modelId, endpointId) {
   }
 
   // Don't hit the API — just store the model info and prepare the UI
-  _pendingChat = { url, modelId, endpointId };
+  _pendingChat = { url, modelId, endpointId, folder };
+  // Also store the folder in sessionStorage so the brand button handler can read it
+  sessionStorage.setItem('ody-pending-folder', folder || '');
   _skipAutoSelect = true;
   _suppressNextSessionLoading = true;
   currentSessionId = null;
@@ -2154,6 +2262,9 @@ export async function materializePendingSession() {
   }
   if (pending.endpointId) {
     fd.append('endpoint_id', pending.endpointId);
+  }
+  if (pending.folder) {
+    fd.append('folder', pending.folder);
   }
 
   let res;
@@ -2234,6 +2345,8 @@ export function setCurrentSessionId(id) {
       el.classList.remove('active-session', 'active');
     });
   }
+  // Update "Move to Project" visibility when a session is selected/deselected
+  updateMoveToProjectVisibility();
 }
 
 // Session list keyboard navigation: arrows to move, Delete to delete

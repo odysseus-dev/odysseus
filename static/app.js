@@ -155,9 +155,13 @@ _refreshDefaultChat();
 async function _createDirectChatFromPreferredModel() {
   if (!sessionModule) return false;
 
+  // Check if a folder was pre-set (e.g. double-click a project folder)
+  let targetFolder = sessionStorage.getItem('ody-pending-folder');
+  if (targetFolder) sessionStorage.removeItem('ody-pending-folder');
+
   const pending = sessionModule.getPendingChat && sessionModule.getPendingChat();
   if (pending && pending.url && pending.modelId && pending.endpointId) {
-    sessionModule.createDirectChat(pending.url, pending.modelId, pending.endpointId);
+    sessionModule.createDirectChat(pending.url, pending.modelId, pending.endpointId, targetFolder);
     return true;
   }
 
@@ -165,20 +169,20 @@ async function _createDirectChatFromPreferredModel() {
   const currentId = sessionModule.getCurrentSessionId();
   const current = sessions.find(s => s.id === currentId);
   if (current && current.endpoint_url && current.model && current.endpoint_id) {
-    sessionModule.createDirectChat(current.endpoint_url, current.model, current.endpoint_id);
+    sessionModule.createDirectChat(current.endpoint_url, current.model, current.endpoint_id, targetFolder);
     return true;
   }
 
   const dc = await _refreshDefaultChat();
   if (dc) {
-    sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id);
+    sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, targetFolder);
     return true;
   }
 
   const withModel = sessions.filter(s => s.endpoint_url && s.model);
   if (withModel.length > 0) {
     const last = withModel[0]; // sessions are sorted by recent
-    sessionModule.createDirectChat(last.endpoint_url, last.model, last.endpoint_id);
+    sessionModule.createDirectChat(last.endpoint_url, last.model, last.endpoint_id, targetFolder);
     return true;
   }
 
@@ -458,6 +462,114 @@ function initializeEventListeners() {
         console.error('Save to docs failed:', err);
         uiModule.showError('Failed to save to documents');
       }
+    });
+  }
+
+  // Export: Move to Project — shows a list of projects to choose from
+  const exportMoveProjectBtn = el('export-move-to-project-btn');
+  if (exportMoveProjectBtn) {
+    exportMoveProjectBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!sessionModule) return;
+      const sessionId = sessionModule.getCurrentSessionId();
+      if (!sessionId) { uiModule.showToast('Nothing to move — create a chat first'); return; }
+      // Load projects
+      try { await sessionModule.loadProjects(); } catch {}
+      const allProjects = window._projectsCache || [];
+      if (allProjects.length === 0) {
+        uiModule.showToast('No projects yet — create one from the sidebar');
+        exportMenu.classList.remove('open');
+        return;
+      }
+      // Build a list of project names, find current project if assigned
+      const currentSession = sessionModule.getSessions().find(s => s.id === sessionId);
+      const currentFolder = currentSession?.folder || '';
+      // Show project selection via a custom modal
+      const project = await _showProjectSelector(allProjects, currentFolder);
+      if (!project) return;
+      try {
+        await sessionModule.assignSessionToProject(project.id, sessionId);
+        uiModule.showToast(`Moved to "${project.name}"`);
+        if (sessionModule.loadSessions) await sessionModule.loadSessions();
+      } catch (err) {
+        uiModule.showError('Failed to move: ' + err.message);
+      }
+      exportMenu.classList.remove('open');
+    });
+  }
+
+  // ── Project selector modal helper ──
+  async function _showProjectSelector(projects, currentFolder) {
+    return new Promise((resolve) => {
+      let overlay = document.getElementById('project-selector-overlay');
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'project-selector-overlay';
+        overlay.className = 'modal';
+        overlay.style.cssText = 'z-index:9999;display:none;';
+        overlay.innerHTML =
+          '<div class="modal-content" style="max-width:420px;min-width:280px;padding:0;overflow:hidden;">' +
+            '<div style="padding:12px 16px;border-bottom:1px solid var(--border,rgba(255,255,255,0.08));">' +
+              '<h4 style="margin:0;font-size:15px;font-weight:600;">Move to Project</h4>' +
+            '</div>' +
+            '<div id="project-selector-list" style="max-height:320px;overflow-y:auto;padding:8px;"></div>' +
+            '<div style="padding:8px 16px;border-top:1px solid var(--border,rgba(255,255,255,0.08));text-align:right;">' +
+              '<button id="project-selector-cancel" class="confirm-btn confirm-btn-secondary" style="padding:6px 14px;font-size:13px;">Cancel</button>' +
+            '</div>' +
+          '</div>';
+        document.body.appendChild(overlay);
+      }
+      const listEl = document.getElementById('project-selector-list');
+      listEl.innerHTML = '';
+      // Render project items
+      projects.forEach(p => {
+        const isCurrent = currentFolder === `project:${p.slug}`;
+        const item = document.createElement('div');
+        item.style.cssText = `
+          padding: 10px 12px; cursor: pointer; border-radius: 6px; margin: 2px 0;
+          display: flex; align-items: center; gap: 8px;
+          opacity: ${isCurrent ? '0.5' : '1'};
+          transition: background 0.15s;
+        `;
+        item.innerHTML = `
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          <div style="flex:1;">
+            <div style="font-weight:500;font-size:14px;">${p.name}</div>
+            ${p.description ? `<div style="font-size:12px;opacity:0.6;margin-top:2px;">${p.description}</div>` : ''}
+          </div>
+          ${isCurrent ? '<span style="font-size:11px;opacity:0.5;">Current</span>' : ''}
+        `;
+        item.addEventListener('mouseenter', () => { if (!isCurrent) item.style.background = 'var(--hover-bg,rgba(255,255,255,0.06))'; });
+        item.addEventListener('mouseleave', () => { item.style.background = 'transparent'; });
+        item.addEventListener('click', () => { cleanup(p); });
+        listEl.appendChild(item);
+      });
+      // Overlay styling
+      overlay.style.background = 'rgba(0,0,0,0.5)';
+      overlay.style.display = 'flex';
+      overlay.style.alignItems = 'center';
+      overlay.style.justifyContent = 'center';
+      overlay.style.position = 'fixed';
+      overlay.style.inset = '0';
+      // Position the modal content
+      const modalContent = overlay.querySelector('.modal-content');
+      modalContent.style.position = 'relative';
+
+      const cancelBtn = document.getElementById('project-selector-cancel');
+      function cleanup(project) {
+        overlay.style.display = 'none';
+        cancelBtn.removeEventListener('click', onCancel);
+        overlay.removeEventListener('click', onBackdrop);
+        document.removeEventListener('keydown', onKey);
+        resolve(project || null);
+      }
+      function onCancel() { cleanup(null); }
+      function onBackdrop(ev) { if (ev.target === overlay) cleanup(null); }
+      function onKey(ev) { if (ev.key === 'Escape') cleanup(null); }
+
+      cancelBtn.addEventListener('click', onCancel);
+      overlay.addEventListener('click', onBackdrop);
+      document.addEventListener('keydown', onKey);
     });
   }
 
@@ -1149,6 +1261,30 @@ function initializeEventListeners() {
     chatsLibraryBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       if (sessionModule) sessionModule.openLibrary('chats');
+    });
+  }
+
+  // Create Project button
+  const createProjectBtn = el('create-project-btn');
+  if (createProjectBtn) {
+    createProjectBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!sessionModule) return;
+      const name = await uiModule.styledPrompt('Name your project:', {
+        title: 'New Project',
+        placeholder: 'e.g. Website Redesign, Research Notes',
+        confirmText: 'Create',
+      });
+      if (!name || !name.trim()) return;
+      try {
+        const result = await sessionModule.createProject(name.trim());
+        if (result) {
+          uiModule.showToast(`Project "${result.name}" created`);
+          if (sessionModule.renderSessionList) sessionModule.renderSessionList();
+        }
+      } catch (err) {
+        uiModule.showError('Failed to create project: ' + err.message);
+      }
     });
   }
 
