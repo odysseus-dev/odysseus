@@ -39,6 +39,7 @@ class AITTSManager {
                     this._provider = 'disabled';
                     return;
                 }
+                this.autoPlay = settings.tts_auto_play === true;
             } catch {}
 
             const response = await fetch('/api/tts/stats');
