@@ -1947,8 +1947,8 @@ async function loadBuiltinTools() {
           <span class="admin-tool-ctx" title="Approximate context tokens used">${esc(tokStr)}</span>
           <div style="display:flex;align-items:center;margin-right:12px;flex-shrink:0;" title="Active by default${isCoreDefault ? ' (required by system)' : ''}">
             <span style="font-size:10px;margin-right:6px;opacity:0.7;">Default</span>
-            <label class="admin-switch" style="flex-shrink:0;margin:0;${isCoreDefault ? 'opacity:0.5;cursor:not-allowed;' : ''}">
-              <input type="checkbox" data-tool-default="${esc(t.id)}" ${defaultChecked ? 'checked' : ''} ${isCoreDefault ? 'disabled' : ''}>
+            <label class="admin-switch" style="flex-shrink:0;margin:0;${isCoreDefault || !t.enabled ? 'opacity:0.5;cursor:not-allowed;' : ''}">
+              <input type="checkbox" data-tool-default="${esc(t.id)}" ${defaultChecked ? 'checked' : ''} ${isCoreDefault || !t.enabled ? 'disabled' : ''} ${isCoreDefault ? 'data-core-default="true"' : ''}>
               <span class="admin-slider"></span>
             </label>
           </div>
@@ -2039,6 +2039,19 @@ async function loadBuiltinTools() {
     // Wire individual tool toggles
     list.querySelectorAll('input[data-tool-id]').forEach(chk => {
       chk.addEventListener('change', async () => {
+        const row = chk.closest('.admin-tool-row');
+        const defaultChk = row.querySelector('input[data-tool-default]');
+        if (defaultChk && !defaultChk.hasAttribute('data-core-default')) {
+           defaultChk.disabled = !chk.checked;
+           const lbl = defaultChk.closest('.admin-switch');
+           if (lbl) {
+             lbl.style.opacity = !chk.checked ? '0.5' : '';
+             lbl.style.cursor = !chk.checked ? 'not-allowed' : '';
+           }
+           if (!chk.checked && defaultChk.checked) {
+             defaultChk.checked = false;
+           }
+        }
         await _saveToolState();
         _updateCatCounter(chk.closest('.admin-tool-category'));
       });
