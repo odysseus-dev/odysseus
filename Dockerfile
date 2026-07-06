@@ -84,7 +84,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
 # Installed by default. Set INSTALL_SPEECH_GPU=true to add CUDA torch instead of CPU.
 ARG INSTALL_SPEECH_GPU=false
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
-    pip install --no-cache-dir faster-whisper kokoro soundfile piper-tts && \
+    pip install --no-cache-dir faster-whisper kokoro soundfile piper-tts omegaconf scipy && \
     python3 -m spacy download en_core_web_sm && \
     mkdir -p /app/data/piper_voices && \
     python3 -m piper.download_voices --download-dir /app/data/piper_voices ru_RU-irina-medium en_US-lessac-medium

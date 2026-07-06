@@ -270,7 +270,8 @@ class TTSService:
             silero = self._get_silero()
             if silero and silero.available:
                 stats["model"] = f"Silero v5 ({silero._device_label})"
-                stats["voice"] = silero._voice or "v5_en"
+                stats["voice"] = silero._voice or "kseniya"
+                stats["speakers"] = silero.model.speakers if silero.model else []
             else:
                 stats["model"] = "Silero (not loaded)"
         elif provider == "browser":
@@ -420,7 +421,8 @@ class _SileroPipeline:
         self.model = None
         self.available = False
         self._device_label = "CPU"
-        self._voice = None
+        self._voice = "kseniya"
+        self._sample_rate = 48000
         self._init()
 
     def _init(self):
@@ -430,31 +432,20 @@ class _SileroPipeline:
 
             os.environ.setdefault("TORCH_HOME", "/app/data/torch_cache")
 
-            # Try local model first
-            local_path = self.MODELS_DIR / "silero_tts.pt"
-            if local_path.exists():
-                self.model = torch.jit.load(str(local_path))
-                self._voice = "ru_v3"
-                self._device_label = "CPU"
-                self.available = True
-                logger.info("Silero TTS loaded from local model")
-                return
-
-            # Try torch.hub
             self.model, _ = torch.hub.load(
                 repo_or_dir='snakers4/silero-models',
                 model='silero_tts',
                 language='ru',
-                speaker='v3_ru',
+                speaker='v5_ru',
                 trust_repo=True,
             )
-            self._voice = "v3_ru"
+            self._voice = "kseniya"
             self._device_label = "CPU"
             self.available = True
-            logger.info("Silero TTS loaded (v3_ru, CPU)")
+            logger.info(f"Silero TTS loaded (v5_ru, speakers: {self.model.speakers})")
         except ImportError as e:
             logger.warning(f"Silero TTS not available: {e}")
-            logger.warning("Install with: pip install torch")
+            logger.warning("Install with: pip install torch scipy")
         except Exception as e:
             logger.error(f"Silero init failed: {e}", exc_info=True)
 
@@ -465,19 +456,20 @@ class _SileroPipeline:
             import torch
             import numpy as np
 
-            if voice and voice != self._voice:
-                self._voice = voice
+            speaker = voice if voice and voice in self.model.speakers else self._voice
 
-            self.model.apply_ssml(f'<speak version="1.0"><prosody rate="{speed}">{text}</prosody></speak>')
-            wav = self.model.to_wav_cpu()
-            sample_rate = self.model.sample_rate
+            audio = self.model.apply_tts(
+                text=text,
+                speaker=speaker,
+                sample_rate=self._sample_rate,
+            )
 
             buf = io.BytesIO()
             with wave.open(buf, "wb") as wf:
                 wf.setnchannels(1)
                 wf.setsampwidth(2)
-                wf.setframerate(sample_rate)
-                wf.writeframes((wav * 32767).astype(np.int16).tobytes())
+                wf.setframerate(self._sample_rate)
+                wf.writeframes((audio.numpy() * 32767).astype(np.int16).tobytes())
             return buf.getvalue()
         except Exception as e:
             logger.error(f"Silero synthesis failed: {e}", exc_info=True)

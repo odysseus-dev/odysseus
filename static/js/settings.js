@@ -967,7 +967,7 @@ async function initTtsSettings() {
     var prov = provSel.value;
     if (prov === 'local') voiceInput.value = 'af_heart';
     else if (prov === 'piper') voiceInput.value = 'en_US-lessac-medium';
-    else if (prov === 'silero') voiceInput.value = 'v3_ru';
+    else if (prov === 'silero') voiceInput.value = 'kseniya';
     else if (isEndpoint()) { voiceSelect.value = 'alloy'; modelSelect.value = 'tts-1'; }
     else if (prov === 'browser') { voiceInput.value = ''; voiceInput.placeholder = (window.__t || (k=>k))('settings.osDefaultVoice'); }
     updateVisibility();
