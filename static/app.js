@@ -983,13 +983,11 @@ function initializeEventListeners() {
       }
     });
   }
-  // File Browser tool button
+  // File Browser tool button — opens in a new window
   const toolFileBrowserBtn = el('tool-filebrowser-btn');
   if (toolFileBrowserBtn) {
     toolFileBrowserBtn.addEventListener('click', () => {
-      if (fileBrowserModule) {
-        fileBrowserModule.togglePanel();
-      }
+      window.open('/static/filebrowser.html', 'filebrowser', 'width=1200,height=800,menubar=no,toolbar=no');
     });
   }
   // Refresh notes due-reminder badge on load and every 5 minutes
@@ -1122,9 +1120,7 @@ function initializeEventListeners() {
     '/tasks':    () => document.getElementById('tool-tasks-btn')?.click(),
     '/library':  () => sessionModule && sessionModule.openLibrary && sessionModule.openLibrary(),
     '/files':    () => {
-      if (!fileBrowserModule) return;
-      _collapseSidebarToRail();
-      fileBrowserModule.openPanel();
+      window.open('/static/filebrowser.html', 'filebrowser', 'width=1200,height=800,menubar=no,toolbar=no');
     },
   };
   const _opener = _routeOpen[urlPath];
