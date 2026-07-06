@@ -42,6 +42,7 @@ class TTSService:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._kokoro = None  # lazy-init
         self._piper = None  # lazy-init
+        self._silero = None  # lazy-init
 
     # ── Settings ──
 
@@ -72,6 +73,9 @@ class TTSService:
         if provider == "piper":
             piper = self._get_piper()
             return piper is not None and piper.available
+        if provider == "silero":
+            silero = self._get_silero()
+            return silero is not None and silero.available
         if provider.startswith("endpoint:"):
             return True  # assume reachable; errors surface at synthesis time
         return False
@@ -113,6 +117,13 @@ class TTSService:
         if self._piper is None:
             self._piper = _PiperPipeline()
         return self._piper
+
+    # ── Silero (local) ──
+
+    def _get_silero(self):
+        if self._silero is None:
+            self._silero = _SileroPipeline()
+        return self._silero
 
     # ── API endpoint ──
 
@@ -192,6 +203,13 @@ class TTSService:
             else:
                 logger.warning("Piper TTS not available")
                 return None
+        elif provider == "silero":
+            silero = self._get_silero()
+            if silero and silero.available:
+                audio_data = silero.synthesize_raw(text, voice, speed)
+            else:
+                logger.warning("Silero TTS not available")
+                return None
         elif provider.startswith("endpoint:"):
             endpoint_id = provider.split(":", 1)[1]
             audio_data = self._synthesize_api(text, endpoint_id, model, voice, speed)
@@ -248,6 +266,13 @@ class TTSService:
                 stats["voice"] = piper._voice_name or "en_US-lessac-medium"
             else:
                 stats["model"] = "Piper (not loaded)"
+        elif provider == "silero":
+            silero = self._get_silero()
+            if silero and silero.available:
+                stats["model"] = f"Silero v5 ({silero._device_label})"
+                stats["voice"] = silero._voice or "v5_en"
+            else:
+                stats["model"] = "Silero (not loaded)"
         elif provider == "browser":
             stats["model"] = "Browser (Web Speech API)"
         elif provider.startswith("endpoint:"):
@@ -379,6 +404,83 @@ class _PiperPipeline:
             return buf.getvalue()
         except Exception as e:
             logger.error(f"Piper synthesis failed: {e}", exc_info=True)
+            return None
+
+
+class _SileroPipeline:
+    """Encapsulates Silero TTS — high-quality local TTS using PyTorch models.
+
+    Supports Russian and English with multiple speakers.
+    Models are loaded via torch.hub from snakers4/silero-models.
+    """
+
+    MODELS_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "silero_models"
+
+    def __init__(self):
+        self.model = None
+        self.available = False
+        self._device_label = "CPU"
+        self._voice = None
+        self._init()
+
+    def _init(self):
+        try:
+            import torch
+            import os
+
+            os.environ.setdefault("TORCH_HOME", "/app/data/torch_cache")
+
+            # Try local model first
+            local_path = self.MODELS_DIR / "silero_tts.pt"
+            if local_path.exists():
+                self.model = torch.jit.load(str(local_path))
+                self._voice = "ru_v3"
+                self._device_label = "CPU"
+                self.available = True
+                logger.info("Silero TTS loaded from local model")
+                return
+
+            # Try torch.hub
+            self.model, _ = torch.hub.load(
+                repo_or_dir='snakers4/silero-models',
+                model='silero_tts',
+                language='ru',
+                speaker='v3_ru',
+                trust_repo=True,
+            )
+            self._voice = "v3_ru"
+            self._device_label = "CPU"
+            self.available = True
+            logger.info("Silero TTS loaded (v3_ru, CPU)")
+        except ImportError as e:
+            logger.warning(f"Silero TTS not available: {e}")
+            logger.warning("Install with: pip install torch")
+        except Exception as e:
+            logger.error(f"Silero init failed: {e}", exc_info=True)
+
+    def synthesize_raw(self, text: str, voice: str = "", speed: float = 1.0) -> Optional[bytes]:
+        if not self.available:
+            return None
+        try:
+            import torch
+            import numpy as np
+
+            if voice and voice != self._voice:
+                self._voice = voice
+
+            self.model.apply_ssml(f'<speak version="1.0"><prosody rate="{speed}">{text}</prosody></speak>')
+            wav = self.model.to_wav_cpu()
+            sample_rate = self.model.sample_rate
+
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(sample_rate)
+                wf.writeframes((wav * 32767).astype(np.int16).tobytes())
+            return buf.getvalue()
+        except Exception as e:
+            logger.error(f"Silero synthesis failed: {e}", exc_info=True)
             return None
 
 

@@ -80,7 +80,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 # Local speech-to-text and text-to-speech.
 # STT: faster-whisper (CPU by default).
-# TTS: Kokoro-82M (English) + Piper (multilingual incl. Russian).
+# TTS: Kokoro-82M (English) + Piper (multilingual incl. Russian) + Silero v5.
 # Installed by default. Set INSTALL_SPEECH_GPU=true to add CUDA torch instead of CPU.
 ARG INSTALL_SPEECH_GPU=false
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
@@ -88,6 +88,9 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
     python3 -m spacy download en_core_web_sm && \
     mkdir -p /app/data/piper_voices && \
     python3 -m piper.download_voices --download-dir /app/data/piper_voices ru_RU-irina-medium en_US-lessac-medium
+ENV TORCH_HOME=/app/data/torch_cache
+RUN mkdir -p /app/data/silero_models /app/data/torch_cache && \
+    python3 -c "import torch; torch.hub.load('snakers4/silero-models', 'silero_tts', language='ru', speaker='v3_ru', trust_repo=True)"
 RUN if [ "$INSTALL_SPEECH_GPU" = "true" ]; then \
         pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu121; \
     fi
