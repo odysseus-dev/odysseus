@@ -91,6 +91,21 @@ _TOOL_CALL_RE = re.compile(
 _TOOL_CALL_OPEN_RE = re.compile(r"\[TOOL_CALL\]\s*\{", re.IGNORECASE)
 _TOOL_CALL_CLOSE_RE = re.compile(r"\}\s*\[/TOOL_CALL\]", re.IGNORECASE)
 
+# Pattern 2b: [bash]...[/bash] / [python]...[/python] square-bracket tags.
+# Qwen-family finetunes sometimes drift from their trained <tool_call> JSON
+# format to this simpler bracket form (#5187): "[bash]mkdir -p x[/bash]".
+# Deliberately scoped to a small, unambiguous allowlist rather than the full
+# _TOOL_NAME_MAP alias set (which includes common English words like "run",
+# "search", "notes", "settings") -- a bare [word]...[/word] scan over that
+# wider set would risk misreading ordinary bracketed prose/markdown labels
+# (e.g. "[notes] ... [/notes]" in a model's own writeup) as a tool call.
+_BRACKET_TOOL_NAMES = ("bash", "shell", "python")
+_BRACKET_OPEN_RE = re.compile(
+    r"\[(" + "|".join(_BRACKET_TOOL_NAMES) + r")\]",
+    re.IGNORECASE,
+)
+_BRACKET_CLOSE_ANY_RE = re.compile(r"\[/(\w+)\]", re.IGNORECASE)
+
 # Pattern 3: XML-style tool calls (minimax, some other models)
 # <minimax:tool_call><invoke name="bash"><parameter name="command">...</parameter></invoke></minimax:tool_call>
 # Also handles: <tool_call><invoke ...>, <function_call><invoke ...>, plain <invoke ...>
@@ -762,6 +777,30 @@ def _strip_bare_invoke_markup(text: str) -> str:
     return "".join(out)
 
 
+def _strip_bracket_tool_markup(text: str) -> str:
+    """Remove [bash]/[shell]/[python]...[/same-tag] blocks (#5187), pairing
+    each opener with its own matching closer via literal scans (no regex
+    backtracking) so it stays safe on untrusted, possibly-unclosed input."""
+    lowered = text.lower()
+    out = []
+    pos = 0
+    while True:
+        starts = [(name, lowered.find(f"[{name}]", pos)) for name in _BRACKET_TOOL_NAMES]
+        starts = [(name, i) for name, i in starts if i >= 0]
+        if not starts:
+            out.append(text[pos:])
+            break
+        name, start = min(starts, key=lambda p: p[1])
+        closer = f"[/{name}]"
+        close = lowered.find(closer, start + len(f"[{name}]"))
+        if close < 0:
+            out.append(text[pos:])
+            break
+        out.append(text[pos:start])
+        pos = close + len(closer)
+    return "".join(out)
+
+
 def _parse_stepfun_tool_call(tool_name: str, body: str) -> Optional[ToolBlock]:
     """Parse StepFun native tool-call tokens into an Odysseus ToolBlock."""
     tool_name = tool_name.lower().replace("-", "_").replace(".", "_")
@@ -994,12 +1033,19 @@ def _iter_xml_direct(text):
     return _iter_backref_blocks(text, _XML_DIRECT_OPEN_RE, _XML_DIRECT_CLOSE_ANY_RE, ci=True)
 
 
+def _iter_bracket_tool_calls(text):
+    """Forward-only ``[bash]...[/bash]``-style scan restricted to
+    _BRACKET_TOOL_NAMES (see _iter_backref_blocks)."""
+    return _iter_backref_blocks(text, _BRACKET_OPEN_RE, _BRACKET_CLOSE_ANY_RE, ci=True)
+
+
 def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
     """Extract executable tool blocks from LLM response text.
 
     Supports multiple formats:
     1. ```bash ... ``` fenced code blocks (standard)
     2. [TOOL_CALL] ... [/TOOL_CALL] blocks (some models)
+    2b. [bash]/[shell]/[python] ... [/same-tag] blocks (Qwen drift; #5187)
     3. XML-style <tool_call>/<invoke> blocks
     4. <tool_code> blocks (MiniMax-M2.5 style)
     5. StepFun Step-3 native <｜tool▁call▁begin｜> tokens
@@ -1073,6 +1119,17 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
             block = _parse_tool_call_block(text[inner_start:inner_end])
             if block:
                 blocks.append(block)
+
+    # Pattern 2b: [bash]/[shell]/[python] square-bracket blocks (#5187) — some
+    # Qwen-family finetunes drift from their trained <tool_call> JSON format to
+    # this simpler bracket form. See _BRACKET_TOOL_NAMES for why the tag set
+    # stays a narrow allowlist instead of the full alias map.
+    if not blocks:
+        for tag, body in _iter_bracket_tool_calls(text):
+            content = body.strip()
+            if content:
+                tool_type = _TOOL_NAME_MAP.get(tag.lower(), tag.lower())
+                blocks.append(ToolBlock(tool_type, content))
 
     # Pattern 3: XML-style <tool_call>/<invoke> blocks
     if not blocks:
@@ -1177,6 +1234,7 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
     # opener with a later closer and stops when none is reachable, so untrusted
     # output can't drive the O(n^2) lazy-rescan (ReDoS); see _iter_delimited.
     cleaned = _strip_delimited(cleaned, _TOOL_CALL_OPEN_RE, _TOOL_CALL_CLOSE_RE)
+    cleaned = _strip_bracket_tool_markup(cleaned)
     cleaned = _strip_stepfun_tool_markup(cleaned)
     cleaned = _strip_delimited(cleaned, _XML_TOOL_CALL_OPEN_RE, _XML_TOOL_CALL_CLOSE_RE)
     cleaned = _XML_OPEN_TOOL_CALL_RE.sub('', cleaned)
