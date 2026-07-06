@@ -2070,7 +2070,22 @@ async function loadBuiltinTools() {
         const catEl = chk.closest('.admin-tool-category');
         if (!catEl) return;
         const checked = chk.checked;
-        catEl.querySelectorAll('input[data-tool-id]').forEach(c => { c.checked = checked; });
+        catEl.querySelectorAll('input[data-tool-id]').forEach(c => { 
+          c.checked = checked; 
+          const row = c.closest('.admin-tool-row');
+          const defaultChk = row.querySelector('input[data-tool-default]');
+          if (defaultChk && !defaultChk.hasAttribute('data-core-default')) {
+             defaultChk.disabled = !checked;
+             const lbl = defaultChk.closest('.admin-switch');
+             if (lbl) {
+               lbl.style.opacity = !checked ? '0.5' : '';
+               lbl.style.cursor = !checked ? 'not-allowed' : '';
+             }
+             if (!checked && defaultChk.checked) {
+               defaultChk.checked = false;
+             }
+          }
+        });
         await _saveToolState();
         _updateCatCounter(catEl);
       });
