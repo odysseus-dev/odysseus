@@ -1675,6 +1675,7 @@ async function initAgentSettings() {
   var toolsInput = el('set-agentMaxTools');
   var roundsInput = el('set-agentMaxRounds');
   var supInput = el('set-agentSupervisorLadder');
+  var budgetInput = el('set-agentInputTokenBudget');
   var msg = el('set-agentMsg');
   if (!toolsInput) return;
 
@@ -1684,6 +1685,7 @@ async function initAgentSettings() {
     if (settings.agent_max_tool_calls) toolsInput.value = settings.agent_max_tool_calls;
     if (roundsInput && settings.agent_max_rounds) roundsInput.value = settings.agent_max_rounds;
     if (supInput) supInput.checked = !!settings.agent_supervisor_ladder;
+    if (budgetInput && settings.agent_input_token_budget) budgetInput.value = settings.agent_input_token_budget;
   } catch (e) {}
 
   // Clamp + coerce a raw input to an int in [lo, hi]; falls back to `dflt`
@@ -1697,10 +1699,13 @@ async function initAgentSettings() {
   async function save() {
     var tools = clampInt(toolsInput.value, 0, 1000, 0);
     var rounds = roundsInput ? clampInt(roundsInput.value, 1, 200, 20) : null;
+    var budget = budgetInput ? clampInt(budgetInput.value, 0, 1000000, 0) : null;
     toolsInput.value = tools;                       // reflect the clamped value
     if (roundsInput) roundsInput.value = rounds;
+    if (budgetInput) budgetInput.value = budget;
     var payload = { agent_max_tool_calls: tools };
     if (rounds != null) payload.agent_max_rounds = rounds;
+    if (budget != null) payload.agent_input_token_budget = budget;
     if (supInput) payload.agent_supervisor_ladder = !!supInput.checked;
     try {
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
@@ -1709,6 +1714,7 @@ async function initAgentSettings() {
       });
       msg.textContent = (tools > 0 ? 'Limit: ' + tools + ' tool calls' : 'Unlimited tool calls') +
         (rounds != null ? ' · ' + rounds + ' steps/message' : '') +
+        (budget != null ? ' · budget: ' + budget : '') +
         (supInput && supInput.checked ? ' · supervisor on' : '');
       msg.style.color = 'var(--fg)';
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
@@ -1717,10 +1723,13 @@ async function initAgentSettings() {
   toolsInput.addEventListener('change', save);
   if (roundsInput) roundsInput.addEventListener('change', save);
   if (supInput) supInput.addEventListener('change', save);
+  if (budgetInput) budgetInput.addEventListener('change', save);
   var cur = parseInt(toolsInput.value, 10) || 0;
   var curR = roundsInput ? (parseInt(roundsInput.value, 10) || 20) : null;
+  var curB = budgetInput ? (parseInt(budgetInput.value, 10) || 0) : null;
   msg.textContent = (cur > 0 ? 'Limit: ' + cur + ' tool calls' : 'Unlimited tool calls') +
     (curR != null ? ' · ' + curR + ' steps/message' : '') +
+    (curB != null ? ' · budget: ' + curB : '') +
     (supInput && supInput.checked ? ' · supervisor on' : '');
 
 }
