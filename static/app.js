@@ -1258,18 +1258,19 @@ function initializeEventListeners() {
     document.addEventListener('click', () => { sortDropdown.style.display = 'none'; });
     sortDropdown.addEventListener('click', (e) => e.stopPropagation());
 
-    // Sort mode options (newest, oldest, last active) — toggleable
+    // Sort mode options — controls within-folder ordering.
+    // Clicking 'By Folder' keeps folders but also sets within-folder sorting.
     sortDropdown.querySelectorAll('.sort-option').forEach(opt => {
       opt.addEventListener('click', () => {
         const mode = opt.dataset.sort;
-        const current = sessionModule.getSortMode();
+        const current = sessionModule.getFolderSortMode();
         // Toggle: clicking the active sort reverts to manual
         if (current === mode) {
-          sessionModule.setSortMode(null);
+          sessionModule.setFolderSortMode(null);
           sortDropdown.style.display = 'none';
           uiModule.showToast('Manual order');
         } else {
-          sessionModule.setSortMode(mode);
+          sessionModule.setFolderSortMode(mode);
           sortDropdown.style.display = 'none';
           uiModule.showToast(`Sorted: ${opt.textContent.trim().toLowerCase()}`);
         }
@@ -1277,9 +1278,9 @@ function initializeEventListeners() {
       });
     });
 
-    // Sync checkmarks on sort options
+    // Sync checkmarks on sort options — uses folder sort mode
     function _syncSortChecks() {
-      const current = sessionModule.getSortMode();
+      const current = sessionModule.getFolderSortMode();
       sortDropdown.querySelectorAll('.sort-option').forEach(o => {
         const check = o.querySelector('.sort-check') || document.createElement('span');
         check.className = 'sort-check';
@@ -1312,7 +1313,7 @@ function initializeEventListeners() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Auto-sort failed');
         if (data.status === 'ok') {
-          sessionModule.setSortMode(null); // clear sort — tidy creates manual folder order
+          sessionModule.setFolderSortMode(null); // clear within-folder sort — tidy creates manual folder order
           _syncSortChecks();
           if (skipLlm) {
             // No-AI path: just report what got cleaned. No "unfiled

@@ -1725,6 +1725,33 @@ class CalendarDeletedEvent(TimestampMixin, Base):
     last_error = Column(Text, nullable=True)
 
 
+class Project(TimestampMixin, Base):
+    """A named project group that sessions can be assigned to.
+
+    Projects are the persistent "folder above folders" — every session
+    belongs to at most one project.  The project name is the UI-facing
+    slug (kebab-case) and description is a free-text label.
+    """
+    __tablename__ = "projects"
+
+    id = Column(String, primary_key=True, index=True)
+    owner = Column(String, nullable=True, index=True)
+    name = Column(String, nullable=False)        # kebab-case slug
+    slug = Column(String, nullable=False, unique=True)  # canonical slug
+    description = Column(String, nullable=True, default="")
+
+    # Index for fast owner + name lookups
+    __table_args__ = (
+        Index('ix_projects_owner_slug', 'owner', 'slug'),
+    )
+
+    @property
+    def sessions(self):
+        """Relationship to sessions assigned to this project."""
+        from sqlalchemy.orm import sessionmaker
+        return None  # sessions linked via folder field on Session rows
+
+
 class Integration(TimestampMixin, Base):
     """An external service connection (email, RSS, webhook, etc.)."""
     __tablename__ = "integrations"
@@ -1865,6 +1892,7 @@ def init_db():
     _migrate_encrypt_signatures()
     _migrate_encrypt_endpoint_keys()
     _migrate_backfill_task_folders()
+    _migrate_add_projects_table()
 
 
 def _migrate_backfill_task_folders():
@@ -1891,6 +1919,30 @@ def _migrate_backfill_task_folders():
                     f"Backfilled folder='Tasks' on {res.rowcount} task/research sessions")
     except Exception as e:
         logging.getLogger(__name__).warning(f"task folder backfill: {e}")
+
+
+def _migrate_add_projects_table():
+    """Create the projects table for grouping sessions.  Idempotent —
+    ``Base.metadata.create_all`` creates the table if missing; the migration
+    call is kept so any future per-row backfill logic has a home."""
+    try:
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            tables = [r[0] for r in conn.execute(text(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ))]
+            if "projects" not in tables:
+                conn.execute(text("DROP TABLE IF EXISTS projects"))
+                Base.metadata.create_all(bind=engine)
+                logging.getLogger(__name__).info("Migrated: created projects table")
+            else:
+                # Ensure the slug column exists (schema evolution guard)
+                cols = [r[1] for r in conn.execute(text("PRAGMA table_info(projects)"))]
+                if "slug" not in cols:
+                    conn.execute(text("ALTER TABLE projects ADD COLUMN slug TEXT NOT NULL DEFAULT ''"))
+                    conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"projects table migration skipped: {e}")
 
 
 def _migrate_chat_messages_fts():

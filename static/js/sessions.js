@@ -27,6 +27,7 @@ const FOLDER_MAX_VISIBLE = 5;
 let _showAllSessions = false;
 let _expandedFolders = {};  // folderName -> true if "show more" clicked
 let _sortMode = Storage.get('odysseus-session-sort') || 'active'; // default to last active
+let _folderSortMode = Storage.get('odysseus-folder-sort') || 'active'; // secondary sort within folders
 let _autoCreateInProgress = false; // guard against recursive auto-create
 const _INCOGNITO_SESSIONS_KEY = 'ody-incognito-sessions'; // sessionStorage key for incognito session IDs
 const _isMac = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -1065,59 +1066,27 @@ function _renderSessionListImpl() {
 
   const _frag = document.createDocumentFragment();
 
-  // ── Flat sort modes: ignore folders, show one ordered list. ──
-  // Folders are only shown when _sortMode === 'group' (or null/empty
-  // for manual mode). This keeps the picker simple: a folder-grouped
-  // view is one of the sort choices, alongside Last Active / Newest.
-  if (_sortMode && _sortMode !== 'group') {
-    orderedSessions.sort((a, b) => {
-      if (_sortMode === 'newest') return (b.created_at || '').localeCompare(a.created_at || '');
-      // "Last active" sorts by the last actual MESSAGE, not updated_at —
-      // updated_at is bumped by renames / model swaps / folder moves, which
-      // made the order feel random. Fall back to updated_at/created_at for
-      // older rows that predate the last_message_at backfill.
-      if (_sortMode === 'active') {
-        const av = a.last_message_at || a.updated_at || a.created_at || '';
-        const bv = b.last_message_at || b.updated_at || b.created_at || '';
-        return bv.localeCompare(av);
-      }
-      return 0;
-    });
-    // Favorites are a global pinned block above date buckets, not just
-    // promoted within the day they belong to.
-    const allFlat = [
-      ...orderedSessions.filter(s => s.is_important),
-      ...orderedSessions.filter(s => !s.is_important),
-    ];
+  // ── Always render folder structure; sort within folders using _folderSortMode. ──
+  // The top-level _sortMode is kept for backward compat but always resolves to
+  // folder-aware rendering.  _folderSortMode controls the within-folder order
+  // (active | newest | manual).
+  if (!_folderSortMode) _folderSortMode = 'active';
 
-    const limit = _showAllSessions ? allFlat.length : SIDEBAR_MAX_VISIBLE;
-    const visible = allFlat.slice(0, limit);
-    const activeIdx = allFlat.findIndex(s => s.id === currentSessionId);
-    if (!_showAllSessions && activeIdx >= limit) visible.push(allFlat[activeIdx]);
-
-    const visibleFavorites = visible.filter(s => s.is_important);
-    const visibleRegular = visible.filter(s => !s.is_important);
-    _appendFavoriteSessionItems(_frag, visibleFavorites);
-    _appendSessionItemsWithDateHeaders(_frag, visibleRegular);
-
-    if (allFlat.length > SIDEBAR_MAX_VISIBLE) {
-      const remaining = allFlat.length - SIDEBAR_MAX_VISIBLE;
-      const toggleBtn = document.createElement('button');
-      toggleBtn.className = 'session-show-more-btn';
-      toggleBtn.textContent = _showAllSessions ? 'Show less' : `Show ${remaining} more`;
-      toggleBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        _showAllSessions = !_showAllSessions;
-        renderSessionList();
-      });
-      _frag.appendChild(toggleBtn);
+  // Build sort comparator for within-folder ordering
+  const _folderCompare = (a, b) => {
+    if (_folderSortMode === 'newest') return (b.created_at || '').localeCompare(a.created_at || '');
+    // "Last active" sorts by the last actual MESSAGE, not updated_at —
+    // updated_at is bumped by renames / model swaps / folder moves, which
+    // made the order feel random. Fall back to updated_at/created_at for
+    // older rows that predate the last_message_at backfill.
+    if (_folderSortMode === 'active') {
+      const av = a.last_message_at || a.updated_at || a.created_at || '';
+      const bv = b.last_message_at || b.updated_at || b.created_at || '';
+      return bv.localeCompare(av);
     }
-
-    list.innerHTML = '';
-    list.appendChild(_frag);
-    _postRenderSessionList(list);
-    return;
-  }
+    // manual / default: keep current (API) order
+    return 0;
+  };
 
   // ── Group / manual mode: render folders, then unfiled sessions. ──
   const folderState = loadFolderState();
@@ -1142,6 +1111,17 @@ function _renderSessionListImpl() {
   };
   starPartition(unfiled);
   Object.values(folders).forEach(arr => starPartition(arr));
+
+  // Apply within-folder sorting (after starred pinning)
+  const sortWithin = (arr) => {
+    const starred = arr.filter(s => s.is_important);
+    const rest = arr.filter(s => !s.is_important);
+    rest.sort(_folderCompare);
+    arr.length = 0;
+    arr.push(...starred, ...rest);
+  };
+  sortWithin(unfiled);
+  Object.values(folders).forEach(arr => sortWithin(arr));
 
   // Render folders first (above unfiled sessions)
   const savedFolderOrder = loadFolderOrder();
@@ -1285,7 +1265,7 @@ function _renderSessionListImpl() {
     visibleUnfiled.push(unfiled[activeInUnfiled]);
   }
 
-  // Wrap in "Unsorted" folder if real folders exist
+  // Wrap in "General" folder if real folders exist
   let unfiledTarget = _frag;
   if (hasFolders && unfiled.length > 0) {
     const unsortedDiv = document.createElement('div');
@@ -1306,7 +1286,7 @@ function _renderSessionListImpl() {
     unsortedHeader.appendChild(toggle);
     const nameSpan = document.createElement('span');
     nameSpan.className = 'folder-name';
-    nameSpan.textContent = 'Unsorted';
+    nameSpan.textContent = 'General';
     unsortedHeader.appendChild(nameSpan);
     const countSpan = document.createElement('span');
     countSpan.className = 'folder-count';
@@ -3447,6 +3427,13 @@ export function setSortMode(mode) {
   renderSessionList();
 }
 
+export function getFolderSortMode() { return _folderSortMode; }
+export function setFolderSortMode(mode) {
+  _folderSortMode = mode || 'active';
+  Storage.set('odysseus-folder-sort', _folderSortMode);
+  renderSessionList();
+}
+
 export function setSessionHasDocs(sessionId, hasDocs) {
   const s = sessions.find(s => s.id === sessionId);
   if (s && s.has_documents !== hasDocs) {
@@ -3484,7 +3471,9 @@ const sessionModule = {
   closeArchive,
   setSessionHasDocs,
   getSortMode,
-  setSortMode
+  setSortMode,
+  getFolderSortMode,
+  setFolderSortMode
 };
 
 export { updateModelPicker };
