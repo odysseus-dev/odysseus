@@ -469,6 +469,8 @@ async def do_api_call(content: str) -> Dict:
     from src.integrations import execute_api_call, load_integrations
     try:
         args = json.loads(content)
+        if not isinstance(args, dict):
+            args = {}
     except json.JSONDecodeError:
         # Try line-based format: integration\nmethod path\nbody
         lines = content.strip().split("\n")
