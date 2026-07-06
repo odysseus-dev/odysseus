@@ -185,6 +185,37 @@ def validate_message(message: str) -> str:
     return message
 
 
+def validate_session_id(session: str) -> str:
+    """Validate and normalize a chat session id."""
+    if not isinstance(session, str):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "VALIDATION_ERROR",
+                "message": "Session ID must be a string"
+            }
+        )
+
+    session = session.strip()
+    if not session:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "VALIDATION_ERROR",
+                "message": "Session ID is required"
+            }
+        )
+    if len(session) > 200:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "VALIDATION_ERROR",
+                "message": "Session ID exceeds maximum length"
+            }
+        )
+    return session
+
+
 def validate_file_upload(file: UploadFile) -> UploadFile:
     """Validate uploaded file meets requirements."""
     if not file or not file.filename:
@@ -274,14 +305,7 @@ def coerce_message_and_session(req_json: dict | None, message: str | None,
         else:
             message = validate_message(message)
 
-        if not session:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "VALIDATION_ERROR",
-                    "message": "Session ID is required"
-                }
-            )
+        session = validate_session_id(session)
         try:
             session_manager.get_session(session)
         except KeyError:
