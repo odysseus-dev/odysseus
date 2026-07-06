@@ -25,6 +25,7 @@ import galleryModule from './js/gallery.js';
 import tasksModule from './js/tasks.js?v=20260630tasksactivity';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
+import fileBrowserModule from './js/fileBrowser.js';
 import adminModule from './js/admin.js';
 import settingsModule from './js/settings.js';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
@@ -982,6 +983,15 @@ function initializeEventListeners() {
       }
     });
   }
+  // File Browser tool button
+  const toolFileBrowserBtn = el('tool-filebrowser-btn');
+  if (toolFileBrowserBtn) {
+    toolFileBrowserBtn.addEventListener('click', () => {
+      if (fileBrowserModule) {
+        fileBrowserModule.togglePanel();
+      }
+    });
+  }
   // Refresh notes due-reminder badge on load and every 5 minutes
   if (notesModule && notesModule.refreshDueBadge) {
     notesModule.refreshDueBadge();
@@ -1111,6 +1121,11 @@ function initializeEventListeners() {
     '/gallery':  () => document.getElementById('tool-gallery-btn')?.click(),
     '/tasks':    () => document.getElementById('tool-tasks-btn')?.click(),
     '/library':  () => sessionModule && sessionModule.openLibrary && sessionModule.openLibrary(),
+    '/files':    () => {
+      if (!fileBrowserModule) return;
+      _collapseSidebarToRail();
+      fileBrowserModule.openPanel();
+    },
   };
   const _opener = _routeOpen[urlPath];
   // Defer the opener — at this point in init, the modules whose handlers
@@ -2507,6 +2522,7 @@ function initializeEventListeners() {
     'tool-library':        '#tool-library-btn',
     'tool-memory':         '#tool-memory-btn',
     'tool-notes':          '#tool-notes-btn',
+    'tool-filebrowser':    '#tool-filebrowser-btn',
     'tool-tasks':          '#tool-tasks-btn',
     'tool-theme':          '#tool-theme-btn',
     'user-bar':            '#user-bar-profile',
@@ -3546,6 +3562,7 @@ async function startOdysseusApp() {
     'rail-tasks':     'tool-tasks-btn',
     'rail-calendar':  'tool-calendar-btn',
     'rail-notes':     'tool-notes-btn',
+    'rail-filebrowser': 'tool-filebrowser-btn',
     'rail-memory':    'tool-memory-btn',
     'rail-theme':     'tool-theme-btn',
     'rail-email':     'email-section-title',

@@ -739,6 +739,10 @@ app.include_router(setup_cookbook_routes())
 from routes.workspace_routes import setup_workspace_routes
 app.include_router(setup_workspace_routes())
 
+# File Browser (browse, read, edit, upload, download server files)
+from routes.filebrowser_routes import setup_filebrowser_routes
+app.include_router(setup_filebrowser_routes())
+
 # Hardware model fitting (cookbook "What Fits?" tab)
 from routes.hwfit_routes import setup_hwfit_routes
 app.include_router(setup_hwfit_routes())

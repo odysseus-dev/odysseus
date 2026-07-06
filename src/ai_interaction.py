@@ -807,6 +807,11 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
             "llm": "cookbook",
             "serve": "cookbook",
             "serving": "cookbook",
+            "files": "files",
+            "file": "files",
+            "filebrowser": "files",
+            "browse": "files",
+            "explorer": "files",
         }
         target = _panel_aliases.get(panel)
         if not target:
