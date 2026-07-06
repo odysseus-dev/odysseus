@@ -1869,56 +1869,96 @@ async function loadBuiltinTools() {
     const tools = data.tools || [];
     if (!tools.length) { list.innerHTML = '<div class="admin-empty">No tools found</div>'; return; }
 
-    // Group by category
+    // Group by category and resolve context sizes
     const groups = {};
+    let totalDefaultTokens = 0;
+    
     for (const t of tools) {
       const meta = TOOL_META[t.id] || { name: t.id, desc: '', cat: 'Other', ctx: '?' };
       const cat = meta.cat;
       if (!groups[cat]) groups[cat] = [];
-      groups[cat].push({ ...t, ...meta });
+      
+      const finalCtx = (meta.ctx && meta.ctx !== '?') ? meta.ctx : (t.auto_ctx || '?');
+      const item = { ...meta, ...t, ctx: finalCtx };
+      groups[cat].push(item);
+      
+      if (item.is_default || ['manage_memory', 'ask_user', 'update_plan'].includes(item.id)) {
+        const v = parseInt(String(item.ctx).replace(/[^0-9]/g, ''), 10);
+        if (!isNaN(v)) totalDefaultTokens += v;
+      }
     }
 
     // Category order
     const catOrder = ['Code', 'Search', 'Documents', 'Media', 'Knowledge', 'Multi-Agent', 'Sessions', 'System', 'Other'];
-    let html = '';
+    let html = `<div style="font-size:12px;opacity:0.8;margin-bottom:12px;display:flex;align-items:center;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;opacity:0.6;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+      Total context footprint of default tools: <strong id="adm-total-default-tokens" style="margin-left:4px;">~${totalDefaultTokens} tok</strong>
+    </div>`;
     for (const cat of catOrder) {
       const items = groups[cat];
       if (!items) continue;
       const enabledCount = items.filter(i => i.enabled).length;
+      const defaultCount = items.filter(i => i.is_default).length;
       const totalCount = items.length;
       const catId = 'tool-cat-' + cat.replace(/[^a-zA-Z]/g, '');
-      const allEnabled = enabledCount === totalCount;
+      const allEnabled = enabledCount === totalCount && totalCount > 0;
+      const allDefault = defaultCount === totalCount && totalCount > 0;
+      let catTokens = 0;
+      for (const t of items) {
+        const v = parseInt(String(t.ctx).replace(/[^0-9]/g, ''), 10);
+        if (!isNaN(v)) catTokens += v;
+      }
+      const catTokensStr = catTokens > 0 ? `~${catTokens} tok` : '';
+
       html += `<div class="admin-tool-category">
         <div class="admin-tool-cat-header" data-tool-cat="${catId}" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
           <span>${esc(cat)}</span>
-          <span style="display:flex;align-items:center;gap:6px;" class="admin-tool-cat-right">
+          <span style="display:flex;align-items:center;gap:12px;" class="admin-tool-cat-right">
+            ${catTokensStr ? `<span class="admin-tool-ctx" style="margin-right:0;">${catTokensStr}</span>` : ''}
             <span class="admin-tool-cat-count" style="font-size:10px;opacity:0.5;">${enabledCount}/${totalCount}</span>
-            <label class="admin-switch" style="flex-shrink:0;">
-              <input type="checkbox" data-tool-cat-toggle="${catId}" ${allEnabled ? 'checked' : ''}>
-              <span class="admin-slider"></span>
-            </label>
-            <svg class="admin-tool-cat-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>
+            <div style="display:flex;align-items:center;gap:4px;" title="Toggle Default for all in category">
+              <span style="font-size:10px;opacity:0.7;">Default</span>
+              <label class="admin-switch" style="flex-shrink:0;margin:0;">
+                <input type="checkbox" data-tool-cat-default-toggle="${catId}" ${allDefault ? 'checked' : ''}>
+                <span class="admin-slider"></span>
+              </label>
+            </div>
+            <div style="display:flex;align-items:center;gap:4px;" title="Toggle Enabled for all in category">
+              <span style="font-size:10px;opacity:0.7;">Enabled</span>
+              <label class="admin-switch" style="flex-shrink:0;margin:0;">
+                <input type="checkbox" data-tool-cat-toggle="${catId}" ${allEnabled ? 'checked' : ''}>
+                <span class="admin-slider"></span>
+              </label>
+            </div>
+            <svg class="admin-tool-cat-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;margin-left:4px;"><polyline points="6 9 12 15 18 9"/></svg>
           </span>
         </div>
         <div class="admin-tool-cat-body hidden" id="${catId}">`;
       for (const t of items) {
+        const tokStr = t.ctx && t.ctx !== '?' ? `${t.ctx} tok` : t.ctx;
+        const isCoreDefault = ['manage_memory', 'ask_user', 'update_plan'].includes(t.id);
+        const defaultChecked = t.is_default || isCoreDefault;
         html += `
         <div class="admin-tool-row">
           <div class="admin-tool-info">
             <span class="admin-tool-name">${esc(t.name)}</span>
             <span class="admin-tool-desc">${esc(t.desc)}</span>
           </div>
-          <span class="admin-tool-ctx" title="Approximate context tokens used">${esc(t.ctx)}</span>
-          <label class="admin-switch" style="flex-shrink:0; margin-right:8px;" title="Active by default">
-            <span style="font-size:10px; margin-right: 4px;">Default</span>
-            <input type="checkbox" data-tool-default="${esc(t.id)}" ${t.is_default ? 'checked' : ''}>
-            <span class="admin-slider"></span>
-          </label>
-          <label class="admin-switch" style="flex-shrink:0;" title="Enable/Disable globally">
-            <span style="font-size:10px; margin-right: 4px;">Enabled</span>
-            <input type="checkbox" data-tool-id="${esc(t.id)}" ${t.enabled ? 'checked' : ''}>
-            <span class="admin-slider"></span>
-          </label>
+          <span class="admin-tool-ctx" title="Approximate context tokens used">${esc(tokStr)}</span>
+          <div style="display:flex;align-items:center;margin-right:12px;flex-shrink:0;" title="Active by default${isCoreDefault ? ' (required by system)' : ''}">
+            <span style="font-size:10px;margin-right:6px;opacity:0.7;">Default</span>
+            <label class="admin-switch" style="flex-shrink:0;margin:0;${isCoreDefault ? 'opacity:0.5;cursor:not-allowed;' : ''}">
+              <input type="checkbox" data-tool-default="${esc(t.id)}" ${defaultChecked ? 'checked' : ''} ${isCoreDefault ? 'disabled' : ''}>
+              <span class="admin-slider"></span>
+            </label>
+          </div>
+          <div style="display:flex;align-items:center;flex-shrink:0;" title="Enable/Disable globally">
+            <span style="font-size:10px;margin-right:6px;opacity:0.7;">Enabled</span>
+            <label class="admin-switch" style="flex-shrink:0;margin:0;">
+              <input type="checkbox" data-tool-id="${esc(t.id)}" ${t.enabled ? 'checked' : ''}>
+              <span class="admin-slider"></span>
+            </label>
+          </div>
         </div>`;
       }
       html += '</div></div>';
@@ -1963,6 +2003,23 @@ async function loadBuiltinTools() {
         credentials: 'same-origin',
       });
     }
+
+    function _updateTotalDefaultTokens() {
+      let sum = 0;
+      list.querySelectorAll('.admin-tool-row').forEach(row => {
+        const defaultChk = row.querySelector('input[data-tool-default]');
+        if (defaultChk && defaultChk.checked) {
+          const ctxSpan = row.querySelector('.admin-tool-ctx');
+          if (ctxSpan) {
+             const v = parseInt(ctxSpan.textContent.replace(/[^0-9]/g, ''), 10);
+             if (!isNaN(v)) sum += v;
+          }
+        }
+      });
+      const totalEl = document.getElementById('adm-total-default-tokens');
+      if (totalEl) totalEl.textContent = `~${sum} tok`;
+    }
+
     function _updateCatCounter(catEl) {
       if (!catEl) return;
       const catChecks = catEl.querySelectorAll('input[data-tool-id]');
@@ -1970,7 +2027,13 @@ async function loadBuiltinTools() {
       const counter = catEl.querySelector('.admin-tool-cat-count');
       if (counter) counter.textContent = catEnabled + '/' + catChecks.length;
       const catToggle = catEl.querySelector('input[data-tool-cat-toggle]');
-      if (catToggle) catToggle.checked = (catEnabled === catChecks.length);
+      if (catToggle) catToggle.checked = (catEnabled === catChecks.length && catChecks.length > 0);
+      
+      const defaultChecks = catEl.querySelectorAll('input[data-tool-default]');
+      const defaultEnabled = Array.from(defaultChecks).filter(c => c.checked).length;
+      const defaultToggle = catEl.querySelector('input[data-tool-cat-default-toggle]');
+      if (defaultToggle) defaultToggle.checked = (defaultEnabled === defaultChecks.length && defaultChecks.length > 0);
+      _updateTotalDefaultTokens();
     }
 
     // Wire individual tool toggles
@@ -1984,6 +2047,7 @@ async function loadBuiltinTools() {
     list.querySelectorAll('input[data-tool-default]').forEach(chk => {
       chk.addEventListener('change', async () => {
         await _saveToolState();
+        _updateCatCounter(chk.closest('.admin-tool-category'));
       });
     });
 
@@ -1994,6 +2058,18 @@ async function loadBuiltinTools() {
         if (!catEl) return;
         const checked = chk.checked;
         catEl.querySelectorAll('input[data-tool-id]').forEach(c => { c.checked = checked; });
+        await _saveToolState();
+        _updateCatCounter(catEl);
+      });
+    });
+    
+    // Wire category-level default toggle (default/undefault all in category)
+    list.querySelectorAll('input[data-tool-cat-default-toggle]').forEach(chk => {
+      chk.addEventListener('change', async () => {
+        const catEl = chk.closest('.admin-tool-category');
+        if (!catEl) return;
+        const checked = chk.checked;
+        catEl.querySelectorAll('input[data-tool-default]:not([disabled])').forEach(c => { c.checked = checked; });
         await _saveToolState();
         _updateCatCounter(catEl);
       });

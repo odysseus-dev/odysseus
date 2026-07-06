@@ -2486,6 +2486,15 @@ def setup_model_routes(model_discovery):
         """List all available tools with their enabled/disabled status and whether they are active by default."""
         from src.agent_tools import TOOL_TAGS
         from src.settings import DEFAULT_SETTINGS
+        from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
+        import json
+        
+        schema_tokens = {}
+        for s in FUNCTION_TOOL_SCHEMAS:
+            if "function" in s:
+                # ~0.3 is the token estimation heuristic used in model_context.py
+                schema_tokens[s["function"]["name"]] = int(len(json.dumps(s)) * 0.3)
+                
         settings = _load_settings()
         disabled = set(settings.get("disabled_tools", []))
         enabled_tools = set(settings.get("enabled_tools", DEFAULT_SETTINGS["enabled_tools"]))
@@ -2494,7 +2503,8 @@ def setup_model_routes(model_discovery):
             tools.append({
                 "id": tag,
                 "enabled": tag not in disabled,
-                "is_default": tag in enabled_tools
+                "is_default": tag in enabled_tools,
+                "auto_ctx": f"~{schema_tokens.get(tag, 100)}"
             })
         return {"tools": tools}
 
