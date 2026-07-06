@@ -483,6 +483,14 @@ async def do_api_call(content: str) -> Dict:
             except json.JSONDecodeError:
                 pass
 
+    # json.loads can succeed with a non-dict when the LLM emits a bare array
+    # or scalar like `[...]` or `5`. Every access below is args.get(...), which
+    # raises AttributeError on a list/int/str, so coerce to an empty dict and
+    # let the "no integration matching ''" path report it cleanly. Mirrors the
+    # guard in src.tool_utils._parse_tool_args.
+    if not isinstance(args, dict):
+        args = {}
+
     integration_name = args.get("integration", "")
     integrations = load_integrations()
     intg = next((i for i in integrations if i["id"] == integration_name
