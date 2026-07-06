@@ -6,21 +6,43 @@ from datetime import datetime
 # Request Models
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=50000, description="Chat message")
-    session: str = Field(..., description="Session ID")
-    attachments: Optional[List[str]] = Field(default=[], description="Attachment IDs")
+    session: str = Field(..., min_length=1, max_length=200, description="Session ID")
+    attachments: List[str] = Field(default_factory=list, description="Attachment IDs")
     use_web: Optional[bool] = Field(default=False, description="Enable web search")
     use_research: Optional[bool] = Field(default=False, description="Enable deep research")
     time_filter: Optional[str] = Field(default=None, description="Time filter for search")
     preset_id: Optional[str] = Field(default=None, description="Preset identifier")
     
-    @field_validator('message')
+    @field_validator('message', mode='before')
     @classmethod
     def clean_message(cls, v):
-        return v.strip()
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
+    @field_validator('session', mode='before')
+    @classmethod
+    def clean_session(cls, v):
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
+    @field_validator('attachments', mode='before')
+    @classmethod
+    def clean_attachments(cls, v):
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return [item.strip() if isinstance(item, str) else item for item in v]
+        return v
     
-    @field_validator('time_filter')
+    @field_validator('time_filter', mode='before')
     @classmethod
     def validate_time_filter(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+        if not v:
+            return None
         if v is not None and v not in ['day', 'week', 'month', 'year']:
             return None  # Just set to None if invalid rather than raising error
         return v
