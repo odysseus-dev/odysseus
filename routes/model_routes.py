@@ -134,6 +134,12 @@ def _active_cookbook_endpoint_ids() -> set[str]:
         state = json.loads(raw)
     except Exception:
         return set()
+    # The state file is managed lifecycle JSON written by several places and is
+    # externally editable; json.loads can return a list or scalar top level.
+    # state.get(...) below would then raise AttributeError, so bail on any
+    # non-dict shape the same way a parse error does.
+    if not isinstance(state, dict):
+        return set()
     out: set[str] = set()
     for task in state.get("tasks") or []:
         if not isinstance(task, dict) or task.get("type") != "serve":
