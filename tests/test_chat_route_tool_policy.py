@@ -94,6 +94,12 @@ def test_disabled_tools_respects_missing_vs_explicit_toggles():
     assert "and not _explicit_web_intent" not in source, (
         "explicit allow_web_search=false must not be overridden by prompt web intent"
     )
+    # Regression: commit 264da65 deleted the assignment but kept 3 usages,
+    # causing NameError at runtime in chat_stream. The variable MUST be
+    # assigned before any use.
+    assert "_explicit_web_intent = bool(_tool_intent" in source, (
+        "_explicit_web_intent must be assigned before use (regression: NameError)"
+    )
 
 
 # ── Functional tests of the disabled-tools logic ───────────────
@@ -234,6 +240,25 @@ def test_explicit_false_disables_even_for_admin():
         allow_bash="false", can_use_bash=True,
     )
     assert "bash" in disabled
+
+
+def test_explicit_web_intent_is_defined_when_tool_intent_is_web():
+    """Regression for NameError in chat_stream: _explicit_web_intent must be
+    derivable from _tool_intent. When the prompt is a web intent and the
+    explicit toggle is off, web tools stay enabled (the user's words win)."""
+    intent = classify_tool_intent("search the web for current CVEs")
+    assert intent is not None and intent.category == "web"
+    _explicit_web_intent = bool(intent and intent.category == "web")
+    assert _explicit_web_intent is True
+
+
+def test_explicit_web_intent_is_false_when_tool_intent_is_not_web():
+    """Regression for NameError in chat_stream: _explicit_web_intent must
+    evaluate to False for non-web intents so the disabled_tools branch
+    is skipped cleanly."""
+    intent = classify_tool_intent("add a reminder to call mom tomorrow")
+    _explicit_web_intent = bool(intent and intent.category == "web")
+    assert _explicit_web_intent is False
 
 
 # ── Frontend source-level guards ──────────────────────────────
