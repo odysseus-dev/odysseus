@@ -54,6 +54,18 @@ def _library_language_for_document(doc: Document) -> str:
     return doc.language or "text"
 
 
+def _email_source_key(content: str) -> tuple[str, str]:
+    """Return the source email identity embedded in an email draft document."""
+    import re
+
+    text = content or ""
+    uid_m = re.search(r"(?im)^X-Source-UID:\s*(.+?)\s*$", text)
+    folder_m = re.search(r"(?im)^X-Source-Folder:\s*(.+?)\s*$", text)
+    uid = (uid_m.group(1).strip() if uid_m else "")
+    folder = (folder_m.group(1).strip() if folder_m else "INBOX")
+    return uid, folder
+
+
 from routes.document_helpers import (
     DocumentCreate, DocumentUpdate, DocumentPatch,
     _doc_to_dict, _version_to_dict,
@@ -99,23 +111,61 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 # the existing lenient path.
                 session = _get_session_or_404(db, req.session_id, user)
 
-            doc_id = str(uuid.uuid4())
-            ver_id = str(uuid.uuid4())
-
             # If no language was supplied (e.g. cloning a doc whose language
             # was never set), detect it from the content rather than storing
             # NULL — which made the editor fall back to plain text. Defaults
             # to markdown for prose.
             language = req.language
             if not language:
-                from src.agent_tools.document_tools import _looks_like_email_document, _sniff_doc_language
+                from src.agent_tools.document_tools import _looks_like_email_document, _sniff_doc_language, _coerce_email_document_content
                 language = _sniff_doc_language(req.content)
             else:
-                from src.agent_tools.document_tools import _looks_like_email_document
+                from src.agent_tools.document_tools import _looks_like_email_document, _coerce_email_document_content
             if _looks_like_email_document(req.content, req.title):
                 language = "email"
 
             _assert_pdf_marker_upload_owned(request, req.content, user, upload_handler)
+
+            # Reply drafts are keyed to the source email. If a UI/tool path tries
+            # to create a second draft for the same email in the same chat,
+            # update the existing draft instead so quoted thread history stays
+            # attached to the visible document.
+            if language == "email" and req.session_id:
+                source_uid, source_folder = _email_source_key(req.content)
+                if source_uid:
+                    candidates = (
+                        db.query(Document)
+                        .filter(Document.session_id == req.session_id)
+                        .filter(Document.is_active == True)
+                        .filter(Document.language == "email")
+                        .order_by(Document.updated_at.desc())
+                        .limit(25)
+                        .all()
+                    )
+                    for existing in candidates:
+                        old_uid, old_folder = _email_source_key(existing.current_content or "")
+                        if old_uid != source_uid or old_folder != source_folder:
+                            continue
+                        merged = _coerce_email_document_content(existing.current_content or "", req.content)
+                        if existing.current_content != merged:
+                            new_ver = (existing.version_count or 1) + 1
+                            existing.current_content = merged
+                            existing.title = req.title or existing.title
+                            existing.version_count = new_ver
+                            db.add(DocumentVersion(
+                                id=str(uuid.uuid4()),
+                                document_id=existing.id,
+                                version_number=new_ver,
+                                content=merged,
+                                summary="Updated existing email draft",
+                                source="user",
+                            ))
+                            db.commit()
+                            db.refresh(existing)
+                        return _doc_to_dict(existing)
+
+            doc_id = str(uuid.uuid4())
+            ver_id = str(uuid.uuid4())
 
             doc = Document(
                 id=doc_id,
@@ -570,12 +620,23 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 raise HTTPException(404, "Document not found")
             _verify_doc_owner(db, doc, user)
 
+            incoming_content = req.content
+            from src.agent_tools.document_tools import _coerce_email_document_content, _looks_like_email_document
+            is_email_doc = (
+                (doc.language or "").lower() == "email"
+                or _looks_like_email_document(doc.current_content or "", doc.title or "")
+                or _looks_like_email_document(req.content or "", doc.title or "")
+            )
+            if is_email_doc:
+                incoming_content = _coerce_email_document_content(doc.current_content or "", req.content)
+                doc.language = "email"
+
             # Skip if content is identical unless the caller explicitly wants
             # a checkpoint version from the current editor state.
-            if doc.current_content == req.content and not req.force_version:
+            if doc.current_content == incoming_content and not req.force_version:
                 return _doc_to_dict(doc)
 
-            _assert_pdf_marker_upload_owned(request, req.content, user, upload_handler)
+            _assert_pdf_marker_upload_owned(request, incoming_content, user, upload_handler)
 
             # Check if we can coalesce with the latest version
             latest_ver = db.query(DocumentVersion).filter(
@@ -591,7 +652,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 age = (now - ver_time).total_seconds()
                 if age < VERSION_COALESCE_SECONDS:
                     # Update the existing version in-place
-                    latest_ver.content = req.content
+                    latest_ver.content = incoming_content
                     latest_ver.created_at = now
                     if req.summary:
                         latest_ver.summary = req.summary
@@ -603,14 +664,14 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     id=str(uuid.uuid4()),
                     document_id=doc_id,
                     version_number=new_ver,
-                    content=req.content,
+                    content=incoming_content,
                     summary=req.summary or "Manual edit",
                     source="user",
                 )
                 doc.version_count = new_ver
                 db.add(ver)
 
-            doc.current_content = req.content
+            doc.current_content = incoming_content
             db.commit()
             db.refresh(doc)
             return _doc_to_dict(doc)

@@ -17,6 +17,6 @@ def test_sglang_native_dependency_diagnosis_is_exposed_to_browser():
 
     assert r"Python\.h" in source
     assert r"libnuma\.so\.1" in source
-    assert "SGLang native dependencies" in source
+    assert "SGLang native kernel/runtime" in source
     assert "libnuma-dev python3.12-dev build-essential" in source
     assert "sglang-kernel" in source

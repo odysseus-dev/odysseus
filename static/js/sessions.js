@@ -3,7 +3,6 @@
 
 import Storage from './storage.js';
 import uiModule, { autoResize, styledPrompt } from './ui.js';
-import markdownModule from './markdown.js';
 import chatRenderer from './chatRenderer.js';
 import { providerLogo } from './providers.js';
 import { initModelPicker, updateModelPicker } from './modelPicker.js';
@@ -110,6 +109,29 @@ function _historyUrl(id, { limit = null, offset = null } = {}) {
   return url.toString();
 }
 
+function _addHistoryMessageWithFullRenderer(role, content, modelName, meta) {
+  const box = document.getElementById('chat-history');
+  if (!box) return [];
+  const marker = document.createComment('history-message');
+  box.appendChild(marker);
+  let rendered = null;
+  try {
+    rendered = chatRenderer.addMessage(role, content, modelName, meta);
+  } catch (e) {
+    marker.remove();
+    throw e;
+  }
+  const nodes = [];
+  let node = marker.nextSibling;
+  while (node) {
+    const next = node.nextSibling;
+    nodes.push(node);
+    node = next;
+  }
+  marker.remove();
+  return nodes.length ? nodes : (rendered ? [rendered] : []);
+}
+
 function _renderHistoryMessage(msg, modelName) {
   const meta = msg.metadata ? { ...msg.metadata, _fromHistory: true } : null;
   let displayContent;
@@ -137,54 +159,7 @@ function _renderHistoryMessage(msg, modelName) {
       displayContent = `[Doc edit: ${docEditMatch[1]}] ${docEditMatch[3]}`;
     }
   }
-  const box = document.getElementById('chat-history');
-  if (!box) return null;
-  if (chatRenderer.hideWelcomeScreen) chatRenderer.hideWelcomeScreen();
-
-  const wrap = document.createElement('div');
-  wrap.className = 'msg ' + (msg.role === 'user' ? 'msg-user' : 'msg-ai');
-  wrap.dataset.raw = displayContent;
-  if (meta?._db_id) wrap.dataset.dbId = meta._db_id;
-
-  const roleEl = document.createElement('div');
-  roleEl.className = 'role';
-  if (msg.role === 'user') {
-    roleEl.textContent = 'You';
-  } else {
-    const pair = chatRenderer.replyModelPair ? chatRenderer.replyModelPair(modelName, meta) : {};
-    const resolved = pair.actualModel || pair.requestedModel || modelName;
-    roleEl.textContent = chatRenderer.modelRouteLabel
-      ? chatRenderer.modelRouteLabel(pair.requestedModel, resolved)
-      : (resolved || 'Odysseus');
-    if (chatRenderer.applyModelColor) chatRenderer.applyModelColor(roleEl, resolved);
-  }
-  const timestamp = meta?.timestamp;
-  if (timestamp) {
-    const ts = document.createElement('span');
-    ts.className = 'msg-time';
-    try {
-      ts.textContent = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } catch {
-      ts.textContent = '';
-    }
-    roleEl.appendChild(ts);
-  }
-
-  const body = document.createElement('div');
-  body.className = 'body';
-  body.innerHTML = markdownModule.processWithThinking(
-    markdownModule.squashOutsideCode(markdownModule.renderContent(displayContent || ''))
-  );
-  if (msg.role === 'user' && Array.isArray(meta?.attachments) && meta.attachments.length) {
-    if (chatRenderer.buildAttachCards) {
-      body.appendChild(chatRenderer.buildAttachCards(meta.attachments));
-    }
-  }
-
-  wrap.appendChild(roleEl);
-  wrap.appendChild(body);
-  box.appendChild(wrap);
-  return wrap;
+  return _addHistoryMessageWithFullRenderer(msg.role, displayContent, modelName, meta);
 }
 
 function _clearHistoryPager() {
@@ -232,8 +207,8 @@ function _installHistoryPager(id, pageInfo, modelName) {
       const newEls = [];
       for (const msg of data.history || []) {
         if (msg.role !== 'user' && msg.role !== 'assistant') continue;
-        const el = _renderHistoryMessage(msg, _historyPager.modelName);
-        if (el) newEls.push(el);
+        const els = _renderHistoryMessage(msg, _historyPager.modelName);
+        if (Array.isArray(els)) newEls.push(...els);
       }
       for (const el of newEls) {
         box.insertBefore(el, anchor || box.firstChild);
@@ -1661,7 +1636,10 @@ export async function loadSessions() {
     // most recently appended a message.
     const _isTransient = (s) => !!s && (s.folder === 'Assistant' || s.folder === 'Tasks');
     const _realSessions = activeSessions.filter(s => !_isTransient(s));
-    const hashId = window.location.hash.replace('#', '');
+    let hashId = window.location.hash.replace('#', '');
+    if (/^(document|note|image|email|event|task|skill|research)-/.test(hashId) || /^open=notes&note=/.test(hashId)) {
+      hashId = '';
+    }
     let savedId = Storage.get('lastSessionId');
     // If the persisted lastSessionId points to a transient session (legacy
     // state from before the persistence-guard was added), drop it.
@@ -1780,7 +1758,7 @@ export async function loadSessions() {
   }
 }
 
-export async function selectSession(id, { keepSidebar = false, showLoading = true } = {}) {
+export async function selectSession(id, { keepSidebar = false, showLoading = true, immediateLoading = false } = {}) {
   // Exit compare mode cleanly if active
   if (window.compareModule && window.compareModule.isActive()) {
     window.compareModule.deactivate(true);
@@ -1898,7 +1876,7 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
     let loadingPaintReady = Promise.resolve();
     if (!isOC) {
       if (showLoading && chatHistory && prevSessionId !== id) {
-        const loadingDelayMs = window.innerWidth <= 768 ? 900 : 500;
+        const loadingDelayMs = immediateLoading ? 0 : (window.innerWidth <= 768 ? 900 : 500);
         loadingTimer = setTimeout(() => {
           if (navToken !== _sessionNavToken || currentSessionId !== id) return;
           _paintSessionLoading(chatHistory, 'Loading chat');
@@ -1990,8 +1968,13 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
       }
     } else {
       if (window.chatModule && window.chatModule.showWelcomeScreen) window.chatModule.showWelcomeScreen();
-      // Don't highlight empty sessions — feels like nothing is selected
-      document.querySelectorAll('.list-item.active-session').forEach(el => el.classList.remove('active-session'));
+      // Don't highlight ordinary empty sessions — feels like nothing is
+      // selected. Keep document/email-scoped sessions highlighted though: a
+      // new email/reply chat starts empty but immediately owns an email doc.
+      const isDocScopedEmptySession = !!(meta && (meta.has_documents || /^Email:|^New Email$/i.test(meta.name || '')));
+      if (!isDocScopedEmptySession) {
+        document.querySelectorAll('.list-item.active-session').forEach(el => el.classList.remove('active-session'));
+      }
     }
     uiModule.scrollHistoryInstant();
     if (!isOC && msgHistory.length) {
@@ -2078,9 +2061,16 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
     }
     uiModule.showError('Failed to load session: ' + error.message);
   } finally {
-    // Ensure memories are loaded after session selection
+    // Memory warmup must not block chat switching. The memories panel can load
+    // on demand; this is only a delayed cache refresh when the foreground chat
+    // is idle.
     if (window.memoryModule && window.memoryModule.loadMemories) {
-      await window.memoryModule.loadMemories();
+      setTimeout(() => {
+        const busy = !!window.__odysseusChatBusy
+          || Date.now() < (window.__odysseusChatBusyUntil || 0)
+          || !!document.querySelector('.send-btn[data-mode="streaming"], .send-btn.send-pending');
+        if (!busy) window.memoryModule.loadMemories().catch(() => {});
+      }, 2500);
     }
     // Auto-focus message input (unless session list has keyboard focus).
     // Skip on mobile — focusing the textarea pops up the on-screen keyboard,
@@ -2208,10 +2198,11 @@ export async function materializePendingSession() {
   Storage.set('lastSessionId', payload.id);
   history.replaceState(null, '', '#' + payload.id);
 
-  // Reload sidebar to show the new session — await it so the session
-  // is fully registered before the caller proceeds (prevents race conditions)
+  // Reload the sidebar in the background. Awaiting this used to block the first
+  // prompt in a new/pending chat behind startup fetches and slow /api/sessions
+  // calls, so the user's message could sit for 20s+ before streaming began.
   _suppressNextSessionLoading = true;
-  await loadSessions().catch(() => {});
+  loadSessions().catch(() => {});
   return true;
 }
 
@@ -2345,7 +2336,7 @@ export function initDragSort() {
 // session navigation (which would reset the active chat).
 window.addEventListener('hashchange', () => {
   const hashId = window.location.hash.replace('#', '');
-  if (/^(document|note|image|email|event|task|skill|research)-/.test(hashId)) return;
+  if (/^(document|note|image|email|event|task|skill|research)-/.test(hashId) || /^open=notes&note=/.test(hashId)) return;
   if (hashId && hashId !== currentSessionId) {
     const target = sessions.find(s => s.id === hashId && !s.archived);
     if (target) selectSession(hashId);

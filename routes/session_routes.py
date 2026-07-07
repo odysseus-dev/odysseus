@@ -207,6 +207,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     """Setup session routes with the provided manager and config"""
 
     REQUEST_TIMEOUT = config.get("REQUEST_TIMEOUT", 20)
+    SESSION_MODEL_VALIDATION_TIMEOUT = min(float(REQUEST_TIMEOUT or 20), 3.0)
     OPENAI_API_KEY = config.get("OPENAI_API_KEY")
     SESSIONS_FILE = config.get("SESSIONS_FILE")
     
@@ -374,7 +375,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             from src.llm_core import list_model_ids
             ids = list_model_ids(
                 endpoint_url,
-                timeout=REQUEST_TIMEOUT,
+                timeout=SESSION_MODEL_VALIDATION_TIMEOUT,
                 headers=validation_headers,
                 owner=user,
                 endpoint_id=endpoint_id.strip() if endpoint_id else None,
@@ -394,7 +395,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             req_base = _os.path.basename(model_to_use.rstrip("/"))
             avail = list_model_ids(
                 endpoint_url,
-                timeout=REQUEST_TIMEOUT,
+                timeout=SESSION_MODEL_VALIDATION_TIMEOUT,
                 headers=validation_headers,
                 owner=user,
                 endpoint_id=endpoint_id.strip() if endpoint_id else None,

@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 from typing import Dict, Any
 
@@ -109,8 +110,20 @@ class WebFetchTool:
             url = "https://" + url
         loop = asyncio.get_running_loop()
         try:
+            def _fetch():
+                kwargs = {"timeout": 10}
+                try:
+                    sig = inspect.signature(fetch_webpage_content)
+                    if "max_bytes" in sig.parameters:
+                        kwargs["max_bytes"] = max_bytes
+                except (TypeError, ValueError):
+                    # Some deployed/test shims may not expose a signature.
+                    # Prefer compatibility over failing the whole fetch.
+                    pass
+                return fetch_webpage_content(url, **kwargs)
+
             result = await asyncio.wait_for(
-                loop.run_in_executor(None, lambda: fetch_webpage_content(url, timeout=10, max_bytes=max_bytes)),
+                loop.run_in_executor(None, _fetch),
                 timeout=30,
             )
         except asyncio.TimeoutError:
