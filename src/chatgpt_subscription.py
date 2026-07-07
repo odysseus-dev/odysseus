@@ -101,7 +101,12 @@ def fetch_available_models(access_token: str, timeout: float = 10.0) -> list[str
         data = response.json()
     except Exception:
         return []
-    entries = data.get("models", []) if isinstance(data, dict) else []
+    # `.get("models", [])` only returns the default when the key is ABSENT; a
+    # present `"models": null` (or a scalar) yields a non-iterable that the loop
+    # below would choke on. `or []` collapses those to an empty list.
+    entries = (data.get("models") or []) if isinstance(data, dict) else []
+    if not isinstance(entries, list):
+        entries = []
     sortable: list[tuple[int, str]] = []
     for item in entries:
         if not isinstance(item, dict):
@@ -302,6 +307,11 @@ def to_http_exception(exc: Exception) -> HTTPException:
 def build_responses_input(messages: list[dict]) -> list[dict]:
     input_items: list[dict] = []
     for msg in messages or []:
+        # A message element can be a non-dict (a bare string in the list); the
+        # part loop below already guards with isinstance, so skip non-dict
+        # messages here rather than crash on msg.get("role").
+        if not isinstance(msg, dict):
+            continue
         role = msg.get("role") or "user"
         if role == "tool":
             role = "user"
