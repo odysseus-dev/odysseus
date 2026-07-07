@@ -154,7 +154,7 @@ services:
       - ${APP_DATA_DIR:-./data}:/home/coder/project:z
     environment:
       - DEFAULT_WORKSPACE=/home/coder/project
-    command: --auth none --bind-addr 0.0.0.0:8443 --trusted-origins http://localhost:7000 /home/coder/project
+    command: ["--auth", "none", "--bind-addr", "0.0.0.0:8443", "--trusted-origins", "http://localhost:7000", "/home/coder/project"]
     restart: unless-stopped
 
 volumes:
