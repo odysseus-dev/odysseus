@@ -208,8 +208,18 @@ docker compose exec odysseus sh -lc 'test -e /dev/kfd && test -d /dev/dri && ls 
 > the CUDA Toolkit at runtime. If Cookbook logs show `Unable to find cudart
 > library`, `Could NOT find CUDAToolkit`, `CUDA Toolkit not found`, or
 > tensors/layers assigned to CPU, that is a Cookbook/llama.cpp build issue —
-> not a Docker passthrough failure. Reinstall the serve engine via
-> **Cookbook → Dependencies** to get a CUDA-enabled build.
+> not a Docker passthrough failure. The default image doesn't include the
+> CUDA Toolkit at all (it's several GB and NVIDIA-only), so Cookbook's
+> from-source llama.cpp build silently falls back to CPU — reinstalling via
+> **Cookbook → Dependencies** alone won't fix this, since there's still no
+> `nvcc`/`libcudart` for it to build against. Rebuild the image with the
+> toolkit included instead:
+> ```bash
+> docker compose build --build-arg INSTALL_CUDA_TOOLKIT=true
+> docker compose up -d
+> ```
+> Then trigger a rebuild of the serve engine (Cookbook → Dependencies, or
+> Stop/Run the model again) so it picks up `nvcc` and links CUDA.
 >
 > The same split applies to AMD/ROCm: seeing `/dev/kfd` and `/dev/dri` inside
 > the container confirms device passthrough, not ROCm userspace or a

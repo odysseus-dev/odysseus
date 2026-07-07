@@ -35,6 +35,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
+# CUDA Toolkit (opt-in, off by default — several GB, NVIDIA/x86_64 only).
+# Cookbook's llama.cpp bootstrap already builds with -DGGML_CUDA=ON whenever
+# it finds `nvcc` + `libcudart` on the system (see _append_llama_cpp_linux_accel_build_lines
+# in routes/cookbook_helpers.py) — it just has nothing to find in the default
+# slim image, since GPU passthrough (nvidia-smi working in the container)
+# only proves the driver is visible, not that the CUDA compiler/runtime is
+# installed. Without this, llama.cpp silently falls back to a CPU-only build
+# (no hard error) whenever the upstream prebuilt-binary release doesn't ship
+# a matching Ubuntu+CUDA asset. Build with:
+#   docker compose build --build-arg INSTALL_CUDA_TOOLKIT=true
+ARG INSTALL_CUDA_TOOLKIT=false
+RUN if [ "$INSTALL_CUDA_TOOLKIT" = "true" ]; then \
+      curl -fsSL -o /tmp/cuda-keyring.deb \
+        https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/cuda-keyring_1.1-1_all.deb \
+      && dpkg -i /tmp/cuda-keyring.deb \
+      && rm -f /tmp/cuda-keyring.deb \
+      && apt-get update \
+      && apt-get install -y --no-install-recommends cuda-toolkit-13-1 \
+      && rm -rf /var/lib/apt/lists/* \
+      && ln -sfn /usr/local/cuda-13.1 /usr/local/cuda \
+      && echo "/usr/local/cuda-13.1/lib64" > /etc/ld.so.conf.d/cuda-13-1.conf \
+      && ldconfig ; \
+    fi
+# Harmless no-ops when INSTALL_CUDA_TOOLKIT=false — the dynamic linker and
+# shell just skip a PATH/LD_LIBRARY_PATH entry that doesn't exist.
+ENV CUDA_HOME=/usr/local/cuda-13.1 \
+    PATH="/usr/local/cuda-13.1/bin:${PATH}" \
+    LD_LIBRARY_PATH="/usr/local/cuda-13.1/lib64:${LD_LIBRARY_PATH}"
+
 # libgl1/libglib2.0-0t64/libxcb1 are runtime shared libs (libGL.so.1,
 # libglib-2.0/libgthread, libxcb.so.1) that opencv-python (cv2) loads. The
 # slim base omits them, so the Cookbook "install realesrgan" path imports cv2
