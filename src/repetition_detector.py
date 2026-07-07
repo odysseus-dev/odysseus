@@ -100,13 +100,11 @@ class RepetitionCollapseDetector:
         # window — avoids false-positives on structured text like numbered
         # lists where a common word ("Item", "Step") recurs structurally.
         for n in range(2, MAX_REPEAT_PHRASE_WORDS + 1):
-            if len(tokens) < n + PHRASE_REPEAT_THRESHOLD:
+            if len(tokens) < n + PHRASE_REPEAT_THRESHOLD - 1:
                 continue
             phrases: Counter[str] = Counter()
             for i in range(len(tokens) - n + 1):
                 phrase = " ".join(tokens[i:i + n])
-                if len(phrase) > MAX_REPEAT_TOKEN_LEN * n:
-                    continue
                 phrases[phrase] += 1
             for phrase, count in phrases.most_common(3):
                 if count >= PHRASE_REPEAT_THRESHOLD:
