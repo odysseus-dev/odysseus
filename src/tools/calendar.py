@@ -208,11 +208,20 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
         elif action == "list_events":
             try:
                 start_raw = _first_nonempty_arg(
-                    "start", "start_date", "range_start", "from", "dtstart", "since"
+                    "start", "start_time", "start_date", "range_start", "from", "dtstart", "since"
                 )
                 end_raw = _first_nonempty_arg(
-                    "end", "end_date", "range_end", "to", "dtend", "until"
+                    "end", "end_time", "end_date", "range_end", "to", "dtend", "until"
                 )
+                query_raw = args.get("query") or args.get("date_range") or args.get("range")
+                if query_raw and (not start_raw or not end_raw):
+                    return {
+                        "error": (
+                            "list_events needs explicit start/end ISO datetimes; "
+                            f"resolve the requested range ({query_raw!r}) and call manage_calendar again."
+                        ),
+                        "exit_code": 1,
+                    }
                 if start_raw:
                     start_dt = _parse_dt(start_raw)
                 else:

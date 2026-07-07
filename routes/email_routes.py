@@ -23,6 +23,8 @@ import smtplib
 import json
 import re
 import html
+import io
+import zipfile
 from html.parser import HTMLParser as _HTMLParser
 import logging
 import uuid
@@ -33,7 +35,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 from fastapi import APIRouter, Query, UploadFile, File, BackgroundTasks, HTTPException, Depends, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from src.constants import DATA_DIR
 
 from src.llm_core import llm_call_async
@@ -63,6 +65,14 @@ logger = logging.getLogger(__name__)
 
 ODYSSEUS_MAIL_ORIGIN = "odysseus-ui"
 EMAIL_READ_ATTACHMENT_VERSION = 2
+
+
+def _safe_attachment_zip_name(name: str, fallback: str) -> str:
+    """Return a zip entry filename without path traversal or empty names."""
+    base = Path(str(name or "")).name.strip() or fallback
+    base = re.sub(r"[\x00-\x1f\x7f]+", "_", base)
+    base = base.replace("/", "_").replace("\\", "_").strip(". ") or fallback
+    return base[:180] or fallback
 
 
 def _coerce_port(value, default):
@@ -484,23 +494,37 @@ def _email_index_rows(owner: str, account_id: str | None, folder: str, uids: lis
     return out
 
 
-def _email_index_search(owner: str, account_id: str | None, folder: str, query: str, limit: int) -> tuple[list[dict], int, str | None]:
+def _email_index_search(owner: str, account_id: str | None, folder: str, query: str, limit: int, global_search: bool = True) -> tuple[list[dict], int, str | None]:
     q = (query or "").strip()
     if not q:
         return [], 0, None
     limit = max(1, min(int(limit or 50), 200))
     account_key = _account_cache_key(account_id, owner)
-    like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
     folder_clause = ""
     params: list = [owner or "", account_key]
     # Searching from INBOX should feel global for Gmail-style accounts,
     # because users expect archived/labelled mail to show up too. The
     # local index only contains folders that have been warmed/listed, so
     # this remains a best-effort fast path; IMAP is still the fallback.
-    if (folder or "").upper() != "INBOX":
+    if not global_search or (folder or "").upper() != "INBOX":
         folder_clause = "AND folder=?"
         params.append(folder)
-    params.extend([like, like, like, like, like])
+    terms = _email_search_terms(q)
+    if not terms:
+        return [], 0, None
+    term_clause = " AND ".join([
+        """(
+                    subject LIKE ? ESCAPE '\\' OR
+                    from_name LIKE ? ESCAPE '\\' OR
+                    from_address LIKE ? ESCAPE '\\' OR
+                    to_text LIKE ? ESCAPE '\\' OR
+                    cc_text LIKE ? ESCAPE '\\'
+                  )"""
+        for _ in terms
+    ])
+    for term in terms:
+        like = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        params.extend([like, like, like, like, like])
     try:
         conn = _sql3.connect(SCHEDULED_DB)
         try:
@@ -509,13 +533,7 @@ def _email_index_search(owner: str, account_id: str | None, folder: str, query: 
                 SELECT COUNT(*), MAX(updated_at)
                 FROM email_message_index
                 WHERE owner=? AND account_key=? {folder_clause}
-                  AND (
-                    subject LIKE ? ESCAPE '\\' OR
-                    from_name LIKE ? ESCAPE '\\' OR
-                    from_address LIKE ? ESCAPE '\\' OR
-                    to_text LIKE ? ESCAPE '\\' OR
-                    cc_text LIKE ? ESCAPE '\\'
-                  )
+                  AND {term_clause}
                 """,
                 params,
             ).fetchone()
@@ -529,13 +547,7 @@ def _email_index_search(owner: str, account_id: str | None, folder: str, query: 
                        folder
                 FROM email_message_index
                 WHERE owner=? AND account_key=? {folder_clause}
-                  AND (
-                    subject LIKE ? ESCAPE '\\' OR
-                    from_name LIKE ? ESCAPE '\\' OR
-                    from_address LIKE ? ESCAPE '\\' OR
-                    to_text LIKE ? ESCAPE '\\' OR
-                    cc_text LIKE ? ESCAPE '\\'
-                  )
+                  AND {term_clause}
                 ORDER BY date_epoch DESC
                 LIMIT ?
                 """,
@@ -571,6 +583,64 @@ def _email_index_search(owner: str, account_id: str | None, folder: str, query: 
             "folder": row_folder or folder,
         })
     return emails, total, (total_row or [None, None])[1]
+
+
+def _email_search_terms(query: str) -> list[str]:
+    q = (query or "").strip()
+    if not q:
+        return []
+    # Preserve quoted phrases, then split the rest. This makes:
+    #   honda insurance -> honda AND insurance
+    #   "Yoko Honda" insurance -> "Yoko Honda" AND insurance
+    # The cap avoids creating huge IMAP expressions from pasted paragraphs.
+    parts = []
+    consumed = []
+    for m in re.finditer(r'"([^"]{1,120})"', q):
+        phrase = m.group(1).strip()
+        if phrase:
+            parts.append(phrase)
+        consumed.append((m.start(), m.end()))
+    remainder = q
+    for start, end in reversed(consumed):
+        remainder = remainder[:start] + " " + remainder[end:]
+    parts.extend(re.findall(r"[^\s,;]+", remainder))
+    out = []
+    seen = set()
+    for p in parts:
+        p = p.strip().strip('"').strip()
+        if len(p) < 2:
+            continue
+        key = p.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(p)
+        if len(out) >= 6:
+            break
+    return out
+
+
+def _imap_or_many(keys: list[str]) -> str:
+    if not keys:
+        return "ALL"
+    expr = keys[0]
+    for key in keys[1:]:
+        expr = f"OR ({expr}) ({key})"
+    return expr
+
+
+def _email_imap_search_criteria(query: str) -> str:
+    terms = _email_search_terms(query)
+    if not terms:
+        return "ALL"
+    term_exprs = []
+    for term in terms:
+        q = _imap_search_quote(term)
+        # Search both sides of the conversation, plus subject and body. The
+        # older route only searched FROM/SUBJECT/TEXT, so recipient searches
+        # and many sent-message searches felt broken.
+        term_exprs.append(f"({_imap_or_many([f'FROM {q}', f'TO {q}', f'CC {q}', f'SUBJECT {q}', f'TEXT {q}'])})")
+    return "(" + " ".join(term_exprs) + ")"
 
 
 def _email_index_upsert(owner: str, account_id: str | None, folder: str, emails: list[dict]):
@@ -2049,6 +2119,7 @@ def setup_email_routes():
         limit: int = Query(50),
         account_id: str | None = Query(None),
         local_only: bool = Query(False),
+        scope: str = Query("all"),
         owner: str = Depends(require_owner),
     ):
         """Search emails server-side via IMAP SEARCH. Matches subject, from, or body text.
@@ -2062,9 +2133,10 @@ def setup_email_routes():
         # CRLF in q would terminate the IMAP command early — reject defensively.
         if "\r" in q or "\n" in q:
             raise HTTPException(400, "Invalid query")
+        global_search = (scope or "all").lower() != "folder"
         indexed_response = None
         try:
-            indexed_emails, indexed_total, indexed_at = _email_index_search(owner, account_id, folder, q, limit)
+            indexed_emails, indexed_total, indexed_at = _email_index_search(owner, account_id, folder, q, limit, global_search=global_search)
             indexed_response = {
                 "emails": indexed_emails,
                 "total": indexed_total,
@@ -2083,7 +2155,7 @@ def setup_email_routes():
                 # If the user asked for INBOX, try to upgrade to All Mail —
                 # one folder == every email on Gmail-class servers.
                 effective_folder = folder
-                if (folder or "").upper() == "INBOX":
+                if global_search and (folder or "").upper() == "INBOX":
                     try:
                         status, folder_lines = conn.list()
                         if status == "OK" and folder_lines:
@@ -2102,12 +2174,18 @@ def setup_email_routes():
                         pass
                 conn.select(_q(effective_folder), readonly=True)
 
-                # Escape backslash and quote for the IMAP-SEARCH quoted-string.
-                q_escaped = q.replace('\\', '\\\\').replace('"', '\\"')
-                search_cmd = f'(OR OR FROM "{q_escaped}" SUBJECT "{q_escaped}" TEXT "{q_escaped}")'
+                search_cmd = _email_imap_search_criteria(q)
 
                 status, data = _imap_uid_search(conn, search_cmd)
                 if status != "OK" or not data[0]:
+                    if indexed_response and indexed_response.get("emails"):
+                        indexed_response["fallback"] = True
+                        indexed_response["source"] = "index"
+                        indexed_response["sync"] = {
+                            **(indexed_response.get("sync") or {}),
+                            "fallback_reason": "imap_empty" if status == "OK" else "imap_search_failed",
+                        }
+                        return indexed_response
                     return {
                         "emails": [],
                         "total": 0,
@@ -2529,6 +2607,59 @@ def setup_email_routes():
         except Exception as e:
             logger.error(f"Failed to download attachment {uid}/{index}: {e}")
             return {"error": "Mail operation failed"}
+
+    @router.get("/attachments-download/{uid}")
+    async def download_all_attachments(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
+        """Download all visible attachments for an email as a zip archive."""
+        try:
+            with _imap(account_id, owner=owner) as conn:
+                conn.select(_q(folder), readonly=True)
+                status, msg_data = _imap_uid_fetch(conn, uid, "(RFC822)")
+            if status != "OK":
+                raise HTTPException(status_code=404, detail="Email not found")
+            raw = msg_data[0][1]
+            msg = email_mod.message_from_bytes(raw)
+            attachments = [
+                att for att in _list_attachments_from_msg(msg)
+                if not _is_likely_signature_image_attachment(att)
+            ]
+            if not attachments:
+                raise HTTPException(status_code=404, detail="No downloadable attachments")
+
+            target_dir = attachment_extract_dir(folder, uid)
+            zip_buf = io.BytesIO()
+            used_names: dict[str, int] = {}
+            with zipfile.ZipFile(zip_buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                for att in attachments:
+                    idx = att.get("index")
+                    if idx is None:
+                        continue
+                    filepath = _extract_attachment_to_disk(msg, int(idx), target_dir)
+                    if not filepath or not Path(filepath).exists():
+                        continue
+                    fallback = f"attachment-{idx}"
+                    arcname = _safe_attachment_zip_name(att.get("filename") or Path(filepath).name, fallback)
+                    stem = Path(arcname).stem
+                    suffix = Path(arcname).suffix
+                    seen = used_names.get(arcname, 0)
+                    used_names[arcname] = seen + 1
+                    if seen:
+                        arcname = f"{stem}-{seen + 1}{suffix}"
+                    zf.write(str(filepath), arcname)
+            zip_buf.seek(0)
+            if not zip_buf.getbuffer().nbytes:
+                raise HTTPException(status_code=404, detail="No downloadable attachments")
+            zip_name = _safe_attachment_zip_name(f"email-{uid}-attachments.zip", "attachments.zip")
+            return StreamingResponse(
+                zip_buf,
+                media_type="application/zip",
+                headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to download attachments zip {uid}: {e}")
+            raise HTTPException(status_code=500, detail="Mail operation failed")
 
     @router.get("/inline-image/{uid}")
     async def inline_image(
@@ -3148,6 +3279,155 @@ def setup_email_routes():
             raise
         except Exception as e:
             logger.error(f"Failed to upload attachment: {e}")
+            return {"success": False, "error": "Mail operation failed"}
+
+    def _safe_compose_filename(name: str, fallback: str = "attachment") -> str:
+        safe_name = re.sub(r"[^\w\s\-.]", "_", Path(str(name or fallback)).name).strip(". ")[:180]
+        return safe_name or fallback
+
+    def _stage_compose_bytes(filename: str, content: bytes) -> dict:
+        if len(content) > EMAIL_COMPOSE_UPLOAD_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="Attachment too large")
+        safe_name = _safe_compose_filename(filename)
+        token = f"{uuid.uuid4().hex}_{safe_name}"
+        filepath = COMPOSE_UPLOADS_DIR / token
+        with open(filepath, "wb") as f:
+            f.write(content)
+        return {"success": True, "token": token, "filename": safe_name, "size": len(content)}
+
+    def _stage_compose_file(filename: str, src: Path) -> dict:
+        if not src.exists() or not src.is_file():
+            raise HTTPException(status_code=404, detail="File not found")
+        size = src.stat().st_size
+        if size > EMAIL_COMPOSE_UPLOAD_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="Attachment too large")
+        safe_name = _safe_compose_filename(filename)
+        token = f"{uuid.uuid4().hex}_{safe_name}"
+        dest = COMPOSE_UPLOADS_DIR / token
+        import shutil as _shutil
+        _shutil.copyfile(str(src), str(dest))
+        return {"success": True, "token": token, "filename": safe_name, "size": size}
+
+    def _load_odysseus_attachment_source(db, kind: str, item_id: str, owner: str):
+        from core.database import Document as _Doc, GalleryImage as _GI
+        from core.database import Session as _Sess
+
+        if kind == "document":
+            doc = db.query(_Doc).filter(_Doc.id == item_id, _Doc.is_active == True).first()
+            if not doc:
+                raise HTTPException(status_code=404, detail="Document not found")
+            if owner:
+                if doc.owner and doc.owner != owner:
+                    raise HTTPException(status_code=404, detail="Document not found")
+                if not doc.owner and doc.session_id:
+                    sess = db.query(_Sess).filter(_Sess.id == doc.session_id).first()
+                    if sess and sess.owner and sess.owner != owner:
+                        raise HTTPException(status_code=404, detail="Document not found")
+            lang = (doc.language or "text").strip().lower()
+            ext = {
+                "markdown": "md",
+                "email": "eml",
+                "json": "json",
+                "yaml": "yaml",
+                "yml": "yml",
+                "html": "html",
+                "csv": "csv",
+                "xml": "xml",
+                "text": "txt",
+            }.get(lang, "txt")
+            base = _safe_compose_filename(doc.title or "document", "document")
+            if not base.lower().endswith(f".{ext}"):
+                base = f"{base}.{ext}"
+            return {"filename": base, "content": (doc.current_content or "").encode("utf-8")}
+
+        if kind == "gallery":
+            img = db.query(_GI).filter(_GI.id == item_id, _GI.is_active == True).first()
+            if not img:
+                raise HTTPException(status_code=404, detail="Image not found")
+            if owner and img.owner and img.owner != owner:
+                raise HTTPException(status_code=404, detail="Image not found")
+            from routes.gallery.gallery_routes import _gallery_image_path
+            src = _gallery_image_path(img.filename)
+            if not src.exists() or not src.is_file():
+                raise HTTPException(status_code=404, detail="Image file not found")
+            return {"filename": _safe_compose_filename(img.filename or "gallery-image.png"), "path": src}
+
+        raise HTTPException(status_code=400, detail="Unknown attachment kind")
+
+    @router.post("/compose-from-odysseus")
+    async def compose_from_odysseus(data: dict, owner: str = Depends(require_owner)):
+        """Stage an Odysseus document or gallery image as a compose upload."""
+        kind = str(data.get("kind") or "").strip().lower()
+        item_id = str(data.get("id") or "").strip()
+        if kind not in {"document", "gallery"} or not item_id:
+            raise HTTPException(status_code=400, detail="Expected kind and id")
+        try:
+            from core.database import SessionLocal as _SL
+
+            db = _SL()
+            try:
+                src = _load_odysseus_attachment_source(db, kind, item_id, owner)
+                if "path" in src:
+                    return _stage_compose_file(src["filename"], src["path"])
+                return _stage_compose_bytes(src["filename"], src["content"])
+            finally:
+                db.close()
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to stage Odysseus attachment {kind}/{item_id}: {e}")
+            return {"success": False, "error": "Mail operation failed"}
+
+    @router.post("/compose-from-odysseus-zip")
+    async def compose_from_odysseus_zip(data: dict, owner: str = Depends(require_owner)):
+        """Stage several Odysseus documents/gallery images as one zip attachment."""
+        raw_items = data.get("items") or []
+        if not isinstance(raw_items, list) or not raw_items:
+            raise HTTPException(status_code=400, detail="Expected items")
+        if len(raw_items) > 100:
+            raise HTTPException(status_code=400, detail="Too many attachments")
+        try:
+            from core.database import SessionLocal as _SL
+
+            db = _SL()
+            try:
+                buf = io.BytesIO()
+                used_names: dict[str, int] = {}
+
+                def unique_name(name: str) -> str:
+                    safe = _safe_attachment_zip_name(name, "attachment")
+                    stem = Path(safe).stem or "attachment"
+                    suffix = Path(safe).suffix
+                    idx = used_names.get(safe, 0)
+                    used_names[safe] = idx + 1
+                    if idx == 0:
+                        return safe
+                    return f"{stem}-{idx + 1}{suffix}"
+
+                with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                    for item in raw_items:
+                        if not isinstance(item, dict):
+                            continue
+                        kind = str(item.get("kind") or "").strip().lower()
+                        item_id = str(item.get("id") or "").strip()
+                        if kind not in {"document", "gallery"} or not item_id:
+                            continue
+                        src = _load_odysseus_attachment_source(db, kind, item_id, owner)
+                        zname = unique_name(src["filename"])
+                        if "path" in src:
+                            zf.write(src["path"], arcname=zname)
+                        else:
+                            zf.writestr(zname, src["content"])
+                content = buf.getvalue()
+                if not content:
+                    raise HTTPException(status_code=400, detail="No valid attachments")
+                return _stage_compose_bytes("odysseus-attachments.zip", content)
+            finally:
+                db.close()
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to stage Odysseus zip attachment: {e}")
             return {"success": False, "error": "Mail operation failed"}
 
     @router.post("/compose-from-attachment/{uid}/{index}")
@@ -4423,7 +4703,9 @@ def setup_email_routes():
         cfg["email_auto_tag"] = bool(settings.get("email_auto_tag", False))
         cfg["email_auto_spam"] = bool(settings.get("email_auto_spam", False))
         cfg["email_auto_calendar"] = bool(settings.get("email_auto_calendar", False))
-        cfg["email_auto_translate"] = bool(settings.get("email_auto_translate", False))
+        # Email translation is owned by the background task now; opening an email
+        # should not trigger reader-side auto-translation from Settings.
+        cfg["email_auto_translate"] = False
         cfg["email_translate_language"] = settings.get("email_translate_language", "English")
         return cfg
 
@@ -4438,11 +4720,9 @@ def setup_email_routes():
         """
         # Automation flags stay in settings.json (they're global, not per-account)
         settings = _load_settings()
-        for key in ["email_auto_summarize", "email_auto_reply", "email_auto_tag", "email_auto_spam", "email_auto_calendar", "email_auto_translate"]:
+        for key in ["email_auto_summarize", "email_auto_reply", "email_auto_tag", "email_auto_spam", "email_auto_calendar"]:
             if key in data:
                 settings[key] = data[key]
-        if "email_translate_language" in data:
-            settings["email_translate_language"] = (data.get("email_translate_language") or "English").strip() or "English"
         _save_settings(settings)
 
         # Credentials go into the default account row

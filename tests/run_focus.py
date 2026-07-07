@@ -50,6 +50,14 @@ AREAS: tuple[str, ...] = (
 # Backward-compatible aggregate selectors for focused runs whose original
 # monolithic files were split into more specific taxonomy sub-areas.
 SUB_AREA_ALIASES: dict[str, tuple[str, ...]] = {
+    "service_health": (
+        "service_health_chromadb",
+        "service_health_search",
+        "service_health_ntfy",
+        "service_health_email",
+        "service_health_providers",
+        "service_health_collect",
+    ),
     "embedding": ("embedding", "embedding_memory"),
 }
 
@@ -214,6 +222,7 @@ def build_parser(
     """Build the argument parser for the focused runner."""
     if valid_sub_areas is None:
         valid_sub_areas = discover_sub_areas()
+    valid_sub_areas = frozenset(valid_sub_areas) | frozenset(SUB_AREA_ALIASES)
     parser = argparse.ArgumentParser(
         prog="run_focus.py",
         description=(

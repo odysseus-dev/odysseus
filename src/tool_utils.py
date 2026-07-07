@@ -54,6 +54,8 @@ def _parse_tool_args(content):
     if isinstance(content, str):
         try:
             args = json.loads(content) if content.strip() else {}
+            if not isinstance(args, dict):
+                args = {}
         except (json.JSONDecodeError, TypeError) as e:
             raise ValueError(str(e))
     elif isinstance(content, dict):
