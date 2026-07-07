@@ -448,3 +448,45 @@ def test_fast_lane_collects_only_unmarked_auth_concurrency_test():
     assert _FAST_AUTH_CONCURRENCY_TEST in collected
     for slow_test in _SLOW_AUTH_CONCURRENCY_TESTS:
         assert slow_test not in collected, f"slow test was not deselected: {slow_test}"
+
+def test_service_health_sub_area_command_includes_split_files():
+    assert _cmd(sub_area="service_health") == [
+        PY,
+        "-m",
+        "pytest",
+        "-m",
+        (
+            "(sub_service_health_chromadb or "
+            "sub_service_health_search or "
+            "sub_service_health_ntfy or "
+            "sub_service_health_email or "
+            "sub_service_health_providers or "
+            "sub_service_health_collect)"
+        ),
+    ]
+
+
+def test_service_health_alias_is_accepted_by_run():
+    seen = []
+
+    def executor(cmd):
+        seen.append(cmd)
+        return 0
+
+    result = run(["--sub-area", "service_health"], executor=executor)
+
+    assert result == 0
+    assert len(seen) == 1
+    assert seen[0][1:] == [
+        "-m",
+        "pytest",
+        "-m",
+        (
+            "(sub_service_health_chromadb or "
+            "sub_service_health_search or "
+            "sub_service_health_ntfy or "
+            "sub_service_health_email or "
+            "sub_service_health_providers or "
+            "sub_service_health_collect)"
+        ),
+    ]

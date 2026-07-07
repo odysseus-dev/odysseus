@@ -523,6 +523,7 @@ registerMessages('pt-BR', {
   "Update Password": "Atualizar senha",
   "Use the utility model to write reminder messages": "Usar o modelo utilitário para escrever mensagens de lembrete",
   "Used to build clickable links back to Odysseus inside outgoing reminder / urgent-email emails (e.g.": "Usado para criar links clicáveis de volta ao Odysseus em e-mails de lembrete ou e-mails urgentes enviados (ex.:",
+  "Used when AI drafts email replies. Keep this email-specific: greetings, sign-off, tone, and length.": "Usado quando a IA redige respostas de e-mail. Mantenha específico para e-mail: saudações, despedida, tom e tamanho.",
   "User Chat Bubble": "Balão de conversa do usuário",
   "Username": "Nome de usuário",
   "Users": "Usuários",

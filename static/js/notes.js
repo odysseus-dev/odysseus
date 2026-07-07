@@ -2525,12 +2525,12 @@ function _bindCardEvents(body) {
     if (span.isContentEditable) return;
     const note = _notes.find(n => n.id === noteId);
     if (!note || !Array.isArray(note.items) || !note.items[idx]) return;
-    
+
     span.textContent = note.items[idx].text || '';
     span.contentEditable = "true";
     span.spellcheck = false;
     span.focus();
-    
+
     const selection = window.getSelection();
     const range = document.createRange();
     range.selectNodeContents(span);
@@ -2542,7 +2542,7 @@ function _bindCardEvents(body) {
       span.contentEditable = "false";
       const newText = span.textContent.trim();
       const oldText = (note.items[idx].text || '').trim();
-      
+
       if (newText === oldText) {
         _renderNotes();
         return;
@@ -2857,6 +2857,7 @@ function _collectFormDraft(form) {
   const d = {
     _ts: Date.now(),
     note_type: type,
+    color: form.dataset.noteColor || '',
     title: form.querySelector('.note-form-title')?.value || '',
     label: form.querySelector('.note-form-label')?.value || '',
     due_date: form.querySelector('.note-form-due')?.value || null,
@@ -2902,7 +2903,7 @@ function _applyDraftToNote(note, id) {
   const d = _loadDraft(id);
   if (_isDraftEmpty(d)) return { note, restored: false };
   const merged = { ...(note || {}) };
-  ['note_type', 'title', 'label', 'due_date', 'repeat', 'content', 'items'].forEach(k => {
+  ['note_type', 'color', 'title', 'label', 'due_date', 'repeat', 'content', 'items'].forEach(k => {
     if (d[k] !== undefined) merged[k] = d[k];
   });
   return { note: merged, restored: true };
@@ -2918,6 +2919,7 @@ function _buildForm(note = null) {
 
   const form = document.createElement('div');
   form.className = 'note-form';
+  form.dataset.noteColor = color || '';
   if (color && !_isBgImage(color)) form.classList.add('note-color-' + color);
   if (_isBgImage(color)) form.setAttribute('style', _customColorStyle(color));
   let currentImageUrl = _safeImgSrc(note?.image_url || '');
@@ -3121,6 +3123,7 @@ function _buildForm(note = null) {
   // Color dots — apply to entire form immediately
   const _applyFormColor = (newColor) => {
     currentColor = newColor || '';
+    form.dataset.noteColor = currentColor;
     const isBg = _isBgImage(currentColor);
     COLORS.forEach(c => { if (c.value && c.value !== 'custom') form.classList.remove('note-color-' + c.value); });
     if (currentColor && !isBg) form.classList.add('note-color-' + currentColor);
@@ -3130,6 +3133,7 @@ function _buildForm(note = null) {
       d.classList.toggle('active', _dotIsActive(d.dataset.color, currentColor));
       d.style.background = _dotBg(d.dataset.color, currentColor);
     });
+    form.dispatchEvent(new Event('change', { bubbles: true }));
   };
   form.querySelectorAll('.note-color-dot').forEach(dot => {
     dot.addEventListener('click', () => {
@@ -4832,8 +4836,14 @@ function _openMobileFullscreenEdit(id, fromCard) {
   const headerActions = overlay.querySelector('.note-fullscreen-actions');
   const archiveBtn = form.querySelector('.note-form-archive-btn');
   const deleteBtn  = form.querySelector('.note-form-delete-btn');
-  if (headerActions && archiveBtn) headerActions.appendChild(archiveBtn);
-  if (headerActions && deleteBtn)  headerActions.appendChild(deleteBtn);
+  if (headerActions && archiveBtn) {
+    archiveBtn.classList.remove('note-form-collapsible');
+    headerActions.appendChild(archiveBtn);
+  }
+  if (headerActions && deleteBtn) {
+    deleteBtn.classList.remove('note-form-collapsible');
+    headerActions.appendChild(deleteBtn);
+  }
   // The built-in archive/delete handlers re-render the notes grid but
   // leave THIS overlay sitting in front of it — looks like nothing
   // happened. Add follow-up listeners that close the overlay so the
@@ -5312,25 +5322,26 @@ async function _initReminders() {
 // just opening the panel when the card isn't found (panel still
 // loading, note in a different filter, etc.).
 async function openNote(noteId) {
-  // If the panel is already open, openPanel() short-circuits and does
-  // nothing — including no re-fetch — so a freshly-created note added
-  // server-side never shows up. Force a refresh by closing first when
-  // open, then re-opening. Clicking the sidebar Notes button as a
-  // last resort keeps this working even if the module state got out
-  // of sync (rare but seen during HMR or after a stuck modal).
-  try {
-    if (isPanelOpen && isPanelOpen()) {
-      closePanel();
-      // give the close animation a frame to settle
-      await new Promise(r => setTimeout(r, 30));
-    }
-  } catch (_) {}
-  openPanel();
-  // openPanel() kicks off _fetchNotes() asynchronously, so the cards
-  // for newly-created notes may not be in the DOM yet. Also poll the
-  // _notes module array directly — if the note IS loaded but the
-  // active filter (e.g. archive view) is hiding it, we can still
-  // surface a confirmation toast.
+  const wasOpen = !!(isPanelOpen && isPanelOpen());
+  _showingArchived = false;
+  _activeLabel = null;
+  _activeFilter = null;
+  _searchQuery = '';
+  if (!wasOpen) {
+    openPanel();
+  } else {
+    _bringNotesToFront();
+    const searchEl = document.getElementById('notes-search');
+    if (searchEl) searchEl.value = '';
+    const pane = document.getElementById('notes-pane');
+    if (pane) pane.classList.remove('notes-pane-archive');
+    const archiveBtn = document.getElementById('notes-archive-toggle');
+    if (archiveBtn) archiveBtn.classList.remove('active');
+    await _fetchNotes();
+    _renderNotes();
+  }
+  // openPanel() kicks off _fetchNotes() asynchronously, so the cards for
+  // newly-created notes may not be in the DOM yet. Poll until the card exists.
   if (!noteId) return;
   let tries = 0;
   const findAndFlash = () => {

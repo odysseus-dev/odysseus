@@ -1003,7 +1003,7 @@ async function _cmdSessionNew(args, ctx) {
   if (res.ok) {
     const data = await res.json();
     await sessionModule.loadSessions();
-    await sessionModule.selectSession(data.id);
+    await sessionModule.selectSession(data.id, { showLoading: false });
     _hideWelcomeScreen();
     const shortModel = (model || '').split('/').pop();
     await typewriterReply(`New session — ${shortModel || 'ready'}.`);

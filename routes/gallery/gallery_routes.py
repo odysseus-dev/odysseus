@@ -77,6 +77,39 @@ def _normalize_image_endpoint_base(url: str) -> str:
     return base
 
 
+def _is_openai_api_base(url: str) -> bool:
+    """Return True only when url's hostname is exactly api.openai.com."""
+    from urllib.parse import urlsplit
+    try:
+        candidate = url if "://" in url else f"https://{url}"
+        return urlsplit(candidate).hostname == "api.openai.com"
+    except Exception:
+        return False
+
+
+_GALLERY_ENDPOINT_PATHS = frozenset({
+    "/images/edits",
+    "/images/generations",
+    "/images/harmonize",
+    "/images/img2img",
+    "/images/inpaint",
+    "/images/upscale",
+    "/images/variations",
+    "/sdapi/v1/img2img",
+})
+
+
+def _join_checked_gallery_endpoint(base: str, path: str) -> str:
+    """Append a known-constant gallery path suffix to a validated base URL.
+
+    Rejects paths not in the pre-approved list so arbitrary strings can never
+    be spliced into the URL passed to httpx.
+    """
+    if path not in _GALLERY_ENDPOINT_PATHS:
+        raise ValueError(f"Unexpected gallery path: {path!r}")
+    return base + path
+
+
 def _visible_image_endpoint_query(db, owner: str | None):
     from src.auth_helpers import owner_filter
     q = db.query(ModelEndpoint).filter(
@@ -255,9 +288,10 @@ def setup_gallery_routes() -> APIRouter:
                 pass
             try:
                 db.commit()
-            except Exception as e:
+            except Exception:
                 db.rollback()
-                raise HTTPException(500, f"DB commit failed: {e}")
+                logger.exception("gallery_replace: DB commit failed")
+                raise HTTPException(500, "Image update failed")
             return {"ok": True, "width": img.width, "height": img.height}
         finally:
             db.close()
@@ -385,8 +419,9 @@ def setup_gallery_routes() -> APIRouter:
                     return {"image": data.get("data", [{}])[0].get("b64_json", "")}
                 # Fallback: no upscale endpoint — return error
                 return {"error": f"Upscale endpoint not available ({resp.status_code})"}
-        except Exception as e:
-            return {"error": str(e)}
+        except Exception:
+            logger.exception("ai_upscale: request failed")
+            return {"error": "Upscale request failed"}
 
     # ---- POST /api/gallery/style-transfer ----
     @router.post("/api/gallery/style-transfer")
@@ -431,8 +466,9 @@ def setup_gallery_routes() -> APIRouter:
                     if img_data:
                         return {"image": img_data}
                 return {"error": f"Style transfer failed ({resp.status_code})"}
-        except Exception as e:
-            return {"error": str(e)}
+        except Exception:
+            logger.exception("style_transfer: request failed")
+            return {"error": "Style transfer failed"}
 
     # ---- GET /api/gallery/tags ----
     @router.get("/api/gallery/tags")
@@ -588,9 +624,9 @@ def setup_gallery_routes() -> APIRouter:
                 "tags": sorted(all_tags),
                 "models": all_models,
             }
-        except Exception as e:
-            logger.error(f"Failed to fetch gallery library: {e}")
-            raise HTTPException(500, f"Failed to fetch gallery library: {e}")
+        except Exception:
+            logger.exception("Failed to fetch gallery library")
+            raise HTTPException(500, "Failed to fetch gallery library")
         finally:
             db.close()
 
@@ -766,9 +802,10 @@ def setup_gallery_routes() -> APIRouter:
             return _image_to_dict(img)
         except HTTPException:
             raise
-        except Exception as e:
+        except Exception:
             db.rollback()
-            raise HTTPException(500, str(e))
+            logger.exception("patch_gallery_image: update failed")
+            raise HTTPException(500, "Image update failed")
         finally:
             db.close()
 
@@ -845,9 +882,10 @@ def setup_gallery_routes() -> APIRouter:
                     cleared += 1
             db.commit()
             return {"ok": True, "cleared": cleared}
-        except Exception as e:
+        except Exception:
             db.rollback()
-            raise HTTPException(500, str(e))
+            logger.exception("clear_gallery_user_tags: failed")
+            raise HTTPException(500, "Tag update failed")
         finally:
             db.close()
 
@@ -871,9 +909,10 @@ def setup_gallery_routes() -> APIRouter:
                     cleared += 1
             db.commit()
             return {"ok": True, "cleared": cleared}
-        except Exception as e:
+        except Exception:
             db.rollback()
-            raise HTTPException(500, str(e))
+            logger.exception("clear_gallery_ai_tags: failed")
+            raise HTTPException(500, "Tag update failed")
         finally:
             db.close()
 
@@ -909,9 +948,10 @@ def setup_gallery_routes() -> APIRouter:
                     img.tags = ', '.join(cleaned)
             db.commit()
             return {"ok": True, "rows_touched": rows_touched, "tags_removed": tags_removed}
-        except Exception as e:
+        except Exception:
             db.rollback()
-            raise HTTPException(500, str(e))
+            logger.exception("dedupe_gallery_tags: failed")
+            raise HTTPException(500, "Tag deduplication failed")
         finally:
             db.close()
 
@@ -1029,9 +1069,10 @@ def setup_gallery_routes() -> APIRouter:
             return {"status": "deleted", "id": image_id}
         except HTTPException:
             raise
-        except Exception as e:
+        except Exception:
             db.rollback()
-            raise HTTPException(500, str(e))
+            logger.exception("delete_gallery_image: failed")
+            raise HTTPException(500, "Image deletion failed")
         finally:
             db.close()
 
@@ -1044,21 +1085,22 @@ def setup_gallery_routes() -> APIRouter:
         import httpx
         user = require_privilege(request, "can_generate_images")
         body = await request.json()
-        # Use endpoint from request body (editor dropdown) or fall back to DB lookup
-        base = (body.pop("_endpoint", "") or "").rstrip("/")
+        # Use endpoint from request body (editor dropdown) or fall back to DB lookup.
+        # Store as requested_base to avoid carrying user input into the outbound request.
+        requested_base = (body.pop("_endpoint", "") or "").rstrip("/")
         # SSRF hardening: validate a client-supplied endpoint before any
         # outbound request (mirrors routes/embedding_routes.py).
-        if base:
+        if requested_base:
             from src.url_safety import check_outbound_url
             ok, reason = check_outbound_url(
-                base,
+                requested_base,
                 block_private=os.getenv("IMAGE_BLOCK_PRIVATE_IPS", "false").lower() == "true",
             )
             if not ok:
                 raise HTTPException(400, f"Rejected endpoint URL: {reason}")
         chosen_model = (body.pop("_model", "") or "").strip()
         api_key = None
-        if not base:
+        if not requested_base:
             db = SessionLocal()
             try:
                 ep = _first_visible_image_endpoint(db, user)
@@ -1069,32 +1111,23 @@ def setup_gallery_routes() -> APIRouter:
             finally:
                 db.close()
         else:
-            # Pull api_key from the matching DB row so OpenAI auth works.
-            # Users may have stored base_url with/without /v1 suffix and with/without
-            # trailing slash, so compare normalized forms.
-            def _norm_url(u: str) -> str:
-                if not u:
-                    return u
-                u = u.rstrip("/")
-                if u.endswith("/v1"):
-                    u = u[:-3]
-                return u
-            _target = _norm_url(base)
+            # Resolve the client-supplied base to a registered visible endpoint.
+            # Admins are not exempted — gallery proxy routes must use a DB row
+            # so the outbound URL never depends directly on request-body input.
             db = SessionLocal()
             try:
-                ep = _visible_image_endpoint_for_base(db, _target, user)
-                if ep:
-                    base = (ep.base_url or base).rstrip("/")
-                    api_key = ep.api_key
-                elif user and not _current_user_is_admin(request, user):
+                ep = _visible_image_endpoint_for_base(db, requested_base, user)
+                if not ep:
                     raise HTTPException(403, "Choose a registered image endpoint")
+                base = ep.base_url.rstrip("/")
+                api_key = ep.api_key
             finally:
                 db.close()
 
         if not base.endswith("/v1"):
             base += "/v1"
 
-        is_openai = "api.openai.com" in base
+        is_openai = _is_openai_api_base(base)
 
         if is_openai:
             # OpenAI path: /v1/images/edits with gpt-image-1.
@@ -1131,8 +1164,9 @@ def setup_gallery_routes() -> APIRouter:
                 mask_buf.seek(0)
             except HTTPException:
                 raise
-            except Exception as e:
-                raise HTTPException(400, f"Failed to prepare OpenAI request: {e}")
+            except Exception:
+                logger.exception("inpaint_proxy: failed to prepare OpenAI request")
+                raise HTTPException(400, "Failed to prepare inpaint request")
 
             width = int(body.get("width") or 1024)
             height = int(body.get("height") or 1024)
@@ -1163,9 +1197,10 @@ def setup_gallery_routes() -> APIRouter:
             headers = {"Authorization": f"Bearer {api_key}"}
             try:
                 async with httpx.AsyncClient(timeout=120) as client:
-                    r = await client.post(f"{base}/images/edits", headers=headers, data=data, files=files)
+                    r = await client.post(_join_checked_gallery_endpoint(base, "/images/edits"), headers=headers, data=data, files=files)
                     if r.status_code != 200:
-                        raise HTTPException(r.status_code, f"OpenAI edit failed: {r.text[:300]}")
+                        logger.error("inpaint_proxy OpenAI edit: status %s", r.status_code)
+                        raise HTTPException(r.status_code, "OpenAI edit failed")
                     result = r.json()
                     raw_b64 = None
                     if result.get("data"):
@@ -1212,16 +1247,18 @@ def setup_gallery_routes() -> APIRouter:
             if chosen_model:
                 body["model"] = chosen_model
             async with httpx.AsyncClient(timeout=120) as client:
-                r = await client.post(f"{base}/images/inpaint", json=body)
+                r = await client.post(_join_checked_gallery_endpoint(base, "/images/inpaint"), json=body)
                 if r.status_code != 200:
-                    raise HTTPException(r.status_code, f"Inpaint failed: {r.text[:200]}")
+                    logger.error("inpaint_proxy diffusion: status %s", r.status_code)
+                    raise HTTPException(r.status_code, "Inpaint request failed")
                 return r.json()
         except httpx.TimeoutException:
             raise HTTPException(504, "Inpaint request timed out (120s)")
         except HTTPException:
             raise
-        except Exception as e:
-            raise HTTPException(502, f"Inpaint error: {str(e)}")
+        except Exception:
+            logger.exception("inpaint_proxy: request failed")
+            raise HTTPException(502, "Inpaint request failed")
 
     # ---- POST /api/image/harmonize — proper img2img call ----
     # Earlier version routed through inpaint with a full-white mask, but
@@ -1243,24 +1280,23 @@ def setup_gallery_routes() -> APIRouter:
         if not image_b64:
             raise HTTPException(400, "No image provided")
 
-        endpoint = (body.get("_endpoint") or "").rstrip("/")
+        requested_base = (body.get("_endpoint") or "").rstrip("/")
         # SSRF hardening: a client-supplied endpoint is fetched server-side
         # below, so validate it first (mirrors routes/embedding_routes.py).
         # Local-first means loopback/LAN is allowed by default; the cloud
         # metadata range and non-HTTP(S) schemes are always rejected.
-        if endpoint:
+        if requested_base:
             from src.url_safety import check_outbound_url
             ok, reason = check_outbound_url(
-                endpoint,
+                requested_base,
                 block_private=os.getenv("IMAGE_BLOCK_PRIVATE_IPS", "false").lower() == "true",
             )
             if not ok:
                 raise HTTPException(400, f"Rejected endpoint URL: {reason}")
         model = (body.get("_model") or "").strip()
 
-        base = endpoint
         api_key = None
-        if not base:
+        if not requested_base:
             db = SessionLocal()
             try:
                 ep = _first_visible_image_endpoint(db, user)
@@ -1271,14 +1307,16 @@ def setup_gallery_routes() -> APIRouter:
             finally:
                 db.close()
         else:
+            # Resolve the client-supplied base to a registered visible endpoint.
+            # Admins are not exempted — gallery proxy routes must use a DB row
+            # so the outbound URL never depends directly on request-body input.
             db = SessionLocal()
             try:
-                ep = _visible_image_endpoint_for_base(db, base, user)
-                if ep:
-                    base = (ep.base_url or base).rstrip("/")
-                    api_key = ep.api_key
-                elif user and not _current_user_is_admin(request, user):
+                ep = _visible_image_endpoint_for_base(db, requested_base, user)
+                if not ep:
                     raise HTTPException(403, "Choose a registered image endpoint")
+                base = ep.base_url.rstrip("/")
+                api_key = ep.api_key
             finally:
                 db.close()
 
@@ -1313,7 +1351,7 @@ def setup_gallery_routes() -> APIRouter:
         # source. Earlier hack (alpha-blend the regen back at `strength`)
         # produced visibly broken results, so we refuse and tell the
         # user to spin up a real diffusion endpoint instead.
-        if "api.openai.com" in base:
+        if _is_openai_api_base(base):
             raise HTTPException(400,
                 "Harmonize needs a diffusion server that supports img2img "
                 "(SD WebUI / Forge / Comfy). OpenAI's API doesn't expose "
@@ -1378,14 +1416,16 @@ def setup_gallery_routes() -> APIRouter:
         # 1024×1024 inference pass on slower setups.
         async with httpx.AsyncClient(timeout=240) as client:
             for path, kind, payload in candidates:
-                target = base_root + path if path.startswith("/sdapi") else base + path
+                _effective_base = base_root if path.startswith("/sdapi") else base
+                target = _join_checked_gallery_endpoint(_effective_base, path)
                 try:
                     r = await client.post(target, json=payload, headers=headers)
                     if r.status_code == 404:
                         last_err = f"{path}: 404"
                         continue  # try next variant
                     if r.status_code != 200:
-                        last_err = f"{path}: {r.status_code} {r.text[:120]}"
+                        logger.warning("harmonize: %s returned %s", path, r.status_code)
+                        last_err = f"{path}: {r.status_code}"
                         continue
                     data = r.json()
                     # Normalise return shape.
@@ -1394,8 +1434,8 @@ def setup_gallery_routes() -> APIRouter:
                         # surface it now instead of trying the other routes
                         # (otherwise the real error gets buried under 404s).
                         if data.get("error") and not data.get("image"):
-                            raise HTTPException(502,
-                                f"Diffusion server error at {path}: {data['error']}")
+                            logger.warning("harmonize: server error at %s: %s", path, data.get("error"))
+                            raise HTTPException(502, f"Diffusion server error at {path}")
                         if data.get("image"):
                             return {"image": data["image"]}
                         if data.get("images") and isinstance(data["images"], list):
@@ -1415,15 +1455,15 @@ def setup_gallery_routes() -> APIRouter:
                                 if img_b64:
                                     return {"image": img_b64}
                     last_err = f"{path}: server returned no image"
-                except httpx.ConnectError as e:
-                    raise HTTPException(502, f"Can't reach diffusion server at {base}: {e}")
+                except httpx.ConnectError:
+                    logger.warning("harmonize: can't reach diffusion server at %s", base)
+                    raise HTTPException(502, "Can't reach diffusion server")
                 except httpx.TimeoutException:
                     raise HTTPException(504, "Harmonize timed out (240s) — restart the diffusion server or lower Color match / disable Seam fix")
         raise HTTPException(502,
-            f"None of the img2img routes worked on {base}. "
-            f"Last response: {last_err or 'unknown'}. "
-            "Your diffusion server needs to expose one of /v1/images/harmonize, "
-            "/v1/images/img2img, /v1/images/variations, or /sdapi/v1/img2img.")
+            "No supported img2img route responded. "
+            "Your diffusion server needs to expose one of: "
+            "/v1/images/harmonize, /v1/images/img2img, /v1/images/variations, /sdapi/v1/img2img.")
 
     # ---- POST /api/image/sharpen ----
     @router.post("/api/image/sharpen")
@@ -1467,8 +1507,8 @@ def setup_gallery_routes() -> APIRouter:
             import base64, io
             from PIL import Image
             import numpy as np
-        except ImportError as e:
-            raise HTTPException(500, f"Server missing dependency: {e}")
+        except ImportError:
+            raise HTTPException(500, "Server missing a required dependency")
         # Decode source image (RGB; Real-ESRGAN doesn't preserve alpha).
         img_bytes = base64.b64decode(image_b64)
         src = Image.open(io.BytesIO(img_bytes)).convert("RGB")
@@ -1495,9 +1535,9 @@ def setup_gallery_routes() -> APIRouter:
             buf = io.BytesIO()
             out_img.save(buf, format="PNG")
             return {"image": base64.b64encode(buf.getvalue()).decode()}
-        except Exception as e:
-            logger.warning(f"Denoise failed: {e}")
-            return {"error": f"Denoise failed: {e}"}
+        except Exception:
+            logger.warning("Denoise failed", exc_info=True)
+            return {"error": "Denoise failed"}
 
     # ---- POST /api/image/upscale-local ----
     # Local Real-ESRGAN upscale (2× or 4×). Self-contained — no diffusion
@@ -1518,8 +1558,8 @@ def setup_gallery_routes() -> APIRouter:
             import base64, io
             from PIL import Image
             import numpy as np
-        except ImportError as e:
-            raise HTTPException(500, f"Server missing dependency: {e}")
+        except ImportError:
+            raise HTTPException(500, "Server missing a required dependency")
         img_bytes = base64.b64decode(image_b64)
         src = Image.open(io.BytesIO(img_bytes)).convert("RGB")
         try:
@@ -1543,9 +1583,9 @@ def setup_gallery_routes() -> APIRouter:
             buf = io.BytesIO()
             out_img.save(buf, format="PNG")
             return {"image": base64.b64encode(buf.getvalue()).decode()}
-        except Exception as e:
-            logger.warning(f"Upscale failed: {e}")
-            return {"error": f"Upscale failed: {e}"}
+        except Exception:
+            logger.warning("AI upscale failed", exc_info=True)
+            return {"error": "AI upscale failed"}
 
     # ---- POST /api/image/remove-bg ----
     @router.post("/api/image/remove-bg")
@@ -1703,8 +1743,9 @@ def setup_gallery_routes() -> APIRouter:
             buf = io.BytesIO()
             enhanced.save(buf, format="PNG")
             return {"image": base64.b64encode(buf.getvalue()).decode(), "method": "pil"}
-        except Exception as e:
-            raise HTTPException(500, f"Face enhancement failed: {str(e)}")
+        except Exception:
+            logger.exception("enhance_face: failed")
+            raise HTTPException(500, "Face enhancement failed")
 
     # ---- Album management (path-param routes) ----
 
@@ -1899,9 +1940,8 @@ def setup_gallery_routes() -> APIRouter:
             async with httpx.AsyncClient(timeout=60) as client:
                 resp = await client.post(chat_url, json=payload, headers=h)
                 if resp.status_code != 200:
-                    body = resp.text[:500]
-                    logger.error(f"Vision model {resp.status_code}: {body}")
-                    return {"error": f"Vision model returned {resp.status_code}: {body[:200]}"}
+                    logger.error("ai_tag vision model: status %s: %s", resp.status_code, resp.text[:500])
+                    return {"error": "Vision model request failed"}
                 data = resp.json()
                 # Anthropic returns content[0].text, OpenAI returns choices[0].message.content
                 if provider == "anthropic":
@@ -1917,9 +1957,9 @@ def setup_gallery_routes() -> APIRouter:
             return {"ok": True, "ai_tags": tag_str}
         except HTTPException:
             raise
-        except Exception as e:
-            logger.error(f"AI tagging failed: {e}")
-            return {"error": str(e)}
+        except Exception:
+            logger.exception("AI tagging failed")
+            return {"error": "Auto-tagging failed"}
         finally:
             db.close()
 
