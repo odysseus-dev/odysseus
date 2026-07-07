@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import httpx
+import websockets
 from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect
 
 logger = logging.getLogger(__name__)
@@ -76,35 +77,35 @@ async def proxy_code_server_ws(websocket: WebSocket, path: str):
 
     await websocket.accept()
 
-    headers = dict(websocket.headers)
-    headers.pop("host", None)
+    # Build headers from the original WebSocket request — skip Origin
+    # (code-server rejects mismatched origins; trusted-origins config
+    # only works for some code-server versions)
+    extra_headers = {}
+    for key in ("cookie", "authorization"):
+        val = websocket.headers.get(key)
+        if val:
+            extra_headers[key] = val
 
-    async with httpx.AsyncClient(timeout=300) as client:
-        try:
-            async with client.stream(
-                "GET",
-                target_url,
-                headers=headers,
-            ) as resp:
-                # For WebSocket upgrade, we need to handle it differently.
-                # Use websockets library for proper WS proxy.
-                pass
-        except Exception:
-            pass
-
-    # Fallback: use a simple WebSocket bridge
-    import websockets
     try:
-        async with websockets.connect(target_url) as ws_server:
+        async with websockets.connect(
+            target_url,
+            additional_headers=extra_headers,
+            ping_interval=20,
+            ping_timeout=20,
+            close_timeout=5,
+        ) as ws_server:
             async def client_to_server():
                 try:
                     while True:
-                        data = await websocket.receive_text()
-                        await ws_server.send(data)
-                    # Also handle bytes
-                except WebSocketDisconnect:
-                    pass
-                except Exception:
+                        msg = await websocket.receive()
+                        if msg["type"] == "websocket.receive":
+                            if "text" in msg:
+                                await ws_server.send(msg["text"])
+                            elif "bytes" in msg:
+                                await ws_server.send(msg["bytes"])
+                        elif msg["type"] == "websocket.disconnect":
+                            break
+                except (WebSocketDisconnect, Exception):
                     pass
 
             async def server_to_client():
@@ -112,12 +113,20 @@ async def proxy_code_server_ws(websocket: WebSocket, path: str):
                     async for msg in ws_server:
                         if isinstance(msg, str):
                             await websocket.send_text(msg)
-                        else:
+                        elif isinstance(msg, bytes):
                             await websocket.send_bytes(msg)
                 except Exception:
                     pass
 
-            await asyncio.gather(client_to_server(), server_to_client())
+            done, pending = await asyncio.wait(
+                [
+                    asyncio.create_task(client_to_server()),
+                    asyncio.create_task(server_to_client()),
+                ],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
     except Exception as e:
         logger.error(f"WebSocket proxy error: {e}")
         try:
