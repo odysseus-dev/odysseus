@@ -23,3 +23,16 @@ def test_markdown_raw_html_sanitizer_strips_scriptable_css():
     assert "if (name === 'style')" in src
     assert r"javascript:|vbscript:|data:|expression\(" in src
     assert "el.removeAttribute(attr.name);" in src
+
+
+def test_email_rich_body_render_path_reuses_raw_html_sanitizer():
+    markdown_src = (_REPO / "static" / "js" / "markdown.js").read_text(encoding="utf-8")
+    document_src = (_REPO / "static" / "js" / "document.js").read_text(encoding="utf-8")
+    email_body_helper = document_src.split("function _emailBodyToHtml(text)", 1)[1].split(
+        "  // Mirror the rich body's plain text", 1
+    )[0]
+
+    assert "export function sanitizeAllowedHtml(html)" in markdown_src
+    assert "sanitizeAllowedHtml," in markdown_src
+    assert "markdownModule.sanitizeAllowedHtml(t)" in email_body_helper
+    assert "return t;" not in email_body_helper

@@ -16,7 +16,7 @@ in this repo do).
 import ast
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parent.parent / "routes" / "history_routes.py"
+SRC = Path(__file__).resolve().parent.parent / "routes" / "history" / "history_routes.py"
 
 
 def _function_source(src_text, name):
