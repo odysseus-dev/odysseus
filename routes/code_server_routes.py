@@ -38,7 +38,8 @@ async def proxy_code_server(path: str, request: Request):
                 follow_redirects=True,
             )
             excluded_headers = {
-                "content-encoding", "content-length", "transfer-encoding", "connection"
+                "content-encoding", "content-length", "transfer-encoding", "connection",
+                "x-frame-options", "content-security-policy", "content-security-policy-report-only",
             }
             response_headers = {
                 k: v for k, v in resp.headers.items()

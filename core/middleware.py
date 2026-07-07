@@ -73,6 +73,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         is_document_pdf_preview = path.startswith("/api/document/") and path.endswith("/render-pdf")
         # Visual report pages are self-contained HTML — need inline scripts + external images
         is_report = path.startswith("/api/research/report/")
+        # Code-server proxy — skip CSP framing headers (code-server needs to embed)
+        is_code_server_proxy = path.startswith("/api/code-server/")
 
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -95,8 +97,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "connect-src 'self'; "
                 "frame-ancestors 'none'"
             )
-        elif is_tool_render:
-            # Skip framing headers for tools.
+        elif is_tool_render or is_code_server_proxy:
+            # Skip framing headers for tools and code-server proxy.
             pass
         elif is_document_pdf_preview:
             response.headers["X-Frame-Options"] = "SAMEORIGIN"
