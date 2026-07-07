@@ -538,6 +538,11 @@ _APP_API_BLOCKLIST_METHOD_PATH = (
     # sidebar surfaces the session. Raw start works but the agent
     # fumbles the payload + the session doesn't reliably show up.
     ("POST",   "/api/research/start"),
+    # Use web_search — the HTTP search route is UI-shaped and generic
+    # app_api calls can return empty/poorly formatted results compared with the
+    # named tool's source-aware output.
+    ("GET",    "/api/search"),
+    ("POST",   "/api/search"),
     # Use the named tools — they handle owner attribution, natural-
     # language due_date parsing, timezone, dedup, and tag/category
     # normalization. Hitting the raw endpoint via app_api saves a
@@ -653,6 +658,8 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
             return {"error": "Don't POST /api/model/serve directly — use the `serve_model` or `serve_preset` tool (handles host resolution, env_prefix, and cookbook tracking).", "exit_code": 1}
         if "/api/research/start" in path:
             return {"error": "Don't POST /api/research/start directly — use the `trigger_research` tool (it surfaces the session in the Deep Research sidebar).", "exit_code": 1}
+        if "/api/search" in path:
+            return {"error": "Don't hit /api/search via app_api — use the `web_search` tool for online lookups, or `web_fetch` for a specific URL.", "exit_code": 1}
         if "/api/notes" in path:
             return {"error": "Don't hit /api/notes via app_api — use the `manage_notes` tool. It accepts natural-language due_date ('11pm today', 'tomorrow at 9am'), fires reminders from the due_date itself (no separate calendar event), and uses the caller's timezone. The raw endpoint requires ISO-UTC + a separate calendar event, both of which the agent tends to get wrong.", "exit_code": 1}
         if "/api/calendar/events" in path:

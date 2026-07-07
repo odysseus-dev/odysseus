@@ -517,6 +517,33 @@ async def test_app_api_blocks_cookbook_host_control_routes_before_loopback(monke
 
 
 @pytest.mark.asyncio
+async def test_app_api_blocks_search_route_before_loopback(monkeypatch):
+    import httpx
+    from src.tool_implementations import do_app_api
+
+    class UnexpectedAsyncClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("app_api should block search routes before loopback")
+
+    monkeypatch.setattr(httpx, "AsyncClient", UnexpectedAsyncClient)
+
+    result = await do_app_api(
+        json.dumps(
+            {
+                "action": "call",
+                "method": "GET",
+                "path": "/api/search",
+                "query": {"q": "crow box designs"},
+            }
+        ),
+        owner="admin",
+    )
+
+    assert result["exit_code"] == 1
+    assert "use the `web_search` tool" in result["error"]
+
+
+@pytest.mark.asyncio
 async def test_app_api_endpoint_discovery_hides_shell_routes(monkeypatch):
     _install_core_middleware_stub(monkeypatch)
     import httpx

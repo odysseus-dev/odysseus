@@ -315,6 +315,7 @@ async def _cookbook_register_task(
 _MODEL_PROCESS_PATTERNS = [
     ("vLLM",            ["vllm.entrypoints", "vllm serve", "/vllm/", "vllm-openai"]),
     ("SGLang",          ["sglang.launch_server", "sglang/launch_server"]),
+    ("MLX",             ["mlx_lm.server", "mlx-lm"]),
     ("llama.cpp",       ["llama-server", "llama_cpp_server", "llamacppserver"]),
     ("Ollama",          ["ollama serve", "ollama runner", "/ollama "]),
     ("ComfyUI",         ["comfyui/main.py", "/ComfyUI/main.py", "ComfyUI"]),
@@ -590,7 +591,7 @@ async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
         hint = ""
         if isinstance(err_msg, str) and "cmd" in err_msg.lower():
             hint = (" — the cmd must START with an allowlisted binary "
-                    "(vllm, python3, llama-server, ollama, sglang, lmdeploy, node, npx). "
+                    "(vllm, python3, llama-server, ollama, sglang, mlx_lm, lmdeploy, node, npx). "
                     "Do NOT prefix with `cd …`, `source …`, or chain with `&&`. "
                     "env_prefix (e.g. `source ~/qwen35-env/bin/activate`) is added "
                     "automatically from the host's saved venv settings.")
@@ -635,7 +636,7 @@ async def do_list_served_models(content: str, owner: Optional[str] = None) -> Di
 
     if not merged:
         return {
-            "output": "No model servers currently running (cookbook task tracker empty; /proc scan found no vLLM / sglang / llama.cpp / Ollama / ComfyUI / A1111 / Fooocus / InvokeAI / TGI / Aphrodite / Triton / Diffusers processes).",
+            "output": "No model servers currently running (cookbook task tracker empty; /proc scan found no vLLM / sglang / MLX / llama.cpp / Ollama / ComfyUI / A1111 / Fooocus / InvokeAI / TGI / Aphrodite / Triton / Diffusers processes).",
             "exit_code": 0,
         }
 

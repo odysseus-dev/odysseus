@@ -29,7 +29,7 @@ def test_diagnose_sglang_native_dependency_errors():
     diagnosis = _diagnose_serve_output(output)
 
     assert diagnosis is not None
-    assert "SGLang native dependencies" in diagnosis["message"]
+    assert "SGLang native kernel/runtime" in diagnosis["message"]
     labels = [suggestion["label"] for suggestion in diagnosis["suggestions"]]
     assert any("libnuma-dev" in label for label in labels)
     assert any("python3.12-dev" in label for label in labels)
