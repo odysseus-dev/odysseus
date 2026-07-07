@@ -108,7 +108,6 @@ stdenv.mkDerivation {
 
     makeWrapper ${pythonEnv}/bin/python $out/bin/odysseus-setup \
       --set PYTHONPATH "$out/share/odysseus" \
-      --set-default ODYSSEUS_DATA_DIR "$out/share/odysseus/data" \
       --add-flags "$out/share/odysseus/setup.py"
 
     # ChromaDB server CLI (from chromadb in pythonEnv) so the service

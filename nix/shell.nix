@@ -70,6 +70,8 @@ pkgs.mkShell {
 
   shellHook = ''
     export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath runtimeLibs}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    case "$ODYSSEUS_DATA_DIR" in /*) ;; *) export ODYSSEUS_DATA_DIR="$PWD/$ODYSSEUS_DATA_DIR" ;; esac
+    export DATABASE_URL="sqlite:///$ODYSSEUS_DATA_DIR/app.db"
 
     echo "Odysseus Nix shell for ${pkgs.stdenv.hostPlatform.system} is loaded."
     echo ""

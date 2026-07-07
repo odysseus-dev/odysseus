@@ -10,6 +10,8 @@ if [ -d "$ODYSSEUS_DATA_DIR" ] && [ -f "$ODYSSEUS_DATA_DIR/auth.json" ]; then
     echo "Setup has already been executed."
     echo "To re-run, delete $ODYSSEUS_DATA_DIR/auth.json first."
     exit 0
+else
+    mkdir -p "$ODYSSEUS_DATA_DIR"
 fi
 
 echo "Running Odysseus first-time setup..."
