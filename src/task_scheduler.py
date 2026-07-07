@@ -10,6 +10,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, Tuple
 
 from core.auth import RESERVED_USERNAMES
+from src.task_action_policy import (
+    is_admin_only_task_action,
+    owner_has_admin_task_privileges,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +243,7 @@ HOUSEKEEPING_DEFAULTS = {
     "tidy_research":        {"name": "Research Tidy",            "trigger_type": "event", "trigger_event": "research_completed", "trigger_count": 5, "schedule": None, "scheduled_time": None, "cron_expression": None, "legacy_names": ["Tidy Research"]},
     "summarize_emails":     {"name": "Email (Summary)",          "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */2 * * *", "ship_paused": True, "legacy_names": ["Tidy Email (Summary)"]},
     "draft_email_replies":  {"name": "Email AI Auto Reply",      "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */2 * * *", "ship_paused": True, "legacy_names": ["Tidy Email (Replies)", "AI Auto Reply"]},
+    "email_auto_translate": {"name": "Email Auto Translate",     "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */2 * * *", "ship_paused": True, "legacy_names": ["Auto-translate Emails", "Auto Translate Email"]},
     "extract_email_events": {"name": "Email Calendar Events",    "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */1 * * *", "ship_paused": True, "legacy_names": ["Email → Calendar Events"]},
     "classify_events":      {"name": "Calendar Classify Events", "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 6,18 * * *", "ship_paused": True, "legacy_names": ["Classify Calendar Events"]},
     "check_email_urgency":   {"name": "Email Tags",               "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 * * * *", "ship_paused": True, "old_cron_expressions": ["*/15 * * * *"], "legacy_names": ["Email Triage", "Urgent Email"]},
@@ -287,6 +292,42 @@ def _checkin_calendar_events(db, owner, start, end):
         .order_by(_CE.dtstart)
         .all()
     )
+
+
+def _normalize_chat_endpoint(url: str) -> str:
+    """Repair a resolved task endpoint to a full chat-completions URL.
+
+    Unlike the chat path — which stores ``build_chat_url(normalize_base(base))``
+    on the session — the task executor passes ``task.endpoint_url`` verbatim to
+    the model HTTP call. A bare OpenAI-compatible base such as
+    ``http://host:11434/v1`` therefore POSTs to a 404 ("page not found") and the
+    model silently appears to "return an empty response".
+
+    Repair only bare OpenAI-compatible bases. Native-Ollama URLs (``/api...``)
+    and URLs that already point at a concrete endpoint are returned untouched, so
+    their own downstream normalizers keep working. Idempotent: a URL already
+    ending in ``/chat/completions`` is left as-is.
+    """
+    if not url:
+        return url
+    # Imports kept function-local (endpoint_resolver pulls in heavy deps) but
+    # OUTSIDE the try: an import failure is a real bug that should surface, not
+    # be silently swallowed into the un-normalized URL this function exists to
+    # repair.
+    from urllib.parse import urlparse
+    from src.endpoint_resolver import normalize_base, build_chat_url
+    path = (urlparse(url).path or "").rstrip("/")
+    if path == "/api" or path.startswith("/api/"):
+        return url  # native Ollama — handled by the native path downstream
+    if path.endswith(("/chat/completions", "/messages", "/responses", "/completions")):
+        return url  # already a concrete endpoint
+    try:
+        return build_chat_url(normalize_base(url))
+    except Exception:
+        # Guard only the actual normalization. Returning the URL un-normalized
+        # reverts to the 404 this fixes, so make the silent revert visible.
+        logger.debug("task endpoint normalization failed for %r; using as-is", url, exc_info=True)
+        return url
 
 
 class TaskScheduler:
@@ -650,6 +691,12 @@ class TaskScheduler:
         db = SessionLocal()
         try:
             now = _utcnow()
+            foreground_active = False
+            try:
+                from src.interactive_gate import has_foreground_activity
+                foreground_active = has_foreground_activity()
+            except Exception:
+                foreground_active = False
             async with self._executing_lock:
                 # Snapshot under the lock so we don't race with mid-iteration adds.
                 executing_snapshot = set(self._executing)
@@ -663,8 +710,13 @@ class TaskScheduler:
                 for task in due:
                     if task.id in self._executing:
                         continue
+                    if foreground_active:
+                        task.next_run = now + timedelta(minutes=15)
+                        continue
                     self._executing.add(task.id)
                     to_dispatch.append(task.id)
+                if foreground_active and due:
+                    db.commit()
             for task_id in to_dispatch:
                 asyncio.create_task(self._execute_task(task_id))
         finally:
@@ -698,15 +750,26 @@ class TaskScheduler:
 
         try:
             if bypass_model_slot or not self._task_needs_model_slot(task_id):
-                await self._execute_task_locked(task_id, run_id, release_executing=release_executing)
+                await self._execute_task_locked(
+                    task_id,
+                    run_id,
+                    release_executing=release_executing,
+                    gate_foreground=not bypass_model_slot,
+                )
                 return
 
             async with self._run_semaphore:
-                await self._execute_task_locked(task_id, run_id, release_executing=release_executing)
+                await self._execute_task_locked(
+                    task_id,
+                    run_id,
+                    release_executing=release_executing,
+                    gate_foreground=True,
+                )
         except asyncio.CancelledError:
             # If cancellation happens while queued behind the semaphore,
             # _execute_task_locked never runs and cannot update the Activity row.
             self._mark_run_aborted(task_id, run_id)
+            self._defer_immediately_due_task(task_id, delay=timedelta(minutes=15))
             raise
         finally:
             handle = self._task_handles.get(task_id)
@@ -716,7 +779,36 @@ class TaskScheduler:
                 async with self._executing_lock:
                     self._executing.discard(task_id)
 
-    async def _execute_task_locked(self, task_id: str, run_id: str, *, release_executing: bool = True):
+    def _defer_immediately_due_task(self, task_id: str, *, delay: timedelta):
+        """A queued task can be cancelled before _execute_task_locked gets a DB
+        handle. If its next_run stays in the past, the scheduler dispatches it
+        again on the next tick and spams aborted Activity rows."""
+        try:
+            from core.database import SessionLocal, ScheduledTask
+            db = SessionLocal()
+            try:
+                task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+                if (
+                    task
+                    and task.status == "active"
+                    and task.next_run is not None
+                    and task.next_run <= _utcnow()
+                ):
+                    task.next_run = _utcnow() + delay
+                    db.commit()
+            finally:
+                db.close()
+        except Exception:
+            logger.debug("Failed to defer cancelled queued task %s", task_id, exc_info=True)
+
+    async def _execute_task_locked(
+        self,
+        task_id: str,
+        run_id: str,
+        *,
+        release_executing: bool = True,
+        gate_foreground: bool = True,
+    ):
         from core.database import SessionLocal, ScheduledTask, TaskRun
 
         db = SessionLocal()
@@ -732,6 +824,36 @@ class TaskScheduler:
                     stale.error = f"Task no longer active (status={task.status if task else 'deleted'})"
                     db.commit()
                 return
+
+            if (
+                is_admin_only_task_action(task.task_type, task.action)
+                and not owner_has_admin_task_privileges(task.owner)
+            ):
+                msg = f"Action '{task.action}' requires admin privileges"
+                blocked = db.query(TaskRun).filter(TaskRun.id == run_id).first()
+                if blocked:
+                    blocked.status = "error"
+                    blocked.result = msg
+                    blocked.error = msg
+                    blocked.finished_at = _utcnow()
+                task.status = "paused"
+                task.next_run = None
+                task.last_run = _utcnow()
+                logger.warning(
+                    "Paused admin-only task %s for non-admin owner %r",
+                    task_id,
+                    task.owner,
+                )
+                db.commit()
+                return
+
+            if gate_foreground:
+                waiting = db.query(TaskRun).filter(TaskRun.id == run_id).first()
+                if waiting and waiting.status == "queued":
+                    waiting.result = "Queued — waiting for Odysseus to be idle…"
+                    db.commit()
+                from src.interactive_gate import wait_for_interactive_quiet
+                await wait_for_interactive_quiet(f"scheduled task {task.name}")
 
             # Flip the run from queued → running. Reset started_at to the
             # actual execution start so queue wait time is visible from
@@ -763,6 +885,27 @@ class TaskScheduler:
             # previous llm/research run's model. The executors set it once the
             # model is resolved.
             self._last_run_model = None
+            foreground_cancel = {"hit": False}
+            foreground_monitor = None
+            if gate_foreground:
+                current_task = asyncio.current_task()
+
+                async def _cancel_if_foreground_active():
+                    # Give the just-finished quiet gate a tiny grace window,
+                    # then keep enforcing "background means background" while
+                    # a long email/LLM action is already running.
+                    await asyncio.sleep(0.1)
+                    from src.interactive_gate import has_foreground_activity
+                    while True:
+                        await asyncio.sleep(0.25)
+                        if has_foreground_activity():
+                            foreground_cancel["hit"] = True
+                            logger.info("Task '%s' interrupted because Odysseus became active", task.name)
+                            if current_task:
+                                current_task.cancel()
+                            return
+
+                foreground_monitor = asyncio.create_task(_cancel_if_foreground_active())
             try:
                 if task_type == "action":
                     result, success = await self._execute_action(task, run_id=run_id)
@@ -802,15 +945,22 @@ class TaskScheduler:
                 db.commit()
                 return
             except asyncio.CancelledError:
-                logger.info("Task '%s' stopped by user", task.name)
+                msg = (
+                    "Paused because Odysseus became active"
+                    if foreground_cancel.get("hit")
+                    else "Stopped by user"
+                )
+                logger.info("Task '%s' %s", task.name, msg)
                 run_obj = db.query(TaskRun).filter(TaskRun.id == run_id).first()
                 if run_obj:
                     run_obj.status = "aborted"
-                    run_obj.error = "Stopped by user"
-                    run_obj.result = run_obj.result or "Stopped by user"
+                    run_obj.error = msg
+                    run_obj.result = run_obj.result or msg
                     run_obj.finished_at = _utcnow()
                 task.last_run = _utcnow()
-                if (task.trigger_type or "schedule") == "schedule":
+                if foreground_cancel.get("hit"):
+                    task.next_run = _utcnow() + timedelta(minutes=15)
+                elif (task.trigger_type or "schedule") == "schedule":
                     task.next_run = compute_next_run(
                         task.schedule, task.scheduled_time,
                         task.scheduled_day, task.scheduled_date,
@@ -845,6 +995,13 @@ class TaskScheduler:
                     task.next_run = None
                 db.commit()
                 return
+            finally:
+                if foreground_monitor and not foreground_monitor.done():
+                    foreground_monitor.cancel()
+                    try:
+                        await foreground_monitor
+                    except asyncio.CancelledError:
+                        pass
 
             run.finished_at = _utcnow()
 
@@ -1014,6 +1171,7 @@ class TaskScheduler:
         "learn_sender_signatures",
         "summarize_emails",
         "draft_email_replies",
+        "email_auto_translate",
         "extract_email_events",
         "classify_events",
         "tidy_sessions",
@@ -1027,6 +1185,7 @@ class TaskScheduler:
     _MODEL_BACKED_ACTIONS = frozenset({
         "summarize_emails",
         "draft_email_replies",
+        "email_auto_translate",
         "extract_email_events",
         "classify_events",
         "learn_sender_signatures",
@@ -1083,6 +1242,8 @@ class TaskScheduler:
                 self._set_run_progress(run_id, message)
 
             kwargs = {"owner": task.owner, "task_name": task.name, "progress_cb": _progress}
+            if task.prompt:
+                kwargs["prompt"] = task.prompt
             if task.action in ("run_script", "run_local", "ssh_command") and task.prompt:
                 kwargs["script" if task.action in ("run_script", "run_local") else "command"] = task.prompt
             # cookbook_serve carries its JSON config in task.prompt — feed it
@@ -1357,6 +1518,7 @@ class TaskScheduler:
             endpoint_url, model = self._resolve_defaults(db, task.owner)
         if not endpoint_url or not model:
             raise RuntimeError("No model/endpoint configured")
+        endpoint_url = _normalize_chat_endpoint(endpoint_url)
         # Record the resolved model so _execute_task_locked can persist it on
         # the run (tasks rarely pin a model, so this is the only record of
         # which model actually produced the output).
@@ -1413,19 +1575,18 @@ class TaskScheduler:
                     system_prompt = f"{char_prompt}\n\n{system_prompt}"
             except Exception:
                 pass
-        # Inject current time so the model knows what's past vs upcoming
+        # Provide current date/time as a user-role message so the system prompt
+        # stays byte-identical across runs and doesn't bust the Anthropic prompt
+        # cache on every scheduled tick (see issue #2927 and the identical fix on
+        # the interactive-chat path in src/agent_loop.py).  The message is built
+        # once here and shared by both execution paths below (agent loop and the
+        # direct fallback) so time grounding is never lost on either path.
         tz_name = _resolve_task_timezone(db, task)
         try:
-            if tz_name:
-                from zoneinfo import ZoneInfo
-                from datetime import timezone
-                now_local = _utcnow().replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz_name))
-                time_str = now_local.strftime("%A, %B %d %Y, %H:%M %Z")
-            else:
-                time_str = _utcnow().strftime("%A, %B %d %Y, %H:%M UTC")
+            from src.user_time import current_datetime_context_message_for_tz
+            _dt_msg: dict | None = current_datetime_context_message_for_tz(tz_name)
         except Exception:
-            time_str = _utcnow().strftime("%A, %B %d %Y, %H:%M UTC")
-        system_prompt = f"Current time: {time_str}\n\n{system_prompt}"
+            _dt_msg = None
 
         # Compute the disabled-tools set: the crew's enabled_tools allowlist
         # (inverted) plus the operator's global disabled_tools setting. The
@@ -1473,14 +1634,15 @@ class TaskScheduler:
                 endpoint_url, model, task, session_id,
                 system_prompt=system_prompt, disabled_tools=disabled_tools or None,
                 relevant_tools=relevant_tools,
+                datetime_context_msg=_dt_msg,
             )
         except Exception as e:
             logger.warning(f"Agent loop failed for task '{task.name}', falling back to simple call: {e}")
             from src.task_endpoint import task_llm_call_async
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": task.prompt},
-            ]
+            messages: list = [{"role": "system", "content": system_prompt}]
+            if _dt_msg:
+                messages.append(_dt_msg)
+            messages.append({"role": "user", "content": task.prompt})
             result = await task_llm_call_async(
                 messages,
                 fallback_url=endpoint_url,
@@ -1547,6 +1709,8 @@ class TaskScheduler:
                 model_name = model_name or resolved_model
             except Exception:
                 pass
+
+        endpoint_url = _normalize_chat_endpoint(endpoint_url)
 
         session_id = task.session_id
         if not session_id:
@@ -1643,8 +1807,15 @@ class TaskScheduler:
 
         target = (output or "").strip()
         explicit = ""
+        account_id = ""
         if target.startswith("email:"):
             explicit = target.split(":", 1)[1].strip()
+            if "|account=" in explicit:
+                explicit, account_id = explicit.split("|account=", 1)
+                explicit = explicit.strip()
+                account_id = account_id.strip()
+            if explicit == "self":
+                explicit = ""
         elif "@" in target:
             explicit = target
 
@@ -1652,7 +1823,7 @@ class TaskScheduler:
             from routes.email_routes import _resolve_send_config
             from routes.email_helpers import _send_smtp_message
 
-            cfg = _resolve_send_config(owner=task.owner or "")
+            cfg = _resolve_send_config(account_id=account_id or None, owner=task.owner or "")
             to_addr = explicit or cfg.get("from_address") or cfg.get("smtp_user") or ""
             if not to_addr:
                 raise RuntimeError("No email recipient resolved for task output")
@@ -1667,7 +1838,7 @@ class TaskScheduler:
             msg["X-Odysseus-Ref"] = str(task.id)
             msg.set_content(result or "")
             _send_smtp_message(cfg, from_addr, [to_addr], msg.as_string(), timeout=30)
-            logger.info("Task %s emailed result to %s (%sb)", task.id, to_addr, len(result or ""))
+            logger.info("Task %s emailed result (recipient_set=%s, %sb)", task.id, bool(to_addr), len(result or ""))
         except Exception as e:
             logger.error("Task %s email delivery failed: %s", task.id, e, exc_info=True)
             raise
@@ -1676,16 +1847,20 @@ class TaskScheduler:
                               system_prompt: str | None = None,
                               disabled_tools: set | None = None,
                               relevant_tools: set | None = None,
-                              override_user_message: str | None = None) -> str:
+                              override_user_message: str | None = None,
+                              datetime_context_msg: dict | None = None) -> str:
         """Run the full agent loop with tool access, collecting the final text."""
         from src.agent_loop import stream_agent_loop
 
         system_content = system_prompt or "You are a helpful assistant executing a scheduled task. Use available tools to complete the task thoroughly."
         user_content = override_user_message or task.prompt
-        messages = [
-            {"role": "system", "content": system_content},
-            {"role": "user", "content": user_content},
-        ]
+        # Build the message list. The datetime context message (user-role) is
+        # inserted immediately before the task prompt so the system prefix stays
+        # byte-identical and cacheable across runs (see issue #2927).
+        messages: list = [{"role": "system", "content": system_content}]
+        if datetime_context_msg:
+            messages.append(datetime_context_msg)
+        messages.append({"role": "user", "content": user_content})
 
         # Resolve headers from the endpoint's API key
         headers = {}
@@ -1716,6 +1891,8 @@ class TaskScheduler:
         # behind the primary endpoint so a downed primary won't silently yield
         # `(no output)`.
         try:
+            from src.interactive_gate import wait_for_interactive_quiet
+            await wait_for_interactive_quiet(f"agent task {task.name}")
             from src.task_endpoint import resolve_task_candidates
             _task_fallbacks = resolve_task_candidates(
                 fallback_url=endpoint_url,
@@ -1736,6 +1913,7 @@ class TaskScheduler:
             disabled_tools=disabled_tools,
             relevant_tools=relevant_tools,
             fallbacks=_task_fallbacks,
+            workload="background",
         ):
             if event_str.startswith("data: ") and not event_str.startswith("data: [DONE]"):
                 try:
@@ -1821,6 +1999,7 @@ class TaskScheduler:
             endpoint_url, model = self._resolve_defaults(db, task.owner)
         if not endpoint_url or not model:
             raise RuntimeError("No model/endpoint configured for research")
+        endpoint_url = _normalize_chat_endpoint(endpoint_url)
         # Record the resolved model for the run record (see _execute_task_locked).
         self._last_run_model = model
 
@@ -2029,7 +2208,7 @@ class TaskScheduler:
                 # silent SMTP failure is easier to spot in the logs.
                 logger.info(
                     f"Task {task.id} delivered via MCP tool {tool_name} "
-                    f"(to={recipient or '<unset>'}, body={body_len}b, reply={stdout[:200]!r})"
+                    f"(recipient_set={bool(recipient)}, body={body_len}b, reply={stdout[:200]!r})"
                 )
         except Exception as e:
             logger.error(f"Task {task.id} MCP delivery failed: {e}")
@@ -2059,6 +2238,28 @@ class TaskScheduler:
                 stopped = True
 
         stopped = self._mark_run_aborted(task_id) or stopped
+        return stopped
+
+    async def stop_background_tasks_for_foreground(self, *, reason: str = "Odysseus became active") -> int:
+        """Cancel all in-process scheduler tasks because the user is active.
+
+        This is intentionally blunt for scheduled/background work: when the
+        user opens or uses Odysseus, foreground interaction wins immediately.
+        Manual force-runs can be restarted by the user; automatic jobs will be
+        deferred by their cancellation path instead of stealing the app.
+        """
+        async with self._executing_lock:
+            task_ids = list(self._executing)
+        stopped = 0
+        for task_id in task_ids:
+            handle = self._task_handles.get(task_id)
+            if handle and not handle.done():
+                handle.cancel()
+                stopped += 1
+            if self._mark_run_aborted(task_id):
+                stopped += 1
+        if stopped:
+            logger.info("Stopped %d background scheduler task(s): %s", stopped, reason)
         return stopped
 
     async def ensure_defaults(self, owner: str):

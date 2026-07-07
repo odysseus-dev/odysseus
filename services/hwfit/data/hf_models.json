@@ -5113,8 +5113,8 @@
  {
   "name": "deepseek-ai/DeepSeek-V4-Flash",
   "provider": "deepseek-ai",
-  "parameter_count": "284B",
-  "parameters_raw": 284000000000,
+  "parameter_count": "158.1B",
+  "parameters_raw": 158069433298,
   "active_parameters": 13000000000,
   "is_moe": true,
   "min_ram_gb": 200.0,
@@ -5130,15 +5130,40 @@
   ],
   "pipeline_tag": "text-generation",
   "architecture": "deepseek_v4_moe",
-  "hf_downloads": 3542202,
-  "hf_likes": 0,
-  "release_date": "2026-05-15"
+  "hf_downloads": 1882337,
+  "hf_likes": 1651,
+  "release_date": "2026-06-22"
+ },
+ {
+  "name": "deepseek-ai/DeepSeek-V4-Flash-DSpark",
+  "provider": "deepseek-ai",
+  "parameter_count": "165.3B",
+  "parameters_raw": 165265454782,
+  "active_parameters": 13000000000,
+  "is_moe": true,
+  "active_experts": 6,
+  "min_ram_gb": 170.0,
+  "recommended_ram_gb": 250.0,
+  "min_vram_gb": 165.0,
+  "quantization": "FP8-Mixed",
+  "context_length": 1000000,
+  "use_case": "General-purpose reasoning, long-context",
+  "capabilities": [
+   "long_context",
+   "reasoning",
+   "moe"
+  ],
+  "pipeline_tag": "text-generation",
+  "architecture": "deepseek_v4_moe",
+  "hf_downloads": 4446,
+  "hf_likes": 107,
+  "release_date": "2026-06-27"
  },
  {
   "name": "deepseek-ai/DeepSeek-V4-Flash-Base",
   "provider": "deepseek-ai",
-  "parameter_count": "284B",
-  "parameters_raw": 284000000000,
+  "parameter_count": "292.0B",
+  "parameters_raw": 292021347282,
   "active_parameters": 13000000000,
   "is_moe": true,
   "min_ram_gb": 290.0,
@@ -5153,15 +5178,15 @@
   ],
   "pipeline_tag": "text-generation",
   "architecture": "deepseek_v4_moe",
-  "hf_downloads": 0,
-  "hf_likes": 0,
-  "release_date": "2026-05-15"
+  "hf_downloads": 76030,
+  "hf_likes": 256,
+  "release_date": "2026-04-27"
  },
  {
   "name": "deepseek-ai/DeepSeek-V4-Pro",
   "provider": "deepseek-ai",
-  "parameter_count": "1.6T",
-  "parameters_raw": 1600000000000,
+  "parameter_count": "861.6B",
+  "parameters_raw": 861608274846,
   "active_parameters": 49000000000,
   "is_moe": true,
   "min_ram_gb": 1100.0,
@@ -5177,15 +5202,40 @@
   ],
   "pipeline_tag": "text-generation",
   "architecture": "deepseek_v4_moe",
-  "hf_downloads": 0,
-  "hf_likes": 0,
-  "release_date": "2026-05-15"
+  "hf_downloads": 1154610,
+  "hf_likes": 5118,
+  "release_date": "2026-06-22"
+ },
+ {
+  "name": "deepseek-ai/DeepSeek-V4-Pro-DSpark",
+  "provider": "deepseek-ai",
+  "parameter_count": "889.5B",
+  "parameters_raw": 889484881098,
+  "active_parameters": 49000000000,
+  "is_moe": true,
+  "active_experts": 6,
+  "min_ram_gb": 900.0,
+  "recommended_ram_gb": 1250.0,
+  "min_vram_gb": 890.0,
+  "quantization": "FP8-Mixed",
+  "context_length": 1000000,
+  "use_case": "Flagship reasoning, long-context",
+  "capabilities": [
+   "long_context",
+   "reasoning",
+   "moe"
+  ],
+  "pipeline_tag": "text-generation",
+  "architecture": "deepseek_v4_moe",
+  "hf_downloads": 6939,
+  "hf_likes": 241,
+  "release_date": "2026-06-27"
  },
  {
   "name": "deepseek-ai/DeepSeek-V4-Pro-Base",
   "provider": "deepseek-ai",
   "parameter_count": "1.6T",
-  "parameters_raw": 1600000000000,
+  "parameters_raw": 1600790440862,
   "active_parameters": 49000000000,
   "is_moe": true,
   "min_ram_gb": 1700.0,
@@ -5200,9 +5250,9 @@
   ],
   "pipeline_tag": "text-generation",
   "architecture": "deepseek_v4_moe",
-  "hf_downloads": 0,
-  "hf_likes": 0,
-  "release_date": "2026-05-15"
+  "hf_downloads": 25387,
+  "hf_likes": 305,
+  "release_date": "2026-04-27"
  },
  {
   "name": "deepseek-ai/deepseek-coder-6.7b-base",
@@ -13309,6 +13359,106 @@
   "gguf_sources": []
  },
  {
+  "name": "zai-org/GLM-5.2",
+  "provider": "zai-org",
+  "parameter_count": "753.3B",
+  "parameters_raw": 753329940480,
+  "min_ram_gb": 1510.0,
+  "recommended_ram_gb": 1800.0,
+  "min_vram_gb": 1510.0,
+  "quantization": "BF16",
+  "context_length": 1048576,
+  "use_case": "General purpose reasoning, coding, long-context",
+  "capabilities": [
+   "long_context",
+   "reasoning",
+   "coding",
+   "moe"
+  ],
+  "pipeline_tag": "text-generation",
+  "architecture": "glm_moe_dsa",
+  "hf_downloads": 142547,
+  "hf_likes": 2996,
+  "release_date": "2026-06-23",
+  "is_moe": true,
+  "active_experts": 8,
+  "gguf_sources": [
+   {
+    "repo": "unsloth/GLM-5.2-GGUF",
+    "provider": "unsloth",
+    "file": "UD-Q4_K_M/*.gguf",
+    "quant": "Q4_K_M"
+   }
+  ]
+ },
+ {
+  "name": "zai-org/GLM-5.2-FP8",
+  "provider": "zai-org",
+  "parameter_count": "753.4B",
+  "parameters_raw": 753375793584,
+  "min_ram_gb": 760.0,
+  "recommended_ram_gb": 900.0,
+  "min_vram_gb": 760.0,
+  "quantization": "FP8",
+  "context_length": 1048576,
+  "use_case": "General purpose reasoning, coding, long-context",
+  "capabilities": [
+   "long_context",
+   "reasoning",
+   "coding",
+   "moe"
+  ],
+  "pipeline_tag": "text-generation",
+  "architecture": "glm_moe_dsa",
+  "hf_downloads": 884226,
+  "hf_likes": 182,
+  "release_date": "2026-06-23",
+  "is_moe": true,
+  "active_experts": 8,
+  "gguf_sources": [
+   {
+    "repo": "unsloth/GLM-5.2-GGUF",
+    "provider": "unsloth",
+    "file": "UD-Q4_K_M/*.gguf",
+    "quant": "Q4_K_M"
+   }
+  ]
+ },
+ {
+  "name": "unsloth/GLM-5.2-GGUF",
+  "provider": "unsloth",
+  "parameter_count": "753.9B",
+  "parameters_raw": 753864139008,
+  "min_ram_gb": 452.0,
+  "recommended_ram_gb": 620.0,
+  "min_vram_gb": 452.0,
+  "quantization": "Q4_K_M",
+  "context_length": 1048576,
+  "use_case": "General purpose reasoning, coding, long-context (GGUF)",
+  "capabilities": [
+   "long_context",
+   "reasoning",
+   "coding",
+   "moe"
+  ],
+  "pipeline_tag": "text-generation",
+  "architecture": "glm-dsa",
+  "hf_downloads": 180394,
+  "hf_likes": 474,
+  "release_date": "2026-06-23",
+  "is_moe": true,
+  "active_experts": 8,
+  "is_gguf": true,
+  "gguf_sources": [
+   {
+    "repo": "unsloth/GLM-5.2-GGUF",
+    "provider": "unsloth",
+    "file": "UD-Q4_K_M/*.gguf",
+    "quant": "Q4_K_M"
+   }
+  ]
+ },
+ {
   "name": "cyankiwi/Qwen3.5-35B-A3B-AWQ-4bit",
   "provider": "cyankiwi",
   "parameter_count": "35.0B",
@@ -14055,6 +14205,138 @@
   "pipeline_tag": "image-text-to-text",
   "release_date": "2026-04-01",
   "gguf_sources": [],
+  "capabilities": [
+   "vision"
+  ]
+ },
+ {
+  "name": "google/gemma-4-12B-it",
+  "provider": "Google",
+  "parameter_count": "12.0B",
+  "parameters_raw": 12000000000,
+  "min_ram_gb": 8.5,
+  "recommended_ram_gb": 11.0,
+  "min_vram_gb": 7.5,
+  "quantization": "Q4_K_M",
+  "context_length": 131072,
+  "use_case": "General purpose, multimodal; unsloth/gemma-4-12B-it-GGUF Dynamic variants reduce VRAM from ~7.5 GB to ~5.5 GB",
+  "is_moe": false,
+  "num_experts": null,
+  "active_experts": null,
+  "active_parameters": null,
+  "architecture": "gemma4",
+  "pipeline_tag": "image-text-to-text",
+  "release_date": "2026-04-01",
+  "gguf_sources": [
+   {
+    "repo": "unsloth/gemma-4-12B-it-GGUF",
+    "provider": "unsloth"
+   }
+  ],
+  "capabilities": [
+   "vision"
+  ]
+ },
+ {
+  "name": "google/gemma-4-12B-it-qat-int4",
+  "provider": "Google",
+  "parameter_count": "12.0B",
+  "parameters_raw": 12000000000,
+  "min_ram_gb": 8.0,
+  "recommended_ram_gb": 9.5,
+  "min_vram_gb": 6.5,
+  "quantization": "QAT-INT4",
+  "context_length": 131072,
+  "use_case": "General purpose, multimodal (QAT quantization-aware training — higher quality than post-train INT4; vLLM native; no GGUF)",
+  "is_moe": false,
+  "num_experts": null,
+  "active_experts": null,
+  "active_parameters": null,
+  "architecture": "gemma4",
+  "pipeline_tag": "image-text-to-text",
+  "release_date": "2026-04-01",
+  "gguf_sources": [],
+  "capabilities": [
+   "vision"
+  ]
+ },
+ {
+  "name": "google/gemma-4-12B-it-qat-int8",
+  "provider": "Google",
+  "parameter_count": "12.0B",
+  "parameters_raw": 12000000000,
+  "min_ram_gb": 15.0,
+  "recommended_ram_gb": 20.0,
+  "min_vram_gb": 13.5,
+  "quantization": "QAT-INT8",
+  "context_length": 131072,
+  "use_case": "General purpose, multimodal (QAT INT8 — highest quality, 2x VRAM of QAT-INT4; vLLM native; no GGUF)",
+  "is_moe": false,
+  "num_experts": null,
+  "active_experts": null,
+  "active_parameters": null,
+  "architecture": "gemma4",
+  "pipeline_tag": "image-text-to-text",
+  "release_date": "2026-04-01",
+  "gguf_sources": [],
+  "capabilities": [
+   "vision"
+  ]
+ },
+ {
+  "name": "google/gemma-4-12B-it-qat-q4_0-gguf",
+  "provider": "Google",
+  "parameter_count": "12.0B",
+  "parameters_raw": 12000000000,
+  "min_ram_gb": 8.5,
+  "recommended_ram_gb": 11.0,
+  "min_vram_gb": 7.5,
+  "quantization": "QAT-INT4",
+  "context_length": 262144,
+  "use_case": "General purpose, multimodal (vision + audio); official Google QAT int4 GGUF — near-bf16 quality at int4 size, served on llama.cpp/Ollama with CPU offload",
+  "is_moe": false,
+  "num_experts": null,
+  "active_experts": null,
+  "active_parameters": null,
+  "architecture": "gemma4",
+  "pipeline_tag": "image-text-to-text",
+  "release_date": "2026-04-01",
+  "gguf_sources": [
+   {
+    "repo": "google/gemma-4-12B-it-qat-q4_0-gguf",
+    "provider": "Google",
+    "file": "gemma-4-12b-it-qat-q4_0.gguf"
+   }
+  ],
+  "capabilities": [
+   "vision",
+   "audio"
+  ]
+ },
+ {
+  "name": "google/gemma-4-26B-A4B-it-qat-q4_0-gguf",
+  "provider": "Google",
+  "parameter_count": "25.2B",
+  "parameters_raw": 25200000000,
+  "min_ram_gb": 14.4,
+  "recommended_ram_gb": 18.0,
+  "min_vram_gb": 14.4,
+  "quantization": "QAT-INT4",
+  "context_length": 262144,
+  "use_case": "High-throughput, multimodal MoE (3.8B active); official Google QAT int4 GGUF — near-bf16 quality at int4 size, served on llama.cpp with CPU offload",
+  "is_moe": true,
+  "num_experts": null,
+  "active_experts": null,
+  "active_parameters": 3800000000,
+  "architecture": "gemma4",
+  "pipeline_tag": "image-text-to-text",
+  "release_date": "2026-04-01",
+  "gguf_sources": [
+   {
+    "repo": "google/gemma-4-26B-A4B-it-qat-q4_0-gguf",
+    "provider": "Google"
+   }
+  ],
   "capabilities": [
    "vision"
   ]
@@ -18822,6 +19104,54 @@
   "num_experts": 256,
   "active_experts": 8,
   "active_parameters": 13600000000
+ },
+ {
+  "name": "MiniMaxAI/MiniMax-M3",
+  "provider": "MiniMaxAI",
+  "parameter_count": "427.0B",
+  "parameters_raw": 427040140160,
+  "min_ram_gb": 855.0,
+  "recommended_ram_gb": 1025.0,
+  "min_vram_gb": 855.0,
+  "quantization": "BF16",
+  "context_length": 1000000,
+  "use_case": "Vision, chat, coding, agentic tool use",
+  "capabilities": [
+   "vision",
+   "tool_use",
+   "coding",
+   "moe"
+  ],
+  "pipeline_tag": "image-text-to-text",
+  "architecture": "minimax_m3_vl",
+  "hf_downloads": 192311,
+  "hf_likes": 1267,
+  "release_date": "2026-06-23",
+  "is_moe": true
+ },
+ {
+  "name": "MiniMaxAI/MiniMax-M3-MXFP8",
+  "provider": "MiniMaxAI",
+  "parameter_count": "440.3B",
+  "parameters_raw": 440279845760,
+  "min_ram_gb": 445.0,
+  "recommended_ram_gb": 560.0,
+  "min_vram_gb": 445.0,
+  "quantization": "MXFP8",
+  "context_length": 1000000,
+  "use_case": "Vision, chat, coding, agentic tool use",
+  "capabilities": [
+   "vision",
+   "tool_use",
+   "coding",
+   "moe"
+  ],
+  "pipeline_tag": "image-text-to-text",
+  "architecture": "minimax_m3_vl",
+  "hf_downloads": 572278,
+  "hf_likes": 43,
+  "release_date": "2026-06-15",
+  "is_moe": true
  },
  {
   "name": "bullerwins/MiniMax-M2.7-REAP-172B-fp8",

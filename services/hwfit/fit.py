@@ -9,7 +9,7 @@ from services.hwfit.models import (
 GPU_BANDWIDTH = {
     "5090": 1792, "5080": 960, "5070 ti": 896, "5070": 672, "5060 ti": 448, "5060": 256,
     "4090": 1008, "4080 super": 736, "4080": 717, "4070 ti super": 672, "4070 ti": 504, "4070 super": 504, "4070": 504, "4060 ti": 288, "4060": 272,
-    "3090 ti": 1008, "3090": 936, "3080 ti": 912, "3080": 760, "3070 ti": 608, "3070": 448, "3060 ti": 448, "3060": 360,
+    "3090 ti": 1008, "3090": 936, "3080 ti": 912, "3080": 760, "3070 ti": 608, "3070": 448, "3060 ti": 448, "3060": 360, "3050 ti": 192, "3050": 224,
     "2080 ti": 616, "2080 super": 496, "2080": 448, "2070 super": 448, "2070": 448, "2060 super": 448, "2060": 336,
     "1660 ti": 288, "1660 super": 336, "1660": 192, "1650 super": 192, "1650": 128,
     "h100 sxm": 3350, "h100": 2039, "h200": 4800, "a100 sxm": 2039, "a100": 1555,
@@ -168,6 +168,19 @@ def _canonical_cpu_backend(system):
     return "cpu_x86"
 
 
+def _is_mlx_model(model, native_q=None):
+    name = (model.get("name") or "").lower()
+    provider = (model.get("provider") or "").lower()
+    fmt = (model.get("format") or "").lower()
+    q = (native_q if native_q is not None else _native_quant(model)).lower()
+    return (
+        q.startswith("mlx-")
+        or provider == "mlx-community"
+        or fmt == "mlx"
+        or name.startswith("mlx-community/")
+    )
+
+
 def _estimate_speed(model, quant, run_mode, system, offload_frac=0.0):
     """Estimate tok/s. Uses active params for MoE (only active experts run per token).
 
@@ -311,6 +324,22 @@ def _fit_score(required, available):
     if ratio <= 0.9:
         return 70
     return 50
+
+
+def _is_unified_memory_system(system):
+    backend = (system.get("backend") or "").lower()
+    return bool(system.get("unified_memory")) or backend in ("metal", "mps", "apple")
+
+
+def _fit_level_for_budget(required_gb, budget_gb):
+    if not required_gb or not budget_gb or required_gb > budget_gb:
+        return "too_tight"
+    ratio = required_gb / budget_gb
+    if ratio <= 0.50:
+        return "perfect"
+    if ratio <= 0.78:
+        return "good"
+    return "marginal"
 
 
 def _context_score(ctx, use_case):
@@ -516,21 +545,42 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
     run_mode, quant, fit_ctx, required_gb = result
 
     # Determine fit level
-    budget = effective_vram if run_mode == "gpu" else available_ram
+    unified_memory = _is_unified_memory_system(system)
+    total_ram = system.get("total_ram_gb") or available_ram
+    unified_budget = max(total_ram or 0, available_ram or 0, effective_vram or 0)
+    budget = unified_budget if unified_memory else (effective_vram if run_mode == "gpu" else available_ram)
     if required_gb > budget:
         return None
     if run_mode == "gpu":
-        rec = model.get("recommended_ram_gb") or required_gb
-        if rec <= gpu_vram:
-            fit_level = "perfect"
-        elif gpu_vram >= required_gb * 1.2:
-            fit_level = "good"
+        if unified_memory:
+            fit_level = _fit_level_for_budget(required_gb, budget)
         else:
-            fit_level = "marginal"
+            # GPU-only fit must leave real allocator/KV/runtime headroom. The
+            # old check used recommended_ram_gb (or required_gb as a fallback),
+            # which made any model that barely fit VRAM read as "perfect".
+            # On CUDA/vLLM/SGLang that is misleading: 141 GB on a 160 GB box is
+            # runnable, but not a comfortable perfect fit.
+            if gpu_vram >= required_gb * 1.50:
+                fit_level = "perfect"
+            elif gpu_vram >= required_gb * 1.2:
+                fit_level = "good"
+            else:
+                fit_level = "marginal"
     elif run_mode == "cpu_offload":
-        fit_level = "good" if available_ram >= required_gb * 1.2 else "marginal"
+        fit_level = _fit_level_for_budget(required_gb, budget)
+        if fit_level == "perfect":
+            fit_level = "good"
     else:
-        fit_level = "marginal"
+        fit_level = _fit_level_for_budget(required_gb, budget)
+        if fit_level == "too_tight":
+            fit_level = "marginal"
+
+    # Rows that comfortably fit in a huge RAM/unified-memory pool should not all
+    # look "marginal"; that made 1B-70B CPU/Ollama rows orange on 256 GB systems.
+    if fit_level == "marginal" and budget and required_gb <= budget * 0.78:
+        fit_level = "good"
+    if fit_level == "good" and budget and required_gb <= budget * 0.50 and run_mode != "cpu_offload":
+        fit_level = "perfect"
 
     # Fraction of the model that spills to CPU RAM (drives the offload speed
     # model). When offloading, anything beyond the GPU's VRAM lives in system RAM.
@@ -621,6 +671,40 @@ SORT_KEYS = {
 }
 
 
+def _search_blob(*parts):
+    text = " ".join(str(p or "") for p in parts).lower()
+    compact = re.sub(r"[^a-z0-9]+", "", text)
+    spaced = re.sub(r"[^a-z0-9]+", " ", text).strip()
+    return f"{text} {spaced} {compact}"
+
+
+def _matches_search(model, search):
+    terms = [t for t in re.split(r"\s+", (search or "").strip().lower()) if t]
+    if not terms:
+        return True
+    blob = _search_blob(
+        model.get("name"),
+        model.get("provider"),
+        model.get("architecture"),
+        model.get("quantization"),
+        model.get("format"),
+        model.get("parameter_count"),
+    )
+    for term in terms:
+        norm = re.sub(r"[^a-z0-9]+", "", term)
+        if term not in blob and (not norm or norm not in blob):
+            if re.fullmatch(r"\d+(?:\.\d+)?b?", term):
+                try:
+                    wanted = float(term.rstrip("b"))
+                    actual = params_b(model)
+                except (TypeError, ValueError):
+                    actual = 0
+                if wanted > 0 and actual > 0 and abs(actual - wanted) <= max(5.0, wanted * 0.08):
+                    continue
+            return False
+    return True
+
+
 def rank_models(system, use_case=None, limit=50, search=None, sort="score", quant=None, target_context=None, fit_only=False):
     """Rank all models against detected hardware. Returns sorted list of fit results.
 
@@ -693,10 +777,11 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
 
     for m in models:
         native_q = _native_quant(m)
+        is_mlx = _is_mlx_model(m, native_q)
 
-        # MLX needs the mlx_lm runtime, which Odysseus does not generate serve
-        # commands for. Hide it on every backend, including Metal.
-        if native_q.startswith("mlx-") or "mlx" in (m.get("name") or "").lower():
+        # MLX is Apple Silicon-only. It should never appear on CUDA/ROCm/CPU,
+        # but it is first-class on Metal where mlx_lm.server can serve it.
+        if is_mlx and not apple_silicon:
             continue
 
         # ROCm support for vLLM/SGLang quantized safetensors is too brittle to
@@ -723,7 +808,7 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
         # Windows is the same: Odysseus only supports llama.cpp on Windows,
         # which requires GGUF. vLLM/SGLang are explicitly blocked, so AWQ/GPTQ
         # models without a GGUF source are unservable there.
-        if (apple_silicon or consumer_amd or is_windows) and not (m.get("is_gguf") or m.get("gguf_sources")):
+        if (apple_silicon or consumer_amd or is_windows) and not is_mlx and not (m.get("is_gguf") or m.get("gguf_sources")):
             continue
 
         # Format filter: AWQ tab -> only AWQ models, FP4 tab -> FP4-family models, etc.
@@ -741,13 +826,26 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
             if quant in ("INT4", "INT8", "W4A16", "W8A8", "W8A16") and native_q != quant:
                 continue
 
-        if search:
-            name = m.get("name", "").lower()
-            provider = m.get("provider", "").lower()
-            if search.lower() not in name and search.lower() not in provider:
-                continue
+        if search and not _matches_search(m, search):
+            continue
 
-        result = analyze_model(m, system, target_quant=quant, scoring_use_case=(use_case or "general"), target_context=target_context)
+        model_quant = quant
+        # UI "Q4" means the user's looking for a 4-bit fit. On multi-GPU
+        # CUDA/vLLM/SGLang boxes, many practical 4-bit models are native AWQ
+        # safetensors, not GGUF Q4_K_M. If we pass Q4_K_M into a prequantized
+        # AWQ row, analyze_model correctly rejects it as the wrong serving
+        # format, but the result is confusing: highlighting Quant/Q4 hides the
+        # exact AWQ rows the machine is built to run. Treat Q4 as AWQ-4bit for
+        # native AWQ rows only on accelerator servers that can serve them.
+        if (
+            quant == "Q4_K_M"
+            and system.get("gpu_count", 1) >= 2
+            and not (apple_silicon or consumer_amd or is_windows)
+            and native_q == "AWQ-4bit"
+        ):
+            model_quant = native_q
+
+        result = analyze_model(m, system, target_quant=model_quant, scoring_use_case=(use_case or "general"), target_context=target_context)
         if result is None:
             continue
 

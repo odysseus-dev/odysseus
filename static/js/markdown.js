@@ -133,7 +133,7 @@ function _cleanAllowedHtmlOnce(htmlString) {
   return tpl.innerHTML;
 }
 
-function sanitizeAllowedHtml(html) {
+export function sanitizeAllowedHtml(html) {
   const raw = String(html == null ? '' : html);
   // Non-browser context (e.g. a future SSR/Node import): fail closed by
   // escaping rather than trusting the markup.
@@ -165,7 +165,7 @@ export function hasUnclosedThinkTag(text) {
 }
 
 export function startsWithReasoningPrefix(text) {
-  return /^\s*(?:thinking(?:\s+process)?\s*:|the user |i need |i should |i will |they are |the question |i can )/i.test(text || '');
+  return /^\s*(?:thinking(?:\s+process)?\s*:|the user |user wants|we need |i need |i should |i will |i'll |i am going |let me (?:think|look|see|check|read|review|analyze|parse|figure|draft|write)|they are |the question |i can )/i.test(text || '');
 }
 
 export function normalizeThinkingMarkup(text) {
@@ -234,6 +234,11 @@ function normalizePlainThinking(text) {
       const reply = withoutPrefix.slice(match.index + 1).trim();
       if (thinkBlock && reply) return `<think>${thinkBlock}</think>\n${reply}`;
     }
+  }
+
+  if (/^\s*(?:thinking(?:\s+process)?\s*:|the user |user wants|we need |let me (?:think|look|see|check|read|review|analyze|parse|figure|draft|write)|i need to |i should |i will |i'll |i am going )/i.test(trimmed)) {
+    const thinkBlock = withoutPrefix.trim();
+    if (thinkBlock) return `<think>${thinkBlock}</think>`;
   }
 
   return text;
@@ -483,6 +488,7 @@ export function processWithThinking(text) {
 export function mdToHtml(src, opts) {
   const allowedHtmlBlocks = [];
   const codeBlocks = [];
+  const inlineCodeBlocks = [];
   const mermaidBlocks = [];
   let s = (src ?? '');
 
@@ -521,6 +527,19 @@ export function mdToHtml(src, opts) {
     return placeholder;
   });
 
+  // Extract inline code spans before the link/autolink/HTML passes, mirroring
+  // the fenced-block handling above. A URL inside `inline code` (e.g.
+  // `irm http://127.0.0.1:3000/x`) is preceded by a space, so the bare-URL
+  // autolink matches it, wraps it in an <a> tag, and swaps that for an
+  // ___ALLOWED_HTML_ placeholder — corrupting the command. The old inline-code
+  // pass ran after those passes, too late to protect it.
+  s = s.replace(/`([^`]+?)`/g, (match, code) => {
+    if (code.startsWith('___CODE_BLOCK_') || code.startsWith('___MERMAID_BLOCK_')) return match;
+    const placeholder = `___INLINE_CODE_${inlineCodeBlocks.length}___`;
+    inlineCodeBlocks.push(`<code>${escapeHtml(code)}</code>`);
+    return placeholder;
+  });
+
   // Repair common ways the agent mangles the entity-anchor convention
   // (`[Name](#kind-<id>)`). Models reliably get the single-link case
   // right but slip into other formats when listing many in a table.
@@ -545,6 +564,12 @@ export function mdToHtml(src, opts) {
   s = s.replace(
     new RegExp(`(^|[^\\[(])#(${ANCHOR_KIND}-[A-Za-z0-9_-]+)\\b`, 'g'),
     '$1[#$2](#$2)',
+  );
+  // Legacy search_chats output used bare session hashes (`#<uuid>`). Upgrade
+  // those too so old answers and model summaries remain clickable.
+  s = s.replace(
+    /(^|[^\[(])#([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/gi,
+    '$1[#session-$2](#session-$2)',
   );
 
   // Convert markdown images before links so ![alt](url) does not become
@@ -678,12 +703,6 @@ export function mdToHtml(src, opts) {
     return html;
   });
 
-  // Inline code (but not placeholders)
-  s = s.replace(/`([^`]+?)`/g, (match, code) => {
-    if (code.startsWith('___CODE_BLOCK_') || code.startsWith('___ALLOWED_HTML_')) return match;
-    return `<code>${code}</code>`;
-  });
-
   // Horizontal rules (must come before bold/italic to avoid * conflicts)
   s = s.replace(/^(?:---|\*\*\*|___)\s*$/gm, '<hr>');
 
@@ -756,6 +775,14 @@ export function mdToHtml(src, opts) {
     s = s.replace(`___CODE_BLOCK_${index}___`, block);
   });
 
+  // Restore inline code spans last, so placeholders carried inside restored
+  // <a>/allowed-HTML blocks are resolved too. The function replacer keeps the
+  // escaped code literal — e.g. a shell snippet like `echo $1` is not treated
+  // as a regex back-reference.
+  inlineCodeBlocks.forEach((block, index) => {
+    s = s.replace(`___INLINE_CODE_${index}___`, () => block);
+  });
+
   return _useSvgEmoji() ? svgifyEmoji(s, opts) : s;
 }
 
@@ -808,6 +835,7 @@ export function renderMermaid(container) {
 const markdownModule = {
   escapeHtml,
   mdToHtml,
+  sanitizeAllowedHtml,
   squashOutsideCode,
   renderContent,
   processWithThinking,

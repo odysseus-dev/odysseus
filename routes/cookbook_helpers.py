@@ -439,15 +439,30 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "                if f.is_file(): nf += 1; sz += f.stat().st_size",
         "                if f.name.endswith('.incomplete'): ic = True",
         "        snap = os.path.join(cache, d, 'snapshots')",
-        "        # Windows HF cache stores files directly in snapshots/; blobs/ may be empty.",
-        "        # Fallback: scan snapshots for real files when blobs yielded nothing.",
-        "        if sz == 0 and os.path.isdir(snap):",
+        "        def snapshot_size():",
+        "            total, count, incomplete = 0, 0, False",
+        "            seen_real = set()",
         "            for sd in os.listdir(snap):",
         "                sf = os.path.join(snap, sd)",
         "                if not os.path.isdir(sf): continue",
-        "                for f in os.scandir(sf):",
-        "                    if f.is_file(): nf += 1; sz += f.stat().st_size",
-        "                    if f.name.endswith('.incomplete'): ic = True",
+        "                for root, dirs, fns in safe_walk(sf):",
+        "                    for fn in fns:",
+        "                        fp = os.path.join(root, fn)",
+        "                        if fn.endswith('.incomplete'): incomplete = True",
+        "                        try:",
+        "                            real = os.path.realpath(fp)",
+        "                            if real in seen_real: continue",
+        "                            seen_real.add(real)",
+        "                            total += os.path.getsize(real)",
+        "                            count += 1",
+        "                        except Exception:",
+        "                            pass",
+        "            return total, count, incomplete",
+        "        # Some HF caches (macOS/MLX/Xet-style) keep blobs elsewhere or expose",
+        "        # snapshot symlinks only. Size snapshots too when blob accounting is empty.",
+        "        if sz == 0 and os.path.isdir(snap):",
+        "            sz2, nf2, ic2 = snapshot_size()",
+        "            sz, nf, ic = sz2, nf2, ic or ic2",
         "        is_diffusion = False; gguf_files = []",
         "        if os.path.isdir(snap):",
         "            for sd in os.listdir(snap):",
@@ -471,7 +486,18 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "    add('/app/.cache/huggingface/hub')",
         f"    add({add_hf_cache!r})" if add_hf_cache else "",
         "    return candidates",
+        "def normalize_model_dir(p):",
+        "    p = os.path.expanduser((p or '').strip())",
+        "    if not p: return p",
+        "    if os.path.isdir(p) or os.path.isabs(p): return p",
+        "    # Users often paste Linux absolute paths without the leading slash.",
+        "    # Treat home/<user>/... as /home/<user>/... so remote scans work.",
+        "    if p.startswith(('home/', 'mnt/', 'media/', 'data/', 'opt/', 'srv/', 'var/')):",
+        "        prefixed = '/' + p",
+        "        if os.path.isdir(prefixed): return prefixed",
+        "    return p",
         "def scan_dir(p):",
+        "    p = normalize_model_dir(p)",
         "    if not os.path.isdir(p) or not safe_path(p): return",
         "    for d in sorted(os.listdir(p)):",
         "        if d.startswith('.'): continue",
@@ -541,7 +567,7 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "scan_ollama()",
     ]
     for model_dir in model_dirs or []:
-        lines.append(f"scan_dir(os.path.expanduser({model_dir!r}))")
+        lines.append(f"scan_dir({model_dir!r})")
     lines.append("print(json.dumps(models))")
     return "\n".join(lines) + "\n"
 
@@ -558,10 +584,22 @@ def _bash_squote(v: str) -> str:
     return v.replace("'", "'\\''")
 
 
+# Shown by generated runner scripts when the ollama binary is missing on the
+# target host. Must stay free of backticks/$( ) and be emitted single-quoted:
+# an earlier version wrapped the install one-liner in backticks inside a
+# double-quoted echo, which bash executed as command substitution and ran the
+# system-wide installer (including on remote SSH hosts) instead of printing
+# the hint.
+OLLAMA_MISSING_HINT = (
+    "ERROR: Ollama not found on this server. Install it from "
+    "https://ollama.com/download or run: curl -fsSL https://ollama.com/install.sh | sh"
+)
+
+
 # Allow-list of binaries permitted as the leading token of `req.cmd` for /api/model/serve.
 # Anything else is rejected before the cmd is interpolated into a tmux/PowerShell wrapper.
 _SERVE_CMD_ALLOWLIST = {
-    "vllm", "llama-server", "llama_server", "llama.cpp", "ollama",
+    "vllm", "llama-server", "llama-server.exe", "llama_server", "llama.cpp", "ollama",
     "python", "python3",
     "sglang", "lmdeploy",
     "node", "npx",
@@ -576,6 +614,16 @@ _SERVE_CMD_ALLOWLIST = {
 # validate the serve binaries it guards rather than rejecting it wholesale.
 _GGUF_PRELUDE_RE = re.compile(
     r'^MODEL_FILE=\$\([^\n]*?\)\s*&&\s*\{[^{}]*\}\s*\|\|\s*\{[^{}]*\}\s*&&\s*'
+)
+_SAFE_SUBSHELL_TEXT = r"[^'\n;&|`$()<>]+"
+_SAFE_SUBSHELL_DQ_HOME_PATH = r'"\$HOME/[^"\n;&|`()<>]*"'
+_SAFE_PRINTF_SUBSHELL_RE = re.compile(
+    rf"^\$\(printf[ \t]+%s[ \t]+(?:'{_SAFE_SUBSHELL_TEXT}'|\$\{{HOME\}}'/{_SAFE_SUBSHELL_TEXT}')\)$"
+)
+_SAFE_FIND_MMPROJ_SUBSHELL_RE = re.compile(
+    rf"^\$\(find[ \t]+(?:'{_SAFE_SUBSHELL_TEXT}'|{_SAFE_SUBSHELL_DQ_HOME_PATH}|{_SAFE_SUBSHELL_TEXT})"
+    r"[ \t]+-iname[ \t]+'mmproj\*\.gguf'"
+    r"(?:[ \t]+2>/dev/null)?[ \t]*\|[ \t]*sort[ \t]*\|[ \t]*head[ \t]+-1\)$"
 )
 _OLLAMA_HOST_ASSIGNMENT_RE = re.compile(r"(?:^|\s)OLLAMA_HOST=([^\s]+)")
 _OLLAMA_BIND_RE = re.compile(r"^\[([^\]]+)\]:(\d+)$|^([^:]+):(\d+)$")
@@ -677,6 +725,13 @@ def _check_serve_binary(seg: str) -> None:
         )
 
 
+def _is_safe_serve_subshell(subshell: str) -> bool:
+    return bool(
+        _SAFE_PRINTF_SUBSHELL_RE.fullmatch(subshell)
+        or _SAFE_FIND_MMPROJ_SUBSHELL_RE.fullmatch(subshell)
+    )
+
+
 def _validate_serve_cmd(v: str | None) -> str | None:
     """Reject serve commands that aren't in the allowlist or contain shell metachars.
 
@@ -708,15 +763,15 @@ def _validate_serve_cmd(v: str | None) -> str | None:
             _check_serve_binary(part.strip())
         return v
 
-    # Otherwise: a single invocation — no shell metacharacters allowed.
-    # Temporarily replace safe $(printf %s ...) expressions with a placeholder
-    # to avoid triggering the metacharacter/command-injection checks.
-    cleaned_v = v
-    printf_matches = list(re.finditer(r"\$\(\s*printf\s+%s\s+([^\n()]*?)\)", v))
-    for match in printf_matches:
-        inner = match.group(1)
-        if not any(c in inner for c in (";", "&&", "||", "$(", "`")):
-            cleaned_v = cleaned_v.replace(match.group(0), "/placeholder/safe/path.gguf")
+    # Otherwise: a single invocation — no shell metacharacters allowed. Replace
+    # only the exact command substitutions emitted by the Cookbook UI:
+    # $(printf %s 'safe-path') and the mmproj lookup
+    # $(find <path> -iname 'mmproj*.gguf' 2>/dev/null | sort | head -1).
+    def _replace_safe_subshell(match: re.Match[str]) -> str:
+        subshell = match.group(0)
+        return "/placeholder/safe/path" if _is_safe_serve_subshell(subshell) else subshell
+
+    cleaned_v = re.sub(r"\$\([^()]*\)", _replace_safe_subshell, v)
 
     # (`$(` was the original intent; bare `$` is fine for shell-safe paths.)
     if any(c in cleaned_v for c in (";", "&&", "||", "$(")):
@@ -1244,19 +1299,34 @@ def _diagnose_serve_output(text: str) -> dict | None:
             [{"label": "install vLLM in Cookbook Dependencies", "op": "dependency", "package": "vllm"}],
         ),
         (
-            r"sgl_kernel[\s\S]*(Python\.h|libnuma\.so\.1|common_ops)|"
-            r"(Python\.h|libnuma\.so\.1|common_ops)[\s\S]*sgl_kernel|"
+            r"sgl_kernel[\s\S]*(Python\.h|libnuma\.so\.1|common_ops|libnvrtc\.so)|"
+            r"(Python\.h|libnuma\.so\.1|common_ops|libnvrtc\.so)[\s\S]*sgl_kernel|"
+            r"Could not load any common_ops library|"
             r"Please ensure sgl_kernel is properly installed",
-            "SGLang native dependencies are missing on this server.",
+            "SGLang native kernel/runtime is missing or mismatched on this server.",
             [
+                {"label": "repair sglang-kernel in this Python environment", "op": "dependency", "package": "sglang-kernel"},
                 {"label": "install OS packages: libnuma-dev python3.12-dev build-essential", "op": "manual"},
-                {"label": "upgrade sglang-kernel after OS packages are installed", "op": "manual"},
+                {"label": "if libnvrtc is still missing, install the matching CUDA/NVRTC runtime on this host", "op": "manual"},
             ],
         ),
         (
             r"sglang.*command not found|No module named sglang|SGLang is not installed",
             "SGLang is not installed or not in PATH on this server.",
             [{"label": "install SGLang in Cookbook Dependencies", "op": "dependency", "package": "sglang[all]"}],
+        ),
+        (
+            r"No module named ['\"]?mlx_lm|mlx_lm.*command not found|MLX is not installed|MLX LM is not installed",
+            "MLX LM is not installed on this server.",
+            [{"label": "install mlx-lm in Cookbook Dependencies", "op": "dependency", "package": "mlx-lm"}],
+        ),
+        (
+            r"Unable to quantize model of type <class ['\"]mlx_lm\.models\.switch_layers\.QuantizedSwitchLinear['\"]>|QuantizedSwitchLinear",
+            "MLX-LM tried to quantize an already-quantized DeepSeek switch layer.",
+            [
+                {"label": "relaunch from the cached local Hugging Face snapshot path on this Mac", "op": "manual"},
+                {"label": "Odysseus now rewrites MLX repo-id launches to a cached snapshot when one exists", "op": "manual"},
+            ],
         ),
         # System build deps come BEFORE the generic llama.cpp catch-all so
         # cmake / build-essential / git missing → a specific OS-package

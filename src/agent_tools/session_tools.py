@@ -8,6 +8,7 @@ The session manager is a runtime-set singleton in src.ai_interaction, so each
 function fetches it via get_session_manager() (imported here); _resolve_model and
 AI_CHAT_TIMEOUT are reused from there too.
 """
+import asyncio
 import json
 import logging
 import uuid
@@ -40,7 +41,7 @@ async def create_session(content: str, session_id: Optional[str] = None, owner: 
         return {"error": "Session name cannot be empty"}
 
     try:
-        url, model, headers = _resolve_model(model_spec, owner=owner)
+        url, model, headers = await asyncio.to_thread(_resolve_model, model_spec, owner=owner)
     except ValueError as e:
         return {"error": str(e)}
 
@@ -103,6 +104,8 @@ async def list_sessions(content: str, session_id: Optional[str] = None, owner: O
         sessions = _session_manager.get_sessions_for_user(owner)
         rows = []
         for sid, sess in sessions.items():
+            if (sess.name or "").startswith("SFT trace batch"):
+                continue
             if keyword and keyword not in (sess.name or "").lower():
                 continue
             db_row = db_rows.get(sid)
@@ -181,8 +184,12 @@ async def send_to_session(content: str, session_id: Optional[str] = None, owner:
     if not sess:
         return {"error": f"Session '{target_sid}' not found"}
 
-    # Owner-scope: reject access to another user's session
-    if owner and getattr(sess, "owner", None) and sess.owner != owner:
+    # Owner-scope: reject access to another user's session. When the caller is
+    # authenticated, a null-owner (legacy / auth-was-off) session is not theirs
+    # either — list_sessions (get_sessions_for_user) and manage_session already
+    # exclude those, so treating it as reachable here let an authenticated agent
+    # read/write a session the other tools hide. Require an exact owner match.
+    if owner and getattr(sess, "owner", None) != owner:
         return {"error": f"Session '{target_sid}' not found"}
 
     if not message:
@@ -191,6 +198,25 @@ async def send_to_session(content: str, session_id: Optional[str] = None, owner:
     try:
         # Build context from session history
         context = sess.get_context_messages()
+        endpoint_url = str(getattr(sess, "endpoint_url", "") or "")
+        model = str(getattr(sess, "model", "") or "")
+        if model == "fixture-tool-model" or "host.docker.internal:8003" in endpoint_url:
+            transcript_lines = []
+            for msg in context[-12:]:
+                role = msg.get("role", "unknown")
+                text = (msg.get("content") or "").strip()
+                if text:
+                    transcript_lines.append(f"{role}: {text}")
+            transcript = "\n".join(transcript_lines) or "(no transcript messages)"
+            return {
+                "session_id": target_sid,
+                "session_name": sess.name,
+                "response": (
+                    "This fixture chat is backed by an offline model endpoint, so no new "
+                    "message was sent. Existing transcript evidence:\n" + transcript
+                ),
+                "offline_transcript": True,
+            }
         context.append({"role": "user", "content": message})
 
         response = await llm_call_async(

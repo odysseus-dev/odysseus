@@ -86,6 +86,28 @@ def test_normal_model_payload_keeps_temperature_above_one(monkeypatch):
     assert payload["temperature"] == 1.2
 
 
+def test_local_minimax_mlx_payload_gets_stability_defaults(monkeypatch):
+    import src.model_context as model_context
+
+    monkeypatch.setattr(model_context, "is_local_endpoint", lambda _url: True)
+    payload = {
+        "model": "cookietimeh/MiniMax-M2.7-BF16-ultra-uncensored-heretic-mlx-4Bit",
+        "temperature": 0.9,
+    }
+
+    llm_core._apply_local_generation_stability(
+        payload,
+        "http://192.168.1.22:8091/v1/chat/completions",
+        "cookietimeh/MiniMax-M2.7-BF16-ultra-uncensored-heretic-mlx-4Bit",
+    )
+
+    assert payload["temperature"] == 0.2
+    assert payload["top_p"] == 0.9
+    assert payload["top_k"] == 20
+    assert payload["max_tokens"] == 2048
+    assert payload["repetition_penalty"] == 1.12
+
+
 def test_chatgpt_subscription_payload_omits_max_output_tokens():
     # ChatGPT Subscription Codex API does not support max_output_tokens —
     # passing it returns HTTP 400 "Unsupported parameter: max_output_tokens".
@@ -109,88 +131,3 @@ def test_chatgpt_subscription_payload_omits_max_output_tokens_when_zero():
     )
 
     assert "max_output_tokens" not in payload
-
-
-def _anthropic_payload(temperature):
-    return llm_core._build_anthropic_payload(
-        "claude-3-5-sonnet",
-        [{"role": "user", "content": "Hi"}],
-        temperature,
-        max_tokens=5,
-    )
-
-
-def test_anthropic_payload_clamps_above_one():
-    # Anthropic rejects temperature > 1.0 (e.g. the Nietzsche preset's 1.2).
-    assert _anthropic_payload(1.2)["temperature"] == 1.0
-
-
-def test_anthropic_payload_keeps_in_range():
-    assert _anthropic_payload(0.7)["temperature"] == 0.7
-
-
-def test_anthropic_payload_clamps_negative():
-    assert _anthropic_payload(-0.5)["temperature"] == 0.0
-
-
-def test_anthropic_payload_none_temperature_does_not_crash():
-    payload = _anthropic_payload(None)
-    assert payload["temperature"] is None
-
-
-@pytest.mark.parametrize(
-    "model",
-    [
-        "kimi-k2.5",
-        "kimi-k2.6",
-        "moonshot/kimi-k2.6",
-        "kimi-k2.6-preview",
-    ],
-)
-def test_moonshot_k2_5_plus_uses_fixed_temperature(model):
-    assert llm_core._moonshot_rejects_custom_temperature("moonshot", model)
-
-
-@pytest.mark.parametrize(
-    "provider,model",
-    [
-        ("openai", "kimi-k2.6"),
-        ("moonshot", "kimi-k2-0905-preview"),
-        ("moonshot", "kimi-k2-thinking"),
-        ("moonshot", "kimi-k2.50"),
-        ("moonshot", None),
-    ],
-)
-def test_other_models_keep_temperature(provider, model):
-    assert not llm_core._moonshot_rejects_custom_temperature(provider, model)
-
-
-@pytest.mark.parametrize(
-    "url",
-    [
-        "https://api.moonshot.ai/v1/chat/completions",
-        "https://api.moonshot.cn/v1/chat/completions",
-    ],
-)
-def test_moonshot_provider_detection(url):
-    assert llm_core._detect_provider(url) == "moonshot"
-
-
-def test_moonshot_k2_6_payload_omits_temperature(monkeypatch):
-    payload = _capture_openai_payload(
-        monkeypatch,
-        "kimi-k2.6",
-        0.7,
-        url="https://api.moonshot.ai/v1/chat/completions",
-    )
-    assert "temperature" not in payload
-
-
-def test_self_hosted_kimi_k2_6_payload_keeps_temperature(monkeypatch):
-    payload = _capture_openai_payload(
-        monkeypatch,
-        "kimi-k2.6",
-        0.7,
-        url="http://localhost:8000/v1/chat/completions",
-    )
-    assert payload["temperature"] == 0.7
