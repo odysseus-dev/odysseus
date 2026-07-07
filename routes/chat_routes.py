@@ -20,6 +20,7 @@ from src.agent_loop import stream_agent_loop
 from src import agent_runs
 from src.model_context import estimate_tokens
 from src.chat_helpers import coerce_message_and_session
+from src.action_intents import classify_tool_intent
 from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
 from src.session_search import search_session_messages
 from src.prompt_security import untrusted_context_message
@@ -868,6 +869,7 @@ def setup_chat_routes(
         finally:
             _doc_db.close()
 
+        _explicit_web_intent = classify_tool_intent(message).category == "web"
         # Build disabled-tools set from frontend toggles + user privileges
         disabled_tools = set()
         # Only disable bash/web_search when the caller *explicitly* set them
