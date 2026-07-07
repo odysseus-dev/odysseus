@@ -28,6 +28,8 @@
       nixpkgs,
       flake-utils,
       nix-darwin,
+      flake-compat ? null,
+      ...
     }@inputs:
     let
       inherit (import ./nix/lib.nix) mkContainer mkRuntimeLibs;
