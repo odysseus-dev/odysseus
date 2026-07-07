@@ -14,6 +14,7 @@ import logging
 from typing import Optional, Dict
 
 from src.tool_utils import get_mcp_manager, _parse_tool_args
+from src.tool_security import BUILTIN_EMAIL_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -706,7 +707,14 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
                 "tasks": ["manage_tasks"],
                 "notes": ["manage_notes"],
                 "calendar": ["manage_calendar"],
-                "email": ["mcp__email__list_emails", "mcp__email__read_email", "mcp__email__send_email"],
+                # The full built-in email tool set, in BOTH spellings: the
+                # qualified mcp__email__* names drive MCP schema hiding, the
+                # bare names drive function-schema hiding, and the runtime
+                # gate accepts either — deriving from BUILTIN_EMAIL_TOOLS
+                # keeps the toggle covering every tool the email server
+                # exposes instead of a hand-picked subset.
+                "email": sorted(BUILTIN_EMAIL_TOOLS)
+                         + [f"mcp__email__{t}" for t in sorted(BUILTIN_EMAIL_TOOLS)],
                 "research": ["web_search", "web_fetch"],  # research is a per-request flag, not a tool (closest analog)
             }
 

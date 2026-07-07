@@ -34,8 +34,14 @@ def _extract_entities(query: str) -> Dict[str, List[str]]:
     cleaned = query
     if qtype:
         cleaned = re.sub(rf"^{qtype}\b", "", cleaned, flags=re.I).strip()
-    for token in re.findall(r"\b[A-Z][a-zA-Z]+\b", cleaned):
-        entities["names"].append(token)
+    # Unicode-aware capitalized-word (name) detection. The old [A-Z][a-zA-Z]+
+    # class missed non-ASCII names like "İstanbul"/"Zürich" (dropped) and
+    # "São" (shredded). Keep the ASCII behaviour — the word boundary already
+    # excludes camelCase mid-word capitals — by requiring an all-alphabetic
+    # token of length > 1 whose first character is uppercase.
+    for token in re.findall(r"\b\w+\b", cleaned):
+        if len(token) > 1 and token[0].isupper() and token.isalpha():
+            entities["names"].append(token)
     for year in re.findall(r"\b(?:19|20)\d{2}\b", cleaned):
         entities["dates"].append(year)
     month_day_year = re.findall(

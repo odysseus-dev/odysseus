@@ -92,37 +92,66 @@ function _modelExists(modelId, url) {
   });
 }
 
+function _firstAvailableModel() {
+  if (!window.modelsModule || !window.modelsModule.getCachedItems) return null;
+  const items = window.modelsModule.getCachedItems() || [];
+  for (const item of items) {
+    if (item.offline) continue;
+    const models = (item.models || []).concat(item.models_extra || []);
+    if (!models.length) continue;
+    return {
+      url: item.url,
+      modelId: models[0],
+      endpointId: item.endpoint_id || '',
+    };
+  }
+  return null;
+}
+
+async function _ensureModelCacheForFallback() {
+  if (!window.modelsModule || !window.modelsModule.getCachedItems) return;
+  const items = window.modelsModule.getCachedItems() || [];
+  if (items.length) return;
+  if (typeof window.modelsModule.refreshModels === 'function') {
+    try { await window.modelsModule.refreshModels(false); } catch (_) {}
+  }
+}
+
 async function _ensureDefaultPendingChat() {
   if (!_deps || _defaultChatPickInFlight) return;
   if (_deps.getCurrentSessionId && _deps.getCurrentSessionId()) return;
   const pending = _deps.getPendingChat && _deps.getPendingChat();
-  if (pending && pending.modelId) return;
+  if (pending && pending.modelId && pending.source === 'manual') return;
   _defaultChatPickInFlight = true;
   try {
+    await _ensureModelCacheForFallback();
     let dc = null;
     try {
       const res = await fetch(`${API_BASE}/api/default-chat`, { credentials: 'same-origin' });
       if (res.ok) dc = await res.json();
     } catch (_) {}
-    if (dc && dc.endpoint_url && dc.model) {
+    if (dc && dc.endpoint_url && dc.model && _modelExists(dc.model, dc.endpoint_url)) {
+      const pendingUrl = String((pending && pending.url) || '').replace(/\/+$/, '');
+      const defaultUrl = String(dc.endpoint_url || '').replace(/\/+$/, '');
       _deps.setPendingChat({
         url: dc.endpoint_url,
         modelId: dc.model,
         endpointId: dc.endpoint_id || '',
+        source: 'default',
       });
       try { window.__odysseusDefaultChat = dc; } catch (_) {}
-      updateModelPicker();
-      return;
-    }
-    // No configured default: preserve the old convenience fallback.
-    if (window.modelsModule && window.modelsModule.getCachedItems) {
-      const items = window.modelsModule.getCachedItems();
-      const first = items.find(item => !item.offline && ((item.models || []).length || (item.models_extra || []).length));
-      if (first) {
-        const models = (first.models || []).concat(first.models_extra || []);
-        _deps.setPendingChat({ url: first.url, modelId: models[0], endpointId: first.endpoint_id });
+      if (!pending || pending.modelId !== dc.model || pendingUrl !== defaultUrl || pending.source !== 'default') {
         updateModelPicker();
       }
+      return;
+    }
+    if (pending && pending.modelId) return;
+    // No configured default, or the configured default is gone/offline:
+    // preserve the convenience fallback and keep the picker usable.
+    const fallback = _firstAvailableModel();
+    if (fallback) {
+      _deps.setPendingChat({ ...fallback, source: 'fallback' });
+      updateModelPicker();
     }
   } finally {
     _defaultChatPickInFlight = false;
@@ -204,6 +233,9 @@ function _initModelPickerDropdown() {
   const _LOCAL_PROBE_TTL_MS = 5000;
 
   async function _refreshLocalProbe() {
+    try {
+      if (window.__odysseusChatBusy || Date.now() < (window.__odysseusChatBusyUntil || 0)) return;
+    } catch (_) {}
     const now = Date.now();
     if (now - _localProbeFetchedAt < _LOCAL_PROBE_TTL_MS) return;
     _localProbeFetchedAt = now;
@@ -538,7 +570,7 @@ function _initModelPickerDropdown() {
     }
     if (!currentSessionId && _pendingChat) {
       // Already have a deferred session — just update the model
-      _deps.setPendingChat({ url: m.url, modelId: m.mid, endpointId: m.endpointId });
+      _deps.setPendingChat({ url: m.url, modelId: m.mid, endpointId: m.endpointId, source: 'manual' });
       // Header stays as session name — model switch only updates picker
       updateModelPicker();
       uiModule.showToast(`Using ${m.display}`);
@@ -581,7 +613,7 @@ function _initModelPickerDropdown() {
     if ((current && current.model) || (pending && pending.modelId)) return;
 
     if (window.modelsModule && window.modelsModule.refreshModels) {
-      try { await window.modelsModule.refreshModels(true); } catch (_) {}
+      try { await window.modelsModule.refreshModels(false); } catch (_) {}
     }
     const items = window.modelsModule && window.modelsModule.getCachedItems ? window.modelsModule.getCachedItems() : [];
     const targetEndpointId = detail.endpointId ? String(detail.endpointId) : '';
@@ -630,12 +662,6 @@ function _initModelPickerDropdown() {
           updateModelPicker();
         }).catch(() => {});
       }
-      // Kick off a local-endpoint probe — when it returns, re-render
-      // the list so stale local servers get dimmed. Cloud entries
-      // aren't probed; they stay visible.
-      _refreshLocalProbe().then(() => {
-        if (!menu.classList.contains('hidden')) _populate(search.value || '');
-      });
       if (window.innerWidth >= 768) search.focus();
       // Hide scroll button so it doesn't overlap
       const _scrollBtn = document.getElementById('scroll-bottom-btn');
@@ -728,7 +754,7 @@ export function updateModelPicker() {
   // silently pre-populate the chatbox of the next user that signed in. If
   // we have no session model and no pending-chat pick, fall through to
   // the "Select model" placeholder below.
-
+  //
   // Check if selected model is still available — fall back ONLY for pending chats with no user selection
   // Never override an existing session's model — the user explicitly chose it
   if (modelId && !currentSessionId && _pendingChat && window.modelsModule && window.modelsModule.getCachedItems) {
@@ -743,11 +769,18 @@ export function updateModelPicker() {
       const fallback = items.find(item => !item.offline && (item.models || []).length > 0);
       if (fallback) {
         modelId = fallback.models[0];
-        _deps.setPendingChat({ url: fallback.url, modelId, endpointId: fallback.endpoint_id });
+        _deps.setPendingChat({ url: fallback.url, modelId, endpointId: fallback.endpoint_id, source: 'fallback' });
       }
     }
   }
-  if (!modelId && !_autoSelectingDefault && window.modelsModule && window.modelsModule.getCachedItems) {
+  const latestPending = _deps.getPendingChat && _deps.getPendingChat();
+  if (
+    !currentSessionId &&
+    !_autoSelectingDefault &&
+    window.modelsModule &&
+    window.modelsModule.getCachedItems &&
+    (!modelId || (latestPending && latestPending.source === 'fallback'))
+  ) {
     _ensureDefaultPendingChat();
   }
 

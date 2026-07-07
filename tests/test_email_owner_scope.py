@@ -184,6 +184,87 @@ def test_sender_signature_cache_is_owner_scoped_and_migrates_legacy_rows(tmp_pat
         conn.close()
 
 
+def test_email_message_index_is_owner_account_folder_scoped(tmp_path, monkeypatch):
+    import routes.email_helpers as email_helpers
+
+    db_path = tmp_path / "scheduled_emails.db"
+    monkeypatch.setattr(email_helpers, "SCHEDULED_DB", db_path)
+
+    email_helpers._init_scheduled_db()
+
+    conn = sqlite3.connect(db_path)
+    try:
+        info = conn.execute("PRAGMA table_info(email_message_index)").fetchall()
+        pk_cols = [r[1] for r in sorted((r for r in info if r[5]), key=lambda r: r[5])]
+        assert pk_cols == ["owner", "account_key", "folder", "uid"]
+
+        conn.execute(
+            """
+            INSERT INTO email_message_index
+            (owner, account_key, folder, uid, message_id, subject, updated_at)
+            VALUES ('alice', 'acct-a', 'INBOX', '7', '<same@example.com>', 'Alice', '2026-01-01')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO email_message_index
+            (owner, account_key, folder, uid, message_id, subject, updated_at)
+            VALUES ('bob', 'acct-a', 'INBOX', '7', '<same@example.com>', 'Bob', '2026-01-01')
+            """
+        )
+        rows = conn.execute(
+            "SELECT owner, subject FROM email_message_index WHERE account_key='acct-a' AND folder='INBOX' AND uid='7' ORDER BY owner"
+        ).fetchall()
+        assert rows == [("alice", "Alice"), ("bob", "Bob")]
+    finally:
+        conn.close()
+
+
+def test_email_index_helpers_roundtrip_and_update_flags(tmp_path, monkeypatch):
+    import routes.email_helpers as email_helpers
+    import routes.email_routes as email_routes
+
+    db_path = tmp_path / "scheduled_emails.db"
+    monkeypatch.setattr(email_helpers, "SCHEDULED_DB", db_path)
+    monkeypatch.setattr(email_routes, "SCHEDULED_DB", db_path)
+    email_helpers._init_scheduled_db()
+
+    email_routes._email_index_upsert(
+        "alice",
+        "acct-a",
+        "INBOX",
+        [{
+            "uid": "11",
+            "message_id": "<m@example.com>",
+            "subject": "Cached",
+            "from_name": "Sender",
+            "from_address": "sender@example.com",
+            "to": "alice@example.com",
+            "cc": "",
+            "date": "2026-01-01T00:00:00+00:00",
+            "date_display": "Thu, 1 Jan 2026 00:00:00 +0000",
+            "date_epoch": 1767225600,
+            "size": 123,
+            "flags": "\\Seen",
+            "has_attachments": True,
+        }],
+    )
+
+    rows = email_routes._email_index_rows("alice", "acct-a", "INBOX", ["11", "12"])
+    assert rows["11"]["subject"] == "Cached"
+    assert rows["11"]["is_read"] is True
+    assert rows["11"]["has_attachments"] is True
+
+    email_routes._email_index_update_flags("alice", "acct-a", "INBOX", "11", "\\Seen", False)
+    email_routes._email_index_update_flags("alice", "acct-a", "INBOX", "11", "\\Flagged", True)
+    rows = email_routes._email_index_rows("alice", "acct-a", "INBOX", ["11"])
+    assert rows["11"]["is_read"] is False
+    assert rows["11"]["is_flagged"] is True
+
+    email_routes._email_index_delete("alice", "acct-a", "INBOX", "11")
+    assert email_routes._email_index_rows("alice", "acct-a", "INBOX", ["11"]) == {}
+
+
 @pytest.mark.asyncio
 async def test_ai_reply_cache_lookup_is_owner_scoped(tmp_path, monkeypatch):
     import routes.email_helpers as email_helpers
@@ -280,8 +361,12 @@ async def test_sender_signature_read_lookup_is_owner_scoped(tmp_path, monkeypatc
 
         def uid(self, command, _uid, query):
             assert command == "FETCH"
-            assert query == "(BODY.PEEK[])"
-            return "OK", [(b"1 (UID 1 BODY[])", raw)]
+            assert query.startswith("(BODY.PEEK[HEADER] BODY.PEEK[TEXT]<0.")
+            header, body = raw.split(b"\r\n\r\n", 1)
+            return "OK", [
+                (b"1 (UID 1 BODY[HEADER])", header + b"\r\n\r\n"),
+                (b"1 (UID 1 BODY[TEXT]<0>)", body),
+            ]
 
     @contextmanager
     def fake_imap(_account_id=None, owner=""):

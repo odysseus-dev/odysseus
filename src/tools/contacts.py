@@ -108,16 +108,28 @@ async def do_manage_contact(content: str, owner: Optional[str] = None) -> Dict:
 
         if action == "add":
             email = (args.get("email") or "").strip()
-            if not email:
-                return {"error": "email is required for add", "exit_code": 1}
-            name = (args.get("name") or "").strip() or email.split("@")[0]
-            # Dedupe by email (same as the /add route).
+            phones = [str(p or "").strip() for p in (args.get("phones") or []) if str(p or "").strip()]
+            phone = (args.get("phone") or "").strip()
+            if phone and phone not in phones:
+                phones.insert(0, phone)
+            address = (args.get("address") or "").strip()
+            name = (args.get("name") or "").strip()
+            if not name and email:
+                name = email.split("@")[0]
+            if not name and not email and not phones and not address:
+                return {"error": "name plus email, phone, or address is required for add", "exit_code": 1}
+            if not name:
+                name = email.split("@")[0] if email else (phones[0] if phones else "Contact")
+            # Dedupe by email or phone (same as the /add route).
             existing = await asyncio.to_thread(cc._fetch_contacts)
             for c in existing:
-                if email.lower() in [e.lower() for e in c.get("emails", [])]:
+                if email and email.lower() in [e.lower() for e in c.get("emails", [])]:
                     return {"output": f"{email} is already a contact ({c.get('name','')}).", "exit_code": 0}
-            ok = await asyncio.to_thread(cc._create_contact, name, email)
-            return {"output": f"{'Added' if ok else 'Failed to add'} {name} <{email}>.", "exit_code": 0 if ok else 1}
+                if phones and any(p in (c.get("phones") or []) for p in phones):
+                    return {"output": f"{phones[0]} is already a contact ({c.get('name','')}).", "exit_code": 0}
+            ok = await asyncio.to_thread(cc._create_contact, name, email, address, phones)
+            detail = email or ", ".join(phones) or address
+            return {"output": f"{'Added' if ok else 'Failed to add'} {name} ({detail}).", "exit_code": 0 if ok else 1}
 
         if action in ("update", "edit"):
             uid = (args.get("uid") or "").strip()
@@ -129,11 +141,12 @@ async def do_manage_contact(content: str, owner: Optional[str] = None) -> Dict:
                 emails = [args["email"]]
             emails = [e.strip() for e in (emails or []) if e and e.strip()]
             phones = [p.strip() for p in (args.get("phones") or []) if p and p.strip()]
-            if not name and not emails:
-                return {"error": "Provide a name or emails to update", "exit_code": 1}
+            address = (args.get("address") or "").strip()
+            if not name and not emails and not phones and not address:
+                return {"error": "Provide a name, emails, phones, or address to update", "exit_code": 1}
             if not name and emails:
                 name = emails[0].split("@")[0]
-            ok = await asyncio.to_thread(cc._update_contact, uid, name, emails, phones)
+            ok = await asyncio.to_thread(cc._update_contact, uid, name, emails, phones, address)
             return {"output": "Contact updated." if ok else "Update failed.", "exit_code": 0 if ok else 1}
 
         if action == "delete":
