@@ -832,7 +832,6 @@ def _insert_before_latest_user(messages: List[Dict], context_msg: Dict) -> List[
 def _final_answer_contract_message() -> Dict:
     return {
         "role": "system",
-        "_protected": True,
         "content": (
             "## FINAL ANSWER CONTRACT\n"
             "After tool work is complete and no more tools are needed, write only the final answer for the user.\n"
