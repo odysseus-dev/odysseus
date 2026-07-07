@@ -24,6 +24,9 @@ import {
   _MODELDIR_CHECK_ON,
   _MODELDIR_CHECK_OFF,
   _serverEntryHtml,
+  _serverDefaultHtml,
+  _applyServerSelectColor,
+  _syncServerSelectColors,
   _copyText,
   // Import cookbook.js WITHOUT a ?v= query — the same plain specifier every other
   // importer uses. A query mismatch loads cookbook.js twice as two separate modules
@@ -34,10 +37,59 @@ import spinnerModule from './spinner.js';
 import { _loadTasks, _tmuxGracefulKill, _nextAvailablePort, _taskPort } from './cookbookRunning.js';
 import { openCookbookDependencies } from './cookbook-diagnosis.js';
 
-// Map a serve-backend code (vllm / sglang / llamacpp) → the package name
+// Map a serve-backend code (vllm / sglang / llamacpp / mlx) → the package name
 // the Dependencies API reports. Used to look up "is this backend installed
 // on the target server" before firing a launch.
-const _BACKEND_PKG = { vllm: 'vllm', sglang: 'sglang', llamacpp: 'llama_cpp' };
+const _BACKEND_PKG = { vllm: 'vllm', sglang: 'sglang', llamacpp: 'llama_cpp', mlx: 'mlx_lm' };
+
+function _normalizeCookbookModelDir(dir) {
+  const d = String(dir || '').replaceAll('\u2715', '').replaceAll('\u2716', '').trim();
+  return /^(home|mnt|media|data|opt|srv|var)\//.test(d) ? `/${d}` : d;
+}
+
+function _wireServerColorPicker(entry) {
+  const wrap = entry.querySelector('.cookbook-srv-color-wrap');
+  const select = entry.querySelector('.cookbook-srv-color');
+  const btn = entry.querySelector('.cookbook-srv-color-btn');
+  const menu = entry.querySelector('.cookbook-srv-color-menu');
+  if (!wrap || !select || !btn || !menu || btn.dataset.bound) return;
+  btn.dataset.bound = '1';
+  const close = () => {
+    menu.classList.add('hidden');
+    btn.setAttribute('aria-expanded', 'false');
+  };
+  const open = () => {
+    document.querySelectorAll('.cookbook-srv-color-menu').forEach(m => {
+      if (m !== menu) m.classList.add('hidden');
+    });
+    menu.classList.remove('hidden');
+    btn.setAttribute('aria-expanded', 'true');
+  };
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (menu.classList.contains('hidden')) open();
+    else close();
+  });
+  menu.querySelectorAll('.cookbook-srv-color-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const color = item.dataset.color || '';
+      select.value = color;
+      const label = item.querySelector('span:last-child')?.textContent || 'Auto';
+      const labelEl = btn.querySelector('.cookbook-srv-color-label');
+      if (labelEl) labelEl.textContent = label;
+      const swatch = item.style.getPropertyValue('--swatch-color') || color;
+      if (/^#[0-9a-fA-F]{6}$/.test(swatch.trim())) {
+        entry.style.setProperty('--cookbook-server-color', swatch.trim());
+        wrap.style.setProperty('--cookbook-server-color', swatch.trim());
+      }
+      menu.querySelectorAll('.cookbook-srv-color-item').forEach(b => b.classList.toggle('active', b === item));
+      close();
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  });
+  document.addEventListener('click', close);
+}
 
 // Pre-launch: ask the deps API whether the chosen backend is present on
 // the target server. Returns true if it's good to go, false if we should
@@ -80,7 +132,6 @@ export let _cachedModelIds = null; // repo IDs already downloaded
 // after the user has switched servers.
 let _hwfitFetchToken = 0;
 let _dismissedHwChips = new Set();
-let _hwfitAutoScanStarted = new Set();
 // Permanently removed (X-clicked) chips. Separate from _dismissedHwChips
 // so the ranker treats "off" and "removed" the same (both ignore the
 // hardware) but the UI keeps "off" chips visible to toggle back on,
@@ -407,15 +458,12 @@ function _manualDisplaySystem(sys, manual) {
 // Signature of everything that affects the result list, so we never paint a
 // cached list under mismatched filters.
 function _scanSig() {
-  const sortEl = document.getElementById('hwfit-sort');
   const tc = document.getElementById('hwfit-gpu-toggles');
   return JSON.stringify({
     h: _envState.remoteHost || '',
     hk: _currentServerValue(),
     u: document.getElementById('hwfit-usecase')?.value || '',
     s: document.getElementById('hwfit-search')?.value?.trim() || '',
-    o: sortEl?.value || 'newest',
-    r: sortEl?.dataset.reverse === '1' ? 1 : 0,
     q: document.getElementById('hwfit-quant')?.value || '',
     c: _ctxValue(),
     g: (tc && typeof tc._activeCount === 'number') ? String(tc._activeCount) : '',
@@ -534,6 +582,13 @@ function _olParseSize(s) {
 function _ollamaToHwfitRows(libModels, vramAvail, ramAvail) {
   const out = [];
   if (!Array.isArray(libModels)) return out;
+  const _ramFitLevel = (need, budget) => {
+    if (!need || !budget || need > budget) return 'too_tight';
+    const ratio = need / budget;
+    if (ratio <= 0.50) return 'perfect';
+    if (ratio <= 0.78) return 'good';
+    return 'marginal';
+  };
   for (const m of libModels) {
     const sizes = (Array.isArray(m.sizes) && m.sizes.length) ? m.sizes : ['latest'];
     for (const sz of sizes) {
@@ -544,10 +599,10 @@ function _ollamaToHwfitRows(libModels, vramAvail, ramAvail) {
       if (vramGb && vramAvail) {
         if (vramGb <= vramAvail * 0.6) fitLevel = 'perfect';
         else if (vramGb <= vramAvail) fitLevel = 'good';
-        else if (ramAvail && vramGb <= ramAvail) fitLevel = 'marginal';
+        else if (ramAvail && vramGb <= ramAvail) fitLevel = _ramFitLevel(vramGb, ramAvail);
         else fitLevel = 'too_tight';
       } else if (vramGb && ramAvail && vramGb <= ramAvail) {
-        fitLevel = 'marginal';
+        fitLevel = _ramFitLevel(vramGb, ramAvail);
       }
       const tag = `${m.name}:${sz}`;
       const paramsLabel = params
@@ -628,21 +683,18 @@ export async function _hwfitFetch(fresh = false, opts = {}) {
       loadingTitle.textContent = 'No cached scan yet';
       loadingTitle.style.cssText = 'font-size:12px;opacity:0.7;';
       const loadingLbl = document.createElement('div');
-      loadingLbl.textContent = 'Scanning hardware…';
+      loadingLbl.textContent = 'Loading model list…';
       loadingLbl.style.cssText = 'font-size:11px;opacity:0.55;max-width:420px;line-height:1.4;';
       loadingDiv.appendChild(loadingTitle);
       loadingDiv.appendChild(loadingLbl);
       list.innerHTML = '';
       list.appendChild(loadingDiv);
-      if (!_hwfitAutoScanStarted.has(_sig)) {
-        _hwfitAutoScanStarted.add(_sig);
-        setTimeout(() => {
-          if (_tk === _hwfitFetchToken) {
-            _resetGpuToggleState();
-            _hwfitFetch(true, { autoFromEmpty: true });
-          }
-        }, 60);
-      }
+      setTimeout(() => {
+        if (_tk === _hwfitFetchToken) {
+          _resetGpuToggleState();
+          _hwfitFetch(true, { autoFromEmpty: true });
+        }
+      }, 60);
       return;
     }
     if (!canKeepPrevious) {
@@ -653,13 +705,15 @@ export async function _hwfitFetch(fresh = false, opts = {}) {
       loadingDiv.style.flexDirection = 'column';
       loadingDiv.style.gap = '6px';
       loadingDiv.appendChild(wp.element);
-      // Text label like the other cookbook tabs: "Loading…", then if the scan runs
-      // long (remote SSH hardware probe), switch to "Scanning hardware…".
+      // Text label like the other cookbook tabs. Only fresh rescans are hardware
+      // probes; normal refreshes are just model ranking/loading from cached hw.
       const loadingLbl = document.createElement('div');
-      loadingLbl.textContent = 'Loading…';
+      loadingLbl.textContent = fresh ? 'Scanning hardware…' : 'Loading models…';
       loadingLbl.style.cssText = 'text-align:center;opacity:0.5;font-size:11px;';
       loadingDiv.appendChild(loadingLbl);
-      setTimeout(() => { if (loadingLbl.isConnected) loadingLbl.textContent = 'Scanning hardware…'; }, 2000);
+      setTimeout(() => {
+        if (loadingLbl.isConnected) loadingLbl.textContent = fresh ? 'Scanning hardware…' : 'Loading model list…';
+      }, 2000);
       list.innerHTML = '';
       list.appendChild(loadingDiv);
       _hwfitCache = null;   // no instant paint — clear until the fetch returns
@@ -703,10 +757,6 @@ export async function _hwfitFetch(fresh = false, opts = {}) {
         _setLastCacheHost('');
       });
   }
-  if (_paintedFromCache && !forceRevalidate) {
-    try { wp.destroy(); } catch {}
-    return;
-  }
   try {
     const sortBy = document.getElementById('hwfit-sort')?.value || 'newest';
     const quantPref = document.getElementById('hwfit-quant')?.value || '';
@@ -722,7 +772,10 @@ export async function _hwfitFetch(fresh = false, opts = {}) {
     if (!hasManualOrDismissed && toggleContainer && toggleContainer._activeGroup) {
       gpuGroupOverride = String(toggleContainer._activeGroup);
     }
-    const params = new URLSearchParams({ limit: '80', sort: sortBy });
+    // Sorting is a table operation, not a different backend query. Fetch a
+    // broad candidate set once, then sort it client-side so VRAM/Params/etc.
+    // do not appear to "filter out" rows by returning a different top-80 slice.
+    const params = new URLSearchParams({ limit: '2500', sort: 'score' });
     if (fresh) params.set('fresh', '1');   // bypass the hardware-scan cache
     if (search) params.set('search', search);
     if (remoteHost) {
@@ -743,6 +796,9 @@ export async function _hwfitFetch(fresh = false, opts = {}) {
     if (hasManualOrDismissed) params.set('_hw_override_ts', String(Date.now()));
     // Image models use a separate registry/endpoint
     const isImageMode = useCase === 'image_gen';
+    if ((fresh || (_paintedFromCache && !search)) && !isImageMode) {
+      params.set('refresh_catalog', '1'); // update HF-backed dynamic catalogs in the background
+    }
     if (!isImageMode) {
       if (useCase) params.set('use_case', useCase);
       if (quantPref) params.set('quant', quantPref);
@@ -1198,9 +1254,9 @@ function _modeLabel(model) {
 export const _hwfitColumns = [
   { key: 'fit', label: 'Fit',    cls: 'hwfit-fit' },
   { key: 'newest', label: 'Model (latest)',  cls: 'hwfit-name' },
+  { key: 'vram',  label: 'VRAM',   cls: 'hwfit-c-vram' },
   { key: 'params',label: 'Param', cls: 'hwfit-c-params' },
   { key: null,    label: 'Quant',  cls: 'hwfit-c-quant' },
-  { key: 'vram',  label: 'VRAM',   cls: 'hwfit-c-vram' },
   { key: 'context',label: 'Ctx',   cls: 'hwfit-c-ctx' },
   { key: 'speed', label: 'Speed',  cls: 'hwfit-c-speed' },
   { key: 'score', label: 'Score',  cls: 'hwfit-c-score' },
@@ -1301,13 +1357,13 @@ export function _hwfitRenderList(el, models) {
       }
     }
     html += `<span class="hwfit-col hwfit-name">${modelLogo(m.name)}${esc(_short)}${_quantSuffix}${moeBadge}${imgBadge}${dlDot}</span>`;
-    html += `<span class="hwfit-col hwfit-c-params">${esc(pcount)}</span>`;
+    html += `<span class="hwfit-col hwfit-c-vram" title="Estimated loaded footprint for this quant/backend/context, including model weights and KV/runtime allowance.">${vramLabel}</span>`;
+    html += `<span class="hwfit-col hwfit-c-params" title="Original total model parameters, not quantized storage size.">${esc(pcount)}</span>`;
     // Truncate the Quant cell to 9 chars + ellipsis so long tags like
     // "FP4-MoE-Mixed" don't push neighboring columns. Full tag stays in title.
     const _qRaw = m.quant || '?';
     const _qShort = _qRaw.length > 9 ? _qRaw.slice(0, 9) + '…' : _qRaw;
     html += `<span class="hwfit-col hwfit-c-quant" title="${esc(_qRaw)}">${esc(_qShort)}</span>`;
-    html += `<span class="hwfit-col hwfit-c-vram">${vramLabel}</span>`;
     html += `<span class="hwfit-col hwfit-c-ctx">${m.is_image_gen ? '\u2014' : ctx}</span>`;
     html += `<span class="hwfit-col hwfit-c-speed">${m.is_image_gen ? '\u2014' : tps + ' t/s'}</span>`;
     html += `<span class="hwfit-col hwfit-c-score">${score}</span>`;
@@ -1356,14 +1412,13 @@ export function _hwfitRenderList(el, models) {
       if (e.target.closest('[data-fit-dot]')) {
         const on = !e.target.classList.contains('active');
         try { localStorage.setItem('hwfit_fit_only_v1', on ? '1' : '0'); } catch {}
-        // Un-toggling the fit filter (off → showing too-tight rows again) is
-        // typically because the user wants to see the LARGE models they can't
-        // run yet — re-sort by VRAM descending so the biggest surface first.
+        // Un-toggling the fit filter should still keep the list usable: show
+        // nearest/smallest VRAM first, not a wall of impossible 7000G rows.
         if (!on) {
           const sortSel = document.getElementById('hwfit-sort');
           if (sortSel) {
             sortSel.value = 'vram';
-            sortSel.dataset.reverse = '0';   // descending (biggest first)
+            sortSel.dataset.reverse = '1';   // ascending (smallest VRAM first)
           }
         }
         _hwfitCache = null;
@@ -1379,7 +1434,9 @@ export function _hwfitRenderList(el, models) {
         sel.dataset.reverse = sel.dataset.reverse === '1' ? '0' : '1';
       } else {
         sel.value = sortKey;
-        sel.dataset.reverse = '0';
+        // VRAM is most useful as "what fits / closest fit first"; descending
+        // buries qwen/gemma-sized rows below absurd impossible footprints.
+        sel.dataset.reverse = sortKey === 'vram' ? '1' : '0';
       }
       _hwfitFetch();
     });
@@ -1751,6 +1808,9 @@ export function _expandModelRow(row, modelData) {
         cmd += ` --context-length ${maxCtx}`;
         cmd += ` --mem-fraction-static ${gpuUtil}`;
         cmd += ' --trust-remote-code';
+      } else if (runBackend === 'mlx') {
+        const bindHost = host ? '0.0.0.0' : '127.0.0.1';
+        cmd = `python3 -m mlx_lm.server --model ${_shellQuote(modelData.name)} --host ${bindHost} --port ${port}`;
       } else if (runBackend === 'llamacpp') {
         const dir = `"$HOME/.cache/huggingface/hub/models--${modelData.name.replace(/\//g, '--')}/snapshots"`;
         const ggufPath = `$({ find ${dir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${dir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`;
@@ -1868,6 +1928,7 @@ const _HWFIT_ENGINE_GLYPHS = {
   '': '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="18" x2="20" y2="18"></line><circle cx="8" cy="6" r="2" fill="currentColor" stroke="none"></circle><circle cx="16" cy="12" r="2" fill="currentColor" stroke="none"></circle><circle cx="10" cy="18" r="2" fill="currentColor" stroke="none"></circle></svg>',
   vllm: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4l7 16 7-16"></path><path d="M14 4l4 9 3-9"></path></svg>',
   sglang: '<span aria-hidden="true" style="display:block;width:14px;height:14px;background:currentColor;-webkit-mask:url(/static/icons/sglang-mark.png) center/contain no-repeat;mask:url(/static/icons/sglang-mark.png) center/contain no-repeat;"></span>',
+  mlx: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 18V6l4 7 4-7v12"></path><path d="M16 6v12"></path><path d="M20 6v12"></path></svg>',
   llamacpp: '<svg width="14" height="14" viewBox="0 0 600 600" fill="none" aria-hidden="true"><path d="M600 392L504.249 558L504.137 557.929C487.252 584.069 458.193 600 426.864 600H120L240 392H600Z" fill="currentColor"></path><path d="M240 392H0L199.602 46.0254C216.032 17.5463 246.411 0 279.29 0H466.154L240 392Z" fill="currentColor"></path></svg>',
   ollama: '<span aria-hidden="true" style="display:block;width:14px;height:14px;background:currentColor;-webkit-mask:url(/static/icons/ollama-mark-crop.png) center/contain no-repeat;mask:url(/static/icons/ollama-mark-crop.png) center/contain no-repeat;"></span>',
   diffusers: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"></path></svg>',
@@ -2040,15 +2101,22 @@ export function _hwfitInit() {
     ];
     for (const sel of selectors) {
       if (!sel) continue;
-      const currentVal = sel.value;
-      let html = `<option value="local">Local</option>`;
+      const currentVal = sel.value || _currentServerValue();
+      const localSrv = _envState.servers.find(s => !s.host || String(s.host).toLowerCase() === 'local') || {};
+      const localColor = /^#[0-9a-fA-F]{6}$/.test(String(localSrv.color || '').trim()) ? String(localSrv.color).trim() : '';
+      const localLabel = localSrv.name || 'Local';
+      let html = `<option value="local"${localColor ? ` style="color:${uiModule.esc(localColor)};"` : ''}>${uiModule.esc(localColor ? `● ${localLabel}` : localLabel)}</option>`;
       _envState.servers.forEach((s, i) => {
         if (!s.host) return;
         const label = s.name || s.host || `Server ${i + 1}`;
-        html += `<option value="${i}">${uiModule.esc(label)}</option>`;
+        const color = /^#[0-9a-fA-F]{6}$/.test(String(s.color || '').trim()) ? String(s.color).trim() : '';
+        html += `<option value="${uiModule.esc(_serverKey(s))}"${color ? ` style="color:${uiModule.esc(color)};"` : ''}>${uiModule.esc(color ? `● ${label}` : label)}</option>`;
       });
       sel.innerHTML = html;
       sel.value = currentVal;
+      if (sel.selectedIndex < 0) sel.value = _currentServerValue();
+      if (sel.selectedIndex < 0) sel.value = 'local';
+      _applyServerSelectColor(sel);
     }
   }
 
@@ -2066,13 +2134,15 @@ export function _hwfitInit() {
       const port = row.querySelector('.cookbook-srv-port')?.value.trim() || '';
       const env = row.querySelector('.cookbook-srv-env')?.value || 'none';
       const envPath = row.querySelector('.cookbook-srv-path')?.value.trim() || '';
+      const colorRaw = row.querySelector('.cookbook-srv-color')?.value?.trim() || '';
+      const color = /^#[0-9a-fA-F]{6}$/.test(colorRaw) ? colorRaw : '';
       // Collect model directories from tags. Read the authoritative data-dir
       // attribute, not textContent \u2014 the tag now also holds a download-target
       // icon, and textContent would fold the icon/\u2716 glyph into the path.
       const dirTags = entry.querySelectorAll('.cookbook-modeldir-tag');
       const modelDirs = [];
       dirTags.forEach(tag => {
-        const d = (tag.dataset.dir || '').replaceAll('\u2715', '').replaceAll('\u2716', '').trim();
+        const d = _normalizeCookbookModelDir(tag.dataset.dir || '');
         if (d) modelDirs.push(d);
       });
       if (!modelDirs.length) modelDirs.push('~/.cache/huggingface/hub');
@@ -2080,7 +2150,7 @@ export function _hwfitInit() {
       const dlEl = entry.querySelector('.cookbook-modeldir-dl.active');
       const downloadDir = dlEl ? (dlEl.dataset.dlDir || '') : '';
       const platform = entry.dataset.platform || '';
-      _envState.servers.push({ name, host: host || '', port, env, envPath, modelDirs, modelDir: modelDirs.filter(d => d !== '~/.cache/huggingface/hub')[0] || modelDirs[0], downloadDir, platform });
+      _envState.servers.push({ name, host: host || '', port, env, envPath, color, modelDirs, modelDir: modelDirs.filter(d => d !== '~/.cache/huggingface/hub')[0] || modelDirs[0], downloadDir, platform });
     });
     // Do NOT auto-change the selected host here. _syncServers can run while the
     // servers DOM is mid-render — host fields that are disabled/readonly read as
@@ -2259,8 +2329,7 @@ export function _hwfitInit() {
         document.querySelectorAll('.cookbook-srv-default').forEach(b => {
           const on = !!_envState.defaultServer && b.dataset.srvKey === _envState.defaultServer;
           b.classList.toggle('active', on);
-          // Keep the "default" label after the icon (don't overwrite it).
-          b.innerHTML = (on ? _MODELDIR_CHECK_ON : _MODELDIR_CHECK_OFF) + '<span class="cookbook-srv-default-label">default</span>';
+          b.innerHTML = _serverDefaultHtml(on);
           b.title = on ? 'Default server — Cookbook opens here' : 'Make this the default server';
         });
         // Apply immediately so the dropdowns reflect it without reopening
@@ -2307,10 +2376,28 @@ export function _hwfitInit() {
         uiModule.showToast('SSH setup command copied');
       });
     }
+    _wireServerColorPicker(entry);
     entry.querySelectorAll('input, select').forEach(el => {
       el.addEventListener('change', () => {
         const selectedBefore = _envState.remoteHost || '';
         const entryHost = entry.querySelector('.cookbook-srv-host')?.value?.trim() || '';
+        const color = entry.querySelector('.cookbook-srv-color')?.value?.trim() || '';
+        const hasColor = /^#[0-9a-fA-F]{6}$/.test(color);
+        const colorWrap = entry.querySelector('.cookbook-srv-color-wrap');
+        if (hasColor) {
+          entry.style.setProperty('--cookbook-server-color', color);
+          colorWrap?.style.setProperty('--cookbook-server-color', color);
+        } else {
+          const autoColor = (colorWrap?.style.getPropertyValue('--cookbook-server-color') || entry.style.getPropertyValue('--cookbook-server-color') || '').trim();
+          if (/^#[0-9a-fA-F]{6}$/.test(autoColor)) {
+            entry.style.setProperty('--cookbook-server-color', autoColor);
+            colorWrap?.style.setProperty('--cookbook-server-color', autoColor);
+          } else {
+            entry.style.removeProperty('--cookbook-server-color');
+            colorWrap?.style.removeProperty('--cookbook-server-color');
+          }
+        }
+        colorWrap?.classList.toggle('has-color', true);
         _syncServers();
         _rebuildServerSelect();
         if (selectedBefore && selectedBefore === entryHost) {
@@ -2319,6 +2406,11 @@ export function _hwfitInit() {
         }
         if (!entry.querySelector('.cookbook-server-key-panel')?.classList.contains('hidden')) {
           _populateServerKeyPanel(entry, false);
+        }
+        const saveBtn = entry.querySelector('.cookbook-server-save-btn.saved');
+        if (saveBtn) {
+          saveBtn.classList.remove('saved');
+          saveBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save';
         }
       });
     });
@@ -2341,7 +2433,7 @@ export function _hwfitInit() {
         _hwfitFetch();
       });
     }
-    // Save button on a brand-new server entry: persist + confirm with a check.
+    // Save button: persist + confirm with a check.
     const saveBtn = entry.querySelector('.cookbook-server-save-btn');
     if (saveBtn && !saveBtn.dataset.bound) {
       saveBtn.dataset.bound = '1';
@@ -2359,6 +2451,7 @@ export function _hwfitInit() {
         } catch (_) {}
         saveBtn.classList.add('saved');
         saveBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#50fa7b" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg>Saved';
+        uiModule.showToast('Server saved');
       });
     }
     const rmBtn = entry.querySelector('.cookbook-server-rm');
@@ -2520,7 +2613,7 @@ export function _hwfitInit() {
       // Build the new entry with the SAME template as existing servers (Model
       // Directory header, default checkmark, platform icon) \u2014 isNew swaps the
       // delete button for a Save button. forceRemote keeps it editable.
-      const blank = { host: '', name: '', port: '', env: 'none', envPath: '', platform: '', modelDirs: ['~/.cache/huggingface/hub'] };
+      const blank = { host: '', name: '', port: '', env: 'none', envPath: '', color: '', platform: '', modelDirs: ['~/.cache/huggingface/hub'] };
       const wrap = document.createElement('div');
       wrap.innerHTML = _serverEntryHtml(blank, idx, _envState.defaultServer || '', true, true);
       const entry = wrap.firstElementChild;
@@ -2554,6 +2647,7 @@ export function _hwfitInit() {
         }
       }
       _persistEnvState();
+      _applyServerSelectColor(serverSelect);
       // Keep the other server dropdowns (Download / Cache / Deps) in sync. The
       // download-input button reads #hwfit-dl-server *directly*, so without this
       // it kept its old value and downloads went to the wrong host even
@@ -2561,6 +2655,7 @@ export function _hwfitInit() {
       document.querySelectorAll('#hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(sel => {
         if (!sel || sel.tagName !== 'SELECT') return;
         sel.value = _currentServerValue();
+        _applyServerSelectColor(sel);
       });
       _hwfitCache = null;
       // Reset GPU-toggle state (no flicker) so the new server's hardware re-renders.
@@ -2568,5 +2663,6 @@ export function _hwfitInit() {
       _hwfitFetch();
     });
   }
+  _syncServerSelectColors();
 
 }

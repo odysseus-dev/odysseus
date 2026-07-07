@@ -1152,6 +1152,36 @@ def _merge_model_ids(*lists):
     return out
 
 
+def _is_mlx_deepseek_v4_repo_id(model_id: str) -> bool:
+    m = str(model_id or "").lower()
+    return "mlx-community/deepseek-v4" in m
+
+
+def _is_mlx_deepseek_v4_shim_id(model_id: str) -> bool:
+    m = str(model_id or "").lower()
+    return "/.cache/odysseus/mlx-shims/deepseek-v4" in m
+
+
+def _filter_mlx_deepseek_v4_repo_when_shimmed(model_ids):
+    """Hide the broken MLX repo id when a launch-specific shim id is available.
+
+    mlx_lm.server may advertise the original HF repo id even though generation
+    only works through Odysseus' sanitized local shim. Keep the shim as the
+    submitted model id and remove the raw repo id from the picker/default list.
+    """
+    ids = list(model_ids or [])
+    has_shim = any(_is_mlx_deepseek_v4_shim_id(m) for m in ids)
+    if not has_shim:
+        return ids
+    return [m for m in ids if not _is_mlx_deepseek_v4_repo_id(m)]
+
+
+def _model_display_name(model_id: str) -> str:
+    if _is_mlx_deepseek_v4_shim_id(model_id):
+        return str(model_id or "").rstrip("/").split("/")[-1] or "DeepSeek-V4-Flash-4bit"
+    return str(model_id or "").split("/")[-1]
+
+
 def _visible_models(cached_models, hidden_models, pinned_models=None):
     """Merge cached + pinned model IDs, then filter out hidden ones.
 
@@ -1165,6 +1195,7 @@ def _visible_models(cached_models, hidden_models, pinned_models=None):
         _normalize_model_ids(cached_models),
         _normalize_model_ids(pinned_models),
     )
+    merged = _filter_mlx_deepseek_v4_repo_when_shimmed(merged)
     if not hidden_models:
         return merged
     hidden = set(_normalize_model_ids(hidden_models))
@@ -1396,9 +1427,9 @@ def setup_model_routes(model_discovery):
                     "port": 0,
                     "url": chat_url,
                     "models": curated,
-                    "models_display": [mid.split("/")[-1] for mid in curated],
+                    "models_display": [_model_display_name(mid) for mid in curated],
                     "models_extra": extra,
-                    "models_extra_display": [mid.split("/")[-1] for mid in extra],
+                    "models_extra_display": [_model_display_name(mid) for mid in extra],
                     "endpoint_id": ep.id,
                     "endpoint_name": ep.name,
                     "category": category,
@@ -1426,7 +1457,7 @@ def setup_model_routes(model_discovery):
         return {"hosts": [], "items": items}
 
     @router.get("/models")
-    def api_models(request: Request, refresh: bool = False, background: bool = True):
+    def api_models(request: Request, refresh: bool = False, background: bool = False):
         """Get available models — per-user (caller sees only their endpoints +
         legacy/shared null-owner rows). Cached per-user for 30s."""
         # Require auth; "" is the unconfigured single-user mode, treated as
@@ -1887,7 +1918,14 @@ def setup_model_routes(model_discovery):
                 if api_key.strip() and not existing.api_key:
                     existing.api_key = api_key.strip()
                     changed = True
-                if should_probe:
+                # Keep duplicate endpoint registration cheap. This path is hit
+                # by Cookbook/browser auto-register flows and can run while the
+                # user is sending a chat message. Probing a stale LAN endpoint
+                # here used to hold the request open for tens of seconds and
+                # contend with session creation, making "send" feel blocked.
+                # Explicit "require models" calls still probe; normal refresh
+                # belongs to /model-endpoints/{id}/models or /probe.
+                if require_model_list:
                     probed_models = _probe_endpoint(
                         base_url,
                         (api_key.strip() or existing.api_key or None),

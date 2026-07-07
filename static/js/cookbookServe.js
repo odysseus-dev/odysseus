@@ -49,11 +49,25 @@ let _cachedAllModels = [];
 const _CACHED_MODELS_SCAN_KEY = 'cookbook_cached_models_scan_v1';
 const _CACHED_MODELS_SCAN_TTL = 6 * 3600 * 1000;
 
+function _normalizeCookbookModelDir(dir) {
+  const d = String(dir || '').replaceAll('✕', '').replaceAll('✖', '').trim();
+  return /^(home|mnt|media|data|opt|srv|var)\//.test(d) ? `/${d}` : d;
+}
+
 function _readCachedModelScan(sig) {
   try {
     const all = JSON.parse(localStorage.getItem(_CACHED_MODELS_SCAN_KEY) || '{}');
     const entry = all[sig];
-    if (entry && Date.now() - (entry.ts || 0) < _CACHED_MODELS_SCAN_TTL) return entry.data || null;
+    if (entry && Date.now() - (entry.ts || 0) < _CACHED_MODELS_SCAN_TTL) {
+      const data = entry.data || null;
+      const models = Array.isArray(data?.models) ? data.models : [];
+      const staleDownloading = models.some(m =>
+        (m?.status === 'downloading' || m?.has_incomplete) && !_isActivelyDownloading(m?.repo_id)
+      );
+      if (!staleDownloading) return data;
+      delete all[sig];
+      localStorage.setItem(_CACHED_MODELS_SCAN_KEY, JSON.stringify(all));
+    }
   } catch {}
   return null;
 }
@@ -83,6 +97,7 @@ function _loadServeFavorites() {
 function _saveServeFavorites(favorites) {
   try {
     localStorage.setItem(SERVE_FAVORITES_KEY, JSON.stringify(Array.from(favorites || [])));
+    document.dispatchEvent(new CustomEvent('cookbook:state-dirty', { detail: { key: SERVE_FAVORITES_KEY } }));
   } catch {}
 }
 
@@ -218,7 +233,21 @@ function _shellSplitForPreview(cmd) {
 }
 
 function _formatServeCmdPreview(cmd) {
-  const raw = String(cmd || '');
+  let raw = String(cmd || '');
+  const mlxDeepSeekV4Compat = /\bmlx_lm\.server\b/i.test(raw)
+    && /--model\s+['"]?mlx-community\/[^'"\s]*deepseek-v4/i.test(raw);
+  if (mlxDeepSeekV4Compat) {
+    const modelMatch = raw.match(/--model\s+(['"]?)(mlx-community\/[^'"\s]*deepseek-v4[^'"\s]*)\1/i);
+    const homeMatch = raw.match(/((?:\/Users|\/home)\/[^/\s'"]+)/);
+    const shortName = modelMatch?.[2]?.split('/').pop();
+    if (homeMatch && shortName) {
+      const shimPath = `${homeMatch[1]}/.cache/odysseus/mlx-shims/${shortName}`;
+      raw = raw.replace(
+        /--model\s+(['"]?)mlx-community\/[^'"\s]*deepseek-v4[^'"\s]*\1/i,
+        `--model '${shimPath}'`
+      );
+    }
+  }
   if (raw.startsWith('MODEL_FILE=$({')) {
     const marker = /&&\s+([A-Za-z_][A-Za-z0-9_]*=\S+\s+)*(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)?(?:llama-server|python3?\s+-m\s+llama_cpp\.server)\b/;
     const match = raw.match(marker);
@@ -233,7 +262,7 @@ function _formatServeCmdPreview(cmd) {
   const lines = [];
   let i = 0;
   while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) {
-    lines.push(tokens[i]);
+    lines.push(`export ${tokens[i]}`);
     i++;
   }
   if (tokens[i]) {
@@ -254,11 +283,43 @@ function _formatServeCmdPreview(cmd) {
       lines.push(t);
     }
   }
-  return lines.join('\n');
+  const envCount = lines.findIndex(line => !line.startsWith('export '));
+  const firstCmdLine = envCount < 0 ? lines.length : envCount;
+  const formatted = lines.map((line, idx) => {
+    const isCommandPart = idx >= firstCmdLine;
+    const hasNextCommandPart = lines.slice(idx + 1).some(next => !next.startsWith('export '));
+    return isCommandPart && hasNextCommandPart ? `${line} \\` : line;
+  }).join('\n');
+  if (mlxDeepSeekV4Compat) {
+    return [
+      '# Odysseus runtime compatibility: using sanitized MLX DeepSeek-V4 shim.',
+      formatted,
+    ].join('\n');
+  }
+  return formatted;
 }
 
 function _normalizeServeCmdForLaunch(cmd) {
-  return String(cmd || '')
+  let raw = String(cmd || '');
+  const lines = raw.split(/\r?\n/)
+    .map(s => s.trim().replace(/\s*\\$/, '').trim())
+    .filter(s => s && !s.startsWith('#'));
+  if (lines.some(line => /^(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*=/.test(line))) {
+    const env = [];
+    const body = [];
+    for (const line of lines) {
+      const m = line.match(/^export\s+([A-Za-z_][A-Za-z0-9_]*=.*)$/);
+      if (m) {
+        env.push(m[1]);
+      } else if (/^[A-Za-z_][A-Za-z0-9_]*=\S+$/.test(line)) {
+        env.push(line);
+      } else {
+        body.push(line);
+      }
+    }
+    raw = [...env, ...body].join(' ');
+  }
+  return raw
     .replace(/MODEL_FILE=\$\(\{\s+/g, 'MODEL_FILE=$({ ')
     .replace(/\s+\}\s+\|\s+head\s+-1\)/g, ' } | head -1)')
     .replace(/\s*;\s*/g, '; ')
@@ -567,7 +628,13 @@ function _selectedServeTarget(panel) {
       host = server?.host || '';
     }
   }
-  const venv = panel?.querySelector('[data-field="venv"]')?.value?.trim() || server?.envPath || _envState.envPath || '';
+  const typedVenv = panel?.querySelector('[data-field="venv"]')?.value?.trim() || '';
+  // For remote targets the server profile is authoritative. Otherwise a stale
+  // venv typed/loaded for another host can leak into this launch, e.g. a Linux
+  // /home/... Python path being used on an Apple Silicon MLX server.
+  const venv = host
+    ? (server?.envPath || typedVenv || '')
+    : (typedVenv || server?.envPath || _envState.envPath || '');
   const label = host
     ? (server?.name ? `${server.name} (${host})` : host)
     : (server?.name || 'local server');
@@ -593,8 +660,8 @@ function _backendChoicesForTarget(target) {
     return [['llamacpp','llama.cpp'],['diffusers','Diffusers']];
   }
   return _isMetal()
-    ? [['llamacpp','llama.cpp'],['ollama','Ollama']]
-    : [['vllm','vLLM'],['sglang','SGLang'],['llamacpp','llama.cpp'],['ollama','Ollama'],['diffusers','Diffusers']];
+    ? [['mlx','MLX'],['llamacpp','llama.cpp'],['ollama','Ollama']]
+    : [['vllm','vLLM'],['sglang','SGLang'],['llamacpp','llama.cpp'],['ollama','Ollama'],['mlx','MLX'],['diffusers','Diffusers']];
 }
 
 async function _fetchServeRuntimePackage(panel, backend) {
@@ -602,6 +669,7 @@ async function _fetchServeRuntimePackage(panel, backend) {
     vllm: 'vllm',
     sglang: 'sglang',
     llamacpp: 'llama_cpp',
+    mlx: 'mlx_lm',
     diffusers: 'diffusers',
   };
   const packageName = packageByBackend[backend];
@@ -621,7 +689,7 @@ async function _fetchServeRuntimePackage(panel, backend) {
 }
 
 function _runtimeNoteText(backend, pkg, target) {
-  const labels = { vllm: 'vLLM', sglang: 'SGLang', llamacpp: 'llama.cpp', diffusers: 'Diffusers' };
+  const labels = { vllm: 'vLLM', sglang: 'SGLang', llamacpp: 'llama.cpp', mlx: 'MLX', diffusers: 'Diffusers' };
   const label = labels[backend] || backend;
   if (!pkg) return `${label} readiness unavailable for ${target.label}.`;
   const note = pkg.status_note || pkg.update_note || '';
@@ -1109,7 +1177,14 @@ function _rerenderCachedModels() {
       const repo = item.dataset.repo;
       if (!repo) return;
       const m = allModels.find(x => x.repo_id === repo);
-      if (!m || m.status !== 'ready') return;
+      if (!m) return;
+      if (m.status !== 'ready') {
+        if (m.status === 'downloading' && !_isActivelyDownloading(m.repo_id)) {
+          uiModule.showToast?.('Refreshing cached model status…');
+          _fetchCachedModels(true);
+        }
+        return;
+      }
 
       // Toggle — close if already open
       if (item.classList.contains('doclib-card-expanded')) {
@@ -1266,7 +1341,7 @@ function _rerenderCachedModels() {
       // stays as the source-of-truth so every existing change handler
       // (updateBackendVisibility, runtime readiness, command builder)
       // still fires via dispatchEvent('change') on selection.
-      panelHtml += `<label>${_l('Engine','Inference engine: vLLM, SGLang, llama.cpp, Ollama, or Diffusers')}<div class="hwfit-backend-picker" data-backend-picker style="position:relative;width:100%;"><select class="hwfit-sf hwfit-backend-source" data-field="backend" style="display:none;">${backendOpts}</select><button type="button" class="hwfit-backend-btn" data-backend-btn aria-haspopup="listbox" aria-expanded="false" style="display:flex;align-items:center;gap:6px;width:100%;height:32px;padding:0 8px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;font:inherit;font-size:11px;cursor:pointer;text-align:left;position:relative;top:-4px;"><span class="hwfit-backend-btn-icon" data-backend-icon-slot aria-hidden="true" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--accent, var(--red));flex-shrink:0;"></span><span class="hwfit-backend-btn-label" data-backend-label style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="opacity:0.6;flex-shrink:0;"><polyline points="6 9 12 15 18 9"/></svg></button><div class="hwfit-backend-menu" data-backend-menu role="listbox" hidden style="position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:100;background:var(--panel, var(--bg));border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,0.22);padding:4px;"></div></div></label>`;
+      panelHtml += `<label>${_l('Engine','Inference engine: MLX, vLLM, SGLang, llama.cpp, Ollama, or Diffusers')}<div class="hwfit-backend-picker" data-backend-picker style="position:relative;width:100%;"><select class="hwfit-sf hwfit-backend-source" data-field="backend" style="display:none;">${backendOpts}</select><button type="button" class="hwfit-backend-btn" data-backend-btn aria-haspopup="listbox" aria-expanded="false" style="display:flex;align-items:center;gap:6px;width:100%;height:32px;padding:0 8px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;font:inherit;font-size:11px;cursor:pointer;text-align:left;position:relative;top:-4px;"><span class="hwfit-backend-btn-icon" data-backend-icon-slot aria-hidden="true" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--accent, var(--red));flex-shrink:0;"></span><span class="hwfit-backend-btn-label" data-backend-label style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="opacity:0.6;flex-shrink:0;"><polyline points="6 9 12 15 18 9"/></svg></button><div class="hwfit-backend-menu" data-backend-menu role="listbox" hidden style="position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:100;background:var(--panel, var(--bg));border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,0.22);padding:4px;"></div></div></label>`;
       panelHtml += `<input type="hidden" class="hwfit-sf" data-field="host" value="${esc(_es.remoteHost || '')}" />`;
       // Inference mode pill (llama.cpp only) — lives directly to the
       // RIGHT of Backend in Row 1 so the engine and the GPU/CPU choice
@@ -1328,13 +1403,13 @@ function _rerenderCachedModels() {
       // TP / Context / GPU / GPU Mem / Max Seqs / Dtype. Everything else
       // (Swap, KV Cache, Attention backend, Env vars, llama.cpp batch/ubatch)
       // moved to the Advanced fold below to keep this row scannable.
-      panelHtml += `<div class="hwfit-serve-row hwfit-serve-row-core hwfit-backend-vllm hwfit-backend-sglang hwfit-backend-llamacpp hwfit-backend-ollama">`;
+      panelHtml += `<div class="hwfit-serve-row hwfit-serve-row-core hwfit-backend-vllm hwfit-backend-sglang hwfit-backend-llamacpp hwfit-backend-ollama hwfit-backend-mlx">`;
       // Order: Dtype → TP → Context → Max Seqs → GPUs → GPU Mem.
       // Dtype moved down from Row 1 to make space for the Inference pill
       // (llama.cpp GPU/CPU toggle, llamacpp-only). GPUs lives next to
       // GPU Mem so "which devices + how much" sit adjacent. Max Seqs
       // follows Context per the "request-shape" cluster.
-      panelHtml += `<label>${_l('Dtype','Data type for weights. auto picks best for GPU')}<select class="hwfit-sf" data-field="dtype">${dtypeOpts}</select></label>`;
+      panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang hwfit-backend-llamacpp">${_l('Dtype','Data type for weights. auto picks best for GPU')}<select class="hwfit-sf" data-field="dtype">${dtypeOpts}</select></label>`;
       panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('TP','Tensor Parallelism — split model across N GPUs')}<select class="hwfit-sf" data-field="tp">${tpOpts}</select></label>`;
       // ctx resets to the model's max on every panel open (the real ctx slider
       // lives in the Scan/Download toolbar — see cookbook.js .hwfit-ctx-control).
@@ -1405,7 +1480,9 @@ function _rerenderCachedModels() {
       panelHtml += `<label>Width${_h('Default output width')} <input type="text" class="hwfit-sf" data-field="diff_width" value="${esc(sv('diff_width', ''))}" placeholder="1024" /></label>`;
       panelHtml += `<label>Height${_h('Default output height')} <input type="text" class="hwfit-sf" data-field="diff_height" value="${esc(sv('diff_height', ''))}" placeholder="1024" /></label>`;
       panelHtml += `</div>`;
-      // Row 3: Checkboxes (vLLM)
+      // Row 3: Advanced toggles for vLLM/SGLang. Several concepts overlap,
+      // but the actual flags differ; keep labels backend-neutral where a
+      // shared checkbox maps to different runtime flags.
       // Order: Trust Remote → Auto Tool → Reasoning Parser (when the
       // model has one) → Enforce Eager → Prefix Caching. Reasoning
       // Parser was previously in a separate row below; the user wanted
@@ -1416,21 +1493,22 @@ function _rerenderCachedModels() {
       const _rp_flag = _opts2_row3.flags.find(f => f.includes('--reasoning-parser'));
       const _rp_name = _rp_flag ? _rp_flag.split(' ')[1] : '';
       panelHtml += `<div class="hwfit-serve-checks hwfit-backend-vllm hwfit-backend-sglang">`;
-      panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="trust_remote"${sv('trust_remote',_isMiniMaxMSeries)?' checked':''} /> Trust Remote Code${_h('Allow model to run custom code from HuggingFace')}</label>`;
-      panelHtml += `<label class="hwfit-sf-cb hwfit-backend-vllm hwfit-backend-sglang"><input type="checkbox" class="hwfit-sf" data-field="auto_tool"${sv('auto_tool',_nativeToolDefault)?' checked':''} /> Auto Tool Choice${_h('Enable function/tool calling for agent mode')}</label>`;
+      panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="trust_remote"${sv('trust_remote',_isMiniMaxMSeries)?' checked':''} /> Trust Remote Code${_h('SGLang/vLLM: allow model code from HuggingFace via --trust-remote-code')}</label>`;
+      panelHtml += `<label class="hwfit-sf-cb hwfit-backend-vllm hwfit-backend-sglang"><input type="checkbox" class="hwfit-sf" data-field="auto_tool"${sv('auto_tool',_nativeToolDefault)?' checked':''} /> Auto Tool Choice${_h('SGLang/vLLM: enable native tool calling and auto-pick the detected tool-call parser')}</label>`;
       // Always-render the Reasoning Parser, Expert Parallel, and MoE Env
       // checkboxes — the model-family detection above is a hint, not a
       // hard gate. User asked to keep these visible regardless so that
       // a borderline-undetected MoE/reasoning model can still toggle
       // them without dropping back to the raw command box.
-      panelHtml += `<label class="hwfit-sf-cb hwfit-backend-vllm hwfit-backend-sglang"><input type="checkbox" class="hwfit-sf" data-field="reasoning_parser" data-parser="${_rp_name || ''}"${sv('reasoning_parser',_reasoningDefault)?' checked':''} /> Reasoning Parser${_rp_name ? ` <span class="hwfit-parser-tag">${_rp_name}</span>` : ''}${_h('Splits <think> tokens into a separate channel. The tag (when shown) is the auto-detected parser; edit the command if you need a different one.')}</label>`;
-      panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="enforce_eager"${sv('enforce_eager',false)?' checked':''} /> Enforce Eager${_h('Disable CUDA graphs. Slower but uses less memory')}</label>`;
-      panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="prefix_cache"${sv('prefix_cache',false)?' checked':''} /> Prefix Caching${_h('Cache shared prompt prefixes across requests')}</label>`;
+      panelHtml += `<label class="hwfit-sf-cb hwfit-backend-vllm hwfit-backend-sglang"><input type="checkbox" class="hwfit-sf" data-field="reasoning_parser" data-parser="${_rp_name || ''}"${sv('reasoning_parser',_reasoningDefault)?' checked':''} /> Reasoning Parser${_rp_name ? ` <span class="hwfit-parser-tag">${_rp_name}</span>` : ''}${_h('SGLang/vLLM: splits thinking tokens into a reasoning channel using the detected parser.')}</label>`;
+      panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="enforce_eager"${sv('enforce_eager',false)?' checked':''} /> Disable CUDA Graphs${_h('vLLM: --enforce-eager. SGLang: --disable-cuda-graph. Slower, but useful for graph-capture crashes.')}</label>`;
+      panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="prefix_cache"${sv('prefix_cache',false)?' checked':''} /> Prefix / Radix Cache${_h('vLLM: prefix caching. SGLang: RadixAttention prefix cache; when off Odysseus adds --disable-radix-cache.')}</label>`;
       // Inline the previously-second vLLM checks row so Expert Parallel /
       // Speculative / MoE Env sit next to Prefix Caching with no gap. All
       // three are vLLM-only — class-gated so they hide on SGLang. Always
       // render so the user can flip them on for any MoE model.
-      panelHtml += `<label class="hwfit-sf-cb hwfit-backend-vllm hwfit-backend-sglang"><input type="checkbox" class="hwfit-sf" data-field="expert_parallel"${sv('expert_parallel',_expertParallelDefault)?' checked':''} /> Expert Parallel${_h('MoE: shard expert layers across GPUs. Helps for MiniMax M-series, StepFun Step-3, Qwen3 A3B/A10B/A22B MoE, DeepSeek V3+/R1. Ignored / wasteful on dense models.')}</label>`;
+      panelHtml += `<label class="hwfit-sf-cb hwfit-backend-vllm hwfit-backend-sglang"><input type="checkbox" class="hwfit-sf" data-field="expert_parallel"${sv('expert_parallel',_expertParallelDefault)?' checked':''} /> Expert Parallel${_h('SGLang/vLLM MoE: shard expert layers across GPUs. Useful for DeepSeek/MiniMax/Qwen MoE; avoid on dense models.')}</label>`;
+      panelHtml += `<label class="hwfit-sf-cb hwfit-backend-sglang">Decode Graph${_h('SGLang only: tune decode CUDA graph capture. Smaller batch can fix DeepSeek-V4 graph-capture errors; disabled is safest but slower.')} <select class="hwfit-sf" data-field="sglang_decode_graph" style="height:24px;max-width:92px;"><option value=""${sv('sglang_decode_graph','') === '' ? ' selected' : ''}>auto</option><option value="bs16"${sv('sglang_decode_graph','') === 'bs16' ? ' selected' : ''}>bs 16</option><option value="disabled"${sv('sglang_decode_graph','') === 'disabled' ? ' selected' : ''}>off</option></select></label>`;
       panelHtml += `<label class="hwfit-sf-cb hwfit-backend-vllm"><input type="checkbox" class="hwfit-sf" data-field="language_model_only"${sv('language_model_only',_isMiniMaxM3)?' checked':''} /> Language Model Only${_h('vLLM --language-model-only. Needed by MiniMax M3 text serving when the repo also contains VL components.')}</label>`;
       panelHtml += `<label class="hwfit-sf-cb hwfit-backend-vllm"><input type="checkbox" class="hwfit-sf" data-field="disable_custom_all_reduce"${sv('disable_custom_all_reduce',_isMiniMaxM3)?' checked':''} /> Disable Custom All Reduce${_h('vLLM --disable-custom-all-reduce. Useful for some 8-GPU/nightly configurations.')}</label>`;
       {
@@ -1585,6 +1663,7 @@ function _rerenderCachedModels() {
         const buildTarget = _selectedServeTarget(panel);
         f.host = buildTarget.host || '';
         f.platform = buildTarget.platform || '';
+        f.venv = buildTarget.venv || '';
         const hostField = panel.querySelector('[data-field="host"]');
         if (hostField) hostField.value = f.host;
         const backend = f.backend || 'vllm';
@@ -1871,6 +1950,7 @@ function _rerenderCachedModels() {
       const _BACKEND_GLYPHS = {
         vllm:   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4l7 16 7-16"/><path d="M14 4l4 9 3-9"/></svg>',
         sglang: '<span aria-hidden="true" style="display:block;width:14px;height:14px;background:currentColor;-webkit-mask:url(/static/icons/sglang-mark.png) center/contain no-repeat;mask:url(/static/icons/sglang-mark.png) center/contain no-repeat;"></span>',
+        mlx: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 18V6l4 7 4-7v12"/><path d="M16 6v12"/><path d="M20 6v12"/></svg>',
         llamacpp: '<svg width="14" height="14" viewBox="0 0 600 600" fill="none" aria-hidden="true"><path d="M600 392L504.249 558L504.137 557.929C487.252 584.069 458.193 600 426.864 600H120L240 392H600Z" fill="currentColor"/><path d="M240 392H0L199.602 46.0254C216.032 17.5463 246.411 0 279.29 0H466.154L240 392Z" fill="currentColor"/></svg>',
         ollama: '<span aria-hidden="true" style="display:block;width:14px;height:14px;background:currentColor;-webkit-mask:url(/static/icons/ollama-mark-crop.png) center/contain no-repeat;mask:url(/static/icons/ollama-mark-crop.png) center/contain no-repeat;"></span>',
         diffusers: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg>',
@@ -1984,7 +2064,7 @@ function _rerenderCachedModels() {
         const backend = panel.querySelector('[data-field="backend"]')?.value || 'vllm';
         const noteText = note.querySelector('.hwfit-serve-runtime-text');
         const _writeNote = (s) => { if (noteText) noteText.textContent = s; else note.textContent = s; };
-        if (!['vllm', 'sglang', 'llamacpp', 'diffusers'].includes(backend)) {
+        if (!['vllm', 'sglang', 'llamacpp', 'mlx', 'diffusers'].includes(backend)) {
           note.style.display = 'none';
           _writeNote('');
           return;
@@ -2024,7 +2104,7 @@ function _rerenderCachedModels() {
             // recipe panel for this backend so the user has one click
             // to the fix instead of hunting for the right row.
             if (noteText) {
-              const pkgName = pkg?.name || ({ vllm: 'vllm', sglang: 'sglang', llamacpp: 'llama_cpp', diffusers: 'diffusers' }[backend]);
+              const pkgName = pkg?.name || ({ vllm: 'vllm', sglang: 'sglang', llamacpp: 'llama_cpp', mlx: 'mlx_lm', diffusers: 'diffusers' }[backend]);
               const repo = (panel.closest('.doclib-card, .memory-item')?.dataset?.repo) || '';
               const link = document.createElement('a');
               link.href = '#';
@@ -2079,7 +2159,7 @@ function _rerenderCachedModels() {
           });
         } else {
           const fields = {
-            backend: cmd.includes('llama_cpp') || cmd.includes('llama-server') ? 'llamacpp' : cmd.includes('diffusion_server') ? 'diffusers' : cmd.includes('sglang') ? 'sglang' : cmd.includes('ollama') ? 'ollama' : 'vllm',
+            backend: cmd.includes('llama_cpp') || cmd.includes('llama-server') ? 'llamacpp' : cmd.includes('mlx_lm.server') ? 'mlx' : cmd.includes('diffusion_server') ? 'diffusers' : cmd.includes('sglang') ? 'sglang' : cmd.includes('ollama') ? 'ollama' : 'vllm',
             port: _ex(/--port\s+(\d+)/) || '8000',
             tp: _ex(/--tensor-parallel-size\s+(\d+)/) || '1',
             ctx: _ex(/--max-model-len\s+(\d+)/) || _ex(/--n_ctx\s+(\d+)/) || _ex(/-c\s+(\d+)/) || '8192',
@@ -3771,7 +3851,8 @@ export async function _fetchCachedModels(fresh = false, opts = {}) {
     const modelDirs = [];
     if (selectedServer && Array.isArray(selectedServer.modelDirs)) {
       for (const d of selectedServer.modelDirs) {
-        if (d && d !== '~/.cache/huggingface/hub') modelDirs.push(d);
+        const normalized = _normalizeCookbookModelDir(d);
+        if (normalized && normalized !== '~/.cache/huggingface/hub') modelDirs.push(normalized);
       }
     }
     // Sync the header dir pills to THIS server (the one whose models we're listing).
@@ -3783,7 +3864,7 @@ export async function _fetchCachedModels(fresh = false, opts = {}) {
       const _allDirs = (Array.isArray(selectedServer.modelDirs) && selectedServer.modelDirs.length
         ? selectedServer.modelDirs
         : [selectedServer.modelDir || '~/.cache/huggingface/hub'])
-        .map(d => (d || '').replaceAll('✕', '').replaceAll('✖', '').trim()).filter(Boolean);
+        .map(d => _normalizeCookbookModelDir(d)).filter(Boolean);
       _dirsEl.innerHTML = _allDirs.map(d => `<span class="cookbook-serve-dir-pill">${esc(d)}</span>`).join('')
         + '<span class="cookbook-serve-dir-edit" title="Edit in Settings">edit</span>';
       _dirsEl.querySelector('.cookbook-serve-dir-edit')?.addEventListener('click', () => {
@@ -3803,10 +3884,12 @@ export async function _fetchCachedModels(fresh = false, opts = {}) {
     }
     if (!allowNetwork) {
       _dlWp.destroy();
-      list.innerHTML = '<div class="hwfit-loading" style="flex-direction:column;gap:8px;text-align:center;"><div>No cached model scan yet</div><div style="font-size:11px;opacity:0.55;max-width:420px;line-height:1.4;">Check this server\'s model cache.</div><button type="button" class="hwfit-gpu-btn serve-empty-scan-btn" style="height:26px;padding:3px 10px;">Scan</button></div>';
-      list.querySelector('.serve-empty-scan-btn')?.addEventListener('click', () => {
-        _fetchCachedModels(true);
-      });
+      const wp = spinnerModule.createWhirlpool(22);
+      list.innerHTML = '<div class="hwfit-loading serve-empty-auto-scan" style="flex-direction:column;gap:8px;text-align:center;"><div class="serve-empty-auto-wp"></div><div>No cached model scan yet</div><div style="font-size:11px;opacity:0.55;max-width:420px;line-height:1.4;">Scanning this server\'s model cache…</div></div>';
+      list.querySelector('.serve-empty-auto-wp')?.appendChild(wp.element);
+      setTimeout(() => {
+        if (list.querySelector('.serve-empty-auto-scan')) _fetchCachedModels(true);
+      }, 60);
       const tagContainer = document.getElementById('serve-tags');
       if (tagContainer) tagContainer.innerHTML = '';
       return;

@@ -471,7 +471,7 @@ async function loadEndpoints() {
   const listLegacy = el('adm-epList');
   // Refresh model picker so new endpoints show up in chat
   if (window.modelsModule && window.modelsModule.refreshModels) {
-    window.modelsModule.refreshModels();
+    window.modelsModule.refreshModels(true);
     setTimeout(() => {
       if (window.sessionModule && window.sessionModule.updateModelPicker) {
         window.sessionModule.updateModelPicker();

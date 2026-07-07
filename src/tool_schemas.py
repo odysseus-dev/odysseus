@@ -18,6 +18,15 @@ from src.tool_security import BUILTIN_EMAIL_TOOLS
 
 logger = logging.getLogger(__name__)
 
+
+_REQUIRED_NATIVE_TOOL_ARGS = {
+    "web_search": ("query", "queries"),
+    "web_fetch": ("url",),
+    "read_file": ("path",),
+    "write_file": ("path",),
+    "edit_file": ("path",),
+}
+
 # ---------------------------------------------------------------------------
 # OpenAI-compatible function tool schemas
 # ---------------------------------------------------------------------------
@@ -187,7 +196,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "create_document",
-            "description": "Create a new document in the editor panel. Use this when the user asks to write, create, build, or generate code, scripts, programs, games, apps, or any substantial content (>15 lines) AND there is no already-open document/email draft that the request refers to. If an email compose draft is open, edit that draft instead of creating another document. NEVER put large code blocks directly in chat — use this tool instead.",
+            "description": "Create a new document in the editor panel. Use this when the user asks to write, create, build, make, or generate code, scripts, programs, games, apps, or any long-form or structured content that is more than a short paragraph, AND there is no already-open document/email draft that the request refers to. If an email compose draft is open, edit that draft instead of creating another document. NEVER put large generated content directly in chat — use this tool instead.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -576,9 +585,10 @@ FUNCTION_TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "action": {"type": "string",
-                               "enum": ["list", "view", "add", "update", "delete", "toggle_item"],
+                               "enum": ["list", "search", "view", "add", "update", "delete", "toggle_item"],
                                "description": "The action to perform"},
                     "id": {"type": "string", "description": "Note id (for update/delete/toggle_item); 8-char prefix is fine"},
+                    "query": {"type": "string", "description": "Search text for action='search'"},
                     "title": {"type": "string", "description": "Note title (for add/update)"},
                     "content": {"type": "string", "description": "Freeform body text. Use this for note_type='note'. Do NOT use this for checklists — pass `checklist_items` instead."},
                     "note_type": {"type": "string", "enum": ["note", "checklist"],
@@ -1025,7 +1035,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "manage_contact",
-            "description": "Create, update, delete, or list the user's CardDAV contacts. Use to save a new contact, update an existing one (email/phone/address), or remove one. For update/delete you need the contact's uid — call action='list' first to find it. Writes go through the same dedupe + validation as the Contacts UI.",
+            "description": "Create, update, delete, or list the user's CardDAV contacts. Use to save a new contact, update an existing one (email/phone/address), or remove one. Add does not require email: name + phone or name + address is valid. For update/delete you need the contact's uid — call action='list' first to find it. Writes go through the same dedupe + validation as the Contacts UI.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1033,9 +1043,9 @@ FUNCTION_TOOL_SCHEMAS = [
                                "description": "list = show all contacts (with uids); add = create; update = edit by uid; delete = remove by uid."},
                     "uid": {"type": "string", "description": "Contact UID (required for update/delete; get it from action=list)."},
                     "name": {"type": "string", "description": "Contact's display name (for add/update)."},
-                    "email": {"type": "string", "description": "Single email address (convenience for add, or the primary email for update)."},
-                    "emails": {"type": "array", "items": {"type": "string"}, "description": "Full list of email addresses (for update; first is primary)."},
-                    "phones": {"type": "array", "items": {"type": "string"}, "description": "Full list of phone numbers (for update)."},
+                    "email": {"type": "string", "description": "Single email address (convenience for add, or the primary email for update). Optional when phone or address is provided."},
+                    "emails": {"type": "array", "items": {"type": "string"}, "description": "Full list of email addresses (first is primary)."},
+                    "phones": {"type": "array", "items": {"type": "string"}, "description": "Full list of phone numbers. Valid for add/update."},
                     "address": {"type": "string", "description": "Postal/mailing address as a single human-readable string."},
                 },
                 "required": ["action"]
@@ -1308,6 +1318,11 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         logger.warning(f"Non-object function call arguments for {name}: {args!r}; treating as empty")
         args = {}
 
+    required_args = _REQUIRED_NATIVE_TOOL_ARGS.get(tool_type)
+    if required_args and not any(str(args.get(key) or "").strip() for key in required_args):
+        logger.warning(f"Rejecting empty required arguments for function call {name}: {args!r}")
+        return None
+
     # Allow MCP tools through (namespaced as mcp__serverid__toolname)
     if tool_type.startswith("mcp__"):
         content = json.dumps(args) if args else "{}"
@@ -1415,15 +1430,20 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
     elif tool_type == "manage_memory":
         action = args.get("action", "")
         if action == "add":
-            content = "add\n" + args.get("text", "")
+            text = args.get("text") or args.get("value") or args.get("content") or ""
+            if not text and args.get("key"):
+                text = str(args.get("key") or "")
+            content = "add\n" + str(text)
             if args.get("category"):
                 content += "\n" + args["category"]
+            elif args.get("key"):
+                content += "\n" + str(args["key"])
         elif action == "edit":
             content = "edit\n" + args.get("memory_id", "") + "\n" + args.get("text", "")
         elif action == "delete":
             content = "delete\n" + args.get("memory_id", "")
         elif action == "search":
-            content = "search\n" + args.get("text", "")
+            content = "search\n" + (args.get("text") or args.get("tex") or args.get("query") or "")
         elif action == "list":
             content = "list"
             if args.get("category"):

@@ -2288,6 +2288,61 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     return header + '\n---\n' + body;
   }
 
+  function _looksLikeWrappedEmailContent(text) {
+    const t = String(text || '').replace(/\r\n/g, '\n').trim();
+    return /\n---\n/.test(t) && /^(To|Cc|Bcc|Subject|In-Reply-To|References|X-Source-UID|X-Source-Folder):\s*/im.test(t);
+  }
+
+  function _decodeBase64EmailWrapper(block) {
+    const compact = String(block || '').replace(/\s+/g, '');
+    if (compact.length < 24 || compact.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(compact)) return null;
+    try {
+      const bin = atob(compact);
+      let decoded = '';
+      if (typeof TextDecoder !== 'undefined') {
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+        decoded = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+      } else {
+        decoded = decodeURIComponent(escape(bin));
+      }
+      decoded = decoded.replace(/\r\n/g, '\n');
+      return _looksLikeWrappedEmailContent(decoded) ? decoded : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function _sanitizeOutgoingEmailBody(raw) {
+    let text = String(raw || '').replace(/\r\n/g, '\n');
+    const trimmed = text.trim();
+    const decodedWhole = _decodeBase64EmailWrapper(trimmed);
+    if (decodedWhole) text = _parseEmailHeader(decodedWhole).body || '';
+    else if (_looksLikeWrappedEmailContent(trimmed)) text = _parseEmailHeader(trimmed).body || '';
+
+    const parts = text.split(/(\n{2,})/);
+    let changed = false;
+    const clean = parts.map(part => {
+      if (/^\n+$/.test(part)) return part;
+      const decoded = _decodeBase64EmailWrapper(part);
+      if (!decoded) return part;
+      changed = true;
+      return _parseEmailHeader(decoded).body || '';
+    }).join('');
+
+    if (!changed && /<[^>]+>/.test(text) && typeof document !== 'undefined') {
+      const probe = document.createElement('div');
+      probe.innerHTML = text;
+      const plain = (probe.innerText || probe.textContent || '').trim();
+      const plainClean = plain ? _sanitizeOutgoingEmailBody(plain) : plain;
+      if (plainClean !== plain) return plainClean;
+    }
+
+    return (changed ? clean : text)
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
   function _emailLocalDraftKey(sourceUid, sourceFolder, inReplyTo) {
     const uid = String(sourceUid || '').trim();
     if (!uid) return '';
@@ -2328,7 +2383,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       references: draft.references ?? fields.references,
       sourceUid: draft.sourceUid ?? fields.sourceUid,
       sourceFolder: draft.sourceFolder ?? fields.sourceFolder,
-      body: draft.body ?? fields.body,
+      body: _sanitizeOutgoingEmailBody(draft.body ?? fields.body),
     };
   }
 
@@ -2636,6 +2691,15 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   function _splitEmailReplyQuote(text) {
     const original = String(text || '');
     if (!original) return { body: '', quote: '', stripped: false };
+    const literal = '---------- Previous message ----------';
+    const literalIdx = original.indexOf(literal);
+    if (literalIdx >= 0) {
+      return {
+        body: original.slice(0, literalIdx).trim(),
+        quote: original.slice(literalIdx).trim(),
+        stripped: true,
+      };
+    }
     const htmlQuoteOffset = _emailQuoteStartOffset(original);
     if (htmlQuoteOffset >= 0) {
       const body = original.slice(0, htmlQuoteOffset).trim();
@@ -2756,7 +2820,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     if (_shouldAutoCollapseEmailHeader()) _setEmailHeaderCollapsed(true, { manual: false });
   }
 
-  function _showEmailFields(doc) {
+  function _showEmailFields(doc, { applyLocalDraft = true } = {}) {
     const emailHeader = document.getElementById('doc-email-header');
     const emailActions = document.getElementById('doc-email-actions');
     // Show MD toolbar for email too (B, I, etc.)
@@ -2789,11 +2853,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     document.getElementById('doc-editor-code')?.classList.add('email-mode');
     document.getElementById('doc-editor-highlight')?.classList.add('email-mode');
     let fields = _parseEmailHeader(doc.content || '');
-    fields = _emailFieldsWithLocalDraft(fields);
+    if (applyLocalDraft) fields = _emailFieldsWithLocalDraft(fields);
+    const preserveEmailHeader = !!(fields.sourceUid || fields.inReplyTo || fields.references);
     const subjectInput = document.getElementById('doc-email-subject');
     const textarea = document.getElementById('doc-editor-textarea');
-    _setEmailHeaderInputValue('doc-email-to', fields.to, { preserveNonEmpty: true });
-    _setEmailHeaderInputValue('doc-email-subject', fields.subject, { preserveNonEmpty: true });
+    _setEmailHeaderInputValue('doc-email-to', fields.to, { preserveNonEmpty: preserveEmailHeader });
+    _setEmailHeaderInputValue('doc-email-subject', fields.subject, { preserveNonEmpty: preserveEmailHeader });
     _setEmailHeaderCollapsed(!!(doc && doc._emailHeaderCollapsed), { manual: false });
     if (subjectInput && !subjectInput._emailTabBodyBound) {
       subjectInput._emailTabBodyBound = true;
@@ -2804,10 +2869,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         }
       });
     }
-    _setEmailHeaderInputValue('doc-email-in-reply-to', fields.inReplyTo, { preserveNonEmpty: true });
-    _setEmailHeaderInputValue('doc-email-references', fields.references, { preserveNonEmpty: true });
-    _setEmailHeaderInputValue('doc-email-source-uid', fields.sourceUid || '', { preserveNonEmpty: true });
-    _setEmailHeaderInputValue('doc-email-source-folder', fields.sourceFolder || '', { preserveNonEmpty: true });
+    _setEmailHeaderInputValue('doc-email-in-reply-to', fields.inReplyTo, { preserveNonEmpty: preserveEmailHeader });
+    _setEmailHeaderInputValue('doc-email-references', fields.references, { preserveNonEmpty: preserveEmailHeader });
+    _setEmailHeaderInputValue('doc-email-source-uid', fields.sourceUid || '', { preserveNonEmpty: preserveEmailHeader });
+    _setEmailHeaderInputValue('doc-email-source-folder', fields.sourceFolder || '', { preserveNonEmpty: preserveEmailHeader });
     // Show/hide unread button only if we have a source UID (came from inbox)
     const unreadBtn = document.getElementById('doc-email-unread-btn');
     if (unreadBtn) unreadBtn.style.display = fields.sourceUid ? '' : 'none';
@@ -2930,8 +2995,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const ccRow = document.getElementById('doc-email-cc-row');
     const bccRow = document.getElementById('doc-email-bcc-row');
     const ccToggle = document.getElementById('doc-email-show-cc');
-    _setEmailHeaderInputValue('doc-email-cc', fields.cc || '', { preserveNonEmpty: true });
-    _setEmailHeaderInputValue('doc-email-bcc', fields.bcc || '', { preserveNonEmpty: true });
+    _setEmailHeaderInputValue('doc-email-cc', fields.cc || '', { preserveNonEmpty: preserveEmailHeader });
+    _setEmailHeaderInputValue('doc-email-bcc', fields.bcc || '', { preserveNonEmpty: preserveEmailHeader });
     const hasCcBcc = !!(
       fields.cc ||
       fields.bcc ||
@@ -3060,6 +3125,292 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const files = e.target.files;
     e.target.value = ''; // reset for next upload
     await _uploadComposeFiles(files);
+  }
+
+  let _odysseusAttachMenu = null;
+
+  function _closeOdysseusAttachMenu() {
+    if (_odysseusAttachMenu) {
+      _odysseusAttachMenu.remove();
+      _odysseusAttachMenu = null;
+    }
+    document.removeEventListener('click', _attachMenuOutsideClick, true);
+    document.removeEventListener('keydown', _attachMenuEscape, true);
+  }
+
+  function _attachMenuOutsideClick(e) {
+    if (_odysseusAttachMenu && !_odysseusAttachMenu.contains(e.target)) _closeOdysseusAttachMenu();
+  }
+
+  function _attachMenuEscape(e) {
+    if (e.key !== 'Escape') return;
+    _closeOdysseusAttachMenu();
+  }
+
+  function _positionOdysseusAttachMenu(anchor, menu) {
+    const r = anchor?.getBoundingClientRect?.();
+    if (!r) return;
+    menu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - 310))}px`;
+    menu.style.top = `${r.bottom + 6}px`;
+    requestAnimationFrame(() => {
+      const mr = menu.getBoundingClientRect();
+      if (mr.bottom > window.innerHeight - 8) {
+        menu.style.top = `${Math.max(8, r.top - mr.height - 6)}px`;
+      }
+    });
+  }
+
+  function _odysseusAttachLabel(item, kind) {
+    if (kind === 'gallery') {
+      return item.caption || item.prompt || item.filename || 'Gallery image';
+    }
+    return item.title || 'Untitled document';
+  }
+
+  async function _stageOdysseusAttachment(kind, id) {
+    const doc = docs.get(activeDocId);
+    if (!doc || doc.language !== 'email') return null;
+    if (!doc._composeAtts) doc._composeAtts = [];
+    const res = await fetch(`${API_BASE}/api/email/compose-from-odysseus`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind, id }),
+    });
+    let data = null;
+    try { data = await res.json(); } catch (_) {}
+    if (!res.ok || !data?.success) throw new Error(data?.error || data?.detail || `HTTP ${res.status}`);
+    doc._composeAtts.push({
+      token: data.token,
+      filename: data.filename,
+      size: data.size || 0,
+    });
+    return data;
+  }
+
+  async function _stageOdysseusZip(items) {
+    const doc = docs.get(activeDocId);
+    if (!doc || doc.language !== 'email') return null;
+    if (!doc._composeAtts) doc._composeAtts = [];
+    const res = await fetch(`${API_BASE}/api/email/compose-from-odysseus-zip`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items }),
+    });
+    let data = null;
+    try { data = await res.json(); } catch (_) {}
+    if (!res.ok || !data?.success) throw new Error(data?.error || data?.detail || `HTTP ${res.status}`);
+    doc._composeAtts.push({
+      token: data.token,
+      filename: data.filename,
+      size: data.size || 0,
+    });
+    return data;
+  }
+
+  function _afterOdysseusAttachmentsAdded(count, label) {
+    _renderComposeAttachments();
+    clearTimeout(_autoSaveDebounce);
+    _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 800);
+    if (uiModule) uiModule.showToast(count > 1 ? `Attached ${count} items` : `Attached ${label || 'item'}`);
+  }
+
+  async function _attachOdysseusItem(kind, id, label, opts = {}) {
+    try {
+      const data = await _stageOdysseusAttachment(kind, id);
+      if (!data) return;
+      _afterOdysseusAttachmentsAdded(1, label || data.filename);
+      if (!opts.keepOpen) _closeOdysseusAttachMenu();
+    } catch (err) {
+      console.error('Failed to attach Odysseus item:', err);
+      if (uiModule) uiModule.showError('Failed to attach from Odysseus');
+    }
+  }
+
+  function _selectedOdysseusAttachRows(menu) {
+    return Array.from(menu?.querySelectorAll?.('.email-odysseus-attach-row.is-selected') || []);
+  }
+
+  function _syncOdysseusAttachSelection(menu) {
+    const selected = _selectedOdysseusAttachRows(menu);
+    const bar = menu?.querySelector?.('.email-odysseus-attach-actions');
+    const count = menu?.querySelector?.('.email-odysseus-attach-count');
+    const attachBtn = menu?.querySelector?.('.email-odysseus-attach-selected');
+    if (bar) bar.style.display = '';
+    if (count) count.textContent = selected.length ? `${selected.length} selected` : 'Select items to attach';
+    if (attachBtn) attachBtn.disabled = selected.length === 0;
+  }
+
+  async function _attachSelectedOdysseusItems(menu) {
+    const rows = _selectedOdysseusAttachRows(menu);
+    if (!rows.length) return;
+    const btn = menu.querySelector('.email-odysseus-attach-selected');
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add('is-loading');
+    }
+    let added = 0;
+    try {
+      const items = rows.map(row => ({ kind: row.dataset.kind, id: row.dataset.id })).filter(x => x.kind && x.id);
+      let zip = false;
+      if (items.length > 5) {
+        const ask = window.styledConfirm || uiModule?.styledConfirm;
+        zip = ask
+          ? await ask(`Attach ${items.length} files as one zip?`, { confirmText: 'Zip', cancelText: 'Separate' })
+          : window.confirm(`Attach ${items.length} files as one zip?`);
+      }
+      if (zip) {
+        await _stageOdysseusZip(items);
+        added = 1;
+      } else {
+        for (const item of items) {
+          await _stageOdysseusAttachment(item.kind, item.id);
+          added += 1;
+        }
+      }
+      _afterOdysseusAttachmentsAdded(added, zip ? 'odysseus-attachments.zip' : undefined);
+      _closeOdysseusAttachMenu();
+    } catch (err) {
+      console.error('Failed to attach selected Odysseus items:', err);
+      if (uiModule) uiModule.showError(added ? `Attached ${added}, then failed` : 'Failed to attach from Odysseus');
+      _renderComposeAttachments();
+    } finally {
+      if (btn) {
+        btn.classList.remove('is-loading');
+        btn.disabled = false;
+      }
+    }
+  }
+
+  async function _loadOdysseusAttachItems(menu, kind) {
+    const list = menu.querySelector('.email-odysseus-attach-list');
+    if (!list) return;
+    menu.dataset.odyAttachKind = kind;
+    list.replaceChildren(spinnerModule.createLoadingRow('Loading…', 14));
+    menu.querySelectorAll('[data-ody-attach-kind]').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.odyAttachKind === kind);
+    });
+    const q = (menu.querySelector('.email-odysseus-attach-search')?.value || '').trim();
+    try {
+      const params = new URLSearchParams({ sort: 'recent', limit: '20' });
+      if (q) params.set('search', q);
+      const endpoint = kind === 'gallery'
+        ? `${API_BASE}/api/gallery/library?${params}`
+        : `${API_BASE}/api/documents/library?${params}`;
+      const res = await fetch(endpoint, { credentials: 'same-origin' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || data?.detail || `HTTP ${res.status}`);
+      const items = kind === 'gallery'
+        ? (Array.isArray(data?.items) ? data.items : Array.isArray(data?.images) ? data.images : [])
+        : (Array.isArray(data?.documents) ? data.documents : Array.isArray(data?.items) ? data.items : []);
+      if (!items.length) {
+        list.innerHTML = `<div class="email-odysseus-attach-empty">${q ? 'No matches' : `No ${kind === 'gallery' ? 'images' : 'documents'}`}</div>`;
+        _syncOdysseusAttachSelection(menu);
+        return;
+      }
+      list.innerHTML = '';
+      for (const item of items) {
+        const label = _odysseusAttachLabel(item, kind);
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = `email-odysseus-attach-row ${kind === 'gallery' ? 'is-gallery' : ''}`;
+        row.dataset.id = item.id || '';
+        row.dataset.kind = kind;
+        if (kind === 'gallery') {
+          const src = item.url ? `${API_BASE}${item.url}` : '';
+          row.innerHTML = `
+            <span class="email-odysseus-attach-dot" aria-hidden="true"></span>
+            <span class="email-odysseus-attach-thumb">${src ? `<img src="${_escHtml(src)}" alt="">` : ''}</span>
+            <span class="email-odysseus-attach-main">
+              <span class="email-odysseus-attach-title">${_escHtml(label)}</span>
+              <span class="email-odysseus-attach-meta">${_escHtml(item.filename || 'image')}</span>
+            </span>
+          `;
+        } else {
+          row.innerHTML = `
+            <span class="email-odysseus-attach-dot" aria-hidden="true"></span>
+            <span class="email-odysseus-attach-icon">${langIcon(item.language || 'text', 14, { style: 'opacity:0.8;' })}</span>
+            <span class="email-odysseus-attach-main">
+              <span class="email-odysseus-attach-title">${_escHtml(label)}</span>
+              <span class="email-odysseus-attach-meta">${_escHtml(item.language || 'text')}</span>
+            </span>
+          `;
+        }
+        row.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          row.classList.toggle('is-selected');
+          _syncOdysseusAttachSelection(menu);
+        });
+        row.addEventListener('dblclick', () => _attachOdysseusItem(kind, item.id, label, { keepOpen: false }));
+        list.appendChild(row);
+      }
+      _syncOdysseusAttachSelection(menu);
+    } catch (err) {
+      console.error('Failed to load Odysseus attach items:', err);
+      list.innerHTML = '<div class="email-odysseus-attach-empty">Could not load</div>';
+    }
+  }
+
+  function _showComposeAttachMenu(anchor) {
+    if (_activeDocLanguage() !== 'email') {
+      document.getElementById('doc-md-image-input')?.click();
+      return;
+    }
+    _closeOdysseusAttachMenu();
+    const menu = document.createElement('div');
+    menu.className = 'email-odysseus-attach-menu';
+    menu.innerHTML = `
+      <button type="button" class="email-odysseus-attach-local">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Upload file
+      </button>
+      <div class="email-odysseus-attach-tabs">
+        <button type="button" data-ody-attach-kind="document" class="active">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h6"/></svg>
+          <span>Documents</span>
+        </button>
+        <button type="button" data-ody-attach-kind="gallery">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+          <span>Gallery</span>
+        </button>
+      </div>
+      <label class="email-odysseus-attach-search-wrap">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input type="search" class="email-odysseus-attach-search" placeholder="Search attachments">
+      </label>
+      <div class="email-odysseus-attach-list"></div>
+      <div class="email-odysseus-attach-actions">
+        <span class="email-odysseus-attach-count"></span>
+        <button type="button" class="email-odysseus-attach-selected" disabled>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+          <span>Attach</span>
+        </button>
+      </div>
+    `;
+    document.body.appendChild(menu);
+    _odysseusAttachMenu = menu;
+    _positionOdysseusAttachMenu(anchor, menu);
+    menu.querySelector('.email-odysseus-attach-local')?.addEventListener('click', () => {
+      _closeOdysseusAttachMenu();
+      document.getElementById('doc-email-file-input')?.click();
+    });
+    menu.querySelectorAll('[data-ody-attach-kind]').forEach(btn => {
+      btn.addEventListener('click', () => _loadOdysseusAttachItems(menu, btn.dataset.odyAttachKind));
+    });
+    let attachSearchTimer = null;
+    menu.querySelector('.email-odysseus-attach-search')?.addEventListener('input', () => {
+      clearTimeout(attachSearchTimer);
+      attachSearchTimer = setTimeout(() => {
+        _loadOdysseusAttachItems(menu, menu.dataset.odyAttachKind || 'document');
+      }, 220);
+    });
+    menu.querySelector('.email-odysseus-attach-selected')?.addEventListener('click', () => _attachSelectedOdysseusItems(menu));
+    setTimeout(() => {
+      document.addEventListener('click', _attachMenuOutsideClick, true);
+      document.addEventListener('keydown', _attachMenuEscape, true);
+    }, 0);
+    _loadOdysseusAttachItems(menu, 'document');
   }
 
   function _isMarkdownImageFile(file) {
@@ -3248,13 +3599,23 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         }).filter(Boolean)
       );
       sugg.innerHTML = '';
+      sugg.dataset.navStarted = '0';
       let count = 0;
       for (const c of data.results) {
         for (const em of (c.emails || [])) {
           if (already.has(em.toLowerCase())) continue;
           const item = document.createElement('div');
           item.className = 'contact-suggestion';
+          item.setAttribute('role', 'option');
+          item.setAttribute('aria-selected', 'false');
           item.innerHTML = `<span class="contact-name">${_escHtml(c.name)}</span><span class="contact-email">${_escHtml(em)}</span>`;
+          item.addEventListener('mouseenter', () => {
+            sugg.dataset.navStarted = '1';
+            sugg.querySelectorAll('.contact-suggestion').forEach(it => {
+              it.classList.toggle('active', it === item);
+              it.setAttribute('aria-selected', it === item ? 'true' : 'false');
+            });
+          });
           // mousedown fires before blur so the click doesn't get lost
           item.addEventListener('mousedown', (e) => { e.preventDefault(); _commitRecipient(input, sugg, em); });
           item.addEventListener('click', (e) => { e.preventDefault(); _commitRecipient(input, sugg, em); });
@@ -3263,9 +3624,6 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         }
       }
       if (count === 0) { sugg.style.display = 'none'; return; }
-      // Auto-highlight first suggestion so Enter accepts it.
-      const first = sugg.querySelector('.contact-suggestion');
-      if (first) first.classList.add('active');
       sugg.style.display = '';
     } catch (e) {
       sugg.style.display = 'none';
@@ -3291,16 +3649,32 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       const items = open ? sugg.querySelectorAll('.contact-suggestion') : [];
       const active = open ? sugg.querySelector('.contact-suggestion.active') : null;
       let idx = active ? Array.from(items).indexOf(active) : -1;
+      const setActive = (nextIdx) => {
+        items.forEach((it, i) => {
+          const on = i === nextIdx;
+          it.classList.toggle('active', on);
+          it.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        if (items[nextIdx]) {
+          items[nextIdx].scrollIntoView({ block: 'nearest' });
+        }
+      };
       if (open && e.key === 'ArrowDown') {
         e.preventDefault();
-        idx = Math.min(items.length - 1, idx + 1);
-        items.forEach(it => it.classList.remove('active'));
-        if (items[idx]) items[idx].classList.add('active');
+        if (!items.length) return;
+        if (sugg.dataset.navStarted !== '1') {
+          idx = Math.max(0, idx);
+          sugg.dataset.navStarted = '1';
+        } else {
+          idx = Math.min(items.length - 1, idx + 1);
+        }
+        setActive(idx);
       } else if (open && e.key === 'ArrowUp') {
         e.preventDefault();
+        if (!items.length) return;
+        sugg.dataset.navStarted = '1';
         idx = Math.max(0, idx - 1);
-        items.forEach(it => it.classList.remove('active'));
-        if (items[idx]) items[idx].classList.add('active');
+        setActive(idx);
       } else if (e.key === 'Enter') {
         // If a suggestion is highlighted, commit it. Otherwise — if the
         // current fragment already looks like a complete email — commit
@@ -3417,8 +3791,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const _rich = _emailRichbodyActive();
     if (_rich) _syncEmailRichbody(_rich);
     const textarea = document.getElementById('doc-editor-textarea');
-    const body = (_rich ? (_rich.innerText || _rich.textContent || '') : (textarea?.value || '')).trim();
-    const bodyHtml = _rich ? _rich.innerHTML : null;
+    const rawBody = (_rich ? (_rich.innerText || _rich.textContent || '') : (textarea?.value || '')).trim();
+    const body = _sanitizeOutgoingEmailBody(rawBody);
+    let bodyHtml = _rich ? _rich.innerHTML : null;
+    if (_rich && body !== rawBody) bodyHtml = _emailBodyToHtml(body);
     const doc = docs.get(activeDocId);
     const attachments = (doc?._composeAtts || []).map(a => a.token);
     if (!to || !body) {
@@ -3581,8 +3957,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const _rich = _emailRichbodyActive();
     if (_rich) _syncEmailRichbody(_rich);
     const textarea = document.getElementById('doc-editor-textarea');
-    const body = (_rich ? (_rich.innerText || _rich.textContent || '') : (textarea?.value || '')).trim();
-    const bodyHtml = _rich ? _rich.innerHTML : null;
+    const rawBody = (_rich ? (_rich.innerText || _rich.textContent || '') : (textarea?.value || '')).trim();
+    const body = _sanitizeOutgoingEmailBody(rawBody);
+    let bodyHtml = _rich ? _rich.innerHTML : null;
+    if (_rich && body !== rawBody) bodyHtml = _emailBodyToHtml(body);
     const btn = document.getElementById('doc-email-draft-btn');
     if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
     const controller = new AbortController();
@@ -3924,10 +4302,11 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const references = document.getElementById('doc-email-references')?.value?.trim();
     const _rich = _emailRichbodyActive();
     if (_rich) _syncEmailRichbody(_rich);
-    const body = (_rich
+    const rawBody = (_rich
       ? (_rich.innerText || _rich.textContent || '')
       : (document.getElementById('doc-editor-textarea')?.value || '')
     ).trim();
+    const body = _sanitizeOutgoingEmailBody(rawBody);
     const doc = docs.get(activeDocId);
     const attachments = (doc?._composeAtts || []).map(a => a.token);
 
@@ -5146,12 +5525,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     }, true);
 
     // Attachments
-    document.getElementById('doc-email-attach-btn')?.addEventListener('click', () => {
-      document.getElementById('doc-email-file-input')?.click();
+    document.getElementById('doc-email-attach-btn')?.addEventListener('click', (e) => {
+      _showComposeAttachMenu(e.currentTarget);
     });
-    document.getElementById('md-toolbar-attach-btn')?.addEventListener('click', () => {
+    document.getElementById('md-toolbar-attach-btn')?.addEventListener('click', (e) => {
       if (_activeDocLanguage() === 'email') {
-        document.getElementById('doc-email-file-input')?.click();
+        _showComposeAttachMenu(e.currentTarget);
       } else {
         document.getElementById('doc-md-image-input')?.click();
       }
@@ -10063,11 +10442,33 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     if (!docs.has(docId)) {
       const curSession = sessionModule?.getCurrentSessionId() || '';
       let reuseId = null;
+      const incomingFields = _parseEmailHeader(newContent || '');
+
+      // Email subjects repeat constantly ("test", "Re: ..."). Match open
+      // compose docs by source email identity first; never let a same-title
+      // draft steal an update meant for a different open email.
+      if (incomingFields.sourceUid) {
+        const wantFolder = (incomingFields.sourceFolder || 'INBOX').trim();
+        for (const [existingId, existingDoc] of docs) {
+          const existingFields = _parseEmailHeader(existingDoc.content || '');
+          if (
+            String(existingFields.sourceUid || '') === String(incomingFields.sourceUid)
+            && ((existingFields.sourceFolder || 'INBOX').trim() === wantFolder)
+          ) {
+            reuseId = existingId;
+            break;
+          }
+        }
+      }
 
       // First: match by title
-      if (data.title) {
+      if (!reuseId && data.title) {
         for (const [existingId, existingDoc] of docs) {
-          if (existingDoc.title === data.title && existingDoc.sessionId === curSession) {
+          if (
+            existingDoc.title === data.title
+            && existingDoc.sessionId === curSession
+            && (existingDoc.language || '').toLowerCase() !== 'email'
+          ) {
             reuseId = existingId;
             break;
           }
@@ -10202,8 +10603,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       if (isEmailUpdate) {
         const updatedDocForEmail = docs.get(docId);
         if (updatedDocForEmail) {
+          const updatedFields = _parseEmailHeader(updatedDocForEmail.content || '');
+          _clearEmailLocalDraft(updatedFields.sourceUid, updatedFields.sourceFolder, updatedFields.inReplyTo);
           _setMarkdownPreviewActive(false, { remember: false });
-          _showEmailFields(updatedDocForEmail);
+          _showEmailFields(updatedDocForEmail, { applyLocalDraft: false });
         }
       } else {
         if (textarea) textarea.value = newContent;
@@ -10226,7 +10629,9 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     if (isEmailUpdate && updatedDoc) {
       updatedDoc.language = 'email';
       if (langSelect) langSelect.value = 'email';
-      _showEmailFields(updatedDoc);
+      const updatedFields = _parseEmailHeader(updatedDoc.content || '');
+      _clearEmailLocalDraft(updatedFields.sourceUid, updatedFields.sourceFolder, updatedFields.inReplyTo);
+      _showEmailFields(updatedDoc, { applyLocalDraft: false });
     }
     if (updatedDoc && !updatedDoc.userSetLanguage && !updatedDoc.language) {
       setTimeout(attemptAutoDetect, 100);
