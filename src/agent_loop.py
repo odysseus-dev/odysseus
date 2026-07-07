@@ -829,6 +829,20 @@ def _insert_before_latest_user(messages: List[Dict], context_msg: Dict) -> List[
     return out
 
 
+def _final_answer_contract_message() -> Dict:
+    return {
+        "role": "system",
+        "_protected": True,
+        "content": (
+            "## FINAL ANSWER CONTRACT\n"
+            "After tool work is complete and no more tools are needed, write only the final answer for the user.\n"
+            "- Keep the final answer concise by default, even if the solving phase used high reasoning or verbosity.\n"
+            "- Do not replay tool commands, raw logs, or earlier failed attempts unless the user explicitly asks for process details.\n"
+            "- Prefer 1-4 sentences or a short bullet list. If blocked, state the exact blocker and the next useful action."
+        ),
+    }
+
+
 def _uploaded_files_context_message(uploaded_files: Optional[List[Dict]]) -> Optional[Dict]:
     if not uploaded_files:
         return None
@@ -1667,17 +1681,7 @@ def _build_system_prompt(
                 ),
             }
 
-    _final_answer_message = {
-        "role": "system",
-        "_protected": True,
-        "content": (
-            "## FINAL ANSWER CONTRACT\n"
-            "After tool work is complete and no more tools are needed, write only the final answer for the user.\n"
-            "- Keep the final answer concise by default, even if the solving phase used high reasoning or verbosity.\n"
-            "- Do not replay tool commands, raw logs, or earlier failed attempts unless the user explicitly asks for process details.\n"
-            "- Prefer 1-4 sentences or a short bullet list. If blocked, state the exact blocker and the next useful action."
-        ),
-    }
+    _final_answer_message = _final_answer_contract_message()
 
     # Document context is kept as a SEPARATE message (not merged into the tool
     # prompt) so the context trimmer doesn't destroy it when truncating the
@@ -3021,8 +3025,7 @@ async def stream_agent_loop(
             if _ody_qwen_finetune_model
             else [{"role": "user", "content": _last_user}]
         )
-        if _final_answer_message:
-            direct_messages = _insert_before_latest_user(direct_messages, _final_answer_message)
+        direct_messages = _insert_before_latest_user(direct_messages, _final_answer_contract_message())
         direct_response = ""
         direct_start = time.time()
         direct_actual_model = model
