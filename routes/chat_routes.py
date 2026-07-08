@@ -876,6 +876,12 @@ def setup_chat_routes(
         # by default without having to send allow_bash in every request.
         if allow_bash is not None and str(allow_bash).lower() != "true":
             disabled_tools.add("bash")
+        # Did the user's words explicitly ask for a web lookup/search? (vs. the
+        # web toggle). Used below to keep web_search/web_fetch available and to
+        # focus tools on the lookup. Derived from the deterministic intent
+        # classifier's "web" category. (Restores a definition dropped in a merge
+        # — 885/955/1413 consume it, so its absence NameError'd every chat.)
+        _explicit_web_intent = bool(_tool_intent and _tool_intent.category == "web")
         if (
             allow_web_search is not None
             and str(allow_web_search).lower() != "true"
