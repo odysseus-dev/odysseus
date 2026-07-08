@@ -66,6 +66,11 @@
   /* Warm accent — used by the Goals/Today UI in Notes. Lives as a token so
      themes can override without touching the goal CSS. */
   --accent-warm: #d19a66;
+  /* iOS PWA / notch insets — requires viewport-fit=cover on the page */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
 }
 
 :root.light {
@@ -643,7 +648,7 @@ body.bg-pattern-sparkles {
     /* Fixed hamburger — always visible, toggles sidebar */
     .hamburger-btn {
       position: fixed;
-      top: 12px;
+      top: calc(12px + var(--safe-top));
       left: 9px;
       right: auto;
       z-index: 210;
@@ -4282,7 +4287,7 @@ body.bg-pattern-sparkles {
     }
     @media (max-width:768px){
       .box { max-height:none; }
-      .chat-container { padding:10px; flex:1; margin-top:0; padding-top:42px; min-height:0; }
+      .chat-container { padding:10px; flex:1; margin-top:0; padding-top:calc(42px + var(--safe-top)); min-height:0; }
       .scroll-nav-btn { width:44px; height:44px; font-size:14px; margin-bottom:0; }
       .send-btn { width:48px; height:48px !important; border-radius:12px; }
       .send-btn svg { width:22px; height:22px; }
@@ -4343,7 +4348,7 @@ body.bg-pattern-sparkles {
       }
       /* Sidebar header — room for hamburger */
       .sidebar-header {
-        padding: 18px 12px 8px 12px;
+        padding: calc(18px + var(--safe-top)) 12px 8px 12px;
         min-height: 44px;
       }
       .sidebar-brand-title {
@@ -4410,8 +4415,8 @@ body.bg-pattern-sparkles {
       .chat-top-bar {
         padding: 1px 8px;
         min-height: 14px;
-        margin-top: -31px;
-        padding-top: 31px;
+        margin-top: calc(-31px - var(--safe-top));
+        padding-top: calc(31px + var(--safe-top));
       }
       .chat-top-bar .chat-new-btn { display: none; }
       .chat-meta-overlay { font-size: 0.65em; max-width: 55%; overflow: visible; left: 50%; top: 50%; transform: translate(-50%, -50%); position: absolute; }
@@ -4424,7 +4429,7 @@ body.bg-pattern-sparkles {
       /* Incognito indicator — right side next to hamburger on mobile */
       .incognito-indicator {
         position: fixed;
-        top: 12px;
+        top: calc(12px + var(--safe-top));
         left: auto !important;
         right: 48px !important;
         transform: none;
@@ -4501,7 +4506,7 @@ body.bg-pattern-sparkles {
       .mobile-new-chat-btn {
         display: flex;
         position: fixed;
-        top: 12px;
+        top: calc(12px + var(--safe-top));
         left: 8px;
         z-index: 210;
         width: 32px;
@@ -4583,6 +4588,7 @@ body.bg-pattern-sparkles {
       .mode-toggle::before {
         border-radius: 11px;
       }
+      .chat-input-right .mode-toggle { display: flex !important; }
       .mode-toggle-btn {
         padding: 0 14px;
         font-size: 12px;

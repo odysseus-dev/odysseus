@@ -70,7 +70,9 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
       if (privs.can_use_agent === false) {
         const _agent = document.getElementById('mode-agent-btn');
         const _chat = document.getElementById('mode-chat-btn');
+        const _overflowAgent = document.getElementById('overflow-mode-agent-btn');
         if (_agent) _agent.style.display = 'none';
+        if (_overflowAgent) _overflowAgent.style.display = 'none';
         if (_chat) { _chat.classList.add('active'); _chat.click?.(); }
       }
     } catch (_) { /* DOM not ready or unexpected shape — UI gates are non-fatal */ }

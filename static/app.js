@@ -2003,6 +2003,52 @@ function initializeEventListeners() {
     document.addEventListener('touchend', () => { setTimeout(() => { _refocusOnBlur = false; }, 50); }, { passive: true });
   }
 
+  // ── Agent / Chat overflow-menu fallback (when toolbar toggle is hidden) ──
+  (function initModeOverflowFallback() {
+    const overflowMenu = el('overflow-menu');
+    const agentOverflow = el('overflow-mode-agent-btn');
+    const chatOverflow = el('overflow-mode-chat-btn');
+    const modeToggle = document.querySelector('.chat-input-right .mode-toggle');
+    const chatBar = document.querySelector('.chat-input-bar');
+    if (!overflowMenu || !agentOverflow || !chatOverflow || !modeToggle || !chatBar) return;
+
+    function syncOverflowVisibility() {
+      const toggleHidden = getComputedStyle(modeToggle).display === 'none';
+      const agentBlocked = el('mode-agent-btn')?.style.display === 'none';
+      if (!agentBlocked) {
+        agentOverflow.style.display = toggleHidden ? '' : 'none';
+      }
+      chatOverflow.style.display = toggleHidden ? '' : 'none';
+    }
+
+    function syncOverflowActive(mode) {
+      const m = mode || (el('mode-agent-btn')?.classList.contains('active') ? 'agent' : 'chat');
+      agentOverflow.classList.toggle('active', m === 'agent');
+      chatOverflow.classList.toggle('active', m === 'chat');
+      updatePlusDot();
+    }
+
+    agentOverflow.addEventListener('click', () => {
+      if (window.__odysseusSetChatMode) window.__odysseusSetChatMode('agent');
+      overflowMenu.classList.add('hidden');
+    });
+    chatOverflow.addEventListener('click', () => {
+      if (window.__odysseusSetChatMode) window.__odysseusSetChatMode('chat');
+      overflowMenu.classList.add('hidden');
+    });
+
+    document.addEventListener('chat-mode-change', (e) => syncOverflowActive(e.detail?.mode));
+
+    const ro = new ResizeObserver(() => requestAnimationFrame(syncOverflowVisibility));
+    ro.observe(chatBar);
+    window.addEventListener('resize', () => requestAnimationFrame(syncOverflowVisibility));
+
+    requestAnimationFrame(() => {
+      syncOverflowVisibility();
+      syncOverflowActive();
+    });
+  })();
+
   (function initOverflowMenu() {
     const plusBtn = el('overflow-plus-btn');
     const menu = el('overflow-menu');
