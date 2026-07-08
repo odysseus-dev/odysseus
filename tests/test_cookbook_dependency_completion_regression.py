@@ -20,7 +20,9 @@ def test_background_status_poll_reconciles_into_local_tasks():
     source = _read("static/js/cookbookRunning.js")
 
     assert "const statusById = new Map(tasks.map(t => [t.session_id, t]));" in source
-    assert "const nextStatus = live.status === 'completed'" in source
+    assert "const completedByOutput = depDone || downloadDone;" in source
+    assert "const nextStatus = completedByOutput" in source
+    assert "live.status === 'completed'" in source
     assert "? 'done'" in source
     assert ": (live.status === 'error'" in source
     assert "? 'error'" in source
@@ -75,7 +77,8 @@ def test_background_poll_recovers_done_for_stopped_dependency_install():
     downgrading the card to crashed."""
     source = _read("static/js/cookbookRunning.js")
 
-    assert "const depDone = !!task.payload?._dep && _depInstallSucceeded(task.output);" in source
+    assert "const combinedOutput = `${task.output || ''}\\n${live.output_tail || ''}`;" in source
+    assert "const depDone = !!task.payload?._dep && _depInstallSucceeded(combinedOutput);" in source
     assert "(depDone || downloadDone) ? 'done' : (task.type === 'download' ? 'crashed' : 'stopped')" in source
 
 
@@ -91,14 +94,14 @@ def test_background_poll_recovers_done_for_completed_download():
     normalized = " ".join(source.split())
     assert (
         "const downloadDone = task.type === 'download' "
-        "&& String(task.output || '').includes('DOWNLOAD_OK');"
+        "&& String(combinedOutput || '').includes('DOWNLOAD_OK');"
     ) in normalized
 
 
 def test_dependency_install_payload_keeps_env_path_for_refresh():
     source = _read("static/js/cookbook.js")
 
-    assert "env_path: _envState.envPath || ''" in source
+    assert "env_path: targetEnvPath || ''" in source
 
 
 def test_local_dependency_probe_refreshes_user_site_visibility():

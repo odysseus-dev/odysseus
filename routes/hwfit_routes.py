@@ -191,7 +191,7 @@ def setup_hwfit_routes():
         return detect_system(host=host, ssh_port=ssh_port, platform=platform, fresh=fresh)
 
     @router.get("/models")
-    def get_models(use_case: str = "", sort: str = "newest", limit: int = 50, search: str = "", host: str = "", quant: str = "", ctx: str = "", gpu_count: str = "", gpu_group: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, manual_mode: str = "", manual_gpu_count: str = "", manual_vram_gb: str = "", manual_ram_gb: str = "", manual_backend: str = "", ignore_detected_gpu: bool = False, ignore_detected_ram: bool = False, fit_only: bool = False):
+    def get_models(use_case: str = "", sort: str = "newest", limit: int = 50, search: str = "", host: str = "", quant: str = "", ctx: str = "", gpu_count: str = "", gpu_group: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, refresh_catalog: bool = False, manual_mode: str = "", manual_gpu_count: str = "", manual_vram_gb: str = "", manual_ram_gb: str = "", manual_backend: str = "", ignore_detected_gpu: bool = False, ignore_detected_ram: bool = False, fit_only: bool = False):
         """Rank LLM models against detected hardware and return scored results.
         gpu_count: override GPU count (0 = CPU only, 1-N = simulate N GPUs of the
             active group). gpu_group: index into system.gpu_groups (the homogeneous
@@ -200,11 +200,17 @@ def setup_hwfit_routes():
         fresh=true bypasses the hardware-detection cache."""
         from services.hwfit.hardware import detect_system
         from services.hwfit.fit import rank_models
-        from services.hwfit.models import get_models, model_catalog_path
+        from services.hwfit.models import get_models, model_catalog_path, refresh_dynamic_catalogs
         host, ssh_port = _validate_detection_target(host, ssh_port)
         system = deepcopy(detect_system(host=host, ssh_port=ssh_port, platform=platform, fresh=fresh))
         if system.get("error"):
             return {"system": system, "models": [], "error": system["error"]}
+        catalog_refresh = None
+        if refresh_catalog:
+            try:
+                catalog_refresh = refresh_dynamic_catalogs(force=True)
+            except Exception as e:
+                catalog_refresh = {"error": str(e)}
         if not get_models():
             return {
                 "system": system,
@@ -304,7 +310,10 @@ def setup_hwfit_routes():
             rank_kwargs.pop("target_context", None)
             rank_kwargs.pop("fit_only", None)
         results = rank_models(system, **rank_kwargs)
-        return {"system": system, "models": results}
+        payload = {"system": system, "models": results}
+        if catalog_refresh is not None:
+            payload["catalog_refresh"] = catalog_refresh
+        return payload
 
     @router.get("/profiles")
     def get_serve_profiles(model: str = "", model_path: str = "", host: str = "", ssh_port: str = "", platform: str = "", fresh: bool = False, serve_weights_gb: float = 0.0, serve_quant: str = ""):

@@ -440,7 +440,10 @@ def build_user_content(
             try:
                 with open(path, "rb") as image_file:
                     encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
-                image_format = ext[1:]
+                # Extensionless uploads (e.g. a pasted screenshot) have no ext,
+                # so fall back to the resolved MIME subtype rather than emitting
+                # an invalid "data:image/;base64," with an empty subtype.
+                image_format = ext[1:] or (mime.split("/", 1)[1] if mime.startswith("image/") else "png")
                 content.append({
                     "type": "image_url",
                     "image_url": {"url": f"data:image/{image_format};base64,{encoded_string}"},
@@ -456,7 +459,7 @@ def build_user_content(
             try:
                 with open(path, "rb") as audio_file:
                     encoded_string = base64.b64encode(audio_file.read()).decode("utf-8")
-                audio_format = ext[1:]
+                audio_format = ext[1:] or (mime.split("/", 1)[1] if mime.startswith("audio/") else "mpeg")
                 content.append({
                     "type": "audio",
                     "audio": {"url": f"data:audio/{audio_format};base64,{encoded_string}"},

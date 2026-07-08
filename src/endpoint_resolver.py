@@ -47,6 +47,33 @@ def _endpoint_cached_models(ep) -> list:
     return models if isinstance(models, list) else []
 
 
+def _endpoint_pinned_models(ep) -> list:
+    raw = getattr(ep, "pinned_models", None)
+    if not raw:
+        return []
+    try:
+        models = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return []
+    return models if isinstance(models, list) else []
+
+
+def _is_mlx_deepseek_v4_repo_id(model_id: str) -> bool:
+    return "mlx-community/deepseek-v4" in str(model_id or "").lower()
+
+
+def _is_mlx_deepseek_v4_shim_id(model_id: str) -> bool:
+    return "/.cache/odysseus/mlx-shims/deepseek-v4" in str(model_id or "").lower()
+
+
+def _filter_mlx_deepseek_v4_repo_when_shimmed(model_ids) -> list:
+    ids = list(model_ids or [])
+    has_shim = any(_is_mlx_deepseek_v4_shim_id(m) for m in ids)
+    if not has_shim:
+        return ids
+    return [m for m in ids if not _is_mlx_deepseek_v4_repo_id(m)]
+
+
 def _endpoint_hidden_models(ep) -> set:
     """Model ids the admin disabled on this endpoint (the UI's hidden list)."""
     raw = getattr(ep, "hidden_models", None)
@@ -67,7 +94,15 @@ def _endpoint_enabled_models(ep) -> list:
     raw first one resolves to a model that 400s ("requires terms acceptance").
     """
     hidden = _endpoint_hidden_models(ep)
-    return [m for m in _endpoint_cached_models(ep) if m not in hidden]
+    merged = []
+    seen = set()
+    for m in [*_endpoint_cached_models(ep), *_endpoint_pinned_models(ep)]:
+        if not isinstance(m, str) or not m or m in seen:
+            continue
+        seen.add(m)
+        merged.append(m)
+    merged = _filter_mlx_deepseek_v4_repo_when_shimmed(merged)
+    return [m for m in merged if m not in hidden]
 
 
 def resolve_endpoint_runtime(ep, owner: Optional[str] = None) -> Tuple[str, Optional[str]]:

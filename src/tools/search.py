@@ -34,8 +34,8 @@ async def do_search_chats(query: str, limit: int = 20, owner: str | None = None)
 
         lines = [f"Found {len(seen_sessions)} session(s) matching \"{query}\":\n"]
         for sid, result in seen_sessions.items():
-            lines.append(f"- **{result.session_name}** (#{sid})")
-            lines.append(f"  Link: [Open chat](#{sid})")
+            lines.append(f"- [**{result.session_name}**](#session-{sid})")
+            lines.append(f"  Open: [Open chat](#session-{sid})")
             lines.append(f"  Match ({result.role}): {result.content_snippet}")
             if result.context_before:
                 before = result.context_before[-1]
