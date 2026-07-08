@@ -346,12 +346,12 @@ export function initSidebarLayout(Storage, opts) {
     // Ignore clicks on the sidebar, icon rail, or hamburger button itself
     if (e.target.closest('#sidebar') || e.target.closest('#icon-rail') || e.target.closest('#hamburger-btn')) return;
     // Ignore clicks inside modals or the chat input area
-    if (e.target.closest('.modal') || e.target.closest('.input-bar') || e.target.closest('#message')) return;
+    if (e.target.closest('.modal') || e.target.closest('.chat-input-bar') || e.target.closest('#message')) return;
     // Ignore clicks on session/folder dropdowns and the styled prompt
     // overlay — they're body-level elements logically tied to a sidebar
     // action (e.g. "Move to folder → New Folder…"), so closing the
     // sidebar when the user clicks one yanks the action mid-flight.
-    if (e.target.closest('.session-dropdown, .folder-submenu, #styled-prompt-overlay, #styled-confirm-overlay')) return;
+    if (e.target.closest('.session-dropdown, .session-folder-submenu, #styled-prompt-overlay, #styled-confirm-overlay')) return;
     // Close full sidebar if open (with animation)
     if (sb && !sb.classList.contains('hidden')) {
       const backdrop = document.getElementById('sidebar-backdrop');
@@ -442,16 +442,18 @@ export function initSidebarLayout(Storage, opts) {
         _railWasOpenBeforeTool = false;
         return;
       }
-      if (_sidebarWasOpenBeforeTool && sb && sb.classList.contains('hidden')) {
+      const restoreSidebar = _sidebarWasOpenBeforeTool;
+      const restoreRail = _railWasOpenBeforeTool;
+      if (restoreSidebar && sb && sb.classList.contains('hidden')) {
         sb.classList.remove('hidden');
         if (backdrop) backdrop.classList.add('visible');
       }
-      if (_railWasOpenBeforeTool && rail && !rail.classList.contains('mobile-mini')) {
+      if (restoreRail && rail && !rail.classList.contains('mobile-mini')) {
         rail.classList.add('mobile-mini');
       }
       _sidebarWasOpenBeforeTool = false;
       _railWasOpenBeforeTool = false;
-      if (_sidebarWasOpenBeforeTool || _railWasOpenBeforeTool) syncRailSide();
+      if (restoreSidebar || restoreRail) syncRailSide();
     };
     const _modalObs = new MutationObserver((muts) => {
       let triggered = false;
@@ -484,7 +486,7 @@ function _initChatSwipeToOpenSidebar() {
 
   // Areas where a horizontal drag means something else (their own scroll/drag).
   const EXCLUDE = [
-    '#sidebar', '#icon-rail', '.modal', '.input-bar', '#message',
+    '#sidebar', '#icon-rail', '.modal', '.chat-input-bar', '#message',
     '#minimized-dock', '.minimized-dock-chip', '#dock-trash-zone',
     'pre', 'table', '.agent-tool-output', '.agent-thread-cmd',
     'input', 'textarea', 'select',

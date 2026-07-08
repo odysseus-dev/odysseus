@@ -6,6 +6,7 @@ import uiModule, { autoResize, styledPrompt } from './ui.js';
 import chatRenderer from './chatRenderer.js';
 import { providerLogo } from './providers.js';
 import { initModelPicker, updateModelPicker } from './modelPicker.js';
+import { bindMenuDismiss } from './escMenuStack.js';
 import themeModule from './theme.js';
 import spinnerModule from './spinner.js';
 
@@ -380,7 +381,8 @@ function buildFolderSubmenu(sessionId, currentFolder, dropdown) {
     e.stopPropagation();
     await moveToFolder(sessionId, '');
     dropdown.style.display = 'none';
-    sub.style.display = 'none';
+    if (typeof sub._dismiss === 'function') sub._dismiss();
+    else sub.style.display = 'none';
   });
   sub.appendChild(noneOpt);
 
@@ -397,7 +399,8 @@ function buildFolderSubmenu(sessionId, currentFolder, dropdown) {
       // chat went, same as when creating a new folder.
       setSortMode('group');
       dropdown.style.display = 'none';
-      sub.style.display = 'none';
+      if (typeof sub._dismiss === 'function') sub._dismiss();
+      else sub.style.display = 'none';
     });
     sub.appendChild(opt);
   });
@@ -421,14 +424,16 @@ function buildFolderSubmenu(sessionId, currentFolder, dropdown) {
     // into the flat list and looks like the action did nothing.
     setSortMode('group');
     dropdown.style.display = 'none';
-    sub.style.display = 'none';
+    if (typeof sub._dismiss === 'function') sub._dismiss();
+    else sub.style.display = 'none';
   });
   sub.appendChild(newOpt);
 
   moveItem.addEventListener('click', (e) => {
     e.stopPropagation();
     if (sub.style.display === 'block') {
-      sub.style.display = 'none';
+      if (typeof sub._dismiss === 'function') sub._dismiss();
+      else sub.style.display = 'none';
     } else {
       const rect = moveItem.getBoundingClientRect();
       const isMobile = window.innerWidth <= 768;
@@ -461,11 +466,19 @@ function buildFolderSubmenu(sessionId, currentFolder, dropdown) {
           sub.style.left = Math.max(8, rect.left - subRect.width - 2) + 'px';
         }
       }
+      // One shared dismiss per open submenu (not a permanent document.click
+      // per session row — that leaked on every renderSessionList).
+      if (typeof sub._dismiss === 'function') {
+        try { sub._dismiss(); } catch (_) {}
+      }
+      sub.style.display = 'block';
+      bindMenuDismiss(sub, () => { sub.style.display = 'none'; }, (ev) =>
+        !sub.contains(ev.target) && ev.target !== moveItem && !moveItem.contains(ev.target)
+      );
     }
   });
 
   sub.addEventListener('click', (e) => e.stopPropagation());
-  document.addEventListener('click', () => { sub.style.display = 'none'; });
   document.body.appendChild(sub);
 
   return moveItem;
@@ -1036,7 +1049,12 @@ function _renderSessionListImpl() {
   }
 
   // Clean up any previous session dropdowns and folder submenus from body
-  document.querySelectorAll('.session-dropdown, .folder-submenu').forEach(d => d.remove());
+  document.querySelectorAll('.session-dropdown, .session-folder-submenu').forEach(d => {
+    if (typeof d._dismiss === 'function') {
+      try { d._dismiss(); } catch (_) {}
+    }
+    d.remove();
+  });
 
   const _frag = document.createDocumentFragment();
 
