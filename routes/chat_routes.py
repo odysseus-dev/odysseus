@@ -587,6 +587,10 @@ def setup_chat_routes(
             str(allow_web_search).lower() == "true"
             or str(use_web).lower() == "true"
         )
+        _tool_intent = _classify_tool_intent(message) if isinstance(message, str) else None
+        _explicit_web_intent = bool(
+            _tool_intent and _tool_intent.needs_tools and _tool_intent.category == "web"
+        )
         # Intent auto-escalation: if the user is clearly asking the assistant
         # to create a todo, reminder, or calendar event, promote chat → agent
         # for this turn so the LLM has access to manage_notes / manage_calendar.
@@ -595,7 +599,6 @@ def setup_chat_routes(
         # its way through a plain chat request (and fail, especially with the
         # shell disabled).
         auto_escalated = False
-        _tool_intent = _classify_tool_intent(message) if isinstance(message, str) else None
         if chat_mode == "chat" and _tool_intent and _tool_intent.needs_tools:
             chat_mode = "agent"
             auto_escalated = True

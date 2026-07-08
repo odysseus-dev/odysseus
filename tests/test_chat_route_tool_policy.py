@@ -96,6 +96,17 @@ def test_disabled_tools_respects_missing_vs_explicit_toggles():
     )
 
 
+def test_explicit_web_intent_defined_before_disabled_tools_block():
+    """chat_stream must define _explicit_web_intent before disabled-tools logic uses it."""
+    source = _CHAT_ROUTES.read_text(encoding="utf-8")
+    define_idx = source.find("_explicit_web_intent =")
+    use_idx = source.find("if _explicit_web_intent:")
+
+    assert define_idx != -1, "_explicit_web_intent must be assigned in chat_stream"
+    assert use_idx != -1, "_explicit_web_intent must be used by disabled-tools logic"
+    assert define_idx < use_idx, "_explicit_web_intent must be defined before first use"
+
+
 # ── Functional tests of the disabled-tools logic ───────────────
 
 
