@@ -9,7 +9,9 @@ import json
 import logging
 import os
 import re
+import asyncio 
 from typing import Any, Dict, List, Optional, Set, Tuple
+from src.database import McpServer, SessionLocal
 
 from src.runtime_paths import get_app_root
 
@@ -409,17 +411,29 @@ class McpManager:
         for sid in ids:
             await self.disconnect_server(sid)
 
-    async def connect_all_enabled(self):
-        """Connect to all enabled MCP servers from the database."""
-        from src.database import McpServer, SessionLocal
 
+    async def connect_all_enabled(self):
         db = SessionLocal()
         try:
             servers = db.query(McpServer).filter(McpServer.is_enabled == True).all()
-            for srv in servers:
-                args = json.loads(srv.args) if srv.args else []
-                env = json.loads(srv.env) if srv.env else {}
-                await self.connect_server(
+
+            tasks = [
+                asyncio.create_task(self._connect_with_timeout(srv))
+                for srv in servers
+            ]
+
+            await asyncio.gather(*tasks)
+        finally:
+            db.close()
+
+
+    async def _connect_with_timeout(self, srv):
+        args = json.loads(srv.args) if srv.args else []
+        env = json.loads(srv.env) if srv.env else {}
+
+        try:
+            await asyncio.wait_for(
+                self.connect_server(
                     server_id=srv.id,
                     name=srv.name,
                     transport=srv.transport,
@@ -427,9 +441,11 @@ class McpManager:
                     args=args,
                     env=env,
                     url=srv.url,
-                )
-        finally:
-            db.close()
+                ),
+                timeout=20,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Timed out connecting to %s", srv.name)
 
     async def call_tool(self, qualified_name: str, arguments: Dict) -> Dict:
         """Call an MCP tool by its qualified name (mcp__{server_id}__{tool_name}).
