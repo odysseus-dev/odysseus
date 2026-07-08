@@ -1,7 +1,9 @@
 /**
  * Deep Research side panel — open/close, form, job rendering, library.
  */
-import * as jobs from './jobs.js?v=20260630researchthumb';
+// Bare path — must match chatStream.js dynamic import('./research/jobs.js').
+// A ?v= mismatch loads two job registries; agent-started research never appears.
+import * as jobs from './jobs.js';
 import themeModule from '../theme.js';
 import createResearchSynapse from '../researchSynapse.js';
 import spinnerModule from '../spinner.js';

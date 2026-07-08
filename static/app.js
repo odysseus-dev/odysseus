@@ -22,7 +22,11 @@ import memoryModule from './js/memory.js';
 import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
 import galleryModule from './js/gallery.js';
-import tasksModule from './js/tasks.js?v=20260630tasksactivity';
+// IMPORTANT: no ?v= on shared modules — bare paths must match every other
+// importer (chatRenderer / settings / calendar / cookbookSchedule). A query
+// mismatch loads the file twice as separate instances (Cookbook + model-picker
+// footgun): split _tasks state, chat #task-* links vs sidebar disagree.
+import tasksModule from './js/tasks.js';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
 import adminModule from './js/admin.js';
@@ -39,7 +43,8 @@ import themeModule from './js/theme.js';
 // unversioned so this can't recur.
 import cookbookModule from './js/cookbook.js';
 import groupModule from './js/group.js';
-import * as researchPanelModule from './js/research/panel.js?v=20260630researchthumb';
+// Bare path — must match chatRenderer / chatStream dynamic imports of panel + jobs.
+import * as researchPanelModule from './js/research/panel.js';
 import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
