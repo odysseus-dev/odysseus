@@ -1911,6 +1911,13 @@ body.bg-pattern-sparkles {
       #welcome-screen { opacity: 0; pointer-events: none; }
     }
     #welcome-screen.hidden { display:none; }
+    /* Hard hide welcome once the chat has messages (guards race where
+       welcome-active / opacity linger behind the first bubble). */
+    .chat-container:has(#chat-history .msg) #welcome-screen {
+      display: none !important;
+      opacity: 0 !important;
+      pointer-events: none !important;
+    }
     #welcome-screen.kb-hidden {
       opacity: 0;
       pointer-events: none;

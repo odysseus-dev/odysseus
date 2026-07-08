@@ -1959,6 +1959,7 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
          <p>Messages will be routed through your OpenClaw agent. The agent has access to tools, memory, and skills configured in your OpenClaw workspace.</p>`,
         'OpenClaw');
     } else if (msgHistory.length) {
+      if (chatRenderer.hideWelcomeScreen) chatRenderer.hideWelcomeScreen();
       for (const msg of msgHistory) {
         try {
           _renderHistoryMessage(msg, modelName);
@@ -2139,9 +2140,15 @@ export function createDirectChat(url, modelId, endpointId) {
     metaEl.textContent = 'New Chat';
   }
 
-  // Enable input
+  // Enable input — focus only on desktop (mobile keyboard bounce / unwanted open).
   const msgInput = document.getElementById('message');
-  if (msgInput) { msgInput.disabled = false; msgInput.value = ''; msgInput.focus(); }
+  if (msgInput) {
+    msgInput.disabled = false;
+    msgInput.value = '';
+    if (window.innerWidth > 768) {
+      try { msgInput.focus(); } catch (_) {}
+    }
+  }
 }
 
 /** Actually create the session in the DB. Called on first message send. */

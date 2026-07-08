@@ -543,9 +543,11 @@ export function initThemeUI() {
       syncAdvancedPickers(saved.colors);
     }
   } catch (e) { console.warn('syncAdvancedPickers on init failed', e); }
-  // Wire up theme tabs (Themes / Customize)
+  // Wire up theme tabs (Themes / Customize) once — saveCustomTheme() re-calls
+  // initThemeUI() on every color drag; without a guard, click handlers stack.
   const themeTabs = document.getElementById('theme-tabs');
-  if (themeTabs) {
+  if (themeTabs && themeTabs.dataset.tabsWired !== '1') {
+    themeTabs.dataset.tabsWired = '1';
     themeTabs.addEventListener('click', (e) => {
       const tab = e.target.closest('.admin-tab');
       if (!tab) return;

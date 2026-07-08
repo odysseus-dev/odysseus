@@ -284,12 +284,17 @@ async function _syncWelcomeModelHint() {
   const tip = document.getElementById('welcome-tip');
   const sub = document.getElementById('welcome-sub');
   if (!tip && !sub) return;
+  if (document.querySelector('#chat-history .msg')) return;
+  // Don't overwrite Nobody/incognito welcome copy (or research mode copy).
+  const incChk = document.getElementById('incognito-toggle');
+  if (incChk && incChk.checked) return;
+  if (sub && (sub.dataset.researchOrigText || sub.dataset.originalText)) return;
   const hasModel = await _hasUsableChatModel();
   if (hasModel) {
-    if (sub && !sub.dataset.researchOrigText) sub.textContent = 'New chat ready.';
+    if (sub) sub.textContent = 'New chat ready.';
     if (tip) tip.textContent = 'Pick a model if you want, or just type.';
   } else {
-    if (sub && !sub.dataset.researchOrigText) {
+    if (sub) {
       sub.innerHTML = 'Welcome, <span class="setup-trigger-link" style="color:var(--accent,var(--red));font-weight:600;cursor:pointer;text-decoration:underline;" title="Click to launch setup">type /setup</span> to get started.';
     }
     if (tip) tip.textContent = 'Add an AI endpoint from Settings in the sidebar, or paste an endpoint/API key into the chat.';
@@ -3271,7 +3276,7 @@ function initializeEventListeners() {
       // Focus the composer synchronously so mobile keyboards pop open.
       // iOS Safari only honours programmatic focus inside the original click
       // callback — a setTimeout breaks the user-gesture chain.
-      const _input = el('message-input');
+      const _input = el('message');
       if (_input) { try { _input.focus(); } catch (_) {} }
     });
   }

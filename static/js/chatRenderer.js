@@ -1436,7 +1436,10 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
 export function hideWelcomeScreen() {
   const ws = document.getElementById('welcome-screen');
   const cc = document.getElementById('chat-container');
-  if (ws) ws.classList.add('hidden');
+  if (ws) {
+    ws.classList.add('hidden');
+    ws.style.display = 'none';
+  }
   if (cc) cc.classList.remove('welcome-active');
   // Update send button — switches from muted arrow to + Chat
   if (window._updateSendBtnIcon) setTimeout(window._updateSendBtnIcon, 50);
@@ -1445,9 +1448,14 @@ export function hideWelcomeScreen() {
 }
 
 export function showWelcomeScreen() {
+  const box = document.getElementById('chat-history');
+  if (box && box.querySelector('.msg')) return;
   const ws = document.getElementById('welcome-screen');
   const cc = document.getElementById('chat-container');
-  if (ws) ws.classList.remove('hidden');
+  if (ws) {
+    ws.classList.remove('hidden');
+    ws.style.display = '';
+  }
   if (cc) cc.classList.add('welcome-active');
   // Entering the New Chat / welcome state: discard any stale draft left in the
   // composer from the previous session so the input starts empty (issue #1343).
