@@ -483,11 +483,22 @@ async def dispatch_reminder(
                 api_key = intg.get("api_key", "")
                 if api_key:
                     hdrs["Authorization"] = f"Bearer {api_key}"
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.post(f"{base}/{topic}", content=ntfy_body, headers=hdrs)
-                    ntfy_sent = resp.is_success
-                    if not ntfy_sent:
-                        ntfy_error = f"ntfy returned HTTP {resp.status_code}"
+                # SSRF guard — same check (and env knob) as the webhook branch
+                # above: link-local / metadata addresses are always rejected;
+                # REMINDER_WEBHOOK_BLOCK_PRIVATE_IPS=true also blocks RFC-1918
+                # so a ntfy base_url can't be pointed at internal services.
+                import os as _os
+                from src.url_safety import check_outbound_url as _chk
+                _block = _os.getenv("REMINDER_WEBHOOK_BLOCK_PRIVATE_IPS", "false").lower() == "true"
+                _ok, _reason = _chk(f"{base}/{topic}", block_private=_block)
+                if not _ok:
+                    ntfy_error = f"ntfy URL rejected: {_reason}"
+                else:
+                    async with httpx.AsyncClient(timeout=10.0) as client:
+                        resp = await client.post(f"{base}/{topic}", content=ntfy_body, headers=hdrs)
+                        ntfy_sent = resp.is_success
+                        if not ntfy_sent:
+                            ntfy_error = f"ntfy returned HTTP {resp.status_code}"
             else:
                 ntfy_error = "No enabled ntfy integration"
         except Exception as e:

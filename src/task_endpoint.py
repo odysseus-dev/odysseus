@@ -74,4 +74,5 @@ async def task_llm_call_async(
     if not candidates:
         raise RuntimeError("No LLM endpoint available for background task")
     await wait_for_interactive_quiet("background task LLM")
+    kwargs.setdefault("workload", "background")
     return await llm_call_async_with_fallback(candidates, messages=messages, **kwargs)

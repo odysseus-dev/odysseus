@@ -42,7 +42,7 @@ let _activeModel = null;
 let _activeAlbum = null;
 let _galleryCascaded = false;   // play the domino-in cascade once per open
 let _favoritesOnly = false;
-let _sort = 'shuffle';
+let _sort = 'recent';
 let _shuffleSeed = Math.floor(Math.random() * 2 ** 31);
 let _offset = 0;
 // Page size — computed from the grid's visible area so taller / wider
@@ -1152,8 +1152,14 @@ function _wireUploadTile() {
     input.type = 'file';
     input.accept = 'image/*,video/*';
     input.multiple = true;
-    input.addEventListener('change', () => {
-      if (input.files.length) _bulkUpload([...input.files], _activeAlbum);
+    input.addEventListener('change', async () => {
+      if (!input.files.length) return;
+      const files = [];
+      for (const file of [...input.files]) {
+        const nextFile = await fileHandlerModule.cropForMobileUpload(file);
+        if (nextFile) files.push(nextFile);
+      }
+      if (files.length) _bulkUpload(files, _activeAlbum);
     });
     input.click();
   });
@@ -2810,6 +2816,68 @@ export function openGallery() {
   searchInput.focus();
 }
 
+function _showImagesTab() {
+  const modal = document.getElementById('gallery-modal');
+  if (!modal) return;
+  modal.querySelectorAll('.gallery-tab').forEach(t => t.classList.remove('active'));
+  modal.querySelector('.gallery-tab[data-tab="images"]')?.classList.add('active');
+  const imagesContainer = document.getElementById('gallery-images-container');
+  const albumsContainer = document.getElementById('gallery-albums-container');
+  const editorContainer = document.getElementById('gallery-editor-container');
+  const settingsContainer = document.getElementById('gallery-settings-container');
+  if (imagesContainer) imagesContainer.style.display = '';
+  if (albumsContainer) albumsContainer.style.display = 'none';
+  if (editorContainer) editorContainer.style.display = 'none';
+  if (settingsContainer) settingsContainer.style.display = 'none';
+}
+
+export async function openGalleryImage(imageId) {
+  if (!imageId) {
+    openGallery();
+    return;
+  }
+  openGallery();
+  _showImagesTab();
+  _search = '';
+  _activeTags = [];
+  _activeModel = null;
+  _activeAlbum = null;
+  _favoritesOnly = false;
+  _sort = 'recent';
+  const searchInput = document.getElementById('gallery-search');
+  if (searchInput) searchInput.value = '';
+  const sortSel = document.getElementById('gallery-sort');
+  if (sortSel) sortSel.value = 'recent';
+  const detail = document.getElementById('gallery-detail');
+  if (detail) detail.style.display = 'none';
+
+  try {
+    await _fetchLibrary(false);
+    let img = _items.find(i => String(i.id) === String(imageId));
+    if (!img) {
+      const res = await fetch(`${API_BASE}/api/gallery/${encodeURIComponent(imageId)}`, { credentials: 'same-origin' });
+      if (res.ok) {
+        const data = await res.json();
+        img = data.image || data;
+      }
+    }
+    if (!img || !img.id) {
+      uiModule.showToast?.('Photo not found in gallery', 3000);
+      return;
+    }
+    _openDetail(img);
+    const card = document.querySelector(`.gallery-card[data-id="${CSS.escape(String(imageId))}"]`);
+    if (card) {
+      card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      card.classList.add('gallery-card-focus');
+      setTimeout(() => card.classList.remove('gallery-card-focus'), 1600);
+    }
+  } catch (err) {
+    console.error('[gallery] open image failed', err);
+    uiModule.showToast?.('Could not open photo in gallery', 3000);
+  }
+}
+
 function _doCloseGallery() {
   const editorMounted = !!document.querySelector('#gallery-editor-container .gallery-editor');
   if ((window.__galleryEditLive || isEditorOpen() || editorMounted) && !window.__galleryAllowCloseEditor) {
@@ -2882,6 +2950,7 @@ function _humanSize(bytes) {
 
 const galleryModule = {
   openGallery,
+  openGalleryImage,
   closeGallery,
   isGalleryOpen,
 };

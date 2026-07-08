@@ -8,7 +8,7 @@ import sessionModule from './sessions.js';
 import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibOpen } from './emailLibrary.js';
 import * as Modals from './modalManager.js';
 import { applyEdgeDock } from './modalSnap.js';
-import { buildReplyAllCc } from './emailLibrary/replyRecipients.js';
+import { buildReplyAllCc, extractEmail } from './emailLibrary/replyRecipients.js';
 import { emailApiUrl, emailAccountQuery } from './emailShared.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
@@ -28,6 +28,23 @@ const _bellIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" s
 const _icon = (svg) => `<span class="dropdown-icon">${svg}</span>`;
 const _replySeparator = '---------- Previous message ----------';
 const _DONE_RESPONSE_TAGS = new Set(['urgent', 'reply-soon', 'action-needed']);
+
+function _splitEmailAddresses(raw) {
+  return (typeof raw === 'string' ? raw : '')
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+function _isMyEmailAddress(addr, myAddresses) {
+  const email = extractEmail(addr);
+  if (!email) return false;
+  return new Set((myAddresses || []).map(a => String(a || '').trim().toLowerCase()).filter(Boolean)).has(email);
+}
+
+function _withoutMyAddresses(raw, myAddresses) {
+  return _splitEmailAddresses(raw).filter(addr => !_isMyEmailAddress(addr, myAddresses));
+}
 
 function _openCalendarEventFromEmail(uid) {
   const target = String(uid || '').trim();
@@ -832,13 +849,26 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
       ? window._myEmailAddresses
       : (window._myEmailAddress ? [window._myEmailAddress] : []);
 
-    let toAddress = data.from_address;
+    const fromIsMe = _isMyEmailAddress(data.from_address, myAddresses);
+    const originalToWithoutMe = _withoutMyAddresses(data.to, myAddresses);
+    const originalCcWithoutMe = _withoutMyAddresses(data.cc, myAddresses);
+
+    let toAddress = fromIsMe
+      ? (originalToWithoutMe.join(', ') || originalCcWithoutMe[0] || data.from_address)
+      : data.from_address;
     let ccAddresses = '';
     let subjectPrefix = 'Re: ';
 
     if (mode === 'reply-all') {
-      // Build reply-all: TO = original sender, CC = everyone else (To + Cc minus me)
-      ccAddresses = buildReplyAllCc(data, myAddresses);
+      if (fromIsMe) {
+        // Replying from Sent should go back to the people I originally wrote
+        // to, not to myself. Keep original Cc recipients on Cc.
+        toAddress = originalToWithoutMe.join(', ') || originalCcWithoutMe[0] || data.from_address;
+        ccAddresses = originalCcWithoutMe.filter(addr => !originalToWithoutMe.some(t => extractEmail(t) === extractEmail(addr))).join(', ');
+      } else {
+        // Build reply-all: TO = original sender, CC = everyone else (To + Cc minus me)
+        ccAddresses = buildReplyAllCc(data, myAddresses);
+      }
     } else if (mode === 'forward') {
       toAddress = '';
       subjectPrefix = 'Fwd: ';
@@ -921,7 +951,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
       // Agent-provided reply text should land in the email draft the user
       // already has open. Otherwise mobile users see the source email while the
       // agent silently creates a second draft elsewhere.
-      const reuseExisting = (mode === 'view' || mode === 'open' || (!!aiSuggestedBody && mode !== 'forward'));
+      const reuseExisting = mode !== 'forward';
       const existingDocId = (reuseExisting && _docModule.findEmailDocId)
         ? _docModule.findEmailDocId(em.uid, _currentFolder)
         : null;
@@ -930,52 +960,22 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
         await _docModule.loadDocument(existingDocId);
         if (aiSuggestedBody && typeof _docModule.replaceEmailReplyBody === 'function') {
-          await _docModule.replaceEmailReplyBody(existingDocId, aiSuggestedBody);
-          _bringEmailReplyDraftToFrontOnMobile();
+          await _docModule.replaceEmailReplyBody(existingDocId, aiSuggestedBody, { force: true });
         }
+        _bringEmailReplyDraftToFrontOnMobile();
       } else {
-        // If the user already has a chat session open, reuse it instead of
-        // spawning a new one. They asked for this explicitly — opening reply
-        // mid-conversation shouldn't whip them out of context.
-        let activeSid = '';
-        try { activeSid = sessionModule?.getCurrentSessionId?.() || ''; } catch {}
+        const activeSid = await _createEmailChat(data);
         if (!activeSid) {
-          // No chat in flight — keep the old behavior of creating a scoped
-          // email-thread chat, then RE-READ the now-current session id. The
-          // POST below requires a session_id (backend 400s without one), and
-          // the freshly-created chat is what should own the reply draft.
-          await _createEmailChat(data);
-          try { activeSid = sessionModule?.getCurrentSessionId?.() || ''; } catch {}
-        }
-        // Guarantee a session — _createEmailChat can't make one when there's
-        // no enabled default-chat endpoint, which left the reply POSTing a
-        // null session_id → 400. Create a bare session so the draft always
-        // has a home regardless of chat/endpoint config.
-        if (!activeSid) {
-          try {
-            const _fd = new FormData();
-            _fd.append('name', `Email: ${(data.subject || '').slice(0, 60)}`);
-            _fd.append('skip_validation', 'true');
-            const _sres = await fetch(`${API_BASE}/api/session`, { method: 'POST', body: _fd, credentials: 'same-origin' });
-            if (_sres.ok) {
-              const _sdata = await _sres.json();
-              if (_sdata && _sdata.id) {
-                activeSid = _sdata.id;
-                if (sessionModule?.loadSessions) await sessionModule.loadSessions();
-                if (sessionModule?.selectSession) await sessionModule.selectSession(activeSid);
-              }
-            }
-          } catch (e) { console.error('reply: bare session create failed', e); }
+          console.error('reply: could not obtain a session_id');
+          import('./ui.js').then(m => m.showError && m.showError('Could not start a reply chat.')).catch(() => {});
+          return;
         }
 
         const docRes = await fetch(`${API_BASE}/api/document`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            // Reuse the user's current chat session if there is one (so the
-            // reply draft lives in the chat they were just in); otherwise
-            // null and the new email-chat (created above) takes over.
-            session_id: activeSid || null,
+            session_id: activeSid,
             title: data.subject,
             content: content,
             language: 'email',
@@ -1256,31 +1256,58 @@ async function _toggleDone(em, itemEl) {
 }
 
 async function _createEmailChat(emailData) {
+  const subject = String(emailData?.subject || 'New Email').trim() || 'New Email';
+  const title = subject === 'New Email' ? 'New Email' : `Email: ${subject.slice(0, 60)}`;
   try {
-    // Try current session's endpoint first
-    const current = sessionModule.getSessions?.().find(s => s.id === sessionModule.getCurrentSessionId?.());
-    let url, model, endpointId;
-    if (current && current.endpoint_url && current.model) {
-      url = current.endpoint_url;
-      model = current.model;
-      endpointId = current.endpoint_id;
-    } else {
-      // Fall back to default chat config
-      const dcRes = await fetch(`${API_BASE}/api/default-chat`);
-      const dc = await dcRes.json();
-      url = dc.endpoint_url;
-      model = dc.model;
-      endpointId = dc.endpoint_id;
+    const currentSid = sessionModule.getCurrentSessionId?.() || '';
+    const current = sessionModule.getSessions?.().find(s => s.id === currentSid);
+    const currentIsBlank = !!current
+      && !current.archived
+      && !current.has_documents
+      && !current.has_images
+      && Number(current.message_count || 0) === 0
+      && current.folder !== 'Assistant'
+      && current.folder !== 'Tasks';
+    if (currentIsBlank) {
+      const meta = document.getElementById('current-meta');
+      if (meta) meta.textContent = title;
+      return current.id;
+    }
+    let url = current?.endpoint_url || '';
+    let model = current?.model || '';
+    let endpointId = current?.endpoint_id || '';
+    if (!url || !model) {
+      try {
+        const dcRes = await fetch(`${API_BASE}/api/default-chat`, { credentials: 'same-origin' });
+        const dc = dcRes.ok ? await dcRes.json() : {};
+        url = dc.endpoint_url || '';
+        model = dc.model || '';
+        endpointId = dc.endpoint_id || '';
+      } catch (_) {}
     }
 
-    if (url && model) {
-      await sessionModule.createDirectChat(url, model, endpointId);
-      // Set a helpful title in the chat meta
-      const meta = document.getElementById('current-meta');
-      if (meta) meta.textContent = `Email: ${(emailData.subject || '').slice(0, 60)}`;
+    const fd = new FormData();
+    fd.append('name', title);
+    fd.append('skip_validation', 'true');
+    if (url) fd.append('endpoint_url', url);
+    if (model) fd.append('model', model);
+    if (endpointId) fd.append('endpoint_id', endpointId);
+    const res = await fetch(`${API_BASE}/api/session`, { method: 'POST', body: fd, credentials: 'same-origin' });
+    if (!res.ok) {
+      console.error('email chat create failed', res.status, await res.text().catch(() => ''));
+      return '';
     }
+    const payload = await res.json().catch(() => ({}));
+    const sid = payload?.id || '';
+    if (!sid) return '';
+    if (sessionModule?.loadSessions) await sessionModule.loadSessions();
+    if (sessionModule?.selectSession) await sessionModule.selectSession(sid);
+    const meta = document.getElementById('current-meta');
+    if (meta) meta.textContent = title;
+    return sid;
   } catch (e) {
     console.error('Failed to create email chat:', e);
+    return '';
   }
 }
 
@@ -1292,38 +1319,7 @@ async function _composeNew() {
   // (doc shows for a frame, then slides up again). Mount once, at injectFreshDoc,
   // after the session + doc exist.
   try {
-    // /api/document requires a session_id (returns 400 if null), so reuse
-    // the active chat if there is one — otherwise spin up an email-scoped
-    // chat first, same pattern the reply path uses.
-    let sid = '';
-    try { sid = sessionModule?.getCurrentSessionId?.() || ''; } catch (_) {}
-    if (!sid) {
-      await _createEmailChat({ subject: 'New Email' });
-      try { sid = sessionModule?.getCurrentSessionId?.() || ''; } catch (_) {}
-    }
-    // Guarantee a session — _createEmailChat can't make one when there's no
-    // enabled default-chat endpoint, which left compose POSTing a null
-    // session_id → 400 (the draft silently never appeared). Same bare-session
-    // fallback the reply flow uses.
-    if (!sid) {
-      try {
-        const _fd = new FormData();
-        _fd.append('name', 'New Email');
-        _fd.append('skip_validation', 'true');
-        const _sres = await fetch(`${API_BASE}/api/session`, { method: 'POST', body: _fd, credentials: 'same-origin' });
-        if (_sres.ok) {
-          const _sdata = await _sres.json();
-          if (_sdata && _sdata.id) {
-            sid = _sdata.id;
-            // NOTE: intentionally do NOT loadSessions()/selectSession() here.
-            // Re-selecting the (empty) session re-renders the chat and flashes
-            // the welcome splash for a frame before the draft opens — the
-            // "splash flickers like crazy then email opens" bug. The doc only
-            // needs the session_id; the draft opens in the doc panel regardless.
-          }
-        }
-      } catch (e) { console.error('compose: bare session create failed', e); }
-    }
+    const sid = await _createEmailChat({ subject: 'New Email' });
     if (!sid) {
       console.error('compose: could not obtain a session_id');
       import('./ui.js').then(m => m.showError && m.showError('Could not start a new email (no session).')).catch(() => {});
