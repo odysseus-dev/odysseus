@@ -634,6 +634,8 @@ def _build_ollama_payload(
         "messages": _ollama_normalize_messages(messages),
         "stream": stream,
     }
+    if _supports_thinking(model):
+        payload["think"] = False
     options: Dict = {}
     if temperature is not None:
         options["temperature"] = temperature
