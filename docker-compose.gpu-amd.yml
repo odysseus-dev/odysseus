@@ -97,11 +97,15 @@ services:
       - ${RENDER_GID:-render}
 
   chromadb:
-    image: docker.io/chromadb/chroma:latest
+    # Pinned, not :latest — chroma's persist path moved from /chroma/chroma to
+    # /data in 1.x, so an unpinned image can silently strand the vector index
+    # on the container's ephemeral layer, wiping it on every recreate. Bump
+    # this deliberately after verifying the new tag still persists to /data.
+    image: docker.io/chromadb/chroma:1.0.0
     ports:
       - "${CHROMADB_BIND:-127.0.0.1}:8100:8000"
     volumes:
-      - chromadb-data:/chroma/chroma
+      - chromadb-data:/data
     environment:
       - ANONYMIZED_TELEMETRY=FALSE
     restart: unless-stopped
