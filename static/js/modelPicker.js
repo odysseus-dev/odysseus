@@ -5,8 +5,20 @@ import { providerLogo } from './providers.js';
 import uiModule from './ui.js';
 import settingsModule from './settings.js';
 import { sortModelObjects } from './modelSort.js';
+import { registerMenuDismiss } from './escMenuStack.js';
 
 const API_BASE = window.location.origin;
+
+// Real close path for the picker (uses .hidden/.closing, not .open).
+// Stashed so closeAllPopups / Escape / overflow can dismiss without poking classes.
+let _closePickerFn = null;
+let _unregisterPickerEsc = () => {};
+
+/** Close the model picker if open. Safe to call when closed or before init. */
+export function closeModelPicker() {
+  if (typeof _closePickerFn === 'function') _closePickerFn();
+}
+if (typeof window !== 'undefined') window.closeModelPicker = closeModelPicker;
 
 // ── Recent + Favorites persistence ──
 // Recent is auto-tracked (last 5 picks, most-recent-first) and lives in its
@@ -181,27 +193,101 @@ function _initModelPickerDropdown() {
   const searchRow = menu ? menu.querySelector('.model-picker-search-row') : null;
   const refreshBtn = document.getElementById('model-picker-refresh-btn');
   if (!wrap || !btn || !menu || !search || !listEl) return;
+  // Guard against double-wiring when sessions.js is loaded twice under
+  // different module URLs (bare vs ?v=) — second handler would open then close.
+  if (btn.dataset.modelPickerWired === '1') return;
+  btn.dataset.modelPickerWired = '1';
+
+  let _closeTimer = null;
+  let _ignoreCloseUntil = 0;
+  let _docClickHandler = null;
+  let _onCloseAnimEnd = null;
+
+  function _detachDocClick() {
+    if (!_docClickHandler) return;
+    document.removeEventListener('click', _docClickHandler, true);
+    _docClickHandler = null;
+  }
+
+  function _cancelCloseAnim() {
+    if (_onCloseAnimEnd) {
+      menu.removeEventListener('animationend', _onCloseAnimEnd);
+      _onCloseAnimEnd = null;
+    }
+    if (_closeTimer) {
+      clearTimeout(_closeTimer);
+      _closeTimer = null;
+    }
+  }
 
   function _close() {
     if (menu.classList.contains('hidden')) return;
+    _unregisterPickerEsc();
+    _unregisterPickerEsc = () => {};
+    _detachDocClick();
     // Restore scroll button
     const _scrollBtn = document.getElementById('scroll-bottom-btn');
     if (_scrollBtn) _scrollBtn.style.display = '';
+    _cancelCloseAnim();
     menu.classList.add('closing');
-    menu.addEventListener('animationend', function _onDone() {
+    _onCloseAnimEnd = function _onDone() {
       menu.removeEventListener('animationend', _onDone);
+      _onCloseAnimEnd = null;
       menu.classList.remove('closing');
       menu.classList.add('hidden');
       search.value = '';
-    }, { once: true });
-    // Fallback if animationend doesn't fire
-    setTimeout(() => {
+    };
+    menu.addEventListener('animationend', _onCloseAnimEnd);
+    // Fallback if animationend doesn't fire — keep id so _open() can cancel
+    _closeTimer = setTimeout(() => {
+      _closeTimer = null;
+      if (_onCloseAnimEnd) {
+        menu.removeEventListener('animationend', _onCloseAnimEnd);
+        _onCloseAnimEnd = null;
+      }
       if (!menu.classList.contains('hidden')) {
         menu.classList.remove('closing');
         menu.classList.add('hidden');
         search.value = '';
       }
     }, 200);
+  }
+  _closePickerFn = _close;
+
+  function _open() {
+    // Cancel any in-flight close so a stale animationend/timer cannot re-hide us
+    _cancelCloseAnim();
+    menu.classList.remove('closing', 'hidden');
+    // Block toggle/outside close briefly (mobile ghost-click + same-turn doc click)
+    _ignoreCloseUntil = Date.now() + 350;
+    _populate('');
+    if (window.modelsModule && window.modelsModule.refreshModels) {
+      window.modelsModule.refreshModels().then(() => {
+        if (!menu.classList.contains('hidden')) _populate(search.value || '');
+        updateModelPicker();
+      }).catch(() => {});
+    }
+    if (window.innerWidth >= 768) search.focus();
+    const _scrollBtn = document.getElementById('scroll-bottom-btn');
+    if (_scrollBtn) _scrollBtn.style.display = 'none';
+
+    // Register with Escape stack BEFORE the textarea guard in ui.js — so Escape
+    // closes the picker even when focus stays on #message (mobile keyboard up).
+    _unregisterPickerEsc();
+    _unregisterPickerEsc = registerMenuDismiss(() => { _close(); });
+
+    // Defer outside-click (capture) so the opening click cannot immediately dismiss
+    _detachDocClick();
+    _docClickHandler = (e) => {
+      if (Date.now() < _ignoreCloseUntil) return;
+      if (menu.classList.contains('hidden')) return;
+      if (!wrap.contains(e.target)) _close();
+    };
+    setTimeout(() => {
+      if (_docClickHandler && !menu.classList.contains('hidden')) {
+        document.addEventListener('click', _docClickHandler, true);
+      }
+    }, 0);
   }
 
   function _openPickerShortcut(kind) {
@@ -650,23 +736,14 @@ function _initModelPickerDropdown() {
     if (match) await _pick(match);
   });
 
+  // Keep composer focus (mobile keyboard) — same pattern as overflow + button
+  btn.addEventListener('pointerdown', (e) => { e.preventDefault(); });
   btn.addEventListener('click', (e) => {
+    e.preventDefault();
     e.stopPropagation();
     if (menu.classList.contains('hidden') || menu.classList.contains('closing')) {
-      // Force-clear any in-progress close animation
-      menu.classList.remove('closing', 'hidden');
-      _populate('');
-      if (window.modelsModule && window.modelsModule.refreshModels) {
-        window.modelsModule.refreshModels().then(() => {
-          if (!menu.classList.contains('hidden')) _populate(search.value || '');
-          updateModelPicker();
-        }).catch(() => {});
-      }
-      if (window.innerWidth >= 768) search.focus();
-      // Hide scroll button so it doesn't overlap
-      const _scrollBtn = document.getElementById('scroll-bottom-btn');
-      if (_scrollBtn) _scrollBtn.style.display = 'none';
-    } else {
+      _open();
+    } else if (Date.now() >= _ignoreCloseUntil) {
       _close();
     }
   });
@@ -703,11 +780,6 @@ function _initModelPickerDropdown() {
       _openPickerShortcut('models');
     });
   }
-  document.addEventListener('click', (e) => {
-    if (!menu.classList.contains('hidden') && !menu.contains(e.target) && e.target !== btn) {
-      _close();
-    }
-  });
 }
 
 /**

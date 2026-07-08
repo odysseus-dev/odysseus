@@ -398,9 +398,22 @@ function initializeEventListeners() {
   // windows are deliberately NOT touched here — those close via their own
   // controls.
   window.closeAllPopups = function closeAllPopups(except) {
+    // These menus use the `.open` class.
     document.querySelectorAll(
-      '.export-dropdown-menu.open, .overflow-menu.open, .model-picker-menu.open, .doc-overflow-menu.open'
+      '.export-dropdown-menu.open, .doc-overflow-menu.open'
     ).forEach(m => { if (m !== except) m.classList.remove('open'); });
+    // Overflow + model picker use `.hidden` / `.closing` — never `.open`.
+    // Calling the real close helpers plays their fold-in animations and
+    // clears zombie open state (visibility:hidden alone used to leave the
+    // picker "open" under the overflow menu).
+    const overflowMenu = document.getElementById('overflow-menu');
+    if (overflowMenu && overflowMenu !== except && typeof window.closeOverflowMenu === 'function') {
+      window.closeOverflowMenu();
+    }
+    const modelPickerMenu = document.getElementById('model-picker-menu');
+    if (modelPickerMenu && modelPickerMenu !== except && typeof window.closeModelPicker === 'function') {
+      window.closeModelPicker();
+    }
     document.querySelectorAll(
       '.skill-kebab-menu, .note-reminder-menu, .task-dropdown, .doclib-card-dropdown, .email-card-dropdown, .msg-overflow-menu'
     ).forEach(m => { if (m !== except) m.remove(); });
@@ -714,10 +727,21 @@ function initializeEventListeners() {
         return;
       }
 
-      // Model picker popup — close before opening any modals
+      // Model picker popup — uses .hidden/.closing, not .open. Prefer the
+      // real close helper (also registered on the Escape menu stack so this
+      // path is usually already handled when focus is in #message).
       const modelPickerMenu = document.getElementById('model-picker-menu');
-      if (modelPickerMenu && modelPickerMenu.classList.contains('open')) {
-        modelPickerMenu.classList.remove('open');
+      if (modelPickerMenu && !modelPickerMenu.classList.contains('hidden')) {
+        if (typeof window.closeModelPicker === 'function') window.closeModelPicker();
+        else {
+          modelPickerMenu.classList.add('hidden');
+          modelPickerMenu.classList.remove('closing');
+        }
+        return;
+      }
+      const overflowMenuEsc = document.getElementById('overflow-menu');
+      if (overflowMenuEsc && !overflowMenuEsc.classList.contains('hidden') && typeof window.closeOverflowMenu === 'function') {
+        window.closeOverflowMenu();
         return;
       }
 
@@ -2055,8 +2079,9 @@ function initializeEventListeners() {
       menu.classList.remove('hidden');
       plusBtn.classList.add('expanded');
       document.body.appendChild(menu);  // escape the composer's container-type trap
-      // Hide pill bar label so it doesn't show through the menu
-      if (pickerWrap) pickerWrap.style.visibility = 'hidden';
+      // Actually close the model picker (don't just hide it with visibility —
+      // that left a zombie open state when overflow closed).
+      if (typeof window.closeModelPicker === 'function') window.closeModelPicker();
       // Keep the textarea focused so the keyboard stays up if it was open (the
       // pointerdown handler above prevents the focus-steal). Still watch
       // visualViewport so the menu follows the chevron if the viewport shifts.
@@ -2079,7 +2104,6 @@ function initializeEventListeners() {
       // scales back into the chevron) before flipping to display:none.
       menu.classList.add('closing');
       plusBtn.classList.remove('expanded');
-      if (pickerWrap) pickerWrap.style.visibility = '';
       // Item delays max at 0.18s + 0.20s anim = 0.38s for items, container
       // delay 0.16s + 0.22s = 0.38s. 400ms covers both with margin.
       setTimeout(() => {
@@ -2088,6 +2112,7 @@ function initializeEventListeners() {
         if (ownerWrap) ownerWrap.appendChild(menu);  // restore from <body> portal
       }, 400);
     }
+    window.closeOverflowMenu = closeOverflowMenu;
     // Close menu when clicking any item inside it. preventDefault on pointerdown
     // so tapping an item (e.g. Attach files) doesn't steal focus from the message
     // box — keeps the mobile keyboard up.
