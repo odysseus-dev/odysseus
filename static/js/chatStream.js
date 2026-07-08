@@ -185,9 +185,17 @@ export function handleUIControl(uiData) {
 
     } else if (uiEvent === 'open_email_reply' || uiData.ui_event === 'open_email_reply') {
       try {
-        var existingDocId = documentModule && documentModule.findEmailDocId
-          ? documentModule.findEmailDocId(uiData.uid, uiData.folder || 'INBOX')
+        var activeCtx = documentModule && documentModule.getActiveEmailComposerContext
+          ? documentModule.getActiveEmailComposerContext()
           : null;
+        var sameActiveDraft = activeCtx
+          && String(activeCtx.sourceUid || '') === String(uiData.uid || '')
+          && String(activeCtx.sourceFolder || 'INBOX') === String(uiData.folder || 'INBOX');
+        var existingDocId = sameActiveDraft && activeCtx.docId
+          ? activeCtx.docId
+          : (documentModule && documentModule.findEmailDocId
+            ? documentModule.findEmailDocId(uiData.uid, uiData.folder || 'INBOX')
+            : null);
         if (existingDocId && documentModule.replaceEmailReplyBody) {
           if (documentModule.loadDocument) documentModule.loadDocument(existingDocId);
           documentModule.replaceEmailReplyBody(existingDocId, uiData.body || '', { force: true });

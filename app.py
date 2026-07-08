@@ -3,6 +3,7 @@ import mimetypes
 import os
 import sys
 import asyncio
+import time
 
 # On Windows, asyncio.create_subprocess_exec/shell require the ProactorEventLoop.
 # When started via `python -m uvicorn` from a terminal, uvicorn sets this
@@ -204,12 +205,43 @@ class _InteractiveActivityMiddleware(_BaseHTTPMiddleware):
         path = request.url.path or ""
         if not should_track_interactive_request(path, request.method):
             return await call_next(request)
+        async def _stop_background():
+            try:
+                await task_scheduler.stop_background_tasks_for_foreground(reason=f"foreground request {request.method} {path}")
+            except Exception:
+                logging.getLogger("app.foreground_gate").debug("foreground task stop failed", exc_info=True)
+        asyncio.create_task(_stop_background())
         async with track_interactive_request(path, request.method):
             return await call_next(request)
 
 
+class _SlowRequestLogMiddleware(_BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        start = time.perf_counter()
+        status = 500
+        try:
+            response = await call_next(request)
+            status = getattr(response, "status_code", 0) or 0
+            return response
+        finally:
+            elapsed = time.perf_counter() - start
+            try:
+                threshold = float(os.getenv("ODYSSEUS_SLOW_REQUEST_LOG_SECONDS", "0.75") or "0.75")
+            except Exception:
+                threshold = 0.75
+            if elapsed >= threshold:
+                logging.getLogger("app.slow_request").warning(
+                    "slow_request method=%s path=%s status=%s elapsed=%.3fs",
+                    request.method,
+                    request.url.path,
+                    status,
+                    elapsed,
+                )
+
+
 app.add_middleware(_RequestTimeoutMiddleware)
 app.add_middleware(_InteractiveActivityMiddleware)
+app.add_middleware(_SlowRequestLogMiddleware)
 
 # ========= AUTH =========
 from routes.auth_routes import setup_auth_routes, SESSION_COOKIE
@@ -600,6 +632,12 @@ app.include_router(auth_router)
 async def activity_heartbeat():
     from src.interactive_gate import mark_browser_activity
     await mark_browser_activity()
+    async def _stop_background():
+        try:
+            await task_scheduler.stop_background_tasks_for_foreground(reason="browser heartbeat")
+        except Exception:
+            logging.getLogger("app.foreground_gate").debug("heartbeat task stop failed", exc_info=True)
+    asyncio.create_task(_stop_background())
     return {"ok": True}
 
 
@@ -889,6 +927,34 @@ async def get_version():
 async def health_check() -> Dict[str, str]:
     return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
 
+@app.post("/api/client-perf")
+async def client_perf(request: Request):
+    """Low-volume frontend timing reports for stalls that happen before SSE logs."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    try:
+        kind = str(data.get("type") or "client").replace("\n", " ")[:80]
+        total_ms = float(data.get("total_ms") or 0)
+        stages = data.get("stages") if isinstance(data.get("stages"), list) else []
+        stage_txt = " ".join(
+            f"{str(s.get('name') or '')[:40]}={float(s.get('delta_ms') or 0):.0f}ms"
+            for s in stages[:20]
+            if isinstance(s, dict)
+        )
+        extra = str(data.get("extra") or "").replace("\n", " ")[:200]
+        logging.getLogger("app.client_perf").warning(
+            "client_perf type=%s total=%.0fms %s%s",
+            kind,
+            total_ms,
+            stage_txt,
+            f" extra={extra}" if extra else "",
+        )
+    except Exception:
+        logging.getLogger("app.client_perf").debug("client_perf log failed", exc_info=True)
+    return {"ok": True}
+
 @app.get("/api/ready")
 async def readiness_check() -> JSONResponse:
     """Readiness / integrity self-check — DB, data dir, local-first storage.
@@ -985,45 +1051,43 @@ async def _startup_event():
 
     _startup_tasks.append(asyncio.create_task(_startup_mcp_connections()))
 
-    # Pre-warm the RAG tool index off the request path. Loading the local
-    # embedding model + opening ChromaDB + indexing the built-in tools is a
-    # one-time ~1-3s cost that otherwise lands on the user's FIRST message
-    # (showing up as a big `tool_selection` time). Doing it here makes the
-    # first turn as fast as subsequent ones (warm embed ≈ a few ms).
-    async def _warmup_tool_index():
-        try:
-            from src.tool_index import get_tool_index
-            idx = await asyncio.to_thread(get_tool_index)
-            if idx:
-                await asyncio.to_thread(idx.get_tools_for_query, "warmup", 8)
-                logger.info("[startup] Tool index pre-warmed")
-        except Exception as e:
-            logger.warning(f"Tool index warmup failed (non-critical): {type(e).__name__}: {e}")
+    # Startup warmups are opt-in. They make later requests a little warmer, but
+    # they also compete with the first seconds of real UI use on slow or busy
+    # machines. Default to clear/idle startup and let requests warm what they use.
+    _startup_warmups_enabled = str(os.getenv("ODYSSEUS_STARTUP_WARMUPS", "")).lower() in {"1", "true", "yes", "on"}
+    if _startup_warmups_enabled:
+        async def _warmup_tool_index():
+            try:
+                from src.tool_index import get_tool_index
+                idx = await asyncio.to_thread(get_tool_index)
+                if idx:
+                    await asyncio.to_thread(idx.get_tools_for_query, "warmup", 8)
+                    logger.info("[startup] Tool index pre-warmed")
+            except Exception as e:
+                logger.warning(f"Tool index warmup failed (non-critical): {type(e).__name__}: {e}")
 
-    _startup_tasks.append(asyncio.create_task(_warmup_tool_index()))
-    # Warmup: ping all known LLM endpoints to prime connections
-    async def _warmup_endpoints():
-        try:
-            import httpx
-            # model_discovery has no get_endpoints(); that call raised
-            # AttributeError every run and silently disabled warmup/keepalive.
-            # Resolve the /models probe URLs via the real discovery API, off the
-            # event loop since discovery does a blocking port scan.
-            urls = (
-                await asyncio.to_thread(model_discovery.warmup_ping_urls)
-                if model_discovery else []
-            )
-            for url in urls:
-                try:
-                    async with httpx.AsyncClient(timeout=5.0) as client:
-                        await client.get(url)
-                    logger.info(f"Warmup ping OK: {url}")
-                except Exception as e:
-                    logger.debug(f"Warmup ping failed for endpoint: {e}")
-        except Exception as e:
-            logger.debug(f"Warmup ping skipped: {e}")
+        _startup_tasks.append(asyncio.create_task(_warmup_tool_index()))
 
-    _startup_tasks.append(asyncio.create_task(_warmup_endpoints()))
+        async def _warmup_endpoints():
+            try:
+                import httpx
+                urls = (
+                    await asyncio.to_thread(model_discovery.warmup_ping_urls)
+                    if model_discovery else []
+                )
+                for url in urls:
+                    try:
+                        async with httpx.AsyncClient(timeout=5.0) as client:
+                            await client.get(url)
+                        logger.info(f"Warmup ping OK: {url}")
+                    except Exception as e:
+                        logger.debug(f"Warmup ping failed for endpoint: {e}")
+            except Exception as e:
+                logger.debug(f"Warmup ping skipped: {e}")
+
+        _startup_tasks.append(asyncio.create_task(_warmup_endpoints()))
+    else:
+        logger.info("Startup warmups disabled (set ODYSSEUS_STARTUP_WARMUPS=1 to enable)")
 
     # Keep-alive is opt-in. The ping path performs model discovery, and when
     # stale LAN endpoints are configured it can add periodic backend pressure

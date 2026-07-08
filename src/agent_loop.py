@@ -43,6 +43,44 @@ from src.agent_tools import (
 logger = logging.getLogger(__name__)
 
 
+def _looks_like_notes_list_request(text: str) -> bool:
+    """Whether the user is asking to see existing notes, not create one."""
+    t = (text or "").lower()
+    return bool(
+        re.search(r"\b(what|show|list|see|current|existing|all|my)\b.{0,60}\bnotes?\b", t)
+        or re.search(r"\bnotes?\b.{0,60}\b(what|show|list|see|current|existing|all|my)\b", t)
+    )
+
+
+def _note_list_summary_from_tool_output(raw: str, max_items: int = 20) -> str:
+    """Format manage_notes list/search output for chat without an LLM pass."""
+    if not isinstance(raw, str) or not raw.strip():
+        return ""
+    titles: list[str] = []
+    for line in raw.splitlines():
+        m = re.match(r"^\s*-\s+\[[^\]]+\]\s+\*\*(.*?)\*\*(.*)$", line)
+        if not m:
+            continue
+        title = re.sub(r"\s+", " ", m.group(1)).strip()
+        suffix = re.sub(r"\s+", " ", m.group(2) or "").strip()
+        label = f"{title} {suffix}".strip()
+        if label:
+            titles.append(label)
+        if len(titles) >= max_items:
+            break
+    if not titles:
+        if re.search(r"\b(no notes|0 notes|found 0)\b", raw, re.IGNORECASE):
+            return "No notes found."
+        return ""
+    total = len(re.findall(r"^\s*-\s+\[[^\]]+\]\s+\*\*", raw, re.MULTILINE))
+    heading_count = total or len(titles)
+    lines = [f"Here are your notes ({heading_count}):"]
+    lines.extend(f"- {title}" for title in titles)
+    if total and total > len(titles):
+        lines.append(f"- ...and {total - len(titles)} more")
+    return "\n".join(lines)
+
+
 def _load_mcp_disabled_map() -> Dict[str, set]:
     """Load per-server disabled tool sets from the database."""
     from core.database import McpServer, SessionLocal
@@ -73,9 +111,11 @@ _AGENT_RULES = """\
 ## Rules
 - Only use tools when needed. Don't search for things you already know.
 - For web lookup/search/latest/current requests, use `web_search` or `web_fetch`. Do NOT use `bash`, `python`, `curl`, `requests`, or scraping code for web lookup unless web tools are disabled or already failed.
+- If `web_search` is listed in this prompt, web search is available. Do NOT tell the user search/web tools are unavailable.
 - These exact tags execute automatically. For showing code examples, use ```shell, ```sh, ```py, etc. instead.
 - Multiple tool blocks per response OK. 60s timeout per tool, 10K char output limit.
 - Code/content >15 lines → ```create_document (NOT in chat). Short snippets OK in chat.
+- Long-form or structured writing is a document by default when the user asks to write/create/make/generate it and the answer would be more than a short paragraph. Use create_document instead of dumping the full content in chat.
 - Editing an existing document: ALWAYS use ```edit_document with FIND/REPLACE blocks. Do NOT rewrite the whole document with ```update_document unless genuinely changing more than half of it.
 - BIAS TOWARD ACTION on edit requests. If the user says "edit out X", "remove the Y paragraph", "change Z" — JUST DO IT with your best interpretation. Don't ask for clarification on minor ambiguity. The user can undo or re-prompt if wrong.
 - AFTER A TOOL SUCCEEDS, do not second-guess. The success message ("Document edited: v2, 1 edit") means it worked. Reply in ONE short sentence confirming what was done. No re-checking, no replaying the diff in your head, no validation theater.
@@ -120,8 +160,10 @@ _API_AGENT_RULES = """\
 - Only call tools when they materially help answer the request.
 - You MUST use tools to take action — do not describe what you would do. Act, don't narrate.
 - For web lookup/search/latest/current requests, call `web_search` or `web_fetch`. Do NOT use shell, Python, curl, requests, or scraping code for web lookup unless web tools are unavailable or already failed.
+- If `web_search` is listed in this prompt, web search is available. Do NOT tell the user search/web tools are unavailable.
 - Keep answers concise unless the user asks for depth.
 - For long code or content, use document tools instead of pasting large blocks into chat.
+- Long-form or structured writing is a document by default when the user asks to write/create/make/generate it and the answer would be more than a short paragraph. Call create_document instead of dumping the full content in chat.
 - Editing an existing document: ALWAYS use `edit_document` with find/replace. Only use `update_document` for genuine full rewrites (>50% changed) — do NOT echo the entire file back for small edits.
 - If the active editor document is an email draft/compose window, treat that open email as the target for "write this", "write the email", "reply with...", "make it say...", "draft this", and similar requests. Do NOT create another document, search/list/manage documents, or open a different reply unless the user explicitly asks. Edit the open email draft with `edit_document` or `update_document`; preserve To/Cc/Bcc/Subject/In-Reply-To/References/X-* header lines unless the user asks to change them.
 - "Give suggestions / feedback / review / how can I improve this / what would make it better" about the OPEN document → call `suggest_document`, do NOT write a prose list of ideas in chat. It creates inline accept/reject bubbles on the doc. Give concrete `find`/`replace`/`reason` items. To suggest an ADDITION (e.g. "add a bow to the SVG", a new section), set `find` to a short existing anchor snippet and `replace` to that same snippet PLUS the new content. Only answer in prose when no document is open, or the request is purely conceptual with no concrete change to propose.
@@ -279,7 +321,7 @@ _DOMAIN_RULES = {
 }
 
 _DOMAIN_TOOL_MAP = {
-    "web": {"web_search", "web_fetch", "trigger_research", "manage_research"},
+    "web": {"web_search", "web_fetch"},
     "documents": {"create_document", "edit_document", "update_document", "suggest_document", "manage_documents"},
     "email": {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "archive_email", "delete_email", "mark_email_read", "resolve_contact", "manage_contact"},
     "cookbook": {"download_model", "serve_model", "serve_preset", "list_serve_presets", "list_served_models", "stop_served_model", "tail_serve_output", "list_downloads", "cancel_download", "search_hf_models", "list_cached_models", "list_cookbook_servers", "adopt_served_model"},
@@ -337,6 +379,7 @@ Or with JSON for fresh news:
 {"query": "<your query>", "time_filter": "day"}
 ```
 Search the web for a SINGLE quick fact/lookup mid-task. For news / "today" / "latest" queries, pass `time_filter` ("day", "week", "month", or "year"). NOT for "research X" / "do research on X" / "look into X" requests — those mean a multi-source DEEP RESEARCH job: use `trigger_research` instead (it runs in the Deep Research sidebar and produces a full report). web_search = one quick query; trigger_research = a researched report.
+If this `web_search` tool section is visible, search is available. Do NOT tell the user web/search tools are unavailable.
 Use this instead of `bash`, `curl`, `python`, `requests`, or scraping code for web lookup/search/latest/current requests.""",
 
     "web_fetch": """\
@@ -614,16 +657,6 @@ def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool 
     if one_liners:
         parts.append("## Additional tools\n" + "\n".join(one_liners))
 
-    # Mention tools that exist but weren't included
-    all_known = set(TOOL_SECTIONS.keys())
-    not_shown = all_known - included - disabled
-    if not_shown:
-        sample = sorted(not_shown)[:5]
-        hint = ", ".join(sample)
-        if len(not_shown) > 5:
-            hint += f", ... ({len(not_shown) - 5} more)"
-        parts.append(f"(Other tools available when needed: {hint})")
-
     parts.append(_AGENT_RULES)
     parts.extend(_domain_rules_for_tools(included))
     return "\n\n".join(parts)
@@ -761,6 +794,15 @@ def _extract_last_user_message(messages: List[Dict]) -> str:
                 content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
             return content
     return ""
+
+
+def _user_turn_count(messages: List[Dict]) -> int:
+    """Count real user turns in the message list."""
+    count = 0
+    for msg in messages or []:
+        if msg.get("role") == "user":
+            count += 1
+    return count
 
 
 def _insert_before_latest_user(messages: List[Dict], context_msg: Dict) -> List[Dict]:
@@ -973,7 +1015,7 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("cookbook")
     if has(r"\b(emails?|mails?|gmail|inbox|reply|forward|cc|bcc|send email|compose email|draft email|message chris|message him|message her)\b"):
         domains.add("email")
-    if has(r"\b(note|todo|to-do|checklist|task list|remind me|reminder|buy|pickup|pick up)\b"):
+    if has(r"\b(notes?|todos?|to-dos?|checklists?|task list|remind me|reminders?|buy|pickup|pick up)\b"):
         domains.add("notes_calendar_tasks")
     if has(r"\b(every day|every morning|every evening|recurring|automatically|cron|scheduled task|background task)\b"):
         domains.add("notes_calendar_tasks")
@@ -1077,6 +1119,20 @@ def _turn_targets_active_document(intent: Dict[str, object], last_user: str, act
     ):
         return True
     if re.search(
+        r"\b(?:make|change|update|fix|edit|rewrite|rework|revise|replace|remove|delete|add|append|insert|set|turn)\b"
+        r".{0,80}\b(?:day\s*\d+|row|rows|column|columns|table|section|chapter|part|paragraph|line|lines|"
+        r"title|heading|body|intro|introduction|conclusion|schedule|itinerary|draft|content)\b",
+        text,
+    ):
+        return True
+    if re.search(
+        r"\b(?:day\s*\d+|row|rows|column|columns|table|section|chapter|part|paragraph|line|lines|"
+        r"title|heading|body|intro|introduction|conclusion|schedule|itinerary)\b"
+        r".{0,80}\b(?:make|change|update|fix|edit|rewrite|rework|revise|replace|remove|delete|add|append|insert|set|turn)\b",
+        text,
+    ):
+        return True
+    if re.search(
         r"\b(?:add|insert|include|apply|put)\b.+\b(?:to it|to this|there|in it|in this|in the text|in the document)\b",
         text,
     ):
@@ -1096,6 +1152,18 @@ def _turn_targets_active_document(intent: Dict[str, object], last_user: str, act
         r")\b",
         text,
     ))
+
+
+def _is_email_document_obj(active_document) -> bool:
+    if active_document is None:
+        return False
+    raw_doc = getattr(active_document, "current_content", "") or ""
+    title_l = (getattr(active_document, "title", "") or "").strip().lower()
+    return (
+        getattr(active_document, "language", None) == "email"
+        or title_l in {"new email", "new mail", "new message"}
+        or ("To:" in raw_doc[:400] and "Subject:" in raw_doc[:400] and "\n---\n" in raw_doc)
+    )
 
 
 def _minimal_saved_memory_message(messages: List[Dict]) -> Optional[Dict]:
@@ -1125,9 +1193,9 @@ def _minimal_saved_memory_message(messages: List[Dict]) -> Optional[Dict]:
                 continue
             seen.add(fact)
             facts.append(fact)
-            if len(facts) >= 12:
+            if len(facts) >= 8:
                 break
-        if len(facts) >= 12:
+        if len(facts) >= 8:
             break
     if not facts:
         return None
@@ -1142,6 +1210,41 @@ def _minimal_saved_memory_message(messages: List[Dict]) -> Optional[Dict]:
             + "\n".join(f"- {fact}" for fact in facts)
         ),
     }
+
+
+def _compact_email_draft_context(raw: str, *, max_own_chars: int = 1200, max_history_chars: int = 1200) -> str:
+    """Compact an email compose document for prompt injection.
+
+    The editor/backend preserve quoted history mechanically, so the model only
+    needs enough of the previous message to understand what to answer.
+    """
+    text = raw or ""
+    if "\n---\n" not in text:
+        return text[:3500] + ("\n...[truncated]" if len(text) > 3500 else "")
+    header, body = text.split("\n---\n", 1)
+    literal = "---------- Previous message ----------"
+    idx = body.find(literal)
+    if idx >= 0:
+        own = body[:idx].strip()
+        history = body[idx:].strip()
+    else:
+        own = body.strip()
+        history = ""
+    if len(own) > max_own_chars:
+        own = own[:max_own_chars].rstrip() + "\n...[draft body truncated]"
+    if len(history) > max_history_chars:
+        history = history[:max_history_chars].rstrip() + "\n...[quoted history truncated; full history is preserved by Odysseus]"
+    if history:
+        body_out = (
+            f"{own}\n\n" if own else ""
+        ) + (
+            "QUOTED HISTORY EXCERPT FOR CONTEXT ONLY -- do not rewrite or include this excerpt in your tool output; "
+            "Odysseus preserves the full quoted thread below the reply automatically.\n"
+            f"{history}"
+        )
+    else:
+        body_out = own
+    return header.rstrip() + "\n---\n" + body_out.strip()
 
 
 def _minimal_odysseus_doc_messages(messages: List[Dict], active_document, stream_create: bool = False) -> List[Dict]:
@@ -1166,6 +1269,10 @@ def _minimal_odysseus_doc_messages(messages: List[Dict], active_document, stream
     else:
         system = (
             "You are Odysseus. Edit or suggest changes to the active document using exactly one fenced tool block when needed.\n"
+            "The active document content is authoritative. Apply the user's request to that content; do not append the user's instruction as document text.\n"
+            "Preserve the current title, language, structure, and existing meaning unless the user explicitly asks to change them.\n"
+            "If the user asks for ALL CAPS/uppercase/lowercase, transform the existing document text itself.\n"
+            "If the user refers to line numbers, use the numbered active document lines; never include the line numbers or tabs in FIND/REPLACE text.\n"
             "If the user asks to add, remove, rewrite, transform, change, capitalize, shorten, expand, or otherwise apply a change, use edit_document or update_document, not suggest_document.\n"
             "Use suggest_document only when the user explicitly asks for suggestions, feedback, or proposed improvements without applying them.\n"
             "For targeted edits:\n"
@@ -1201,16 +1308,94 @@ def _minimal_odysseus_doc_messages(messages: List[Dict], active_document, stream
         out.append(memory_message)
     if active_document is not None:
         content = active_document.current_content or ""
+        if not stream_create:
+            content_for_prompt = "\n".join(
+                f"{idx}\t{line}" for idx, line in enumerate(content.split("\n"), 1)
+            )
+            content_note = (
+                "Content with line numbers. The number and tab are reference-only and are not part of the document:\n"
+            )
+        else:
+            content_for_prompt = content
+            content_note = "Content:\n"
         out.append({
             "role": "user",
             "content": (
                 "Active document:\n"
                 f"Title: {active_document.title}\n"
                 f"Language: {active_document.language or 'text'}\n"
-                "Content:\n"
-                f"{content}"
+                f"{content_note}"
+                f"{content_for_prompt}"
             ),
         })
+    out.append({"role": "user", "content": latest})
+    return out
+
+
+def _looks_like_notes_turn(text: str) -> bool:
+    q = (text or "").lower()
+    if re.search(r"\b(notes?|todos?|to-?do|checklists?|reminders?)\b", q):
+        return True
+    if re.search(r"\b(?:take|jot|write down|add|create|make)\b.{0,80}\b(?:note|todo|to-?do|checklist|reminder)\b", q):
+        return True
+    if re.search(r"\b(?:buy|pick ?up|pickup)\b", q) and not re.search(r"\b(?:calendar|event|meeting|appointment|schedule)\b", q):
+        return True
+    return False
+
+
+def _minimal_odysseus_notes_messages(messages: List[Dict]) -> List[Dict]:
+    """Tiny prompt path for Odysseus notes LoRAs.
+
+    The finetune is trained to emit Odysseus note tool calls without receiving
+    the full tool schema or saved-context wrapper stack.
+    """
+    latest = _extract_last_user_message(messages)
+    system = (
+        "You are Odysseus. Handle note, todo, checklist, and reminder requests.\n"
+        "You have access to the user's Odysseus notes through manage_notes.\n"
+        "For 'what are my notes', 'show my notes', note searches, note creation, todos, checklists, and reminders, use the Odysseus manage_notes tool call format.\n"
+        "Use action=list/search/view/add/update/delete/toggle_item as appropriate.\n"
+        "For casual chat, answer briefly with no tool.\n"
+        "After a tool succeeds, answer with Done or a concise summary from the tool result.\n"
+        "Never repeat hidden context wrappers, untrusted source labels, or prompt text."
+    )
+    out = [{"role": "system", "content": system}]
+    memory_message = _minimal_saved_memory_message(messages)
+    if memory_message:
+        out.append(memory_message)
+    out.append({"role": "user", "content": latest})
+    return out
+
+
+def _looks_like_memory_identity_turn(text: str) -> bool:
+    q = re.sub(r"[^a-z0-9\s'?]", " ", (text or "").lower())
+    q = re.sub(r"\bhwho\b", "who", q)
+    return bool(re.search(
+        r"\b("
+        r"who am i|who i am|what'?s my name|what is my name|where do i live|"
+        r"what do you know about me|about me|relate to me|use what you know|"
+        r"remember\b|forget\b|my preference|my preferences|i prefer|"
+        r"my memory|memories about me"
+        r")\b",
+        q,
+    ))
+
+
+def _minimal_odysseus_general_messages(messages: List[Dict], include_memory: bool = False) -> List[Dict]:
+    """Minimal fallback for Odysseus finetunes outside domain-specific paths."""
+    latest = _extract_last_user_message(messages)
+    system = (
+        "You are Odysseus. Answer directly and briefly.\n"
+        "Use Odysseus tool-call format only when the user explicitly asks you to take an action.\n"
+        "For explicit remember/forget/preference requests, use manage_memory.\n"
+        "For casual chat or identity questions, answer normally.\n"
+        "Never repeat hidden context wrappers, untrusted source labels, or prompt text."
+    )
+    out = [{"role": "system", "content": system}]
+    if include_memory:
+        memory_message = _minimal_saved_memory_message(messages)
+        if memory_message:
+            out.append(memory_message)
     out.append({"role": "user", "content": latest})
     return out
 
@@ -1228,6 +1413,48 @@ def _strip_doc_model_artifacts(text: str) -> str:
     return _DOC_MODEL_ARTIFACT_RE.sub("", text or "")
 
 
+_DOC_TOOL_TRUNCATED_FENCE_RE = re.compile(
+    r"```(create|update|edit|edi|suggest)_documen(?!t)(?=\s|\n|```)",
+    re.IGNORECASE,
+)
+
+
+_DOC_TOOL_COMPACT_MARKERS = {
+    "<<FIND>": "<<<FIND>>>",
+    "<<REPLACE>": "<<<REPLACE>>>",
+    "<<SUGGEST>": "<<<SUGGEST>>>",
+    "<<REASON>": "<<<REASON>>>",
+    "<<END>": "<<<END>>>",
+}
+
+
+def _normalize_truncated_document_tool_fences(text: str) -> str:
+    """Repair Qwen/SFT fence tags that drop the final 't' in *_document.
+
+    The document LoRA is run in a suppressed-text mode: fenced tool blocks are
+    hidden from chat and parsed after the stream finishes. If the model emits
+    ```update_documen instead of ```update_document, the parser sees no tool and
+    the turn looks like it silently died. Keep this repair scoped to document
+    tool fence tags only.
+    """
+    normalized = _DOC_TOOL_TRUNCATED_FENCE_RE.sub(
+        lambda m: f"```{'edit' if m.group(1).lower() == 'edi' else m.group(1).lower()}_document",
+        text or "",
+    )
+    for compact, full in _DOC_TOOL_COMPACT_MARKERS.items():
+        normalized = normalized.replace(compact, full)
+    marker = r"<<<(?:FIND|REPLACE|SUGGEST|REASON|END)>>>"
+    normalized = re.sub(rf"(?<!\n)({marker})", r"\n\1", normalized)
+    normalized = re.sub(rf"({marker})(?=\S)", r"\1\n", normalized)
+    normalized = re.sub(
+        r"(<<<(?:REPLACE|SUGGEST|REASON)>>>)\n(<<<END>>>)",
+        r"\1\n\n\2",
+        normalized,
+    )
+    normalized = re.sub(r"\n(```)", r"\1", normalized)
+    return normalized
+
+
 def _normalize_stream_document_fences(text: str, target_tool: str = "create_document") -> str:
     """Treat visible ```document/documen blocks as document tool blocks.
 
@@ -1236,7 +1463,9 @@ def _normalize_stream_document_fences(text: str, target_tool: str = "create_docu
     the same shape is a full replacement of the open document, so map it to
     update_document and drop the title/language header lines.
     """
-    text = _strip_doc_model_artifacts(text or "")
+    text = _normalize_truncated_document_tool_fences(
+        _strip_doc_model_artifacts(text or "")
+    )
 
     def repl(match: re.Match) -> str:
         body = match.group(1) or ""
@@ -1387,6 +1616,7 @@ def _build_system_prompt(
     _email_style_message = None
     _integ_message = None
     _mcp_desc_message = None
+    _active_doc_is_email_doc = False
     if active_document:
         set_active_document(active_document.id)
         _doc_raw = active_document.current_content or ""
@@ -1402,19 +1632,23 @@ def _build_system_prompt(
             or _doc_title_l in {"new email", "new mail", "new message"}
             or ("To:" in _doc_raw[:400] and "Subject:" in _doc_raw[:400] and "\n---\n" in _doc_raw)
         )
+        _active_doc_is_email_doc = _is_email_doc
         if _is_email_doc:
+            _email_prompt_doc = _compact_email_draft_context(_doc_raw)
             doc_ctx = (
                 f'ACTIVE EMAIL DRAFT (open in editor — the user is looking at this right now)\n'
                 f'Title: "{active_document.title}"\n'
-                f'```\n{_doc_raw}\n```\n\n'
+                f'```\n{_email_prompt_doc}\n```\n\n'
                 f'This is the current email compose window, not a normal document library item. If the user says "write", "draft", "reply", "make it say", or "write the email" without naming another target, edit THIS email draft.\n\n'
                 f'When the user asks you to write, reply to, or improve this email:\n'
-                f'1. Use `update_document` to replace the ENTIRE content — keep all the header lines (To, Subject, In-Reply-To, References, X-Source-UID, X-Source-Folder, X-Attachments) and the `---` separator EXACTLY as they are.\n'
-                f'2. Replace ONLY the body text (the part after `---`). If there is a quoted original email (lines starting with `>`), keep that quoted block unchanged BELOW your new reply.\n'
+                f'1. Use `update_document` to update this email draft — keep all header lines (To, Subject, In-Reply-To, References, X-Source-UID, X-Source-Folder, X-Attachments) and the `---` separator EXACTLY as they are.\n'
+                f'2. Replace ONLY the new reply text above `---------- Previous message ----------`. You may omit the quoted history from your tool output; Odysseus preserves everything from that separator downward automatically.\n'
                 f'3. Write the reply body above the quoted original. Use the saved email writing style when present.\n'
                 f'4. Identity is critical: write as the logged-in user / mailbox owner only. NEVER sign as the recipient, original sender, quoted sender, spouse, assistant, company, or any third party. If adding a signature, use only the name/signature implied by the saved email writing style.\n'
                 f'5. Mechanical style is critical: never use em dash/en dash; use --. Never use curly apostrophes. For English emails, use Hi/Hiya from the saved style rather than Hey unless the user explicitly asks for Hey.\n'
-                f'6. Do NOT use create_document — the email is already open, you must update it.\n\n'
+                f'6. Do NOT use create_document — the email is already open, you must update it.\n'
+                f'7. Do NOT call read_email/list_emails for this turn. The open email draft above is the source of truth, and the quoted history excerpt is enough context for a reply.\n'
+                f'8. After a successful tool call, answer with a brief confirmation only. Do not paste the full email back into chat unless the user asks.\n\n'
                 f'Do NOT ask the user to paste or share the email — you already have it above.'
             )
         else:
@@ -1528,7 +1762,7 @@ def _build_system_prompt(
     # resolve to the real UID instead of the agent inventing a fresh .md
     # draft with fake headers. This is the email equivalent of _doc_message.
     _email_message = None
-    if active_email and active_email.get("uid"):
+    if active_email and active_email.get("uid") and not _active_doc_is_email_doc:
         _em_uid = active_email.get("uid", "")
         _em_folder = active_email.get("folder", "INBOX")
         _em_account = active_email.get("account", "")
@@ -2328,6 +2562,7 @@ async def stream_agent_loop(
     workspace: Optional[str] = None,
     forced_tools: Optional[Set[str]] = None,
     uploaded_files: Optional[List[Dict]] = None,
+    workload: str = "foreground",
     _is_teacher_run: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
@@ -2371,13 +2606,23 @@ async def stream_agent_loop(
     _t0 = time.time()
     _needs_admin = _detect_admin_intent(messages)
     _last_user = _extract_last_user_message(messages)
+    _ody_qwen_finetune_model = (model or "").lower().startswith("odysseus-qwen3")
+    _ody_memory_identity_turn = _looks_like_memory_identity_turn(_last_user)
     _intent = _classify_agent_request(messages, _last_user)
     _low_signal_turn = bool(_intent.get("low_signal"))
     _casual_low_signal_turn = _is_casual_low_signal(_last_user)
+    _existing_conversation = _user_turn_count(messages) > 1
     _active_document_relevant = _turn_targets_active_document(_intent, _last_user, active_document)
+    _active_email_draft_relevant = _active_document_relevant and _is_email_document_obj(active_document)
+    if _active_email_draft_relevant:
+        disabled_tools.update({
+            "list_email_accounts", "list_emails", "read_email",
+            "mcp__email__list_emails", "mcp__email__read_email",
+        })
     _prompt_active_document = active_document if _active_document_relevant else None
     _direct_low_signal = (
         _low_signal_turn
+        and not _existing_conversation
         and not bool(_intent.get("continuation"))
         and not plan_mode
         and not approved_plan
@@ -2400,10 +2645,22 @@ async def stream_agent_loop(
         _active_document_relevant,
         _retrieval_query[:200],
     )
+    if _low_signal_turn and _existing_conversation:
+        logger.info(
+            "[agent] keeping contextual path for low-signal turn in existing conversation latest=%r",
+            _last_user[:80],
+        )
     _mcp_disabled_map = _load_mcp_disabled_map() if mcp_mgr else {}
     if _direct_low_signal:
         logger.info("[agent] direct low-signal reply path for latest=%r", _last_user[:80])
-        direct_messages = [{"role": "user", "content": _last_user}]
+        direct_messages = (
+            _minimal_odysseus_general_messages(
+                messages,
+                include_memory=True,
+            )
+            if _ody_qwen_finetune_model
+            else [{"role": "user", "content": _last_user}]
+        )
         direct_response = ""
         direct_start = time.time()
         direct_actual_model = model
@@ -2419,6 +2676,7 @@ async def stream_agent_loop(
                 tools=None,
                 timeout=int(get_setting("agent_stream_timeout_seconds", 300) or 300),
                 session_id=session_id,
+                workload=workload,
             ):
                 if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                     try:
@@ -2511,7 +2769,18 @@ async def stream_agent_loop(
     if not guide_only and not _relevant_tools:
         try:
             from src.tool_index import get_tool_index, ALWAYS_AVAILABLE
-            tool_idx = get_tool_index()
+            try:
+                tool_idx = await asyncio.wait_for(
+                    asyncio.to_thread(get_tool_index),
+                    timeout=_TOOL_SELECTION_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[tool-rag] Tool index init exceeded %.1fs; falling back to always-available tools",
+                    _TOOL_SELECTION_TIMEOUT_SECONDS,
+                )
+                tool_idx = None
+                _relevant_tools = set(ALWAYS_AVAILABLE)
             if tool_idx:
                 if mcp_mgr:
                     try:
@@ -2579,6 +2848,13 @@ async def stream_agent_loop(
             _relevant_tools.add("ui_control")
         if "web" in (_intent.get("domains") or set()):
             _relevant_tools.update({"web_search", "web_fetch"})
+            _removed_web_blocks = sorted({"web_search", "web_fetch"} & disabled_tools)
+            if _removed_web_blocks:
+                disabled_tools.difference_update({"web_search", "web_fetch"})
+                logger.info(
+                    "[agent-intent] web turn forced search tools enabled; removed disabled=%s",
+                    _removed_web_blocks,
+                )
         if "ui" in (_intent.get("domains") or set()):
             _relevant_tools.add("ui_control")
 
@@ -2588,6 +2864,19 @@ async def stream_agent_loop(
     # panel is open.
     if _relevant_tools is not None and _active_document_relevant:
         _relevant_tools.update({"edit_document", "update_document", "suggest_document"})
+        if _active_email_draft_relevant:
+            # The open compose document already contains the recipient,
+            # subject, source UID, and quoted previous-message excerpt. Reading
+            # the same email again through IMAP/MCP is slow, token-heavy, and
+            # can hang. Keep draft editing tools, drop email fetch tools.
+            _email_fetch_tools = {
+                "list_email_accounts", "list_emails", "read_email",
+                "mcp__email__list_emails", "mcp__email__read_email",
+            }
+            removed = sorted(_relevant_tools & _email_fetch_tools)
+            if removed:
+                _relevant_tools.difference_update(_email_fetch_tools)
+                logger.info("[agent-intent] active email draft pruned fetch tools=%s", removed)
 
     # Current-turn chat uploads are real files under the upload/data root. Make
     # the read-side file/document tools visible immediately so the agent can
@@ -2598,14 +2887,15 @@ async def stream_agent_loop(
             _relevant_tools = set(ALWAYS_AVAILABLE)
         _relevant_tools.update({"read_file", "grep", "ls", "manage_documents"})
 
-    # Per-request UI toggles are stronger than retrieval. If the user turns on
-    # Search, the model must see the search tools even when the latest text is a
-    # typo or otherwise low-signal for tool RAG.
+    # Per-request forced tools are stronger than retrieval. Search toggles and
+    # explicit lookup turns must make web tools visible even when tool RAG
+    # misses them; route-level disabled_tools decides what else is allowed.
     if not guide_only and forced_tools:
+        forced_set = {t for t in forced_tools if t not in disabled_tools}
         if _relevant_tools is None:
             from src.tool_index import ALWAYS_AVAILABLE
             _relevant_tools = set(ALWAYS_AVAILABLE)
-        _relevant_tools.update(t for t in forced_tools if t not in disabled_tools)
+        _relevant_tools.update(forced_set)
 
     # The skill index injected by _build_system_prompt tells the model to
     # call `manage_skills action=view`, and Jaccard-matched skills are pasted
@@ -2647,12 +2937,20 @@ async def stream_agent_loop(
 
     _intent_domains = set(_intent.get("domains") or set())
     _ody_doc_finetune_mode = (
-        (model or "").lower().startswith("odysseus-qwen3")
+        _ody_qwen_finetune_model
         and (
             "documents" in _intent_domains
             or _active_document_relevant
             or _prompt_active_document is not None
         )
+        and "files" not in _intent_domains
+        and not guide_only
+    )
+    _ody_notes_finetune_mode = (
+        _ody_qwen_finetune_model
+        and not _ody_doc_finetune_mode
+        and ("notes_calendar_tasks" in _intent_domains or _looks_like_notes_turn(_last_user))
+        and _looks_like_notes_turn(_last_user)
         and "files" not in _intent_domains
         and not guide_only
     )
@@ -2666,6 +2964,36 @@ async def stream_agent_loop(
         else:
             _relevant_tools = {"create_document", "ask_user", "update_plan"}
         logger.info("[agent-intent] odysseus doc finetune tool clamp=%s", sorted(_relevant_tools))
+    elif _ody_notes_finetune_mode and _relevant_tools is not None:
+        _relevant_tools = {"manage_notes", "ask_user", "update_plan"}
+        logger.info("[agent-intent] odysseus notes finetune tool clamp=%s", sorted(_relevant_tools))
+
+    if (
+        _relevant_tools is not None
+        and _active_document_relevant
+        and "files" not in _intent_domains
+        and not uploaded_files
+        and not workspace
+    ):
+        _doc_irrelevant_file_tools = {
+            "append_file",
+            "bash",
+            "edit_file",
+            "glob",
+            "grep",
+            "ls",
+            "read_file",
+            "replace_file",
+            "run_shell",
+            "write_file",
+        }
+        _removed_doc_file_tools = sorted(_relevant_tools & _doc_irrelevant_file_tools)
+        if _removed_doc_file_tools:
+            _relevant_tools.difference_update(_doc_irrelevant_file_tools)
+            logger.info(
+                "[agent-intent] active document turn removed file tools=%s",
+                _removed_doc_file_tools,
+            )
 
     if _relevant_tools is not None:
         logger.info("[agent-intent] selected_tools=%s", sorted(_relevant_tools)[:50])
@@ -2765,6 +3093,24 @@ async def stream_agent_loop(
             "[agent-intent] odysseus doc minimal prompt active active_doc=%s stream_create=%s messages=%s",
             bool(_prompt_active_document),
             _ody_doc_stream_create_mode,
+            len(messages),
+        )
+    elif _ody_notes_finetune_mode and not plan_mode and not approved_plan and not guide_only:
+        messages = _minimal_odysseus_notes_messages(messages)
+        mcp_schemas = []
+        logger.info(
+            "[agent-intent] odysseus notes minimal prompt active messages=%s",
+            len(messages),
+        )
+    elif _ody_qwen_finetune_model and not plan_mode and not approved_plan and not guide_only:
+        messages = _minimal_odysseus_general_messages(
+            messages,
+            include_memory=True,
+        )
+        mcp_schemas = []
+        logger.info(
+            "[agent-intent] odysseus general minimal prompt active include_memory=%s messages=%s",
+            _ody_memory_identity_turn,
             len(messages),
         )
     if plan_mode and not guide_only:
@@ -2881,6 +3227,7 @@ async def stream_agent_loop(
     requested_model = model
     actual_model = model
     total_tool_calls = 0  # for budget enforcement
+    _ody_notes_tool_completed = False
 
     # Loop-breaker state. Small models (e.g. deepseek-v4-flash) can get
     # stuck firing the same tool call over and over with no text — burns
@@ -2978,7 +3325,7 @@ async def stream_agent_loop(
                     if s.get("function", {}).get("name") not in _ADMIN_SCHEMA_NAMES
                 ]
                 all_tool_schemas = base_schemas + mcp_schemas
-            if _ody_doc_finetune_mode:
+            if _ody_qwen_finetune_model:
                 all_tool_schemas = []
             if disabled_tools:
                 all_tool_schemas = [
@@ -3028,6 +3375,7 @@ async def stream_agent_loop(
             tool_choice_none=_ody_doc_finetune_mode,
             timeout=agent_stream_timeout,
             session_id=session_id,
+            workload=workload,
         ):
             if not _round_first_event_logged:
                 _round_first_event_logged = True
@@ -3149,11 +3497,15 @@ async def stream_agent_loop(
                         if data.get("thinking"):
                             round_reasoning += data["delta"]
                         else:
-                            _delta_text = _strip_doc_model_artifacts(data["delta"]) if _ody_doc_finetune_mode else data["delta"]
+                            _delta_text = (
+                                _strip_doc_model_artifacts(data["delta"])
+                                if _ody_qwen_finetune_model
+                                else data["delta"]
+                            )
                             round_response += _delta_text
                             full_response += _delta_text
                             data["delta"] = _delta_text
-                        if not _ody_doc_finetune_mode or data.get("thinking"):
+                        if not _ody_qwen_finetune_model or data.get("thinking"):
                             yield f"data: {json.dumps(data)}\n\n"
                         # Detect text-fence doc streaming. Normal agent prompts
                         # use ```create_document; the doc LoRA streaming path
@@ -3274,6 +3626,59 @@ async def stream_agent_loop(
                     else converted_calls[:1]
                 )
 
+        if _ody_qwen_finetune_model and tool_blocks:
+            _allowed_memory_write_actions = {"add", "edit", "update", "delete", "delete_all"}
+            _explicit_memory_browse = bool(re.search(
+                r"\b(search|list|show|open|view)\b.{0,40}\b(memories|memory|brain)\b",
+                _last_user.lower(),
+            ))
+            _filtered_tool_blocks = []
+            _filtered_converted_calls = []
+            _dropped_memory_lookup = False
+            for _idx, _block in enumerate(tool_blocks):
+                if _block.tool_type != "manage_memory":
+                    _filtered_tool_blocks.append(_block)
+                    if _idx < len(converted_calls):
+                        _filtered_converted_calls.append(converted_calls[_idx])
+                    continue
+                _action = ""
+                try:
+                    _args = json.loads(_block.content or "{}")
+                    if isinstance(_args, dict):
+                        _action = str(_args.get("action") or "").lower()
+                except Exception:
+                    _action = ""
+                if _action in {"list", "search", "view", "get", "read"} and not _explicit_memory_browse:
+                    _dropped_memory_lookup = True
+                elif _action in _allowed_memory_write_actions and re.search(
+                    r"\b(remember|forget|preference|prefer|save this about me|update memory|delete memory)\b",
+                    _last_user.lower(),
+                ):
+                    _filtered_tool_blocks.append(_block)
+                    if _idx < len(converted_calls):
+                        _filtered_converted_calls.append(converted_calls[_idx])
+                else:
+                    _dropped_memory_lookup = True
+            if _dropped_memory_lookup:
+                logger.info(
+                    "[agent-intent] odysseus qwen dropped manage_memory lookup; answering from compact memory"
+                )
+                tool_blocks = _filtered_tool_blocks
+                converted_calls = _filtered_converted_calls
+                if used_native:
+                    native_tool_calls = _filtered_converted_calls
+                if not tool_blocks:
+                    _force_answer = True
+                    messages.append({
+                        "role": "system",
+                        "content": (
+                            "Answer the user's identity/personal-memory question from the compact "
+                            "saved memory facts already provided. Do not call manage_memory or any tool."
+                        ),
+                    })
+                    yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                    continue
+
         # Force-answer round: we told the model to STOP calling tools and
         # answer. If it ignored that and emitted a (possibly DSML) tool
         # call anyway, discard it — don't execute, don't re-loop. Keep
@@ -3358,6 +3763,8 @@ async def stream_agent_loop(
         # on reload (#3222 follow-up).
         cleaned_round = strip_tool_blocks(round_response, skip_fenced=(_is_api_model and not used_native and not guide_only)).strip()
         round_texts.append(cleaned_round)
+        if _ody_qwen_finetune_model and not tool_blocks and cleaned_round:
+            yield f'data: {json.dumps({"delta": cleaned_round})}\n\n'
 
         if not tool_blocks:
             # ── Completion verifier (mechanism 3a) ────────────────────
@@ -3819,6 +4226,39 @@ async def stream_agent_loop(
                 tool_output_data["diff"] = result["diff"]
             yield f'data: {json.dumps(tool_output_data)}\n\n'
 
+            if block.tool_type == "manage_notes":
+                _notes_action = ""
+                try:
+                    _notes_args = json.loads(block.content or "{}")
+                    if isinstance(_notes_args, dict):
+                        _notes_action = str(_notes_args.get("action") or "").lower()
+                except Exception:
+                    _notes_action = ""
+                _notes_text = ""
+                if not result.get("error"):
+                    if _notes_action in {"list", "search", "find", "view", "lis"}:
+                        _notes_text = _note_list_summary_from_tool_output(
+                            result.get("output") or result.get("results") or result.get("content") or ""
+                        )
+                    elif _notes_action in {"add", "update", "delete", "toggle_item"}:
+                        _notes_text = str(
+                            result.get("response")
+                            or result.get("output")
+                            or result.get("results")
+                            or ""
+                        ).strip()
+                        if _notes_text.startswith("AI: "):
+                            _notes_text = _notes_text[4:].strip()
+                        if _notes_text and not re.match(r"^(done|note|item|deleted)\b", _notes_text, re.IGNORECASE):
+                            _notes_text = f"Done — {_notes_text}"
+                if _notes_text:
+                    _clean_current = strip_tool_blocks(full_response).strip()
+                    if _notes_text not in _clean_current:
+                        _prefix = "\n\n" if _clean_current else ""
+                        full_response = (_clean_current + _prefix + _notes_text).strip()
+                        yield f'data: {json.dumps({"delta": _prefix + _notes_text})}\n\n'
+                    _ody_notes_tool_completed = True
+
             # This must be the final UI event for ask_user: the frontend appends
             # the card below the now-settled tool node and cancels any between-
             # round spinner.  The turn ends after the current tool batch.
@@ -3863,6 +4303,7 @@ async def stream_agent_loop(
                 _title = (result.get("note_title") or "").strip()
                 _label = f"View note: {_title}" if _title else "View note"
                 _anchor = f"\n\n[{_label}](#note-{_nid})\n"
+                full_response = (full_response.rstrip() + _anchor).strip()
                 yield 'data: ' + json.dumps({"delta": _anchor}) + '\n\n'
 
             # Save for history persistence
@@ -3934,6 +4375,10 @@ async def stream_agent_loop(
             logger.info("[agent] odysseus doc tool completed after one textual tool block")
             break
 
+        if _ody_notes_finetune_mode and _ody_notes_tool_completed:
+            logger.info("[agent] odysseus notes completed from deterministic tool output")
+            break
+
         # Feed results back to LLM for next round
         # Pass the CONVERTED calls (aligned 1:1 with tool_result_texts), not the
         # raw native_tool_calls: a call that failed to convert is dropped from
@@ -3973,6 +4418,27 @@ async def stream_agent_loop(
     )
     if _fallback_chunk:
         yield _fallback_chunk
+
+    # Do not persist raw textual tool-call JSON / role markers as assistant
+    # prose. Local finetunes may emit those before the parser catches and
+    # executes them; saved history should contain only the user-facing answer.
+    full_response = strip_tool_blocks(full_response).strip()
+    if _ody_notes_finetune_mode and tool_events:
+        for _ev in reversed(tool_events):
+            if _ev.get("tool") != "manage_notes":
+                continue
+            _notes_action = ""
+            try:
+                _cmd_args = json.loads(_ev.get("command") or "{}")
+                if isinstance(_cmd_args, dict):
+                    _notes_action = str(_cmd_args.get("action") or "").lower()
+            except Exception:
+                _notes_action = ""
+            if _notes_action in {"list", "search", "find", "view", "lis"}:
+                _notes_summary = _note_list_summary_from_tool_output(_ev.get("output") or "")
+                if _notes_summary:
+                    full_response = _notes_summary
+                break
 
     # --- Final metrics ---
     total_duration = time.time() - total_start

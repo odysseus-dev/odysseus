@@ -439,15 +439,30 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "                if f.is_file(): nf += 1; sz += f.stat().st_size",
         "                if f.name.endswith('.incomplete'): ic = True",
         "        snap = os.path.join(cache, d, 'snapshots')",
-        "        # Windows HF cache stores files directly in snapshots/; blobs/ may be empty.",
-        "        # Fallback: scan snapshots for real files when blobs yielded nothing.",
-        "        if sz == 0 and os.path.isdir(snap):",
+        "        def snapshot_size():",
+        "            total, count, incomplete = 0, 0, False",
+        "            seen_real = set()",
         "            for sd in os.listdir(snap):",
         "                sf = os.path.join(snap, sd)",
         "                if not os.path.isdir(sf): continue",
-        "                for f in os.scandir(sf):",
-        "                    if f.is_file(): nf += 1; sz += f.stat().st_size",
-        "                    if f.name.endswith('.incomplete'): ic = True",
+        "                for root, dirs, fns in safe_walk(sf):",
+        "                    for fn in fns:",
+        "                        fp = os.path.join(root, fn)",
+        "                        if fn.endswith('.incomplete'): incomplete = True",
+        "                        try:",
+        "                            real = os.path.realpath(fp)",
+        "                            if real in seen_real: continue",
+        "                            seen_real.add(real)",
+        "                            total += os.path.getsize(real)",
+        "                            count += 1",
+        "                        except Exception:",
+        "                            pass",
+        "            return total, count, incomplete",
+        "        # Some HF caches (macOS/MLX/Xet-style) keep blobs elsewhere or expose",
+        "        # snapshot symlinks only. Size snapshots too when blob accounting is empty.",
+        "        if sz == 0 and os.path.isdir(snap):",
+        "            sz2, nf2, ic2 = snapshot_size()",
+        "            sz, nf, ic = sz2, nf2, ic or ic2",
         "        is_diffusion = False; gguf_files = []",
         "        if os.path.isdir(snap):",
         "            for sd in os.listdir(snap):",
@@ -471,7 +486,18 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "    add('/app/.cache/huggingface/hub')",
         f"    add({add_hf_cache!r})" if add_hf_cache else "",
         "    return candidates",
+        "def normalize_model_dir(p):",
+        "    p = os.path.expanduser((p or '').strip())",
+        "    if not p: return p",
+        "    if os.path.isdir(p) or os.path.isabs(p): return p",
+        "    # Users often paste Linux absolute paths without the leading slash.",
+        "    # Treat home/<user>/... as /home/<user>/... so remote scans work.",
+        "    if p.startswith(('home/', 'mnt/', 'media/', 'data/', 'opt/', 'srv/', 'var/')):",
+        "        prefixed = '/' + p",
+        "        if os.path.isdir(prefixed): return prefixed",
+        "    return p",
         "def scan_dir(p):",
+        "    p = normalize_model_dir(p)",
         "    if not os.path.isdir(p) or not safe_path(p): return",
         "    for d in sorted(os.listdir(p)):",
         "        if d.startswith('.'): continue",
@@ -541,7 +567,7 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "scan_ollama()",
     ]
     for model_dir in model_dirs or []:
-        lines.append(f"scan_dir(os.path.expanduser({model_dir!r}))")
+        lines.append(f"scan_dir({model_dir!r})")
     lines.append("print(json.dumps(models))")
     return "\n".join(lines) + "\n"
 
@@ -1273,19 +1299,34 @@ def _diagnose_serve_output(text: str) -> dict | None:
             [{"label": "install vLLM in Cookbook Dependencies", "op": "dependency", "package": "vllm"}],
         ),
         (
-            r"sgl_kernel[\s\S]*(Python\.h|libnuma\.so\.1|common_ops)|"
-            r"(Python\.h|libnuma\.so\.1|common_ops)[\s\S]*sgl_kernel|"
+            r"sgl_kernel[\s\S]*(Python\.h|libnuma\.so\.1|common_ops|libnvrtc\.so)|"
+            r"(Python\.h|libnuma\.so\.1|common_ops|libnvrtc\.so)[\s\S]*sgl_kernel|"
+            r"Could not load any common_ops library|"
             r"Please ensure sgl_kernel is properly installed",
-            "SGLang native dependencies are missing on this server.",
+            "SGLang native kernel/runtime is missing or mismatched on this server.",
             [
+                {"label": "repair sglang-kernel in this Python environment", "op": "dependency", "package": "sglang-kernel"},
                 {"label": "install OS packages: libnuma-dev python3.12-dev build-essential", "op": "manual"},
-                {"label": "upgrade sglang-kernel after OS packages are installed", "op": "manual"},
+                {"label": "if libnvrtc is still missing, install the matching CUDA/NVRTC runtime on this host", "op": "manual"},
             ],
         ),
         (
             r"sglang.*command not found|No module named sglang|SGLang is not installed",
             "SGLang is not installed or not in PATH on this server.",
             [{"label": "install SGLang in Cookbook Dependencies", "op": "dependency", "package": "sglang[all]"}],
+        ),
+        (
+            r"No module named ['\"]?mlx_lm|mlx_lm.*command not found|MLX is not installed|MLX LM is not installed",
+            "MLX LM is not installed on this server.",
+            [{"label": "install mlx-lm in Cookbook Dependencies", "op": "dependency", "package": "mlx-lm"}],
+        ),
+        (
+            r"Unable to quantize model of type <class ['\"]mlx_lm\.models\.switch_layers\.QuantizedSwitchLinear['\"]>|QuantizedSwitchLinear",
+            "MLX-LM tried to quantize an already-quantized DeepSeek switch layer.",
+            [
+                {"label": "relaunch from the cached local Hugging Face snapshot path on this Mac", "op": "manual"},
+                {"label": "Odysseus now rewrites MLX repo-id launches to a cached snapshot when one exists", "op": "manual"},
+            ],
         ),
         # System build deps come BEFORE the generic llama.cpp catch-all so
         # cmake / build-essential / git missing → a specific OS-package

@@ -164,6 +164,8 @@ def _package_installed_from_probe(name: str, probe: dict) -> bool:
         return bool(binaries.get("llama-server") or dists.get("llama-cpp-python"))
     if name == "sglang":
         return bool(dists.get("sglang") or modules.get("sglang", {}).get("real_module"))
+    if name == "mlx_lm":
+        return bool(dists.get("mlx-lm") or modules.get("mlx_lm", {}).get("real_module"))
     if name == "diffusers":
         return bool(
             (dists.get("diffusers") or modules.get("diffusers", {}).get("real_module"))
@@ -210,6 +212,10 @@ def _package_status_note(name: str, probe: dict) -> str:
         if _package_installed_from_probe(name, probe):
             return f"diffusers {dists.get('diffusers', 'available')} with torch {dists.get('torch', 'available')}"
         return "Diffusers serving needs both diffusers and torch."
+    if name == "mlx_lm":
+        if _package_installed_from_probe(name, probe):
+            return f"MLX LM {dists.get('mlx-lm', 'available')}"
+        return "MLX serving needs mlx-lm on an Apple Silicon Mac."
     if name in dists:
         return f"{name} {dists[name]}"
     return ""
@@ -307,12 +313,14 @@ dist_names={{
     'vllm':['vllm'],
     'llama_cpp':['llama-cpp-python'],
     'sglang':['sglang'],
+    'mlx_lm':['mlx-lm'],
     'diffusers':['diffusers','torch'],
     'hf_transfer':['hf-transfer','hf_transfer'],
 }}
 bin_names={{
     'vllm':['vllm'],
     'llama_cpp':['llama-server'],
+    'tmux':['tmux'],
 }}
 
 def add_user_install_bins_to_path():
@@ -325,6 +333,8 @@ def add_user_install_bins_to_path():
     candidates.append(os.path.expanduser('~/llama.cpp/build/bin'))
     candidates.append(os.path.expanduser('~/llama.cpp/build-vulkan/bin'))
     candidates.append(os.path.expanduser('~/.local/bin'))
+    candidates.append('/opt/homebrew/bin')
+    candidates.append('/usr/local/bin')
     parts = os.environ.get('PATH', '').split(os.pathsep) if os.environ.get('PATH') else []
     changed = False
     for path in reversed([p for p in candidates if p]):
@@ -397,6 +407,47 @@ class ShellExecRequest(BaseModel):
     )
     use_pty: bool = False  # use pseudo-TTY (for progress bars)
     use_tmux: bool = False  # run in tmux session (survives browser disconnect)
+
+
+_REMOTE_TMUX_PATH_PREFIX = 'PATH="$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; '
+
+
+def _normalize_legacy_remote_tmux_exec(command: str) -> str:
+    """Repair stale frontend Cookbook tmux SSH commands.
+
+    Older loaded JS sends `ssh host 'tmux capture-pane ...'`. On macOS/Homebrew
+    remotes, non-login SSH shells often lack /opt/homebrew/bin, so tmux is
+    installed but the capture/kill command returns nothing. Keep this narrowly
+    scoped to SSH commands whose remote shell starts with `tmux `.
+    """
+    cmd = command or ""
+    if _REMOTE_TMUX_PATH_PREFIX in cmd or not cmd.lstrip().startswith("ssh "):
+        return cmd
+    try:
+        parts = shlex.split(cmd)
+    except Exception:
+        return cmd
+    if not parts or parts[0] != "ssh":
+        return cmd
+    remote_idx = -1
+    i = 1
+    while i < len(parts):
+        part = parts[i]
+        if part in {"-p", "-o", "-i", "-F", "-J", "-l", "-S", "-W", "-b", "-c", "-m"}:
+            i += 2
+            continue
+        if part.startswith("-"):
+            i += 1
+            continue
+        remote_idx = i
+        break
+    if remote_idx < 0 or remote_idx + 1 >= len(parts):
+        return cmd
+    remote_cmd = " ".join(parts[remote_idx + 1:]).strip()
+    if not remote_cmd.startswith("tmux "):
+        return cmd
+    repaired = parts[:remote_idx + 1] + [_REMOTE_TMUX_PATH_PREFIX + remote_cmd]
+    return shlex.join(repaired)
 
 
 async def _create_shell(command: str, **kwargs):
@@ -815,6 +866,10 @@ def setup_shell_routes() -> APIRouter:
         if not cmd:
             return {"stdout": "", "stderr": "No command provided", "exit_code": 1}
 
+        fixed_cmd = _normalize_legacy_remote_tmux_exec(cmd)
+        if fixed_cmd != cmd:
+            logger.info("Rewrote legacy remote tmux exec command with Homebrew PATH")
+            cmd = fixed_cmd
         logger.info("User shell exec requested: length=%d", len(cmd))
         result = await _exec_shell(
             cmd, timeout=req.timeout if req.timeout is not None else EXEC_TIMEOUT
@@ -1135,6 +1190,13 @@ def setup_shell_routes() -> APIRouter:
                 "target": "remote",
             },
             {
+                "name": "mlx_lm",
+                "pip": "mlx-lm",
+                "desc": "Serve MLX-format models on Apple Silicon Macs",
+                "category": "LLM",
+                "target": "remote",
+            },
+            {
                 "name": "APFEL",
                 "pip": "",
                 "desc": "OpenAI-compatible API for Apple Foundational Models on Apple Silicon",
@@ -1279,9 +1341,9 @@ def setup_shell_routes() -> APIRouter:
                 for name in all_system_names:
                     qn = shlex.quote(name)
                     checks.append(
-                        f"if command -v {qn} >/dev/null 2>&1; then echo {qn}=1; else echo {qn}=0; fi"
+                        f"PATH=\"$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"; if command -v {qn} >/dev/null 2>&1; then echo {qn}=1; else echo {qn}=0; fi"
                     )
-                checks.append("echo '---OSREL---'; cat /etc/os-release 2>/dev/null || true")
+                checks.append("echo '---OSREL---'; cat /etc/os-release 2>/dev/null || { [ \"$(uname -s 2>/dev/null)\" = \"Darwin\" ] && echo ID=macos; } || true")
                 inner = " ; ".join(checks)
                 argv = _ssh_base_argv(host, ssh_port) + [inner]
                 proc = await asyncio.create_subprocess_exec(
@@ -1538,6 +1600,7 @@ def setup_shell_routes() -> APIRouter:
             "onnxruntime",
             "hdbscan",
             "vllm",
+            "mlx-lm",
         }
         if pip_name not in known:
             return {"ok": False, "error": f"Unknown package: {pip_name}"}
@@ -1584,6 +1647,19 @@ def setup_shell_routes() -> APIRouter:
                 elif n == "g++": out += ["gcc-c++"]
                 else: out.append(n)
             return out
+        def _apk(names):
+            out = []
+            for n in names:
+                if n == "build-essential": out.append("build-base")
+                else: out.append(n)
+            return out
+        def _zypper(names):
+            out = []
+            for n in names:
+                if n == "build-essential": out += ["gcc-c++", "make"]
+                elif n == "g++": out.append("gcc-c++")
+                else: out.append(n)
+            return out
         def _brew(names):
             return [n for n in names if n not in ("build-essential", "g++", "gcc", "make")]
         # Build a single shell snippet that detects the package manager and
@@ -1592,6 +1668,8 @@ def setup_shell_routes() -> APIRouter:
         apt_pkgs = " ".join(shlex.quote(p) for p in _apt(pkgs))
         pac_pkgs = " ".join(shlex.quote(p) for p in _pacman(pkgs))
         dnf_pkgs = " ".join(shlex.quote(p) for p in _dnf(pkgs))
+        apk_pkgs = " ".join(shlex.quote(p) for p in _apk(pkgs))
+        zypper_pkgs = " ".join(shlex.quote(p) for p in _zypper(pkgs))
         brew_pkgs = " ".join(shlex.quote(p) for p in _brew(pkgs))
         # Error messages go to stderr (>&2) so the route's error field
         # gets populated. Without the redirect, `echo "ERROR…"` on stdout
@@ -1599,18 +1677,28 @@ def setup_shell_routes() -> APIRouter:
         # bare "HTTP 200" instead of surfacing the real reason.
         script = (
             'set -e; '
-            'if ! sudo -n true 2>/dev/null; then '
-            '  echo "ERROR: passwordless sudo unavailable on this target. Run once: sudo apt install -y ' + " ".join(pkgs) + ' (or your distro equivalent: pacman -S, dnf install, brew install). After that, Cookbook can install the rest." >&2; exit 2; fi; '
-            'if command -v apt-get >/dev/null 2>&1; then '
-            f'  sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update -qq && sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends {apt_pkgs}; '
-            'elif command -v pacman >/dev/null 2>&1; then '
-            f'  sudo -n pacman -Sy --needed --noconfirm {pac_pkgs}; '
-            'elif command -v dnf >/dev/null 2>&1; then '
-            f'  sudo -n dnf install -y {dnf_pkgs}; '
-            'elif command -v brew >/dev/null 2>&1; then '
-            f'  brew install {brew_pkgs}; '
+            'BREW="$(command -v brew 2>/dev/null || true)"; '
+            'if [ -z "$BREW" ] && [ -x /opt/homebrew/bin/brew ]; then BREW=/opt/homebrew/bin/brew; fi; '
+            'if [ -z "$BREW" ] && [ -x /usr/local/bin/brew ]; then BREW=/usr/local/bin/brew; fi; '
+            'if [ -n "$BREW" ]; then '
+            f'  if [ -z "{brew_pkgs}" ]; then echo "Nothing to install with brew for requested packages." >&2; exit 4; fi; "$BREW" install {brew_pkgs}; exit $?; '
+            'fi; '
+            'if [ "$(id -u)" = "0" ]; then SUDO=""; '
+            'elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then SUDO="sudo -n"; '
             'else '
-            '  echo "ERROR: no supported package manager (apt/pacman/dnf/brew) on this target." >&2; exit 3; fi'
+            '  echo "ERROR: this target needs sudo for its OS package manager, but passwordless sudo is unavailable. Open a terminal on the target and run the shown install command once, then retry in Cookbook." >&2; exit 2; fi; '
+            'if command -v apt-get >/dev/null 2>&1; then '
+            f'  $SUDO env DEBIAN_FRONTEND=noninteractive apt-get update -qq && $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends {apt_pkgs}; '
+            'elif command -v pacman >/dev/null 2>&1; then '
+            f'  $SUDO pacman -Sy --needed --noconfirm {pac_pkgs}; '
+            'elif command -v dnf >/dev/null 2>&1; then '
+            f'  $SUDO dnf install -y {dnf_pkgs}; '
+            'elif command -v apk >/dev/null 2>&1; then '
+            f'  $SUDO apk add --no-interactive {apk_pkgs}; '
+            'elif command -v zypper >/dev/null 2>&1; then '
+            f'  $SUDO zypper --non-interactive install {zypper_pkgs}; '
+            'else '
+            '  echo "ERROR: no supported package manager (apt/pacman/dnf/apk/zypper/brew) on this target." >&2; exit 3; fi'
         )
         try:
             if host:

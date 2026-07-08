@@ -1356,7 +1356,7 @@
         <div class="settings-sidebar">
           <!-- Section 1: AI plumbing (Add Models → AI Defaults → Search) -->
           <button class="settings-nav-item active" data-settings-tab="services">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
             <span>Add Models</span>
           </button>
           <button class="settings-nav-item" data-settings-tab="added-models">
@@ -1979,34 +1979,6 @@
             </div>
           </div>
 
-          <div class="admin-card">
-            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></svg>Translation</h2>
-            <div class="settings-row" style="align-items:center;">
-              <div style="flex:1;min-width:0;">
-                <div class="settings-label" style="margin-bottom:3px;">Auto translate</div>
-                <div class="admin-toggle-sub" style="margin:0;">When an opened email appears to be in another language, prepare a translated view.</div>
-              </div>
-              <label class="admin-switch"><input type="checkbox" id="set-email-auto-translate"><span class="admin-slider"></span></label>
-            </div>
-            <div class="settings-row" style="align-items:center;margin-top:8px;">
-              <label class="settings-label" for="set-email-translate-language">Translate to</label>
-              <input id="set-email-translate-language" class="settings-select" list="set-email-translate-language-list" placeholder="English, Swedish, Japanese..." style="max-width:220px;">
-              <datalist id="set-email-translate-language-list">
-                <option value="English"></option>
-                <option value="Swedish"></option>
-                <option value="Norwegian"></option>
-                <option value="Danish"></option>
-                <option value="Japanese"></option>
-                <option value="Spanish"></option>
-                <option value="French"></option>
-                <option value="German"></option>
-                <option value="British English"></option>
-                <option value="Plain English"></option>
-              </datalist>
-              <span id="set-email-translate-msg" style="font-size:11px;margin-left:auto;"></span>
-            </div>
-          </div>
-
         </div>
 
         <!-- ═══ REMINDERS TAB ═══ -->
@@ -2122,7 +2094,7 @@
 
           <!-- ── Local card ─────────────────────────────────────────── -->
           <div class="admin-card">
-            <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>Add Local Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoint)</span>
+            <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M12 5v14"/><path d="M5 12h14"/></svg>Add Local Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoint)</span>
               <span style="flex:1"></span>
               <button class="admin-btn-sm" id="adm-epLocalTestBtn" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Test
@@ -2154,7 +2126,7 @@
                     <input id="adm-epLocalUrl" type="text" placeholder="Paste endpoint URL, e.g. http://localhost:11434/v1" style="flex:1;min-width:0;border-top-left-radius:0;border-bottom-left-radius:0;">
                   </div>
                   <button class="admin-btn-add" id="adm-epLocalAddBtn" style="min-width:55px;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:4px;flex-shrink:0;">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Add
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>Add
                   </button>
                 </div>
                 <div class="admin-model-form-row" id="adm-epLocalApiKey-row" style="display:none;">
@@ -2167,7 +2139,7 @@
 
           <!-- ── API card ───────────────────────────────────────────── -->
           <div class="admin-card">
-            <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>Add API Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoint)</span>
+            <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="11" cy="12" r="8"/><path d="M19 5v6"/><path d="M16 8h6"/><path d="M7 12h8"/></svg>Add API Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoint)</span>
               <span style="flex:1"></span>
               <button class="admin-btn-sm" id="adm-epApiTestBtn" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Test
@@ -2236,7 +2208,7 @@
                     <input id="adm-epApiKey" type="password" placeholder="API key, e.g. sk-proj-AbCdEf…" autocomplete="off" style="flex:1;padding-left:28px;height:32px;box-sizing:border-box;">
                   </div>
                   <button class="admin-btn-add" id="adm-epAddBtn" style="height:32px;min-width:55px;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:4px;flex-shrink:0;box-sizing:border-box;">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Add
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>Add
                   </button>
                 </div>
                 <div id="adm-epApiMsg" class="adm-ep-inline-msg"></div>

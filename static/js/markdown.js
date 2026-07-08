@@ -165,7 +165,7 @@ export function hasUnclosedThinkTag(text) {
 }
 
 export function startsWithReasoningPrefix(text) {
-  return /^\s*(?:thinking(?:\s+process)?\s*:|the user |i need |i should |i will |they are |the question |i can )/i.test(text || '');
+  return /^\s*(?:thinking(?:\s+process)?\s*:|the user |user wants|we need |i need |i should |i will |i'll |i am going |let me (?:think|look|see|check|read|review|analyze|parse|figure|draft|write)|they are |the question |i can )/i.test(text || '');
 }
 
 export function normalizeThinkingMarkup(text) {
@@ -234,6 +234,11 @@ function normalizePlainThinking(text) {
       const reply = withoutPrefix.slice(match.index + 1).trim();
       if (thinkBlock && reply) return `<think>${thinkBlock}</think>\n${reply}`;
     }
+  }
+
+  if (/^\s*(?:thinking(?:\s+process)?\s*:|the user |user wants|we need |let me (?:think|look|see|check|read|review|analyze|parse|figure|draft|write)|i need to |i should |i will |i'll |i am going )/i.test(trimmed)) {
+    const thinkBlock = withoutPrefix.trim();
+    if (thinkBlock) return `<think>${thinkBlock}</think>`;
   }
 
   return text;
@@ -559,6 +564,12 @@ export function mdToHtml(src, opts) {
   s = s.replace(
     new RegExp(`(^|[^\\[(])#(${ANCHOR_KIND}-[A-Za-z0-9_-]+)\\b`, 'g'),
     '$1[#$2](#$2)',
+  );
+  // Legacy search_chats output used bare session hashes (`#<uuid>`). Upgrade
+  // those too so old answers and model summaries remain clickable.
+  s = s.replace(
+    /(^|[^\[(])#([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/gi,
+    '$1[#session-$2](#session-$2)',
   );
 
   // Convert markdown images before links so ![alt](url) does not become
