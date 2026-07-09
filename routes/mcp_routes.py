@@ -7,7 +7,7 @@ import urllib.parse
 import html
 from pathlib import Path
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
 import logging
 import httpx
 
@@ -309,7 +309,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
             )
 
             status = mcp_manager.get_server_status(server_id)
-            return {
+            payload = {
                 "connected": connected,
                 "status": status.get("status", "disconnected"),
                 "tool_count": status.get("tool_count", 0),
@@ -317,6 +317,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 "auth_url": status.get("auth_url"),
                 "needs_auth": status.get("status") == "needs_auth",
             }
+            return JSONResponse(content=payload)
         finally:
             db.close()
 
