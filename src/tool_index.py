@@ -27,6 +27,34 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# The set of tools deemed safe to be "always available" regardless of routing relevance.
+# High-impact mutating, shell, and admin tools should rely on RAG or keyword hints.
+SAFE_DEFAULTABLE_TOOLS = frozenset({
+    "manage_memory",
+    "ask_user",
+    "update_plan",
+    "ui_control",
+    "chat_with_model",
+    "ask_teacher",
+    "manage_session",
+    "list_sessions",
+    "search_chats",
+    "list_models",
+    "manage_documents",
+    "manage_notes",
+    "manage_calendar",
+    "manage_tasks",
+    "web_search",
+    "web_fetch",
+    "create_document",
+    "edit_document",
+    "suggest_document",
+    "update_document",
+    "generate_image",
+    "manage_research",
+    "trigger_research",
+})
+
 # Tools that are ALWAYS included regardless of retrieval results.
 # Keep this deliberately tiny. Domain tools (web, documents, email,
 # cookbook/model serving, files, settings, etc.) are injected by retrieval or
@@ -37,7 +65,7 @@ def get_always_available_tools() -> frozenset:
     # Default matches the original hardcoded list
     default_tools = ["manage_memory", "ask_user", "update_plan"]
     enabled = get_setting("enabled_tools", default_tools)
-    return frozenset(enabled)
+    return frozenset([t for t in enabled if t in SAFE_DEFAULTABLE_TOOLS])
 
 # Tools that the Personal Assistant always has access to during scheduled
 # check-ins and proactive tasks, in addition to RAG-selected tools.

@@ -1872,16 +1872,16 @@ async function loadBuiltinTools() {
     // Group by category and resolve context sizes
     const groups = {};
     let totalDefaultTokens = 0;
-    
+
     for (const t of tools) {
       const meta = TOOL_META[t.id] || { name: t.id, desc: '', cat: 'Other', ctx: '?' };
       const cat = meta.cat;
       if (!groups[cat]) groups[cat] = [];
-      
+
       const finalCtx = (meta.ctx && meta.ctx !== '?') ? meta.ctx : (t.auto_ctx || '?');
       const item = { ...meta, ...t, ctx: finalCtx };
       groups[cat].push(item);
-      
+
       if (item.is_default || ['manage_memory', 'ask_user', 'update_plan'].includes(item.id)) {
         const v = parseInt(String(item.ctx).replace(/[^0-9]/g, ''), 10);
         if (!isNaN(v)) totalDefaultTokens += v;
@@ -1989,13 +1989,13 @@ async function loadBuiltinTools() {
     async function _saveToolState() {
       const allChecks = list.querySelectorAll('input[data-tool-id]');
       const defaultChecks = list.querySelectorAll('input[data-tool-default]');
-      
+
       const disabled = [];
       const enabled_tools = [];
-      
+
       allChecks.forEach(c => { if (!c.checked) disabled.push(c.dataset.toolId); });
       defaultChecks.forEach(c => { if (c.checked) enabled_tools.push(c.dataset.toolDefault); });
-      
+
       await fetch('/api/tools', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2028,7 +2028,7 @@ async function loadBuiltinTools() {
       if (counter) counter.textContent = catEnabled + '/' + catChecks.length;
       const catToggle = catEl.querySelector('input[data-tool-cat-toggle]');
       if (catToggle) catToggle.checked = (catEnabled === catChecks.length && catChecks.length > 0);
-      
+
       const defaultChecks = catEl.querySelectorAll('input[data-tool-default]');
       const defaultEnabled = Array.from(defaultChecks).filter(c => c.checked).length;
       const defaultToggle = catEl.querySelector('input[data-tool-cat-default-toggle]');
@@ -2070,8 +2070,8 @@ async function loadBuiltinTools() {
         const catEl = chk.closest('.admin-tool-category');
         if (!catEl) return;
         const checked = chk.checked;
-        catEl.querySelectorAll('input[data-tool-id]').forEach(c => { 
-          c.checked = checked; 
+        catEl.querySelectorAll('input[data-tool-id]').forEach(c => {
+          c.checked = checked;
           const row = c.closest('.admin-tool-row');
           const defaultChk = row.querySelector('input[data-tool-default]');
           if (defaultChk && !defaultChk.hasAttribute('data-core-default')) {
@@ -2090,7 +2090,7 @@ async function loadBuiltinTools() {
         _updateCatCounter(catEl);
       });
     });
-    
+
     // Wire category-level default toggle (default/undefault all in category)
     list.querySelectorAll('input[data-tool-cat-default-toggle]').forEach(chk => {
       chk.addEventListener('change', async () => {

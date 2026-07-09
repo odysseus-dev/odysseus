@@ -229,11 +229,11 @@ def load_settings() -> dict:
         merged = {**DEFAULT_SETTINGS, **saved}
     except (FileNotFoundError, PermissionError, json.JSONDecodeError, ValueError):
         merged = dict(DEFAULT_SETTINGS)
-    
+
     # Migrate legacy "6000 means auto" to the new "0 means auto"
     if merged.get("agent_input_token_budget") == 6000:
         merged["agent_input_token_budget"] = 0
-        
+
     _settings_cache = (now, merged)
     return merged
 

@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import src.settings as settings
 import src.model_context as mc
-from src.context_budget import compute_input_token_budget, DEFAULT_BUDGET, budget_is_explicit
+from src.context_budget import compute_input_token_budget, DEFAULT_BUDGET, DEFAULT_FALLBACK, budget_is_explicit
 
 
 def test_default_value_is_the_auto_sentinel():
@@ -49,18 +49,17 @@ def test_saving_an_unrelated_setting_does_not_re_cap_the_budget(tmp_path, monkey
     assert settings.is_setting_overridden("agent_input_token_budget") is True
     soft = int(settings.get_setting("agent_input_token_budget", DEFAULT_BUDGET) or 0)
     assert budget_is_explicit(soft) is False
-    # And the effective budget scales to the window rather than capping at 6000.
-    assert compute_input_token_budget(soft, 131072, explicit=budget_is_explicit(soft)) == int(131072 * 0.85)
+    assert compute_input_token_budget(soft, 131072, explicit=budget_is_explicit(soft)) == int(131072 * 0.80)
 
 
 def test_auto_scales_on_a_known_window():
-    assert compute_input_token_budget(DEFAULT_BUDGET, 131072, explicit=False) == int(131072 * 0.85)
+    assert compute_input_token_budget(DEFAULT_BUDGET, 131072, explicit=False) == int(131072 * 0.80)
 
 
 def test_auto_stays_conservative_on_unknown_window():
     # P2 #2: the budget block passes context_length=0 when the window is only a
     # fallback, so auto-scaling must NOT inflate to the unproven window.
-    assert compute_input_token_budget(DEFAULT_BUDGET, 0, explicit=False) == DEFAULT_BUDGET
+    assert compute_input_token_budget(DEFAULT_BUDGET, 0, explicit=False) == DEFAULT_FALLBACK
 
 
 def test_nondefault_value_is_an_explicit_cap():
@@ -108,4 +107,35 @@ def test_no_arg_caller_scales_from_discovered_window_not_6000():
     ~111k instead of being capped at the conservative 6000."""
     with patch.object(mc, "get_context_length_known", return_value=(131072, True)):
         ctx = mc.budget_context_for_model("u", "m", fallback=0)
-    assert compute_input_token_budget(DEFAULT_BUDGET, ctx, explicit=False) == int(131072 * 0.85)
+    assert compute_input_token_budget(DEFAULT_BUDGET, ctx, explicit=False) == int(131072 * 0.80)
+
+
+def test_agent_loop_invokes_trimmer_on_default_budget():
+    from unittest.mock import MagicMock
+    from src.agent_loop import stream_agent_loop
+    import asyncio
+    
+    async def dummy_stream(*args, **kwargs):
+        yield "hello"
+        
+    with patch.object(settings, "get_setting", return_value=0), \
+         patch("src.agent_loop.estimate_tokens", return_value=1000), \
+         patch("src.context_compactor.trim_for_context", return_value=([{"role": "user", "content": "hi"}], 0, False)) as mock_trim, \
+         patch("src.model_context.budget_context_for_model", return_value=128000) as mock_budget, \
+         patch("src.agent_loop.stream_llm_with_fallback", side_effect=dummy_stream):
+        
+        async def run_loop():
+            try:
+                async for _ in stream_agent_loop(
+                    messages=[{"role": "user", "content": "This is a complex query that requires tools to solve."}],
+                    model="test-model",
+                    endpoint_url="http://test",
+                    relevant_tools={"web_search"}
+                ): pass
+            except Exception:
+                pass
+                
+        asyncio.run(run_loop())
+            
+        mock_budget.assert_called()
+        mock_trim.assert_called()

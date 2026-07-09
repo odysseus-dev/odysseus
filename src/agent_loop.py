@@ -3148,7 +3148,7 @@ async def stream_agent_loop(
         from src.model_context import budget_context_for_model
 
         soft_budget = int(get_setting("agent_input_token_budget", DEFAULT_BUDGET) or 0)
-        if soft_budget > 0:
+        if soft_budget >= 0:
             before_trim_tokens = estimate_tokens(messages)
             reserve_tokens = min(max(max_tokens or 1024, 512), 2048)
             # Ceiling for the auto-derived budget (no effect on an explicit budget;

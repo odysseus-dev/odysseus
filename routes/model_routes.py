@@ -2526,13 +2526,13 @@ def setup_model_routes(model_discovery):
         from src.settings import DEFAULT_SETTINGS
         from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
         import json
-        
+
         schema_tokens = {}
         for s in FUNCTION_TOOL_SCHEMAS:
             if "function" in s:
                 # ~0.3 is the token estimation heuristic used in model_context.py
                 schema_tokens[s["function"]["name"]] = int(len(json.dumps(s)) * 0.3)
-                
+
         settings = _load_settings()
         disabled = set(settings.get("disabled_tools", []))
         enabled_tools = set(settings.get("enabled_tools", DEFAULT_SETTINGS["enabled_tools"]))
@@ -2558,8 +2558,12 @@ def setup_model_routes(model_discovery):
         if body.disabled is not None:
             settings["disabled_tools"] = body.disabled
         if body.enabled_tools is not None:
-            settings["enabled_tools"] = body.enabled_tools
+            from src.tool_index import SAFE_DEFAULTABLE_TOOLS
+            # Filter the incoming list through the safety policy so arbitrary high-impact
+            # tools cannot be persisted as defaults.
+            safe_enabled = [t for t in body.enabled_tools if t in SAFE_DEFAULTABLE_TOOLS]
+            settings["enabled_tools"] = safe_enabled
         _save_settings(settings)
-        return {"ok": True, "disabled": body.disabled, "enabled_tools": body.enabled_tools}
+        return {"ok": True, "disabled": body.disabled, "enabled_tools": settings.get("enabled_tools", [])}
 
     return router
