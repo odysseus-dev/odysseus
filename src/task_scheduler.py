@@ -894,10 +894,10 @@ class TaskScheduler:
                     # Give the just-finished quiet gate a tiny grace window,
                     # then keep enforcing "background means background" while
                     # a long email/LLM action is already running.
-                    await asyncio.sleep(1.0)
+                    await asyncio.sleep(0.1)
                     from src.interactive_gate import has_foreground_activity
                     while True:
-                        await asyncio.sleep(1.0)
+                        await asyncio.sleep(0.25)
                         if has_foreground_activity():
                             foreground_cancel["hit"] = True
                             logger.info("Task '%s' interrupted because Odysseus became active", task.name)
@@ -1913,6 +1913,7 @@ class TaskScheduler:
             disabled_tools=disabled_tools,
             relevant_tools=relevant_tools,
             fallbacks=_task_fallbacks,
+            workload="background",
         ):
             if event_str.startswith("data: ") and not event_str.startswith("data: [DONE]"):
                 try:
@@ -2237,6 +2238,28 @@ class TaskScheduler:
                 stopped = True
 
         stopped = self._mark_run_aborted(task_id) or stopped
+        return stopped
+
+    async def stop_background_tasks_for_foreground(self, *, reason: str = "Odysseus became active") -> int:
+        """Cancel all in-process scheduler tasks because the user is active.
+
+        This is intentionally blunt for scheduled/background work: when the
+        user opens or uses Odysseus, foreground interaction wins immediately.
+        Manual force-runs can be restarted by the user; automatic jobs will be
+        deferred by their cancellation path instead of stealing the app.
+        """
+        async with self._executing_lock:
+            task_ids = list(self._executing)
+        stopped = 0
+        for task_id in task_ids:
+            handle = self._task_handles.get(task_id)
+            if handle and not handle.done():
+                handle.cancel()
+                stopped += 1
+            if self._mark_run_aborted(task_id):
+                stopped += 1
+        if stopped:
+            logger.info("Stopped %d background scheduler task(s): %s", stopped, reason)
         return stopped
 
     async def ensure_defaults(self, owner: str):

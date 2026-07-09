@@ -35,6 +35,8 @@ let _libSearchSeq = 0;
 let _libSearchHadResults = false;
 let _libSearchInFlight = false;
 let _activeEmailReaderForSelectAll = null;
+let _libAccountsLoadedAt = 0;
+const _LIB_ACCOUNTS_TTL_MS = 5 * 60 * 1000;
 
 function _isEmailTypingTarget(t) {
   return !!(t && (
@@ -981,6 +983,28 @@ function _loadEmailsFresh() {
   return _loadEmails({ force: true, useCache: false });
 }
 
+function _isChatInteractionBusy() {
+  try {
+    if (window.__odysseusChatBusy) return true;
+    const until = Number(window.__odysseusChatBusyUntil || 0);
+    return until > Date.now();
+  } catch (_) {
+    return false;
+  }
+}
+
+function _loadEmailsWhenChatIdle({ delay = 700, retries = 180, options = {} } = {}) {
+  const run = () => {
+    if (!state._libOpen || !document.getElementById('email-lib-modal')) return;
+    if (_isChatInteractionBusy() && retries > 0) {
+      setTimeout(() => _loadEmailsWhenChatIdle({ delay: 1000, retries: retries - 1, options }), 1000);
+      return;
+    }
+    _loadEmails(options);
+  };
+  setTimeout(run, Math.max(0, Number(delay) || 0));
+}
+
 export function prewarmEmailLibrary({ delay = 2500 } = {}) {
   if (_libPrewarmTimer || _libPrewarmPromise) return;
   const elapsed = Date.now() - _libLastPrewarmAt;
@@ -1011,7 +1035,10 @@ async function _prewarmEmailViews() {
     const accountsRes = await fetch(`${API_BASE}/api/email/accounts`, { credentials: 'same-origin' });
     if (accountsRes.ok) {
       const accountsData = await accountsRes.json().catch(() => ({}));
-      if (Array.isArray(accountsData.accounts)) state._libAccounts = accountsData.accounts;
+      if (Array.isArray(accountsData.accounts)) {
+        state._libAccounts = accountsData.accounts;
+        _libAccountsLoadedAt = Date.now();
+      }
     }
   } catch (_) {}
 
@@ -1737,7 +1764,13 @@ export function openEmailLibrary(opts = {}) {
   };
   document.addEventListener('keydown', state._libEscHandler, true);
 
-  _renderAccountsLoading();
+  const grid = document.getElementById('email-lib-grid');
+  if (grid && !grid.children.length) _renderEmailLoading(grid);
+  if (Array.isArray(state._libAccounts) && state._libAccounts.length) {
+    _renderAccountsStrip();
+  } else {
+    _renderAccountsLoading();
+  }
   // Await accounts before loading emails so the list request carries the
   // right account_id from the very first fetch (now that we auto-select
   // an explicit account instead of relying on a 'Default' chip).
@@ -1745,17 +1778,31 @@ export function openEmailLibrary(opts = {}) {
     await _loadAccounts();
     _loadFolders();
     _loadEmailReminderBellVisibility();
-    _loadEmails();
+    _loadEmailsWhenChatIdle();
   })();
 }
 
-async function _loadAccounts() {
+async function _loadAccounts({ force = false } = {}) {
+  const hasCachedAccounts = Array.isArray(state._libAccounts) && state._libAccounts.length;
+  const accountsFresh = _libAccountsLoadedAt && (Date.now() - _libAccountsLoadedAt) < _LIB_ACCOUNTS_TTL_MS;
+  if (!force && hasCachedAccounts && accountsFresh) {
+    if (!state._libAccountId) {
+      const def = state._libAccounts.find(a => a.is_default) || state._libAccounts[0];
+      state._libAccountId = def?.id || null;
+      _publishActiveAccount();
+    }
+    _renderAccountsStrip();
+    return;
+  }
   try {
     const r = await fetch(`${API_BASE}/api/email/accounts`, { credentials: 'same-origin' });
     if (!r.ok) return;
     const d = await r.json();
     state._libAccounts = d.accounts || [];
-  } catch (_) { state._libAccounts = []; }
+    _libAccountsLoadedAt = Date.now();
+  } catch (_) {
+    if (!hasCachedAccounts) state._libAccounts = [];
+  }
   // The 'Default' chip is gone — pick an explicit account so the email
   // list and any per-email actions (open in new tab, mark read, etc.)
   // always carry an account_id and can't desync from the server's
@@ -2078,6 +2125,60 @@ function _crossFolderCandidates() {
     pick(['Archive', '[Gmail]/All Mail', 'All Mail'], '[Gmail]/All Mail'),
   ];
   return Array.from(new Set(candidates.filter(Boolean)));
+}
+
+function _findEmailFolder(patterns, fallback) {
+  const available = Array.isArray(state._libFolders) ? state._libFolders.filter(Boolean) : [];
+  const lower = new Map(available.map(f => [String(f).toLowerCase(), f]));
+  for (const p of patterns) {
+    const direct = lower.get(String(p).toLowerCase());
+    if (direct) return direct;
+  }
+  return available.find(f => patterns.some(p => String(f).toLowerCase().includes(String(p).toLowerCase()))) || fallback;
+}
+
+function _sentFolderName() {
+  return _findEmailFolder(['[Gmail]/Sent Mail', 'Sent Mail', 'Sent Items', 'INBOX.Sent', 'Sent'], 'Sent');
+}
+
+function _deriveSearchScope(rawQuery) {
+  const original = String(rawQuery || '').trim();
+  const tokens = original.split(/\s+/).filter(Boolean);
+  let scope = 'all';
+  const kept = [];
+  let forced = '';
+  for (const token of tokens) {
+    const t = token.toLowerCase().replace(/^#+/, '').replace(/:$/, '');
+    if (['sent', 'sentmail', 'sent-mail', 'outbox'].includes(t)) {
+      forced = 'sent';
+      continue;
+    }
+    if (['inbox'].includes(t)) {
+      forced = 'inbox';
+      continue;
+    }
+    kept.push(token);
+  }
+  if (forced) scope = forced;
+  let folder = 'INBOX';
+  let serverScope = 'all';
+  if (scope === 'sent') {
+    folder = _sentFolderName();
+    serverScope = 'folder';
+  } else if (scope === 'inbox') {
+    folder = 'INBOX';
+    serverScope = 'folder';
+  } else if (scope === 'current') {
+    folder = state._libFolder || 'INBOX';
+    serverScope = 'folder';
+  }
+  return {
+    scope,
+    folder,
+    serverScope,
+    q: forced ? kept.join(' ').trim() : original,
+    forced,
+  };
 }
 
 // Snapshot of state._libEmails taken right before search starts so we
@@ -2429,6 +2530,15 @@ function _addSearchPill(pill) {
   _applyPillFilter();
 }
 
+function _searchQueryFromPills() {
+  const parts = [];
+  for (const p of state._libSearchPills || []) {
+    if (p.type === 'text' && p.text) parts.push(String(p.text).trim());
+    else if (p.type === 'contact' && (p.email || p.name)) parts.push(String(p.email || p.name).trim());
+  }
+  return parts.filter(Boolean).join(' ').trim();
+}
+
 function _removeSearchPillAt(idx) {
   if (!Array.isArray(state._libSearchPills)) return;
   const removed = state._libSearchPills[idx];
@@ -2452,6 +2562,26 @@ function _removeSearchPillAt(idx) {
     state._libOffset = 0;
     const _searchInput = document.getElementById('email-lib-search');
     if (_searchInput) _searchInput.value = '';
+    _loadEmails({ useCache: true });
+    return;
+  }
+  const remainingQuery = _searchQueryFromPills();
+  if (remainingQuery.length >= 2) {
+    state._libSearch = remainingQuery;
+    const _searchInput = document.getElementById('email-lib-search');
+    if (_searchInput) _searchInput.value = '';
+    state._libSearchDraft = '';
+    _doSearch();
+    return;
+  }
+  if ((state._libSearchPills || []).length && _libSearchHadResults) {
+    _libSearchHadResults = false;
+    _libPreSearchEmails = null;
+    _libPreSearchTotal = 0;
+    _libServerSearchEmails = null;
+    _libServerSearchTotal = 0;
+    state._libSearch = '';
+    state._libOffset = 0;
     _loadEmails({ useCache: true });
     return;
   }
@@ -2724,8 +2854,9 @@ window.addEventListener('click', (e) => {
 async function _doSearch() {
   _exitEmailReaderModeForList();
   const seq = ++_libSearchSeq;
-  const q = state._libSearch.trim();
-  if (q.length < 2) {
+  const derived = _deriveSearchScope(state._libSearch);
+  const q = derived.q;
+  if (q.length < 2 && !derived.forced) {
     // Empty or too short — restore the normal folder if a previous search
     // had replaced the grid contents.
     if (_libSearchHadResults) {
@@ -2738,7 +2869,8 @@ async function _doSearch() {
     return;
   }
   const accountAtStart = state._libAccountId || '';
-  const folderAtStart = state._libFolder || 'INBOX';
+  const folderAtStart = derived.folder || state._libFolder || 'INBOX';
+  const serverScopeAtStart = derived.serverScope || 'all';
   // No grid-blanking spinner — the local filter already painted something
   // useful. Surface progress in the stats badge instead so the user knows
   // the server search is still grinding.
@@ -2753,25 +2885,67 @@ async function _doSearch() {
 
   const stillCurrent = () => (
     seq === _libSearchSeq &&
-    q === state._libSearch.trim() &&
+    q === _deriveSearchScope(state._libSearch).q &&
     accountAtStart === (state._libAccountId || '') &&
-    folderAtStart === (state._libFolder || 'INBOX')
+    folderAtStart === (_deriveSearchScope(state._libSearch).folder || state._libFolder || 'INBOX')
   );
   const searchUrl = (localOnly = false) => {
     const params = new URLSearchParams({
       folder: folderAtStart,
       q,
       limit: '100',
+      scope: serverScopeAtStart,
     });
     if (accountAtStart) params.set('account_id', accountAtStart);
     if (localOnly) params.set('local_only', '1');
     return `${API_BASE}/api/email/search?${params.toString()}`;
   };
+  const folderListUrl = () => {
+    const params = new URLSearchParams({
+      folder: folderAtStart,
+      limit: '100',
+      offset: '0',
+      filter: state._libFilter || 'all',
+    });
+    if (accountAtStart) params.set('account_id', accountAtStart);
+    return `${API_BASE}/api/email/list?${params.toString()}`;
+  };
+  const mergeSearchResults = (painted, incoming) => {
+    const byKey = new Map();
+    const out = [];
+    const add = (em) => {
+      if (!em) return;
+      const key = `${em.account_id || accountAtStart || ''}:${em.folder || folderAtStart || ''}:${em.uid || em.message_id || JSON.stringify(em)}`;
+      if (byKey.has(key)) return;
+      byKey.set(key, em);
+      out.push(em);
+    };
+    (painted || []).forEach(add);
+    const additions = [];
+    const addIncoming = (em) => {
+      if (!em) return;
+      const key = `${em.account_id || accountAtStart || ''}:${em.folder || folderAtStart || ''}:${em.uid || em.message_id || JSON.stringify(em)}`;
+      if (byKey.has(key)) return;
+      byKey.set(key, em);
+      additions.push(em);
+    };
+    (incoming || []).forEach(addIncoming);
+    additions.sort((a, b) => {
+      const ad = Number(a?.date_epoch || 0);
+      const bd = Number(b?.date_epoch || 0);
+      if (bd !== ad) return bd - ad;
+      return String(b?.date || '').localeCompare(String(a?.date || ''));
+    });
+    return out.concat(additions);
+  };
   let paintedInterimResults = false;
   const paintSearchData = (data, interim = false) => {
     if (!stillCurrent()) return false;
     if (data.error) throw new Error(data.error);
-    const results = data.emails || [];
+    let results = data.emails || [];
+    if (!interim && paintedInterimResults) {
+      results = mergeSearchResults(state._libEmails || [], results);
+    }
     if (!interim && paintedInterimResults && results.length === 0) {
       if (stats) {
         const count = state._libTotal || (state._libEmails || []).length;
@@ -2789,7 +2963,7 @@ async function _doSearch() {
     const preservingBase = !!(_libServerSearchEmails && pills.length > 1);
     if (!preservingBase) {
       _libServerSearchEmails = results.slice();
-      _libServerSearchTotal = data.total || results.length;
+      _libServerSearchTotal = Math.max(Number(data.total || 0), results.length);
       _libPreSearchEmails = results.slice();
       _libPreSearchTotal = _libServerSearchTotal;
       state._libEmails = results;
@@ -2803,7 +2977,7 @@ async function _doSearch() {
       if (!(state._libEmails || []).length && !preservingBase) state._libEmails = results;
     }
     _renderGrid();
-    const count = data.total || results.length;
+    const count = Math.max(Number(data.total || 0), results.length);
     if (stats) {
       if (interim) {
         stats.textContent = `${count} cached match${count === 1 ? '' : 'es'} · searching…`;
@@ -2822,9 +2996,22 @@ async function _doSearch() {
   };
 
   try {
+    if (q.length < 2 && derived.forced) {
+      const res = await fetch(folderListUrl());
+      const data = await res.json();
+      if (!stillCurrent()) return;
+      paintSearchData({
+        emails: (data.emails || []).map(em => ({ ...em, folder: folderAtStart })),
+        total: data.total || (data.emails || []).length,
+        source: 'folder',
+        sync: { source: 'folder' },
+      }, false);
+      return;
+    }
+    const fullSearchPromise = fetch(searchUrl(false)).then(res => res.json());
+    const localSearchPromise = fetch(searchUrl(true)).then(res => res.json());
     try {
-      const localRes = await fetch(searchUrl(true));
-      const localData = await localRes.json();
+      const localData = await localSearchPromise;
       if (!stillCurrent()) return;
       if (!localData.error && (localData.emails || []).length) {
         paintSearchData(localData, true);
@@ -2833,8 +3020,7 @@ async function _doSearch() {
       if (!stillCurrent()) return;
     }
 
-    const res = await fetch(searchUrl(false));
-    const data = await res.json();
+    const data = await fullSearchPromise;
     if (!stillCurrent()) return;
     paintSearchData(data, false);
   } catch (e) {
@@ -3401,9 +3587,12 @@ function _createCard(em) {
     card.appendChild(cb);
   }
 
-  // In Sent folder, show the recipient(s) — the sender is always you and
-  // hides the actually useful info. Outside Sent, show the sender as before.
-  const isSentFolderEarly = /sent/i.test(state._libFolder);
+  // In Sent results, show the recipient(s) — the sender is always you and
+  // hides the actually useful info. Search results can be stamped with their
+  // real folder while the visible folder selector still says INBOX, so use the
+  // email's folder first.
+  const cardFolder = em.folder || state._libFolder || 'INBOX';
+  const isSentFolderEarly = /sent/i.test(cardFolder);
   let senderName;
   let senderAddress;
   if (isSentFolderEarly) {
@@ -3482,7 +3671,7 @@ function _createCard(em) {
   }
 
   // Done check + unread dot stay next to the subject on the left.
-  const isSentFolder = /sent/i.test(state._libFolder);
+  const isSentFolder = /sent/i.test(cardFolder);
   if (!isSentFolder) {
     const doneCheck = document.createElement('span');
     doneCheck.className = 'email-card-done' + (em.is_answered ? ' active' : '');
@@ -3512,10 +3701,10 @@ function _createCard(em) {
       }
       try {
         if (newState) {
-          await fetch(`${API_BASE}/api/email/mark-answered/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
-          await fetch(`${API_BASE}/api/email/mark-read/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
+          await fetch(`${API_BASE}/api/email/mark-answered/${em.uid}?folder=${encodeURIComponent(cardFolder)}${_acct()}`, { method: 'POST' });
+          await fetch(`${API_BASE}/api/email/mark-read/${em.uid}?folder=${encodeURIComponent(cardFolder)}${_acct()}`, { method: 'POST' });
         } else {
-          await fetch(`${API_BASE}/api/email/clear-answered/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
+          await fetch(`${API_BASE}/api/email/clear-answered/${em.uid}?folder=${encodeURIComponent(cardFolder)}${_acct()}`, { method: 'POST' });
         }
       } catch (err) { console.error(err); }
     };
@@ -3571,8 +3760,14 @@ function _createCard(em) {
   const meta = document.createElement('div');
   meta.className = 'memory-item-meta';
   meta.style.cssText = 'font-size:10px;opacity:0.7;margin-top:2px;';
+  const showFolderChip = !!(_libSearchHadResults && cardFolder);
+  const prettyFolder = folderDisplayName(cardFolder);
+  const sentChip = isSentFolderEarly ? '<span class="email-sent-chip" title="Sent email">Sent</span>' : '';
+  const folderChip = showFolderChip && !isSentFolderEarly
+    ? `<span class="email-folder-chip" title="${_esc(cardFolder)}">${_esc(prettyFolder)}</span>`
+    : '';
   const senderPrefix = isSentFolderEarly ? 'to ' : '';
-  meta.innerHTML = `<span class="email-meta-sender" data-email="${_esc(senderAddress || '')}" data-name="${_esc(senderName || '')}"><span style="opacity:0.55">${senderPrefix}</span><span style="color:${color};font-weight:600">${_esc(senderName)}</span></span><span class="email-meta-sep"> · </span><span class="email-meta-date">${_esc(dateStr)}</span>`;
+  meta.innerHTML = `${sentChip}${folderChip}<span class="email-meta-sender" data-email="${_esc(senderAddress || '')}" data-name="${_esc(senderName || '')}"><span style="opacity:0.55">${senderPrefix}</span><span style="color:${color};font-weight:600">${_esc(senderName)}</span></span><span class="email-meta-sep"> · </span><span class="email-meta-date">${_esc(dateStr)}</span>`;
   content.appendChild(meta);
 
   card.appendChild(content);
@@ -5284,6 +5479,63 @@ function _wireAttachmentHandlers(reader, folder) {
   // a ReferenceError when this fn is called from contexts that don't have
   // _isMobileUA in scope (e.g. _openEmailAsTab, _openEmailWindow).
   const _isMobileUA = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  reader.querySelectorAll('.email-attachments-download-all').forEach(btn => {
+    if (btn.dataset.wired === '1') return;
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      ev.preventDefault();
+      if (btn.dataset.downloading === '1') return;
+      const uid = btn.dataset.attUid;
+      const sourceFolder = btn.dataset.attFolder || useFolder;
+      const count = Number(btn.dataset.attCount || 0);
+      if (!uid) return;
+      const originalHtml = btn.innerHTML;
+      const originalTitle = btn.title;
+      btn.dataset.downloading = '1';
+      btn.classList.add('is-loading');
+      try {
+        const sp = window.spinnerModule || (await import('./spinner.js')).default;
+        const wp = sp.createWhirlpool(12);
+        wp.element.style.margin = '0';
+        btn.textContent = '';
+        btn.appendChild(wp.element);
+        const label = document.createElement('span');
+        label.textContent = 'All';
+        btn.appendChild(label);
+      } catch (_) {
+        btn.textContent = 'All...';
+      }
+      try {
+        const url = `${API_BASE}/api/email/attachments-download/${encodeURIComponent(uid)}?folder=${encodeURIComponent(sourceFolder)}${_acct()}`;
+        const res = await fetch(url, { credentials: 'same-origin' });
+        if (!res.ok) {
+          const msg = await res.text().catch(() => '');
+          console.error('attachments zip download failed', res.status, msg);
+          location.href = url;
+          return;
+        }
+        const blob = await res.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = `email-${uid}-attachments.zip`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+        try { uiModule.showToast && uiModule.showToast(`Downloading ${count || 'all'} attachments`); } catch (_) {}
+      } catch (e) {
+        console.error('attachments zip download error', e);
+        try { const { showError } = await import('./ui.js'); showError('Could not download attachments'); } catch (_) {}
+      } finally {
+        delete btn.dataset.downloading;
+        btn.classList.remove('is-loading');
+        btn.title = originalTitle;
+        btn.innerHTML = originalHtml;
+      }
+    });
+  });
   reader.querySelectorAll('.email-attachment-open').forEach(openBtn => {
     if (openBtn.dataset.wired === '1') return;
     openBtn.dataset.wired = '1';
@@ -5487,11 +5739,15 @@ function _buildAttsHtmlFor(uid, data) {
       ? `Thread attachments (${related.length})`
       : `Hidden inline attachments (${hidden.length})`;
   const startCollapsed = !visible.length && !related.length;
+  const downloadAllBtn = visible.length > 4
+    ? `<button type="button" class="email-attachments-download-all" title="Download all attachments" data-att-uid="${_esc(uid)}" data-att-folder="${_esc(data.folder || state._libFolder || 'INBOX')}" data-att-count="${visible.length}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span>All</span></button>`
+    : '';
   return (
     `<div class="email-reader-atts-wrap${startCollapsed ? ' collapsed' : ''}">`
     +   '<div class="email-reader-atts-header email-summary-toggle" role="button" tabindex="0">'
     +     '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>'
     +     `<span>${label}</span>`
+    +     downloadAllBtn
     +     '<svg class="email-summary-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:auto;transition:transform .15s ease;"><polyline points="6 9 12 15 18 9"/></svg>'
     +   '</div>'
     +   visibleSection
@@ -6350,26 +6606,7 @@ async function _translateEmail(reader, language, opts = {}) {
 }
 
 async function _maybeAutoTranslateEmail(reader) {
-  if (!reader || reader.dataset.autoTranslateChecked === '1') return;
-  reader.dataset.autoTranslateChecked = '1';
-  try {
-    const res = await fetch(`${API_BASE}/api/email/config`);
-    const cfg = await res.json();
-    if (!cfg || !cfg.email_auto_translate) return;
-    try {
-      const sid = window.sessionModule?.getCurrentSessionId?.() || '';
-      if (sid) {
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 800);
-        const statusRes = await fetch(`${API_BASE}/api/chat/stream_status/${encodeURIComponent(sid)}`, {
-          signal: ctrl.signal,
-        }).catch(() => null);
-        clearTimeout(timer);
-        if (statusRes && statusRes.ok) return;
-      }
-    } catch (_) {}
-    await _translateEmail(reader, cfg.email_translate_language || 'English', { auto: true });
-  } catch (_) {}
+  if (reader) reader.dataset.autoTranslateChecked = '1';
 }
 
 // Keep an email ⋮ dropdown inside the viewport: when it would spill past the

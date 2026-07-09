@@ -60,6 +60,11 @@ if (typeof window !== 'undefined' && !window._tagScrollGuardWired) {
 export const _MODELDIR_CHECK_OFF = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/></svg>';
 export const _MODELDIR_CHECK_ON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="8 12 11 15 16 9"/></svg>';
 
+function _normalizeCookbookModelDir(dir) {
+  const d = String(dir || '').replaceAll('✕', '').replaceAll('✖', '').trim();
+  return /^(home|mnt|media|data|opt|srv|var)\//.test(d) ? `/${d}` : d;
+}
+
 // Monochrome platform glyphs (currentColor) for a server's OS tag: a penguin for
 // Linux, the four-pane logo for Windows, an Android robot for Termux/Android.
 function _platformIcon(platform) {
@@ -170,6 +175,92 @@ function _gemma4ThinkingChatTemplateArg(modelName) {
     : '';
 }
 
+const _SERVER_COLOR_CHOICES = [
+  ['', 'Auto'],
+  ['#bd93f9', 'Purple'],
+  ['#ff79c6', 'Pink'],
+  ['#fca5a5', 'Red'],
+  ['#93c5fd', 'Blue'],
+  ['#86efac', 'Green'],
+  ['#d6b37a', 'Bronze'],
+  ['#111827', 'Black'],
+  ['#f8fafc', 'White'],
+  ['#c0c4cc', 'Silver'],
+  ['#d9f99d', 'Lime'],
+  ['#ccfbf1', 'Mint'],
+];
+const _SERVER_AUTO_COLOR_VALUES = _SERVER_COLOR_CHOICES.slice(1).map(([value]) => value);
+
+function _serverColorValue(value) {
+  const v = String(value || '').trim();
+  return /^#[0-9a-fA-F]{6}$/.test(v) ? v : '';
+}
+
+function _serverColor(s) {
+  return _serverColorValue(s && s.color);
+}
+
+function _serverColorLabel(color) {
+  const hit = _SERVER_COLOR_CHOICES.find(([value]) => value === color);
+  return hit ? hit[1] : 'Auto';
+}
+
+function _autoServerColor(index) {
+  const servers = Array.isArray(_envState.servers) ? _envState.servers : [];
+  const explicit = new Set(servers.map(s => _serverColor(s)).filter(Boolean));
+  const used = new Set(explicit);
+  for (let j = 0; j <= index; j++) {
+    const s = servers[j] || {};
+    const explicitColor = _serverColor(s);
+    if (explicitColor) continue;
+    const picked = _SERVER_AUTO_COLOR_VALUES.find(c => !used.has(c)) || _SERVER_AUTO_COLOR_VALUES[j % _SERVER_AUTO_COLOR_VALUES.length] || '';
+    if (j === index) return picked;
+    if (picked) used.add(picked);
+  }
+  return _SERVER_AUTO_COLOR_VALUES[index % _SERVER_AUTO_COLOR_VALUES.length] || '';
+}
+
+function _resolvedServerColor(s, index) {
+  return _serverColor(s) || _autoServerColor(index);
+}
+
+function _serverOptionLabel(label, color) {
+  return color ? `● ${label}` : label;
+}
+
+function _serverOptionStyle(color) {
+  return color ? ` style="color:${esc(color)};"` : '';
+}
+
+function _serverColorOptionStyle(color) {
+  if (!color) return ' style="background:var(--bg);color:var(--fg);"';
+  const c = String(color).toLowerCase();
+  const fg = (c === '#111827') ? '#f8fafc' : (c === '#f8fafc' || c === '#fca5a5' || c === '#93c5fd' || c === '#86efac' || c === '#d9f99d' || c === '#ccfbf1' || c === '#c0c4cc') ? '#111827' : color;
+  return ` style="color:${esc(fg)};background-color:color-mix(in srgb, ${esc(color)} 28%, var(--bg));"`;
+}
+
+function _serverColorForValue(value) {
+  const s = _serverByVal(value);
+  const idx = Array.isArray(_envState.servers) ? _envState.servers.indexOf(s) : -1;
+  return s ? _resolvedServerColor(s, idx >= 0 ? idx : 0) : '';
+}
+
+export function _applyServerSelectColor(sel) {
+  if (!sel || sel.tagName !== 'SELECT') return;
+  const color = _serverColorForValue(sel.value);
+  if (color) {
+    sel.style.setProperty('--cookbook-server-color', color);
+    sel.classList.add('cookbook-server-select-colored');
+  } else {
+    sel.style.removeProperty('--cookbook-server-color');
+    sel.classList.remove('cookbook-server-select-colored');
+  }
+}
+
+export function _syncServerSelectColors(root = document) {
+  root.querySelectorAll('#hwfit-server-select, #hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(_applyServerSelectColor);
+}
+
 function _buildServerOpts(excludeLocal = false) {
   // The local server is ALWAYS represented by the synthetic value="local" option
   // (showing its custom name from the "server name" feature). We must therefore
@@ -177,7 +268,8 @@ function _buildServerOpts(excludeLocal = false) {
   const _localIdx = _envState.servers.findIndex(_isLocalEntry);
   const _localSrv = _localIdx >= 0 ? _envState.servers[_localIdx] : null;
   const _localLabel = (_localSrv && _localSrv.name) ? _localSrv.name : 'Local';
-  let html = `<option value="local"${!_envState.remoteHost ? ' selected' : ''}>${esc(_localLabel)}</option>`;
+  const _localColor = _localSrv ? _resolvedServerColor(_localSrv, _localIdx) : '';
+  let html = `<option value="local"${_serverOptionStyle(_localColor)}${!_envState.remoteHost ? ' selected' : ''}>${esc(_serverOptionLabel(_localLabel, _localColor))}</option>`;
   const selectedKey = _envState.remoteServerKey || '';
   let legacyHostSelected = false;
   for (let i = 0; i < _envState.servers.length; i++) {
@@ -186,12 +278,13 @@ function _buildServerOpts(excludeLocal = false) {
     if (excludeLocal && _isLocalEntry(s)) continue;
     const label = s.name || s.host || `Server ${i + 1}`;
     const value = _serverKey(s);
+    const color = _resolvedServerColor(s, i);
     let selected = selectedKey ? value === selectedKey : false;
     if (!selectedKey && _envState.remoteHost === s.host && !legacyHostSelected) {
       selected = true;
       legacyHostSelected = true;
     }
-    html += `<option value="${esc(value)}"${selected ? ' selected' : ''}>${esc(label)}</option>`;
+    html += `<option value="${esc(value)}"${_serverOptionStyle(color)}${selected ? ' selected' : ''}>${esc(_serverOptionLabel(label, color))}</option>`;
   }
   return html;
 }
@@ -345,6 +438,8 @@ export function _detectReasoningParser(modelName) {
   // MiniMax M2 / M2.5 / M2.7 — released with a dedicated parser. Catch M2
   // before plain "minimax" so M2.x doesn't fall through to a wrong parser.
   if (n.includes('minimax') && n.match(/\bm2(?:\.\d)?\b/)) return 'minimax_m2';
+  // DeepSeek-V4 has a dedicated parser in SGLang. Keep it before R1/V3.
+  if (n.includes('deepseek') && /\bv[-_]?4\b/.test(n)) return 'deepseek-v4';
   // DeepSeek-R1 / V3-Thinking / V3.1-Thinking variants. Bare V3/V3.1 (non-
   // thinking) skip this — they're not reasoning models.
   if (n.includes('deepseek') && (n.includes('r1') || n.includes('thinking'))) return 'deepseek_r1';
@@ -382,6 +477,7 @@ export function _detectToolParser(modelName) {
   if (n.includes('llama-4') || n.includes('llama4')) return 'llama4_json';
   if (n.includes('llama') || n.includes('nemotron')) return 'llama3_json';
   if (n.includes('mistral') || n.includes('mixtral')) return 'mistral';
+  if (n.includes('deepseek') && /\bv[-_]?4\b/.test(n)) return 'deepseekv4';
   if (n.includes('deepseek-v3')) return 'deepseek_v3';
   if (n.includes('deepseek')) return 'deepseek_v3';
   if (n.includes('minimax') && /\bm3\b/.test(n)) return 'minimax_m3';
@@ -409,7 +505,7 @@ export function _detectBackend(model) {
   const isAppleSilicon = ['metal', 'mps', 'apple'].includes(sysBackend);
   const _nm = `${model.repo_id || ''} ${model.path || ''} ${model.name || ''}`.toLowerCase();
   if (/\bmlx\b|mlx-|_mlx/i.test(_nm) || q.startsWith('MLX')) {
-    return { backend: 'unsupported', label: 'Unsupported' };
+    return { backend: 'mlx', label: 'MLX' };
   }
   const isAwqLike = /^AWQ|^GPTQ|^NVFP4/.test(q) || ['FP8', 'FP4', 'MXFP4', 'NF4', 'INT4', 'INT8', 'W4A16', 'W8A8', 'W8A16'].includes(q) || /\b(awq|gptq|fp8|fp4|nvfp4|mxfp4|nf4|int4|int8|w4a16|w8a8|w8a16)\b/i.test(_nm);
   const hasGgufFile = Array.isArray(model.gguf_files)
@@ -442,7 +538,7 @@ export function _detectBackend(model) {
   // don't run on macOS; vLLM-native quantized models are already filtered out
   // of metal Cookbook results, so llama.cpp is always the right engine here.
   if (['metal', 'mps', 'apple'].includes(sysBackend)) {
-    return { backend: 'llamacpp', label: 'llama.cpp' };
+    return { backend: 'mlx', label: 'MLX' };
   }
 
   // ROCm/AMD machines should not blindly default HF safetensors models to
@@ -540,13 +636,32 @@ function _venvRootFromPath(path) {
   return p;
 }
 
+function _venvLooksWrongForPlatform(path, platform) {
+  const p = String(path || '').trim();
+  const plat = String(platform || '').toLowerCase();
+  if (!p || !plat) return false;
+  if ((plat === 'darwin' || plat === 'macos') && /^\/(?:home|usr\/local\/cuda|opt\/conda)\//.test(p)) return true;
+  if ((plat === 'linux' || plat === 'termux') && /^\/(?:Users|opt\/homebrew)\//.test(p)) return true;
+  return false;
+}
+
+function _isDeepSeekV4Model(modelName) {
+  const n = String(modelName || '').toLowerCase();
+  return n.includes('deepseek') && /\bv[-_]?4\b/.test(n);
+}
+
+function _envHasKey(envText, key) {
+  return String(envText || '').split(/\s+/).some(part => part.startsWith(`${key}=`));
+}
+
 export function _buildServeCmd(f, modelName, backend) {
   // When a venv is configured on the chosen server, use the venv's binaries
   // by absolute path. Bare `vllm` / `python3` relies on PATH, and SSH non-
   // interactive sessions often leave a user-site install (~/.local/bin/vllm)
   // ahead of the venv's bin, so the WRONG vllm gets launched even with the
   // venv activated. Absolute path sidesteps the whole PATH question.
-  const _formVenv = (f.venv ?? '').toString().trim();
+  let _formVenv = (f.venv ?? '').toString().trim();
+  if (_venvLooksWrongForPlatform(_formVenv, f.platform)) _formVenv = '';
   const _activeVenvPath = _venvRootFromPath(_formVenv || (_envState.env === 'venv' ? (_envState.envPath || '') : ''));
   const _venvBin = _activeVenvPath ? (_activeVenvPath + '/bin/') : '';
   const _vllmBin = _venvBin ? `${_venvBin}vllm` : 'vllm';
@@ -618,14 +733,19 @@ export function _buildServeCmd(f, modelName, backend) {
     // button strip is the only source for which devices to pin.
     const gpuId = (f.gpus || f.gpu_id || '').toString().trim();
     cmd += _gpuEnvPrefix(gpuId);
-    const _extraEnv = (f.extra_env ?? '').toString().replace(/\s+/g, ' ').trim();
+    const _isDsv4 = _isDeepSeekV4Model(modelName);
+    let _extraEnv = (f.extra_env ?? '').toString().replace(/\s+/g, ' ').trim();
+    if (_isDsv4 && !_envHasKey(_extraEnv, 'SGLANG_DSV4_COMPRESS_STATE_DTYPE')) {
+      _extraEnv = (`SGLANG_DSV4_COMPRESS_STATE_DTYPE=bf16 ${_extraEnv}`).trim();
+    }
     if (_extraEnv) cmd += _extraEnv + ' ';
     cmd += `${_py3Bin} -m sglang.launch_server --model-path ${modelName} --host 0.0.0.0 --port ${f.port || '30000'}`;
     const _gemma4ChatTemplate = _gemma4ThinkingChatTemplateArg(modelName);
     if (_gemma4ChatTemplate) cmd += ` --chat-template ${_gemma4ChatTemplate}`;
     if (f.tp && f.tp !== '1') cmd += ` --tp ${f.tp}`;
     if (f.ctx) cmd += ` --context-length ${f.ctx}`;
-    if (f.gpu_mem && f.gpu_mem !== '0.90') cmd += ` --mem-fraction-static ${f.gpu_mem}`;
+    const _memFraction = _isDsv4 && (!f.gpu_mem || f.gpu_mem === '0.90') ? '0.80' : f.gpu_mem;
+    if (_memFraction && _memFraction !== '0.90') cmd += ` --mem-fraction-static ${_memFraction}`;
     if (f.dtype && f.dtype !== 'auto') cmd += ` --dtype ${f.dtype}`;
     if (f.max_seqs && f.max_seqs.toString().trim()) cmd += ` --max-running-requests ${f.max_seqs.toString().trim()}`;
     if (f.trust_remote) cmd += ' --trust-remote-code';
@@ -638,6 +758,14 @@ export function _buildServeCmd(f, modelName, backend) {
     }
     if (!f.prefix_cache) cmd += ' --disable-radix-cache';
     if (f.enforce_eager) cmd += ' --disable-cuda-graph';
+    const _decodeGraph = String(f.sglang_decode_graph || '').trim();
+    if (!f.enforce_eager && _decodeGraph === 'disabled') {
+      cmd += ' --cuda-graph-backend-decode disabled';
+    } else if (!f.enforce_eager && _decodeGraph === 'bs16') {
+      cmd += ' --cuda-graph-max-bs-decode 16';
+    } else if (!f.enforce_eager && _isDsv4 && !/\s--cuda-graph-max-bs-decode\b/.test(cmd) && !/\s--cuda-graph-backend-decode\b/.test(cmd)) {
+      cmd += ' --cuda-graph-backend-decode disabled';
+    }
   } else if (backend === 'llamacpp') {
     const ggufPath = f._gguf_path || 'model.gguf';
     // GPU list — read from gpus (button strip); fall back to gpu_id for
@@ -812,6 +940,13 @@ export function _buildServeCmd(f, modelName, backend) {
     if (f.diff_attention_slicing) cmd += ' --attention-slicing';
     if (f.diff_vae_slicing) cmd += ' --vae-slicing';
     if (f.diff_harmonize_gpu) cmd += ` --harmonize-gpu ${f.diff_harmonize_gpu}`;
+  } else if (backend === 'mlx') {
+    const mlxPy = _isWindows() ? 'python' : _py3Bin;
+    const mlxHost = f.host ? '0.0.0.0' : '127.0.0.1';
+    cmd += `${mlxPy} -m mlx_lm.server --model ${_shellQuote(modelName)} --host ${mlxHost} --port ${f.port || '8080'}`;
+    if (/minimax|mini-max/i.test(modelName)) {
+      cmd += ' --temp 0.7 --top-p 0.9 --max-tokens 2048';
+    }
   }
   return cmd;
 }
@@ -933,6 +1068,7 @@ async function _fetchDependencies() {
     const pkgs = data.packages || [];
     if (!pkgs.length) { list.innerHTML = '<div class="hwfit-loading">No packages found</div>'; return; }
     const _winUnsupported = new Set(['hf_transfer', 'vllm', 'rembg', 'gfpgan']);
+    const _systemInstallable = new Set(['tmux']);
 
     const _statusTag = (pkg, isLocal, isSystemDep, winBlocked) => {
       if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
@@ -944,8 +1080,12 @@ async function _fetchDependencies() {
       if (pkg.installed) return `<button class="cookbook-dep-tag cookbook-dep-installed cookbook-dep-installed-btn" title="Installed — click for actions"><span class="cookbook-dep-installed-label">Installed</span><span class="cookbook-dep-caret">&#9662;</span></button>`;
       if (isSystemDep) {
         const depTip = esc(pkg.install_hint || 'Install this OS package on the selected server.');
+        if (pkg.applicable !== false && _systemInstallable.has(pkg.name)) {
+          return `<button type="button" class="cookbook-dep-tag cookbook-dep-install cookbook-dep-install-sysdeps" data-dep-sysdeps="${esc(pkg.name)}" data-dep-target="${isLocal ? 'local' : 'remote'}" title="${depTip}">Install</button>`;
+        }
         const depLabel = pkg.applicable === false ? 'N/A ?' : 'Missing';
-        return `<span class="cookbook-dep-tag cookbook-dep-na" title="${depTip}">${depLabel}</span>`;
+        const depStyle = pkg.name === 'docker' ? ' style="width:87.7px;justify-content:center;"' : '';
+        return `<span class="cookbook-dep-tag cookbook-dep-na" title="${depTip}"${depStyle}>${depLabel}</span>`;
       }
       return `<button class="cookbook-dep-tag cookbook-dep-install" data-dep-pip="${esc(pkg.pip)}" data-dep-target="${isLocal ? 'local' : 'remote'}">Install</button>`;
     };
@@ -957,6 +1097,7 @@ async function _fetchDependencies() {
     const _DEP_GLYPHS = {
       vllm: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4l7 16 7-16"/><path d="M14 4l4 9 3-9"/></svg>',
       sglang: '<span aria-hidden="true" style="display:block;width:13px;height:13px;background:currentColor;-webkit-mask:url(/static/icons/sglang-mark.png) center/contain no-repeat;mask:url(/static/icons/sglang-mark.png) center/contain no-repeat;"></span>',
+      mlx_lm: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 18V6l4 7 4-7v12"/><path d="M16 6v12"/><path d="M20 6v12"/></svg>',
       llama_cpp: '<svg width="13" height="13" viewBox="0 0 600 600" fill="none" aria-hidden="true"><path d="M600 392L504.249 558L504.137 557.929C487.252 584.069 458.193 600 426.864 600H120L240 392H600Z" fill="currentColor"/><path d="M240 392H0L199.602 46.0254C216.032 17.5463 246.411 0 279.29 0H466.154L240 392Z" fill="currentColor"/></svg>',
       ollama: '<img src="/static/icons/ollama-mark-crop.png" alt="" aria-hidden="true" width="13" height="13" style="display:block;width:13px;height:13px;object-fit:contain;" />',
       diffusers: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg>',
@@ -1121,22 +1262,32 @@ async function _fetchDependencies() {
     // "Update" item in an installed package's ⋮ menu. `upgrade` adds pip -U;
     // `statusEl`, when given, shows "Installing…/Updating…" and is disabled.
     async function _installDep(pipName, pkgName, isLocalOnly, upgrade, statusEl) {
+      let targetServer = null;
       if (isLocalOnly) {
         _envState.remoteHost = '';
         _envState.env = 'none';
         _envState.envPath = '';
       } else {
         const depsServerSel = document.getElementById('hwfit-deps-server');
-        if (depsServerSel) _applyServerSelection(depsServerSel.value);
+        if (depsServerSel) {
+          targetServer = _serverByVal(depsServerSel.value);
+          _applyServerSelection(depsServerSel.value);
+        }
       }
-      const targetHost = isLocalOnly ? 'this server' : (_envState.remoteHost || 'local');
+      const targetHost = isLocalOnly ? 'this server' : ((targetServer?.host || _envState.remoteHost) || 'local');
+      const targetEnv = isLocalOnly ? 'none' : (targetServer?.env || _envState.env || 'none');
+      const targetEnvPath = isLocalOnly ? '' : (targetServer?.envPath || _envState.envPath || '');
+      const targetPlatform = isLocalOnly ? (_envState.hostPlatform || _envState.platform || '') : (targetServer?.platform || _envState.platform || '');
+      const targetRemoteHost = isLocalOnly ? '' : (targetServer?.host || _envState.remoteHost || '');
       // Always go through `python -m pip` so the leading token is `python`
       // — matches the /api/model/serve allow-list (bare `pip` is blocked).
       // Inside a venv/conda env, `--user` is invalid (pip refuses), so we
       // only add `--user --break-system-packages` when there's no env —
       // for PEP-668-locked system pythons (Arch, newer Debian).
-      const _inEnv = _envState.env === 'venv' || _envState.env === 'conda';
-      const _pipFlags = (!_isWindows() && !_inEnv) ? ' --user --break-system-packages' : '';
+      const _inEnv = targetEnv === 'venv' || targetEnv === 'conda';
+      const _platform = String(targetPlatform || '').toLowerCase();
+      const _isAppleTarget = _platform === 'darwin' || _platform === 'macos' || _platform.includes('mac os');
+      const _pipFlags = (!_isWindows() && !_inEnv) ? (_isAppleTarget ? ' --user' : ' --user --break-system-packages') : '';
       // Use the venv's python3 by absolute path when configured. Even with the
       // env_prefix sourcing activate, SSH non-interactive sessions sometimes
       // pick a `python3` ahead of the venv's bin on PATH, so the install
@@ -1144,35 +1295,35 @@ async function _fetchDependencies() {
       let _py;
       if (_isWindows()) {
         _py = 'python';
-      } else if (_envState.env === 'venv' && _envState.envPath) {
-        _py = `${_envState.envPath.replace(/\/+$/, '')}/bin/python3`;
+      } else if (targetEnv === 'venv' && targetEnvPath) {
+        _py = `${targetEnvPath.replace(/\/+$/, '')}/bin/python3`;
       } else {
         _py = 'python3';
       }
       const cmd = `${_py} -m pip install${upgrade ? ' -U' : ''}${_pipFlags} "${pipName}"`;
       let envPrefix = '';
       if (_isWindows()) {
-        if (_envState.env === 'venv' && _envState.envPath) {
-          envPrefix = '& ' + _psQuote(_envState.envPath.endsWith('\\Scripts\\Activate.ps1') ? _envState.envPath : _envState.envPath + '\\Scripts\\Activate.ps1');
-        } else if (_envState.env === 'conda' && _envState.envPath) {
-          envPrefix = 'conda activate ' + _psQuote(_envState.envPath);
+        if (targetEnv === 'venv' && targetEnvPath) {
+          envPrefix = '& ' + _psQuote(targetEnvPath.endsWith('\\Scripts\\Activate.ps1') ? targetEnvPath : targetEnvPath + '\\Scripts\\Activate.ps1');
+        } else if (targetEnv === 'conda' && targetEnvPath) {
+          envPrefix = 'conda activate ' + _psQuote(targetEnvPath);
         }
       } else {
-        if (_envState.env === 'venv' && _envState.envPath) {
-          const p = _envState.envPath;
+        if (targetEnv === 'venv' && targetEnvPath) {
+          const p = targetEnvPath;
           envPrefix = 'source ' + _shellQuote(p.endsWith('/bin/activate') ? p : p + '/bin/activate');
-        } else if (_envState.env === 'conda' && _envState.envPath) {
-          envPrefix = 'eval "$(conda shell.bash hook)" && conda activate ' + _shellQuote(_envState.envPath);
+        } else if (targetEnv === 'conda' && targetEnvPath) {
+          envPrefix = 'eval "$(conda shell.bash hook)" && conda activate ' + _shellQuote(targetEnvPath);
         }
       }
       try {
         const reqBody = {
           repo_id: pipName,
           cmd: cmd,
-          remote_host: _envState.remoteHost || undefined,
-          ssh_port: _getPort(_envState.remoteHost) || undefined,
+          remote_host: targetRemoteHost || undefined,
+          ssh_port: _getPort(targetRemoteHost) || undefined,
           env_prefix: envPrefix || undefined,
-          platform: _envState.platform || undefined,
+          platform: targetPlatform || undefined,
         };
         const res = await fetch('/api/model/serve', {
           method: 'POST', credentials: 'same-origin',
@@ -1196,7 +1347,7 @@ async function _fetchDependencies() {
         }
         // _dep flags this as a pip dependency/driver install (not a servable
         // model) so the running-task card doesn't offer a "Serve →" button.
-        const payload = { repo_id: pipName, _cmd: cmd, remote_host: _envState.remoteHost || '', _dep: true, env_path: _envState.envPath || '' };
+        const payload = { repo_id: pipName, _cmd: cmd, remote_host: targetRemoteHost || '', _dep: true, env_path: targetEnvPath || '', platform: targetPlatform || '' };
         _addTask(data.session_id, 'pip ' + pkgName, 'download', payload);
         if (statusEl) { statusEl.textContent = upgrade ? 'Updating...' : 'Installing...'; statusEl.disabled = true; }
         uiModule.showToast(`${upgrade ? 'Updating' : 'Installing'} ${pkgName} on ${targetHost}...`);
@@ -1334,7 +1485,7 @@ async function _fetchDependencies() {
             // from the row) so the user can copy-paste it without leaving
             // the toast. Otherwise just surface the error.
             const _suffix = _resolvedCmd ? `\n\nRun on ${targetLabel}: ${_resolvedCmd}` : '';
-            uiModule.showToast('Build-deps install failed: ' + String(reason).slice(0, 300) + _suffix, {
+            uiModule.showToast('System dependency install failed: ' + String(reason).slice(0, 300) + _suffix, {
               duration: 25000,
               action: _resolvedCmd ? 'Copy command' : 'OK',
               onAction: async () => {
@@ -1638,7 +1789,45 @@ function _applyServerSelection(val) {
       sel.value = _want;
       if (sel.selectedIndex < 0) sel.value = 'local';
     }
+    _applyServerSelectColor(sel);
   });
+}
+
+async function _refreshScanDownloadTarget() {
+  const btn = document.getElementById('hwfit-hw-refresh-btn');
+  if (btn && btn.disabled) return;
+  const selectedVal = document.getElementById('hwfit-server-select')?.value || _currentServerValue();
+  if (btn) {
+    btn.disabled = true;
+    btn.style.opacity = '0.55';
+    btn.style.cursor = 'wait';
+  }
+  try {
+    if (selectedVal) _applyServerSelection(selectedVal);
+    const ok = await _syncFromServer().catch((e) => {
+      console.warn('[cookbook] explicit server sync failed', e);
+      return false;
+    });
+    if (ok) {
+      try { Object.assign(_envState, _readStoredEnvState()); } catch {}
+      if (selectedVal) _applyServerSelection(selectedVal);
+    }
+    _resetGpuToggleState();
+    await Promise.allSettled([
+      _hwfitFetch(true),
+      _fetchCachedModels(true),
+    ]);
+    if (uiModule?.showToast) uiModule.showToast('Refreshed selected server');
+  } catch (e) {
+    console.warn('[cookbook] scan/download refresh failed', e);
+    if (uiModule?.showError) uiModule.showError('Refresh failed: ' + (e?.message || e));
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.style.opacity = '';
+      btn.style.cursor = '';
+    }
+  }
 }
 
 function _wireTabEvents(body) {
@@ -1701,17 +1890,18 @@ function _wireTabEvents(body) {
       const port = entry.querySelector('.cookbook-srv-port')?.value?.trim() || '';
       const env = entry.querySelector('.cookbook-srv-env')?.value || 'none';
       const envPath = entry.querySelector('.cookbook-srv-path')?.value?.trim() || '';
+      const color = _serverColorValue(entry.querySelector('.cookbook-srv-color')?.value || '');
       const platform = entry.dataset.platform || '';
       const dirs = [];
       entry.querySelectorAll('.cookbook-modeldir-tag').forEach(tag => {
         // Read from data attribute (authoritative) — never parse displayed text
-        const d = (tag.dataset.dir || '').replaceAll('✕', '').replaceAll('✖', '').trim();
+        const d = _normalizeCookbookModelDir(tag.dataset.dir || '');
         if (d) dirs.push(d);
       });
       // Directory flagged as the download target ('' = default HF cache).
       const dlEl = entry.querySelector('.cookbook-modeldir-dl.active');
       const downloadDir = dlEl ? (dlEl.dataset.dlDir || '') : '';
-      servers.push({ name, host, port, env, envPath, modelDirs: dirs, downloadDir, platform });
+      servers.push({ name, host, port, env, envPath, color, modelDirs: dirs, downloadDir, platform });
     });
     _envState.servers = servers;
     // Auto-default: when the user has configured EXACTLY ONE remote server
@@ -1737,13 +1927,16 @@ function _wireTabEvents(body) {
     Promise.resolve().then(() => {
       const _want = _currentServerValue();
       document.querySelectorAll('#hwfit-server-select, #hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(sel => {
-        if (sel && sel.tagName === 'SELECT') sel.value = _want;
+        if (sel && sel.tagName === 'SELECT') {
+          sel.value = _want;
+          _applyServerSelectColor(sel);
+        }
       });
     });
   }
 
   // Wire server form inputs
-  document.querySelectorAll('.cookbook-srv-name, .cookbook-srv-host, .cookbook-srv-port, .cookbook-srv-path').forEach(el => {
+  document.querySelectorAll('.cookbook-srv-name, .cookbook-srv-color, .cookbook-srv-host, .cookbook-srv-port, .cookbook-srv-path').forEach(el => {
     el.addEventListener('change', _syncServers);
   });
   document.querySelectorAll('.cookbook-srv-env').forEach(el => {
@@ -1788,7 +1981,7 @@ function _wireTabEvents(body) {
       if (cacheDirEl) cacheDirEl.value = srv.modelDir || '~/.cache/huggingface/hub';
       const dirsEl = document.querySelector('.cookbook-serve-dirs');
       if (dirsEl) {
-        const dirs = (Array.isArray(srv.modelDirs) ? srv.modelDirs : [srv.modelDir || '~/.cache/huggingface/hub']).map(d => d.replaceAll('✕', '').replaceAll('✖', '').trim()).filter(Boolean);
+        const dirs = (Array.isArray(srv.modelDirs) ? srv.modelDirs : [srv.modelDir || '~/.cache/huggingface/hub']).map(d => _normalizeCookbookModelDir(d)).filter(Boolean);
         dirsEl.innerHTML = dirs.map(d => `<span class="cookbook-serve-dir-pill">${esc(d)}</span>`).join('') +
           '<span class="cookbook-serve-dir-edit" title="Edit in Settings">edit</span>';
         dirsEl.querySelector('.cookbook-serve-dir-edit')?.addEventListener('click', () => {
@@ -1802,7 +1995,22 @@ function _wireTabEvents(body) {
 
   const scanBtn = document.getElementById('hwfit-cache-scan');
   if (scanBtn) {
-    scanBtn.addEventListener('click', () => _fetchCachedModels(true));
+    scanBtn.addEventListener('click', async () => {
+      if (scanBtn.disabled) return;
+      scanBtn.disabled = true;
+      scanBtn.classList.add('spinning');
+      try {
+        await _fetchCachedModels(true);
+      } finally {
+        scanBtn.disabled = false;
+        scanBtn.classList.remove('spinning');
+      }
+    });
+  }
+
+  const hwRefreshBtn = document.getElementById('hwfit-hw-refresh-btn');
+  if (hwRefreshBtn) {
+    hwRefreshBtn.addEventListener('click', _refreshScanDownloadTarget);
   }
 
   const editDirsLink = document.querySelector('.cookbook-serve-dir-edit');
@@ -1822,6 +2030,7 @@ function _wireTabEvents(body) {
       _fetchDependencies();
     });
   }
+  _syncServerSelectColors(body);
 
   // "Rebuild llama.cpp" clears the cached build so the next serve recompiles.
   // The serve bootstrap only builds llama-server when it is missing from PATH,
@@ -2522,11 +2731,30 @@ function _wireTabEvents(body) {
 // (Model Directory header, default-server checkmark, trash delete, platform icon).
 // forceRemote renders an editable remote entry even before a host is typed
 // (a new server's host is empty, which would otherwise read as "Local").
+export function _serverDefaultHtml(active) {
+  const check = active ? '<span class="hwfit-hf-check cookbook-srv-default-check" title="Default server" style="font-weight:800;color:var(--green,#50fa7b);font-size:15px;line-height:1;flex-shrink:0;position:relative;top:2px;">✓</span>' : '';
+  return `${check}<span class="cookbook-srv-default-label">default</span>`;
+}
+
 export function _serverEntryHtml(s, i, defaultServer, forceRemote, isNew) {
   const isLocal = (forceRemote || isNew) ? false : (!s.host || s.host === 'local');
   const envOpts = [['none', 'None'], ['venv', 'venv'], ['conda', 'conda']].map(([value, label]) => `<option value="${value}"${s.env === value ? ' selected' : ''}>${label}</option>`).join('');
+  const srvColor = _serverColor(s);
+  const resolvedSrvColor = _resolvedServerColor(s, i);
+  const colorOpts = _SERVER_COLOR_CHOICES.map(([value, label]) => {
+    const displayLabel = label;
+    return `<option value="${esc(value)}"${_serverColorOptionStyle(value)}${srvColor === value ? ' selected' : ''}>${esc(displayLabel)}</option>`;
+  }).join('');
+  const selectedColorLabel = srvColor ? _serverColorLabel(srvColor) : `Auto · ${_serverColorLabel(resolvedSrvColor)}`;
+  const colorMenu = _SERVER_COLOR_CHOICES.map(([value, label]) => {
+    const active = value === srvColor;
+    const swatchColor = value || resolvedSrvColor;
+    const rowLabel = value ? label : `Auto · ${_serverColorLabel(resolvedSrvColor)}`;
+    const swatch = swatchColor ? ` style="--swatch-color:${esc(swatchColor)};"` : '';
+    return `<button type="button" class="cookbook-srv-color-item${active ? ' active' : ''}" data-color="${esc(value)}"${swatch}><span class="cookbook-srv-color-item-dot"></span><span>${esc(rowLabel)}</span></button>`;
+  }).join('');
   let html = '';
-  html += `<div class="cookbook-server-entry" data-idx="${i}" data-platform="${esc(s.platform || '')}">`;
+  html += `<div class="cookbook-server-entry" data-idx="${i}" data-platform="${esc(s.platform || '')}"${resolvedSrvColor ? ` style="--cookbook-server-color:${esc(resolvedSrvColor)};"` : ''}>`;
   const _srvTitle = s.name || (isLocal ? 'Local' : (s.host || `Server ${i + 1}`));
   const _srvKey = isLocal ? 'local' : (s.host || '');
   const _isDefaultSrv = (defaultServer || '') === _srvKey;
@@ -2542,12 +2770,13 @@ export function _serverEntryHtml(s, i, defaultServer, forceRemote, isNew) {
     // sense once the server is saved.
     html += `<span style="margin-left:auto;display:inline-flex;gap:4px;align-items:center;">${_checkBtn}${_keyBtn}<button class="cookbook-server-cancel-btn" title="Discard this new server" style="height:22px;box-sizing:border-box;display:inline-flex;align-items:center;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Cancel</button></span>`;
   } else {
-    html += `<span style="margin-left:auto;display:inline-flex;gap:4px;align-items:center;">${!isLocal ? _checkBtn + _keyBtn : ''}<span class="cookbook-srv-default${_isDefaultSrv ? ' active' : ''}" title="${_isDefaultSrv ? 'Default server — Cookbook opens here' : 'Make this the default server'}" data-srv-key="${esc(_srvKey)}">${_isDefaultSrv ? _MODELDIR_CHECK_ON : _MODELDIR_CHECK_OFF}<span class="cookbook-srv-default-label">default</span></span></span>`;
+    html += `<span style="margin-left:auto;display:inline-flex;gap:4px;align-items:center;">${!isLocal ? _checkBtn + _keyBtn : ''}<span class="cookbook-srv-default${_isDefaultSrv ? ' active' : ''}" title="${_isDefaultSrv ? 'Default server — Cookbook opens here' : 'Make this the default server'}" data-srv-key="${esc(_srvKey)}">${_serverDefaultHtml(_isDefaultSrv)}</span></span>`;
   }
   html += `</span>`;
   html += `<div class="cookbook-server-row">`;
   html += `<input type="text" class="hwfit-sf cookbook-srv-name" value="${esc(s.name || (isLocal ? 'Local' : ''))}" placeholder="Name (optional)" style="width:92px;flex-shrink:0;" />`;
-  html += `<input type="text" class="hwfit-sf cookbook-srv-host" value="${isLocal ? '' : esc(s.host || '')}" placeholder="e.g. user@ip" style="width:214.5px;flex-shrink:0;box-sizing:border-box;" ${isLocal ? 'readonly' : ''} />`;
+  html += `<span class="cookbook-srv-color-wrap has-color" title="Server color"><select class="hwfit-sf cookbook-srv-color" aria-hidden="true" tabindex="-1">${colorOpts}</select><button type="button" class="hwfit-sf cookbook-srv-color-btn" aria-haspopup="listbox" aria-expanded="false"><span class="cookbook-srv-color-dot" aria-hidden="true"></span><span class="cookbook-srv-color-label">${esc(selectedColorLabel)}</span><svg class="cookbook-srv-color-caret" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></button><div class="cookbook-srv-color-menu hidden" role="listbox">${colorMenu}</div></span>`;
+  html += `<input type="text" class="hwfit-sf cookbook-srv-host" value="${isLocal ? '' : esc(s.host || '')}" placeholder="e.g. user@ip" style="width:184px;flex-shrink:0;box-sizing:border-box;" ${isLocal ? 'readonly' : ''} />`;
   html += `<input type="text" class="hwfit-sf cookbook-srv-port" value="${esc(s.port || '')}" placeholder="Port" title="SSH port (default 22)" style="width:48px;flex-shrink:0;" ${isLocal ? 'readonly' : ''} />`;
   html += `<select class="hwfit-sf cookbook-srv-env">${envOpts}</select>`;
   html += `<input type="text" class="hwfit-sf cookbook-srv-path" value="${esc(s.envPath || '')}" placeholder="${s.platform === 'windows' ? 'venv/conda env' : '~/venv or conda-env'}" />`;
@@ -2567,13 +2796,15 @@ export function _serverEntryHtml(s, i, defaultServer, forceRemote, isNew) {
     html += `<span class="cookbook-modeldir-tag${isDefault ? ' cookbook-modeldir-default' : ''}${isTarget ? ' cookbook-modeldir-target' : ''}" data-dir-idx="${j}" data-dir="${esc(modelDirs[j])}">${dlBtn} ${esc(modelDirs[j])}${rmBtn}</span>`;
   }
   html += `<button class="cookbook-modeldir-add" title="Add model directory">+ Add</button>`;
-  const _btnStyle = 'margin-left:auto;position:relative;top:-2px;height:22px;box-sizing:border-box;display:inline-flex;align-items:center;';
+  const _btnBaseStyle = 'position:relative;top:-2px;height:22px;box-sizing:border-box;display:inline-flex;align-items:center;';
+  const _btnPushStyle = `margin-left:auto;${_btnBaseStyle}`;
   if (isNew) {
     // A brand-new server: Save (confirm) sits where Delete would be; Cancel is
     // top-right in the title. Save confirms with a checkmark (auto-saves on edit too).
-    html += `<button class="cookbook-server-save-btn" title="Save this server" style="${_btnStyle}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save</button>`;
+    html += `<button class="cookbook-server-save-btn" title="Save this server" style="${_btnPushStyle}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save</button>`;
   } else if (!isLocal) {
-    html += `<button class="cookbook-server-rm cookbook-server-rm-btn" title="Delete this server" style="${_btnStyle}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>Delete</button>`;
+    html += `<button class="cookbook-server-rm cookbook-server-rm-btn" title="Delete this server" style="${_btnPushStyle}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>Delete</button>`;
+    html += `<button class="cookbook-server-save-btn" title="Save server changes" style="${_btnBaseStyle}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save</button>`;
   }
   html += `</div>`;
   if (!isLocal) {
@@ -2709,6 +2940,7 @@ function _renderRecipes() {
   html += '<option value="">Engine</option>';
   html += '<option value="llamacpp">llama.cpp</option>';
   html += '<option value="ollama">Ollama</option>';
+  html += '<option value="mlx">MLX</option>';
   html += '<option value="vllm">vLLM</option>';
   html += '<option value="sglang">SGLang</option>';
   html += '<option value="diffusers">Diffusers</option>';
@@ -2726,7 +2958,7 @@ function _renderRecipes() {
   html += '<span class="hwfit-quant-wrap">';
   html += '<select class="cookbook-field-input hwfit-quant" id="hwfit-quant" style="height:28px;">';
   html += '<option value="" selected>Quant</option>';
-  html += '<option value="Q4_K_M">Q4</option><option value="Q8_0">Q8</option>';
+  html += '<option value="Q4_K_M">Q4 / AWQ</option><option value="Q8_0">Q8</option>';
   html += '<option value="Q6_K">Q6</option><option value="Q5_K_M">Q5</option>';
   html += '<option value="Q3_K_M">Q3</option><option value="Q2_K">Q2</option>';
   html += '<option value="AWQ-4bit">AWQ</option><option value="FP8">FP8</option><option value="FP4">FP4</option><option value="NVFP4">NVFP4</option></select>';
@@ -2744,9 +2976,8 @@ function _renderRecipes() {
   html += _buildServerOpts(false);
   html += '</select>';
   html += '<div class="hwfit-gpu-toggles" id="hwfit-gpu-toggles"></div>';
-  // (Rescan button removed — Edit handles manual hardware updates;
-  // automatic re-probe runs on container restart.)
   html += '<button type="button" class="hwfit-gpu-btn hwfit-hw-manual-btn" id="hwfit-hw-manual-btn" title="Set hardware manually" style="flex-shrink:0;position:relative;top:-3px;left:-1px;display:inline-flex;align-items:center;gap:3px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>EDIT</button>';
+  html += '<button type="button" class="hwfit-gpu-btn hwfit-hw-refresh-btn" id="hwfit-hw-refresh-btn" title="Refresh selected server hardware and cached models" aria-label="Refresh selected server hardware and cached models" style="flex-shrink:0;position:relative;top:-3px;left:-3px;width:26px;height:26px;padding:0;display:inline-flex;align-items:center;justify-content:center;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10"/><path d="M3.51 15a9 9 0 0 0 14.85 3.36L23 14"/></svg></button>';
   // Sort state — the clickable column headers read/write this (pewds' original
   // sort paradigm). Newest is reachable by clicking the Model column header.
   html += '<select class="cookbook-field-input hwfit-sort" id="hwfit-sort" style="display:none">';
@@ -2787,7 +3018,7 @@ function _renderRecipes() {
   html += '<h2 style="margin:0;padding:0;line-height:1;">Serve <span id="serve-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>';
   html += '</div>';
   const _selSrv = _es.servers.find(s => s.host === _es.remoteHost) || _es.servers[0] || {};
-  const _srvDirs = (Array.isArray(_selSrv.modelDirs) ? _selSrv.modelDirs : [_selSrv.modelDir || '~/.cache/huggingface/hub']).map(d => d.replaceAll('✕', '').replaceAll('✖', '').trim()).filter(Boolean);
+  const _srvDirs = (Array.isArray(_selSrv.modelDirs) ? _selSrv.modelDirs : [_selSrv.modelDir || '~/.cache/huggingface/hub']).map(d => _normalizeCookbookModelDir(d)).filter(Boolean);
   html += '<div class="cookbook-serve-dirs" style="margin-top:6px;">';
   html += _srvDirs.map(d => `<span class="cookbook-serve-dir-pill">${esc(d)}</span>`).join('');
   html += '<span class="cookbook-serve-dir-edit" title="Edit in Settings">edit</span>';
@@ -2797,6 +3028,7 @@ function _renderRecipes() {
   html += '<select class="memory-sort-select" id="serve-sort" style="height:24px;">';
   html += '<option value="name">Name</option><option value="size-desc">Size \u2193</option><option value="size-asc">Size \u2191</option><option value="recent">Recent</option>';
   html += '</select>';
+  html += '<button type="button" class="hwfit-gpu-btn" id="hwfit-cache-scan" title="Refresh cached models on selected server" aria-label="Refresh cached models on selected server"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10"/><path d="M3.51 15a9 9 0 0 0 14.85 3.36L23 14"/></svg></button>';
   html += '</div>';
   html += '<div class="memory-toolbar" style="margin-top:8px;">';
   html += '<div class="memory-category-filters">';
@@ -3170,6 +3402,7 @@ document.addEventListener('cookbook:state-synced', () => {
   if (isVisible()) {
     const activeTab = document.querySelector('#cookbook-modal .cookbook-tab.active')?.dataset?.backend || '';
     if (activeTab === 'Running') _renderRunningTab();
+    else if (activeTab === 'Serve') _rerenderCachedModels();
   }
 });
 

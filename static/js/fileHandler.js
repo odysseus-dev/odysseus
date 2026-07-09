@@ -24,6 +24,131 @@ const MAX_FILES = 10;
 const MAX_VISIBLE = 3;
 let _expanded = false;
 
+function _isMobileViewport() {
+  return window.matchMedia && window.matchMedia('(max-width: 768px)').matches;
+}
+
+function _isCroppableImage(f) {
+  const mime = (f?.type || '').toLowerCase();
+  const name = (f?.name || '').toLowerCase();
+  if (!(mime.startsWith('image/') || /\.(png|jpe?g|webp|bmp)$/i.test(name))) return false;
+  return !mime.includes('svg') && !mime.includes('gif') && !/\.svg|\.gif$/i.test(name);
+}
+
+function _loadImage(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+function _canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve) => canvas.toBlob(resolve, type || 'image/png', quality));
+}
+
+async function _openMobileCropper(file) {
+  const url = _getPreviewUrl(file);
+  const imgProbe = await _loadImage(url);
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'attach-crop-overlay';
+    overlay.innerHTML = `
+      <div class="attach-crop-panel" role="dialog" aria-modal="true" aria-label="Crop image">
+        <div class="attach-crop-stage">
+          <img class="attach-crop-img" alt="">
+          <div class="attach-crop-box"><span class="attach-crop-handle"></span></div>
+        </div>
+        <div class="attach-crop-actions">
+          <button type="button" class="attach-crop-btn" data-action="cancel">Cancel</button>
+          <button type="button" class="attach-crop-btn" data-action="original">Original</button>
+          <button type="button" class="attach-crop-btn attach-crop-primary" data-action="crop">Use crop</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const img = overlay.querySelector('.attach-crop-img');
+    const box = overlay.querySelector('.attach-crop-box');
+    img.src = url;
+    img.alt = file.name || 'image';
+
+    let crop = { x: 0.08, y: 0.08, w: 0.84, h: 0.84 };
+    let drag = null;
+
+    function applyCrop() {
+      const r = img.getBoundingClientRect();
+      const pr = overlay.querySelector('.attach-crop-stage').getBoundingClientRect();
+      box.style.left = (r.left - pr.left + crop.x * r.width) + 'px';
+      box.style.top = (r.top - pr.top + crop.y * r.height) + 'px';
+      box.style.width = (crop.w * r.width) + 'px';
+      box.style.height = (crop.h * r.height) + 'px';
+    }
+    function clampCrop() {
+      crop.w = Math.max(0.12, Math.min(1, crop.w));
+      crop.h = Math.max(0.12, Math.min(1, crop.h));
+      crop.x = Math.max(0, Math.min(1 - crop.w, crop.x));
+      crop.y = Math.max(0, Math.min(1 - crop.h, crop.y));
+    }
+    function finish(value) {
+      overlay.remove();
+      window.removeEventListener('resize', applyCrop);
+      resolve(value);
+    }
+    requestAnimationFrame(applyCrop);
+    img.addEventListener('load', applyCrop);
+    window.addEventListener('resize', applyCrop);
+
+    box.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      box.setPointerCapture(e.pointerId);
+      drag = {
+        mode: e.target.classList.contains('attach-crop-handle') ? 'resize' : 'move',
+        sx: e.clientX,
+        sy: e.clientY,
+        start: { ...crop },
+      };
+    });
+    box.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const r = img.getBoundingClientRect();
+      const dx = (e.clientX - drag.sx) / Math.max(1, r.width);
+      const dy = (e.clientY - drag.sy) / Math.max(1, r.height);
+      if (drag.mode === 'resize') {
+        crop.w = drag.start.w + dx;
+        crop.h = drag.start.h + dy;
+      } else {
+        crop.x = drag.start.x + dx;
+        crop.y = drag.start.y + dy;
+      }
+      clampCrop();
+      applyCrop();
+    });
+    box.addEventListener('pointerup', () => { drag = null; });
+    box.addEventListener('pointercancel', () => { drag = null; });
+
+    overlay.querySelector('[data-action="cancel"]').addEventListener('click', () => finish(null));
+    overlay.querySelector('[data-action="original"]').addEventListener('click', () => finish(file));
+    overlay.querySelector('[data-action="crop"]').addEventListener('click', async () => {
+      clampCrop();
+      const canvas = document.createElement('canvas');
+      const sx = Math.round(crop.x * imgProbe.naturalWidth);
+      const sy = Math.round(crop.y * imgProbe.naturalHeight);
+      const sw = Math.max(1, Math.round(crop.w * imgProbe.naturalWidth));
+      const sh = Math.max(1, Math.round(crop.h * imgProbe.naturalHeight));
+      canvas.width = sw;
+      canvas.height = sh;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(imgProbe, sx, sy, sw, sh, 0, 0, sw, sh);
+      const type = file.type && file.type !== 'image/bmp' ? file.type : 'image/png';
+      const blob = await _canvasToBlob(canvas, type, 0.92);
+      if (!blob) { finish(file); return; }
+      const ext = type.includes('jpeg') ? 'jpg' : (type.split('/')[1] || 'png');
+      const base = (file.name || 'image').replace(/\.[^.]+$/, '');
+      finish(new File([blob], `${base}-cropped.${ext}`, { type, lastModified: Date.now() }));
+    });
+  });
+}
+
 function _getPreviewUrl(f) {
   if (!f) return '';
   let url = _previewUrls.get(f);
@@ -231,15 +356,33 @@ export async function uploadPending(opts = {}) {
 /**
  * Add files to pending list (capped at MAX_FILES)
  */
-export function addFiles(files) {
+export async function addFiles(files) {
   for (const f of files) {
     if (pendingFiles.length >= MAX_FILES) {
       _showToast(`Max ${MAX_FILES} files allowed`);
       break;
     }
-    pendingFiles.push(f);
+    let nextFile = f;
+    if (_isMobileViewport() && _isCroppableImage(f)) {
+      try {
+        nextFile = await _openMobileCropper(f);
+      } catch (_) {
+        nextFile = f;
+      }
+      if (!nextFile) continue;
+    }
+    pendingFiles.push(nextFile);
   }
   renderAttachStrip();
+}
+
+export async function cropForMobileUpload(file) {
+  if (!_isMobileViewport() || !_isCroppableImage(file)) return file;
+  try {
+    return await _openMobileCropper(file);
+  } catch (_) {
+    return file;
+  }
 }
 
 function _showToast(msg) {
@@ -326,6 +469,7 @@ const fileHandlerModule = {
   removePending,
   uploadPending,
   addFiles,
+  cropForMobileUpload,
   getPendingCount,
   getPendingInfo,
   getPendingRaw,

@@ -17,6 +17,7 @@ _ACTIVE_REQUESTS = 0
 _LAST_ACTIVITY = 0.0
 _LAST_BROWSER_ACTIVITY = 0.0
 _COND: asyncio.Condition | None = None
+_COND_LOOP: asyncio.AbstractEventLoop | None = None
 
 
 def _enabled() -> bool:
@@ -47,14 +48,20 @@ def _browser_active_seconds() -> float:
 
 
 def _condition() -> asyncio.Condition:
-    global _COND
-    if _COND is None:
+    global _COND, _COND_LOOP
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if _COND is None or _COND_LOOP is not loop:
         _COND = asyncio.Condition()
+        _COND_LOOP = loop
     return _COND
 
 
 _PASSIVE_EXACT_PATHS = {
     "/api/activity/heartbeat",
+    "/api/client-perf",
     "/api/tasks/notifications",
     "/api/research/active",
     "/api/email/urgency-state",
@@ -100,15 +107,18 @@ def _has_recent_browser_activity(now: float | None = None) -> bool:
 def has_foreground_activity(now: float | None = None) -> bool:
     """Return True when foreground browser/model work should stop background jobs.
 
-    This is intentionally narrower than `wait_for_interactive_quiet`: active
-    request tracking is good for delaying task startup, but a running task
-    should not cancel itself just because the UI polls a passive endpoint.
-    Browser heartbeats and active chat streams are the durable "user is here"
-    signals.
+    Passive polling endpoints are excluded by should_track_interactive_request,
+    so active/recent request tracking is safe to use here. This matters during
+    initial page load: the heartbeat may not have landed yet, but the user is
+    already waiting on real UI requests.
     """
     if not _enabled():
         return False
     t = now if now is not None else time.monotonic()
+    if _ACTIVE_REQUESTS > 0:
+        return True
+    if _LAST_ACTIVITY > 0 and (t - _LAST_ACTIVITY) < _quiet_seconds():
+        return True
     return _has_recent_browser_activity(t) or _has_active_chat_stream()
 
 

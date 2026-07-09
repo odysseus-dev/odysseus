@@ -3106,6 +3106,28 @@ async function initEmailSettings() {
   const root = el('settings-modal');
   if (!root || !root.querySelector('[data-settings-panel="email"]')) return;
 
+  const styleKey = 'odysseus-email-writing-style';
+  const styleEl = el('set-email-style');
+
+  // The account/CardDAV config endpoints can be slow when remote mail servers
+  // are cold. Populate the Writing Style box independently so saved prose does
+  // not appear seconds after the panel opens.
+  try {
+    const cachedStyle = localStorage.getItem(styleKey);
+    if (styleEl && cachedStyle !== null && !styleEl.value) styleEl.value = cachedStyle;
+  } catch (_) {}
+
+  const loadWritingStyle = async () => {
+    try {
+      const res = await fetch('/api/email/style');
+      const data = await res.json();
+      const style = data.style || '';
+      if (styleEl) styleEl.value = style;
+      try { localStorage.setItem(styleKey, style); } catch (_) {}
+    } catch (_) {}
+  };
+  loadWritingStyle();
+
   // Load current email config
   try {
     const res = await fetch('/api/email/config');
@@ -3119,8 +3141,6 @@ async function initEmailSettings() {
     if (el('set-email-smtp-user')) el('set-email-smtp-user').value = cfg.smtp_user || '';
     if (el('set-email-smtp-pass')) el('set-email-smtp-pass').value = '';
     if (el('set-email-from')) el('set-email-from').value = cfg.from_address || '';
-    if (el('set-email-auto-translate')) el('set-email-auto-translate').checked = !!cfg.email_auto_translate;
-    if (el('set-email-translate-language')) el('set-email-translate-language').value = cfg.email_translate_language || 'English';
   } catch (_) {}
 
   // Load contacts config
@@ -3130,13 +3150,6 @@ async function initEmailSettings() {
     if (el('set-carddav-url')) el('set-carddav-url').value = cfg.url || '';
     if (el('set-carddav-user')) el('set-carddav-user').value = cfg.username || '';
     if (el('set-carddav-pass')) el('set-carddav-pass').value = '';
-  } catch (_) {}
-
-  // Load writing style
-  try {
-    const res = await fetch('/api/email/style');
-    const data = await res.json();
-    if (el('set-email-style')) el('set-email-style').value = data.style || '';
   } catch (_) {}
 
   // Save email config
@@ -3151,8 +3164,6 @@ async function initEmailSettings() {
       smtp_port: parseInt(el('set-email-smtp-port').value) || 0,
       smtp_user: el('set-email-smtp-user').value,
       email_from: el('set-email-from').value,
-      email_auto_translate: !!el('set-email-auto-translate')?.checked,
-      email_translate_language: (el('set-email-translate-language')?.value || 'English').trim() || 'English',
     };
     const imapPass = el('set-email-imap-pass').value;
     const smtpPass = el('set-email-smtp-pass').value;
@@ -3166,10 +3177,7 @@ async function initEmailSettings() {
       });
       const result = await res.json();
       if (msg) msg.textContent = result.success ? '✓ Saved' : (result.error || 'Failed');
-      const translateMsg = el('set-email-translate-msg');
-      if (translateMsg) translateMsg.textContent = result.success ? '✓ Saved' : (result.error || 'Failed');
       setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
-      setTimeout(() => { const translateMsg = el('set-email-translate-msg'); if (translateMsg) translateMsg.textContent = ''; }, 3000);
     } catch (e) {
       if (msg) msg.textContent = 'Failed';
     }
@@ -3234,7 +3242,8 @@ async function initEmailSettings() {
       });
       const data = await res.json();
       if (data.success && data.style) {
-        if (el('set-email-style')) el('set-email-style').value = data.style;
+        if (styleEl) styleEl.value = data.style;
+        try { localStorage.setItem(styleKey, data.style); } catch (_) {}
         if (msg) msg.textContent = '✓ Style extracted';
       } else {
         if (msg) msg.textContent = data.error || 'Failed';
@@ -3253,12 +3262,16 @@ async function initEmailSettings() {
     const msg = el('set-email-style-msg');
     if (msg) msg.textContent = 'Saving...';
     try {
+      const style = styleEl ? styleEl.value : '';
       const res = await fetch('/api/email/style', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ style: el('set-email-style').value }),
+        body: JSON.stringify({ style }),
       });
       const result = await res.json();
+      if (result.success) {
+        try { localStorage.setItem(styleKey, style); } catch (_) {}
+      }
       if (msg) msg.textContent = result.success ? '✓ Saved' : 'Failed';
       setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
     } catch (e) {
