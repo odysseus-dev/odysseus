@@ -41,13 +41,13 @@ _GEMMA_CHANNEL_CLOSE_TRIM_RE = re.compile(r"<channel\|>\s*", re.IGNORECASE)
 # Qwen and a few other models prefix the response with a "Thinking Process:"
 # block before the real answer.
 _QWEN_THINKING_RE = re.compile(
-    r"^Thinking Process:.*?(?=\n\n#|\n\n\*\*|\Z)",
+    r"^Thinking Process:.*?(?=\n\n#|\n\n\*\*|\n\n\{)",
     re.IGNORECASE | re.DOTALL,
 )
 # Leaked prompt-echo headers (a few models replay the request before answering).
 _PROMPT_ECHO_RES = (
-    re.compile(r"^The user asks:.*?(?=\n\n#|\n\n\*\*[A-Z]|\Z)", re.DOTALL),
-    re.compile(r"^We need to.*?(?=\n\n#|\n\n\*\*[A-Z]|\Z)", re.DOTALL),
+    re.compile(r"^The user asks:.*?(?=\n\n#|\n\n\*\*[A-Z]|\n\n\{)", re.DOTALL),
+    re.compile(r"^We need to.*?(?=\n\n#|\n\n\*\*[A-Z]|\n\n\{)", re.DOTALL),
 )
 
 # Aggressive heuristic for untagged reasoning prose (models that don't wrap
