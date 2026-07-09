@@ -43,6 +43,43 @@ _TOOL_BLOCK_RE = re.compile(
 _CODE_FENCE_TAGS = frozenset({"bash", "python"})
 
 
+_PATH_ARG_TOOLS = frozenset(
+    {"read_file", "edit_file", "write_file", "grep", "glob", "ls", "web_fetch"}
+)
+
+_TOOL_ONELINE_RE = re.compile(
+    r"```(" + "|".join(TOOL_TAGS) + r")(?![\w-])[ \t]+([^\n`]+?)```",
+    re.IGNORECASE,
+)
+
+_BRACKET_TOOL_RE = re.compile(
+    r"\[(" + "|".join(sorted(TOOL_TAGS, key=len, reverse=True)) + r")\]([\s\S]*?)\[/\1\]",
+    re.IGNORECASE,
+)
+
+
+def _parse_json_tool_call_payload(body: str) -> Optional[ToolBlock]:
+    """Parse Qwen/Hermes-style bare JSON inside <tool_call> wrappers (#5187)."""
+    raw = (body or "").strip()
+    if not raw.startswith("{"):
+        return None
+    try:
+        obj = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(obj, dict):
+        return None
+    name = str(obj.get("name") or obj.get("tool") or "").strip()
+    if not name:
+        return None
+    args = obj.get("arguments", obj.get("args", {}))
+    if not isinstance(args, dict):
+        args = {"command": str(args)} if args is not None else {}
+    from src.tool_schemas import function_call_to_tool_block
+
+    return function_call_to_tool_block(name, json.dumps(args))
+
+
 def _fenced_tool_call(m) -> Optional[Tuple[str, str]]:
     """Classify a Pattern-1 fence match: (tag, content) when it is an
     executable tool call, None when the fence must stay display text.
@@ -70,6 +107,10 @@ def _fenced_tool_call(m) -> Optional[Tuple[str, str]]:
     try:
         json.loads(content)
     except (ValueError, TypeError):
+        if tag in _PATH_ARG_TOOLS:
+            path = f"{inline}\n{body}".strip() if body else inline.strip()
+            if path and not path.startswith("{"):
+                return tag, path
         return None
     return tag, content
 
@@ -1262,6 +1303,18 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
     # XML patterns below catch it.
     text = _normalize_dsml(text)
 
+    # Pattern 0: one-line fences like ```read_file /path/to/file``` (#4966).
+    if not skip_fenced:
+        for m in _TOOL_ONELINE_RE.finditer(text):
+            tag = m.group(1).lower()
+            body = (m.group(2) or "").strip()
+            if not body:
+                continue
+            if tag in _PATH_ARG_TOOLS:
+                blocks.append(ToolBlock(tag, body))
+            elif tag in BUILTIN_EMAIL_TOOLS:
+                blocks.append(ToolBlock(tag, body))
+
     # Pattern 1: fenced code blocks (skipped when `skip_fenced` — see docstring).
     if not skip_fenced:
         for m in _TOOL_BLOCK_RE.finditer(text):
@@ -1312,6 +1365,14 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
             if block:
                 blocks.append(block)
 
+    # Pattern 2b: [bash]command[/bash] square-bracket tags (#5187).
+    if not blocks:
+        for m in _BRACKET_TOOL_RE.finditer(text):
+            tag = m.group(1).lower()
+            body = (m.group(2) or "").strip()
+            if tag in TOOL_TAGS and body:
+                blocks.append(ToolBlock(tag, body))
+
     # Pattern 3: XML-style <tool_call>/<invoke> blocks
     if not blocks:
         for tool_name, body in _iter_stepfun_tool_calls(text):
@@ -1334,6 +1395,10 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
                     block = _parse_xml_direct_tool(d_name, d_body)
                     if block:
                         blocks.append(block)
+            if not blocks:
+                block = _parse_json_tool_call_payload(body)
+                if block:
+                    blocks.append(block)
         # Some local models stream an opening <tool_call> wrapper and a
         # complete inner tool tag, but forget the closing </tool_call>.
         if not blocks:
@@ -1347,6 +1412,10 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
                     break
                 for d_name, d_body in _iter_xml_direct(body):
                     block = _parse_xml_direct_tool(d_name, d_body)
+                    if block:
+                        blocks.append(block)
+                if not blocks:
+                    block = _parse_json_tool_call_payload(body)
                     if block:
                         blocks.append(block)
         # Try bare <invoke> without wrapper
