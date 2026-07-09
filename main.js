@@ -12,13 +12,13 @@ const BACKEND_STARTUP_TIMEOUT_MS = 15 * 60 * 1000;
 const STARTUP_LOG_MAX_LINES = 120;
 const STARTUP_THEME_FILE = 'startup-theme.json';
 const STARTUP_THEME_DEFAULT_COLORS = {
-  bg: '#252a32',
-  fg: '#d8e2e8',
-  panel: '#0b0e0f',
-  border: '#244a57',
-  cyan: '#86d5e8',
-  red: '#e05b67',
-  warm: '#f0b45b'
+  bg: '#282c34',
+  fg: '#9cdef2',
+  panel: '#111111',
+  border: '#355a66',
+  cyan: '#9cdef2',
+  red: '#e06c75',
+  warm: '#d19a66'
 };
 const STARTUP_THEME_COLOR_KEYS = Object.keys(STARTUP_THEME_DEFAULT_COLORS);
 const STARTUP_STEPS = [
@@ -100,10 +100,44 @@ function startupThemeInjectionScript(theme) {
   if (!clean) return '';
   const payload = JSON.stringify(clean).replace(/</g, '\\u003c');
   return `
-    (() => {
+    (async () => {
       try {
         const theme = ${payload};
         const colors = theme.colors || {};
+        let hasLocalTheme = false;
+        let localTheme = null;
+        try {
+          const localRaw = localStorage.getItem('odysseus-theme');
+          hasLocalTheme = Boolean(localRaw);
+          if (localRaw) localTheme = JSON.parse(localRaw);
+        } catch (_) {}
+        let hasServerTheme = false;
+        let serverTheme = null;
+        try {
+          const res = await fetch('/api/prefs/theme', { credentials: 'same-origin', cache: 'no-store' });
+          if (res.ok) {
+            const data = await res.json();
+            serverTheme = data && data.value;
+            hasServerTheme = Boolean(serverTheme && serverTheme.colors);
+          }
+        } catch (_) {}
+        const sameStartupColors = (a, b) => ['bg', 'fg', 'panel', 'border', 'red', 'cyan', 'warm']
+          .every((key) => (a && a[key]) === (b && b[key]));
+        const localMatchesStartup = Boolean(localTheme && localTheme.colors &&
+          localTheme.name === theme.name && sameStartupColors(localTheme.colors, colors));
+        if (hasServerTheme && (!hasLocalTheme || localMatchesStartup)) {
+          try { localStorage.setItem('odysseus-theme', JSON.stringify(serverTheme)); } catch (_) {}
+          window.dispatchEvent(new CustomEvent('odysseus:startup-theme-preserved', {
+            detail: { hasLocalTheme, hasServerTheme, restoredFromServer: true }
+          }));
+          return;
+        }
+        if (hasLocalTheme || hasServerTheme) {
+          window.dispatchEvent(new CustomEvent('odysseus:startup-theme-preserved', {
+            detail: { hasLocalTheme, hasServerTheme }
+          }));
+          return;
+        }
         localStorage.setItem('odysseus-theme', JSON.stringify(theme));
         const style = document.documentElement.style;
         style.setProperty('--bg', colors.bg);
@@ -759,24 +793,40 @@ function startupPage(progress) {
           .replace(/"/g, '&quot;')
           .replace(/'/g, '&#39;');
         const THEME_PRESETS = {
-          dark: { bg: '#252a32', fg: '#d8e2e8', panel: '#0b0e0f', border: '#244a57', cyan: '#86d5e8', red: '#e05b67', warm: '#f0b45b' },
-          light: { bg: '#f6f7f9', fg: '#1f2933', panel: '#eef3f8', border: '#cfd8e3', cyan: '#2c7f95', red: '#d34b56', warm: '#b8792d' },
-          midnight: { bg: '#050b16', fg: '#dce8ff', panel: '#0a1324', border: '#254367', cyan: '#78d7ff', red: '#6ea8ff', warm: '#ffd166' },
-          forest: { bg: '#101810', fg: '#dfeadd', panel: '#172216', border: '#2e4b30', cyan: '#90dac1', red: '#8fcf73', warm: '#d7c76a' },
-          ocean: { bg: '#071821', fg: '#d9f2f7', panel: '#0d2530', border: '#1c4f61', cyan: '#5bd8ff', red: '#45a6d8', warm: '#f8c75b' },
-          ume: { bg: '#24141a', fg: '#ffe8ef', panel: '#301b23', border: '#6f3445', cyan: '#8fd8ff', red: '#ff7aa2', warm: '#ffb35c' },
-          copper: { bg: '#211915', fg: '#f1dfd2', panel: '#2b201a', border: '#704c35', cyan: '#8dcbd2', red: '#d98a54', warm: '#f0b45b' },
-          terminal: { bg: '#04100a', fg: '#c9ffd8', panel: '#07170d', border: '#245c37', cyan: '#77ffc8', red: '#6df58a', warm: '#f4d35e' }
+          dark: { bg: '#282c34', fg: '#9cdef2', panel: '#111111', border: '#355a66', cyan: '#9cdef2', red: '#e06c75', warm: '#d19a66' },
+          light: { bg: '#f0ebe3', fg: '#5a5248', panel: '#faf6f0', border: '#d4cdc2', cyan: '#2c7f95', red: '#c47d5a', warm: '#b8792d' },
+          midnight: { bg: '#0d1117', fg: '#c9d1d9', panel: '#161b22', border: '#30363d', cyan: '#58a6ff', red: '#f85149', warm: '#d29922' },
+          paper: { bg: '#faf8f5', fg: '#3b3836', panel: '#ffffff', border: '#d5d0c8', cyan: '#8aa4b8', red: '#c5ac4a', warm: '#c5ac4a' },
+          cyberpunk: { bg: '#0a0a0f', fg: '#0ff0fc', panel: '#12101a', border: '#9b30ff', cyan: '#0ff0fc', red: '#e040fb', warm: '#ffbc42' },
+          retrowave: { bg: '#1a1a2e', fg: '#e94560', panel: '#16213e', border: '#533483', cyan: '#53d8fb', red: '#e94560', warm: '#ffb000' },
+          forest: { bg: '#1b2a1b', fg: '#a8d5a2', panel: '#142414', border: '#3d6b3d', cyan: '#a8d5a2', red: '#7cb871', warm: '#d7c76a' },
+          ocean: { bg: '#0b1a2c', fg: '#64d2ff', panel: '#091422', border: '#1e5074', cyan: '#64d2ff', red: '#4facfe', warm: '#f8c75b' },
+          ume: { bg: '#2b1b2e', fg: '#f5c2e7', panel: '#1e1420', border: '#6c4675', cyan: '#8fd8ff', red: '#f5a0c0', warm: '#ffb35c' },
+          copper: { bg: '#1c1410', fg: '#e8c39e', panel: '#140f0a', border: '#7a5533', cyan: '#8dcbd2', red: '#d4764e', warm: '#f0b45b' },
+          terminal: { bg: '#000000', fg: '#00ff41', panel: '#0a0a0a', border: '#003b00', cyan: '#00ff41', red: '#00ff41', warm: '#f4d35e' },
+          organs: { bg: '#0a0406', fg: '#efe1c8', panel: '#15080a', border: '#3a1519', cyan: '#efe1c8', red: '#c83240', warm: '#c58d4d' },
+          lavender: { bg: '#f3eef8', fg: '#3d3551', panel: '#faf7ff', border: '#cec3de', cyan: '#7c6da8', red: '#9b6dcc', warm: '#d49ad2' },
+          gpt: { bg: '#212121', fg: '#ececec', panel: '#171717', border: '#424242', cyan: '#ececec', red: '#949494', warm: '#949494' },
+          claude: { bg: '#262624', fg: '#f5f4f0', panel: '#30302e', border: '#4a4a47', cyan: '#f5f4f0', red: '#c6613f', warm: '#d19a66' },
+          cute: { bg: '#fff0f5', fg: '#d4608a', panel: '#fff8fa', border: '#f0c0d0', cyan: '#7ccfff', red: '#ff6b9d', warm: '#ffb86b' }
         };
         const THEME_LABELS = {
           dark: 'Dark',
           light: 'Light',
           midnight: 'Midnight',
+          paper: 'Paper',
+          cyberpunk: 'Cyberpunk',
+          retrowave: 'Retrowave',
           forest: 'Forest',
           ocean: 'Ocean',
           ume: 'Ume',
           copper: 'Copper',
-          terminal: 'Terminal'
+          terminal: 'Terminal',
+          organs: 'Organs',
+          lavender: 'Lavender',
+          gpt: 'GPT',
+          claude: 'Claude',
+          cute: 'Cute'
         };
         const THEME_COLOR_KEYS = ['bg', 'fg', 'panel', 'border', 'cyan', 'red', 'warm'];
         const DEFAULT_THEME_DRAFT = { name: 'dark', colors: { ...THEME_PRESETS.dark } };

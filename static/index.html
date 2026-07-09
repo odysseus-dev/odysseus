@@ -32,6 +32,16 @@
         // app boots and applyColors() fills --brand-color.
         var _bc = (c.advanced && c.advanced.brandColor) || c.red;
         if (_bc) s.setProperty('--brand-color', _bc);
+        var _ap = (c.advanced && c.advanced.accentPrimary) || c.cyan;
+        if (_ap) {
+          s.setProperty('--color-accent', _ap);
+          s.setProperty('--accent-primary', _ap);
+        }
+        var _aw = (c.advanced && c.advanced.accentWarm) || c.warm;
+        if (_aw) {
+          s.setProperty('--accent-warm', _aw);
+          s.setProperty('--warn', _aw);
+        }
         // Match the mobile browser toolbar / status bar to the saved theme bg
         // from the very first paint. Otherwise the hardcoded dark meta sits
         // there during load and the bar "switches" colour once the app boots.

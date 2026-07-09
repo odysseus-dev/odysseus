@@ -5,6 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MAIN_JS = (ROOT / "main.js").read_text(encoding="utf-8")
 LAUNCH_PS1 = (ROOT / "launch-windows.ps1").read_text(encoding="utf-8")
 THEME_JS = (ROOT / "static" / "js" / "theme.js").read_text(encoding="utf-8")
+INDEX_HTML = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
 INSTALLER_PY = (ROOT / "installer.py").read_text(encoding="utf-8")
 PACKAGE_JSON = (ROOT / "package.json").read_text(encoding="utf-8")
 STARTUP_PRELOAD_JS = (ROOT / "startup-preload.js").read_text(encoding="utf-8")
@@ -76,7 +77,7 @@ def test_standalone_startup_tiles_own_their_scrollbars():
     assert ".terminal { flex: 1 1 auto; min-height: 0; overflow: auto;" in MAIN_JS
 
 
-def test_standalone_startup_theme_studio_persists_into_app_theme():
+def test_standalone_startup_theme_studio_seeds_blank_app_theme_only():
     assert "Theme Studio" in MAIN_JS
     assert "startup-theme.json" in MAIN_JS
     assert "startup-theme-presets" in MAIN_JS
@@ -85,9 +86,40 @@ def test_standalone_startup_theme_studio_persists_into_app_theme():
     assert "startup:theme-load" in MAIN_JS
     assert "startup:theme-save" in MAIN_JS
     assert "applyStartupThemeToBackendPage" in MAIN_JS
+    assert "const localRaw = localStorage.getItem('odysseus-theme');" in MAIN_JS
+    assert "if (localRaw) localTheme = JSON.parse(localRaw);" in MAIN_JS
+    assert "const res = await fetch('/api/prefs/theme', { credentials: 'same-origin', cache: 'no-store' });" in MAIN_JS
+    assert "hasServerTheme = Boolean(serverTheme && serverTheme.colors);" in MAIN_JS
+    assert "const localMatchesStartup = Boolean(localTheme && localTheme.colors &&" in MAIN_JS
+    assert "localStorage.setItem('odysseus-theme', JSON.stringify(serverTheme));" in MAIN_JS
+    assert "restoredFromServer: true" in MAIN_JS
+    assert "if (hasLocalTheme || hasServerTheme)" in MAIN_JS
+    assert "odysseus:startup-theme-preserved" in MAIN_JS
     assert "localStorage.setItem('odysseus-theme', JSON.stringify(theme));" in MAIN_JS
     assert "fetch('/api/prefs/theme'" in MAIN_JS
     assert "contextBridge.exposeInMainWorld('odysseusStartupTheme'" in STARTUP_PRELOAD_JS
+
+
+def test_standalone_startup_theme_presets_match_installed_app_palette():
+    assert "dark: { bg: '#282c34', fg: '#9cdef2', panel: '#111111', border: '#355a66'" in MAIN_JS
+    assert "light: { bg: '#f0ebe3', fg: '#5a5248', panel: '#faf6f0', border: '#d4cdc2'" in MAIN_JS
+    assert "midnight: { bg: '#0d1117', fg: '#c9d1d9', panel: '#161b22', border: '#30363d'" in MAIN_JS
+    assert "paper: { bg: '#faf8f5', fg: '#3b3836', panel: '#ffffff', border: '#d5d0c8'" in MAIN_JS
+    assert "terminal: { bg: '#000000', fg: '#00ff41', panel: '#0a0a0a', border: '#003b00'" in MAIN_JS
+    assert "gpt: { bg: '#212121', fg: '#ececec', panel: '#171717', border: '#424242'" in MAIN_JS
+    assert "cute: { bg: '#fff0f5', fg: '#d4608a', panel: '#fff8fa', border: '#f0c0d0'" in MAIN_JS
+
+
+def test_installed_theme_honors_startup_accent_fields_after_transfer():
+    assert "const accentPrimary = colors.cyan || adv.accentPrimary;" in THEME_JS
+    assert "s.setProperty('--color-accent', accentPrimary);" in THEME_JS
+    assert "s.setProperty('--accent-primary', accentPrimary);" in THEME_JS
+    assert "const accentWarm = colors.warm || adv.accentWarm;" in THEME_JS
+    assert "s.setProperty('--accent-warm', accentWarm);" in THEME_JS
+    assert "s.setProperty('--warn', accentWarm);" in THEME_JS
+    assert "s.removeProperty('--accent-warm');" in THEME_JS
+    assert "var _ap = (c.advanced && c.advanced.accentPrimary) || c.cyan;" in INDEX_HTML
+    assert "var _aw = (c.advanced && c.advanced.accentWarm) || c.warm;" in INDEX_HTML
 
 
 def test_standalone_install_preserves_user_data_outside_install_dir():

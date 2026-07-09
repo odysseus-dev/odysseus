@@ -256,11 +256,28 @@ function generateHarmonyColors(accentHex, harmonyType, mode) {
 
 export function applyColors(colors) {
   const s = document.documentElement.style;
+  const adv = colors.advanced || {};
   s.setProperty('--bg', colors.bg);
   s.setProperty('--fg', colors.fg);
   s.setProperty('--panel', colors.panel);
   s.setProperty('--border', colors.border);
   if (colors.red) s.setProperty('--red', colors.red);
+  const accentPrimary = colors.cyan || adv.accentPrimary;
+  if (accentPrimary) {
+    s.setProperty('--color-accent', accentPrimary);
+    s.setProperty('--accent-primary', accentPrimary);
+  } else {
+    s.removeProperty('--color-accent');
+    s.removeProperty('--accent-primary');
+  }
+  const accentWarm = colors.warm || adv.accentWarm;
+  if (accentWarm) {
+    s.setProperty('--accent-warm', accentWarm);
+    s.setProperty('--warn', accentWarm);
+  } else {
+    s.removeProperty('--accent-warm');
+    s.removeProperty('--warn');
+  }
 
   // Keep the mobile browser toolbar / status bar matched to the theme bg
   // (same as the early head-script does on first paint).
@@ -281,7 +298,6 @@ export function applyColors(colors) {
   s.setProperty('--hl-params', syn.params);
 
   // Apply advanced overrides (or defaults)
-  const adv = colors.advanced || {};
   const defaults = computeAdvancedDefaults(colors);
   for (const { key, css } of ADV_KEYS) {
     s.setProperty(css, adv[key] || defaults[key]);
