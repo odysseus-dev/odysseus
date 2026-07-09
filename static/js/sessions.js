@@ -2501,7 +2501,7 @@ async function _checkServerStream(sessionId) {
       return; // 404 = no active stream
     }
     const info = await res.json();
-    if (info.status !== 'streaming') {
+    if (info.status === 'idle' || info.active === false || (info.status && info.status !== 'streaming')) {
       _clearRunningState(sessionId);
       return;
     }
