@@ -641,7 +641,7 @@ class DeepResearcher:
                     untrusted_context_message("webpage", content),
                 ],
                 temperature=0.2,
-                max_tokens=2048,
+                max_tokens=8192,
                 timeout=self.extraction_timeout,
             )
             parsed = self._parse_json_object(response)
@@ -892,7 +892,7 @@ class DeepResearcher:
         for i, f in enumerate(findings, 1):
             url = f.get("url", "unknown")
             title = f.get("title", "")
-            summary = f.get("summary", "")
+            summary = (f.get("summary", "") or "")[:2000]
             evidence = f.get("evidence", "")
             # Use summary if available, fall back to truncated evidence
             content = summary if summary else (evidence[:1000] if evidence else "(no content)")
