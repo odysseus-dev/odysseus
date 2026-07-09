@@ -37,3 +37,23 @@ def test_gemma_parser_does_not_strip_non_tool_fenced_metadata():
 
     assert parse_tool_blocks(raw) == []
     assert strip_tool_blocks(raw) == raw
+
+
+def test_strip_raw_openai_function_json_leak():
+    raw = (
+        '{"function":{"arguments":"{\\"action\\":\\"search\\",\\"tex\\":\\"hi\\"}",'
+        '"name":"manage_memory"},"id":"call_memory_search1","type":"function"}]</|assistan|Done.'
+    )
+
+    assert strip_tool_blocks(raw) == "Done."
+
+
+def test_strip_raw_openai_function_json_array_leak():
+    raw = (
+        'Before\n['
+        '{"function":{"arguments":"{\\"action\\":\\"add\\",\\"text\\":\\"x\\"}",'
+        '"name":"manage_memory"},"id":"call_memory_add1","type":"function"}'
+        ']\nAfter'
+    )
+
+    assert strip_tool_blocks(raw) == "Before\nAfter"

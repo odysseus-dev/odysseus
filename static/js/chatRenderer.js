@@ -474,6 +474,10 @@ const XML_INVOKE_RE = /<invoke\s+name=['"][^'"]*['"]>[\s\S]*?<\/invoke>/gi;
 // (e.g. mid-stream before the closing tag arrives).
 const DSML_TOOL_RE = /<\s*[｜|]+\s*DSML\s*[｜|]+\s*tool_calls\s*>[\s\S]*?(?:<\s*\/\s*[｜|]+\s*DSML\s*[｜|]+\s*tool_calls\s*>|$)/gi;
 const DSML_STRAY_RE = /<\s*\/?\s*[｜|]+\s*DSML\s*[｜|]+[^>]*>/gi;
+const DSML_INVOKE_RE = /<\s*[｜|]+\s*DSML\s*[｜|]+\s*invoke\b[^>]*>[\s\S]*?(?:<\s*\/\s*[｜|]+\s*DSML\s*[｜|]+\s*invoke\s*>|$)/gi;
+const RAW_OPENAI_TOOL_JSON_RE = /(?:\[\s*)?\{\s*"function"\s*:\s*\{[\s\S]*?\}\s*,\s*"id"\s*:\s*"[^"]*"\s*,\s*"type"\s*:\s*"function"\s*\}\s*\]?/gi;
+const QWEN_ROLE_MARKER_RE = /<\/?\|(?:assistant|assistan|user|system|tool)\|>?|<\/\|end\|>?/gi;
+const QWEN_BARE_MARKER_RE = /(?:^|[\t\r\n ])(?:\|?end\|?|\/?\|end\|)(?=[\t\r\n ]|$)|(?:^|[\t\r\n ])assistan(?:t)?(?=[\t\r\n ]|$)/gi;
 // Self-narration about tool results (model echoing stdout/exit_code)
 const TOOL_NARRATION_RE = /(?:The (?:result|output) shows?:?\s*)?-?\s*(?:stdout|stderr|exit_code):\s*.+/gi;
 
@@ -911,9 +915,13 @@ export function stripToolBlocks(text) {
   let cleaned = text.replace(TOOL_CALL_RE, '');
   if (EXEC_FENCE_RE) cleaned = cleaned.replace(EXEC_FENCE_RE, stripExecutedFence);
   cleaned = cleaned.replace(DSML_TOOL_RE, '');
+  cleaned = cleaned.replace(DSML_INVOKE_RE, '');
   cleaned = cleaned.replace(DSML_STRAY_RE, '');
   cleaned = cleaned.replace(XML_TOOL_CALL_RE, '');
   cleaned = cleaned.replace(XML_INVOKE_RE, '');
+  cleaned = cleaned.replace(RAW_OPENAI_TOOL_JSON_RE, '');
+  cleaned = cleaned.replace(QWEN_ROLE_MARKER_RE, '');
+  cleaned = cleaned.replace(QWEN_BARE_MARKER_RE, ' ');
   cleaned = cleaned.replace(TOOL_NARRATION_RE, '');
   cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
   return cleaned.trim();
@@ -1152,17 +1160,41 @@ document.addEventListener('click', function(e) {
   while (_t && _t.nodeType === Node.TEXT_NODE) _t = _t.parentElement;
   const a = _t && _t.closest && _t.closest('a[href]');
   if (!a) return;
-  const href = a.getAttribute('href') || '';
+  const rawHref = a.getAttribute('href') || '';
+  let href = rawHref;
+  try {
+    const parsed = new URL(rawHref, window.location.origin);
+    if (parsed.origin === window.location.origin && parsed.pathname === window.location.pathname) {
+      href = parsed.hash || rawHref;
+    }
+  } catch (_) {}
   if (!href.startsWith('#')) return;
-  const m = href.match(/^#(session|document|note|image|email|event|task|skill|research)-(.+)$/);
+  let m = href.match(/^#(session|document|note|image|email|event|task|skill|research)-(.+)$/);
+  if (!m) {
+    const noteOpen = href.match(/^#open=notes&note=([^&]+)/);
+    if (noteOpen) m = ['note', 'note', decodeURIComponent(noteOpen[1])];
+  }
+  if (!m) {
+    const bareSession = href.match(/^#([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+    if (bareSession) m = ['session', 'session', bareSession[1]];
+  }
   if (!m) return;
   e.preventDefault();
   e.stopPropagation();
   const [, kind, id] = m;
   if (kind === 'session') {
+    try {
+      a.classList.add('is-loading');
+      a.setAttribute('aria-busy', 'true');
+    } catch {}
     import('./sessions.js').then(mod => {
       const fn = mod.selectSession || (mod.default && mod.default.selectSession);
-      if (fn) fn(id);
+      if (fn) return fn(id, { showLoading: true, immediateLoading: true });
+    }).finally(() => {
+      try {
+        a.classList.remove('is-loading');
+        a.removeAttribute('aria-busy');
+      } catch {}
     });
   } else if (kind === 'document') {
     import('./document.js').then(mod => {
@@ -1175,6 +1207,11 @@ document.addEventListener('click', function(e) {
     import('./notes.js').then(mod => {
       const open = mod.openNote || (mod.default && mod.default.openNote);
       if (open) open(id);
+      try {
+        if (/^#(?:note-|open=notes&note=)/.test(window.location.hash || '')) {
+          history.replaceState(null, '', window.location.pathname + window.location.search);
+        }
+      } catch (_) {}
     }).catch(() => {});
   } else if (kind === 'image') {
     import('./gallery.js').then(mod => {
@@ -1208,7 +1245,7 @@ document.addEventListener('click', function(e) {
       if (open) open(id);
     }).catch(() => {});
   }
-});
+}, true);
 
 /**
  * Build a generated-image bubble element.
@@ -1325,6 +1362,25 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
     }
   });
   actions.appendChild(editBtn);
+
+  if (imageId) {
+    const galleryBtn = document.createElement('button');
+    galleryBtn.className = 'footer-copy-btn footer-open-gallery-btn';
+    galleryBtn.type = 'button';
+    galleryBtn.title = 'Open in gallery';
+    galleryBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg><span>Open in gallery</span>';
+    galleryBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        const mod = await import('./gallery.js');
+        const open = mod.openGalleryImage || (mod.default && mod.default.openGalleryImage);
+        if (open) open(imageId);
+      } catch (err) {
+        console.error('[chat] open in gallery failed', err);
+      }
+    });
+    actions.appendChild(galleryBtn);
+  }
 
   const delBtn = document.createElement('button');
   delBtn.className = 'footer-copy-btn footer-delete-btn';
@@ -1789,19 +1845,16 @@ export function displayMetrics(messageElement, metrics) {
     }
   }
 
-  // Default: show tok/s if available, else fall back to other stats
+  // Keep token counts in the Message Stats popup; the footer should stay slim.
   const costStr0 = cost !== null ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}` : null;
-  const metricsLabel = tps != null && tps !== 'undefined'
+  const hasTps = tps != null && tps !== 'undefined';
+  const metricsLabel = hasTps
     ? `${tps} tok/s`
     : costStr0
-      ? `${outputTokens} tok · ${costStr0}`
-      : outputTokens
-        ? `${outputTokens} tok · ${responseTime != null ? responseTime + 's' : ''}`
-        : inputTokens
-          ? `${inputTokens} in${responseTime != null ? ' · ' + responseTime + 's' : ''}`
-          : responseTime != null
-            ? `${responseTime}s`
-            : '';
+      ? costStr0
+      : responseTime != null
+        ? `${responseTime}s`
+        : '';
   if (!metricsLabel) return;
   metricsContainer.textContent = metricsLabel;
   metricsContainer.style.cursor = 'pointer';
@@ -2442,8 +2495,8 @@ export function addMessage(role, content, modelName, metadata) {
         .trim();
     }
 
-    wrap.dataset.raw = text;
-    if (metadata?._db_id) wrap.dataset.dbId = metadata._db_id;
+	    wrap.dataset.raw = text;
+	    if (metadata?._db_id) wrap.dataset.dbId = metadata._db_id;
     // Prepend sources box if saved in metadata
     var sourcesPrefix = '';
     var findingsSuffix = '';
@@ -2466,9 +2519,10 @@ export function addMessage(role, content, modelName, metadata) {
         '<think' + (thinkTime ? ` time="${thinkTime}"` : '') + '>' + metadata.thinking + '</think>\n\n' + text
       );
       b.innerHTML = sourcesPrefix + thinkHtml + findingsSuffix;
-    } else {
-      b.innerHTML = sourcesPrefix + markdownModule.processWithThinking(text) + findingsSuffix;
-    }
+	    } else {
+	      b.innerHTML = sourcesPrefix + markdownModule.processWithThinking(text) + findingsSuffix;
+	    }
+	    b.dataset.raw = text;
 
     // The vision/OCR caption is stripped from the displayed text above (so the
     // bubble doesn't show the raw model output) but no longer rendered as an
