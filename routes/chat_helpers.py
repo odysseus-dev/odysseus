@@ -682,6 +682,8 @@ async def build_chat_context(
     )
     casual_low_signal = _is_casual_low_signal(message)
 
+    _grp_participant = (getattr(sess, "name", "") or "").startswith("[GRP]")
+
     # Memory enabled?
     mem_enabled = not incognito and not no_memory and uprefs.get("memory_enabled", True)
     # Skills injection respects its own enable toggle (mirrors memory_enabled).
@@ -691,6 +693,9 @@ async def build_chat_context(
         mem_enabled = False
         skills_enabled = False
     if casual_low_signal:
+        mem_enabled = False
+        skills_enabled = False
+    if _grp_participant:
         mem_enabled = False
         skills_enabled = False
     logger.debug(
@@ -708,7 +713,7 @@ async def build_chat_context(
 
     # Use RAG?
     use_rag_val = (str(use_rag).lower() != "false") if use_rag is not None else True
-    if incognito or not allow_tool_preprocessing or is_research_spinoff or casual_low_signal:
+    if incognito or not allow_tool_preprocessing or is_research_spinoff or casual_low_signal or _grp_participant:
         use_rag_val = False
 
     # If pre-fetched search context was provided (compare mode), skip live web search

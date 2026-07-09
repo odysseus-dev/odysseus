@@ -149,7 +149,7 @@ function _initGroupTab() {
         console.warn('[group] Participant has no valid model:', p);
         return null;
       }
-      if (p.character) m.character = { characterId: p.character.id, characterName: p.character.name, characterPrompt: p.character.prompt };
+      if (p.character) m.character = { characterId: p.character.id, characterName: p.character.name, characterPrompt: p.character.prompt || '' };
       return m;
     }).filter(Boolean);
 
@@ -836,11 +836,35 @@ async function _syncAllResponses(holders) {
   }
 }
 
+async function _reinjectParticipantPersona(model, sessionId) {
+  const ch = model.character;
+  const persona = ch?.characterPrompt || ch?.prompt;
+  if (!persona || !sessionId) return;
+  const otherNames = _models.filter(x => x !== model).map(x =>
+    x._groupName || x.character?.characterName || x.display
+  ).join(', ');
+  const sysPrompt = persona + '\n\n' +
+    `You're in a group discussion with ${otherNames || 'other participants'} and the user. ` +
+    `Engage with the discussion when others have spoken. Stay in character. ` +
+    `Do not prefix your reply with your name.`;
+  try {
+    await fetch(`${API_BASE}/api/session/${sessionId}/inject_messages`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'system', content: sysPrompt }] }),
+    });
+  } catch (e) {
+    console.warn('[group] persona inject failed:', e);
+  }
+}
+
 async function _streamToHolder(modelIdx, sessionId, msg, holderEl, abortCtrl) {
   if (!sessionId) {
     holderEl.querySelector('.body').innerHTML = '<i style="opacity:0.5;">[Session creation failed]</i>';
     return;
   }
+
+  await _reinjectParticipantPersona(_models[modelIdx], sessionId);
 
   const fd = new FormData();
   fd.append('message', msg);
