@@ -14548,6 +14548,96 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   font-size: 11px;
   margin-top: 2px;
 }
+
+/* LDAP / FreeIPA settings */
+.ldap-toggle-row {
+  margin-bottom: 10px;
+}
+.ldap-settings-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px 10px;
+}
+.ldap-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.ldap-field > span {
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+  font-size: 11px;
+  font-weight: 600;
+}
+.ldap-field-wide {
+  grid-column: 1 / -1;
+}
+.ldap-field textarea.settings-select {
+  min-height: 72px;
+  resize: vertical;
+}
+.ldap-advanced {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+}
+.ldap-advanced summary {
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.ldap-inline-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-top: 8px;
+}
+.ldap-inline-options label {
+  align-items: center;
+  color: color-mix(in srgb, var(--fg) 75%, transparent);
+  display: inline-flex;
+  font-size: 12px;
+  gap: 6px;
+}
+.ldap-inline-options input {
+  accent-color: var(--accent, var(--red));
+}
+.ldap-test-row {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
+  margin-top: 10px;
+}
+.ldap-settings-msg {
+  font-size: 11px;
+  min-height: 16px;
+}
+.ldap-test-result {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: color-mix(in srgb, var(--fg) 78%, transparent);
+  font-size: 11px;
+  line-height: 1.45;
+  margin-top: 8px;
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px;
+  white-space: pre-wrap;
+}
+@media (max-width: 768px) {
+  .ldap-settings-grid,
+  .ldap-test-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ldap-test-row .admin-btn-sm,
+  .ldap-test-row .admin-btn-add {
+    width: 100%;
+  }
+}
 /* Hide the native up/down spinners on the Max auto-skills number input. */
 #skill-max-input {
   -moz-appearance: textfield;
@@ -15094,6 +15184,10 @@ span[id$="-logo"] svg:not([width]) {
   background: color-mix(in srgb, var(--color-error) 20%, transparent);
   color: var(--color-error);
 }
+.admin-badge-muted {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+}
 
 /* Buttons */
 .admin-btn-delete {
@@ -15143,6 +15237,13 @@ span[id$="-logo"] svg:not([width]) {
 .admin-btn-sm:hover {
   background: var(--border);
   border-color: var(--red);
+}
+.admin-btn-sm:disabled,
+.admin-btn-sm:disabled:hover {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: var(--panel);
+  border-color: var(--border);
 }
 .admin-spinner {
   display: inline-block;
