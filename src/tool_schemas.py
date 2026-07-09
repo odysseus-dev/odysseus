@@ -1215,6 +1215,34 @@ FUNCTION_TOOL_SCHEMAS = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "manage_bookstack",
+            "description": "Search, read, create, update, and delete pages in BookStack wiki. Use 'search' to find content, 'get_page' to read a page, 'create_page' to add new content. BookStack must be configured in Settings with URL and API token.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string",
+                               "enum": ["search", "list_shelves", "list_books", "get_book", "list_pages", "get_page", "create_page", "update_page", "delete_page", "export_page"],
+                               "description": "Action to perform"},
+                    "query": {"type": "string", "description": "Search query (for search action)"},
+                    "book_id": {"type": "integer", "description": "Book ID (for list_pages, create_page)"},
+                    "chapter_id": {"type": "integer", "description": "Chapter ID (for list_pages, create_page)"},
+                    "page_id": {"type": "integer", "description": "Page ID (for get_page, update_page, delete_page, export_page)"},
+                    "id": {"type": "integer", "description": "Alias for page_id or book_id depending on action"},
+                    "name": {"type": "string", "description": "Page name (for create_page, update_page)"},
+                    "content": {"type": "string", "description": "Page content as HTML or markdown (for create_page, update_page)"},
+                    "html": {"type": "string", "description": "Page content as HTML (for create_page, update_page)"},
+                    "markdown": {"type": "string", "description": "Page content as markdown (for create_page, update_page)"},
+                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to apply (for create_page, update_page)"},
+                    "count": {"type": "integer", "description": "Number of results for search (default 20)"},
+                    "shelf_id": {"type": "integer", "description": "Shelf ID to filter books"},
+                },
+                "required": ["action"]
+            }
+        }
+    },
 ]
 
 

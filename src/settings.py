@@ -109,6 +109,9 @@ DEFAULT_SETTINGS = {
     # unbounded model/API bill. Other values are bounded to [60, 86400].
     # Tune via Settings or by editing data/settings.json.
     "research_run_timeout_seconds": 1800,
+    # BookStack integration — external wiki platform
+    "bookstack_url": "",
+    "bookstack_token": "",
     "agent_max_tool_calls": 0,
     "agent_max_rounds": 20,  # per-message agent step cap (clamped 1..200)
     # Soft input-token budget for the agent loop. The DEFAULT value (6000) is the

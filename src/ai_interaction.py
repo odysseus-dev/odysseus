@@ -818,10 +818,13 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
             "codeeditor": "code-server",
             "vscode": "code-server",
             "editor": "code-server",
+            "bookstack": "bookstack",
+            "wiki": "bookstack",
+            "docs": "bookstack",
         }
         target = _panel_aliases.get(panel)
         if not target:
-            return {"error": f"Unknown panel '{panel}'. Valid: documents, gallery, email, sessions, notes, memories, skills, settings, cookbook, files, code-server."}
+            return {"error": f"Unknown panel '{panel}'. Valid: documents, gallery, email, sessions, notes, memories, skills, settings, cookbook, files, code-server, bookstack."}
         return {
             "ui_event": "open_panel",
             "panel": target,

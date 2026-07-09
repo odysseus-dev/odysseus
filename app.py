@@ -785,6 +785,10 @@ app.include_router(setup_filebrowser_routes())
 from routes.code_server_routes import setup_code_server_routes
 app.include_router(setup_code_server_routes(), prefix="/api/code-server")
 
+# BookStack integration (external wiki platform)
+from routes.bookstack_routes import setup_bookstack_routes
+app.include_router(setup_bookstack_routes())
+
 # Hardware model fitting (cookbook "What Fits?" tab)
 from routes.hwfit_routes import setup_hwfit_routes
 app.include_router(setup_hwfit_routes())

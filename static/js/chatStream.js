@@ -180,6 +180,11 @@ export function handleUIControl(uiData) {
           var fn = mod.openPanel || (mod.default && mod.default.openPanel);
           if (fn) fn();
         }).catch(function(){});
+      } else if (panel === 'bookstack') {
+        import('./bookstack.js').then(function(mod) {
+          var fn = mod.openPanel || (mod.default && mod.default.openPanel);
+          if (fn) fn();
+        }).catch(function(){});
       } else if (panel === 'notes') {
         import('./notes.js').then(function(mod) {
           var fn = mod.openPanel || mod.openNotes || (mod.default && (mod.default.openPanel || mod.default.openNotes));
