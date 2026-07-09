@@ -49,6 +49,10 @@ Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration
 - **Notes, Tasks + Calendar** — reminders, todos, scheduled agent tasks, and CalDAV sync.
 - **Extras** — gallery/image editor, themes, uploads, web search, presets, sessions, and 2FA.
 
+## Writing skills
+
+Agent skills are `SKILL.md` files (YAML frontmatter + structured Markdown). See the [skill format reference](docs/skills/format.md) for frontmatter fields, body sections, and on-disk layout.
+
 ## Demo
 
 A full hover-to-play tour lives on the landing page: [`docs/index.html`](docs/index.html).
