@@ -30,12 +30,14 @@ def _compute_is_api_model(model: str, endpoint_url: str, endpoint_supports=None)
 
     if endpoint_supports is True:
         return True
-    if (
-        endpoint_supports is False
-        or model_no_tools
-        or _is_ollama_native_url(endpoint_url)
-        or _is_ollama_openai_compat_url(endpoint_url)
-    ):
+    if endpoint_supports is False or model_no_tools or _is_ollama_native_url(endpoint_url):
+        return False
+    if _is_ollama_openai_compat_url(endpoint_url) and endpoint_supports is None:
+        # NULL supports_tools on Ollama /v1: infer from model keywords (#5048),
+        # but keep gemma on fenced tools (#1567).
+        ollama_null_fenced = any(kw in model_lc for kw in ("gemma",))
+        return model_supports_tools and not ollama_null_fenced
+    if _is_ollama_openai_compat_url(endpoint_url):
         return False
     return any(h in endpoint_url for h in _API_HOSTS) or model_supports_tools
 
@@ -66,7 +68,12 @@ class TestDeepSeekToolSupport:
     def test_qwen_local_ollama_defaults_to_fenced_tools(self):
         assert _compute_is_api_model(
             "qwen3.5:4b", "http://localhost:11434/v1"
-        ) is False
+        ) is True
+
+    def test_qwen36_local_ollama_null_gets_native_tools(self):
+        assert _compute_is_api_model(
+            "qwen3.6:27b-q4_K_M", "http://localhost:11434/v1", endpoint_supports=None
+        ) is True
 
     def test_gemma_local_ollama_defaults_to_fenced_tools(self):
         assert _compute_is_api_model(

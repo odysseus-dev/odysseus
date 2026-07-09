@@ -3061,12 +3061,12 @@ async def stream_agent_loop(
     _ollama_openai_compat = _is_ollama_openai_compat_url(endpoint_url or "")
     if _endpoint_supports is True:
         _is_api_model = True
-    elif (
-        _endpoint_supports is False
-        or _model_no_tools
-        or _is_ollama_native
-        or _ollama_openai_compat
-    ):
+    elif _endpoint_supports is False or _model_no_tools or _is_ollama_native:
+        _is_api_model = False
+    elif _ollama_openai_compat and _endpoint_supports is None:
+        _ollama_null_fenced = any(kw in _model_lc for kw in ("gemma",))
+        _is_api_model = _model_supports_tools and not _ollama_null_fenced
+    elif _ollama_openai_compat:
         _is_api_model = False
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
