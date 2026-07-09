@@ -479,7 +479,8 @@ async def dispatch_reminder(
                 base = intg["base_url"].rstrip("/")
                 topic = settings.get("reminder_ntfy_topic") or "reminders"
                 ntfy_body = synthesis or note_body or title
-                hdrs = {"Title": title or "Reminder", "Priority": "high", "Tags": "bell"}
+                safe_title = (title or "Reminder").encode("ascii", "replace").decode("ascii")[:200] or "Reminder"
+                hdrs = {"Title": safe_title, "Priority": "high", "Tags": "bell"}
                 api_key = intg.get("api_key", "")
                 if api_key:
                     hdrs["Authorization"] = f"Bearer {api_key}"
