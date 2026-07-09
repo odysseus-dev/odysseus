@@ -1409,10 +1409,12 @@ export function openEmailLibrary(opts = {}) {
 
   document.getElementById('email-lib-folder').addEventListener('change', (e) => {
     state._libFolder = e.target.value;
+    _resetEmailBulkSelection();
     _loadEmailsFresh();
   });
   document.getElementById('email-lib-filter').addEventListener('change', (e) => {
     state._libFilter = e.target.value;
+    _resetEmailBulkSelection();
     _syncUnreadWindowGlow();
     _syncReminderClearButton();
     _loadEmailsFresh();
@@ -1427,6 +1429,7 @@ export function openEmailLibrary(opts = {}) {
     const btn = document.getElementById('email-attach-btn');
     state._libHasAttachments = !state._libHasAttachments;
     btn?.classList.toggle('active', state._libHasAttachments);
+    _resetEmailBulkSelection();
     _syncReminderClearButton();
     _loadEmailsFresh();
   });
@@ -1652,6 +1655,14 @@ export function openEmailLibrary(opts = {}) {
     if (!btn) return;
     if (on) { btn.classList.add('active'); btn.innerHTML = _SELECT_BTN_X_SVG + 'Cancel'; }
     else { btn.classList.remove('active'); btn.innerHTML = _SELECT_BTN_DOT_SVG + 'Select'; }
+  };
+  const _resetEmailBulkSelection = () => {
+    if (!state._selectMode && (!state._selectedUids || state._selectedUids.size === 0)) return;
+    state._selectMode = false;
+    state._selectedUids?.clear();
+    _setSelectBtnState(false);
+    _updateBulkBar();
+    _renderGrid();
   };
   document.getElementById('email-lib-select-btn').addEventListener('click', () => {
     state._selectMode = !state._selectMode;
@@ -2795,6 +2806,7 @@ async function _initEmailSearchChipBar() {
         // search so state._libEmails is replaced with the actual hits,
         // then the pill filter narrows to matches.
         state._libSearch = v;
+        _resetEmailBulkSelection();
         _doSearch();
       }
       return;
