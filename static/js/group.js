@@ -967,7 +967,7 @@ async function _streamToHolder(modelIdx, sessionId, msg, holderEl, abortCtrl) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: [{
         role: 'assistant', content: accumulated,
-        metadata: { group_model: gName, model: _models[modelIdx].mid }
+        metadata: { group_model: gName, group_participant: gName, model: _models[modelIdx].mid }
       }]}),
     }).catch(() => {});
   }

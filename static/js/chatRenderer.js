@@ -2451,6 +2451,8 @@ export function addMessage(role, content, modelName, metadata) {
     }
     if (metadata?.group_model && role !== 'user') {
       _roleText = metadata.group_model;
+      wrap.classList.add('msg-group');
+      if (metadata.model) applyModelColor(r, metadata.model);
     } else if (metadata?.character_name && role !== 'user' && !isSlash && !isCompacted) {
       _roleText = metadata.character_name;
     }
