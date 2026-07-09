@@ -42,6 +42,7 @@ import {
   preferredEdgeDockSide,
 } from './modalSnap.js';
 import { dismissOrRemove } from './escMenuStack.js';
+import { nextToolWindowZ } from './toolWindowZOrder.js';
 
 const _state = new Map(); // id -> { restoreFn, closeFn, railBtnId, isMinimized, restoreMinHeight }
 

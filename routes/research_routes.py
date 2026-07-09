@@ -1,22 +1,18 @@
-"""Research background task routes — /api/research/*."""
+"""Backward-compat shim — canonical location is routes/research/research_routes.py.
 
-import asyncio
-import json
-import logging
-import re
-import uuid
-from datetime import datetime
-from pathlib import Path
-from typing import Optional
+This module is replaced in ``sys.modules`` by the canonical module object so
+that ``import routes.research_routes``, ``from routes.research_routes import X``,
+``importlib.import_module("routes.research_routes")``, and
+``monkeypatch.setattr("routes.research_routes.ATTR", ...)`` (string-targeted
+patch used by ``test_research_owner_scope_routes.py``) all operate on the
+*same* object the application actually uses. Keeps existing import paths
+working after slice 2b (#4082/#4071). Source-introspection tests read the
+canonical file by path.
+"""
 
-from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
-from pydantic import BaseModel, Field
-from src.endpoint_resolver import resolve_endpoint
-from src.auth_helpers import _auth_disabled, get_current_user
-from src.constants import DEEP_RESEARCH_DIR
+import sys as _sys
 
-_SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]{1,128}$")
+from routes.research import research_routes as _canonical  # noqa: F401
 
 logger = logging.getLogger(__name__)
 

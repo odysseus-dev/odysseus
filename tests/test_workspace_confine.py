@@ -141,6 +141,65 @@ async def test_grep_and_ls_confined_e2e(ws, admin):
 
 
 @pytest.mark.asyncio
+async def test_glob_confined_e2e(ws, admin):
+    """glob's literal fast-path must stay inside the workspace. A pattern with
+    ../ or an absolute path outside the root would otherwise leak the existence
+    and full path of arbitrary host files (an oracle), even though read_file
+    blocks reading them."""
+    with open(os.path.join(ws, "found.py"), "w") as f:
+        f.write("x")
+    _, r = await execute_tool_block(_block("glob", json.dumps({"pattern": "found.py"})), owner="a", workspace=ws)
+    assert r["exit_code"] == 0 and "found.py" in r["output"]
+
+    # a secret outside the workspace must not be discoverable via glob
+    outside = tempfile.mkdtemp()
+    secret = os.path.join(outside, "secret.txt")
+    with open(secret, "w") as f:
+        f.write("nope")
+    # An escaping pattern must come back as "No files" (the not-found message),
+    # not as a match that returns the file's path. The not-found message echoes
+    # the pattern the model supplied, so the signal is the absence of a match,
+    # not the absence of the path string.
+    rel = os.path.relpath(secret, os.path.realpath(ws))
+    _, r = await execute_tool_block(_block("glob", json.dumps({"pattern": rel})), owner="a", workspace=ws)
+    assert r["exit_code"] == 0 and "No files" in r["output"] and secret not in r["output"]
+    _, r = await execute_tool_block(_block("glob", json.dumps({"pattern": secret})), owner="a", workspace=ws)
+    assert r["exit_code"] == 0 and "No files" in r["output"]
+
+
+@pytest.mark.asyncio
+async def test_glob_skips_sensitive_files_in_workspace(ws, admin):
+    """glob must not enumerate deny-listed sensitive files that live inside the
+    workspace. read_file/write_file/edit_file refuse them and grep skips them,
+    so glob surfacing their paths is an enumeration oracle for prompt-injection.
+    """
+    with open(os.path.join(ws, "keep.py"), "w") as f:
+        f.write("x")
+    with open(os.path.join(ws, ".env"), "w") as f:
+        f.write("AWS_SECRET=xxx")
+    with open(os.path.join(ws, "id_rsa"), "w") as f:  # non-dotfile key at root
+        f.write("KEY")
+    os.makedirs(os.path.join(ws, ".ssh"), exist_ok=True)
+    with open(os.path.join(ws, ".ssh", "authorized_keys"), "w") as f:
+        f.write("ssh-rsa AAAA")
+
+    # A recursive wildcard returns ordinary files but none of the sensitive
+    # ones. The pattern "**/*" contains no secret names, so a secret basename
+    # appearing in the output is a real leak (not the echoed not-found pattern).
+    _, r = await execute_tool_block(_block("glob", json.dumps({"pattern": "**/*"})), owner="a", workspace=ws)
+    assert r["exit_code"] == 0
+    assert "keep.py" in r["output"]
+    for leak in (".env", "id_rsa", "authorized_keys"):
+        assert leak not in r["output"], f"glob leaked sensitive file: {leak}"
+
+    # Directly targeting a sensitive file (literal fast-path and wildcard) must
+    # come back as the not-found message, never a match with the file's path.
+    for pat in (".env", "**/id_rsa", "**/authorized_keys"):
+        _, r = await execute_tool_block(_block("glob", json.dumps({"pattern": pat})), owner="a", workspace=ws)
+        assert r["exit_code"] == 0 and "No files" in r["output"]
+
+
+@pytest.mark.asyncio
 async def test_subprocess_cwd_is_workspace_e2e(ws, admin):
     """python tool runs with cwd = workspace (OS-agnostic probe)."""
     _, r = await execute_tool_block(_block("python", "import os; print(os.getcwd())"), owner="a", workspace=ws)

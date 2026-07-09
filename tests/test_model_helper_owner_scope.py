@@ -34,7 +34,7 @@ def test_task_parse_resolves_with_owner_scope():
 
 
 def test_history_compact_resolves_with_owner_scope():
-    body = _function_source("routes/history_routes.py", "compact_session")
+    body = _function_source("routes/history/history_routes.py", "compact_session")
     assert "owner = effective_user(request)" in body
     assert 'resolve_endpoint("utility", owner=owner or None)' in body
 

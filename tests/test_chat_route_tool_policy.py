@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from src.action_intents import classify_tool_intent
+
 _CHAT_ROUTES = Path(__file__).resolve().parent.parent / "routes" / "chat_routes.py"
 
 
@@ -73,7 +75,7 @@ def test_allow_web_search_reads_from_body_as_fallback():
     )
 
 
-def test_disabled_tools_does_not_bash_when_allow_bash_is_none():
+def test_disabled_tools_respects_missing_vs_explicit_toggles():
     """When allow_bash is not set (None), bash must NOT be unconditionally
     added to disabled_tools.  The per-user privilege check handles it.
     """
@@ -89,6 +91,9 @@ def test_disabled_tools_does_not_bash_when_allow_bash_is_none():
     assert "allow_web_search is not None" in source, (
         "disabled_tools check must guard against allow_web_search being None"
     )
+    assert "and not _explicit_web_intent" not in source, (
+        "explicit allow_web_search=false must not be overridden by prompt web intent"
+    )
 
 
 # ── Functional tests of the disabled-tools logic ───────────────
@@ -99,6 +104,7 @@ def _build_disabled_tools(
     allow_web_search=None,
     can_use_bash=True,
     can_use_browser=True,
+    explicit_web_intent=False,
 ):
     """Replicate the disabled-tools logic from chat_stream for unit testing.
 
@@ -109,7 +115,10 @@ def _build_disabled_tools(
     # Issue #3229 fix: only disable when explicitly set to a falsy value.
     if allow_bash is not None and str(allow_bash).lower() != "true":
         disabled_tools.add("bash")
-    if allow_web_search is not None and str(allow_web_search).lower() != "true":
+    if (
+        allow_web_search is not None
+        and str(allow_web_search).lower() != "true"
+    ):
         disabled_tools.add("web_search")
         disabled_tools.add("web_fetch")
 
@@ -144,6 +153,29 @@ def test_json_body_allow_web_search_true_enables_web():
 def test_json_body_allow_web_search_false_disables_web():
     """API caller sending {"allow_web_search": false} gets web tools disabled."""
     disabled = _build_disabled_tools(allow_web_search="false")
+    assert "web_search" in disabled
+    assert "web_fetch" in disabled
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "please use web search for current CVEs",
+        "search the web for current CVEs",
+        "can you look up the latest docs",
+    ],
+)
+def test_explicit_false_disables_web_despite_prompt_web_intent(message):
+    """Explicit allow_web_search=false is a hard deny even when the prompt
+    asks for web search."""
+    intent = classify_tool_intent(message)
+    assert intent is not None
+    assert intent.category == "web"
+
+    disabled = _build_disabled_tools(
+        allow_web_search="false",
+        explicit_web_intent=True,
+    )
     assert "web_search" in disabled
     assert "web_fetch" in disabled
 
@@ -222,6 +254,6 @@ def test_frontend_always_sends_explicit_allow_bash():
 def test_frontend_sends_explicit_allow_web_search_false_in_agent_mode():
     """chat.js must send allow_web_search=false when web toggle is off in agent mode."""
     source = _CHAT_JS.read_text(encoding="utf-8")
-    assert "allow_web_search', 'false'" in source, (
+    assert "fd.append('allow_web_search', el('web-toggle').checked ? 'true' : 'false')" in source, (
         "Frontend must send explicit allow_web_search=false in agent mode when toggle is off"
     )

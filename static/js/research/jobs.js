@@ -76,6 +76,10 @@ function _removeQueuedDuplicates(keeper) {
 }
 
 let _activePollInterval = null;
+let _activePollInFlight = false;
+let _librarySyncInFlight = false;
+let _lastLibrarySyncAt = 0;
+const _LIBRARY_SYNC_MIN_MS = 120000;
 
 export function init(apiBase) {
   _apiBase = apiBase;
@@ -98,13 +102,34 @@ async function _loadRecentCompleted() {
       for (const item of (libData.research || [])) {
         if (item.status !== 'done') continue;
         if (dismissed.has(item.id)) continue;
-        if (_jobs.some(j => j.id === item.id)) continue;
         const elapsed = item.duration ? _parseDuration(item.duration) : 0;
+        const existing = _jobs.find(j => j.id === item.id);
+        if (existing) {
+          let changed = false;
+          const updates = {
+            query: item.query || existing.query,
+            status: 'done',
+            elapsed: elapsed || existing.elapsed || 0,
+            sourceCount: item.source_count || existing.sourceCount || 0,
+            thumbnail: item.thumbnail || existing.thumbnail || '',
+            category: item.category || existing.category || '',
+            _fromLibrary: true,
+          };
+          for (const [key, value] of Object.entries(updates)) {
+            if (existing[key] !== value) {
+              existing[key] = value;
+              changed = true;
+            }
+          }
+          if (changed) _notify();
+          continue;
+        }
         _jobs.push({
           id: item.id, query: item.query, status: 'done',
           progress: {}, startedAt: (item.started_at || 0) * 1000,
           elapsed, result: null, sources: null, findings: null,
           sourceCount: item.source_count || 0,
+          thumbnail: item.thumbnail || '',
           category: item.category || '',
           errorMsg: item.error_summary || null, avgDuration: null, modelName: null,
           settings: { max_rounds: item.rounds || 8, report_layout: item.report_layout || 'auto' },
@@ -112,9 +137,12 @@ async function _loadRecentCompleted() {
         });
       }
     }
-
+    _lastLibrarySyncAt = Date.now();
     _notify();
   } catch {}
+  finally {
+    _librarySyncInFlight = false;
+  }
 }
 
 function _parseDuration(s) {

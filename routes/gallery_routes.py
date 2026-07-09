@@ -1,4 +1,4 @@
-"""Gallery routes — browsable library for photos and AI-generated images."""
+"""Backward-compat shim - canonical location is routes/gallery/gallery_routes.py.
 
 import asyncio
 import json

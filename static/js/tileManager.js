@@ -8,16 +8,15 @@
  * to modalSnap's edge dock so the chat/composer reserve space and reflow
  * instead of being covered by a fixed overlay tile.
  *
- * Snap zones (9):
- *   - top edge (10% strip)        → maximize
- *   - top-left corner             → top-left quarter
- *   - top-right corner            → top-right quarter
+ * Snap zones:
+ *   - over top edge               → fullscreen
+ *   - top strip                   → maximize
+ *   - top edge                    → top half
  *   - left edge                   → left half
  *   - right edge                  → reserved right dock
  *   - bottom-left corner          → bottom-left quarter
  *   - bottom-right corner         → bottom-right quarter
  *   - bottom edge                 → bottom half
- *   - sidebar edge (if present)   → snap next to the sidebar
  *
  * Mobile (≤768px) is excluded — the swipe-dismiss UX takes precedence.
  *
@@ -28,7 +27,6 @@
 import { applyEdgeDock } from './modalSnap.js';
 
 const EDGE_THRESHOLD_PX = 24;     // how close to an edge counts as "near"
-const CORNER_THRESHOLD_PX = 64;   // corner box size
 const TOP_FULL_STRIP_PX = 8;      // top strip → maximize
 const MIN_CHAT_WIDTH = 380;
 const MIN_EDGE_DOCK_WIDTH = 360;
@@ -269,8 +267,7 @@ function _zoneForContent(content, x, y) {
   // flip to top tabs via CSS when the window gets narrow.
   if (modal && modal.id === 'settings-modal' && zone.name !== 'right-half') return null;
   if (modal && (modal.id === 'cookbook-modal'
-      || modal.id === 'theme-modal'
-      || modal.id === 'memory-modal')
+      || modal.id === 'theme-modal')
       && zone.name !== 'fullscreen') return null;
   return zone;
 }
@@ -479,6 +476,7 @@ function _reclampAll(animate = false) {
     switch (name) {
       case 'fullscreen':     r = _fullscreenRect(); break;
       case 'maximize':       r = { left: safe.left, top: safe.top, width: W, height: H }; break;
+      case 'top-half':       r = { left: safe.left, top: safe.top, width: W, height: H/2 }; break;
       case 'left-half':      r = { left: safe.left, top: safe.top, width: W/2, height: H }; break;
       case 'right-half':     r = _rightDockPreviewRect(safe); break;
       case 'bottom-half':    r = { left: safe.left, top: safe.top + H/2, width: W, height: H/2 }; break;
@@ -560,6 +558,14 @@ export function previewZoneAt(x, y, target = null) {
 export function clearPreview() {
   _hideGhost();
   _activeZone = null;
+}
+
+export function _zoneForPointerForTests(x, y) {
+  return _zoneForPointer(x, y);
+}
+
+export function _zoneForContentForTests(content, x, y) {
+  return _zoneForContent(content, x, y);
 }
 
 // Snap a modal (its .modal-content) into a previously-detected zone.

@@ -36,6 +36,7 @@ _IMPORTED_AGENT_LOOP = None
 try:
     from src.agent_loop import (
         _detect_admin_intent,
+        _classify_agent_request,
         _compute_final_metrics,
         _append_tool_results,
         _assemble_prompt,

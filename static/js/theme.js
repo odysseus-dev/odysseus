@@ -26,7 +26,7 @@ export const THEMES = {
   gpt:        { bg:'#212121', fg:'#ececec', panel:'#171717', border:'#424242', red:'#949494',
                 advanced: { sendBtnBg: '#949494', sendBtnHover: '#7f7f7f',
                             userBubbleBg: '#2f2f2f', aiBubbleBg: '#171717',
-                            inputBg: '#2f2f2f' } },
+                            inputBg: '#2f2f2f', brandColor: '#ffffff', brandMixTo: '#ffffff' } },
   claude:     { bg:'#262624', fg:'#f5f4f0', panel:'#30302e', border:'#4a4a47', red:'#c6613f' },
   cute:       { bg:'#fff0f5', fg:'#d4608a', panel:'#fff8fa', border:'#f0c0d0', red:'#ff6b9d' },
 };
@@ -39,6 +39,7 @@ const FONT_MAP = {
   mono: "'Fira Code', monospace",
   sans: "system-ui, -apple-system, 'Segoe UI', sans-serif",
   serif: "Georgia, 'Times New Roman', serif",
+  opendyslexic: "'OpenDyslexic', sans-serif",
 };
 const DEFAULT_FONT = 'mono';
 const DEFAULT_DENSITY = 'comfortable';
@@ -184,6 +185,7 @@ const ADV_KEYS = [
   { key: 'bubbleBorder',       css: '--bubble-border',     label: 'Border Chat Bubble', group: 'Chat Bubbles' },
   { key: 'sidebarBg',          css: '--sidebar-bg',        label: 'Sidebar Bg',       group: 'Sidebar' },
   { key: 'brandColor',         css: '--brand-color',       label: 'Odysseus Logo',    group: 'Sidebar' },
+  { key: 'brandMixTo',         css: '--brand-mix-to',      label: 'Logo Gradient End', group: 'Sidebar' },
   { key: 'hamburgerColor',     css: '--hamburger-color',   label: 'Hamburger Menu',   group: 'Sidebar' },
   { key: 'inputBg',            css: '--input-bg',          label: 'Input Bg',         group: 'Chat Input / Prompt Area' },
   { key: 'inputBorder',        css: '--input-border',      label: 'Input Border',     group: 'Chat Input / Prompt Area' },
@@ -203,6 +205,7 @@ function computeAdvancedDefaults(colors) {
     bubbleBorder: colors.border,
     sidebarBg: colors.panel,
     brandColor: red,
+    brandMixTo: colors.fg,
     hamburgerColor: colors.fg,
     inputBg: colors.panel,
     inputBorder: colors.border,
@@ -383,6 +386,20 @@ export function applyFontDensity(font, density) {
   document.documentElement.style.setProperty('--font-family', family);
   document.documentElement.classList.remove('density-compact', 'density-spacious');
   if (d !== 'comfortable') document.documentElement.classList.add('density-' + d);
+}
+
+// UI text-size scale (accessibility). Global and independent of the active
+// theme, so the chosen size persists across theme switches. Stored as a plain
+// percentage string ('100' | '110' | '125' | '150').
+const UI_SCALE_KEY = 'odysseus-ui-scale';
+const DEFAULT_UI_SCALE = '100';
+
+export function applyUiScale(scale) {
+  const s = scale || DEFAULT_UI_SCALE;
+  // Only one non-default scale ('125'). Remove any legacy classes too so an
+  // older stored value can't leave a stale zoom applied.
+  document.documentElement.classList.remove('ui-scale-110', 'ui-scale-125', 'ui-scale-140');
+  if (s === '125') document.documentElement.classList.add('ui-scale-125');
 }
 
 const _BG_CLASSES = ['bg-pattern-dots',
@@ -1129,6 +1146,18 @@ export function initThemeUI() {
     nd.addEventListener('change', () => {
       applyFontDensity(document.getElementById('theme-font-select').value, nd.value);
       const s = getSaved(); if (s) _saveFull(s.name, s.colors);
+    });
+  }
+  const textSizeSelect = document.getElementById('theme-text-size-select');
+  if (textSizeSelect) {
+    const nts = textSizeSelect.cloneNode(true); textSizeSelect.parentNode.replaceChild(nts, textSizeSelect);
+    let initScale = DEFAULT_UI_SCALE;
+    try { initScale = localStorage.getItem(UI_SCALE_KEY) || DEFAULT_UI_SCALE; } catch (e) {}
+    nts.value = initScale;
+    applyUiScale(initScale);
+    nts.addEventListener('change', () => {
+      applyUiScale(nts.value);
+      try { localStorage.setItem(UI_SCALE_KEY, nts.value); } catch (e) {}
     });
   }
   if (patternSelect) {

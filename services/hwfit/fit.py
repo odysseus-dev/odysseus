@@ -9,7 +9,7 @@ from services.hwfit.models import (
 GPU_BANDWIDTH = {
     "5090": 1792, "5080": 960, "5070 ti": 896, "5070": 672, "5060 ti": 448, "5060": 256,
     "4090": 1008, "4080 super": 736, "4080": 717, "4070 ti super": 672, "4070 ti": 504, "4070 super": 504, "4070": 504, "4060 ti": 288, "4060": 272,
-    "3090 ti": 1008, "3090": 936, "3080 ti": 912, "3080": 760, "3070 ti": 608, "3070": 448, "3060 ti": 448, "3060": 360,
+    "3090 ti": 1008, "3090": 936, "3080 ti": 912, "3080": 760, "3070 ti": 608, "3070": 448, "3060 ti": 448, "3060": 360, "3050 ti": 192, "3050": 224,
     "2080 ti": 616, "2080 super": 496, "2080": 448, "2070 super": 448, "2070": 448, "2060 super": 448, "2060": 336,
     "1660 ti": 288, "1660 super": 336, "1660": 192, "1650 super": 192, "1650": 128,
     "h100 sxm": 3350, "h100": 2039, "h200": 4800, "a100 sxm": 2039, "a100": 1555,
@@ -19,22 +19,36 @@ GPU_BANDWIDTH = {
     "6950 xt": 576, "6900 xt": 512, "6800 xt": 512, "6800": 512, "6700 xt": 384, "6600 xt": 256, "6600": 224,
     "mi300x": 5300, "mi300": 5300, "mi250x": 3277, "mi250": 3277, "mi210": 1638, "mi100": 1229,
     "9070 xt": 624, "9070": 488, "9060 xt": 322, "9060": 322,
-    # Apple Silicon unified-memory bandwidth (GB/s). Keyed off the chip name
-    # reported by sysctl machdep.cpu.brand_string (e.g. "Apple M4 Max"). Listed
-    # before the bare "m_" keys matters less than length-sorting (done below),
-    # which guarantees "m4 max" is tried before "m4".
-    "m1 ultra": 800, "m1 max": 400, "m1 pro": 200, "m1": 68,
-    "m2 ultra": 800, "m2 max": 400, "m2 pro": 200, "m2": 100,
-    "m3 ultra": 800, "m3 max": 300, "m3 pro": 150, "m3": 100,
-    "m4 max": 546, "m4 pro": 273, "m4": 120,
-    "m5 max": 546, "m5 pro": 273, "m5": 150,
+    # NVIDIA GB10 Grace-Blackwell superchip (DGX Spark). Unified LPDDR5X memory,
+    # not Apple Silicon, so it lives in the generic GPU table — the Apple-only
+    # lookup never matches it (its name carries no "apple").
+    "gb10": 273,
 }
 
 # Pre-sort keys by length descending for correct substring matching
 _BW_KEYS_SORTED = sorted(GPU_BANDWIDTH.keys(), key=len, reverse=True)
 
-# metal: backstop for Apple Silicon chips not in GPU_BANDWIDTH (e.g. a future
-# M5) — the named chips above take the accurate bandwidth path instead.
+# Apple Silicon unified-memory bandwidth (GB/s). For chip families with both
+# binned and full variants under the same "Apple Mx Max" brand string, prefer
+# GPU core count when hardware detection provides it; otherwise fall back to the
+# conservative tier so speed estimates do not over-promise.
+APPLE_BANDWIDTH_FIXED = {
+    "m1 ultra": 800, "m1 max": 400, "m1 pro": 200, "m1": 68,
+    "m2 ultra": 800, "m2 max": 400, "m2 pro": 200, "m2": 100,
+    "m3 ultra": 800, "m3 pro": 150, "m3": 100,
+    "m4 pro": 273, "m4": 120,
+    "m5 pro": 307, "m5": 153,
+}
+APPLE_BANDWIDTH_BY_CORES = {
+    "m3 max": {30: 300, 40: 400},
+    "m4 max": {32: 410, 40: 546},
+    "m5 max": {32: 460, 40: 614},
+}
+_APPLE_FIXED_KEYS_SORTED = sorted(APPLE_BANDWIDTH_FIXED.keys(), key=len, reverse=True)
+_APPLE_VARIANT_KEYS_SORTED = sorted(APPLE_BANDWIDTH_BY_CORES.keys(), key=len, reverse=True)
+
+# metal: backstop for Apple Silicon chips not in the explicit tables above
+# (e.g. a future M6) — use a conservative generic estimate when unknown.
 FALLBACK_K = {"cuda": 220, "rocm": 180, "metal": 150, "cpu_x86": 70, "cpu_arm": 90}
 
 USE_CASE_WEIGHTS = {
@@ -60,14 +74,111 @@ CONTEXT_TARGET = {
 }
 
 
-def _lookup_bandwidth(gpu_name):
+def _lookup_apple_bandwidth(system):
+    gpu_name = system.get("gpu_name")
     if not isinstance(gpu_name, str) or not gpu_name:
         return None
+    gn = gpu_name.lower()
+
+    # Guard against false matches on non-Apple GPUs whose names contain
+    # "m3"/"m4"/"m5" (e.g. NVIDIA Quadro M4 000).
+    if "apple" not in gn:
+        return None
+
+    raw_cores = system.get("gpu_cores")
+    try:
+        gpu_cores = int(raw_cores) if raw_cores is not None else None
+    except (TypeError, ValueError):
+        gpu_cores = None
+
+    for key in _APPLE_VARIANT_KEYS_SORTED:
+        if key not in gn:
+            continue
+        if gpu_cores in APPLE_BANDWIDTH_BY_CORES[key]:
+            return APPLE_BANDWIDTH_BY_CORES[key][gpu_cores]
+        return min(APPLE_BANDWIDTH_BY_CORES[key].values())
+
+    for key in _APPLE_FIXED_KEYS_SORTED:
+        if key in gn:
+            return APPLE_BANDWIDTH_FIXED[key]
+    return None
+
+
+def _lookup_bandwidth(system):
+    if isinstance(system, dict):
+        gpu_name = system.get("gpu_name")
+    else:
+        gpu_name = system
+
+    if not isinstance(gpu_name, str) or not gpu_name:
+        return None
+
+    # Apple tiers live only in the Apple-specific table now (#2564), so route
+    # BOTH dict and bare-string callers through it. A bare string carries no
+    # gpu_cores, so the helper falls back to the conservative (lowest) tier for
+    # that model -- before #2564 the generic table answered string lookups, and
+    # dropping that made _lookup_bandwidth("Apple M3 Max") return None.
+    apple_input = system if isinstance(system, dict) else {"gpu_name": gpu_name}
+    bw = _lookup_apple_bandwidth(apple_input)
+    if bw is not None:
+        return bw
+
     gn = gpu_name.lower()
     for key in _BW_KEYS_SORTED:
         if key in gn:
             return GPU_BANDWIDTH[key]
     return None
+
+
+def _canonical_cpu_backend(system):
+    """Return the canonical CPU backend for cpu_only speed estimation.
+
+    Normalizes CPU-architecture aliases separately from the GPU backend, and
+    overrides GPU-only backends (CUDA/ROCm/Metal) so they do not inherit a
+    discrete-GPU fallback constant when the model is actually running on CPU.
+    """
+    backend = (system.get("backend") or "").lower().strip()
+    cpu_arch = (system.get("cpu_arch") or "").lower().strip()
+    cpu_name = (system.get("cpu_name") or "").lower()
+    gpu_name = (system.get("gpu_name") or "").lower()
+
+    # Already-canonical CPU backends
+    if backend in ("cpu_x86", "cpu_arm"):
+        return backend
+
+    # Raw CPU-architecture aliases. Treat plain "arm" as 32-bit ARM, not the
+    # ARM64-class CPU fallback used for Apple Silicon/aarch64 machines.
+    if backend in ("x86_64", "amd64", "i386", "i686"):
+        return "cpu_x86"
+    if backend in ("arm64", "aarch64"):
+        return "cpu_arm"
+
+    # Prefer an explicit CPU architecture field when present
+    if cpu_arch:
+        if cpu_arch in ("x86_64", "amd64", "x86", "i386", "i686"):
+            return "cpu_x86"
+        if cpu_arch in ("arm64", "aarch64"):
+            return "cpu_arm"
+
+    # Apple Silicon enters ranking as backend="metal"; its CPU path is ARM.
+    if backend in ("metal", "mps", "apple") or "apple" in cpu_name or "apple" in gpu_name:
+        return "cpu_arm"
+
+    # Conservative default for CUDA/ROCm/discrete GPU backends and unknowns.
+    return "cpu_x86"
+
+
+def _is_mlx_model(model, native_q=None):
+    name = (model.get("name") or "").lower()
+    provider = (model.get("provider") or "").lower()
+    fmt = (model.get("format") or "").lower()
+    q = (native_q if native_q is not None else _native_quant(model)).lower()
+    return (
+        q.startswith("mlx-")
+        or provider == "mlx-community"
+        or fmt == "mlx"
+        or name.startswith("mlx-community/")
+    )
 
 
 def _estimate_speed(model, quant, run_mode, system, offload_frac=0.0):
@@ -84,8 +195,13 @@ def _estimate_speed(model, quant, run_mode, system, offload_frac=0.0):
     """
     pb = _active_params_b(model)
     is_moe = model.get("is_moe", False)
-    bw = _lookup_bandwidth(system.get("gpu_name"))
+    bw = _lookup_bandwidth(system)
     backend = system.get("backend", "cpu_x86")
+
+    # CPU-only inference must never inherit a GPU backend's fallback constant,
+    # even if the detected system happens to report a CUDA/Metal/ROCm backend.
+    if run_mode == "cpu_only":
+        backend = _canonical_cpu_backend(system)
 
     if bw and run_mode in ("gpu", "cpu_offload"):
         bpp = QUANT_BYTES_PER_PARAM.get(quant, 0.5)
@@ -208,6 +324,22 @@ def _fit_score(required, available):
     if ratio <= 0.9:
         return 70
     return 50
+
+
+def _is_unified_memory_system(system):
+    backend = (system.get("backend") or "").lower()
+    return bool(system.get("unified_memory")) or backend in ("metal", "mps", "apple")
+
+
+def _fit_level_for_budget(required_gb, budget_gb):
+    if not required_gb or not budget_gb or required_gb > budget_gb:
+        return "too_tight"
+    ratio = required_gb / budget_gb
+    if ratio <= 0.50:
+        return "perfect"
+    if ratio <= 0.78:
+        return "good"
+    return "marginal"
 
 
 def _context_score(ctx, use_case):
@@ -413,21 +545,42 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
     run_mode, quant, fit_ctx, required_gb = result
 
     # Determine fit level
-    budget = effective_vram if run_mode == "gpu" else available_ram
+    unified_memory = _is_unified_memory_system(system)
+    total_ram = system.get("total_ram_gb") or available_ram
+    unified_budget = max(total_ram or 0, available_ram or 0, effective_vram or 0)
+    budget = unified_budget if unified_memory else (effective_vram if run_mode == "gpu" else available_ram)
     if required_gb > budget:
         return None
     if run_mode == "gpu":
-        rec = model.get("recommended_ram_gb") or required_gb
-        if rec <= gpu_vram:
-            fit_level = "perfect"
-        elif gpu_vram >= required_gb * 1.2:
-            fit_level = "good"
+        if unified_memory:
+            fit_level = _fit_level_for_budget(required_gb, budget)
         else:
-            fit_level = "marginal"
+            # GPU-only fit must leave real allocator/KV/runtime headroom. The
+            # old check used recommended_ram_gb (or required_gb as a fallback),
+            # which made any model that barely fit VRAM read as "perfect".
+            # On CUDA/vLLM/SGLang that is misleading: 141 GB on a 160 GB box is
+            # runnable, but not a comfortable perfect fit.
+            if gpu_vram >= required_gb * 1.50:
+                fit_level = "perfect"
+            elif gpu_vram >= required_gb * 1.2:
+                fit_level = "good"
+            else:
+                fit_level = "marginal"
     elif run_mode == "cpu_offload":
-        fit_level = "good" if available_ram >= required_gb * 1.2 else "marginal"
+        fit_level = _fit_level_for_budget(required_gb, budget)
+        if fit_level == "perfect":
+            fit_level = "good"
     else:
-        fit_level = "marginal"
+        fit_level = _fit_level_for_budget(required_gb, budget)
+        if fit_level == "too_tight":
+            fit_level = "marginal"
+
+    # Rows that comfortably fit in a huge RAM/unified-memory pool should not all
+    # look "marginal"; that made 1B-70B CPU/Ollama rows orange on 256 GB systems.
+    if fit_level == "marginal" and budget and required_gb <= budget * 0.78:
+        fit_level = "good"
+    if fit_level == "good" and budget and required_gb <= budget * 0.50 and run_mode != "cpu_offload":
+        fit_level = "perfect"
 
     # Fraction of the model that spills to CPU RAM (drives the offload speed
     # model). When offloading, anything beyond the GPU's VRAM lives in system RAM.
@@ -518,6 +671,40 @@ SORT_KEYS = {
 }
 
 
+def _search_blob(*parts):
+    text = " ".join(str(p or "") for p in parts).lower()
+    compact = re.sub(r"[^a-z0-9]+", "", text)
+    spaced = re.sub(r"[^a-z0-9]+", " ", text).strip()
+    return f"{text} {spaced} {compact}"
+
+
+def _matches_search(model, search):
+    terms = [t for t in re.split(r"\s+", (search or "").strip().lower()) if t]
+    if not terms:
+        return True
+    blob = _search_blob(
+        model.get("name"),
+        model.get("provider"),
+        model.get("architecture"),
+        model.get("quantization"),
+        model.get("format"),
+        model.get("parameter_count"),
+    )
+    for term in terms:
+        norm = re.sub(r"[^a-z0-9]+", "", term)
+        if term not in blob and (not norm or norm not in blob):
+            if re.fullmatch(r"\d+(?:\.\d+)?b?", term):
+                try:
+                    wanted = float(term.rstrip("b"))
+                    actual = params_b(model)
+                except (TypeError, ValueError):
+                    actual = 0
+                if wanted > 0 and actual > 0 and abs(actual - wanted) <= max(5.0, wanted * 0.08):
+                    continue
+            return False
+    return True
+
+
 def rank_models(system, use_case=None, limit=50, search=None, sort="score", quant=None, target_context=None, fit_only=False):
     """Rank all models against detected hardware. Returns sorted list of fit results.
 
@@ -590,10 +777,11 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
 
     for m in models:
         native_q = _native_quant(m)
+        is_mlx = _is_mlx_model(m, native_q)
 
-        # MLX needs the mlx_lm runtime, which Odysseus does not generate serve
-        # commands for. Hide it on every backend, including Metal.
-        if native_q.startswith("mlx-") or "mlx" in (m.get("name") or "").lower():
+        # MLX is Apple Silicon-only. It should never appear on CUDA/ROCm/CPU,
+        # but it is first-class on Metal where mlx_lm.server can serve it.
+        if is_mlx and not apple_silicon:
             continue
 
         # ROCm support for vLLM/SGLang quantized safetensors is too brittle to
@@ -620,7 +808,7 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
         # Windows is the same: Odysseus only supports llama.cpp on Windows,
         # which requires GGUF. vLLM/SGLang are explicitly blocked, so AWQ/GPTQ
         # models without a GGUF source are unservable there.
-        if (apple_silicon or consumer_amd or is_windows) and not (m.get("is_gguf") or m.get("gguf_sources")):
+        if (apple_silicon or consumer_amd or is_windows) and not is_mlx and not (m.get("is_gguf") or m.get("gguf_sources")):
             continue
 
         # Format filter: AWQ tab -> only AWQ models, FP4 tab -> FP4-family models, etc.
@@ -638,13 +826,26 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
             if quant in ("INT4", "INT8", "W4A16", "W8A8", "W8A16") and native_q != quant:
                 continue
 
-        if search:
-            name = m.get("name", "").lower()
-            provider = m.get("provider", "").lower()
-            if search.lower() not in name and search.lower() not in provider:
-                continue
+        if search and not _matches_search(m, search):
+            continue
 
-        result = analyze_model(m, system, target_quant=quant, scoring_use_case=(use_case or "general"), target_context=target_context)
+        model_quant = quant
+        # UI "Q4" means the user's looking for a 4-bit fit. On multi-GPU
+        # CUDA/vLLM/SGLang boxes, many practical 4-bit models are native AWQ
+        # safetensors, not GGUF Q4_K_M. If we pass Q4_K_M into a prequantized
+        # AWQ row, analyze_model correctly rejects it as the wrong serving
+        # format, but the result is confusing: highlighting Quant/Q4 hides the
+        # exact AWQ rows the machine is built to run. Treat Q4 as AWQ-4bit for
+        # native AWQ rows only on accelerator servers that can serve them.
+        if (
+            quant == "Q4_K_M"
+            and system.get("gpu_count", 1) >= 2
+            and not (apple_silicon or consumer_amd or is_windows)
+            and native_q == "AWQ-4bit"
+        ):
+            model_quant = native_q
+
+        result = analyze_model(m, system, target_quant=model_quant, scoring_use_case=(use_case or "general"), target_context=target_context)
         if result is None:
             continue
 
