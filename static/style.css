@@ -2123,6 +2123,23 @@ body.bg-pattern-sparkles {
       margin: 0;
       overflow: hidden;
       max-width: 100%;
+      user-select: text;
+      -webkit-user-select: text;
+    }
+    .msg .body .emoji {
+      position: relative;
+      display: inline-block;
+    }
+    .msg .body .emoji-select-text {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
     }
     .msg .body > * {
       margin-top: 8px;
