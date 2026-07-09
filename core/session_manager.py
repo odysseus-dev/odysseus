@@ -11,6 +11,7 @@ This is the single place that handles:
 import json
 import uuid
 import logging
+import re
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Optional
 
@@ -21,6 +22,31 @@ from .models import Session, ChatMessage
 from .models import set_session_manager_instance, get_session_manager_instance
 
 logger = logging.getLogger(__name__)
+
+_STORAGE_DATA_IMAGE_RE = re.compile(
+    r"data:image/[^;,\"]+;base64,[A-Za-z0-9+/=\s]+"
+)
+
+
+def _content_for_db_storage(content):
+    """Strip inline base64 image payloads before persisting to SQLite/FTS."""
+    if isinstance(content, list):
+        slim = []
+        for block in content:
+            if not isinstance(block, dict):
+                slim.append(block)
+                continue
+            if block.get("type") == "image_url":
+                iu = block.get("image_url")
+                url = (iu.get("url") if isinstance(iu, dict) else "") or ""
+                if isinstance(url, str) and url.startswith("data:image/"):
+                    slim.append({"type": "text", "text": "[image attachment]"})
+                    continue
+            slim.append(block)
+        return slim
+    if isinstance(content, str) and "data:image/" in content:
+        return _STORAGE_DATA_IMAGE_RE.sub("[inline image omitted from storage]", content)
+    return content
 
 
 def _message_timestamp_iso(value: Optional[datetime]) -> Optional[str]:
@@ -238,7 +264,7 @@ class SessionManager:
             # Multimodal content (image/audio attachments) is a list — serialize
             # to JSON so the Text column can store it.  On reload, _db_to_session
             # detects the JSON-array prefix and parses it back.
-            _content = message.content
+            _content = _content_for_db_storage(message.content)
             if isinstance(_content, list):
                 _content = json.dumps(_content)
             db_message = DbChatMessage(
