@@ -8,7 +8,7 @@ from services.hwfit.models import (
 
 GPU_BANDWIDTH = {
     "5090": 1792, "5080": 960, "5070 ti": 896, "5070": 672, "5060 ti": 448, "5060": 256,
-    "4090": 1008, "4080 super": 736, "4080": 717, "4070 ti super": 672, "4070 ti": 504, "4070 super": 504, "4070": 504, "4060 ti": 288, "4060": 272,
+    "4090": 1008, "4090 laptop": 504, "4080 super": 736, "4080": 717, "4070 ti super": 672, "4070 ti": 504, "4070 super": 504, "4070": 504, "4060 ti": 288, "4060": 272,
     "3090 ti": 1008, "3090": 936, "3080 ti": 912, "3080": 760, "3070 ti": 608, "3070": 448, "3060 ti": 448, "3060": 360, "3050 ti": 192, "3050": 224,
     "2080 ti": 616, "2080 super": 496, "2080": 448, "2070 super": 448, "2070": 448, "2060 super": 448, "2060": 336,
     "1660 ti": 288, "1660 super": 336, "1660": 192, "1650 super": 192, "1650": 128,
@@ -124,6 +124,8 @@ def _lookup_bandwidth(system):
         return bw
 
     gn = gpu_name.lower()
+    if "laptop" in gn and "4090" in gn:
+        return GPU_BANDWIDTH.get("4090 laptop", 504)
     for key in _BW_KEYS_SORTED:
         if key in gn:
             return GPU_BANDWIDTH[key]
