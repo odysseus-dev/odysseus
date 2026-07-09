@@ -630,14 +630,12 @@ app.include_router(auth_router)
 
 @app.post("/api/activity/heartbeat")
 async def activity_heartbeat():
-    from src.interactive_gate import mark_browser_activity
-    await mark_browser_activity()
-    async def _stop_background():
-        try:
-            await task_scheduler.stop_background_tasks_for_foreground(reason="browser heartbeat")
-        except Exception:
-            logging.getLogger("app.foreground_gate").debug("heartbeat task stop failed", exc_info=True)
-    asyncio.create_task(_stop_background())
+    """Browser keepalive.
+
+    Intentionally passive: opening a tab must not cancel in-flight scheduled
+    work or hold the foreground gate open (#5294). Real UI traffic is still
+    tracked via the interactive-request middleware.
+    """
     return {"ok": True}
 
 
