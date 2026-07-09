@@ -1747,6 +1747,9 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
 
     messages_copy = _sanitize_llm_messages(messages)
 
+    if _is_ollama_openai_compat_url(url):
+        messages_copy = _ollama_normalize_messages(messages_copy)
+
     # Consolidate multiple system messages into one at the start.
     sys_parts = []
     non_sys = []
@@ -1907,6 +1910,9 @@ async def llm_call_async(
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
+
+    if _is_ollama_openai_compat_url(url):
+        messages_copy = _ollama_normalize_messages(messages_copy)
 
     # Consolidate multiple system messages into one at the start.
     sys_parts = []
@@ -2111,6 +2117,9 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
     """
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
+
+    if _is_ollama_openai_compat_url(url):
+        messages_copy = _ollama_normalize_messages(messages_copy)
 
     # Consolidate multiple system messages into one at the start.
     # Some models (e.g. Qwen3.5) reject system messages that aren't first.
