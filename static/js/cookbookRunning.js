@@ -755,6 +755,9 @@ function _normalizeTaskForDisplay(task) {
   if (task.type === 'serve' && task.status === 'done' && !_serveOutputLooksReady(task)) {
     return { ...task, status: 'error' };
   }
+  if (task.type === 'download' && ['done', 'completed'].includes(String(task.status || '')) && _downloadOutputLooksActive(task)) {
+    return { ...task, status: 'running', _doneConfirmAt: null };
+  }
   return task;
 }
 
