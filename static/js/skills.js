@@ -110,6 +110,9 @@ export async function loadSkills(cascade = false) {
     loaded = true;
     renderSkillsList();
     updateCount();
+    try {
+      window.dispatchEvent(new CustomEvent('odysseus-skills-changed', { detail: { count: skills.length } }));
+    } catch (_) {}
     if (_pendingFocusSkill) {
       _focusSkillRow(_pendingFocusSkill);
       _pendingFocusSkill = null;

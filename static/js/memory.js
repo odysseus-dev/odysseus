@@ -228,6 +228,29 @@ function reflectMemoryToggleInSidebar(enabled) {
   if (btn) btn.classList.toggle('tool-disabled', !enabled);
 }
 
+function refreshSidebarMemoryCount(total) {
+  const btn = document.getElementById('tool-memory-btn');
+  if (!btn) return;
+  let badge = btn.querySelector('.sidebar-memory-count');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'sidebar-memory-count memory-count';
+    badge.style.cssText = 'font-size:0.75em;opacity:0.55;margin-left:auto;flex-shrink:0;';
+    btn.appendChild(badge);
+  }
+  const n = Number(total) || 0;
+  badge.textContent = n > 0 ? String(n) : '';
+  badge.hidden = n <= 0;
+}
+
+function _notifyMemoriesChanged() {
+  try {
+    window.dispatchEvent(new CustomEvent('odysseus-memories-changed', {
+      detail: { count: memories.length },
+    }));
+  } catch (_) {}
+}
+
 function syncToggleDim(toggle) {
   const card = toggle.closest('.admin-card');
   if (!card) return;
@@ -396,6 +419,7 @@ export async function loadMemories() {
     buildCategoryChips();
     renderMemoryList();
     updateMemoryCount();
+    _notifyMemoriesChanged();
   } catch (error) {
     console.error('Failed to load memories:', error);
     memories = [];
@@ -1083,6 +1107,7 @@ export function updateMemoryCount() {
   // Documents header. The bare number still feeds any tab badge if present.
   if (h2Count) h2Count.textContent = `${num} ${scopeTotal === 1 && visible.length === scopeTotal ? 'memory' : 'memories'}`;
   if (tabCount) tabCount.textContent = num;
+  refreshSidebarMemoryCount(scopeTotal);
 }
 
 export async function addNewMemory() {
@@ -1511,6 +1536,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   window.addEventListener('memory-refresh', () => {
     loadMemories();
+  });
+  window.addEventListener('odysseus-memories-changed', (e) => {
+    const n = e?.detail?.count;
+    if (typeof n === 'number') refreshSidebarMemoryCount(n);
   });
 });
 
