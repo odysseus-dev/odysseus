@@ -227,4 +227,11 @@ registerMessages('pt-BR', {
   'Diagnosis:': 'Diagnóstico:',
   'Command': 'Comando',
   'Last captured output': 'Última saída capturada',
+  'Port {host}:{port} answered, but it is serving {actual}, not {expected}. The new serve likely failed or the port is occupied by an older server.': 'A porta {host}:{port} respondeu, mas está servindo {actual}, não {expected}. O novo servidor provavelmente falhou ou a porta está ocupada por um servidor mais antigo.',
+  'the launched model': 'o modelo iniciado',
+  'No payload': 'Sem payload',
+  'Unknown error': 'Erro desconhecido',
+  'Network error': 'Erro de rede',
+  'working': 'funcional',
+  'Saved working config': 'Configuração funcional salva',
 });

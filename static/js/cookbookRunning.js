@@ -620,8 +620,8 @@ function _endpointMatchesServe(ep, task) {
 
 function _markServeEndpointMismatch(task, ep, host, port) {
   const expected = _serveExpectedModel(task);
-  const actual = (ep?.models || []).join(', ') || 'no models';
-  const msg = `Port ${host}:${port} answered, but it is serving ${actual}, not ${expected || task?.name || 'the launched model'}. The new serve likely failed or the port is occupied by an older server.`;
+  const actual = (ep?.models || []).join(', ') || window.t('no models');
+  const msg = window.t('Port {host}:{port} answered, but it is serving {actual}, not {expected}. The new serve likely failed or the port is occupied by an older server.', { host, port, actual, expected: expected || task?.name || window.t('the launched model') });
   _updateTask(task.sessionId || task.session_id, {
     status: 'error',
     _serveReady: false,
@@ -656,7 +656,7 @@ function _processQueue() {
 
 async function _startQueuedDownload(task) {
   if (!task.payload) {
-    _updateTask(task.sessionId, { status: 'error', output: 'No payload' });
+    _updateTask(task.sessionId, { status: 'error', output: window.t('No payload') });
     _renderRunningTab();
     return;
   }
@@ -688,7 +688,7 @@ async function _startQueuedDownload(task) {
     }
     const data = await res.json();
     if (!data.ok) {
-      _updateTask(task.sessionId, { status: 'error', output: data.error || 'Unknown error' });
+      _updateTask(task.sessionId, { status: 'error', output: data.error || window.t('Unknown error') });
       _renderRunningTab();
       return;
     }
@@ -715,7 +715,7 @@ async function _startQueuedDownload(task) {
     await new Promise(r => setTimeout(r, 2000));
     _renderRunningTab();
   } catch (e) {
-    _updateTask(task.sessionId, { status: 'error', output: e.message || 'Network error' });
+    _updateTask(task.sessionId, { status: 'error', output: e.message || window.t('Network error') });
     _renderRunningTab();
   }
 }
@@ -1262,7 +1262,7 @@ function _autoConfigLabel(task) {
   if (ml) { const n = parseInt(ml[1]); bits.push((n >= 1024 ? Math.round(n / 1024) + 'k' : n) + ' ctx'); }
   const q = (task.name || '').match(/AWQ|GPTQ|FP8|Q4|Q5|Q6|Q8|INT8|INT4/i);
   if (q) bits.push(q[0].toUpperCase());
-  return bits.length ? bits.join(' · ') : 'working';
+  return bits.length ? bits.join(' · ') : window.t('working');
 }
 
 // Auto-save a serve config the moment its endpoint registers successfully, and
@@ -1296,7 +1296,7 @@ function _autoSaveWorkingConfig(task) {
   }));
   _savePresets(presets.map(_redactPresetForStorage));
   task._autoSaved = true;
-  uiModule.showToast('Saved working config');
+  uiModule.showToast(window.t('Saved working config'));
 }
 
 // ── Cross-device sync ──
