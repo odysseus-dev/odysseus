@@ -2350,7 +2350,10 @@ def setup_model_routes(model_discovery):
             if body:
                 if "supports_tools" in body:
                     v = body["supports_tools"]
-                    ep.supports_tools = {True: True, False: False, 'true': True, 'false': False, 1: True, 0: False}.get(v)
+                    ep.supports_tools = {
+                        True: True, False: False, None: None,
+                        "true": True, "false": False, 1: True, 0: False,
+                    }.get(v, None)
                 if "is_enabled" in body:
                     v_ie = body['is_enabled']
                     ep.is_enabled = v_ie.lower() in ('true', '1', 'yes') if isinstance(v_ie, str) else bool(v_ie)

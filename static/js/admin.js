@@ -463,6 +463,18 @@ async function _selectAddedModelInChat(endpoint) {
   } catch (_) {}
 }
 
+function _supportsToolsLabel(v) {
+  if (v === true) return 'Tools: yes';
+  if (v === false) return 'Tools: no';
+  return 'Tools: auto';
+}
+
+function _supportsToolsDataset(v) {
+  if (v === true) return 'true';
+  if (v === false) return 'false';
+  return 'auto';
+}
+
 async function loadEndpoints() {
   const listLocal = el('adm-epList-local');
   const listApi = el('adm-epList-api');
@@ -524,6 +536,7 @@ async function loadEndpoints() {
               <span class="adm-ep-row-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex-shrink:0;opacity:0.9;">${providerLogoFromUrl(ep.base_url) || ''}</span>
               <span class="admin-user-name">${esc(ep.name)}</span>
               ${ep.model_type === 'image' ? '<span class="admin-badge" style="background:color-mix(in srgb, var(--accent) 20%, transparent);color:var(--accent);">Image</span>' : ''}
+              ${(ep.model_type || 'llm') !== 'image' ? `<button type="button" class="admin-btn-sm" data-adm-ep-tools="${ep.id}" data-supports-tools="${_supportsToolsDataset(ep.supports_tools)}" title="Native tool-call support (PATCH supports_tools)">${esc(_supportsToolsLabel(ep.supports_tools))}</button>` : ''}
               ${kindLabel ? `<span class="admin-badge">${esc(kindLabel)}</span>` : ''}
               ${statusBadge}
               ${ep.is_enabled ? '' : '<span class="admin-badge admin-badge-off">disabled</span>'}
@@ -573,6 +586,22 @@ async function loadEndpoints() {
     };
     queryAll('[data-adm-toggle-ep]').forEach(btn => {
       btn.addEventListener('click', async (e) => { e.stopPropagation(); await fetch(`/api/model-endpoints/${btn.dataset.admToggleEp}`, { method: 'PATCH' }); loadEndpoints(); });
+    });
+    queryAll('[data-adm-ep-tools]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const cur = btn.dataset.supportsTools || 'auto';
+        const next = cur === 'auto' ? true : (cur === 'true' ? false : null);
+        try {
+          await fetch(`/api/model-endpoints/${btn.dataset.admEpTools}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ supports_tools: next }),
+          });
+        } catch (_) {}
+        loadEndpoints();
+      });
     });
     queryAll('[data-adm-copy-url]').forEach(btn => {
       btn.addEventListener('click', (e) => {
@@ -1084,6 +1113,8 @@ function initEndpointForm() {
       fd.append('model_refresh_mode', endpointKind === 'proxy' ? 'manual' : 'auto');
       fd.append('model_refresh_timeout', '30');
       if (apiKey) fd.append('api_key', apiKey);
+      const stSel = document.getElementById('adm-epSupportsTools');
+      if (stSel && stSel.value) fd.append('supports_tools', stSel.value);
       if (provider.value && provider.selectedOptions && provider.selectedOptions[0]) {
         fd.append('name', provider.selectedOptions[0].textContent.trim());
       }
