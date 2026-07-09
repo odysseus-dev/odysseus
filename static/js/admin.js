@@ -458,7 +458,7 @@ function initLdapSettings() {
   const testResult = el('adm-ldapTestResult');
   const setTestResult = (text, status) => {
     testResult.textContent = text;
-    testResult.className = 'ldap-test-result' + (status ? ' ' + status : '');
+    testResult.className = status || '';
   };
   if (testBtn && testResult) {
     testBtn.addEventListener('click', async () => {
