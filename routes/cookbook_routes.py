@@ -1086,8 +1086,8 @@ def setup_cookbook_routes() -> APIRouter:
                 lines.append("export HF_HUB_ENABLE_HF_TRANSFER=0")
                 lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=4")
             else:
-                lines.append(f"python3 -c 'import hf_transfer' 2>/dev/null || {_pip_install_fallback_chain('hf_transfer')}")
-                lines.append("python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
+                lines.append("export HF_HUB_ENABLE_HF_TRANSFER=0")
+                lines.append(f"python3 -c 'import hf_xet' 2>/dev/null || {_pip_install_fallback_chain('hf_xet')}")
                 lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=8")
 
         remote = req.remote_host  # None for local
