@@ -283,7 +283,7 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
     # that message with a visible notice instead of dropping it; otherwise the
     # model appears to "ignore" large pastes because it never receives them.
     # Hermes-style: recent context matters more than old context.
-    PROTECT_RECENT = 10
+    PROTECT_RECENT = 18
     current_msg = convo_msgs[-1:] if convo_msgs else []
     prior_convo = convo_msgs[:-1] if convo_msgs else []
     if len(prior_convo) >= PROTECT_RECENT:
