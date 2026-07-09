@@ -234,4 +234,10 @@ registerMessages('pt-BR', {
   'Network error': 'Erro de rede',
   'working': 'funcional',
   'Saved working config': 'Configuração funcional salva',
+  'restarting...': 'reiniciando...',
+  'Retrying download — progress may look reset while HuggingFace checks cached files, then it should resume.': 'Tentando novamente o download — o progresso pode parecer reiniciado enquanto o HuggingFace verifica arquivos em cache, depois deve retomar.',
+  'Retrying download. Progress may briefly look like a fresh download while HuggingFace checks cached/incomplete files; cached partial files will be reused when available.': 'Tentando novamente o download. O progresso pode parecer brevemente um download novo enquanto o HuggingFace verifica arquivos em cache/incompletos; arquivos parciais em cache serão reaproveitados quando disponíveis.',
+  'Retrying with {envVar}...': 'Tentando novamente com {envVar}...',
+  'No model info on this task': 'Sem informação de modelo nesta tarefa',
+  'Could not open serve panel': 'Não foi possível abrir o painel de servidor',
 });
