@@ -125,7 +125,9 @@ def test_download_progress_persisted_for_rerender():
 def test_task_menu_reloads_live_status_before_stop_actions():
     source = RUNNING_JS.read_text(encoding="utf-8")
     idx = source.index("menuBtn.addEventListener('click'")
-    block = source[idx:idx + 1600]
+    # Window must cover the full Run-section items (queued Start now, Reconnect,
+    # Stop) — the handler grew past 1600 chars when queued downloads were added.
+    block = source[idx:idx + 2200]
     assert "_loadTasks().find(t => t.sessionId === task.sessionId)" in block
     assert "if (menuStatus === 'running')" in block
     assert "hide Stop after the user stopped" in block
