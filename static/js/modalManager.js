@@ -408,10 +408,16 @@ function _enforceDesktopWindowBudget(activeId) {
 
 function _bringToFront(modal) {
   if (!modal) return;
-  modal.style.setProperty('z-index', String(++_modalTopZ), 'important');
+  const z = nextToolWindowZ({
+    exclude: modal,
+    current: getComputedStyle(modal).zIndex,
+    floor: _modalTopZ,
+  });
+  _modalTopZ = Math.max(_modalTopZ, z);
+  modal.style.setProperty('z-index', String(z), 'important');
   const id = modal.id || '';
   const state = id ? _state.get(id) : null;
-  if (state) state.lastActiveAt = _modalTopZ;
+  if (state) state.lastActiveAt = z;
   if (id) setTimeout(() => _enforceDesktopWindowBudget(id), 0);
 }
 

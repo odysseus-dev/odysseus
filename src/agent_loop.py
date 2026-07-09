@@ -954,6 +954,21 @@ _CASUAL_BLOCKLIST_RE = re.compile(
     r"file|folder|repo|git|settings?|endpoint|api|token|mcp)\b",
     re.IGNORECASE,
 )
+
+
+def _is_casual_low_signal(text: str) -> bool:
+    """Return true for tiny greetings/slang that should not pull tool context."""
+    s = str(text or "").strip()
+    m = _CASUAL_OPENING_RE.match(s)
+    if not m:
+        return False
+    tail = m.group("tail") or ""
+    if _CASUAL_BLOCKLIST_RE.search(tail):
+        return False
+    tail_words = re.findall(r"[A-Za-z0-9_'-]+", tail)
+    return len(tail_words) <= 2
+
+
 _EXPLICIT_CONTINUATION_RE = re.compile(
     r"^\s*(?:"
     r"yes|y|yeah|yep|ok|okay|sure|do it|go ahead|continue|carry on|"
@@ -1856,7 +1871,9 @@ def _build_system_prompt(
     compact: bool = False,
     owner: Optional[str] = None,
     suppress_local_context: bool = False,
+    suppress_skills: bool = False,
     workspace: Optional[str] = None,
+    active_email: Optional[Dict[str, str]] = None,
 ) -> List[Dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
     global _cached_base_prompt, _cached_base_prompt_key
@@ -1937,6 +1954,10 @@ def _build_system_prompt(
     # always check it.
     _skills_message = None
     _context_brief_message = None
+    _email_style_message = None
+    _integ_message = None
+    _mcp_desc_message = None
+    _active_doc_is_email_doc = False
     if active_document:
         set_active_document(active_document.id)
         _doc_raw = active_document.current_content or ""
@@ -3436,6 +3457,7 @@ async def stream_agent_loop(
         owner=owner,
         suppress_local_context=guide_only,
         workspace=workspace,
+        active_email=active_email,
     )
     if _ody_doc_finetune_mode and not plan_mode and not approved_plan and not guide_only:
         messages = _minimal_odysseus_doc_messages(

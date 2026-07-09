@@ -9,13 +9,26 @@ import asyncio
 import base64
 import json
 import logging
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from src.constants import MAX_READ_CHARS, DEEP_RESEARCH_DIR, VAULT_FILE, GENERATED_IMAGES_DIR
+from src.tools._common import _parse_tool_args
+from src.tools.cookbook import _string_arg, _validate_cookbook_ssh_target
+from src.tools.search import do_search_chats  # re-exported for facade compatibility
+from src.tools.system import do_manage_skills, _skill_dump
 from src.tool_utils import get_mcp_manager
 from core.constants import internal_api_base
 
 logger = logging.getLogger(__name__)
+
+_ADMIN_TOOL_SYMBOLS = ("_mcp_allowed_commands",)
+
+
+def __getattr__(name):
+    if name in _ADMIN_TOOL_SYMBOLS:
+        from src.agent_tools import admin_tools
+        return getattr(admin_tools, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 # ---------------------------------------------------------------------------
 # Active email state
@@ -45,6 +58,11 @@ def set_active_email(uid: Optional[str], folder: Optional[str] = None, account: 
 
 def get_active_email() -> Optional[Dict[str, str]]:
     return _active_email_ref
+
+
+def clear_active_email() -> None:
+    global _active_email_ref
+    _active_email_ref = None
 
 
 # ---------------------------------------------------------------------------

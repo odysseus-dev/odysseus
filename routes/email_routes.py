@@ -46,7 +46,7 @@ from routes.email_helpers import (
     _q, _attach_compose_uploads, _cleanup_compose_uploads,
     _load_settings, _save_settings, _get_email_config,
     _send_smtp_message, _smtp_security_mode,
-    _IMAP_TIMEOUT_SECONDS, _open_imap_connection,
+    _IMAP_TIMEOUT_SECONDS, _open_imap_connection, _normalize_imap_starttls,
     make_oauth_state, verify_oauth_state,
     EmailNotConfiguredError,
     _imap_connect, _imap, _decode_header, _detect_sent_folder, _detect_drafts_folder,
@@ -4863,7 +4863,11 @@ def setup_email_routes():
                 imap_port=imap_port,
                 imap_user=(data.get("imap_user") or "").strip(),
                 imap_password=_enc(data.get("imap_password") or ""),
-                imap_starttls=bool(data.get("imap_starttls", True)),
+                imap_starttls=_normalize_imap_starttls(
+                    (data.get("imap_host") or "").strip(),
+                    imap_port,
+                    data.get("imap_starttls", True),
+                ),
                 smtp_host=(data.get("smtp_host") or "").strip(),
                 smtp_port=smtp_port,
                 smtp_security=_smtp_security_mode({"smtp_security": data.get("smtp_security"), "smtp_port": smtp_port}),
@@ -4916,9 +4920,14 @@ def setup_email_routes():
                     setattr(row, key, port)
             if "smtp_security" in data:
                 row.smtp_security = _smtp_security_mode({"smtp_security": data.get("smtp_security"), "smtp_port": data.get("smtp_port") or row.smtp_port})
-            for key in ("imap_starttls", "enabled"):
-                if key in data:
-                    setattr(row, key, bool(data[key]))
+            if "enabled" in data:
+                row.enabled = bool(data["enabled"])
+            if "imap_starttls" in data or "imap_port" in data:
+                row.imap_starttls = _normalize_imap_starttls(
+                    row.imap_host,
+                    row.imap_port,
+                    data.get("imap_starttls", row.imap_starttls),
+                )
             # Passwords — only overwrite when a non-empty value is
             # provided. Stored encrypted; see src/secret_storage.py.
             from src.secret_storage import encrypt as _enc
@@ -5020,7 +5029,7 @@ def setup_email_routes():
         imap_port, imap_port_err = _coerce_port(body.get("imap_port"), 993)
         imap_user = (body.get("imap_user") or "").strip()
         imap_pass = body.get("imap_password") or ""
-        imap_starttls = bool(body.get("imap_starttls"))
+        imap_starttls = _normalize_imap_starttls(imap_host, imap_port or 993, body.get("imap_starttls"))
 
         if imap_port_err:
             imap_result = {"ok": False, "error": imap_port_err}

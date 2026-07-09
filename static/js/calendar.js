@@ -699,6 +699,33 @@ function _getModal() {
   return _modal;
 }
 
+function _resetCalendarFreshWindowMode(modal) {
+  const content = modal?.querySelector?.('.cal-modal-content, .modal-content');
+  if (!modal || !content) return;
+
+  const staleFullscreen = modal.classList.contains('modal-full-expanded')
+    || content.dataset?._tileZone === 'fullscreen';
+  const staleTileSnap = !!content.dataset?._tileZone || !!content.dataset?._tilePreSnap;
+  if (!staleFullscreen && !staleTileSnap && !content._fullExpandReturnState) return;
+
+  modal.classList.remove('modal-full-expanded');
+  delete content.dataset._tileZone;
+  delete content.dataset._tilePreSnap;
+  delete content._fullExpandReturnState;
+  [
+    'position', 'left', 'top', 'right', 'bottom', 'width', 'max-width',
+    'height', 'max-height', 'margin', 'transform', 'transition',
+    'border-radius',
+  ].forEach((prop) => content.style.removeProperty(prop));
+
+  const expandBtn = modal.querySelector('.modal-expand-btn, [data-full-expand]');
+  if (expandBtn) {
+    expandBtn.classList.remove('active');
+    expandBtn.title = 'Full expand';
+    expandBtn.setAttribute('aria-label', 'Full expand window');
+  }
+}
+
 // ── Render dispatch ──
 
 // Quick-add hint examples — the placeholder cycles through these every few
@@ -3919,6 +3946,7 @@ function openCalendar() {
     _content.style.animation = '';
     _content.style.opacity = '';
   }
+  _resetCalendarFreshWindowMode(modal);
   modal.style.display = 'flex';
   Modals.register('calendar-modal', {
     railBtnId: 'rail-calendar',

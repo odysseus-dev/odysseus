@@ -638,6 +638,31 @@ def test_docked_calendar_splitter_keeps_calendar_visible():
     assert "overflow-x: auto;" in block
 
 
+def test_calendar_fresh_open_resets_fullscreen_without_forcing_sheet_layout():
+    assert "function _resetCalendarFreshWindowMode(modal)" in CALENDAR_JS
+    assert "modal.classList.contains('modal-full-expanded')" in CALENDAR_JS
+    assert "content.dataset?._tileZone === 'fullscreen'" in CALENDAR_JS
+    assert "modal.classList.remove('modal-full-expanded');" in CALENDAR_JS
+    assert "delete content.dataset._tileZone;" in CALENDAR_JS
+    assert "delete content.dataset._tilePreSnap;" in CALENDAR_JS
+    assert "delete content._fullExpandReturnState;" in CALENDAR_JS
+    assert "_resetCalendarFreshWindowMode(modal);" in CALENDAR_JS
+
+    marker = "Keep Calendar as a movable window on narrow desktop and touch landscape"
+    assert marker in CSS
+    block = CSS[CSS.index(marker): CSS.index(marker) + 1800]
+    assert "(max-width: 768px) and (hover: hover)" in block
+    assert "(max-width: 768px) and (pointer: fine)" in block
+    assert "(max-width: 768px) and (orientation: landscape)" in block
+    selector = "#calendar-modal:not(.modal-full-expanded):not(.modal-left-docked):not(.modal-right-docked)"
+    assert selector in block
+    assert "align-items: center !important;" in block
+    assert "justify-content: center !important;" in block
+    assert "pointer-events: none !important;" in block
+    assert "height: auto !important;" in block
+    assert "max-height: 88vh !important;" in block
+
+
 def test_calendar_splitter_height_is_clamped_to_current_layout():
     assert "const CAL_DETAIL_STORAGE_KEY = 'odysseus.cal.detailH';" in CALENDAR_JS
     assert "function _calDetailLayoutKey()" in CALENDAR_JS

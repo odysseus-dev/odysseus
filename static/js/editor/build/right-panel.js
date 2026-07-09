@@ -135,7 +135,7 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
   }
 
   function syncControlsPlacement() {
-    if (!state.container || !rightPanel.isConnected || !controls.isConnected) return;
+    if (!state.container) return;
     const compact = isCompactEditorViewport();
     const touchLandscape = isTouchLandscape();
     const editorBody = state.container.querySelector('.ge-editor-body');

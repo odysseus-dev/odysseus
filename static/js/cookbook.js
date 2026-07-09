@@ -356,7 +356,10 @@ export function _getPlatform(hostOrTask) {
 
 /** Check if the current active server is Windows */
 export function _isWindows(hostOrTask) {
-  return _getPlatform(hostOrTask) === 'windows';
+  const platform = _getPlatform(hostOrTask);
+  if (platform) return platform === 'windows';
+  if (hostOrTask || _envState.remoteHost) return false;
+  return /Windows/i.test(navigator.userAgent || navigator.platform || '');
 }
 
 /** Check if the detected (local) hardware is Apple Silicon / Metal. Keys off the
@@ -1106,10 +1109,20 @@ async function _fetchDependencies() {
     if (_depBackend && _hwfitCache?._scannedHost === _depHost) {
       _pkgParams.set('backend', _depBackend);
     }
-    const resp = await fetch('/api/cookbook/packages' + (_pkgParams.toString() ? '?' + _pkgParams.toString() : ''));
-    const data = await resp.json();
-    const pkgs = data.packages || [];
-    if (!pkgs.length) { list.innerHTML = '<div class="hwfit-loading">No packages found</div>'; return; }
+    const resp = await fetch('/api/cookbook/packages' + (_pkgParams.toString() ? '?' + _pkgParams.toString() : ''), {
+      credentials: 'same-origin',
+    });
+    let data = {};
+    try { data = await resp.json(); } catch (_) {}
+    if (!resp.ok) {
+      const detail = typeof data.detail === 'string' ? data.detail : (resp.statusText || 'request failed');
+      throw new Error(`Dependency package query failed (${resp.status} ${detail})`);
+    }
+    if (!Array.isArray(data.packages)) {
+      throw new Error('Dependency package query returned an invalid response');
+    }
+    const pkgs = data.packages;
+    if (!pkgs.length) { list.innerHTML = '<div class="hwfit-loading">No dependency package manifest returned</div>'; return; }
     const _winUnsupported = new Set(['hf_transfer', 'vllm', 'rembg', 'gfpgan']);
 
     const _statusTag = (pkg, isLocal, isSystemDep, isFileDep, winBlocked) => {

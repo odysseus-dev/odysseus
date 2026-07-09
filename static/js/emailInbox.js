@@ -5,7 +5,7 @@
 
 import spinnerModule from './spinner.js';
 import sessionModule from './sessions.js';
-import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibOpen } from './emailLibrary.js';
+import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibOpen, prewarmEmailLibrary } from './emailLibrary.js';
 import * as Modals from './modalManager.js';
 import { applyEdgeDock } from './modalSnap.js';
 import { buildReplyAllCc, extractEmail } from './emailLibrary/replyRecipients.js';
@@ -349,10 +349,9 @@ async function _refreshUnreadCount() {
   const dot = document.getElementById('email-unread-dot');
   if (dot && !dot._stickyState) dot.style.display = 'none';
   try {
-    // Parallel: unread list + urgency state.
-    const unreadLimit = _isCompactEmailViewport() ? 12 : 50;
-    const [listRes, urgRes] = await Promise.all([
-      fetch(`${API_BASE}/api/email/list?folder=INBOX&limit=${unreadLimit}&filter=unread${_acct()}`),
+    // Parallel: unread state + urgency state.
+    const [stateRes, urgRes] = await Promise.all([
+      fetch(emailApiUrl('/api/email/unread-state', { folder: 'INBOX' })),
       fetch(`${API_BASE}/api/email/urgency-state`, { credentials: 'same-origin' }).catch(() => null),
     ]);
     if (!stateRes || !stateRes.ok) return;

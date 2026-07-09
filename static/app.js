@@ -1661,7 +1661,10 @@ function initializeEventListeners() {
       sortDropdown.querySelectorAll('.sort-option').forEach(o => {
         const check = o.querySelector('.sort-check') || document.createElement('span');
         check.className = 'sort-check';
-        check.style.cssText = 'float:right;font-size:20px;line-height:1;position:relative;top:1px;color:var(--accent, var(--red));opacity:' + (o.dataset.sort === current ? '1' : '0');
+        const active = o.dataset.sort === current;
+        o.classList.toggle('active', active);
+        o.setAttribute('aria-checked', active ? 'true' : 'false');
+        check.style.cssText = 'margin-left:auto;font-size:18px;line-height:1;color:var(--accent, var(--red));opacity:' + (active ? '1' : '0');
         check.textContent = '\u2022';
         if (!o.querySelector('.sort-check')) o.appendChild(check);
       });
@@ -1690,7 +1693,7 @@ function initializeEventListeners() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Auto-sort failed');
         if (data.status === 'ok') {
-          sessionModule.setSortMode(null); // clear sort — tidy creates manual folder order
+          sessionModule.setSortMode('group');
           _syncSortChecks();
           if (skipLlm) {
             // No-AI path: just report what got cleaned. No "unfiled

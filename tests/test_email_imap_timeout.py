@@ -11,6 +11,7 @@ os.environ.setdefault("DATABASE_URL", f"sqlite:///{_tmp_data / 'app.db'}")
 from routes.email_helpers import (
     _IMAP_TIMEOUT_SECONDS,
     _coerce_imap_timeout_seconds,
+    _normalize_imap_starttls,
     _open_imap_connection,
 )
 
@@ -86,6 +87,21 @@ def test_open_imap_connection_supports_starttls(monkeypatch):
     ]
 
 
+def test_open_imap_connection_uses_implicit_ssl_for_imaps_even_if_starttls_checked(monkeypatch):
+    import routes.email_helpers as helpers
+
+    _FakeIMAP.calls = []
+    monkeypatch.setattr(helpers.imaplib, "IMAP4", _FakeIMAP)
+    monkeypatch.setattr(helpers.imaplib, "IMAP4_SSL", _FakeIMAPSSL)
+
+    _open_imap_connection("imap.gmail.com", 993, starttls=True)
+
+    assert _FakeIMAP.calls == [
+        ("connect", "_FakeIMAPSSL", "imap.gmail.com", 993, _IMAP_TIMEOUT_SECONDS),
+    ]
+    assert _normalize_imap_starttls("imap.gmail.com", 993, True) is False
+
+
 @pytest.mark.asyncio
 async def test_account_config_uses_shared_imap_timeout(monkeypatch):
     import routes.email_routes as email_routes
@@ -124,3 +140,42 @@ async def test_account_config_uses_shared_imap_timeout(monkeypatch):
     assert captured["open"] == ("imap.one.com", 993, False, _IMAP_TIMEOUT_SECONDS)
     assert captured["login"] == ("user@example.com", "pw")
     assert captured["logout"] is True
+
+
+@pytest.mark.asyncio
+async def test_account_config_normalizes_imaps_port_starttls(monkeypatch):
+    import routes.email_routes as email_routes
+
+    captured = {}
+
+    class _Conn:
+        def login(self, user, password):
+            captured["login"] = (user, password)
+
+        def logout(self):
+            captured["logout"] = True
+
+    def fake_open(host, port, *, starttls, timeout):
+        captured["open"] = (host, port, starttls, timeout)
+        return _Conn()
+
+    class _Req:
+        async def json(self):
+            return {
+                "imap_host": "imap.gmail.com",
+                "imap_port": 993,
+                "imap_user": "user@gmail.com",
+                "imap_password": "pw",
+                "imap_starttls": True,
+            }
+
+    monkeypatch.setattr(email_routes, "_open_imap_connection", fake_open)
+
+    router = email_routes.setup_email_routes()
+    endpoint = next(route.endpoint for route in router.routes if route.path == "/api/email/accounts/test")
+
+    result = await endpoint(_Req(), owner="")
+
+    assert result["imap"] == {"ok": True}
+    assert captured["open"] == ("imap.gmail.com", 993, False, _IMAP_TIMEOUT_SECONDS)
+    assert captured["login"] == ("user@gmail.com", "pw")

@@ -1038,6 +1038,7 @@ _IMAP_TIMEOUT_SECONDS = _coerce_imap_timeout_seconds(os.environ.get("ODYSSEUS_IM
 def _open_imap_connection(host: str, port: int, *, starttls: bool, timeout: int = _IMAP_TIMEOUT_SECONDS):
     """Open an IMAP connection using the configured security mode."""
     port = int(port or 993)
+    starttls = _normalize_imap_starttls(host, port, starttls)
     if starttls:
         conn = imaplib.IMAP4(host, port, timeout=timeout)
         try:
@@ -1063,6 +1064,16 @@ def _open_imap_connection(host: str, port: int, *, starttls: bool, timeout: int 
     # "got more than 1000000 bytes" on UID SEARCH ALL.  (#2883)
     imaplib._MAXLINE = 50_000_000
     return conn
+
+
+def _normalize_imap_starttls(host: str, port: int, starttls: bool) -> bool:
+    """Return the effective STARTTLS mode for an IMAP host/port pair."""
+    port = int(port or 993)
+    # Port 993 is IMAPS: TLS starts immediately. Trying plain IMAP + STARTTLS
+    # against providers like Gmail makes the server close the socket with EOF.
+    if port == 993:
+        return False
+    return bool(starttls)
 
 def _imap_connect(account_id: str | None = None, owner: str = "",
                   timeout: int = _IMAP_TIMEOUT_SECONDS):

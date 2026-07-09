@@ -1,4 +1,4 @@
-"""Compatibility wrapper for the canonical services.youtube.youtube_handler module.
+"""Canonical YouTube helper implementation.
 
 Odysseus historically carried two independent copies of the YouTube handler —
 one here under ``src`` and one under ``services.youtube``. They drifted: the
@@ -9,16 +9,21 @@ module object), the ``YOUTUBE_AVAILABLE`` / ``YouTubeTranscriptApi`` globals set
 by ``init_youtube`` never reached it and transcript extraction always reported
 "YouTube transcript API not available".
 
-Keep the old ``src.youtube_handler`` import path working, but make it resolve to
-the single source of truth so module state and behavior can't diverge again.
+Keep ``src.youtube_handler`` as the single source of truth. The
+``services.youtube.youtube_handler`` module is a compatibility shim that points
+back here so module state and behavior can't diverge again.
 """
 
-import importlib
+import asyncio
+import json
+import logging
+import shutil
 import sys
+import urllib.parse
+from pathlib import Path
+from typing import Any, Dict, Optional
 
-# Import the canonical module directly (services.youtube.youtube_handler)
-# without triggering the heavy services/__init__.py top-level imports.
-_youtube_handler = importlib.import_module("services.youtube.youtube_handler")
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -75,15 +80,17 @@ def extract_youtube_id(url: str) -> Optional[str]:
     if not isinstance(url, str):
         return None
     parsed = urllib.parse.urlparse(url)
-    if parsed.hostname in ("www.youtube.com", "youtube.com", "m.youtube.com"):
+    hostname = (parsed.hostname or "").lower()
+    path_parts = [part for part in parsed.path.split("/") if part]
+    if hostname in ("www.youtube.com", "youtube.com", "m.youtube.com", "music.youtube.com"):
         if parsed.path == "/watch":
             params = urllib.parse.parse_qs(parsed.query)
             if "v" in params:
                 return params["v"][0]
-        elif parsed.path.startswith("/embed/"):
-            return parsed.path.split("/")[-1]
-    elif parsed.hostname == "youtu.be":
-        return parsed.path[1:]
+        elif len(path_parts) >= 2 and path_parts[0] in {"embed", "v", "shorts", "live"}:
+            return path_parts[1]
+    elif hostname == "youtu.be" and path_parts:
+        return path_parts[0]
     return None
 
 

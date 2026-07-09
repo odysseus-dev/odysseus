@@ -744,12 +744,13 @@
             </button>
             <div id="session-sort-dropdown" class="dropdown sort-dropdown" style="display:none;">
               <div class="dropdown-item sort-option sort-dropdown-item" data-sort="active">Last Active</div>
+              <div class="dropdown-item sort-option sort-dropdown-item" data-sort="date">By Date</div>
               <div class="dropdown-item sort-option sort-dropdown-item" data-sort="newest">Newest First</div>
               <div class="dropdown-item sort-option sort-dropdown-item" data-sort="group">By Folder</div>
               <div class="dropdown-item sort-dropdown-item sort-dropdown-sep" id="auto-sort-sessions-row" style="display:flex;align-items:center;padding:0;">
                 <span id="auto-sort-sessions-btn" style="flex:1;padding:5px 10px 5px 4px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
                   <span class="auto-sort-icon"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg></span>
-                  <span>Group</span>
+                  <span>AI Grouping</span>
                   <span class="auto-sort-spinner" style="display:none;">Sorting...</span>
                 </span>
               </div>
@@ -2143,28 +2144,15 @@
             </div>
           </div>
 
-            <!-- API subsection -->
-            <div class="adm-add-section collapsible collapsed" id="adm-add-api" style="margin-top:14px">
-              <div class="adm-ep-section-head adm-section-toggle" role="button" tabindex="0" aria-expanded="false">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                <span>API</span>
-                <svg class="adm-section-caret" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-              </div>
-              <div class="admin-model-form">
-                <!-- Custom picker (with logos). Hidden native <select> mirrors
-                     its value so the existing JS that reads adm-epProvider
-                     keeps working unchanged. -->
-                <div class="adm-provider-picker adm-provider-combo" id="adm-provider-picker">
-                  <input id="adm-epUrl" type="text" placeholder="Base URL or pick provider" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url">
-                  <button type="button" class="adm-provider-btn" id="adm-provider-btn" title="Pick provider">
-                    <span class="adm-provider-current"><span class="adm-provider-logo"></span><span class="adm-provider-name">Provider</span></span>
-                    <svg class="adm-provider-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-                  </button>
-                </div>
-              </div>
-            </h2>
-            <div class="admin-toggle-sub" style="margin:0 0 10px 2px;">Connect a cloud provider (OpenAI, Anthropic, DeepSeek, OpenRouter, etc.).</div>
-            <div class="adm-add-section">
+          <!-- API subsection -->
+          <div class="adm-add-section collapsible collapsed" id="adm-add-api" style="margin-top:14px">
+            <div class="adm-ep-section-head adm-section-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="adm-add-api-body">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+              <span>API</span>
+              <svg class="adm-section-caret" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="adm-add-section-body" id="adm-add-api-body">
+              <div class="admin-toggle-sub" style="margin:0 0 10px 2px;">Connect a cloud provider (OpenAI, Anthropic, DeepSeek, OpenRouter, etc.).</div>
               <div class="admin-model-form">
                 <div class="admin-model-form-row">
                   <div class="adm-provider-picker adm-provider-combo" id="adm-provider-picker" style="flex:1 1 220px;min-width:0;margin-bottom:0;">

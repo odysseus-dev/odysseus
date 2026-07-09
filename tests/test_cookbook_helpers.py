@@ -403,10 +403,10 @@ def test_pip_install_attempt_wraps_in_status_preserving_subshell():
     snippet = _pip_install_attempt("pip install -q huggingface_hub")
     assert snippet.startswith("bash -c '")
     assert "$(mktemp)" in snippet
-    assert "_rc=$?" in snippet
+    assert "_rc=\\$?" in snippet
     assert "tail -5" in snippet
     assert "rm -f" in snippet
-    assert "exit $_rc" in snippet
+    assert "exit \\$_rc" in snippet
 
 
 def test_pip_install_attempt_no_bare_pipe_tail():
@@ -885,6 +885,31 @@ def test_pip_install_no_cache_is_idempotent_and_scoped():
     # not a pip install -> unchanged
     assert _pip_install_no_cache("vllm serve --model x") == "vllm serve --model x"
     assert _pip_install_no_cache("") == ""
+
+
+def test_windows_local_pip_install_uses_real_python_in_git_bash():
+    from routes.cookbook_helpers import _windows_safe_local_pip_install_cmd
+
+    cmd = _windows_safe_local_pip_install_cmd(
+        'python3 -m pip install --no-cache-dir "onnxruntime-directml"',
+        local_windows=True,
+        python_executable=r"D:\GitHub\odysseus\venv\Scripts\python.exe",
+    )
+
+    assert cmd.startswith("/d/GitHub/odysseus/venv/Scripts/python.exe -m pip install")
+    assert "onnxruntime-directml" in cmd
+
+
+def test_windows_local_pip_install_leaves_remote_commands_unchanged():
+    from routes.cookbook_helpers import _windows_safe_local_pip_install_cmd
+
+    cmd = 'python3 -m pip install --no-cache-dir "onnxruntime-directml"'
+
+    assert _windows_safe_local_pip_install_cmd(
+        cmd,
+        local_windows=False,
+        python_executable=r"D:\GitHub\odysseus\venv\Scripts\python.exe",
+    ) == cmd
 
 
 def test_cached_model_scan_runs_additional_hf_cache(tmp_path):

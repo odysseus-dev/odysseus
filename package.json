@@ -21,6 +21,10 @@
                          "@anthropic-ai/sdk":  "^0.98.0"
                      },
     "build":  {
+                  "compression":  "maximum",
+                  "electronLanguages":  [
+                                            "en-US"
+                                        ],
                   "directories":  {
                                       "output":  "electron-dist"
                                   },

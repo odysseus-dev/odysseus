@@ -422,41 +422,84 @@ async function showModelSelector() {
     /** Build a searchable model picker (used when >5 models) */
     function _buildSearchablePicker(modelList, currentSel, slotIdx, onSelect) {
       const wrap = document.createElement('div');
-      wrap.style.cssText = 'flex:1;position:relative;';
+      wrap.className = 'cmp-model-picker';
 
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.placeholder = 'Search models\u2026';
-      input.className = 'cmp-form-control';
-      input.style.cssText = 'width:100%;box-sizing:border-box;';
-      // Mobile: suppress the on-screen keyboard so tapping the picker
-      // opens the dropdown but doesn't shove a keyboard up over the list.
-      // (Matches the +Model dropdown's mobile behavior.)
-      if (window.innerWidth <= 768) {
-        input.setAttribute('inputmode', 'none');
-        input.setAttribute('readonly', 'readonly');
-      }
-      if (currentSel) {
-        const m = modelList.find(m => m.id === currentSel.model && m.url === currentSel.endpoint)
-          || modelList.find(m => m.id === currentSel.model);
-        if (m) input.value = buildOption(m).label;
-      } else {
-        const fallback = modelList[Math.min(slotIdx, modelList.length - 1)];
-        if (fallback) input.value = buildOption(fallback).label;
-      }
-      wrap.appendChild(input);
+      const pickerId = `cmp-picker-${slotIdx}-${Math.random().toString(36).slice(2)}`;
+      const closedIcon = '<svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+      const openIcon = '<svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
+
+      const trigger = document.createElement('button');
+      trigger.type = 'button';
+      trigger.className = 'cmp-model-picker-trigger';
+      trigger.setAttribute('aria-haspopup', 'listbox');
+      trigger.setAttribute('aria-expanded', 'false');
+      trigger.setAttribute('aria-controls', pickerId);
+
+      const triggerLabel = document.createElement('span');
+      triggerLabel.className = 'cmp-model-picker-label';
+      const triggerIcon = document.createElement('span');
+      triggerIcon.className = 'cmp-model-picker-chevron';
+      triggerIcon.innerHTML = closedIcon;
+      trigger.appendChild(triggerLabel);
+      trigger.appendChild(triggerIcon);
+      wrap.appendChild(trigger);
 
       const dropdown = document.createElement('div');
       dropdown.className = 'cmp-picker-dropdown';
+      dropdown.id = pickerId;
+      dropdown.hidden = true;
+      dropdown.dataset.open = 'false';
+      dropdown.setAttribute('role', 'listbox');
       // Appended to document.body (NOT wrap) and position:fixed so it escapes
       // both the modal's overflow clipping AND any transform on the modal-content
       // (a transformed ancestor makes position:fixed clip to it — which was why
       // the dropdown kept cropping under the next row). Coords set in _placeDropdown.
-      dropdown.style.cssText = 'display:none;position:fixed;max-height:200px;overflow-y:auto;background:var(--panel);border:1px solid var(--border);border-radius:6px;z-index:100000;box-shadow:0 4px 12px rgba(0,0,0,0.2);';
+      dropdown.style.cssText = 'display:none;position:fixed;max-height:240px;overflow:hidden;background:var(--panel);border:1px solid var(--border);border-radius:6px;z-index:100000;box-shadow:0 4px 12px rgba(0,0,0,0.2);';
+
+      const searchRow = document.createElement('div');
+      searchRow.className = 'cmp-picker-search-row';
+      const searchInput = document.createElement('input');
+      searchInput.type = 'text';
+      searchInput.placeholder = 'Search models...';
+      searchInput.className = 'cmp-picker-search';
+      searchInput.setAttribute('aria-label', 'Search models');
+      searchInput.autocomplete = 'off';
+      searchInput.spellcheck = false;
+      const closeBtn = document.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.className = 'cmp-picker-close';
+      closeBtn.title = 'Close model menu';
+      closeBtn.setAttribute('aria-label', 'Close model menu');
+      closeBtn.innerHTML = openIcon;
+      searchRow.appendChild(searchInput);
+      searchRow.appendChild(closeBtn);
+
+      const list = document.createElement('div');
+      list.className = 'cmp-picker-list';
+      dropdown.appendChild(searchRow);
+      dropdown.appendChild(list);
       document.body.appendChild(dropdown);
 
+      function _findDisplayModel() {
+        if (currentSel) {
+          return modelList.find(m => m.id === currentSel.model && m.url === currentSel.endpoint)
+            || modelList.find(m => m.id === currentSel.model);
+        }
+        return modelList[Math.min(slotIdx, modelList.length - 1)] || null;
+      }
+
+      function _syncTrigger() {
+        const selected = _findDisplayModel();
+        const label = selected ? buildOption(selected).label : 'Choose model';
+        const isOpen = dropdown.dataset.open === 'true';
+        triggerLabel.textContent = label;
+        trigger.title = label;
+        trigger.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        triggerIcon.innerHTML = isOpen ? openIcon : closedIcon;
+      }
+
       function renderItems(query) {
-        dropdown.innerHTML = '';
+        list.innerHTML = '';
         const q = (query || '').toLowerCase();
         const matches = modelList.filter(m => {
           const label = buildOption(m).label.toLowerCase();
@@ -464,97 +507,142 @@ async function showModelSelector() {
         });
         if (matches.length === 0) {
           const empty = document.createElement('div');
-          empty.style.cssText = 'padding:8px 12px;color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:0.82em;font-style:italic;';
+          empty.className = 'cmp-picker-empty';
           empty.textContent = 'No matches';
-          dropdown.appendChild(empty);
+          list.appendChild(empty);
           return;
         }
         matches.forEach(m => {
           const opt = buildOption(m);
           const item = document.createElement('div');
-          item.style.cssText = 'padding:6px 12px;cursor:pointer;font-size:0.85em;transition:background 0.08s;';
+          item.className = 'cmp-picker-option';
+          item.setAttribute('role', 'option');
           item.textContent = opt.label;
-          const isSelected = currentSel && currentSel.model === m.id && (currentSel.endpoint === m.url || !modelList.some(o => o.id === m.id && o !== m));
-          if (isSelected) item.style.background = 'color-mix(in srgb, var(--fg) 8%, transparent)';
-          item.addEventListener('mouseenter', () => { item.style.background = 'color-mix(in srgb, var(--fg) 10%, transparent)'; });
-          item.addEventListener('mouseleave', () => { item.style.background = isSelected ? 'color-mix(in srgb, var(--fg) 8%, transparent)' : ''; });
+          const selected = _findDisplayModel();
+          const isSelected = selected && selected.id === m.id && (selected.url === m.url || !modelList.some(o => o.id === m.id && o !== m));
+          item.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+          if (isSelected) item.classList.add('current');
           item.addEventListener('click', () => {
             const chosen = { model: m.id, endpoint: m.url, endpointId: m.endpointId, name: m.name, endpointName: m.endpointName || '' };
-            input.value = opt.label;
             currentSel = chosen;
             onSelect(chosen);
-            dropdown.style.display = 'none';
-            input.blur();
+            closeDropdown({ restoreFocus: true });
           });
-          dropdown.appendChild(item);
+          list.appendChild(item);
         });
       }
 
-      // Position the dropdown either below or above the input depending
-      // on which side has more room — otherwise on a mobile bottom-sheet
-      // a picker near the bottom of the screen would open downward and
-      // either clip past the modal or extend off the viewport.
+      // Position the dropdown either below or above the trigger depending
+      // on which side has more room. This keeps the menu usable in the
+      // mobile bottom-sheet without changing the app's shared z-index rules.
       const _placeDropdown = () => {
-        const inRect = input.getBoundingClientRect();
+        const inRect = trigger.getBoundingClientRect();
         const vh = window.innerHeight;
         const vw = window.innerWidth;
         const below = vh - inRect.bottom;
         const above = inRect.top;
         const flipUp = below < 220 && above > below;
-        // Horizontal: align to the input but clamp inside the viewport so it
-        // never runs off the screen edge on mobile.
         const width = Math.min(inRect.width, vw - 16);
         let left = inRect.left;
         if (left + width > vw - 8) left = vw - 8 - width;
         if (left < 8) left = 8;
         dropdown.style.left = left + 'px';
         dropdown.style.width = width + 'px';
-        // Vertical: flip above/below based on available room (fixed coords).
         if (flipUp) {
+          const maxHeight = Math.max(120, Math.min(280, above - 16));
           dropdown.style.top = 'auto';
           dropdown.style.bottom = (vh - inRect.top + 2) + 'px';
-          dropdown.style.maxHeight = Math.max(120, Math.min(280, above - 16)) + 'px';
+          dropdown.style.maxHeight = maxHeight + 'px';
+          dropdown.style.setProperty('--cmp-picker-list-max-height', Math.max(72, maxHeight - searchRow.offsetHeight - 8) + 'px');
         } else {
+          const maxHeight = Math.max(120, Math.min(280, below - 16));
           dropdown.style.bottom = 'auto';
           dropdown.style.top = (inRect.bottom + 2) + 'px';
-          dropdown.style.maxHeight = Math.max(120, Math.min(280, below - 16)) + 'px';
+          dropdown.style.maxHeight = maxHeight + 'px';
+          dropdown.style.setProperty('--cmp-picker-list-max-height', Math.max(72, maxHeight - searchRow.offsetHeight - 8) + 'px');
         }
       };
-      input.addEventListener('focus', () => {
-        input.value = '';
-        renderItems('');
+
+      const _repositionIfOpen = () => {
+        if (dropdown.dataset.open === 'true') _placeDropdown();
+      };
+
+      function openDropdown() {
+        renderItems(searchInput.value);
+        dropdown.hidden = false;
         dropdown.style.display = '';
+        dropdown.dataset.open = 'true';
+        _syncTrigger();
+        _placeDropdown();
+        if (window.matchMedia('(pointer:fine)').matches) {
+          requestAnimationFrame(() => searchInput.focus({ preventScroll: true }));
+        }
+      }
+
+      function closeDropdown({ restoreFocus = false } = {}) {
+        dropdown.style.display = 'none';
+        dropdown.hidden = true;
+        dropdown.dataset.open = 'false';
+        searchInput.value = '';
+        _syncTrigger();
+        if (restoreFocus) trigger.focus({ preventScroll: true });
+      }
+
+      trigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (dropdown.dataset.open !== 'true') openDropdown();
+        else closeDropdown();
+      });
+      trigger.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          openDropdown();
+        }
+      });
+      closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeDropdown({ restoreFocus: true });
+      });
+      searchInput.addEventListener('input', () => {
+        renderItems(searchInput.value);
         _placeDropdown();
       });
-      input.addEventListener('input', () => {
-        renderItems(input.value);
-        dropdown.style.display = '';
-        _placeDropdown();
-      });
-      input.addEventListener('keydown', (e) => {
+      searchInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
           e.preventDefault();
-          const first = dropdown.querySelector('div[style*="cursor:pointer"]');
+          const first = list.querySelector('.cmp-picker-option');
           if (first) first.click();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          closeDropdown({ restoreFocus: true });
         }
       });
       // Close on outside click. The dropdown lives in document.body, so check
       // both wrap and dropdown; and tear the dropdown down when the picker row
       // is removed from the DOM (rebuild) so it doesn't orphan in the body.
+      let _cleanedUp = false;
+      function _cleanupPicker() {
+        if (_cleanedUp) return;
+        _cleanedUp = true;
+        dropdown.remove();
+        document.removeEventListener('click', _closeHandler, true);
+        window.removeEventListener('resize', _repositionIfOpen);
+        document.removeEventListener('scroll', _repositionIfOpen, true);
+      }
+      dropdown._cmpCleanup = _cleanupPicker;
+
       function _closeHandler(e) {
         if (!wrap.contains(e.target) && !dropdown.contains(e.target)) {
-          dropdown.style.display = 'none';
-          if (currentSel) {
-            const m = modelList.find(m => m.id === currentSel.model && m.url === currentSel.endpoint);
-            if (m) input.value = buildOption(m).label;
-          }
+          closeDropdown();
           if (!wrap.isConnected) {
-            dropdown.remove();
-            document.removeEventListener('click', _closeHandler, true);
+            _cleanupPicker();
           }
         }
       }
       setTimeout(() => document.addEventListener('click', _closeHandler, true), 0);
+      window.addEventListener('resize', _repositionIfOpen);
+      document.addEventListener('scroll', _repositionIfOpen, true);
+      _syncTrigger();
 
       return wrap;
     }
@@ -563,7 +651,10 @@ async function showModelSelector() {
       if (!_modelsLoaded) return;
       // The picker dropdowns live in document.body (to escape modal clipping);
       // clear any leftovers before rebuilding the rows so they don't orphan.
-      document.querySelectorAll('.cmp-picker-dropdown').forEach(d => d.remove());
+      document.querySelectorAll('.cmp-picker-dropdown').forEach(d => {
+        if (typeof d._cmpCleanup === 'function') d._cmpCleanup();
+        else d.remove();
+      });
 
       // ── Search mode: show provider dropdowns ──
       if (state._compareMode === 'search') {
@@ -877,7 +968,10 @@ async function showModelSelector() {
     function cleanup(result) {
       overlay.remove();
       // Remove any body-appended picker dropdowns so they don't orphan.
-      document.querySelectorAll('.cmp-picker-dropdown').forEach(d => d.remove());
+      document.querySelectorAll('.cmp-picker-dropdown').forEach(d => {
+        if (typeof d._cmpCleanup === 'function') d._cmpCleanup();
+        else d.remove();
+      });
       if (result) {
         state._selectedModels = selections.filter(Boolean);
         state._timeout = Math.max(5, parseInt(timeoutInput.value) || 30);

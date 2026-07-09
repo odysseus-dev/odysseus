@@ -1,0 +1,232 @@
+x64:
+  firstOrDefaultFilePatterns:
+    - '!build{,/**/*}'
+    - '!electron-dist{,/**/*}'
+    - main.js
+    - startup-preload.js
+    - package.json
+    - '!**/node_modules/**'
+    - node_modules/**/*
+    - '!**/*.{iml,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,suo,xproj,cc,d.ts,mk,a,o,obj,forge-meta,pdb}'
+    - '!**/._*'
+    - '!**/electron-builder.{yaml,yml,json,json5,toml,ts}'
+    - '!**/{.git,.hg,.svn,CVS,RCS,SCCS,__pycache__,.DS_Store,thumbs.db,.gitignore,.gitkeep,.gitattributes,.npmignore,.idea,.vs,.flowconfig,.jshintrc,.eslintrc,.circleci,.yarn-integrity,.yarn-metadata.json,yarn-error.log,yarn.lock,package-lock.json,npm-debug.log,pnpm-lock.yaml,bun.lock,bun.lockb,appveyor.yml,.travis.yml,circle.yml,.nyc_output,.husky,.github,electron-builder.env}'
+    - '!.yarn{,/**/*}'
+    - '!.editorconfig'
+    - '!.yarnrc.yml'
+  nodeModuleFilePatterns:
+    - '**/*'
+    - main.js
+    - startup-preload.js
+    - package.json
+    - node_modules/**/*
+nsis:
+  script: |-
+    !include "D:\GitHub\odysseus\node_modules\app-builder-lib\templates\nsis\include\StdUtils.nsh"
+    !addincludedir "D:\GitHub\odysseus\node_modules\app-builder-lib\templates\nsis\include"
+    !macro _isUpdated _a _b _t _f
+      ${StdUtils.TestParameter} $R9 "updated"
+      StrCmp "$R9" "true" `${_t}` `${_f}`
+    !macroend
+    !define isUpdated `"" isUpdated ""`
+
+    !macro _isForceRun _a _b _t _f
+      ${StdUtils.TestParameter} $R9 "force-run"
+      StrCmp "$R9" "true" `${_t}` `${_f}`
+    !macroend
+    !define isForceRun `"" isForceRun ""`
+
+    !macro _isKeepShortcuts _a _b _t _f
+      ${StdUtils.TestParameter} $R9 "keep-shortcuts"
+      StrCmp "$R9" "true" `${_t}` `${_f}`
+    !macroend
+    !define isKeepShortcuts `"" isKeepShortcuts ""`
+
+    !macro _isNoDesktopShortcut _a _b _t _f
+      ${StdUtils.TestParameter} $R9 "no-desktop-shortcut"
+      StrCmp "$R9" "true" `${_t}` `${_f}`
+    !macroend
+    !define isNoDesktopShortcut `"" isNoDesktopShortcut ""`
+
+    !macro _isDeleteAppData _a _b _t _f
+      ${StdUtils.TestParameter} $R9 "delete-app-data"
+      StrCmp "$R9" "true" `${_t}` `${_f}`
+    !macroend
+    !define isDeleteAppData `"" isDeleteAppData ""`
+
+    !macro _isForAllUsers _a _b _t _f
+      ${StdUtils.TestParameter} $R9 "allusers"
+      StrCmp "$R9" "true" `${_t}` `${_f}`
+    !macroend
+    !define isForAllUsers `"" isForAllUsers ""`
+
+    !macro _isForCurrentUser _a _b _t _f
+      ${StdUtils.TestParameter} $R9 "currentuser"
+      StrCmp "$R9" "true" `${_t}` `${_f}`
+    !macroend
+    !define isForCurrentUser `"" isForCurrentUser ""`
+
+    !macro addLangs
+      !insertmacro MUI_LANGUAGE "English"
+      !insertmacro MUI_LANGUAGE "German"
+      !insertmacro MUI_LANGUAGE "French"
+      !insertmacro MUI_LANGUAGE "SpanishInternational"
+      !insertmacro MUI_LANGUAGE "SimpChinese"
+      !insertmacro MUI_LANGUAGE "TradChinese"
+      !insertmacro MUI_LANGUAGE "Japanese"
+      !insertmacro MUI_LANGUAGE "Korean"
+      !insertmacro MUI_LANGUAGE "Italian"
+      !insertmacro MUI_LANGUAGE "Dutch"
+      !insertmacro MUI_LANGUAGE "Danish"
+      !insertmacro MUI_LANGUAGE "Swedish"
+      !insertmacro MUI_LANGUAGE "Norwegian"
+      !insertmacro MUI_LANGUAGE "Finnish"
+      !insertmacro MUI_LANGUAGE "Russian"
+      !insertmacro MUI_LANGUAGE "Portuguese"
+      !insertmacro MUI_LANGUAGE "PortugueseBR"
+      !insertmacro MUI_LANGUAGE "Polish"
+      !insertmacro MUI_LANGUAGE "Ukrainian"
+      !insertmacro MUI_LANGUAGE "Czech"
+      !insertmacro MUI_LANGUAGE "Slovak"
+      !insertmacro MUI_LANGUAGE "Hungarian"
+      !insertmacro MUI_LANGUAGE "Arabic"
+      !insertmacro MUI_LANGUAGE "Turkish"
+      !insertmacro MUI_LANGUAGE "Thai"
+      !insertmacro MUI_LANGUAGE "Vietnamese"
+    !macroend
+
+    !include "C:\Users\Falab\AppData\Local\Temp\t-SK8VIR\1-messages.nsh"
+    !addplugindir /x86-unicode "C:\Users\Falab\AppData\Local\electron-builder\Cache\nsis-resources-3.4.1\nsis-resources-3.4.1-2jx2y\plugins\x86-unicode"
+
+    Var newStartMenuLink
+    Var oldStartMenuLink
+    Var newDesktopLink
+    Var oldDesktopLink
+    Var oldShortcutName
+    Var oldMenuDirectory
+
+    !include "common.nsh"
+    !include "MUI2.nsh"
+    !include "multiUser.nsh"
+    !include "allowOnlyOneInstallerInstance.nsh"
+
+    !ifdef BUILD_UNINSTALLER
+      !ifmacrodef customUnInstallSection
+        !define MUI_COMPONENTSPAGE_NODESC
+        !insertmacro MUI_UNPAGE_COMPONENTS
+      !endif
+    !endif
+
+    !ifdef INSTALL_MODE_PER_ALL_USERS
+      !ifdef BUILD_UNINSTALLER
+        RequestExecutionLevel user
+      !else
+        RequestExecutionLevel admin
+      !endif
+    !else
+      RequestExecutionLevel user
+    !endif
+
+    !ifdef BUILD_UNINSTALLER
+      SilentInstall silent
+    !else
+      Var appExe
+      Var launchLink
+    !endif
+
+    !ifdef ONE_CLICK
+      !include "oneClick.nsh"
+    !else
+      !include "assistedInstaller.nsh"
+    !endif
+
+    !insertmacro addLangs
+
+    !ifmacrodef customHeader
+      !insertmacro customHeader
+    !endif
+
+    Function .onInit
+      Call setInstallSectionSpaceRequired
+
+      SetOutPath $INSTDIR
+      ${LogSet} on
+
+      !ifmacrodef preInit
+        !insertmacro preInit
+      !endif
+
+      !ifdef DISPLAY_LANG_SELECTOR
+        !insertmacro MUI_LANGDLL_DISPLAY
+      !endif
+
+      !ifdef BUILD_UNINSTALLER
+        WriteUninstaller "${UNINSTALLER_OUT_FILE}"
+        !insertmacro quitSuccess
+      !else
+        !insertmacro check64BitAndSetRegView
+
+        !ifdef ONE_CLICK
+          !insertmacro ALLOW_ONLY_ONE_INSTALLER_INSTANCE
+        !else
+          ${IfNot} ${UAC_IsInnerInstance}
+            !insertmacro ALLOW_ONLY_ONE_INSTALLER_INSTANCE
+          ${EndIf}
+        !endif
+
+        !insertmacro initMultiUser
+
+        !ifmacrodef customInit
+          !insertmacro customInit
+        !endif
+
+        !ifmacrodef addLicenseFiles
+          InitPluginsDir
+          !insertmacro addLicenseFiles
+        !endif
+      !endif
+    FunctionEnd
+
+    !ifndef BUILD_UNINSTALLER
+      !include "installUtil.nsh"
+    !endif
+
+    Section "install" INSTALL_SECTION_ID
+      !ifndef BUILD_UNINSTALLER
+        # If we're running a silent upgrade of a per-machine installation, elevate so extracting the new app will succeed.
+        # For a non-silent install, the elevation will be triggered when the install mode is selected in the UI,
+        # but that won't be executed when silent.
+        !ifndef INSTALL_MODE_PER_ALL_USERS
+          !ifndef ONE_CLICK
+              ${if} $hasPerMachineInstallation == "1" # set in onInit by initMultiUser
+              ${andIf} ${Silent}
+                ${ifNot} ${UAC_IsAdmin}
+                  ShowWindow $HWNDPARENT ${SW_HIDE}
+                  !insertmacro UAC_RunElevated
+                  ${Switch} $0
+                    ${Case} 0
+                      ${Break}
+                    ${Case} 1223 ;user aborted
+                      ${Break}
+                    ${Default}
+                      MessageBox mb_IconStop|mb_TopMost|mb_SetForeground "Unable to elevate, error $0"
+                      ${Break}
+                  ${EndSwitch}
+                  Quit
+                ${else}
+                  !insertmacro setInstallModePerAllUsers
+                ${endIf}
+              ${endIf}
+          !endif
+        !endif
+        !include "installSection.nsh"
+      !endif
+    SectionEnd
+
+    Function setInstallSectionSpaceRequired
+      !insertmacro setSpaceRequired ${INSTALL_SECTION_ID}
+    FunctionEnd
+
+    !ifdef BUILD_UNINSTALLER
+      !include "uninstaller.nsh"
+    !endif

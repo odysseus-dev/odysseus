@@ -13,6 +13,8 @@ import logging
 from collections import namedtuple
 from typing import Optional
 
+from src.tool_security import BUILTIN_EMAIL_TOOLS
+
 logger = logging.getLogger(__name__)
 ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
 

@@ -2969,7 +2969,7 @@ async function initEmailAccountsSettings() {
         <div class="settings-row"><label class="settings-label">Port${_hint('993 for IMAPS (most providers), 143 for plain or STARTTLS. Local servers often use a custom port like 31143.')}</label><input id="eaf-imap-port" class="settings-input" type="number" value="${esc(a.imap_port || 993)}" style="max-width:100px"></div>
         <div class="settings-row"><label class="settings-label">Username${_hint('Usually your full email address.')}</label><input id="eaf-imap-user" class="settings-input" value="${esc(a.imap_user || '')}"></div>
         <div class="eaf-password-section"><div class="settings-row"><label class="settings-label">Password${_hint('Your IMAP login password. Use an app-specific password if your provider requires 2FA. Outlook / Office 365 generally requires OAuth and will not work with a normal password here.')}</label><input id="eaf-imap-pass" class="settings-input" type="password" placeholder="${isEdit && a.has_imap_password ? '(unchanged)' : ''}"></div></div>
-        <div class="settings-row"><label class="settings-label">STARTTLS${_hint('Turn ON for port 143/587 to upgrade plain to TLS. Turn OFF for port 993 (IMAPS — already encrypted) or a local server with no TLS configured.')}</label><label class="admin-switch"><input type="checkbox" id="eaf-imap-starttls" ${a.imap_starttls !== false ? 'checked' : ''}><span class="admin-slider"></span></label></div>
+        <div class="settings-row"><label class="settings-label">STARTTLS${_hint('Turn ON for port 143/587 to upgrade plain to TLS. Turn OFF for port 993 (IMAPS — already encrypted) or a local server with no TLS configured.')}</label><label class="admin-switch"><input type="checkbox" id="eaf-imap-starttls" ${(a.imap_starttls !== false && parseInt(a.imap_port || 993) !== 993) ? 'checked' : ''}><span class="admin-slider"></span></label></div>
         <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px">SMTP (Sending) <span style="font-weight:normal;opacity:0.7">— optional, leave blank for read-only</span></div>
         <div class="settings-row"><label class="settings-label">Host${_hint('Your outgoing-mail server, e.g. smtp.gmail.com, smtp.migadu.com. Leave blank to make this account read-only.')}</label><input id="eaf-smtp-host" class="settings-input" value="${esc(a.smtp_host || '')}"></div>
         <div class="settings-row"><label class="settings-label">Port${_hint('465 for SSL/SMTPS, 587 for STARTTLS. 25 is usually blocked by ISPs.')}</label><input id="eaf-smtp-port" class="settings-input" type="number" value="${esc(a.smtp_port || 465)}" style="max-width:100px"></div>
@@ -3001,6 +3001,15 @@ async function initEmailAccountsSettings() {
       });
     }
 
+    const _effectiveEafImapStarttls = () => {
+      const port = parseInt(el('eaf-imap-port')?.value || 993);
+      return port === 993 ? false : !!el('eaf-imap-starttls')?.checked;
+    };
+    const _syncEafImapStarttlsForPort = () => {
+      const port = parseInt(el('eaf-imap-port')?.value || 993);
+      if (port === 993) el('eaf-imap-starttls').checked = false;
+    };
+
     const eafProviderNotes = {
       outlook: {
         title: 'Outlook / Office 365 needs OAuth',
@@ -3029,6 +3038,7 @@ async function initEmailAccountsSettings() {
       el('eaf-imap-host').value = p.imap.host;
       el('eaf-imap-port').value = p.imap.port;
       el('eaf-imap-starttls').checked = !!p.imap.starttls;
+      _syncEafImapStarttlsForPort();
       el('eaf-smtp-host').value = p.smtp.host;
       el('eaf-smtp-port').value = p.smtp.port;
       el('eaf-smtp-security').value = p.smtp.security || ((parseInt(p.smtp.port || 465) === 587) ? 'starttls' : 'ssl');
@@ -3047,7 +3057,7 @@ async function initEmailAccountsSettings() {
         imap_host: el('eaf-imap-host').value.trim(),
         imap_port: parseInt(el('eaf-imap-port').value) || 993,
         imap_user: el('eaf-imap-user').value.trim(),
-        imap_starttls: el('eaf-imap-starttls').checked,
+        imap_starttls: _effectiveEafImapStarttls(),
         smtp_host: el('eaf-smtp-host').value.trim(),
         smtp_port: parseInt(el('eaf-smtp-port').value) || 587,
         smtp_user: el('eaf-imap-user').value.trim(),
@@ -3073,6 +3083,9 @@ async function initEmailAccountsSettings() {
     };
     el('eaf-smtp-same').addEventListener('change', _syncSmtpSame);
     _syncSmtpSame();
+    el('eaf-imap-port').addEventListener('input', _syncEafImapStarttlsForPort);
+    el('eaf-imap-port').addEventListener('change', _syncEafImapStarttlsForPort);
+    _syncEafImapStarttlsForPort();
 
     el('eaf-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
     el('eaf-save').addEventListener('click', async () => {
@@ -3083,7 +3096,7 @@ async function initEmailAccountsSettings() {
         imap_host: el('eaf-imap-host').value.trim(),
         imap_port: parseInt(el('eaf-imap-port').value) || 993,
         imap_user: el('eaf-imap-user').value.trim(),
-        imap_starttls: el('eaf-imap-starttls').checked,
+        imap_starttls: _effectiveEafImapStarttls(),
         smtp_host: el('eaf-smtp-host').value.trim(),
         smtp_port: parseInt(el('eaf-smtp-port').value) || 465,
         smtp_security: el('eaf-smtp-security').value,
@@ -4481,7 +4494,7 @@ async function initUnifiedIntegrations() {
           <div class="settings-row"><label class="settings-label">Port${_hint('993 for IMAPS (most providers), 143 for plain or STARTTLS. Local servers often use a custom port like 31143.')}</label><input id="uf-imap-port" class="settings-input" type="number" placeholder="993" style="max-width:100px"></div>
           <div class="settings-row"><label class="settings-label">Username${_hint('Yes — your full email address goes here too (e.g. you@gmail.com). Same as the Email field above for almost every provider.')}</label><input id="uf-imap-user" class="settings-input" placeholder="you@example.com"></div>
           <div class="uf-password-section"><div class="settings-row"><label class="settings-label">Password${_hint('For Gmail, iCloud, and Yahoo: paste your App Password (NOT your normal account password). For Migadu and Fastmail, your mailbox password usually works. Outlook / Office 365 generally requires OAuth and will not work with this password form.')}</label><input id="uf-imap-pass" class="settings-input" type="password" placeholder="${placeholderPass}"></div></div>
-          <div class="settings-row"><label class="settings-label">STARTTLS${_hint('Turn ON for port 143/587 to upgrade plain to TLS. Turn OFF for port 993 (IMAPS — already encrypted) or a local server with no TLS configured.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-imap-starttls" checked><span class="admin-slider"></span></label></div>
+          <div class="settings-row"><label class="settings-label">STARTTLS${_hint('Turn ON for port 143/587 to upgrade plain to TLS. Turn OFF for port 993 (IMAPS — already encrypted) or a local server with no TLS configured.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-imap-starttls"><span class="admin-slider"></span></label></div>
           <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px;display:flex;align-items:center;gap:5px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>SMTP (Sending) <span style="font-weight:normal;opacity:0.7">— optional, leave blank for read-only</span></div>
           <div class="settings-row"><label class="settings-label">Host${_hint('Your outgoing-mail server, e.g. smtp.gmail.com. Leave blank to make this account read-only.')}</label><input id="uf-smtp-host" class="settings-input" placeholder="smtp.example.com"></div>
           <div class="settings-row"><label class="settings-label">Port${_hint('465 for SSL/SMTPS, 587 for STARTTLS. 25 is usually blocked by ISPs.')}</label><input id="uf-smtp-port" class="settings-input" type="number" placeholder="465" style="max-width:100px"></div>
@@ -4615,6 +4628,15 @@ async function initUnifiedIntegrations() {
       });
     }
 
+    const _effectiveImapStarttls = () => {
+      const port = parseInt(el('uf-imap-port')?.value || 993);
+      return port === 993 ? false : !!el('uf-imap-starttls')?.checked;
+    };
+    const _syncImapStarttlsForPort = () => {
+      const port = parseInt(el('uf-imap-port')?.value || 993);
+      if (port === 993) el('uf-imap-starttls').checked = false;
+    };
+
     // Custom dropdown wire-up — the native <select> stays in the DOM as the
     // data source and accessibility target, but the visible UI is a button +
     // popup so each provider row can render with its SVG logo. Selecting an
@@ -4679,6 +4701,7 @@ async function initUnifiedIntegrations() {
       el('uf-imap-host').value = p.imap.host;
       el('uf-imap-port').value = p.imap.port;
       el('uf-imap-starttls').checked = !!p.imap.starttls;
+      _syncImapStarttlsForPort();
       el('uf-smtp-host').value = p.smtp.host;
       el('uf-smtp-port').value = p.smtp.port;
       el('uf-smtp-security').value = p.smtp.security || ((parseInt(p.smtp.port || 465) === 587) ? 'starttls' : 'ssl');
@@ -4722,7 +4745,7 @@ async function initUnifiedIntegrations() {
       el('uf-imap-host').value = existing.imap_host || '';
       el('uf-imap-port').value = existing.imap_port || 993;
       el('uf-imap-user').value = existing.imap_user || '';
-      el('uf-imap-starttls').checked = existing.imap_starttls !== false;
+      el('uf-imap-starttls').checked = existing.imap_starttls !== false && parseInt(existing.imap_port || 993) !== 993;
       el('uf-smtp-host').value = existing.smtp_host || '';
       el('uf-smtp-port').value = existing.smtp_port || 465;
       el('uf-smtp-security').value = _smtpSecurity(existing);
@@ -4739,6 +4762,9 @@ async function initUnifiedIntegrations() {
       el('uf-smtp-port').value = 465;
       el('uf-smtp-security').value = 'ssl';
     }
+    el('uf-imap-port').addEventListener('input', _syncImapStarttlsForPort);
+    el('uf-imap-port').addEventListener('change', _syncImapStarttlsForPort);
+    _syncImapStarttlsForPort();
     el('uf-email-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
 
     // Reset the Test button to neutral when the user edits any field
@@ -4771,7 +4797,7 @@ async function initUnifiedIntegrations() {
         imap_host: el('uf-imap-host').value.trim(),
         imap_port: parseInt(el('uf-imap-port').value) || 993,
         imap_user: el('uf-imap-user').value.trim(),
-        imap_starttls: el('uf-imap-starttls').checked,
+        imap_starttls: _effectiveImapStarttls(),
         smtp_host: el('uf-smtp-host').value.trim(),
         smtp_port: parseInt(el('uf-smtp-port').value) || 465,
         smtp_security: el('uf-smtp-security').value,

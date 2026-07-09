@@ -115,3 +115,14 @@ def test_local_dependency_probe_refreshes_user_site_visibility():
     # deps (realesrgan) probe as not-installed until a restart. See #4810.
     assert "if user_site and os.path.isdir(user_site):" in source
     assert "site.addsitedir(user_site)" in source
+
+
+def test_dependency_panel_fetch_rejects_auth_and_api_errors():
+    source = _read("static/js/cookbook.js")
+    fetch_start = source.index("const resp = await fetch('/api/cookbook/packages'")
+    fetch_block = source[fetch_start:source.index("const pkgs =", fetch_start)]
+
+    assert "credentials: 'same-origin'" in fetch_block
+    assert "if (!resp.ok)" in fetch_block
+    assert "Array.isArray(data.packages)" in fetch_block
+    assert "No dependency package manifest returned" in source

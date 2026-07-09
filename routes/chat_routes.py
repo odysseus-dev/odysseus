@@ -822,6 +822,11 @@ def setup_chat_routes(
         # shell disabled).
         auto_escalated = False
         _tool_intent = _classify_tool_intent(message) if isinstance(message, str) else None
+        _explicit_web_intent = bool(
+            _tool_intent
+            and _tool_intent.needs_tools
+            and _tool_intent.category == "web"
+        )
         if chat_mode == "chat" and workspace and _message_mentions_workspace_files(message):
             chat_mode = "agent"
             logger.info(
@@ -939,6 +944,7 @@ def setup_chat_routes(
                 and _is_contextual_web_followup(message, sess)
             ):
                 _tool_intent = ToolIntent(True, "web", "contextual web lookup follow-up")
+                _explicit_web_intent = True
                 chat_mode = "agent"
                 auto_escalated = True
                 logger.info(

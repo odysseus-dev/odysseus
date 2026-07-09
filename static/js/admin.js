@@ -18,6 +18,32 @@ let _authPolicy = { password_min_length: 8, reserved_usernames: [] };
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
 
+function wireAdminSectionToggles() {
+  if (document._admSectionToggleWired) return;
+  document._admSectionToggleWired = true;
+  const toggleSection = (head) => {
+    const section = head && head.closest('.adm-add-section.collapsible');
+    if (!section) return;
+    const expanded = section.classList.toggle('collapsed') === false;
+    head.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+  };
+  document.addEventListener('click', (e) => {
+    const head = e.target.closest('.adm-section-toggle');
+    if (!head) return;
+    e.preventDefault();
+    toggleSection(head);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const head = e.target.closest('.adm-section-toggle');
+    if (!head) return;
+    e.preventDefault();
+    toggleSection(head);
+  });
+}
+
+wireAdminSectionToggles();
+
 async function unloadAllLoadedModels(btn) {
   const msg = 'Unload every currently loaded local model? Downloaded model files and endpoints will stay in place.';
   if (uiModule?.styledConfirm) {

@@ -96,6 +96,8 @@ def test_inpaint_popover_reclamps_to_visible_editor_window():
 
 def test_gallery_editor_reparents_controls_across_mobile_orientation():
     assert "function syncControlsPlacement()" in RIGHT_PANEL_JS
+    assert "if (!state.container) return;" in RIGHT_PANEL_JS
+    assert "if (!state.container || !rightPanel.isConnected || !controls.isConnected) return;" not in RIGHT_PANEL_JS
     assert "state.container.insertBefore(controls, editorBody);" in RIGHT_PANEL_JS
     assert "rightPanel.insertBefore(controls, layerPanel);" in RIGHT_PANEL_JS
     assert "function restoreInpaintPanelToControls()" in RIGHT_PANEL_JS
@@ -125,7 +127,7 @@ def test_gallery_tool_sheet_dismiss_restores_layer_peek():
 
 
 def test_gallery_editor_cache_bumped_for_android_assets():
-    assert "const CACHE_NAME = 'odysseus-v416';" in SW_JS
+    assert "const CACHE_NAME = 'odysseus-v419';" in SW_JS
 
 
 def test_gallery_fit_zoom_uses_visible_canvas_above_mobile_layers_sheet():

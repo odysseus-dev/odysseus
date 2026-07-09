@@ -207,8 +207,8 @@ def _pip_install_attempt(pip_cmd: str) -> str:
     """
     return (
         "bash -c '"
-        f'_out=$(mktemp) && {pip_cmd} >"$_out" 2>&1; _rc=$?; '
-        'tail -5 "$_out"; rm -f "$_out"; exit $_rc'
+        f'_out=\\$(mktemp) && {pip_cmd} >"\\$_out" 2>&1; _rc=\\$?; '
+        'tail -5 "\\$_out"; rm -f "\\$_out"; exit \\$_rc'
         "'"
     )
 
@@ -304,6 +304,35 @@ def _venv_safe_local_pip_install_cmd(cmd: str, *, local: bool, in_venv: bool) ->
         if part not in {"--user", "--break-system-packages"}
     ]
     return shlex.join(stripped)
+
+
+def _windows_safe_local_pip_install_cmd(
+    cmd: str,
+    *,
+    local_windows: bool,
+    python_executable: str,
+) -> str:
+    """Use the real Odysseus Python for local Windows pip installs.
+
+    Local Windows serve/download tasks run inside Git Bash. A command like
+    ``python3 -m pip install ...`` can resolve to the Microsoft Store execution
+    alias instead of the venv interpreter, producing "Python was not found" even
+    though Odysseus itself is running on Python. Rewrite only the leading Python
+    executable for local Windows pip installs; remote/Linux commands stay as
+    submitted.
+    """
+    if not local_windows or "pip install" not in (cmd or ""):
+        return cmd
+    try:
+        parts = shlex.split(cmd)
+    except ValueError:
+        return cmd
+    if len(parts) < 4 or parts[1:3] != ["-m", "pip"] or parts[3] != "install":
+        return cmd
+    if parts[0].lower() not in {"python", "python3", "python.exe"}:
+        return cmd
+    py = _git_bash_path(python_executable)
+    return shlex.join([py, *parts[1:]])
 
 
 def _pip_install_command_without_break_system_packages(cmd: str) -> str:
@@ -548,6 +577,7 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "        seen.add(name)",
         "        models.append({'repo_id':name,'size_bytes':size_bytes,'nb_files':1,'has_incomplete':False,'path':'ollama','backend':'ollama','is_ollama':True})",
         "def scan_ollama_api():",
+        "    if os.name == 'nt' and not os.environ.get('ODYSSEUS_ALLOW_OLLAMA_CLI_SCAN'): return",
         "    urls = ['http://127.0.0.1:11434/api/tags', 'http://localhost:11434/api/tags', 'http://host.docker.internal:11434/api/tags']",
         "    for url in urls:",
         "        try:",

@@ -25,7 +25,7 @@ const SIDEBAR_MAX_VISIBLE = 10;
 const FOLDER_MAX_VISIBLE = 5;
 let _showAllSessions = false;
 let _expandedFolders = {};  // folderName -> true if "show more" clicked
-let _sortMode = Storage.get('odysseus-session-sort') || 'active'; // default to last active
+let _sortMode = Storage.get('odysseus-session-sort') || 'date'; // default to date-grouped recency
 let _autoCreateInProgress = false; // guard against recursive auto-create
 const _INCOGNITO_SESSIONS_KEY = 'ody-incognito-sessions'; // sessionStorage key for incognito session IDs
 const _isMac = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -950,7 +950,7 @@ function createSessionItem(s) {
 
 function _dateBucketLabel(value) {
   if (!value) return 'Older';
-  const d = new Date(value);
+  const d = _parseSessionDate(value);
   if (Number.isNaN(d.getTime())) return 'Older';
   const dayStart = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
   const today = dayStart(new Date());
@@ -969,8 +969,23 @@ function _dateBucketLabel(value) {
   return d.toLocaleDateString([], sameYear ? { month: 'long', day: 'numeric' } : { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
+function _parseSessionDate(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return new Date(NaN);
+  const hasTime = /[T\s]\d{2}:\d{2}/.test(raw);
+  const hasTimezone = /(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(raw);
+  const normalized = hasTime && !hasTimezone ? raw.replace(' ', 'T') + 'Z' : raw;
+  return new Date(normalized);
+}
+
 function _sessionBucketDate(s) {
   return s.last_message_at || s.updated_at || s.created_at || '';
+}
+
+function _sessionTimeValue(value) {
+  const d = _parseSessionDate(value);
+  const time = d.getTime();
+  return Number.isFinite(time) ? time : 0;
 }
 
 function _createDateSectionHeader(label, kind = 'session') {
@@ -978,6 +993,12 @@ function _createDateSectionHeader(label, kind = 'session') {
   el.className = `date-section-header ${kind}-date-section-header`;
   el.textContent = label;
   return el;
+}
+
+function _appendSessionItemsFlat(frag, items) {
+  for (const s of items) {
+    frag.appendChild(createSessionItem(s));
+  }
 }
 
 function _appendSessionItemsWithDateHeaders(frag, items) {
@@ -1043,18 +1064,16 @@ function _renderSessionListImpl() {
   // ── Flat sort modes: ignore folders, show one ordered list. ──
   // Folders are only shown when _sortMode === 'group' (or null/empty
   // for manual mode). This keeps the picker simple: a folder-grouped
-  // view is one of the sort choices, alongside Last Active / Newest.
+  // view is one of the sort choices, alongside flat and date-grouped sorts.
   if (_sortMode && _sortMode !== 'group') {
     orderedSessions.sort((a, b) => {
-      if (_sortMode === 'newest') return (b.created_at || '').localeCompare(a.created_at || '');
+      if (_sortMode === 'newest') return _sessionTimeValue(b.created_at) - _sessionTimeValue(a.created_at);
       // "Last active" sorts by the last actual MESSAGE, not updated_at —
       // updated_at is bumped by renames / model swaps / folder moves, which
       // made the order feel random. Fall back to updated_at/created_at for
       // older rows that predate the last_message_at backfill.
-      if (_sortMode === 'active') {
-        const av = a.last_message_at || a.updated_at || a.created_at || '';
-        const bv = b.last_message_at || b.updated_at || b.created_at || '';
-        return bv.localeCompare(av);
+      if (_sortMode === 'active' || _sortMode === 'date') {
+        return _sessionTimeValue(_sessionBucketDate(b)) - _sessionTimeValue(_sessionBucketDate(a));
       }
       return 0;
     });
@@ -1073,7 +1092,11 @@ function _renderSessionListImpl() {
     const visibleFavorites = visible.filter(s => s.is_important);
     const visibleRegular = visible.filter(s => !s.is_important);
     _appendFavoriteSessionItems(_frag, visibleFavorites);
-    _appendSessionItemsWithDateHeaders(_frag, visibleRegular);
+    if (_sortMode === 'date') {
+      _appendSessionItemsWithDateHeaders(_frag, visibleRegular);
+    } else {
+      _appendSessionItemsFlat(_frag, visibleRegular);
+    }
 
     if (allFlat.length > SIDEBAR_MAX_VISIBLE) {
       const remaining = allFlat.length - SIDEBAR_MAX_VISIBLE;

@@ -8,7 +8,7 @@ import themeModule from './theme.js';
 import * as Modals from './modalManager.js';
 import spinnerModule from './spinner.js';
 import { registerMenuDismiss, dismissTopMenu, dismissOrRemove } from './escMenuStack.js';
-import { nextToolWindowZ, topToolWindowZ } from './toolWindowZOrder.js';
+import { nextToolWindowZ } from './toolWindowZOrder.js';
 
 let toastEl = null;
 let autoScrollEnabled = true;
@@ -340,12 +340,19 @@ export function showToast(msg, durationOrOpts) {
     stack.style.cssText = 'display:inline-flex;flex-direction:column;align-items:center;gap:1px;margin-left:10px;line-height:1;';
 
     const btn = document.createElement('button');
+    // If the caller supplied an SVG icon, prepend it. We trust the icon string
+    // (only set internally) — never accept caller-controlled HTML otherwise.
     if (actionIcon) {
       btn.innerHTML = `<span style="display:inline-flex;align-items:center;gap:5px;">${actionIcon}<span></span></span>`;
       btn.querySelector('span span').textContent = actionLabel;
     } else {
       btn.textContent = actionLabel;
     }
+    // The toast itself is `pointer-events: none` so it doesn't block clicks
+    // beneath it. With an action button we need to flip both the toast AND
+    // the button so the user can actually click Undo. The flag is reset on
+    // the next plain showToast / showError call (those overwrite textContent
+    // which strips the button + we clear inline style at the top below).
     btn.style.cssText = 'padding:2px 10px;border:1px solid var(--fg);border-radius:4px;background:none;color:var(--fg);cursor:pointer;font-size:12px;pointer-events:auto;display:inline-flex;align-items:center;';
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -355,6 +362,8 @@ export function showToast(msg, durationOrOpts) {
     });
     stack.appendChild(btn);
 
+    // Keyboard-shortcut hints (Ctrl+Z / ⌘Z) are meaningless on touch devices —
+    // skip them on mobile so the toast just shows the Undo button.
     if (actionHint && window.innerWidth > 768) {
       const hint = document.createElement('span');
       hint.textContent = actionHint;
@@ -363,27 +372,31 @@ export function showToast(msg, durationOrOpts) {
     }
 
     toastEl.appendChild(stack);
+
+    // Small × to dismiss the toast without taking the action. Useful when
+    // the user already acted (or just doesn't want the banner sitting there).
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.setAttribute('aria-label', 'Dismiss');
+    closeBtn.title = 'Dismiss';
+    closeBtn.textContent = '×';
+    closeBtn.style.cssText = 'margin-left:8px;padding:0;width:20px;height:20px;line-height:1;border:none;background:none;color:var(--fg);opacity:0.55;cursor:pointer;font-size:18px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;pointer-events:auto;';
+    closeBtn.addEventListener('mouseenter', () => { closeBtn.style.opacity = '1'; });
+    closeBtn.addEventListener('mouseleave', () => { closeBtn.style.opacity = '0.55'; });
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      clearTimeout(toastEl._hideTimer);
+      toastEl.classList.add('exiting');
+      toastEl.classList.remove('show');
+    });
+    toastEl.appendChild(closeBtn);
+
     toastEl.style.pointerEvents = 'auto';
   } else {
+    // No action — restore the default non-blocking behavior.
     toastEl.style.pointerEvents = '';
   }
-
-  // Close button for all toasts — dismiss without waiting for timeout.
-  const closeBtn = document.createElement('button');
-  closeBtn.type = 'button';
-  closeBtn.className = 'toast-close-btn';
-  closeBtn.setAttribute('aria-label', 'Dismiss');
-  closeBtn.title = 'Dismiss';
-  closeBtn.textContent = '×';
-  closeBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    clearTimeout(toastEl._hideTimer);
-    toastEl.classList.add('exiting');
-    toastEl.classList.remove('show');
-    toastEl.style.pointerEvents = '';
-  });
-  toastEl.appendChild(closeBtn);
 
   // Pin to top-right via CSS — clear any legacy inline overrides so the
   // slide-in-from-right / slide-out-to-left transition can run cleanly.
@@ -415,38 +428,17 @@ export function showError(msg) {
     toastEl = document.getElementById('toast');
   }
   _wireToastSwipe(toastEl);
-  toastEl.textContent = '';
+  toastEl.textContent = msg;
   toastEl.classList.add('error');
   toastEl.style.left = '';
   toastEl.style.transform = '';
   toastEl.classList.remove('exiting');
   toastEl.classList.add('show');
   clearTimeout(toastEl._hideTimer);
-
-  const textSpan = document.createElement('span');
-  textSpan.textContent = msg;
-  toastEl.appendChild(textSpan);
-
-  const closeBtn = document.createElement('button');
-  closeBtn.type = 'button';
-  closeBtn.className = 'toast-close-btn';
-  closeBtn.setAttribute('aria-label', 'Dismiss');
-  closeBtn.title = 'Dismiss';
-  closeBtn.textContent = '×';
-  closeBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    clearTimeout(toastEl._hideTimer);
-    toastEl.classList.add('exiting');
-    toastEl.classList.remove('show');
-    toastEl.style.pointerEvents = '';
-  });
-  toastEl.appendChild(closeBtn);
-
   toastEl._hideTimer = setTimeout(() => {
     toastEl.classList.add('exiting');
     toastEl.classList.remove('show');
-  }, 6000);
+  }, 3000);
 }
 
 /**
@@ -1322,22 +1314,16 @@ if (!window._odyEscExpandGuard) {
   // research get re-appended on each open). Result: opening compare AFTER
   // cookbook can render compare UNDER it. Bumping the z-index on every
   // open guarantees most-recently-opened wins both visually AND for ESC.
-  let _zCounter = 1000;
   const _isVisible = (m) => !m.classList.contains('hidden') && getComputedStyle(m).display !== 'none';
   const _promote = (m) => {
     if (!m?.classList?.contains('modal') || !_isVisible(m)) return;
     // Re-entry guard: setting style.zIndex itself fires the observer that
     // calls us back. Skip if this element is already pinned to the top
     // (matches the current counter) so we don't spin into an infinite loop.
-    const cur = parseInt(getComputedStyle(m).zIndex, 10) || 0;
-    if (cur === _zCounter && cur > topToolWindowZ({ exclude: m })) return;
-    const z = nextToolWindowZ({
-      exclude: m,
-      current: cur,
-      floor: _zCounter,
-    });
-    _zCounter = Math.max(_zCounter, z);
-    if (z !== cur) m.style.setProperty('z-index', String(z), 'important');
+    const cur = parseInt(m.style.zIndex, 10) || 0;
+    const z = nextToolWindowZ({ exclude: m, current: cur, floor: 1000 });
+    if (cur === z) return;
+    m.style.setProperty('z-index', String(z), 'important');
   };
   new MutationObserver((muts) => {
     for (const m of muts) {

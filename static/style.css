@@ -1827,20 +1827,44 @@ body.bg-pattern-sparkles {
     .session-folder { margin: 2px 0; }
     .session-folder-header {
       display: flex; align-items: center; gap: 6px;
-      padding: 4px 8px; cursor: pointer;
-      font-size: 0.88em; font-weight: 600;
-      color: color-mix(in srgb, var(--fg) 55%, transparent);
+      padding: 8px 8px 4px; cursor: pointer;
+      font-size: 10px; font-weight: 700;
+      line-height: 1.2;
+      letter-spacing: 0;
+      text-transform: uppercase;
+      color: color-mix(in srgb, var(--fg) 58%, transparent);
       border-radius: 4px; user-select: none;
       transition: opacity 0.08s, background 0.08s;
     }
     .session-folder-header:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 4%, transparent); }
-    .session-folder-header .folder-count { font-weight: 400; opacity: 0.5; }
+    .session-folder-header::after {
+      content: '';
+      order: 2;
+      flex: 1 1 auto;
+      min-width: 18px;
+      height: 1px;
+      background: color-mix(in srgb, var(--border) 72%, transparent);
+    }
+    .session-folder-header .folder-count { font-size: 10px; font-weight: 700; opacity: 0.5; }
     .session-folder-header.drag-over {
       outline: 2px dashed var(--red); background: color-mix(in srgb, var(--red) 13%, transparent); opacity: 1;
     }
     .session-folder.dragging-folder { opacity: 0.4; }
     .folder-toggle { font-size: 0.7em; width: 10px; text-align: center; }
+    .session-folder-header .folder-toggle,
+    .session-folder-header .folder-name,
+    .session-folder-header .folder-count,
+    .session-folder-header .folder-drag-handle {
+      order: 1;
+    }
     .folder-name { font-weight: inherit; flex: 1; }
+    .session-folder-header .folder-name {
+      flex: 0 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
     .folder-count { font-size: 0.85em; opacity: 0.5; }
     .folder-drag-handle {
       cursor: grab; opacity: 0.3; font-size: 0.8em; padding: 0 2px;
@@ -1848,6 +1872,7 @@ body.bg-pattern-sparkles {
     }
     .session-folder-header:hover .folder-drag-handle { opacity: 0.7; }
     .folder-delete-btn {
+      order: 3;
       background: none; border: none; color: var(--fg); opacity: 0;
       cursor: pointer; font-size: 1.1em; padding: 0 2px; line-height: 1;
       min-height: 0; height: auto;
@@ -2121,7 +2146,7 @@ body.bg-pattern-sparkles {
     .chat-history {
       display:flex;
       flex-direction:column;
-      flex:1;
+      flex:1 1 0;
       overflow-y:auto;
       overflow-x:hidden;
       overscroll-behavior-y: none;
@@ -2133,6 +2158,9 @@ body.bg-pattern-sparkles {
       --chat-max: 800px;
       padding-left: max(0px, calc((100% - var(--chat-max)) / 2));
       padding-right: max(12px, calc((100% - var(--chat-max)) / 2 + 12px));
+    }
+    .chat-history > * {
+      flex-shrink: 0;
     }
     @media (orientation: landscape) and (hover: none),
            (orientation: landscape) and (pointer: coarse) {
@@ -7552,6 +7580,117 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .cmp-form-control {
       padding: 8px; background: var(--bg); color: var(--fg);
       border: 1px solid var(--border); border-radius: 6px; font-size: 0.85em;
+    }
+    .cmp-model-picker {
+      flex: 1 1 auto;
+      min-width: 0;
+      position: relative;
+    }
+    .cmp-model-picker-trigger {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
+      padding: 8px;
+      background: var(--bg);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font: inherit;
+      font-size: 0.85em;
+      line-height: 1.2;
+      cursor: pointer;
+      text-align: left;
+    }
+    .cmp-model-picker-trigger:hover,
+    .cmp-model-picker-trigger[aria-expanded="true"] {
+      border-color: color-mix(in srgb, var(--fg) 35%, var(--border));
+      background: color-mix(in srgb, var(--fg) 5%, var(--bg));
+    }
+    .cmp-model-picker-trigger:focus-visible,
+    .cmp-picker-search:focus-visible,
+    .cmp-picker-close:focus-visible {
+      outline: 2px solid color-mix(in srgb, var(--fg) 55%, transparent);
+      outline-offset: 2px;
+    }
+    .cmp-model-picker-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .cmp-model-picker-chevron {
+      display: inline-flex;
+      flex: 0 0 auto;
+      color: color-mix(in srgb, var(--fg) 62%, transparent);
+    }
+    .cmp-picker-search-row {
+      display: flex;
+      align-items: stretch;
+      gap: 6px;
+      padding: 6px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+    }
+    .cmp-picker-search {
+      flex: 1 1 auto;
+      min-width: 0;
+      padding: 7px 8px;
+      background: var(--bg);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      font: inherit;
+      font-size: 0.84em;
+      outline: none;
+    }
+    .cmp-picker-search:focus {
+      border-color: color-mix(in srgb, var(--fg) 45%, var(--border));
+    }
+    .cmp-picker-close {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 32px;
+      width: 32px;
+      padding: 0;
+      background: var(--bg);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      cursor: pointer;
+      opacity: 0.75;
+    }
+    .cmp-picker-close:hover { opacity: 1; border-color: var(--fg); }
+    .cmp-picker-list {
+      max-height: var(--cmp-picker-list-max-height, 192px);
+      overflow-y: auto;
+      padding: 4px;
+    }
+    .cmp-picker-option {
+      padding: 7px 8px;
+      border-radius: 4px;
+      color: var(--fg);
+      cursor: pointer;
+      font-size: 0.85em;
+      line-height: 1.25;
+      transition: background 0.08s;
+    }
+    .cmp-picker-option:hover {
+      background: color-mix(in srgb, var(--fg) 10%, transparent);
+    }
+    .cmp-picker-option.current,
+    .cmp-picker-option[aria-selected="true"] {
+      background: color-mix(in srgb, var(--fg) 8%, transparent);
+    }
+    .cmp-picker-empty {
+      padding: 8px 10px;
+      color: color-mix(in srgb, var(--fg) 40%, transparent);
+      font-size: 0.82em;
+      font-style: italic;
     }
     .cmp-btn-secondary {
       background: transparent; color: var(--fg); border: 1px solid var(--border);
@@ -15467,6 +15606,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   transition: transform 0.18s ease;
 }
 /* Collapsed: hide the form body and point the caret right. */
+.adm-add-section.collapsed .adm-add-section-body { display: none; }
 .adm-add-section.collapsed .admin-model-form { display: none; }
 .adm-add-section.collapsed .adm-section-caret { transform: rotate(-90deg); }
 .adm-quickstart-section {
@@ -25935,16 +26075,28 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   backdrop-filter: none !important;
 }
 .sort-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   cursor: pointer;
-  padding: 6px 8px 6px 6px !important;
+  padding: 6px 8px !important;
   font-size: 11px !important;
   border-radius: 6px !important;
   border-bottom: none !important;
   white-space: nowrap;
-  transition: background 0.1s;
+  color: color-mix(in srgb, var(--fg) 74%, transparent);
+  transition: background 0.1s, color 0.1s;
 }
 .sort-dropdown-item:hover {
-  background: color-mix(in srgb, var(--accent) 10%, transparent) !important;
+  background: color-mix(in srgb, var(--red) 10%, transparent) !important;
+  color: var(--fg);
+}
+.sort-dropdown .sort-option.active {
+  background: color-mix(in srgb, var(--red) 10%, transparent) !important;
+  color: var(--fg);
+}
+.sort-dropdown .sort-check {
+  flex: 0 0 auto;
 }
 .sort-dropdown-sep {
   border-top: 1px solid var(--border);
@@ -39409,6 +39561,32 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 
 /* ── Calendar ── */
 .cal-modal-content { width:min(680px, 94vw); max-height:88vh; overflow-x:hidden; }
+/* Keep Calendar as a movable window on narrow desktop and touch landscape.
+   Portrait phones still use the shared full-height bottom sheet rules. */
+@media (max-width: 768px) and (hover: hover),
+       (max-width: 768px) and (pointer: fine),
+       (max-width: 768px) and (orientation: landscape) {
+  #calendar-modal:not(.modal-full-expanded):not(.modal-left-docked):not(.modal-right-docked) {
+    align-items: center !important;
+    justify-content: center !important;
+    background: none !important;
+    height: 100% !important;
+    padding: 0 !important;
+    pointer-events: none !important;
+  }
+  #calendar-modal:not(.modal-full-expanded):not(.modal-left-docked):not(.modal-right-docked) .cal-modal-content {
+    width: min(680px, 94vw) !important;
+    max-height: 88vh !important;
+    height: auto !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 10px !important;
+    padding: 10px !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.45) !important;
+    pointer-events: auto !important;
+  }
+}
 /* Was overflow-y:auto with grid + day-detail flowing naturally. Now uses a
    true splitter layout: the body is a flex column that doesn't scroll
    itself; the grid takes the remaining space and scrolls if needed; the
