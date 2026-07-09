@@ -3211,7 +3211,14 @@ export async function open(opts) {
     restoreFn: () => { _renderRunningTab(); },
   });
   _wireCookbookDrag(modal);
-  await _syncFromServer();
+  try {
+    await Promise.race([
+      _syncFromServer(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('cookbook sync timeout')), 20000)),
+    ]);
+  } catch (e) {
+    console.warn('[cookbook] sync from server failed or timed out; opening with cached state', e);
+  }
   // `_syncFromServer` lives in cookbookRunning.js and populates *its* _envState
   // (a different object reference than this module's), then mirrors the merged
   // state to localStorage. So ALWAYS hydrate our _envState from that mirror —
