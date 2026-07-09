@@ -6,7 +6,7 @@
 
 import uiModule from './ui.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
-import { registerMenuDismiss } from './escMenuStack.js';
+import { registerMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 import { computeProgressSignal } from './cookbookProgressSignal.js';
 import { portOf, nextFreePort } from './cookbookPorts.js';
 
@@ -2014,6 +2014,8 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
 // ── Render Running tab ──
 
 export function _renderRunningTab() {
+  document.querySelectorAll('.cookbook-task-dropdown').forEach((el) => dismissOrRemove(el));
+
   // Auto-clear the sidebar notif (the bright-icon highlight) when no tasks
   // are actively running or errored. _showCookbookNotif fires on each task
   // event but the matching clear only ran on modal-open, so the highlight
@@ -2800,13 +2802,13 @@ export function _renderRunningTab() {
           _unreg(); _unreg = () => {};
           dropdown.remove();
           menuBtn.classList.remove('cookbook-menu-active');
-          document.removeEventListener('click', closeHandler);
+          document.removeEventListener('click', closeHandler, true);
           window.removeEventListener('scroll', scrollClose, true);
           window.visualViewport?.removeEventListener('scroll', scrollClose);
         };
         dropdown._dismiss = _cleanup;
         setTimeout(() => {
-          document.addEventListener('click', closeHandler);
+          document.addEventListener('click', closeHandler, true);
           window.addEventListener('scroll', scrollClose, true);
           window.visualViewport?.addEventListener('scroll', scrollClose);
         }, 0);
