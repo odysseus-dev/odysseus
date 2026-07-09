@@ -268,7 +268,8 @@ _DOMAIN_RULES = {
     "documents": """\
 ## Document rules
 - For long code/content (>15 lines), use `create_document` instead of pasting into chat.
-- If an active document is open, "fix this", "add X", "change Y", etc. usually refers to that document.
+- If the user asks to modify a workspace/disk file (path, repo file, "in this project"), use `edit_file`/`write_file` — NOT `edit_document`/`create_document`.
+- If an active document is open, "fix this", "add X", "change Y", etc. usually refers to that document unless a workspace path is specified.
 - Use `edit_document` for targeted changes. Use `update_document` only for genuine full rewrites.
 - For feedback/review/suggestions on an open document, use `suggest_document`.""",
     "email": """\
@@ -2857,6 +2858,27 @@ async def stream_agent_loop(
         if "ui" in (_intent.get("domains") or set()):
             _relevant_tools.add("ui_control")
 
+    if not guide_only and workspace and _relevant_tools is not None:
+        from src.tool_security import PLAN_MODE_READONLY_TOOLS
+        import re as _re
+
+        _workspace_read_tools = _DOMAIN_TOOL_MAP["files"] & PLAN_MODE_READONLY_TOOLS
+        _workspace_write_intent = bool(
+            _re.search(
+                r"\b(edit|modify|update|rewrite|patch|fix|create|make|write|save|append|replace|add|change|remove|rework)\b"
+                r"[^\n]{0,120}\b(file|files|document|doc|docs|markdown|md|json|yaml|yml|toml|py|ts|js|html|css)\b",
+                str(_retrieval_query or ""),
+                _re.IGNORECASE,
+            )
+        )
+        if not (_relevant_tools & _DOMAIN_TOOL_MAP["files"]):
+            _relevant_tools |= _workspace_read_tools
+            logger.info("[tool-rag] Workspace active with no file tools selected; adding read-only file tools")
+        if _workspace_write_intent:
+            _relevant_tools.update({"edit_file", "write_file"})
+            logger.info("[tool-rag] Workspace file-write intent detected; adding edit_file/write_file tools")
+        _relevant_tools.update({"get_workspace", "read_file", "ask_user"})
+
     # If this turn targets the open document, keep editing tools available
     # regardless of which selection path (RAG, keyword, caller-provided) ran.
     # Do not leak document tools into unrelated turns just because the editor
@@ -3731,7 +3753,20 @@ async def stream_agent_loop(
             tc.get("name") in ("create_document", "update_document")
             for tc in native_tool_calls
         )
-        if not has_doc_tool and session_id and "create_document" not in (disabled_tools or set()):
+        _last_user_l = (_extract_last_user_message(messages) or "").lower()
+        _file_edit_intent = (
+            ("edit_file" in (_relevant_tools or set()) or "write_file" in (_relevant_tools or set()))
+            and any(
+                k in _last_user_l
+                for k in (
+                    "edit", "add", "remove", "rework", "rewrite", "modify", "change", "update",
+                    "fix", "patch", "refactor", "in the file", "in this file", "workspace",
+                    "repo", "repository", "project file", ".py", ".js", ".ts", ".json", ".md",
+                    ".yaml", ".yml",
+                )
+            )
+        )
+        if not has_doc_tool and session_id and "create_document" not in (disabled_tools or set()) and not _file_edit_intent:
             _code_block_re = re.compile(r'```(\w*)\n([\s\S]*?)```')
             for m in _code_block_re.finditer(round_response):
                 lang_tag = m.group(1).lower()
