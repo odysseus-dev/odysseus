@@ -1660,6 +1660,15 @@ export async function loadSessions() {
       targetId = null;
     } else if (hashId && activeSessions.some(s => s.id === hashId)) {
       targetId = hashId;
+    } else if (!hashId) {
+      // Bare root URL (#4452): stay on new-chat; do not restore lastSessionId or
+      // auto-select the most recent session. Keep only an in-flight session id.
+      if (currentSessionId) {
+        targetId = currentSessionId;
+      } else {
+        targetId = null;
+        Storage.remove('lastSessionId');
+      }
     } else if (currentSessionId && activeSessions.some(s => s.id === currentSessionId)) {
       targetId = currentSessionId;
     } else if (currentSessionId) {
