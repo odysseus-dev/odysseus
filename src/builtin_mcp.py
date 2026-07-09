@@ -113,6 +113,13 @@ async def register_builtin_servers(mcp_manager):
     base_dir = get_app_root()
     python = sys.executable
 
+    def _python_mcp_env() -> dict:
+        env = dict(os.environ)
+        existing = env.get("PYTHONPATH", "")
+        parts = [p for p in (base_dir, existing) if p]
+        env["PYTHONPATH"] = os.pathsep.join(parts)
+        return env
+
     async def _connect_python_server(server_id: str, script_path: str, name: str):
         try:
             ok = await mcp_manager.connect_server(
@@ -121,7 +128,7 @@ async def register_builtin_servers(mcp_manager):
                 transport="stdio",
                 command=python,
                 args=[script_path],
-                env={"PYTHONPATH": base_dir},
+                env=_python_mcp_env(),
             )
             if ok:
                 logger.info(f"Built-in MCP server registered: {name}")
