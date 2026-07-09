@@ -393,12 +393,77 @@ def _proxy_catalog_context(endpoint_url: str, model: str) -> Optional[int]:
     return None
 
 
+def _probe_ollama_serving_context(endpoint_url: str, model: str) -> Optional[int]:
+    """Read Ollama /api/show for the configured serving context (#5193).
+
+    Returns a positive window when discoverable. OLLAMA_CONTEXT_LENGTH is not
+    exposed via API; Modelfile ``num_ctx`` and model metadata are used as
+    downward corrections against the static known-models table.
+    """
+    if not is_local_endpoint(endpoint_url):
+        return None
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(endpoint_url or "")
+        host = (parsed.hostname or "").lower()
+        if host not in _LOCAL_HOSTS and not _is_private_ip_literal(host) and not _in_tailscale_range(host):
+            return None
+        port = parsed.port or (11434 if host in _LOCAL_HOSTS else None)
+        if port != 11434 and "11434" not in (endpoint_url or ""):
+            return None
+        root = f"{parsed.scheme or 'http'}://{host}:{port or 11434}"
+        r = httpx.post(f"{root}/api/show", json={"name": model}, timeout=REQUEST_TIMEOUT)
+        if not r.is_success:
+            return None
+        data = r.json() or {}
+        candidates = []
+        for key in ("num_ctx", "context_length"):
+            val = data.get(key)
+            if isinstance(val, (int, float)) and val > 0:
+                candidates.append(int(val))
+        params = data.get("parameters") or ""
+        if isinstance(params, str):
+            for line in params.splitlines():
+                line = line.strip()
+                if line.lower().startswith("num_ctx"):
+                    parts = line.split()
+                    if len(parts) >= 2 and parts[1].isdigit():
+                        candidates.append(int(parts[1]))
+        mi = data.get("model_info") or {}
+        if isinstance(mi, dict):
+            for key in ("context_length", "llama.context_length"):
+                val = mi.get(key)
+                if isinstance(val, (int, float)) and val > 0:
+                    candidates.append(int(val))
+        if not candidates:
+            return None
+        return min(candidates)
+    except Exception as e:
+        logger.debug("Ollama /api/show context probe failed for %s: %s", model, e)
+        return None
+
+
 def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
     """Query the model API for context length. Returns (context_length, known) where
     ``known`` is False only for the bare DEFAULT_CONTEXT fallback."""
     known = _lookup_known(model)
     api_ctx = None
     configured_kind = _configured_endpoint_kind(endpoint_url)
+
+    ollama_serving = _probe_ollama_serving_context(endpoint_url, model)
+    if ollama_serving and known:
+        capped = min(known, ollama_serving)
+        logger.info(
+            "Ollama serving context for %s: %s (known table %s) — using %s",
+            model,
+            ollama_serving,
+            known,
+            capped,
+        )
+        return capped, True
+    if ollama_serving:
+        logger.info("Ollama serving context for %s: %s", model, ollama_serving)
+        return ollama_serving, True
 
     # Large OpenAI-compatible proxies can make /models expensive. If the
     # endpoint is explicitly configured as API/proxy, prefer known context
