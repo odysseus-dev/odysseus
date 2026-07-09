@@ -85,6 +85,18 @@ function _writeCachedModelScan(sig, data) {
   } catch {}
 }
 
+function _invalidateCachedModelScan(sig) {
+  try {
+    const all = JSON.parse(localStorage.getItem(_CACHED_MODELS_SCAN_KEY) || '{}');
+    if (sig) {
+      delete all[sig];
+    } else {
+      for (const k of Object.keys(all)) delete all[k];
+    }
+    localStorage.setItem(_CACHED_MODELS_SCAN_KEY, JSON.stringify(all));
+  } catch {}
+}
+
 function _loadServeFavorites() {
   try {
     const raw = JSON.parse(localStorage.getItem(SERVE_FAVORITES_KEY) || '[]');
@@ -3933,6 +3945,10 @@ function _presetsForModel(presets, repo) {
 // ── Init ──
 
 export function initServe(shared) {
+  document.addEventListener('cookbook:model-cache-invalidate', () => {
+    _invalidateCachedModelScan();
+    try { _fetchCachedModels?.(true); } catch (_) {}
+  });
   _envState = shared._envState;
   _sshCmd = shared._sshCmd;
   _getPort = shared._getPort;

@@ -4184,6 +4184,9 @@ async function _pollBackgroundStatus() {
         if (nextStatus && task.status !== nextStatus) {
           updates.status = nextStatus;
           if (nextStatus === 'done' && task.payload?._dep) completedDeps.push(task);
+          if (nextStatus === 'done' && task.type === 'download' && downloadDone) {
+            document.dispatchEvent(new CustomEvent('cookbook:model-cache-invalidate'));
+          }
         }
         if (serveReady && !task._serveReady) {
           updates._serveReady = true;
