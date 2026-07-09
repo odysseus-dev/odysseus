@@ -5,6 +5,8 @@ import uiModule from './ui.js';
 import markdownModule from './markdown.js';
 import chatRenderer from './chatRenderer.js';
 import spinnerModule from './spinner.js';
+import { shortModel } from './model/models.js';
+import { safeDisplayImageSrc } from './util/safeString.js';
 import { providerLogo } from './providers.js';
 import { PROMPT_TEMPLATES, getUserTemplates } from './presets.js';
 import { sortModelObjects } from './modelSort.js';
@@ -733,7 +735,7 @@ function _createGroupBubble(model, box) {
   wrap.style.position = 'relative';
 
   // Role label — use character name if assigned, otherwise model name
-  const roleLabel = model._groupName || (model.character ? model.character.characterName : chatRenderer.shortModel(model.mid));
+  const roleLabel = model._groupName || (model.character ? model.character.characterName : shortModel(model.mid));
   const roleTs = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   wrap.innerHTML = `<div class="role">${uiModule.esc(roleLabel)} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
   chatRenderer.applyModelColor(wrap.querySelector('.role'), model.mid);
@@ -919,7 +921,7 @@ async function _streamToHolder(modelIdx, sessionId, msg, holderEl, abortCtrl) {
           }
           // Generated image
           else if (json.type === 'generated_image' && json.url) {
-            const safeImageUrl = chatRenderer.safeDisplayImageSrc(json.url);
+            const safeImageUrl = safeDisplayImageSrc(json.url);
             if (safeImageUrl) {
               const img = document.createElement('img');
               img.src = safeImageUrl;

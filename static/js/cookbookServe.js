@@ -7,7 +7,7 @@
 import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
-import { modelColor } from './chatRenderer.js';
+import { modelColor } from './model/models.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 import { openCookbookDependencies } from './cookbook-diagnosis.js';
 import { _hwfitCache } from './cookbook-hwfit.js';
@@ -3998,3 +3998,4 @@ document.addEventListener('click', (e) => {
   const repo = pill.dataset.repo || '';
   if (repo) _openRunningTabForRepo(repo);
 });
+

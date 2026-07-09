@@ -2,7 +2,7 @@
 import Storage from '../storage.js';
 import state from './state.js';
 import { _modelDisplayNames } from './models.js';
-import { getModelCost } from '../chatRenderer.js';
+import { getModelCost } from '../model/pricing.js';
 import uiModule from '../ui.js';
 import { VOTES_STORAGE_KEY, VOTES_MAX } from './icons.js';
 import { showScoreboard } from './scoreboard.js';
@@ -252,3 +252,4 @@ function spawnConfetti(cx, cy, count) {
 }
 
 export { _saveVote, handleVote, buildVoteBar, addFinishBadge, spawnConfetti, registerCompareActions };
+

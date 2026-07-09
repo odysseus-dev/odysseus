@@ -23,6 +23,10 @@ import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handle
 import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composerArrowUpRecall.js';
+import { isSubscriptionEndpoint } from './model/endpoint.js';
+import { modelRouteLabel, replyModelPair, sameModelName, shortModel } from './model/models.js';
+import { getImageCost, getModelCost } from './model/pricing.js';
+import { safeDisplayImageSrc, safeToolScreenshotSrc } from './util/safeString.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
@@ -102,10 +106,6 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   let _autoContinuePending = false; // marks the next submit as an auto-continue (don't reset the counter)
   const _AUTO_NUDGE_CAP = 3;
 
-  // shortModel and modelColor are now in chatRenderer.js
-  var _shortModel = chatRenderer.shortModel;
-  var _modelRouteLabel = chatRenderer.modelRouteLabel;
-  var _sameModelName = chatRenderer.sameModelName;
   var _applyModelColor = chatRenderer.applyModelColor;
   function _setRoleModelLabel(roleEl, requestedModel, actualModel, opts) {
     if (!roleEl) return;
@@ -113,12 +113,12 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     const tsSpan = roleEl.querySelector('.role-timestamp');
     const req = requestedModel || actualModel || '';
     const actual = actualModel || requestedModel || '';
-    let label = _modelRouteLabel(req, actual);
+    let label = modelRouteLabel(req, actual);
     if (opts.suffix) label += ' (' + opts.suffix + ')';
     if (opts.characterName) label = opts.characterName;
     roleEl.textContent = label + ' ';
     _applyModelColor(roleEl, actual || req);
-    if (req && actual && !_sameModelName(req, actual)) {
+    if (req && actual && !sameModelName(req, actual)) {
       roleEl.title = req + ' -> ' + actual + (opts.reason ? ': ' + opts.reason : '');
     } else if (!opts.reason) {
       roleEl.removeAttribute('title');
@@ -285,8 +285,6 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
   // Model/image pricing, _buildImageBubble now in chatRenderer.js
   var _buildImageBubble = chatRenderer.buildImageBubble;
-  var getModelCost = chatRenderer.getModelCost;
-  var getImageCost = chatRenderer.getImageCost;
 
   // stripToolBlocks and roleTimestamp now in chatRenderer.js
   var stripToolBlocks = chatRenderer.stripToolBlocks;
@@ -420,7 +418,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       if (window._updateSendBtnIcon) {
         setTimeout(window._updateSendBtnIcon, 50);
       } else {
-        var icons = window._odysseusBtnIcons;
+        var icons = window._odysseusBtnIcons;// already declared above (non-breaking)
         submitBtn.innerHTML = icons ? icons.send : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
         submitBtn.title = 'Send message';
         submitBtn.classList.remove('mic-mode', 'newchat-mode');
@@ -584,7 +582,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       clearTimeout(window._researchTimeoutTimer);
       window._researchTimeoutTimer = null;
     }
-    // Get current session
+    // Get current session (note: these two vars go UNUSED)
     const sessionId = sessionModule.getCurrentSessionId();
     const session = sessionModule.getSessions().find(s => s.id === sessionId);
     
@@ -867,7 +865,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
 
     const messageInput = el('message');
-    const originalBtnText = submitBtn ? submitBtn.innerHTML : '';
+    const originalBtnText = submitBtn ? submitBtn.innerHTML : '';// note: UNUSED
 
     // Re-enable the textarea now that we've handed off to the stream: the
     // user wants to compose the next message while the AI is still talking.
@@ -1278,7 +1276,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       
       const modelName = sessionModule.getCurrentModel() || null;
 
-      let loadingText = 'Initializing...';
+      let loadingText = 'Initializing...';//note: UNUSED despite being set below
 
       if (el('web-toggle').checked && !_isAgent) {
         const _searchLabel = searchModule ? searchModule.getProviderLabel() : 'web';
@@ -1292,7 +1290,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         loadingText = 'Processing request...';
       }
 
-      var roleLabel = _modelRouteLabel(modelName, modelName);
+      var roleLabel = modelRouteLabel(modelName, modelName);
       var _charNameInit = presetsModule.getCharacterName ? presetsModule.getCharacterName() : '';
       if (_charNameInit) roleLabel = _charNameInit;
       const roleTs = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
@@ -1461,7 +1459,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         const metaS = sessionModule.getSessions().find(s => s.id === streamSessionId);
         const requested = holder?._requestedModel || metaS?.model || modelName;
         const actual = holder?._actualModel || requested;
-        newRole.textContent = _modelRouteLabel(requested, actual) || '';
+        newRole.textContent = modelRouteLabel(requested, actual) || '';
         _applyModelColor(newRole, actual);
         newWrap.appendChild(newRole);
         const newBody = document.createElement('div');
@@ -2292,8 +2290,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 // it visible so a misconfigured provider is never silently
                 // masked under the selected model's name.
                 if (!_isBg) {
-                  var _selM = _shortModel(json.selected_model || '');
-                  var _ansM = _shortModel(json.answered_by || '');
+                  var _selM = shortModel(json.selected_model || '');
+                  var _ansM = shortModel(json.answered_by || '');
                   uiModule.showToast('⚠ ' + _selM + ' failed — answered by ' + _ansM, 6000);
                   if (holder) {
                     var _rEl = holder.querySelector('.role');
@@ -2305,7 +2303,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                       _applyModelColor(_rEl, json.answered_by);
                       if (_tsS) _rEl.appendChild(_tsS);
                       holder._requestedModel = json.selected_model || holder._requestedModel || modelName;
-                      const _hasResolvedActual = holder._actualModel && !_sameModelName(holder._actualModel, holder._requestedModel);
+                      const _hasResolvedActual = holder._actualModel && !sameModelName(holder._actualModel, holder._requestedModel);
                       holder._actualModel = _hasResolvedActual ? holder._actualModel : (json.answered_by || holder._actualModel || holder._requestedModel);
                       _setRoleModelLabel(_rEl, holder._requestedModel, holder._actualModel, {
                         suffix: holder._roleSuffix,
@@ -2676,7 +2674,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 if (json.screenshot && currentToolBubble) {
                   const contentEl = currentToolBubble.querySelector('.agent-thread-content');
                   if (contentEl) {
-                    const screenshotSrc = chatRenderer.safeToolScreenshotSrc(json.screenshot);
+                    const screenshotSrc = safeToolScreenshotSrc(json.screenshot);
                     if (screenshotSrc) {
                       const details = document.createElement('details');
                       details.className = 'agent-tool-output';
@@ -2796,7 +2794,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 // Agent wrote back to the plan (ticked a step / revised). Update
                 // the stored plan + live-refresh the docked plan window.
                 const _pu = (json.data && json.data.plan) ? json.data.plan : '';
-                if (_pu) _setStoredPlan(_pu);
+                if (_pu) _setStoredPlan(_pu);// note: error - undeclared
 
               } else if (json.type === 'agent_step') {
                 if (_isBg) continue;
@@ -2823,7 +2821,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 const metaS = sessionModule.getSessions().find(s => s.id === streamSessionId);
                 const _roundRequested = holder?._requestedModel || metaS?.model;
                 const _roundActual = holder?._actualModel || _roundRequested;
-                newRole.textContent = _modelRouteLabel(_roundRequested, _roundActual) || '';
+                newRole.textContent = modelRouteLabel(_roundRequested, _roundActual) || '';
                 _applyModelColor(newRole, _roundActual);
                 newWrap.appendChild(newRole);
                 const newBody = document.createElement('div');
@@ -3231,13 +3229,15 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         }
       } else {
         // Stop streaming TTS on any error/abort
+        // note - error: streamingTTS is undefined (try block), so window.aiTTSManager.stop() will NEVER be called
         if (streamingTTS && window.aiTTSManager) window.aiTTSManager.stop();
 
         if (currentAbort && currentAbort.signal.aborted) {
           const abortReason = currentAbort._reason || '';
           // Timeout-triggered aborts should remain visible instead of disappearing.
           if (timedOut || abortReason === 'timeout') {
-            const timeoutMsg = _isAgent
+            // note - error: _isAgent is undefined (try block), so msg will ALWAYS be "Response timed out. Try again."
+            const timeoutMsg = _isAgent 
               ? 'Agent response timed out. Try again, switch to a faster model, or reduce tool usage.'
               : 'Response timed out. Try again.';
 
@@ -3781,7 +3781,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     const holder = document.createElement('div');
     holder.className = 'msg msg-ai';
     const meta = sessionModule.getSessions().find(s => s.id === sessionId);
-    const roleLabel = _shortModel(meta && meta.model);
+    const roleLabel = shortModel(meta && meta.model);
     const roleTs = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     holder.innerHTML = '<div class="role">' + uiModule.esc(roleLabel) +
       ' <span class="role-timestamp">' + roleTs + '</span></div>' +
@@ -3948,7 +3948,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       var holder = document.createElement('div');
       holder.className = 'msg msg-ai';
       var meta = sessionModule.getSessions().find(function(s) { return s.id === sessionId; });
-      var roleLabel = _shortModel(meta && meta.model);
+      var roleLabel = shortModel(meta && meta.model);
       var roleTs = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
       holder.innerHTML = '<div class="role">' + uiModule.esc(roleLabel) + ' <span class="role-timestamp">' + roleTs + '</span></div><div class="body"></div>';
       _applyModelColor(holder.querySelector('.role'), meta && meta.model);
@@ -4725,7 +4725,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
               var _role = document.createElement('div');
               _role.className = 'role';
               var _meta = sessionModule.getSessions().find(function(s) { return s.id === sessionId; });
-              _role.textContent = _shortModel(_meta?.model);
+              _role.textContent = shortModel(_meta?.model);
               _applyModelColor(_role, _meta?.model);
               _role.appendChild(chatRenderer.roleTimestamp());
               var _body = document.createElement('div');
@@ -4761,7 +4761,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       holder.dataset.researchSession = sessionId;
       const roleTs = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
       const agentMeta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
-      const agentModelLabel = _shortModel(agentMeta?.model);
+      const agentModelLabel = shortModel(agentMeta?.model);
       holder.innerHTML = `<div class="role">${uiModule.esc(agentModelLabel)} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
       _applyModelColor(holder.querySelector('.role'), agentMeta?.model);
       box.appendChild(holder);
@@ -5412,7 +5412,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     hideWelcomeScreen: chatRenderer.hideWelcomeScreen,
     showWelcomeScreen: chatRenderer.showWelcomeScreen,
     checkPendingResearch,
-    getImageCost: chatRenderer.getImageCost,
+    getImageCost: getImageCost,
     setDisplayOverride,
     setHideUserBubble,
     setPendingContinue,

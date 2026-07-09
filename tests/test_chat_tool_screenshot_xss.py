@@ -1,6 +1,7 @@
 """Regression guards for agent-tool screenshot DOM sinks."""
 
 from pathlib import Path
+from tests.helpers.valid_imports import assert_valid_imports
 
 
 _REPO = Path(__file__).resolve().parent.parent
@@ -13,12 +14,16 @@ def test_live_tool_screenshot_does_not_template_raw_sse_value():
     assert 'img.src = screenshotSrc' in chat
     assert 'details.innerHTML = `<summary>Screenshot</summary><img src="${json.screenshot}"' not in chat
 
-
 def test_restored_tool_screenshot_uses_raster_data_url_whitelist():
     renderer = (_REPO / "static" / "js" / "chatRenderer.js").read_text(encoding="utf-8")
+    safe = (_REPO / "static" / "js" / "util" / "safeString.js").read_text(encoding="utf-8")
 
-    assert "export function safeToolScreenshotSrc(raw)" in renderer
-    assert "(?:png|jpe?g|gif|webp)" in renderer
+    assert_valid_imports(
+        renderer,
+        import_names=["safeToolScreenshotSrc"],
+        module_path="./util/safeString"
+    )
+    assert "(?:png|jpe?g|gif|webp)" in safe
     assert "safeToolScreenshotSrc(ev.screenshot)" in renderer
     assert 'src="${esc(ev.screenshot)}"' not in renderer
 
@@ -38,14 +43,17 @@ def test_generated_image_urls_are_vetted_before_assignment_or_open():
     compare = (_REPO / "static" / "js" / "compare" / "stream.js").read_text(encoding="utf-8")
     group = (_REPO / "static" / "js" / "group.js").read_text(encoding="utf-8")
 
-    assert "export function safeDisplayImageSrc(raw)" in renderer
+    assert_valid_imports(
+        renderer,
+        import_names=["safeDisplayImageSrc"],
+        module_path="./util/safeString"
+    )
     assert "safeDisplayImageSrc(imageUrl)" in renderer
     assert "img.src = safeImageUrl" in renderer
     assert "window.open(safeImageUrl, '_blank', 'noopener,noreferrer')" in renderer
-    assert "safeDisplayImageSrc," in renderer
     assert "safeDisplayImageSrc(json.image_url)" in compare
     assert "img.src = json.image_url" not in compare
-    assert "chatRenderer.safeDisplayImageSrc(json.url)" in group
+    assert "safeDisplayImageSrc(json.url)" in group
     assert "img.src = json.url" not in group
 
 

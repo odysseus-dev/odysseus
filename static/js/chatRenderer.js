@@ -10,45 +10,17 @@ import settingsModule from './settings.js';
 import spinnerModule from './spinner.js';
 import { bindMenuDismiss } from './escMenuStack.js';
 import { matchModelKey } from './model/matchKey.js';
+import { isCostTrackedEndpoint, isLocalEndpoint, isSubscriptionEndpoint } from './model/endpoint.js';
+import { getModelInfo, modelColor, modelRouteLabel, replyModelPair, sameModelName, shortModel } from './model/models.js';
+import { getImageCost, getModelCost } from './model/pricing.js';
+import { formatCompactNumber, toTrimmedString } from './util/format.js';
+import { safeDisplayImageSrc, safeHref, safeToolScreenshotSrc } from './util/safeString.js';
 
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 const REPORT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>';
 const CHAT_ABOUT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
 const COPY_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
 const CHECK_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
-
-/** Sanitize a URL for use in href — only allow http(s) and protocol-relative. */
-function _safeHref(url) {
-  if (!url) return '#';
-  try {
-    var parsed = new URL(url, window.location.origin);
-    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return uiModule.esc(url);
-  } catch(e) { /* invalid URL */ }
-  return '#';
-}
-
-export function safeToolScreenshotSrc(raw) {
-  const src = String(raw || '').trim();
-  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(src)) {
-    return src;
-  }
-  return '';
-}
-
-export function safeDisplayImageSrc(raw) {
-  const src = String(raw || '').trim();
-  if (!src) return '';
-  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(src)) {
-    return src;
-  }
-  try {
-    const parsed = new URL(src, window.location.origin);
-    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-      return parsed.href;
-    }
-  } catch (_) {}
-  return '';
-}
 
 function _makeActionBtn(className, title, text, handler) {
   const btn = document.createElement('button');
@@ -579,86 +551,6 @@ const IMAGE_PRICING = {
   'gpt-image-1-mini': { 'low': { '1024x1024': 0.005, '1024x1536': 0.006, '1536x1024': 0.006 }, 'medium': { '1024x1024': 0.011, '1024x1536': 0.015, '1536x1024': 0.015 }, 'high': { '1024x1024': 0.036, '1024x1536': 0.052, '1536x1024': 0.052 } },
 };
 
-export function shortModel(name) {
-  if (!name) return '...';
-  if (typeof name !== 'string') name = String(name);
-  let short = name.split('/').pop();
-  // Strip .gguf extension
-  short = short.replace(/\.gguf$/i, '');
-  // Strip quantization suffixes (Q4_K_M, Q8_0, etc.) and shard numbers
-  short = short.replace(/-0000\d-of-\d+$/, '');
-  short = short.replace(/[-_](Q\d[_A-Z\d]*|F16|F32|BF16|fp16|fp32)$/i, '');
-  // Truncate if still too long (keep first meaningful part)
-  if (short.length > 25) {
-    // Try to find a natural break point (dash after model size like -35B or -7B)
-    const sizeMatch = short.match(/^(.+?-\d+[BbMm])/);
-    if (sizeMatch) short = sizeMatch[1];
-    else short = short.substring(0, 22) + '…';
-  }
-  return short;
-}
-
-function modelValue(name) {
-  if (name == null) return '';
-  return String(name).trim();
-}
-
-export function sameModelName(left, right) {
-  const a = modelValue(left);
-  const b = modelValue(right);
-  if (!a || !b) return false;
-  return a.toLowerCase() === b.toLowerCase()
-    || shortModel(a).toLowerCase() === shortModel(b).toLowerCase();
-}
-
-export function modelRouteLabel(requestedModel, actualModel) {
-  const requested = modelValue(requestedModel);
-  const actual = modelValue(actualModel) || requested;
-  if (!requested || sameModelName(requested, actual)) return shortModel(actual || requested);
-  return shortModel(requested) + ' -> ' + shortModel(actual);
-}
-
-export function replyModelPair(modelName, metadata) {
-  const meta = metadata || {};
-  const actualFromMeta = modelValue(meta.model || meta.actual_model);
-  const requestedFromMeta = modelValue(meta.requested_model || meta.selected_model);
-  if (actualFromMeta || requestedFromMeta) {
-    const actual = actualFromMeta || requestedFromMeta || modelValue(modelName);
-    const requested = requestedFromMeta || actual;
-    return { requestedModel: requested, actualModel: actual };
-  }
-  const fallback = modelValue(modelName);
-  return { requestedModel: fallback, actualModel: fallback };
-}
-
-/**
- * Generate a consistent HSL color for a model name.
- * Returns an hsl() string. The hue is derived from a string hash,
- * saturation and lightness are fixed for readability on dark/light themes.
- */
-export function modelColor(name) {
-  if (!name) return null;
-  const key = name.toLowerCase();
-  let hash = 0;
-  for (let i = 0; i < key.length; i++) {
-    hash = ((hash << 5) - hash + key.charCodeAt(i)) | 0;
-  }
-  const hue = ((hash % 360) + 360) % 360;
-  return `hsl(${hue}, 55%, 65%)`;
-}
-
-/** Look up model info (pricing + context) by substring match */
-export function getModelInfo(modelName) {
-  if (!modelName) return null;
-  const key = matchModelKey(modelName, Object.keys(MODEL_INFO));
-  return key ? { key, ...MODEL_INFO[key] } : null;
-}
-
-function _fmtCtx(n) {
-  if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
-  return Math.round(n / 1000) + 'K';
-}
-
 /**
  * Apply model color to a role element (sets color + dot color).
  */
@@ -707,11 +599,11 @@ export function applyModelColor(roleEl, modelName) {
       // Show static context initially, then fetch real from server
       const _realCtx = window._realContextLengths && window._realContextLengths[modelName];
       if (_realCtx) {
-        html += '<div><span class="ctx-label">Context</span> ' + _fmtCtx(_realCtx) + ' tokens';
-        if (info && info.ctx && info.ctx !== _realCtx) html += ' <span style="opacity:0.35">(spec: ' + _fmtCtx(info.ctx) + ')</span>';
+        html += '<div><span class="ctx-label">Context</span> ' + formatCompactNumber(_realCtx) + ' tokens';
+        if (info && info.ctx && info.ctx !== _realCtx) html += ' <span style="opacity:0.35">(spec: ' + formatCompactNumber(info.ctx) + ')</span>';
         html += '</div>';
       } else if (info && info.ctx) {
-        html += '<div><span class="ctx-label">Context</span> <span id="_ctx-val">' + _fmtCtx(info.ctx) + ' tokens</span></div>';
+        html += '<div><span class="ctx-label">Context</span> <span id="_ctx-val">' + formatCompactNumber(info.ctx) + ' tokens</span></div>';
       }
       // Fetch real context from server async
       if (!_realCtx && window.sessionModule) {
@@ -723,9 +615,9 @@ export function applyModelColor(roleEl, modelName) {
               window._realContextLengths[modelName] = d.context_length;
               const el = document.getElementById('_ctx-val');
               if (el) {
-                el.innerHTML = _fmtCtx(d.context_length) + ' tokens';
+                el.innerHTML = formatCompactNumber(d.context_length) + ' tokens';
                 if (info && info.ctx && info.ctx !== d.context_length) {
-                  el.innerHTML += ' <span style="opacity:0.35">(spec: ' + _fmtCtx(info.ctx) + ')</span>';
+                  el.innerHTML += ' <span style="opacity:0.35">(spec: ' + formatCompactNumber(info.ctx) + ')</span>';
                 }
               }
             }
@@ -759,64 +651,9 @@ export function applyModelColor(roleEl, modelName) {
   }
 }
 
-export function getModelCost(modelName, inputTokens, outputTokens) {
-  if (!modelName) return null;
-  const key = matchModelKey(modelName, Object.keys(MODEL_PRICING));
-  if (!key) return null;
-  const price = MODEL_PRICING[key];
-  return (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
-}
-
-/**
- * Is this endpoint a local / self-hosted model server (vLLM, Ollama, …)?
- * Local models are free, so we must NOT bill them at cloud rates — the
- * pricing table matches on a name substring, so a local `qwen2.5-coder`
- * would otherwise be charged like cloud `qwen2.5`. When the serving host is
- * loopback, a private LAN range, Tailscale CGNAT (100.64–100.127.x), a
- * `.local` name, or the app's own host, the model is local → free.
- * Unknown / missing endpoint also counts as local (bias to not over-bill).
- */
-export function isLocalEndpoint(url) {
-  if (!url) return true;
-  let host;
-  try { host = new URL(url).hostname; } catch (_e) { return true; }
-  if (!host) return true;
-  if (host === 'localhost' || host === '0.0.0.0' || host === 'host.docker.internal' || host.endsWith('.local')) return true;
-  if (typeof window !== 'undefined' && window.location && host === window.location.hostname) return true;
-  // A single-label hostname (no dot) is an internal/Docker service name
-  // (e.g. "nim-nano", "llamaswap", "nemotron-super-49b") or a LAN shortname —
-  // never a public API, which always needs an FQDN. Treat as local → free.
-  // (Without this, container-name endpoints get billed at cloud rates because
-  // the pricing table matches on a name substring, e.g. "nemotron".)
-  if (!host.includes('.')) return true;
-  if (/^127\./.test(host)) return true;
-  if (/^10\./.test(host)) return true;
-  if (/^192\.168\./.test(host)) return true;
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
-  const cg = host.match(/^100\.(\d+)\./);            // Tailscale CGNAT
-  if (cg && +cg[1] >= 64 && +cg[1] <= 127) return true;
-  return false;
-}
-
-export function isSubscriptionEndpoint(url) {
-  if (!url) return false;
-  try {
-    const parsed = new URL(url);
-    const path = parsed.pathname.replace(/\/+$/, '');
-    return parsed.hostname === 'chatgpt.com'
-      && (path === '/backend-api/codex' || path.startsWith('/backend-api/codex/'));
-  } catch (_e) {
-    return false;
-  }
-}
-
 function _currentEndpointUrl() {
   return (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
     ? window.sessionModule.getCurrentEndpointUrl() : null;
-}
-
-export function isCostTrackedEndpoint(url) {
-  return !isLocalEndpoint(url) && !isSubscriptionEndpoint(url);
 }
 
 /** Cost for the current turn, returning null for non-billable endpoints. */
@@ -824,18 +661,6 @@ function _billableCost(model, inputTokens, outputTokens) {
   const url = _currentEndpointUrl();
   if (!isCostTrackedEndpoint(url)) return null;
   return getModelCost(model, inputTokens, outputTokens);
-}
-
-export function getImageCost(model, quality, size) {
-  if (!model) return null;
-  const m = model.toLowerCase();
-  for (const [key, quals] of Object.entries(IMAGE_PRICING)) {
-    if (m.includes(key)) {
-      const q = quals[(quality || 'medium').toLowerCase()] || quals['medium'];
-      return q ? (q[size] || q['1024x1024'] || null) : null;
-    }
-  }
-  return null;
 }
 
 /* ── Session cost helpers ─────────────────────────────────────────── */
@@ -955,7 +780,7 @@ export function buildSourcesBox(sources, type, expanded) {
     var domain = '';
     try { domain = new URL(s.url).hostname.replace('www.', ''); } catch(e) { domain = s.url; }
     var title = esc(s.title || domain || '');
-    var safeUrl = _safeHref(s.url);
+    var safeUrl = safeHref(s.url);
     lines += '<a href="' + safeUrl + '" target="_blank" rel="noopener noreferrer" class="source-link">'
       + '<span class="source-num">' + (i + 1) + '</span>'
       + '<span class="source-title">' + title + '</span>'
@@ -1011,7 +836,7 @@ export function buildFindingsBox(findings, expanded) {
     try { domain = new URL(f.url).hostname.replace('www.', ''); } catch(e) { domain = f.url; }
     var title = esc(f.title || domain || '');
     var summary = esc(f.summary || '');
-    var safeUrl = _safeHref(f.url);
+    var safeUrl = safeHref(f.url);
     lines += '<div class="finding-item">'
       + '<a href="' + safeUrl + '" target="_blank" rel="noopener noreferrer" class="source-link">'
       + '<span class="source-num">' + (i + 1) + '</span>'
@@ -2728,24 +2553,13 @@ export function addMessage(role, content, modelName, metadata) {
 }
 
 const chatRenderer = {
-  shortModel,
-  sameModelName,
-  modelRouteLabel,
-  replyModelPair,
-  modelColor,
   applyModelColor,
-  getModelCost,
-  isCostTrackedEndpoint,
-  isSubscriptionEndpoint,
-  getImageCost,
   getSessionCost,
   resetSessionCost,
   updateSessionCostUI,
   roleTimestamp,
   stripToolBlocks,
   copyMessageText,
-  safeToolScreenshotSrc,
-  safeDisplayImageSrc,
   removeAskUserCards,
   renderAskUserCard,
   buildSourcesBox,
@@ -2762,3 +2576,5 @@ const chatRenderer = {
 };
 
 export default chatRenderer;
+
+

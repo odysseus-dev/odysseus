@@ -1,7 +1,8 @@
 // compare/stream.js — SSE streaming to panes
 import state from './state.js';
 import { addFinishBadge } from './vote.js';
-import { getModelCost, safeDisplayImageSrc } from '../chatRenderer.js';
+import { getModelCost } from '../model/pricing.js';
+import { safeDisplayImageSrc } from '../util/safeString.js';
 import markdownModule from '../markdown.js';
 import spinnerModule from '../spinner.js';
 import uiModule from '../ui.js';
@@ -734,3 +735,4 @@ function _stampGradeBadge(paneIdx, response, expected) {
 }
 
 export { streamToPane, _renderSearchResults, _runSynthForPane, _formatMs, registerStreamActions };
+
