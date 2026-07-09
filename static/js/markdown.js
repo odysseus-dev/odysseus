@@ -586,6 +586,11 @@ export function mdToHtml(src, opts) {
 
   // Autolink bare URLs (http/https). Skips URLs already inside <a> tags
   // (placed by markdown link replacement above) and URLs in backticks.
+  // Loopback URLs are almost always shell probes, not navigation (#4625).
+  s = s.replace(
+    /(^|[\s(<])(https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?[^\s<>"'`\]]*)/gi,
+    '$1$2'
+  );
   s = s.replace(
     /(^|[\s(<])(https?:\/\/[^\s<>"'`\]]+[^\s<>"'`\].,;:!?])/g,
     (match, prefix, url) => `${prefix}${linkHtml(url, url)}`
