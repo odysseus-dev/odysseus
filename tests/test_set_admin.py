@@ -271,6 +271,22 @@ def test_route_last_admin_returns_400():
     assert exc.value.status_code == 400
 
 
+def test_route_ldap_managed_returns_400():
+    from routes.auth_routes import SetAdminRequest
+
+    R = _result_enum()
+    auth, target = _auth_route_endpoint(_ADMIN_ROUTE, "PUT")
+    auth.get_username_for_token.return_value = "admin"
+    auth.is_admin.return_value = True
+    auth.set_admin.return_value = R.LDAP_MANAGED
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(target(username="alice", body=SetAdminRequest(is_admin=False),
+                           request=_fake_auth_request()))
+
+    assert exc.value.status_code == 400
+
+
 def test_route_user_not_found_returns_404():
     from routes.auth_routes import SetAdminRequest
 

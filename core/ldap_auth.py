@@ -7,10 +7,10 @@ optional ldap3 dependency is unavailable.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 import logging
 import os
-from typing import Any, Iterable, List, Optional, Sequence, Set
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,44 @@ class LdapConfig:
         if missing:
             raise LdapConfigError("Missing LDAP setting(s): " + ", ".join(missing))
 
+    @classmethod
+    def from_mapping(
+        cls,
+        settings: Optional[Mapping[str, Any]],
+        *,
+        env_fallback: bool = True,
+    ) -> "LdapConfig":
+        """Build LDAP config from auth.json settings, using env as fallback."""
+        base = cls.from_env() if env_fallback else cls()
+        if not isinstance(settings, Mapping):
+            return base
+        data = {field.name: getattr(base, field.name) for field in fields(cls)}
+        defaults = cls()
+        for name in data:
+            if name not in settings or settings[name] is None:
+                continue
+            value = settings[name]
+            if name in {"enabled", "start_tls"}:
+                data[name] = _coerce_bool(value, bool(data[name]))
+            elif name in {"allowed_groups", "admin_groups"}:
+                data[name] = _split_setting(value)
+            elif name == "connect_timeout":
+                data[name] = _coerce_float(value, float(data[name] or defaults.connect_timeout))
+            elif name == "bind_password":
+                data[name] = str(value)
+            else:
+                text = str(value).strip()
+                if not text and name in {
+                    "user_filter",
+                    "user_name_attribute",
+                    "display_name_attribute",
+                    "email_attribute",
+                    "group_filter",
+                }:
+                    text = str(getattr(defaults, name))
+                data[name] = text
+        return cls(**data)
+
 
 @dataclass(frozen=True)
 class LdapLoginResult:
@@ -86,8 +124,128 @@ class LdapLoginResult:
     is_admin: bool = False
 
 
-def ldap_enabled() -> bool:
-    return LdapConfig.from_env().enabled
+def ldap_enabled(config: Optional[LdapConfig] = None) -> bool:
+    return (config or LdapConfig.from_env()).enabled
+
+
+def sanitize_ldap_settings(
+    settings: Optional[Mapping[str, Any]],
+    existing: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Return auth.json-safe LDAP settings without leaking absent secrets."""
+    current = dict(existing or {}) if isinstance(existing, Mapping) else {}
+    out: Dict[str, Any] = {
+        field.name: current[field.name]
+        for field in fields(LdapConfig)
+        if field.name in current
+    }
+    if not isinstance(settings, Mapping):
+        return out
+
+    defaults = LdapConfig()
+    clear_password = _coerce_bool(settings.get("clear_bind_password"), False)
+    for field in fields(LdapConfig):
+        name = field.name
+        if name not in settings or settings[name] is None:
+            continue
+        value = settings[name]
+        if name in {"enabled", "start_tls"}:
+            out[name] = _coerce_bool(value, bool(getattr(defaults, name)))
+        elif name in {"allowed_groups", "admin_groups"}:
+            out[name] = list(_split_setting(value))
+        elif name == "connect_timeout":
+            out[name] = _coerce_float(value, defaults.connect_timeout)
+        elif name == "bind_password":
+            password = str(value)
+            if clear_password:
+                out[name] = ""
+            elif password:
+                out[name] = password
+        else:
+            text = str(value).strip()
+            if not text and name in {
+                "user_filter",
+                "user_name_attribute",
+                "display_name_attribute",
+                "email_attribute",
+                "group_filter",
+            }:
+                text = str(getattr(defaults, name))
+            out[name] = text
+
+    if clear_password and "bind_password" not in settings:
+        out["bind_password"] = ""
+    return out
+
+
+def public_ldap_settings(config: Optional[LdapConfig] = None) -> Dict[str, Any]:
+    """Return LDAP settings safe to expose to admin UI clients."""
+    config = config or LdapConfig.from_env()
+    data: Dict[str, Any] = {}
+    for field in fields(LdapConfig):
+        value = getattr(config, field.name)
+        if field.name in {"allowed_groups", "admin_groups"}:
+            value = list(value)
+        data[field.name] = value
+    data["bind_password_configured"] = bool(config.bind_password)
+    data["bind_password"] = ""
+    return data
+
+
+def diagnose_ldap(
+    username: str,
+    password: str,
+    config: Optional[LdapConfig] = None,
+) -> Dict[str, Any]:
+    """Run an LDAP login test and return admin-friendly diagnostics."""
+    config = config or LdapConfig.from_env()
+    result: Dict[str, Any] = {
+        "ok": False,
+        "stage": "disabled",
+        "detail": "LDAP is disabled",
+        "host": config.server_uri,
+        "username": "",
+        "user_dn": "",
+        "groups": [],
+        "is_admin": False,
+        "in_allowed_group": False,
+    }
+    if not config.enabled:
+        return result
+    try:
+        config.validate()
+    except LdapConfigError as exc:
+        result.update(stage="configuration", detail=str(exc))
+        return result
+    try:
+        login = authenticate_ldap(username, password, config)
+    except LdapConfigError as exc:
+        result.update(stage="configuration", detail=str(exc))
+        return result
+    except LdapAuthError as exc:
+        result.update(stage="connection", detail=str(exc))
+        return result
+    except Exception as exc:
+        logger.warning("LDAP diagnostic failed: %s", exc)
+        result.update(stage="error", detail=str(exc))
+        return result
+    if login is None:
+        result.update(
+            stage="authentication",
+            detail="Invalid credentials, no unique user match, or LDAP group policy denied access",
+        )
+        return result
+    result.update(
+        ok=True,
+        stage="authenticated",
+        detail="LDAP login succeeded",
+        username=login.username,
+        user_dn=login.user_dn,
+        groups=list(login.groups),
+        is_admin=login.is_admin,
+        in_allowed_group=not config.allowed_groups or group_set_matches(login.groups, config.allowed_groups),
+    )
+    return result
 
 
 def authenticate_ldap(username: str, password: str, config: Optional[LdapConfig] = None) -> Optional[LdapLoginResult]:
@@ -287,22 +445,52 @@ def _env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
     if value is None:
         return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+    return _coerce_bool(value, default)
 
 
 def _env_float(name: str, default: float) -> float:
     value = os.getenv(name)
     if value is None:
         return default
+    return _coerce_float(value, default)
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _coerce_float(value: Any, default: float) -> float:
     try:
         return float(value)
-    except ValueError:
+    except (TypeError, ValueError):
         return default
 
 
 def _split_env(name: str) -> Sequence[str]:
     value = os.getenv(name, "")
-    return tuple(part.strip() for part in value.split(",") if part.strip())
+    return _split_setting(value)
+
+
+def _split_setting(value: Any) -> Sequence[str]:
+    if isinstance(value, (list, tuple, set)):
+        return tuple(str(part).strip() for part in value if str(part or "").strip())
+    text = str(value or "").strip()
+    if not text:
+        return ()
+    if ";" in text or "\n" in text:
+        return tuple(part.strip() for part in text.replace("\n", ";").split(";") if part.strip())
+    if "=" in text:
+        return (text,)
+    return tuple(part.strip() for part in text.split(",") if part.strip())
 
 
 def _ldap3() -> Any:

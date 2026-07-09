@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Request, Response, HTTPException
 from pydantic import BaseModel
-from typing import Optional
+from typing import Any, Dict, Optional
 import asyncio
 import logging
 import os
@@ -80,6 +80,31 @@ class SetAdminRequest(BaseModel):
 
 class SetOpenRegistrationRequest(BaseModel):
     enabled: bool
+
+
+class LdapSettingsRequest(BaseModel):
+    enabled: Optional[bool] = None
+    server_uri: Optional[str] = None
+    bind_dn: Optional[str] = None
+    bind_password: Optional[str] = None
+    clear_bind_password: bool = False
+    user_base_dn: Optional[str] = None
+    user_filter: Optional[str] = None
+    user_name_attribute: Optional[str] = None
+    display_name_attribute: Optional[str] = None
+    email_attribute: Optional[str] = None
+    group_base_dn: Optional[str] = None
+    group_filter: Optional[str] = None
+    allowed_groups: Optional[Any] = None
+    admin_groups: Optional[Any] = None
+    start_tls: Optional[bool] = None
+    connect_timeout: Optional[float] = None
+
+
+class LdapTestLoginRequest(BaseModel):
+    username: str
+    password: str
+    settings: Optional[LdapSettingsRequest] = None
 
 SESSION_COOKIE = "odysseus_session"
 
@@ -283,6 +308,38 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         if not user or not auth_manager.is_admin(user):
             raise HTTPException(403, "Admin only")
         return {"users": auth_manager.list_users()}
+
+    @router.get("/ldap-settings")
+    async def get_ldap_settings(request: Request):
+        user = _get_current_user(request)
+        if not user or not auth_manager.is_admin(user):
+            raise HTTPException(403, "Admin only")
+        return auth_manager.ldap_settings()
+
+    @router.post("/ldap-settings")
+    async def set_ldap_settings(body: LdapSettingsRequest, request: Request):
+        user = _get_current_user(request)
+        if not user or not auth_manager.is_admin(user):
+            raise HTTPException(403, "Admin only")
+        try:
+            return auth_manager.set_ldap_settings(body.model_dump(exclude_none=True))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
+    @router.post("/ldap-settings/test")
+    async def test_ldap_settings(body: LdapTestLoginRequest, request: Request):
+        user = _get_current_user(request)
+        if not user or not auth_manager.is_admin(user):
+            raise HTTPException(403, "Admin only")
+        settings: Optional[Dict[str, Any]] = None
+        if body.settings is not None:
+            settings = body.settings.model_dump(exclude_none=True)
+        return await asyncio.to_thread(
+            auth_manager.ldap_test_login,
+            body.username,
+            body.password,
+            settings,
+        )
 
     @router.post("/users")
     async def admin_create_user(body: CreateUserRequest, request: Request):
@@ -552,6 +609,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(403, "Admin only")
         if result is SetAdminResult.LAST_ADMIN:
             raise HTTPException(400, "Cannot demote the last admin")
+        if result is SetAdminResult.LDAP_MANAGED:
+            raise HTTPException(400, "LDAP group configuration manages this user's admin status")
         target = (username or "").strip().lower()
         return {
             "ok": True,

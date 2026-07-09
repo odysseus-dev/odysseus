@@ -92,6 +92,7 @@ class SetAdminResult(enum.Enum):
     USER_NOT_FOUND = "user_not_found"
     NOT_AUTHORIZED = "not_authorized"   # requester is not an admin
     LAST_ADMIN = "last_admin"           # would remove the last remaining admin
+    LDAP_MANAGED = "ldap_managed"       # LDAP group config owns admin status
 
 
 class AuthManager:
@@ -256,6 +257,65 @@ class AuthManager:
         }
 
     # ------------------------------------------------------------------
+    # LDAP / FreeIPA configuration
+    # ------------------------------------------------------------------
+
+    def _stored_ldap_settings(self) -> Dict[str, Any]:
+        settings = self._config.get("ldap", {})
+        return settings if isinstance(settings, dict) else {}
+
+    def ldap_config(self):
+        from core.ldap_auth import LdapConfig
+
+        return LdapConfig.from_mapping(self._stored_ldap_settings())
+
+    def ldap_settings(self) -> Dict[str, Any]:
+        from core.ldap_auth import public_ldap_settings
+
+        data = public_ldap_settings(self.ldap_config())
+        data["source"] = "auth.json" if self._stored_ldap_settings() else "env"
+        return data
+
+    def set_ldap_settings(self, settings: Dict[str, Any]) -> Dict[str, Any]:
+        from core.ldap_auth import LdapConfig, LdapConfigError, public_ldap_settings, sanitize_ldap_settings
+
+        with self._config_lock:
+            sanitized = sanitize_ldap_settings(settings, self._stored_ldap_settings())
+            config = LdapConfig.from_mapping(sanitized)
+            try:
+                config.validate()
+            except LdapConfigError as exc:
+                raise ValueError(str(exc)) from exc
+            self._config["ldap"] = sanitized
+            self._save()
+        data = public_ldap_settings(config)
+        data["source"] = "auth.json"
+        return data
+
+    def ldap_test_login(
+        self,
+        username: str,
+        password: str,
+        settings: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        from core.ldap_auth import LdapConfig, diagnose_ldap, sanitize_ldap_settings
+
+        effective_settings = (
+            sanitize_ldap_settings(settings, self._stored_ldap_settings())
+            if settings is not None
+            else self._stored_ldap_settings()
+        )
+        config = LdapConfig.from_mapping(effective_settings)
+        return diagnose_ldap(username, password, config)
+
+    def _ldap_admin_groups_configured(self) -> bool:
+        try:
+            return bool(self.ldap_config().admin_groups)
+        except Exception as exc:
+            logger.warning("LDAP admin-group config check failed: %s", exc)
+            return False
+
+    # ------------------------------------------------------------------
     # Account management
     # ------------------------------------------------------------------
 
@@ -378,11 +438,16 @@ class AuthManager:
         return self.users.get(username, {}).get("is_admin", False)
 
     def list_users(self) -> List[Dict[str, Any]]:
+        ldap_admin_groups_configured = self._ldap_admin_groups_configured()
         return [
             {
                 "username": u,
                 "is_admin": d.get("is_admin", False),
                 "auth_source": d.get("auth_source", "local"),
+                "admin_managed_by_ldap": (
+                    str(d.get("auth_source") or "local").strip().lower() == "ldap"
+                    and ldap_admin_groups_configured
+                ),
                 "privileges": self.get_privileges(u),
             }
             for u, d in self.users.items()
@@ -451,6 +516,12 @@ class AuthManager:
             if not self.users.get(requesting_user, {}).get("is_admin"):
                 return SetAdminResult.NOT_AUTHORIZED
             currently_admin = bool(target.get("is_admin"))
+            if (
+                str(target.get("auth_source") or "local").strip().lower() == "ldap"
+                and self._ldap_admin_groups_configured()
+                and currently_admin != is_admin
+            ):
+                return SetAdminResult.LDAP_MANAGED
             if currently_admin == is_admin:
                 return SetAdminResult.OK  # no-op; leave privileges untouched
             if currently_admin and not is_admin:
@@ -609,7 +680,7 @@ class AuthManager:
         try:
             from core.ldap_auth import ldap_enabled
 
-            return bool(ldap_enabled())
+            return bool(ldap_enabled(self.ldap_config()))
         except Exception as exc:
             logger.warning("LDAP availability check failed: %s", exc)
             return False
@@ -629,7 +700,7 @@ class AuthManager:
         try:
             from core.ldap_auth import authenticate_ldap
 
-            result = authenticate_ldap(username, password)
+            result = authenticate_ldap(username, password, self.ldap_config())
         except Exception as exc:
             logger.warning("LDAP login failed for '%s': %s", username, exc)
             return None
