@@ -191,6 +191,8 @@ class ChatHandler:
                         "name": fi.get("name") or fi.get("original_name") or fi["id"],
                         "mime": fi.get("mime", ""),
                         "size": fi.get("size", 0),
+                        "checksum_sha256": fi.get("checksum_sha256") or fi.get("hash"),
+                        "created_at": fi.get("created_at") or fi.get("uploaded_at"),
                         "width": fi.get("width"),
                         "height": fi.get("height"),
                     })

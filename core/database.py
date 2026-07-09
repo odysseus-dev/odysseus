@@ -1904,6 +1904,20 @@ def _migrate_chat_messages_fts():
     conn = None
     try:
         conn = sqlite3.connect(db_path)
+        fts_content_expr_new = (
+            "CASE WHEN instr(COALESCE(new.content, ''), ';base64,') > 0 "
+            "OR instr(COALESCE(new.content, ''), 'data:image/') > 0 "
+            "OR instr(COALESCE(new.content, ''), 'data:audio/') > 0 "
+            "THEN '[inline media omitted from search index]' "
+            "ELSE COALESCE(new.content, '') END"
+        )
+        fts_content_expr_cm = (
+            "CASE WHEN instr(COALESCE(cm.content, ''), ';base64,') > 0 "
+            "OR instr(COALESCE(cm.content, ''), 'data:image/') > 0 "
+            "OR instr(COALESCE(cm.content, ''), 'data:audio/') > 0 "
+            "THEN '[inline media omitted from search index]' "
+            "ELSE COALESCE(cm.content, '') END"
+        )
         try:
             conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS temp._odysseus_fts5_probe USING fts5(content)")
             conn.execute("DROP TABLE IF EXISTS temp._odysseus_fts5_probe")
@@ -1912,7 +1926,7 @@ def _migrate_chat_messages_fts():
             return
 
         conn.executescript(
-            """
+            f"""
             CREATE VIRTUAL TABLE IF NOT EXISTS chat_messages_fts USING fts5(
                 content,
                 message_id UNINDEXED,
@@ -1920,10 +1934,14 @@ def _migrate_chat_messages_fts():
                 role UNINDEXED
             );
 
+            DROP TRIGGER IF EXISTS chat_messages_fts_ai;
+            DROP TRIGGER IF EXISTS chat_messages_fts_ad;
+            DROP TRIGGER IF EXISTS chat_messages_fts_au;
+
             CREATE TRIGGER IF NOT EXISTS chat_messages_fts_ai
             AFTER INSERT ON chat_messages BEGIN
                 INSERT INTO chat_messages_fts(content, message_id, session_id, role)
-                VALUES (COALESCE(new.content, ''), new.id, new.session_id, new.role);
+                VALUES ({fts_content_expr_new}, new.id, new.session_id, new.role);
             END;
 
             CREATE TRIGGER IF NOT EXISTS chat_messages_fts_ad
@@ -1935,14 +1953,14 @@ def _migrate_chat_messages_fts():
             AFTER UPDATE ON chat_messages BEGIN
                 DELETE FROM chat_messages_fts WHERE message_id = old.id;
                 INSERT INTO chat_messages_fts(content, message_id, session_id, role)
-                VALUES (COALESCE(new.content, ''), new.id, new.session_id, new.role);
+                VALUES ({fts_content_expr_new}, new.id, new.session_id, new.role);
             END;
             """
         )
         conn.execute(
-            """
+            f"""
             INSERT INTO chat_messages_fts(content, message_id, session_id, role)
-            SELECT COALESCE(cm.content, ''), cm.id, cm.session_id, cm.role
+            SELECT {fts_content_expr_cm}, cm.id, cm.session_id, cm.role
             FROM chat_messages cm
             WHERE NOT EXISTS (
                 SELECT 1 FROM chat_messages_fts fts
@@ -1950,6 +1968,7 @@ def _migrate_chat_messages_fts():
             )
             """
         )
+        _scrub_legacy_chat_message_fts_media(conn)
         conn.commit()
     except Exception as e:
         logging.getLogger(__name__).warning(f"chat_messages FTS migration failed: {e}")
@@ -1958,6 +1977,37 @@ def _migrate_chat_messages_fts():
             conn.close()
         except Exception:
             pass
+
+
+def _scrub_legacy_chat_message_fts_media(conn) -> None:
+    """Replace already-indexed inline media rows with searchable text only."""
+    try:
+        from src.attachment_refs import search_index_text
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"chat_messages FTS media scrub skipped: {e}")
+        return
+
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, session_id, role, content
+            FROM chat_messages
+            WHERE instr(COALESCE(content, ''), ';base64,') > 0
+               OR instr(COALESCE(content, ''), 'data:image/') > 0
+               OR instr(COALESCE(content, ''), 'data:audio/') > 0
+            """
+        ).fetchall()
+        for message_id, session_id, role, content in rows:
+            conn.execute("DELETE FROM chat_messages_fts WHERE message_id = ?", (message_id,))
+            conn.execute(
+                """
+                INSERT INTO chat_messages_fts(content, message_id, session_id, role)
+                VALUES (?, ?, ?, ?)
+                """,
+                (search_index_text(content), message_id, session_id, role),
+            )
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"chat_messages FTS media scrub failed: {e}")
 
 
 def _migrate_add_email_smtp_security():

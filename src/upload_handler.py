@@ -538,6 +538,10 @@ class UploadHandler:
         resolved.setdefault("name", os.path.basename(path))
         resolved.setdefault("original_name", resolved["name"])
         resolved.setdefault("mime", mimetypes.guess_type(path)[0] or "application/octet-stream")
+        if resolved.get("hash") and not resolved.get("checksum_sha256"):
+            resolved["checksum_sha256"] = resolved["hash"]
+        if resolved.get("uploaded_at") and not resolved.get("created_at"):
+            resolved["created_at"] = resolved["uploaded_at"]
         return resolved
     
     def cleanup_rate_limits(self):
@@ -706,6 +710,9 @@ class UploadHandler:
                         # fresh-insert path below; release the lock first.
                         raise LookupError("upload entry vanished mid-dedupe")
                     existing_file["last_accessed"] = datetime.now().isoformat()
+                    existing_file.setdefault("checksum_sha256", file_hash)
+                    if existing_file.get("uploaded_at"):
+                        existing_file.setdefault("created_at", existing_file["uploaded_at"])
                     current[live_key] = existing_file
                     self._atomic_write_json(uploads_db_path, current)
                 except LookupError:
@@ -721,7 +728,9 @@ class UploadHandler:
                     "size": existing_file["size"],
                     "name": existing_file["original_name"],
                     "hash": file_hash,
+                    "checksum_sha256": existing_file.get("checksum_sha256") or file_hash,
                     "uploaded_at": existing_file["uploaded_at"],
+                    "created_at": existing_file.get("created_at") or existing_file["uploaded_at"],
                     "owner": existing_file.get("owner"),
                     "width": existing_file.get("width"),
                     "height": existing_file.get("height"),
@@ -744,6 +753,7 @@ class UploadHandler:
             raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
         
         # Create file metadata
+        created_at = datetime.now().isoformat()
         file_metadata = {
             "id": file_id,
             "path": file_path,
@@ -751,9 +761,11 @@ class UploadHandler:
             "size": file_size,
             "name": safe_filename,
             "hash": file_hash,
+            "checksum_sha256": file_hash,
             "original_name": original_filename,
-            "uploaded_at": datetime.now().isoformat(),
-            "last_accessed": datetime.now().isoformat(),
+            "uploaded_at": created_at,
+            "created_at": created_at,
+            "last_accessed": created_at,
             "client_ip": client_ip,
             "owner": owner,
         }

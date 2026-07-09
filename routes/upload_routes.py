@@ -172,7 +172,9 @@ def setup_upload_routes(upload_handler):
                     "mime": meta["mime"],
                     "size": meta["size"],
                     "hash": meta["hash"],
+                    "checksum_sha256": meta.get("checksum_sha256") or meta["hash"],
                     "uploaded_at": meta["uploaded_at"],
+                    "created_at": meta.get("created_at") or meta["uploaded_at"],
                     "width": meta.get("width"),
                     "height": meta.get("height"),
                     "is_duplicate": meta.get("is_duplicate", False)
