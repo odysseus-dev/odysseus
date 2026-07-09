@@ -6,7 +6,7 @@
 
 import uiModule from './ui.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
-import { registerMenuDismiss } from './escMenuStack.js';
+import { bindMenuDismiss } from './escMenuStack.js';
 import { computeProgressSignal } from './cookbookProgressSignal.js';
 import { portOf, nextFreePort } from './cookbookPorts.js';
 
@@ -2755,7 +2755,7 @@ export function _renderRunningTab() {
           const ic = _MENU_ICONS[item.action] || '';
           div.innerHTML = `<span style="display:inline-flex;flex-shrink:0;opacity:0.7;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ic}</svg></span><span>${item.label}</span>`;
           div.addEventListener('click', () => {
-            _cleanup();
+            close();
             if (item.custom) { item.custom(); return; }
             el.querySelector('.cookbook-task-action-' + item.action)?.click();
           });
@@ -2786,31 +2786,17 @@ export function _renderRunningTab() {
           dropdown.style.top = top + 'px';
         }
 
-        const closeHandler = (ev) => {
-          if (!dropdown.contains(ev.target) && ev.target !== menuBtn && !menuBtn.contains(ev.target)) {
-            _cleanup();
-          }
-        };
-        // Close on scroll too — once the page scrolls, the dropdown's
-        // fixed position no longer matches the originating ⋮ button, so
-        // it visually drifts. Matches the email kebab behaviour.
-        const scrollClose = () => _cleanup();
-        let _unreg = () => {};
-        const _cleanup = () => {
-          _unreg(); _unreg = () => {};
+        const scrollClose = () => close();
+        const close = bindMenuDismiss(dropdown, () => {
           dropdown.remove();
           menuBtn.classList.remove('cookbook-menu-active');
-          document.removeEventListener('click', closeHandler);
           window.removeEventListener('scroll', scrollClose, true);
           window.visualViewport?.removeEventListener('scroll', scrollClose);
-        };
-        dropdown._dismiss = _cleanup;
-        setTimeout(() => {
-          document.addEventListener('click', closeHandler);
-          window.addEventListener('scroll', scrollClose, true);
-          window.visualViewport?.addEventListener('scroll', scrollClose);
-        }, 0);
-        _unreg = registerMenuDismiss(_cleanup);
+        }, (ev) =>
+          !dropdown.contains(ev.target) && ev.target !== menuBtn && !menuBtn.contains(ev.target)
+        );
+        window.addEventListener('scroll', scrollClose, true);
+        window.visualViewport?.addEventListener('scroll', scrollClose);
       });
     }
 
