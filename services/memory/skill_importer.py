@@ -113,7 +113,7 @@ def parse_skill_source(url: str) -> ResolvedSource:
     if len(bits) < 2:
         raise SkillImportError("Invalid GitHub URL")
     owner, repo = bits[0], bits[1]
-    ref = "main"
+    ref = ""
     path = ""
 
     if len(bits) >= 4 and bits[2] in ("tree", "blob"):
@@ -125,6 +125,41 @@ def parse_skill_source(url: str) -> ResolvedSource:
         raise SkillImportError("GitHub URL must include /tree/<branch>/... or /blob/<branch>/...")
 
     return ResolvedSource(owner=owner, repo=repo, ref=ref, path=path)
+
+
+def _github_default_branch(owner: str, repo: str) -> str:
+    """Resolve the repo default branch via GitHub API (falls back to main)."""
+    api_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo, safe='')}"
+    ok, reason = check_outbound_url(api_url)
+    if not ok:
+        logger.warning("Cannot resolve default branch for %s/%s: %s", owner, repo, reason)
+        return "main"
+    try:
+        with httpx.Client(follow_redirects=True, timeout=15.0) as client:
+            r = client.get(api_url, headers={"Accept": "application/vnd.github+json"})
+            if r.status_code >= 400:
+                logger.warning(
+                    "GitHub default_branch lookup failed for %s/%s (%s)",
+                    owner,
+                    repo,
+                    r.status_code,
+                )
+                return "main"
+            body = r.json()
+            if isinstance(body, dict):
+                branch = (body.get("default_branch") or "").strip()
+                if branch:
+                    return branch
+    except Exception as exc:
+        logger.warning("GitHub default_branch lookup error for %s/%s: %s", owner, repo, exc)
+    return "main"
+
+
+def _ensure_resolved_ref(src: ResolvedSource) -> ResolvedSource:
+    if src.ref:
+        return src
+    ref = _github_default_branch(src.owner, src.repo)
+    return ResolvedSource(owner=src.owner, repo=src.repo, ref=ref, path=src.path)
 
 
 def _raw_url(src: ResolvedSource, rel_path: str) -> str:
@@ -229,7 +264,7 @@ def _list_github_dir(src: ResolvedSource, rel_dir: str, out: Dict[str, str], *, 
 
 def fetch_skill_bundle(url: str) -> Tuple[Dict[str, str], ResolvedSource]:
     """Download SKILL.md and sibling text assets. Returns relative_path → content."""
-    src = parse_skill_source(url)
+    src = _ensure_resolved_ref(parse_skill_source(url))
     files: Dict[str, str] = {}
 
     path = _safe_relpath(src.path) if src.path else ""

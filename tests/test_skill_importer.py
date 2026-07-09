@@ -5,7 +5,9 @@ from services.memory.skill_importer import (
     ResolvedSource,
     SkillImportError,
     _assert_github_url,
+    _ensure_resolved_ref,
     _fetch_bytes,
+    _github_default_branch,
     _list_github_dir,
     parse_skill_source,
 )
@@ -44,6 +46,52 @@ def test_parse_raw_github():
 def test_rejects_non_github():
     with pytest.raises(SkillImportError):
         parse_skill_source("https://example.com/skill.md")
+
+
+def test_parse_repo_root_leaves_ref_empty():
+    src = parse_skill_source("https://github.com/example/legacy-skills")
+    assert src.owner == "example"
+    assert src.repo == "legacy-skills"
+    assert src.ref == ""
+    assert src.path == ""
+
+
+def test_ensure_resolved_ref_uses_default_branch(monkeypatch):
+    monkeypatch.setattr(
+        "services.memory.skill_importer._github_default_branch",
+        lambda owner, repo: "master" if repo == "legacy-skills" else "main",
+    )
+    src = ResolvedSource(owner="example", repo="legacy-skills", ref="", path="")
+    resolved = _ensure_resolved_ref(src)
+    assert resolved.ref == "master"
+
+
+def test_github_default_branch_from_api(monkeypatch):
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"default_branch": "develop"}
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, headers=None):
+            return _Resp()
+
+    monkeypatch.setattr("services.memory.skill_importer.httpx.Client", _Client)
+    monkeypatch.setattr(
+        "services.memory.skill_importer.check_outbound_url",
+        lambda url: (True, ""),
+    )
+    assert _github_default_branch("o", "r") == "develop"
 
 
 def test_fetch_bytes_rejects_cross_host_redirect(monkeypatch):
