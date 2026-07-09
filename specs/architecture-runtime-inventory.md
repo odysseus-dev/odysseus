@@ -1,6 +1,6 @@
 # Architecture Runtime Inventory
 
-Last updated: dev@88191d1 | 2026-07-02
+Last updated: dev@d88c8cb | 2026-07-09
 
 > Purpose: current runtime/module inventory for codebase readability work
 > originally discussed around #4071/#4082. This is a source snapshot, not a
@@ -19,7 +19,9 @@ odysseus/
 ├── conf/                     # Configuration helpers
 ├── core/                     # database, auth, middleware, session helpers
 ├── routes/                   # HTTP routes plus selected domain subpackages
+│   ├── contacts/             # canonical contacts/CardDAV route package
 │   ├── gallery/              # canonical gallery route/helper package
+│   ├── history/              # canonical chat history route package
 │   ├── memory/               # canonical memory route package
 │   └── research/             # canonical research route package
 ├── src/                      # agent/model/runtime services and facades
@@ -38,8 +40,8 @@ odysseus/
 
 | Directory | Flat `.py` Files | Subdirectories | Current Concern |
 |-----------|------------------|----------------|-----------------|
-| `src/` | 97 | `agent_tools/`, `search/`, `tools/` | Still broad, but tool handlers and do_* implementations now have packages. |
-| `routes/` | 54 | `gallery/`, `memory/`, `research/` | Route grouping has started; most domains remain flat top-level route files. |
+| `src/` | 98 | `agent_tools/`, `search/`, `tools/` | Still broad, but tool handlers and do_* implementations now have packages. |
+| `routes/` | 54 | `contacts/`, `gallery/`, `history/`, `memory/`, `research/` | Route grouping has started; most domains remain flat top-level route files. |
 | `core/` | 10 | none | Manageable count, but `database.py` remains oversized and highly imported. |
 
 ## Largest Runtime Modules
@@ -48,16 +50,18 @@ odysseus/
 
 | File | Lines | Notes |
 |------|-------|-------|
-| `routes/email_routes.py` | 4,943 | Largest HTTP domain; route, cache, compose, OAuth, and mutation behavior. |
-| `src/agent_loop.py` | 4,004 | Agent orchestration, tool rounds, prompt/context assembly, recovery. |
-| `routes/cookbook_routes.py` | 3,825 | Cookbook setup/download/serve/state flows. |
+| `routes/email_routes.py` | 5,223 | Largest HTTP domain; route, cache, compose, OAuth, and mutation behavior. |
+| `src/agent_loop.py` | 4,475 | Agent orchestration, tool rounds, prompt/context assembly, recovery. |
+| `routes/cookbook_routes.py` | 4,386 | Cookbook setup/download/serve/state flows. |
 | `src/builtin_actions.py` | 2,776 | Scheduler/background built-in action helpers. |
-| `src/task_scheduler.py` | 2,578 | Task runner, runs, chained/event/webhook execution. |
-| `src/llm_core.py` | 2,561 | Provider payloads, streaming, fallbacks, provider quirks. |
-| `routes/model_routes.py` | 2,507 | Endpoint CRUD, probing, catalog cache, provider auth links. |
+| `src/llm_core.py` | 2,804 | Provider payloads, streaming, fallbacks, provider quirks. |
+| `src/task_scheduler.py` | 2,627 | Task runner, runs, chained/event/webhook execution. |
+| `routes/model_routes.py` | 2,545 | Endpoint CRUD, probing, catalog cache, provider auth links. |
 | `core/database.py` | 2,405 | SQLAlchemy models plus manual SQLite migrations. |
 | `routes/gallery/gallery_routes.py` | 1,966 | Canonical gallery/media route package. |
-| `routes/research/research_routes.py` | 727 | Canonical research route package. |
+| `routes/contacts/contacts_routes.py` | 916 | Canonical contacts/CardDAV route package. |
+| `routes/research/research_routes.py` | 783 | Canonical research route package. |
+| `routes/history/history_routes.py` | 768 | Canonical chat history route package. |
 | `routes/memory/memory_routes.py` | 552 | Canonical memory route package. |
 | `src/tool_implementations.py` | 115 | Compatibility facade over `src/tools/*` and admin tool handlers. |
 
@@ -65,23 +69,23 @@ odysseus/
 
 | File | Lines | Notes |
 |------|-------|-------|
-| `static/style.css` | 39,697 | App-wide CSS remains the largest frontend risk. |
-| `static/js/document.js` | 10,626 | Large document editor/library coordinator. |
-| `static/js/emailLibrary.js` | 7,531 | Email library UI and cache behavior. |
-| `static/js/settings.js` | 5,781 | Settings modal and provider/admin-adjacent wiring. |
-| `static/js/chat.js` | 5,208 | Main chat streaming/UI coordinator. |
-| `static/app.js` | 4,208 | SPA orchestration and compatibility bridges. |
+| `static/style.css` | 40,450 | App-wide CSS remains the largest frontend risk. |
+| `static/js/document.js` | 11,038 | Large document editor/library coordinator. |
+| `static/js/emailLibrary.js` | 7,768 | Email library UI and cache behavior. |
+| `static/js/settings.js` | 5,795 | Settings modal and provider/admin-adjacent wiring. |
+| `static/js/chat.js` | 5,441 | Main chat streaming/UI coordinator. |
+| `static/app.js` | 4,389 | SPA orchestration and compatibility bridges. |
 
 ## Import Dependency Snapshot
 
 | Relationship | Count | Notes |
 |--------------|-------|-------|
-| `core.database` importers | 115 | Highest-risk split target; routes, services, tests, and helpers depend on it. |
+| `core.database` importers | 114 | Highest-risk split target; routes, services, tests, and helpers depend on it. |
 | `src.tool_implementations` importers | 22 | Still a live facade even after the tool split. |
-| `src.agent_loop` importers | 30 | Agent loop is an orchestration hub. |
+| `src.agent_loop` importers | 31 | Agent loop is an orchestration hub. |
 | `src/` import lines referencing `routes` | 36 | Mostly function-local compatibility/runtime coupling. |
-| `routes/` import lines referencing `src` | 379 | Expected route-to-service direction. |
-| `routes/` import lines referencing `core` | 137 | Expected DB/auth/session dependencies. |
+| `routes/` import lines referencing `src` | 383 | Expected route-to-service direction. |
+| `routes/` import lines referencing `core` | 139 | Expected DB/auth/session dependencies. |
 
 Recompute examples:
 
@@ -96,7 +100,7 @@ rg -n '(^| )from routes|(^| )import routes' src --glob '*.py' | wc -l
 
 ## Route Ownership Map
 
-Route modules are still mostly flat, with three landed domain packages:
+Route modules are still mostly flat, with five landed domain packages:
 
 - `routes/gallery/gallery_routes.py` and `routes/gallery/gallery_helpers.py`
   are canonical. `routes/gallery_routes.py` and `routes/gallery_helpers.py`
@@ -106,6 +110,10 @@ Route modules are still mostly flat, with three landed domain packages:
   a compatibility shim.
 - `routes/research/research_routes.py` is canonical. `routes/research_routes.py`
   is a compatibility shim.
+- `routes/history/history_routes.py` is canonical. `routes/history_routes.py`
+  is a compatibility shim.
+- `routes/contacts/contacts_routes.py` is canonical.
+  `routes/contacts_routes.py` is a compatibility shim.
 
 Other major domains remain top-level route modules:
 
@@ -115,7 +123,7 @@ Other major domains remain top-level route modules:
 | Chat / Agent | `chat_routes.py`, `chat_helpers.py`, `shell_routes.py`, `codex_routes.py`, `skills_routes.py` | High: cross-cuts sessions, tools, research, compare, uploads. |
 | Cookbook | `cookbook_routes.py`, `cookbook_helpers.py`, `cookbook_output.py` | Medium-high: code execution, SSH, model serving, state. |
 | Model / LLM | `model_routes.py`, `assistant_routes.py`, `copilot_routes.py`, `chatgpt_subscription_routes.py` | Medium-high: secrets, endpoint ownership, provider auth. |
-| Calendar / Contacts | `calendar_routes.py`, `contacts_routes.py` | Medium: remote sync/writeback and credential handling. |
+| Calendar / Contacts | `calendar_routes.py`, `contacts/contacts_routes.py` plus shim | Medium: remote sync/writeback and credential handling. |
 | Documents | `document_routes.py`, `document_helpers.py`, `personal_routes.py`, `upload_routes.py` | Medium: files, ownership, optional renderers, RAG. |
 | Auth / Admin | `auth_routes.py`, `api_token_routes.py`, `backup_routes.py`, `diagnostics_routes.py`, `admin_wipe_routes.py` | Medium: security-critical but more modular. |
 
@@ -165,7 +173,7 @@ Admin manage tools for endpoints, MCP, webhooks, tokens, and settings live in
 Already-landed structure that should not be treated as future work:
 
 - `src/tool_implementations.py` has already been split behind a facade.
-- Gallery, research, and memory route packages already have canonical subpackage
+- Gallery, research, memory, history, and contacts route packages already have canonical subpackage
   locations plus top-level compatibility shims.
 
 ## Safety Guardrails For Follow-Up Work
@@ -189,4 +197,6 @@ python -c "from src.tool_implementations import do_search_chats; print('tool fac
 python -c "import routes.gallery_routes as g; import routes.gallery.gallery_routes as c; print(g is c)"
 python -c "import routes.memory_routes as m; import routes.memory.memory_routes as c; print(m is c)"
 python -c "import routes.research_routes as r; import routes.research.research_routes as c; print(r is c)"
+python -c "import routes.history_routes as h; import routes.history.history_routes as c; print(h is c)"
+python -c "import routes.contacts_routes as c0; import routes.contacts.contacts_routes as c1; print(c0 is c1)"
 ```

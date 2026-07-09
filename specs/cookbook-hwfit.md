@@ -1,6 +1,6 @@
 # Cookbook And Hardware Fit
 
-Last updated: dev@88191d1 | 2026-07-02
+Last updated: dev@d88c8cb | 2026-07-09
 
 ## Scope
 
@@ -99,7 +99,11 @@ HW Fit is an MIT-licensed llmfit adaptation; attribution lives in project acknow
 
 `services/hwfit/hardware.py` owns hardware detection across NVIDIA, AMD, Apple Silicon, Windows, CPU, RAM, available RAM, remote SSH, container/native probe context, and cached host detections.
 
-`services/hwfit/models.py`, `fit.py`, `profiles.py`, and `image_models.py` own model catalog loading, normalization, memory estimates, quantization labels, fit scoring, serve profile computation, image model ranking, and backend/format servability filtering.
+`services/hwfit/models.py`, `fit.py`, `profiles.py`, `image_models.py`, and
+`hf_discovery.py` own model catalog loading, normalization, API-backed dynamic
+catalog refresh, memory estimates, quantization labels, fit scoring, serve
+profile computation, image model ranking, and backend/format servability
+filtering.
 
 `routes/hwfit_routes.py` owns the HTTP surface and manual hardware override application.
 
@@ -108,6 +112,10 @@ Runtime behavior:
 - hardware detection uses a cache with `fresh=true` bypass;
 - probe results include scope/container visibility metadata, and containerized no-GPU/low-RAM states can return user-facing visibility warnings with rescan/manual/copy-diagnostics actions;
 - manual hardware replacement is a what-if simulator, not additive hardware;
+- manual hardware accepts `cuda`, `rocm`, `metal`, `cpu_x86`, and `cpu_arm`
+  backends and must stay in lock-step with backend support in `fit.py`. Metal
+  simulation marks unified memory and filters toward locally servable GGUF/MLX
+  choices instead of CUDA/vLLM-only formats.
 - ignore switches can drop detected GPU/RAM before ranking;
 - homogeneous GPU grouping targets realistic multi-GPU pools;
 - image model ranking normalizes to a single-GPU fit view;
@@ -139,13 +147,23 @@ Runtime behavior:
 
 ## Model Catalog And Latest Lookup
 
-HW Fit model scoring depends on `services/hwfit/data/hf_models.json`, catalog normalization, and assumptions about model formats and quantization. `scripts/add_hwfit_models.py` updates that catalog.
+HW Fit model scoring depends on bundled `services/hwfit/data/hf_models.json`,
+bundled `services/hwfit/data/mlx_community_models.json`, runtime dynamic caches
+under `DATA_DIR/hwfit/`, catalog normalization, and assumptions about model
+formats and quantization. `scripts/add_hwfit_models.py` updates the static HF
+catalog.
 
-Hugging Face latest lookup uses external Hub metadata and can degrade to empty, unknown-size, or malformed-result behavior. HW Fit tolerates non-numeric `gpu_count` values from callers. Catalog drift and dynamic latest-model metadata are separate sources of recommendation drift.
+Hugging Face latest lookup and HW Fit dynamic refresh use external Hub metadata
+and can degrade to empty, unknown-size, partial, or malformed-result behavior.
+`refresh_catalog=1` refreshes API-backed collection caches for MLX community
+and selected HF organization collections, with a 24-hour freshness guard and
+bundled JSON fallbacks when the network/cache is unavailable. HW Fit tolerates
+non-numeric `gpu_count` values from callers. Catalog drift and dynamic
+latest-model metadata are separate sources of recommendation drift.
 
 ## Security Policy
 
-Admin gates must stay in place for install, serve, kill, setup, state mutation, and shell-like actions. `/api/shell/exec` is an admin primitive used by Cookbook task control and must stay in this review boundary.
+Admin gates must stay in place for install, serve, kill, setup, state mutation, and shell-like actions. `/api/shell/exec` is an admin primitive used by Cookbook task control and must stay in this review boundary. Scheduled `cookbook_serve` tasks are admin-only action tasks; task create/update/manual run/webhook/scheduler execution must all reject or pause them for non-admin owners.
 
 Kill-pid guardrails:
 
@@ -159,7 +177,7 @@ Shell-bound Cookbook inputs must pass helper validation before command construct
 
 ## Testing Coverage
 
-Existing coverage is strongest for helper validation/quoting, SSH host validation, pip fallback and dependency-completion regressions, cached scan scripts, serve profile computation, scheduled serve lifecycle state persistence, hardware detection/ranking across AMD/NVIDIA/macOS/manual/container modes, Docker GPU compose overlays, Cookbook CLI state, package detection, Windows path/task helpers, non-numeric GPU counts, and selected frontend progress regressions.
+Existing coverage is strongest for helper validation/quoting, SSH host validation, pip fallback and dependency-completion regressions, cached scan scripts, serve profile computation, scheduled serve lifecycle state persistence, hardware detection/ranking across AMD/NVIDIA/macOS/manual/container modes, MLX/Metal ranking, manual backend simulation, Docker GPU compose overlays, Cookbook CLI state, package detection, Windows path/task helpers, non-numeric GPU counts, and selected frontend progress regressions.
 
 Route-level auth/security and degraded-return coverage is thinner for Cookbook admin routes, shell dependency routes, `/api/cookbook/hf-latest`, state/status edge cases, HW Fit routes, frontend JS behavior, and helper scripts such as `hf_download.py`, `add_hwfit_models.py`, and `diffusion_server.py`.
 

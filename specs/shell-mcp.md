@@ -1,6 +1,6 @@
 # Shell And MCP
 
-Last updated: dev@88191d1 | 2026-07-02
+Last updated: dev@d88c8cb | 2026-07-09
 
 ## Scope
 
@@ -92,6 +92,13 @@ The optional browser built-in uses `npx -y @playwright/mcp@latest --headless --c
 
 Built-in Python servers can be reconnected once on tool-call failure. User-configured MCP servers return the call failure instead of automatic reconnect.
 
+The built-in email MCP server is owner-aware when an owner is supplied by the
+caller or configured through `ODYSSEUS_MCP_EMAIL_OWNER` /
+`ODYSSEUS_EMAIL_OWNER`; if owner-scoped email accounts exist and no owner is
+available, email MCP fails closed instead of exposing global accounts. Other
+built-in servers remain process-global/admin trust-boundary tools unless their
+own subsystem spec says otherwise.
+
 ## Agent MCP Exposure
 
 `McpManager` owns raw qualified tool calls named `mcp__{server_id}__{tool_name}`. It does not own admin, owner, public-user, or disabled-tool policy; callers must enforce policy before dispatch.
@@ -127,7 +134,10 @@ Per-server disabled MCP tools currently hide tools from prompts/schemas while li
 - Non-admin/public tool policy blocks `bash`, `python`, file tools, `manage_mcp`, and all `mcp__*` tools.
 - MCP stdio server registration is arbitrary host process execution and is admin-only.
 - MCP OAuth key/token file paths supplied through routes are confined under `data/mcp_oauth`; generic Streamable HTTP OAuth token state is encrypted in the database.
-- Built-in MCP servers are process-global local/admin trust-boundary tools; they are not equivalent to owner-scoped HTTP route behavior.
+- Built-in MCP servers are local/admin trust-boundary tools and are not
+  automatically equivalent to owner-scoped HTTP route behavior. Email MCP is
+  the current exception with explicit owner filtering; other built-ins need
+  their own owner policy before being treated as scoped surfaces.
 - MCP output is untrusted tool output. Current MCP text output is not centrally capped before model re-entry.
 
 ## Testing Notes

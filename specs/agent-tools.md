@@ -1,6 +1,6 @@
 # Agent Tools
 
-Last updated: dev@88191d1 | 2026-07-02
+Last updated: dev@d88c8cb | 2026-07-09
 
 ## Scope
 
@@ -32,7 +32,7 @@ This spec covers agent/tool behavior in:
 
 ## Agent Loop
 
-`src.agent_loop` owns agent prompt assembly, request-local current date/time insertion, tool retrieval, prompted tool-block handling, native tool-call consumption after `llm_core` normalizes provider events, multi-round execution, tool result insertion, final metrics, and fallback responses. It requests context from documents, skills, tool retrieval, and messages; it should not own domain-specific business logic for every tool.
+`src.agent_loop` owns agent prompt assembly, request-local current date/time insertion, tool retrieval, prompted tool-block handling, native tool-call consumption after `llm_core` normalizes provider events, multi-round execution, tool result insertion, final metrics, and fallback responses. It requests context from documents, skills, tool retrieval, and messages; it should not own domain-specific business logic for every tool. Its prompt rules now bias structured/long-form writing toward living documents, route active compose/email drafts back into existing email documents, and prefer first-class `web_search`/`web_fetch` tools over shell/Python/curl for current web lookups when web tools are enabled.
 
 `src.llm_core` owns provider payloads, native tool-schema emission, and provider stream parsing. `agent_loop` consumes normalized tool-call events and decides whether and how to execute them.
 
@@ -71,7 +71,15 @@ Tool retrieval has domain-specific hooks beyond generic similarity: contact quer
 
 Interaction/session/model helper tools are native first-class tools, not prompt-only conventions. `ask_user` and `update_plan` live in `src.agent_tools.interaction_tools`, model delegation/listing helpers live in `model_interaction_tools`, session creation/list/send/manage helpers live in `session_tools`, and `manage_bg_jobs` lives in `bg_job_tools`.
 
-Prompted-tool parsing includes a narrow recovery path for local models that mention a web tool and then emit a bare JSON object. Executed raw web JSON is stripped from assistant text afterward; this is not a general-purpose JSON-command parser.
+Prompted-tool parsing includes recovery paths for local/provider text leaks:
+bare JSON after a web-tool mention, OpenAI-style raw
+`{"function": ...}` payloads, StepFun/Gemma/DSML markup, and
+`<function_model><function_call>...</function_call><parameters>...</parameters></function_model>`
+wrappers from local MLX/Exo models. Non-dict JSON arguments are rejected back to
+empty args instead of crashing the turn, common `tex` typos normalize to
+`text`, and delimiter scans are forward-only so unterminated tool markup cannot
+drive quadratic regex rescans. Executed raw tool JSON is stripped from assistant
+text afterward; this is still not a general-purpose JSON-command parser.
 
 Current call sites include:
 
@@ -115,13 +123,14 @@ MCP prompt/schema rendering includes server-provided input schemas, but names, t
 
 ## Intent And Recovery Helpers
 
-`src.action_intents` owns deterministic chat-to-agent promotion hints and returns a category/reason so route logs can explain auto-escalation decisions. Explicit web-search language is category `web`; a latest-turn explicit web intent can override a stale `allow_web_search=false` UI setting for that turn. It must avoid promoting explanatory questions into agent mode. `src.builtin_actions` owns scheduler/background actions outside the normal live agent loop. `src.teacher_escalation` owns recovery/escalation and skill-creation flows. `src.goal_based_extractor` is research-adjacent and should stay cross-referenced from research behavior rather than treated as ordinary tool execution.
+`src.action_intents` owns deterministic chat-to-agent promotion hints and returns a category/reason so route logs can explain auto-escalation decisions. Explicit web-search language is category `web`; it can promote the turn into agent mode and narrow tools toward web search/fetch, but route policy requires explicit web-search enablement and honors explicit denial. It must avoid promoting explanatory questions into agent mode. `src.builtin_actions` owns scheduler/background actions outside the normal live agent loop. `src.teacher_escalation` owns recovery/escalation and skill-creation flows. `src.goal_based_extractor` is research-adjacent and should stay cross-referenced from research behavior rather than treated as ordinary tool execution.
 
 When an email reader is active, browser chat passes active email metadata and the agent loop injects it as protected, untrusted context so default reply/draft behavior targets the selected message. Active email compose documents are handled as existing email drafts rather than generic new-document requests.
 
 ## Degraded Behavior
 
-- ToolIndex can degrade to keyword selection when embeddings, Chroma, or index warmup fail.
+- ToolIndex can degrade to keyword selection when embeddings, Chroma, index
+  warmup, or vector retrieval timeouts fail.
 - Agent mode can degrade from native function schemas to prompted fenced-block parsing based on provider/tool-support heuristics. Local Ollama `/v1` and native `/api` endpoints default to text tools unless the endpoint explicitly advertises `supports_tools`; `gpt-oss` remains text-tool by default unless the endpoint opts in.
 - MCP startup failure is non-critical; route/status surfaces expose per-server errors.
 - `ODYSSEUS_DISABLE_MCP`, missing `mcp`, uncached browser MCP packages, and per-server disabled tools can remove tools without blocking the app.

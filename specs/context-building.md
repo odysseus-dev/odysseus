@@ -1,6 +1,6 @@
 # Context Building
 
-Last updated: dev@88191d1 | 2026-07-02
+Last updated: dev@d88c8cb | 2026-07-09
 
 ## Scope
 
@@ -54,7 +54,7 @@ Current untrusted context sources include:
 
 Chat URL prefetch and agent `web_fetch` are different paths. Chat prefetch happens before the model call; `web_fetch` is a tool the model may choose later. Both should converge on the same intent: enrich context when content is available, represent unavailable content when it is not, and let the model interpret the user request.
 
-Search results and fetched pages are evidence. `web_search` should not force a page fetch unless its explicit contract says it does. Failed fetches should not crash chat or silently imply content was read. Canonical search content fetchers can extract readable text from HTML, `text/*`, Markdown, `.txt`, `.json`, and `.jsonl` responses and should return shaped error results for HTTP status failures.
+Search results and fetched pages are evidence. `web_search` should not force a page fetch unless its explicit contract says it does. Failed fetches should not crash chat or silently imply content was read. Canonical search content fetchers can extract readable text from HTML, `text/*`, Markdown, `.txt`, `.json`, and `.jsonl` responses and should return shaped error results for HTTP status failures. URL fetches validate every redirect hop and pin the outbound connection to a public IP resolved during validation, so context-building callers do not need a second DNS-rebinding guard.
 
 Current behavior is not yet unified:
 

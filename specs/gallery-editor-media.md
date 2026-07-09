@@ -1,6 +1,6 @@
 # Gallery, Editor, And Media
 
-Last updated: dev@88191d1 | 2026-07-02
+Last updated: dev@d88c8cb | 2026-07-09
 
 ## Scope
 
@@ -92,7 +92,7 @@ Optional dependency behavior:
 
 `routes.editor_draft_routes` owns server-backed image editor project payloads. `EditorDraft` rows store title, payload JSON, thumbnail, source image, timestamps, and owner.
 
-Frontend editor behavior is split across `static/js/editor/*` and `static/js/galleryEditor.js`: canvas state, layer panel, masks, history, snapping, stroke pipeline, inpaint/rembg/harmonize tools, AI tool runner, model pickers, import wiring, topbar controls, auto-save, resume by draft ID or source image, draft-only open, and cleanup after close.
+Frontend editor behavior is split across `static/js/editor/*` and `static/js/galleryEditor.js`: canvas state, layer panel, masks, history, snapping, stroke pipeline, inpaint/rembg/harmonize tools, AI tool runner, model pickers, an AI edit command box that routes natural-language edit requests into existing inpaint/remove/upscale/background/style actions where possible, import wiring, topbar controls, auto-save, resume by draft ID or source image, draft-only open, and cleanup after close.
 
 Draft compatibility behavior:
 

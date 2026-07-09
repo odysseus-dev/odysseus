@@ -1,6 +1,6 @@
 # Documents, RAG, And Uploads
 
-Last updated: dev@88191d1 | 2026-07-02
+Last updated: dev@d88c8cb | 2026-07-09
 
 ## Scope
 
@@ -50,6 +50,11 @@ Chat does not own attachment extraction. Runtime flow:
 - `src.document_processor.build_user_content()` produces model-ready text, PDF text, Office/EPUB text when MarkItDown or the DOCX fallback is available, image/multimodal blocks, truncation, and PDF/Office auto-document updates;
 - chat streams attachment, PDF-created `doc_update`, and `rag_sources` events where applicable.
 
+Extensionless image and audio attachments derive their data-URI subtype from
+the detected MIME type, so `image/png` and `audio/mpeg` uploads do not become
+invalid `data:image/;base64` or `data:audio/;base64` blocks when the filename
+has no extension.
+
 ## Living Documents And PDF
 
 `routes/document_routes.py` owns the HTTP document API: create/read/update/archive/delete, library listing, import/export, version history, tidy/AI tidy, PDF rendering/export, PDF form helpers, and email-attachment reply preparation.
@@ -58,7 +63,15 @@ Chat does not own attachment extraction. Runtime flow:
 
 `static/js/document.js` owns the browser document editor and markdown preview. Preview rendering applies code highlighting when highlight.js is present, renders Mermaid diagrams when the Mermaid runtime is available, refreshes after AI edits, and discards pending AI diffs before switching the active document.
 
-Document mutations also happen through agent tools, Codex document routes, email attachment import, and scripts. Those callers must preserve document owner and version semantics.
+Document mutations also happen through agent tools, Codex document routes, email attachment import, and scripts. Native document tool outputs include metadata that the browser can use to open/update the editor if a later stream update is missed. Those callers must preserve document owner and version semantics.
+
+Email draft documents are a first-class document language. Create/update paths
+detect the `To`/`Subject`/header shape, coerce language to `email`, and preserve
+protected reply/forward headers such as `In-Reply-To`, `References`,
+`X-Source-UID`, `X-Source-Folder`, attachment headers, and quoted/original
+history when model or UI edits replace the draft body. Creating a draft for the
+same source UID/folder in the same session updates the active draft instead of
+creating a duplicate.
 
 `Document` rows own current content and owner. `DocumentVersion` rows own immutable snapshots. Document access should be owner-filtered, not session-id-only; the session document listing path still needs regression coverage for per-document owner filtering after the session owner check.
 

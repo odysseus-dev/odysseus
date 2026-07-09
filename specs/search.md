@@ -1,6 +1,6 @@
 # Search
 
-Last updated: dev@88191d1 | 2026-07-02
+Last updated: dev@d88c8cb | 2026-07-09
 
 ## Scope
 
@@ -38,7 +38,7 @@ Research provider naming is not fully normalized in the UI: some frontend select
 
 `services/search/providers.py` owns provider-specific calls for SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, and Serper. `PROVIDER_INFO`, provider availability, missing-key behavior, and provider dispatch live there.
 
-`services/search/query.py` owns query enhancement and sanitization, including stripping markdown/code-fence noise from model- or user-supplied queries before provider calls. `services/search/ranking.py` owns result ranking, including word-boundary title/snippet/subject matching so short query terms do not match unrelated substrings.
+`services/search/query.py` owns query enhancement and sanitization, including stripping markdown/code-fence noise from model- or user-supplied queries before provider calls and extracting Unicode/non-ASCII capitalized entity names. `services/search/ranking.py` owns result ranking, including word-boundary title/snippet/subject matching so short query terms do not match unrelated substrings.
 
 ## Provider Settings And Fallback
 
@@ -62,10 +62,14 @@ Runtime behavior:
 - DNS fail-closed behavior;
 - rejection of localhost, metadata, private, reserved, multicast, and link-local targets;
 - redirect revalidation on each hop;
+- one-time public DNS resolution per hop plus an `httpcore`/`httpx` pinned
+  transport that connects to the validated public IP while preserving the
+  original URL, Host header, and TLS SNI, closing DNS-rebinding time-of-check
+  drift;
 - metadata, Open Graph image, list, table, code block, PDF, and text extraction;
 - readable text extraction for `text/*`, Markdown, `.txt`, `.json`, `.jsonl`, and JSON content types;
 - central User-Agent behavior through `WEB_FETCH_USER_AGENT`;
-- soft and hard download byte caps through `WEB_FETCH_SOFT_MAX_BYTES` and `WEB_FETCH_HARD_MAX_BYTES`, with declared-length and streaming-budget checks;
+- soft and hard download byte caps through `WEB_FETCH_SOFT_MAX_BYTES` and `WEB_FETCH_HARD_MAX_BYTES`, with declared-length and streaming-budget checks; requests prefer identity transfer encoding so compressed bodies cannot bypass the effective body cap;
 - JS-heavy empty result hints;
 - cache writes;
 - empty/error result shape, including explicit HTTP-status failures instead of raising through callers.

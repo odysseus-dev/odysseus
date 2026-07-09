@@ -1,6 +1,6 @@
 # LLM Models And Endpoints
 
-Last updated: dev@88191d1 | 2026-07-02
+Last updated: dev@d88c8cb | 2026-07-09
 
 ## Scope
 
@@ -29,7 +29,7 @@ This spec covers model/provider behavior in:
 
 `llm_core` owns payload shape. Route files and chat/agent code should request a call; they should not duplicate provider-specific payload quirks.
 
-Provider-specific behavior is part of this layer: `LLM_CONNECT_TIMEOUT` controls the connect budget for sync and streaming calls, Kimi Code endpoints retry a small whitelisted User-Agent set on 403 and cache the accepted value, official Moonshot/Kimi Code and Anthropic Opus 4.7+ payloads omit `temperature` where required, reasoning models omit or clamp unsupported temperature values, and self-hosted compatible endpoints keep normal OpenAI-compatible parameters unless detected otherwise. Mistral/Moonshot/Kimi reasoning content, `gpt-oss` harmony channel output, and native/OpenAI-compatible Ollama thinking formats are normalized so hidden reasoning and visible text stay separated where the provider exposes that structure.
+Provider-specific behavior is part of this layer: `LLM_CONNECT_TIMEOUT` controls the connect budget for sync and streaming calls, Kimi Code endpoints retry a small whitelisted User-Agent set on 403 and cache the accepted value, official Moonshot/Kimi Code and Anthropic Opus 4.7+ payloads omit `temperature` where required, reasoning models omit or clamp unsupported temperature values, and self-hosted compatible endpoints keep normal OpenAI-compatible parameters unless detected otherwise. Mistral/Moonshot/Kimi reasoning content, `gpt-oss` harmony channel output, and native/OpenAI-compatible Ollama thinking formats are normalized so hidden reasoning and visible text stay separated where the provider exposes that structure. Copilot request metadata is treated defensively; malformed/non-dict `request_flags` in the last message must not crash payload construction.
 
 Route-level probe helpers in `routes/model_routes.py` are the current exception: they build minimal provider-specific probe payloads using `llm_core` detection helpers. Keep probe behavior aligned with `llm_core` provider adapters. LLM provider HTTP clients and endpoint probes share `src.tls_overrides.llm_verify()`, which can add an operator-provided `LLM_CA_BUNDLE` on top of normal certificate verification without turning verification off or widening that trust to arbitrary URL fetches.
 

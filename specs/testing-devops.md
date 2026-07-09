@@ -1,6 +1,6 @@
 # Testing And Devops
 
-Last updated: dev@88191d1 | 2026-07-02
+Last updated: dev@d88c8cb | 2026-07-09
 
 ## Scope
 
@@ -37,11 +37,11 @@ Activated-venv `python -m pytest <test path>` is equivalent. System/global `pyte
 
 `tests/conftest.py` inserts the repo root on `sys.path` and conditionally stubs missing heavy/runtime dependencies such as SQLAlchemy, FastAPI, Starlette, Pydantic, httpx, bcrypt, and pyotp. Tests that need real dependencies use explicit imports/skips. Tests that stub `sys.modules`, environment variables, globals, or parent packages must restore them with `monkeypatch` or an equivalent cleanup pattern.
 
-The suite currently contains roughly 692 `test_*.py` files. Treat that count as a moving source metric, not a target; focused regression tests are still preferred for narrow changes.
+The suite currently contains roughly 712 `test_*.py` files. Treat that count as a moving source metric, not a target; focused regression tests are still preferred for narrow changes.
 
 Focused regression tests are preferred for narrow behavior changes. Broaden tests when touching shared contracts such as auth, owner filtering, OAuth/token custody, tool output, context building, provider calls, persistence, frontend rendering, or route/API shapes.
 
-`tests/run_focus.py` and `tests/_taxonomy.py` provide a local focused-run helper and category map. `tests/TESTING_STANDARD.md` documents expectations for targeted validation, and `tests/LAYOUT_INVENTORY.md` records the test-suite layout. CLI tests live under `tests/cli/`.
+`tests/run_focus.py` and `tests/_taxonomy.py` provide a local focused-run helper and category map. `.github/scripts/focused_test_guidance.py` and its focused-test guidance checks map changed files to suggested focused tests for PR review, while keeping the full pytest job informational. `tests/TESTING_STANDARD.md` documents expectations for targeted validation, and `tests/LAYOUT_INVENTORY.md` records the test-suite layout. CLI tests live under `tests/cli/`.
 
 ## JS And UI Tests
 
@@ -139,7 +139,7 @@ When route/API behavior changes, check whether a matching CLI script depends on 
 
 ## GitHub Metadata
 
-`.github/` owns issue/PR templates, a copyable PR review template, description-check workflows, security/governance workflows, Docker publishing, and a lightweight CI workflow. Current CI compiles Python with `python -m compileall`, syntax-checks first-party JS with `node --check`, and runs `python -m pytest -q` as an informational/non-blocking job; the pytest job skips documentation-only changes.
+`.github/` owns issue/PR templates, a copyable PR review template, description-check workflows, security/governance workflows, Docker publishing, and a lightweight CI workflow. Current CI compiles Python with `python -m compileall`, syntax-checks first-party JS with `node --check`, emits focused-test guidance for changed code, and runs `python -m pytest -q` as an informational/non-blocking job; the pytest job skips documentation-only changes.
 
 `CONTRIBUTING.md` owns the branch model: PRs target `dev`; `main` is the curated user-running branch fast-forwarded from stable `dev` commits. Contributors who accidentally target `main` should retarget the PR base without rebasing.
 
@@ -194,7 +194,9 @@ Run the app for user-facing or integration changes. Unit tests and syntax checks
 
 - Fresh install smoke coverage across Linux native, Docker, macOS native/app, Windows native, WSL/Git Bash, missing Node/npm, missing Chroma service, and GPU overlays remains a roadmap item.
 - There is no frontend build/type-check/npm test pipeline.
-- CI now covers Python compile, first-party JS syntax, and pytest smoke; it does not cover Docker compose validation, launcher smoke tests, browser/module-graph execution, or platform installs.
+- CI now covers Python compile, first-party JS syntax, focused-test guidance,
+  and pytest smoke; it does not cover Docker compose validation, launcher smoke
+  tests, browser/module-graph execution, or platform installs.
 - Optional dependency behavior is broad; remaining gaps include local STT missing-`faster-whisper` behavior and provider/OAuth combinations not covered by focused tests.
 - GitHub description-check scripts and `scripts/pr_blocker_audit.py` need continued local fixtures for section parsing, placeholder stripping, label swaps, workflow-safe behavior, and duplicate/hot-file heuristics.
 - Spec bootstrap rules lack meta tests for reading `_readme.md`, spec shape, `.env*` handling, draft/report placement, and shared helper conventions.

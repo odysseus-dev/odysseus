@@ -1,6 +1,6 @@
 # Integrations
 
-Last updated: dev@88191d1 | 2026-07-02
+Last updated: dev@d88c8cb | 2026-07-09
 
 ## Scope
 
@@ -84,6 +84,14 @@ The Cookbook scoped-agent surface currently exposes `cookbook:read` and `cookboo
 
 `api_call` is the agent/tool execution path for configured integrations. It is blocked for non-admin/public users by tool security, accepts only relative paths, uses the admin-configured base URL/auth settings, and returns truncated external responses to the model, including a sentinel when long JSON lists are shortened. Admin-authored integration descriptions are prompt context; external responses remain untrusted data.
 
+`execute_api_call()` normalizes base URLs to HTTP(S) scheme, hostname, and
+path-only values, rejects request paths that are not relative absolute paths
+(`/...`) or that carry schemes/fragments, treats `/` as the base URL without
+appending an extra slash, and checks the final URL through `src.url_safety`.
+Link-local/metadata targets are always rejected; setting
+`INTEGRATION_API_BLOCK_PRIVATE_IPS=true` also rejects loopback/RFC1918/private
+addresses for operators who do not need LAN integrations.
+
 Current call sites include:
 
 - `src.agent_loop` injecting enabled integration descriptions;
@@ -93,7 +101,7 @@ Current call sites include:
 
 ## Webhooks And External Chat
 
-Outgoing webhooks are admin-managed `Webhook` rows. `routes.webhook_routes` owns CRUD/test/toggle/delete and `/api/v1/chat`. `src.webhook_manager` owns allowed event validation, public URL validation, delivery-time URL revalidation, HMAC signing, fire-and-forget delivery, in-flight task references, and delivery status/error persistence. Sanitized delivery errors redact IPv6-style address details.
+Outgoing webhooks are admin-managed `Webhook` rows. `routes.webhook_routes` owns CRUD/test/toggle/delete and `/api/v1/chat`. `src.webhook_manager` owns allowed event validation, public URL validation, delivery-time URL revalidation, DNS-rebinding-safe pinned-IP delivery, HMAC signing, fire-and-forget delivery, in-flight task references, and delivery status/error persistence. Sanitized delivery errors redact IPv6-style address details.
 
 Allowed outgoing events are:
 
@@ -147,7 +155,8 @@ This spec owns the cross-integration framing and agent/token/webhook surfaces. D
 - Missing or corrupt `data/integrations.json` loads as an empty list; non-object rows are ignored.
 - Plaintext generic integration API keys migrate to encrypted storage on load.
 - Webhook delivery has no retry/backoff queue; the persisted state is last status or sanitized last error.
-- Webhook URLs are validated at create and delivery time and redirects are disabled.
+- Webhook URLs are validated at create and delivery time, redirects are disabled,
+  and delivery connects to the IP set validated immediately before the request.
 - Companion LAN detection is best-effort and falls back to local host/port defaults.
 - `ODYSSEUS_URL` must be reachable from the external coding agent; no Docker/native URL rewrite is performed.
 
@@ -179,7 +188,8 @@ The integration audit also ran the targeted venv subset covering those areas wit
 - `do_manage_webhooks()` bypasses route behavior and does not cover signing-secret parity.
 - Companion read endpoints should either require `chat` scope or be documented as an explicit scope-policy exception.
 - Decide whether webhook secret plaintext fallback should remain accepted when the API key manager is unavailable.
-- Decide whether generic integration base URLs are intentionally admin-trusted/local-capable or should gain SSRF validation.
+- Decide whether generic integration base URLs should stay LAN-capable by
+  default or make `INTEGRATION_API_BLOCK_PRIVATE_IPS=true` the default.
 - Decide whether admin-authored integration descriptions and `api_call` results need a shared untrusted-context wrapper.
 - The dormant SQLAlchemy `Integration` model should be removed, migrated into use, or documented as legacy.
 - `scripts/odysseus-webhook` still emits the removed `/api/webhook/{token}` path.

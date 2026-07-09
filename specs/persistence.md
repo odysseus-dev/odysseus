@@ -1,6 +1,6 @@
 # Persistence
 
-Last updated: dev@88191d1 | 2026-07-02
+Last updated: dev@d88c8cb | 2026-07-09
 
 ## Scope
 
@@ -13,7 +13,7 @@ This spec covers durable state in:
 - `core/models.py`;
 - `core/session_manager.py`;
 - `core/atomic_io.py`;
-- JSON stores managed by `core/auth.py`, `src/settings.py`, `src/api_key_manager.py`, `src/preset_manager.py`, `src/integrations.py`, `src/upload_handler.py`, `src/personal_docs.py`, `src/research_handler.py`, `src/bg_jobs.py`, `routes/prefs_routes.py`, `routes/contacts_routes.py`, `routes/vault_routes.py`, `routes/cookbook_routes.py`, and memory/skills managers;
+- JSON stores managed by `core/auth.py`, `src/settings.py`, `src/api_key_manager.py`, `src/preset_manager.py`, `src/integrations.py`, `src/upload_handler.py`, `src/personal_docs.py`, `src/research_handler.py`, `src/bg_jobs.py`, `routes/prefs_routes.py`, canonical `routes/contacts/contacts_routes.py` plus its shim, `routes/vault_routes.py`, `routes/cookbook_routes.py`, and memory/skills managers;
 - `routes/email_helpers.py` scheduled-email storage;
 - `routes/backup_routes.py` and `scripts/odysseus-backup`;
 - runtime data under `data/`.
@@ -66,7 +66,7 @@ Owner columns are security-relevant. Current owner-bearing domains include sessi
 
 Route code owns filtering for its domain. `src.auth_helpers.owner_filter()` is the common helper where available; gallery, documents, calendar, email, skills, and other surfaces also use local filters. Null-owner compatibility is domain-specific: shared endpoints may include null owners, while strict gates and disk stores may reject them. Do not rely on frontend filtering for access control.
 
-There is no single anonymous/local owner value today. SQL `NULL` and missing JSON owners usually mean legacy/shared/unscoped compatibility; route-level no-login helpers use the empty string `""` when `AUTH_ENABLED=false`; chat/agent paths can pass `owner=None`; and calendar routes normalize empty owners to `ODYSSEUS_FALLBACK_OWNER` or `owner@localhost`. Lower-level helpers such as `get_upcoming_events(owner=None)` treat `None` as no owner scoping, so multi-user callers must pass a non-empty owner deliberately.
+There is no single anonymous/local owner value today. SQL `NULL` and missing JSON owners usually mean legacy/shared/unscoped compatibility; route-level no-login helpers use the empty string `""` when `AUTH_ENABLED=false`; chat/agent paths can pass `owner=None`; and calendar routes normalize empty owners to `ODYSSEUS_FALLBACK_OWNER` or `owner@localhost`. Email account helpers treat ownerless rows as single-user/global only for empty-owner mode; for non-empty owners, old ownerless account rows are visible only when the mailbox/from-address matches the owner. Lower-level helpers such as `get_upcoming_events(owner=None)` treat `None` as no owner scoping, so multi-user callers must pass a non-empty owner deliberately.
 
 ## Secrets And Local Stores
 

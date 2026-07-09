@@ -1,6 +1,6 @@
 # Auth And Security
 
-Last updated: dev@88191d1 | 2026-07-02
+Last updated: dev@d88c8cb | 2026-07-09
 
 ## Scope
 
@@ -14,6 +14,7 @@ This spec covers current security and trust-boundary behavior in:
 - `src/auth_helpers.py`;
 - `src/tool_security.py`;
 - `src/tool_execution.py`;
+- `src/task_action_policy.py`;
 - `src/prompt_security.py`;
 - `src/url_safety.py` and `src/url_security.py`;
 - `src/host_docker_access.py`;
@@ -90,7 +91,7 @@ Agent tools call admin-gated HTTP routes through an in-process loopback. `core.m
 
 `src.tool_security.owner_is_admin_or_single_user()` treats explicit `AUTH_ENABLED=false` as intentional single-user mode even when an auth store already exists, while keeping pre-setup auth-enabled callers non-admin.
 
-Current admin gates include `require_admin()` call sites across admin wipe, backup, contacts, Cookbook, diagnostics, embeddings, MCP, model, personal docs, presets, skills, uploads, vault, webhook, and companion routes. Local wrappers also exist in auth routes, shell routes, and task action policy; changes to those wrappers need the same trust-boundary review as `require_admin()`.
+Current admin gates include `require_admin()` call sites across admin wipe, backup, contacts, Cookbook, diagnostics, embeddings, MCP, model, personal docs, presets, skills, uploads, vault, webhook, and companion routes. Local wrappers also exist in auth routes, shell routes, and task action policy; changes to those wrappers need the same trust-boundary review as `require_admin()`. Scheduled task action policy treats `run_local`, `run_script`, `ssh_command`, and `cookbook_serve` as admin-only action tasks across create/update/manual-run/webhook/scheduler execution.
 
 ## Untrusted Context Policy
 
@@ -106,7 +107,16 @@ Current untrusted surfaces include fetched URLs, web results, emails, memories, 
 - `src/url_security.py` owns public HTTP(S) validation for integration/API-token supplied URLs. It should fail closed for private IP, loopback, invalid scheme, and unsafe redirect targets.
 - `src/url_safety.py` owns local-first outbound URL safety for model endpoints and similar local services. Loopback/LAN can be allowed by default, and private-IP blocking is an explicit caller policy.
 - `core.log_safety.redact_url()` strips URL userinfo, query strings, and fragments before endpoint URLs enter logs. Model, chat/research endpoint, contact/CardDAV, and similar diagnostics should use this helper instead of logging raw admin-configured URLs.
-- `src.webhook_manager` validates webhook URLs at create and delivery time. `src.integrations` owns admin-configured integration base URLs and secret masking.
+- `src.webhook_manager` validates webhook URLs at create and delivery time,
+  rejects private/internal targets, disables redirects, and pins delivery to
+  the public IP set that passed validation immediately before the request.
+- `src.integrations` owns admin-configured integration base URLs and secret
+  masking. `api_call` accepts only relative paths, rejects link-local/metadata
+  destinations through `src.url_safety`, and can additionally block
+  RFC1918/loopback/private targets with `INTEGRATION_API_BLOCK_PRIVATE_IPS=true`.
+- `services.search.content` validates every redirect hop, rejects private/local
+  resolved addresses, and pins the HTTP connection to the validated public IP
+  while preserving original URL/SNI/Host semantics.
 - Path-based tools, upload/document/gallery/signature/generated-image routes, embedding cache paths, and research JSON helpers must stay confined to allowed roots and owner-scoped files. Native file/code-navigation tools also apply a case-insensitive sensitive-path denylist so `grep`, `glob`, `ls`, direct reads, and writes cannot reveal `.env`, SSH/GPG material, private-key filenames, or similar secret paths.
 - Secret-like DB columns use `EncryptedText` or `src.secret_storage`. Email passwords and Google OAuth mail tokens are encrypted manually in `EmailAccount` string columns; Google OAuth state is HMAC-signed and callback writes are owner-checked before token storage. `src.api_key_manager` keeps provider API keys encrypted in `data/api_keys.json`, writes by loading the raw encrypted dict so saving one provider does not rewrite other providers' keys as plaintext, and restricts local key-file permissions where the platform supports chmod. Vault state in `data/vault.json` is a chmod-restricted JSON secret store, not Fernet-encrypted DB storage. Do not log or return decrypted secrets except for intentional admin vault retrieval flows with audit/reason checks.
 - `.env` files are secrets-only inputs and should not be read or printed during agent work.

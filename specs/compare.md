@@ -1,6 +1,6 @@
 # Compare
 
-Last updated: dev@88191d1 | 2026-07-02
+Last updated: dev@d88c8cb | 2026-07-09
 
 ## Scope
 
@@ -39,6 +39,10 @@ Frontend compare behavior is split by responsibility:
 - `selector.js`, `models.js`, and `probe.js` own endpoint/model selection and probe UI;
 - `panes.js` and `stream.js` own paired response rendering;
 - `vote.js` and `scoreboard.js` own voting and history display.
+
+Mobile compare layout collapses multi-pane grids to a single column so panes
+remain readable on narrow screens while the desktop grid still uses the
+selected column count.
 
 ## Ownership Boundaries
 

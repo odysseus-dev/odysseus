@@ -1,13 +1,14 @@
 # Chat
 
-Last updated: dev@88191d1 | 2026-07-02
+Last updated: dev@d88c8cb | 2026-07-09
 
 ## Scope
 
 This spec covers current chat behavior in:
 
 - `routes/chat_routes.py` and `routes/chat_helpers.py`;
-- `routes/session_routes.py` and `routes/history_routes.py`;
+- `routes/session_routes.py` and canonical `routes/history/history_routes.py`,
+  with `routes/history_routes.py` as a compatibility shim;
 - `src/chat_helpers.py`;
 - `src/agent_runs.py`;
 - `src/chat_handler.py` and `src/chat_processor.py`;
@@ -19,7 +20,7 @@ This spec covers current chat behavior in:
 
 ## Session Ownership
 
-`core.session_manager.SessionManager` owns session persistence and message writes. `routes/session_routes.py` owns session list/create/update/archive/delete/folder/importance behavior for the sidebar. `routes/history_routes.py` owns history/topic surfaces.
+`core.session_manager.SessionManager` owns session persistence and message writes. `routes/session_routes.py` owns session list/create/update/archive/delete/folder/importance behavior for the sidebar. `routes.history.history_routes` owns history/topic surfaces, with `routes/history_routes.py` kept as a compatibility shim.
 
 `core.models.Session` and `ChatMessage` are pure data containers. They do not own persistence; `Session.add_message()` delegates to the configured session manager when present.
 
@@ -35,7 +36,9 @@ Runtime behavior:
 - browser chat sends `X-Tz-Offset`; route code forwards it into `routes.calendar_routes` request-local state so note/calendar tool parsing can anchor natural-language dates to the user clock;
 - browser chat can send a selected workspace path; route code only resolves it for admin/single-user flows, validates it as an existing directory, and forwards it so agent file/shell tools are confined by `src.tool_execution`;
 - stream callbacks can outlive a deleted session, so persistence must fail closed instead of recreating orphan messages;
-- message metadata carries timestamps, metrics, tool events, sources, and related UI state;
+- message metadata carries timestamps, metrics, tool events, sources, hidden
+  thinking/reasoning text when providers expose it separately, context-trim
+  metrics, and related UI state;
 - metadata preserves both requested and actual reply models when provider streams or fallbacks report them, and stable session ids are kept available so prompt/sequence-memory and KV-cache paths can address the same conversation consistently;
 - multimodal content can be a list of content blocks, not just a string.
 
@@ -66,13 +69,30 @@ Current call sites include:
 - deep research orchestration in `src/research_handler.py`;
 - compare entry points in `routes/compare_routes.py` and frontend compare modules.
 
-Agent-mode tool access is gated in layers. Chat route toggles and privileges build a disabled-tool set; incognito and compare mode remove persistence-heavy or UI-breaking tools; `src.action_intents.message_needs_tools()` provides conservative regex auto-escalation hints; `src.agent_loop`, `src.tool_security`, `src.tool_execution`, and internal loopback validation remain server-side enforcement owners.
+Agent-mode tool access is gated in layers. Chat route toggles and privileges
+build a disabled-tool set; incognito and compare mode remove persistence-heavy
+or UI-breaking tools; `src.action_intents.message_needs_tools()` provides
+conservative regex auto-escalation hints; `src.agent_loop`,
+`src.tool_security`, `src.tool_execution`, and internal loopback validation
+remain server-side enforcement owners.
 
 `allow_bash` and `allow_web_search` can be read from the JSON request body for browser chat posts that do not submit traditional form fields.
 
-An explicit latest-turn web-search intent can override `allow_web_search=false` for that turn so stale UI toggle state does not suppress a direct user request.
+Web search tools are per-turn explicit opt-in. Either `allow_web_search=true`
+or `use_web=true` can enable `web_search`/`web_fetch`, but an explicit
+`allow_web_search=false` wins over `use_web=true` and keeps those tools
+disabled. Explicit latest-turn web-search intent can still auto-escalate into
+agent mode and narrows the available tool set toward `web_search`/`web_fetch`,
+but it no longer re-enables web tools after an explicit denial or global
+disable.
 
 Guide-only/no-tools requests build an effective tool policy before preprocessing and agent dispatch. That policy suppresses tool-backed preprocessing/background extraction/research, disables schemas and MCP for the turn, and is still enforced by `src.tool_execution` if a model emits a tool call anyway.
+
+When route context is trimmed without full compaction, chat emits a
+`context_trimmed` SSE event and carries before/after message/token counts into
+metrics. Provider reasoning/thinking deltas are streamed for live UI handling
+but kept out of the visible saved assistant content and stored in metadata when
+available.
 
 ## Attachments
 
@@ -81,6 +101,11 @@ Guide-only/no-tools requests build an effective tool policy before preprocessing
 Attachment-only sends are valid. Missing or unauthorized upload ids are skipped, upload failures keep pending files for retry, unsupported media can degrade to text markers, optional Office/PDF/VL dependencies can emit extraction banners, Office attachments can create markdown documents when extracted server-side, and fillable-PDF auto-document failures fall back to normal PDF extraction. Chat does not own durable document storage; it requests document/upload behavior from those subsystems.
 
 Frontend chat distinguishes normal resend from regenerate-from-here: normal resend appends a fresh user copy and carries upload IDs where available, while regeneration truncates from the selected point. AI-message delete prompts before removing the AI response plus preceding user turn. Desktop Enter submits; mobile Enter inserts a newline unless another platform-specific send control is used.
+
+Native document tool outputs can open or refresh the document editor from
+tool-result metadata, so the UI can recover if a later `doc_update` stream event
+is missed. The chat renderer also hides raw/incomplete leaked tool JSON and
+document fences from normal transcript text.
 
 ## Security And Provenance
 

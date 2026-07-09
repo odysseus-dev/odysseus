@@ -1,6 +1,6 @@
 # Research
 
-Last updated: dev@88191d1 | 2026-07-02
+Last updated: dev@d88c8cb | 2026-07-09
 
 ## Scope
 
@@ -75,6 +75,13 @@ Spinoff/Discuss creates a new chat session from a saved report. It seeds the rep
 ## Reports And Persistence
 
 Research persistence uses `data/deep_research/<session_id>.json`. Current JSON can include result/report text, raw report, sources, raw findings, stats, category, archived state, hidden images, owner, timestamps, and consumed state.
+
+Route access to persisted report files is path-confined. Browser routes validate
+session ids against `^[a-zA-Z0-9-]{1,128}$`, enumerate trusted `*.json` files
+under the resolved research storage root, match by exact filename, reject
+symlink/path escapes after `resolve().relative_to(root)`, and then perform owner
+checks before detail/archive/delete/result-peek/spinoff reads or mutations.
+Invalid ids return 400; missing or cross-owner reports return 404.
 
 `src.visual_report` owns HTML report generation from markdown-like research output, heading/TOC processing, category styling, image injection, allowlist sanitization of untrusted rendered HTML, and client-side controls for hiding images and discussing reports.
 
