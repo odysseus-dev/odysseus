@@ -5716,24 +5716,27 @@ function syncAdminVisibility() {
 export function open(tab) {
   if (!initialized) initAll();
   syncAppearanceCheckboxes();
-  if (modalEl.classList.contains('hidden')) {
-    resetWindowPlacement();
-  }
-  modalEl.classList.remove('hidden');
-  syncAdminVisibility();
-  const content = modalEl.querySelector('.settings-modal-content');
-  if (tab) {
-    modalEl.querySelectorAll('[data-settings-tab]').forEach(b => b.classList.toggle('active', b.dataset.settingsTab === tab));
-    modalEl.querySelectorAll('[data-settings-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.settingsPanel !== tab));
-  }
-  // Auto-init admin data if showing an admin tab
-  const activeTab = tab || (modalEl.querySelector('[data-settings-tab].active') || {}).dataset?.settingsTab || 'services';
-  document.body.classList.toggle('settings-appearance-open', activeTab === 'appearance');
-  syncAppearanceOpacity(activeTab === 'appearance');
-  if (activeTab === 'ai') refreshAiModelEndpoints();
-  if (ADMIN_TABS.has(activeTab) && window.adminModule && !window.adminModule._initialized) {
-    window.adminModule._initData();
-  }
+  const finishOpen = () => {
+    if (modalEl.classList.contains('hidden')) {
+      resetWindowPlacement();
+    }
+    modalEl.classList.remove('hidden');
+    syncAdminVisibility();
+    const content = modalEl.querySelector('.settings-modal-content');
+    if (tab) {
+      modalEl.querySelectorAll('[data-settings-tab]').forEach(b => b.classList.toggle('active', b.dataset.settingsTab === tab));
+      modalEl.querySelectorAll('[data-settings-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.settingsPanel !== tab));
+    }
+    const activeTab = tab || (modalEl.querySelector('[data-settings-tab].active') || {}).dataset?.settingsTab || 'services';
+    document.body.classList.toggle('settings-appearance-open', activeTab === 'appearance');
+    syncAppearanceOpacity(activeTab === 'appearance');
+    if (activeTab === 'ai') refreshAiModelEndpoints();
+    if (ADMIN_TABS.has(activeTab) && window.adminModule && !window.adminModule._initialized) {
+      window.adminModule._initData();
+    }
+  };
+  // Defer reveal so the same click that opened settings does not hit the backdrop close handler (#4938).
+  requestAnimationFrame(() => requestAnimationFrame(finishOpen));
 }
 
 export function close() {
