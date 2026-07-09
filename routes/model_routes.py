@@ -564,6 +564,17 @@ def _explicit_model_list_timeout(base_url: str, endpoint_kind: str = "auto", req
     category = _classify_endpoint(base_url, kind)
     if kind in ("api", "proxy") or category == "api":
         return 30.0
+    try:
+        host = (urlparse(base_url).hostname or "").lower()
+        if host and (
+            host in ("localhost", "127.0.0.1")
+            or host.startswith("192.168.")
+            or host.startswith("10.")
+            or re.match(r"^172\.(1[6-9]|2[0-9]|3[0-1])\.", host)
+        ):
+            return 20.0 if _is_ollama_base(base_url) else 15.0
+    except Exception:
+        pass
     return 15.0 if category == "local" else (3.0 if _is_ollama_base(base_url) else 2.0)
 
 
@@ -674,7 +685,7 @@ def _safe_build_headers(api_key: Optional[str], base_url: str) -> dict:
 
 
 def _is_discovery_only_provider(provider: str) -> bool:
-    return provider == "chatgpt-subscription"
+    return provider in ("chatgpt-subscription", "openrouter")
 
 
 def _resolve_probe_key(ep) -> Optional[str]:
@@ -1730,9 +1741,14 @@ def setup_model_routes(model_discovery):
                 skipped = len(all_models) - len(models)
                 yield f"data: {json.dumps({'type': 'probe_start', 'endpoint': ep['name'], 'model_count': len(models), 'skipped': skipped})}\n\n"
 
+                discovery_only = _is_discovery_only_provider(_safe_detect_provider(base))
+
                 for model_id in models:
                     total += 1
-                    result = _probe_single_model(base, ep.get("api_key"), model_id, timeout=8)
+                    if discovery_only:
+                        result = {"status": "ok", "latency_ms": 0, "skipped": True}
+                    else:
+                        result = _probe_single_model(base, ep.get("api_key"), model_id, timeout=8)
                     result["type"] = "probe_result"
                     result["endpoint"] = ep["name"]
                     result["model"] = model_id
@@ -1965,7 +1981,7 @@ def setup_model_routes(model_discovery):
         model_ids = _probe_endpoint(base_url, api_key.strip() or None, timeout=explicit_timeout) if should_probe else []
         ping = {"reachable": False, "error": None}
         if (should_probe or requested_kind in ("api", "proxy")) and not model_ids:
-            ping = _ping_endpoint(base_url, api_key.strip() or None, timeout=min(explicit_timeout, 10.0))
+            ping = _ping_endpoint(base_url, api_key.strip() or None, timeout=explicit_timeout)
         if require_model_list and not model_ids:
             raise HTTPException(400, _model_endpoint_error_message(base_url, ping))
 
