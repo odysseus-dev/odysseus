@@ -95,7 +95,7 @@ nsis:
       !insertmacro MUI_LANGUAGE "Vietnamese"
     !macroend
 
-    !include "C:\Users\Falab\AppData\Local\Temp\t-ReO5tv\1-messages.nsh"
+    !include "C:\Users\Falab\AppData\Local\Temp\t-0LfzZJ\1-messages.nsh"
     !addplugindir /x86-unicode "C:\Users\Falab\AppData\Local\electron-builder\Cache\nsis-resources-3.4.1\nsis-resources-3.4.1-2jx2y\plugins\x86-unicode"
 
     Var newStartMenuLink
