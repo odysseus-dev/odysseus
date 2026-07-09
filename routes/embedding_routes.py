@@ -77,7 +77,9 @@ def _is_downloaded(hf_source: str) -> bool:
 
 def _active_model() -> str:
     """Get the currently configured fastembed model name."""
-    return os.environ.get("FASTEMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+    from src.embeddings import default_fastembed_model
+
+    return default_fastembed_model()
 
 
 def _dir_size_mb(path: str) -> float:

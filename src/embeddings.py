@@ -13,6 +13,7 @@ Set EMBEDDING_URL in .env, e.g.:
 """
 
 import os
+import sys
 
 from src.constants import FASTEMBED_CACHE_DIR, EMBEDDING_ENDPOINT_FILE
 
@@ -36,7 +37,17 @@ from src.runtime_paths import get_app_root
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MODEL = "all-minilm:l6-v2"
-_DEFAULT_FASTEMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+
+
+def _default_fastembed_model_name() -> str:
+    # all-MiniLM-L6-v2 often fails on Windows native (missing model.onnx); bge-small-en is reliable (#4425).
+    if sys.platform == "win32":
+        return "BAAI/bge-small-en"
+    return "sentence-transformers/all-MiniLM-L6-v2"
+
+
+def default_fastembed_model() -> str:
+    return os.getenv("FASTEMBED_MODEL", _default_fastembed_model_name())
 
 
 class EmbeddingClient:
@@ -142,7 +153,7 @@ class FastEmbedClient:
                 "embeddings server."
             ) from e
 
-        self.model = model or os.getenv("FASTEMBED_MODEL", _DEFAULT_FASTEMBED_MODEL)
+        self.model = model or default_fastembed_model()
         # Persistent cache under data/ so the model survives reboots and so
         # the download lands exactly where the admin panel's _is_downloaded()
         # check looks (both default to this same path).
