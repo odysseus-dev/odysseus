@@ -147,6 +147,15 @@ def _resolve_research_endpoint(sess, owner: Optional[str] = None) -> tuple:
         fallback_headers=sess.headers,
         owner=owner,
     )
+    sess_model = getattr(sess, "model", None) or ""
+    if model and sess_model and model != sess_model:
+        logger.info(
+            "Research using configured model '%s' (session model was '%s')",
+            model,
+            sess_model,
+        )
+    elif model:
+        logger.info("Research using model '%s'", model)
     return url, model, headers
 
 
@@ -574,7 +583,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             extraction_concurrency=body.extraction_concurrency,
             owner=user,
         )
-        return {"session_id": session_id, "status": "running", "query": body.query}
+        return {"session_id": session_id, "status": "running", "query": body.query, "model": ep_model}
 
     @router.get("/api/research/stream/{session_id}")
     async def research_stream(session_id: str, request: Request):

@@ -302,6 +302,7 @@ class ResearchHandler:
             "result": None,
             "started_at": time.time(),
             "category": category,
+            "llm_model": llm_model,
             # SECURITY: track ownership so all reads / saves can filter by user.
             "owner": owner or "",
         }
@@ -413,6 +414,7 @@ class ResearchHandler:
                 "progress": entry["progress"],
                 "query": entry["query"],
                 "started_at": entry["started_at"],
+                "model": entry.get("llm_model"),
             }
             # avg_duration is a historical figure over completed reports on
             # disk; get_avg_duration() globs and JSON-parses the whole research
