@@ -2098,11 +2098,19 @@ def setup_model_routes(model_discovery):
         chat_models = [m for m in all_models if _is_chat_model(m)]
         skipped = len(all_models) - len(chat_models)
 
+        db_pre = SessionLocal()
+        try:
+            ep_pre = db_pre.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
+            user_hidden = set(_parse_model_list(ep_pre.hidden_models)) if ep_pre else set()
+        finally:
+            db_pre.close()
+        probe_models = [m for m in chat_models if m not in user_hidden]
+
         def _stream():
-            yield f"data: {json.dumps({'type': 'probe_start', 'endpoint': ep_data['name'], 'model_count': len(chat_models), 'skipped': skipped})}\n\n"
+            yield f"data: {json.dumps({'type': 'probe_start', 'endpoint': ep_data['name'], 'model_count': len(probe_models), 'skipped': skipped})}\n\n"
             failed = []
             ok_count = 0
-            for mid in chat_models:
+            for mid in probe_models:
                 result = _probe_single_model(base, ep_data["api_key"], mid, timeout=8)
                 result["model"] = mid
                 result["type"] = "probe_result"
@@ -2118,7 +2126,8 @@ def setup_model_routes(model_discovery):
             try:
                 ep_obj = db2.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
                 if ep_obj:
-                    ep_obj.hidden_models = json.dumps(failed) if failed else None
+                    merged_hidden = sorted(user_hidden | set(failed))
+                    ep_obj.hidden_models = json.dumps(merged_hidden) if merged_hidden else None
                     if all_models:
                         ep_obj.cached_models = json.dumps(all_models)
                     db2.commit()
