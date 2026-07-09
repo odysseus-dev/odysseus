@@ -2097,6 +2097,91 @@
               <label class="admin-switch"><input type="checkbox" id="adm-shareDefaultsToggle"><span class="admin-slider"></span></label>
             </div>
           </div>
+          <div class="admin-card" id="adm-ldapCard">
+            <h2 style="display:flex;align-items:center;gap:8px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;opacity:0.6"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              LDAP / FreeIPA Login
+              <span id="adm-ldapSource" class="admin-badge admin-badge-muted hidden"></span>
+            </h2>
+            <div class="admin-toggle-row ldap-toggle-row">
+              <div>
+                <div class="admin-toggle-label">Directory authentication</div>
+                <div class="admin-toggle-sub">Allow LDAP or FreeIPA users to sign in alongside local accounts.</div>
+              </div>
+              <label class="admin-switch"><input type="checkbox" id="adm-ldapEnabled"><span class="admin-slider"></span></label>
+            </div>
+            <div class="ldap-settings-grid">
+              <label class="ldap-field ldap-field-wide">
+                <span>Server URI</span>
+                <input id="adm-ldapServerUri" class="settings-select" type="text" placeholder="ldaps://ipa.example.test">
+              </label>
+              <label class="ldap-field">
+                <span>Bind DN</span>
+                <input id="adm-ldapBindDn" class="settings-select" type="text" placeholder="uid=service,cn=users,cn=accounts,dc=example,dc=test">
+              </label>
+              <label class="ldap-field">
+                <span>Bind Password</span>
+                <input id="adm-ldapBindPassword" class="settings-select" type="password" placeholder="Leave blank to keep saved password">
+              </label>
+              <label class="ldap-field ldap-field-wide">
+                <span>User Base DN</span>
+                <input id="adm-ldapUserBaseDn" class="settings-select" type="text" placeholder="cn=users,cn=accounts,dc=example,dc=test">
+              </label>
+              <label class="ldap-field ldap-field-wide">
+                <span>User Filter</span>
+                <input id="adm-ldapUserFilter" class="settings-select" type="text" placeholder="(uid={username})">
+              </label>
+              <label class="ldap-field ldap-field-wide">
+                <span>Group Base DN</span>
+                <input id="adm-ldapGroupBaseDn" class="settings-select" type="text" placeholder="cn=groups,cn=accounts,dc=example,dc=test">
+              </label>
+              <label class="ldap-field ldap-field-wide">
+                <span>Group Filter</span>
+                <input id="adm-ldapGroupFilter" class="settings-select" type="text" placeholder="(member={user_dn})">
+              </label>
+              <label class="ldap-field">
+                <span>Allowed Groups</span>
+                <textarea id="adm-ldapAllowedGroups" class="settings-select" rows="3" placeholder="odysseus-users"></textarea>
+              </label>
+              <label class="ldap-field">
+                <span>Admin Groups</span>
+                <textarea id="adm-ldapAdminGroups" class="settings-select" rows="3" placeholder="odysseus-admins"></textarea>
+              </label>
+            </div>
+            <details class="ldap-advanced">
+              <summary>Advanced attributes</summary>
+              <div class="ldap-settings-grid">
+                <label class="ldap-field">
+                  <span>Username Attribute</span>
+                  <input id="adm-ldapUserNameAttribute" class="settings-select" type="text" placeholder="uid">
+                </label>
+                <label class="ldap-field">
+                  <span>Display Name Attribute</span>
+                  <input id="adm-ldapDisplayNameAttribute" class="settings-select" type="text" placeholder="displayName">
+                </label>
+                <label class="ldap-field">
+                  <span>Email Attribute</span>
+                  <input id="adm-ldapEmailAttribute" class="settings-select" type="text" placeholder="mail">
+                </label>
+                <label class="ldap-field">
+                  <span>Connect Timeout</span>
+                  <input id="adm-ldapConnectTimeout" class="settings-select" type="number" min="1" step="0.5" placeholder="5">
+                </label>
+              </div>
+              <div class="ldap-inline-options">
+                <label><input type="checkbox" id="adm-ldapStartTls"> StartTLS</label>
+                <label><input type="checkbox" id="adm-ldapClearBindPassword"> Clear saved bind password</label>
+              </div>
+            </details>
+            <div class="ldap-test-row">
+              <input id="adm-ldapTestUsername" class="settings-select" type="text" placeholder="Test username">
+              <input id="adm-ldapTestPassword" class="settings-select" type="password" placeholder="Test password">
+              <button type="button" class="admin-btn-sm" id="adm-ldapTestBtn">Test Login</button>
+              <button type="button" class="admin-btn-add" id="adm-ldapSaveBtn">Save LDAP</button>
+            </div>
+            <div id="adm-ldapMsg" class="ldap-settings-msg"></div>
+            <pre id="adm-ldapTestResult" class="ldap-test-result hidden"></pre>
+          </div>
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Users</h2>
             <div id="adm-userList"><div class="admin-empty">Loading...</div></div>

@@ -17,6 +17,10 @@ faster-whisper
 # Alternatives: SearXNG, Brave, Tavily, Serper, Google PSE.
 ddgs
 
+# LDAP / FreeIPA login integration. The core app lazy-imports ldap3, so local
+# password auth and non-LDAP installs keep working without this package.
+ldap3
+
 # PDF form-filling feature (fillable AcroForm detection, field extraction,
 # value/annotation/signature stamping, page rendering for the form overlay).
 # NOTE: PyMuPDF is AGPL-3.0. Installing it brings AGPL obligations for a
