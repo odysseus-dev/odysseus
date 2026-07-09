@@ -126,7 +126,27 @@ class EmbeddingClient:
         # OpenAI format: {"data": [{"embedding": [...], "index": 0}, ...]}
         embeddings = data.get("data", [])
         embeddings.sort(key=lambda e: e.get("index", 0))
-        return [emb["embedding"] for emb in embeddings]
+        out: List[List[float]] = []
+        for emb in embeddings:
+            vec = emb.get("embedding")
+            if vec is None:
+                raise ValueError(
+                    f"Embedding API response missing 'embedding' field "
+                    f"(url={self.url}, model={self.model}); got keys={list(emb.keys())}"
+                )
+            out.append(vec)
+        return out
+
+    def close(self) -> None:
+        client = getattr(self, "_client", None)
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
+
+    def __del__(self) -> None:
+        self.close()
 
 
 class FastEmbedClient:
