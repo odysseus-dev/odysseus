@@ -225,8 +225,34 @@ def load_model():
 
         if use_offload:
             try:
-                _pipe.enable_model_cpu_offload()
-                logger.info(f"Loaded as {name} with CPU offload")
+                # Model offload keeps each pipeline component resident on the GPU
+                # as a whole while active. A large transformer (e.g. a 6B DiT
+                # ~12GB in bf16) alone fills a 12GB card, leaving no room for VAE
+                # decode / activations -> CUDA OOM at generation time (load still
+                # "succeeds"). When the biggest component wouldn't leave ~2GB of
+                # headroom, fall back to per-layer sequential offload (much lower
+                # peak VRAM, slower).
+                use_sequential = getattr(_args, "sequential_offload", False)
+                if not use_sequential:
+                    try:
+                        total_vram = torch.cuda.get_device_properties(0).total_memory
+                        biggest = 0
+                        for _comp in (getattr(_pipe, "components", {}) or {}).values():
+                            if isinstance(_comp, torch.nn.Module):
+                                _b = sum(p.numel() * p.element_size() for p in _comp.parameters())
+                                _b += sum(bf.numel() * bf.element_size() for bf in _comp.buffers())
+                                biggest = max(biggest, _b)
+                        if biggest and biggest + (2 * 1024 ** 3) > total_vram * 0.9:
+                            use_sequential = True
+                            logger.info(f"Largest component {biggest/1e9:.1f}GB vs {total_vram/1e9:.1f}GB VRAM — using sequential offload")
+                    except Exception as _se:
+                        logger.debug(f"offload sizing check failed, using model offload: {_se}")
+                if use_sequential:
+                    _pipe.enable_sequential_cpu_offload()
+                    logger.info(f"Loaded as {name} with sequential CPU offload")
+                else:
+                    _pipe.enable_model_cpu_offload()
+                    logger.info(f"Loaded as {name} with CPU offload")
                 return True
             except Exception as e:
                 logger.warning(f"{name} + cpu_offload failed: {e}")
@@ -1143,6 +1169,7 @@ if __name__ == "__main__":
     parser.add_argument("--width", type=int, default=1024, help="Default output width")
     parser.add_argument("--height", type=int, default=1024, help="Default output height")
     parser.add_argument("--cpu-offload", action="store_true", help="Enable model CPU offload")
+    parser.add_argument("--sequential-offload", action="store_true", help="Force per-layer sequential CPU offload (lowest VRAM, slower). Auto-enabled when the largest model component would not fit alongside activations.")
     parser.add_argument("--attention-slicing", action="store_true", help="Enable attention slicing")
     parser.add_argument("--vae-slicing", action="store_true", help="Enable VAE slicing")
     parser.add_argument("--harmonize-gpu", type=int, default=None, help="GPU index for harmonize/img2img (default: same as main)")
