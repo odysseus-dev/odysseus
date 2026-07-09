@@ -1176,6 +1176,10 @@ def _imap(account_id: str | None = None, owner: str = ""):
 def _decode_header(raw):
     if not raw:
         return ""
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="replace")
+    else:
+        raw = str(raw)
     try:
         # make_header concatenates per RFC 2047: no spurious space between an
         # encoded-word and adjacent plain text (plain runs keep their own
