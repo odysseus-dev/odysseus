@@ -68,3 +68,60 @@ def test_strip_tool_blocks_removes_rescued_read_file_fence():
     assert "read_file" not in cleaned
     assert "Opening file:" in cleaned
     assert "Done." in cleaned
+
+
+def test_same_line_read_file_path_fence_runs_as_read_file():
+    blocks = parse_tool_blocks('```read_file path="README.md"\n```')
+
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "read_file"
+    assert blocks[0].content == "README.md"
+
+
+def test_same_line_workspace_tools_still_parse_when_native_fences_are_skipped():
+    text = (
+        '```read_file path="README.md"\n```\n'
+        '```read_file path="package.json"```\n'
+        '```ls path=".github/workflows"\n```'
+    )
+
+    blocks = parse_tool_blocks(text, skip_fenced=True)
+
+    assert [(b.tool_type, b.content) for b in blocks] == [
+        ("read_file", "README.md"),
+        ("read_file", "package.json"),
+        ("ls", ".github/workflows"),
+    ]
+
+
+def test_empty_get_workspace_fence_executes():
+    blocks = parse_tool_blocks("```get_workspace\n```")
+
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "get_workspace"
+    assert blocks[0].content == ""
+
+
+def test_plain_readonly_workspace_tool_line_runs_as_readonly_tool():
+    blocks = parse_tool_blocks('read_file path="README.md"', skip_fenced=True)
+
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "read_file"
+    assert blocks[0].content == "README.md"
+
+
+def test_strip_tool_blocks_removes_same_line_readonly_workspace_fences_when_skipped():
+    text = (
+        'Opening files:\n'
+        '```read_file path="README.md"\n```\n'
+        '```ls path=".github/workflows"```\n'
+        'Done.'
+    )
+
+    cleaned = strip_tool_blocks(text, skip_fenced=True)
+
+    assert "read_file" not in cleaned
+    assert "ls path" not in cleaned
+    assert "```" not in cleaned
+    assert "Opening files:" in cleaned
+    assert "Done." in cleaned

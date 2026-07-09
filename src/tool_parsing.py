@@ -10,6 +10,7 @@ import bisect
 import json
 import logging
 import re
+import shlex
 from typing import List, Optional, Tuple
 
 from src.agent_tools import ToolBlock, TOOL_TAGS
@@ -22,17 +23,15 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Pattern 1: ```bash ... ``` fenced code blocks. The tag may be followed by a
-# newline (classic form) or by inline JSON args on the same line
-# (```list_email_accounts {}). The same-line part is captured separately
-# (group 2) and judged by _fenced_tool_call below — the regex alone only
-# requires it to start with { or [; anything else after the tag is a Markdown
-# info string (```python title="example.py") and the fence never matches.
+# newline (classic form) or by inline args on the same line. The same-line part
+# is captured separately (group 2) and judged by _fenced_tool_call below —
+# most inline text is Markdown fence metadata and stays inert.
 # (?![\w-]) keeps the alternation from prefix-matching longer fence tags:
 # without it, ```python3 would match as tool "python" with content "3\n..."
 # and execute as code.
 _TOOL_BLOCK_RE = re.compile(
     r"```(" + "|".join(TOOL_TAGS) + r")(?![\w-])"
-    r"[ \t]*([{\[][^\n]*?)?[ \t]*(?=\r?\n|```)\r?\n?([\s\S]*?)```",
+    r"[ \t]*([^\r\n`]*)?[ \t]*(?=\r?\n|```)\r?\n?([\s\S]*?)```",
     re.IGNORECASE,
 )
 
@@ -64,9 +63,12 @@ def _fenced_tool_call(m) -> Optional[Tuple[str, str]]:
         return tag, body
     if tag in _CODE_FENCE_TAGS:
         return None
+    content = f"{inline}\n{body}" if body else inline
+    if tag in _READONLY_WORKSPACE_TOOLS:
+        block = _parse_readonly_workspace_tool_call(tag, content)
+        return (block.tool_type, block.content) if block else None
     # Inline args may continue onto following lines (a JSON object opened on
     # the tag line); the combined text must parse as JSON or nothing runs.
-    content = f"{inline}\n{body}" if body else inline
     try:
         json.loads(content)
     except (ValueError, TypeError):
@@ -347,6 +349,18 @@ _PLAIN_UI_OPEN_PANEL_RE = re.compile(
     r"\s*(?:`{1,3})?\s*$"
 )
 
+_READONLY_WORKSPACE_TOOLS = frozenset({"get_workspace", "read_file", "ls", "glob", "grep"})
+_EMPTY_FENCE_TOOLS = frozenset({"get_workspace"})
+_READONLY_TOOL_FENCE_RE = re.compile(
+    r"```[ \t]*(get_workspace|read_file|ls|glob|grep)(?![\w-])"
+    r"[ \t]*([^\r\n`]*)?[ \t]*(?=\r?\n|```)\r?\n?([\s\S]*?)```",
+    re.IGNORECASE,
+)
+_PLAIN_READONLY_TOOL_LINE_RE = re.compile(
+    r"(?im)^\s*(?:`{1,3})?\s*(get_workspace|read_file|ls|glob|grep)(?![\w-])"
+    r"([^\r\n`]*)\s*(?:`{1,3})?\s*$",
+)
+
 
 # ---------------------------------------------------------------------------
 # Parsing functions
@@ -365,6 +379,106 @@ def _literal_string(value) -> Optional[str]:
             if isinstance(item, str) and item.strip():
                 return item.strip()
     return None
+
+
+def _coerce_scalar_arg(value: str):
+    raw = str(value or "").strip()
+    if re.fullmatch(r"\d+", raw):
+        try:
+            return int(raw)
+        except ValueError:
+            return raw
+    if raw.lower() in ("true", "false"):
+        return raw.lower() == "true"
+    return raw
+
+
+def _parse_readonly_workspace_tool_call(tool_name: str, arg_text: str) -> Optional[ToolBlock]:
+    """Recover malformed read-only workspace tool calls.
+
+    Some local models emit ```read_file path="README.md"``` instead of the
+    documented fenced form. Keep this rescue read-only and workspace-confined:
+    no bash/python/write/edit tools are accepted here.
+    """
+    canonical = (tool_name or "").strip().lower().replace("-", "_")
+    if canonical not in _READONLY_WORKSPACE_TOOLS:
+        return None
+
+    raw = (arg_text or "").strip()
+    if canonical == "get_workspace":
+        return ToolBlock("get_workspace", "") if not raw else None
+    if not raw:
+        return ToolBlock(canonical, "{}" if canonical in {"ls", "glob", "grep"} else "")
+
+    if raw.startswith("{"):
+        try:
+            payload = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        from src.tool_schemas import function_call_to_tool_block
+        return function_call_to_tool_block(canonical, json.dumps(payload))
+
+    try:
+        parts = shlex.split(raw, posix=True)
+    except ValueError:
+        return None
+    if not parts:
+        return None
+
+    args = {}
+    positional = []
+    for part in parts:
+        if "=" in part and not part.startswith("="):
+            key, value = part.split("=", 1)
+            key = key.strip().lower().replace("-", "_")
+            value = value.strip()
+            if key in ("file", "file_path", "filename"):
+                key = "path"
+            elif key in ("regex", "query", "text"):
+                key = "pattern"
+            elif key in ("max", "limit_results"):
+                key = "max_results"
+            args[key] = _coerce_scalar_arg(value)
+        else:
+            positional.append(part)
+
+    allowed = {
+        "read_file": {"path", "offset", "limit"},
+        "ls": {"path"},
+        "glob": {"pattern", "path"},
+        "grep": {"pattern", "path", "glob", "ignore_case", "max_results"},
+    }[canonical]
+    if set(args) - allowed:
+        return None
+
+    if positional:
+        if len(positional) != 1:
+            return None
+        if canonical in {"read_file", "ls"} and "path" not in args:
+            args["path"] = positional[0]
+        elif canonical in {"glob", "grep"} and "pattern" not in args:
+            args["pattern"] = positional[0]
+        else:
+            return None
+
+    if canonical in {"read_file", "ls"} and set(args) == {"path"}:
+        return ToolBlock(canonical, str(args["path"]))
+
+    from src.tool_schemas import function_call_to_tool_block
+    return function_call_to_tool_block(canonical, json.dumps(args))
+
+
+def _strip_inline_readonly_tool_fence(m) -> str:
+    inline = (m.group(2) or "").strip()
+    body = (m.group(3) or "").strip()
+    content = f"{inline}\n{body}" if inline and body else (inline or body)
+    return "" if _parse_readonly_workspace_tool_call(m.group(1), content) else m.group(0)
+
+
+def _strip_plain_readonly_tool_line(m) -> str:
+    return "" if _parse_readonly_workspace_tool_call(m.group(1), m.group(2)) else m.group(0)
 
 
 def _parse_misfenced_web_lookup(content: str) -> Optional[ToolBlock]:
@@ -1262,8 +1376,18 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
     # XML patterns below catch it.
     text = _normalize_dsml(text)
 
-    # Pattern 1: fenced code blocks (skipped when `skip_fenced` — see docstring).
-    if not skip_fenced:
+    # Pattern 1: fenced code blocks. When fenced parsing is disabled for native
+    # models, keep a narrow read-only workspace rescue so failed native calls like
+    # ```read_file path="README.md"``` still execute instead of rendering as text.
+    if skip_fenced:
+        for m in _READONLY_TOOL_FENCE_RE.finditer(text):
+            inline = (m.group(2) or "").strip()
+            body = (m.group(3) or "").strip()
+            content = f"{inline}\n{body}" if inline and body else (inline or body)
+            block = _parse_readonly_workspace_tool_call(m.group(1), content)
+            if block:
+                blocks.append(block)
+    else:
         for m in _TOOL_BLOCK_RE.finditer(text):
             call = _fenced_tool_call(m)
             if call is None:
@@ -1277,7 +1401,7 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
                 # silently dropping the call left models concluding email was
                 # broken. Other tags (bash, python, ...) keep skipping: empty
                 # content is nothing to run.
-                if tag in BUILTIN_EMAIL_TOOLS:
+                if tag in BUILTIN_EMAIL_TOOLS or tag in _EMPTY_FENCE_TOOLS:
                     blocks.append(ToolBlock(tag, ""))
                 continue
             # If a code block's content is an <invoke> XML call (some models wrap
@@ -1404,6 +1528,14 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
         if m:
             blocks.append(ToolBlock("ui_control", f"open_panel {m.group(1).lower()}"))
 
+    # Pattern 8: read-only workspace tool call emitted as a plain line, e.g.
+    # `read_file path="README.md"`. Keep this rescue narrow and read-only.
+    if not blocks:
+        for m in _PLAIN_READONLY_TOOL_LINE_RE.finditer(text):
+            block = _parse_readonly_workspace_tool_call(m.group(1), m.group(2))
+            if block:
+                blocks.append(block)
+
     return blocks
 
 
@@ -1427,6 +1559,8 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
     # that actually dispatched; leave example fences from native models inert
     # but visible), then remove [TOOL_CALL]{...}[/TOOL_CALL] markup.
     cleaned = text if skip_fenced else _TOOL_BLOCK_RE.sub(_strip_executed_fence, text)
+    if skip_fenced:
+        cleaned = _READONLY_TOOL_FENCE_RE.sub(_strip_inline_readonly_tool_fence, cleaned)
     # Forward-only removal mirrors parse_tool_blocks: _strip_delimited pairs each
     # opener with a later closer and stops when none is reachable, so untrusted
     # output can't drive the O(n^2) lazy-rescan (ReDoS); see _iter_delimited.
@@ -1446,6 +1580,7 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
             _, (start, end) = raw_web_json
             cleaned = cleaned[:start] + cleaned[end:]
     cleaned = _PLAIN_UI_OPEN_PANEL_RE.sub("", cleaned)
+    cleaned = _PLAIN_READONLY_TOOL_LINE_RE.sub(_strip_plain_readonly_tool_line, cleaned)
     # Strip bare <invoke> blocks not wrapped in <tool_call>
     cleaned = _strip_bare_invoke_markup(cleaned)
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
