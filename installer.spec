@@ -38,7 +38,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='Odysseus_Setup',
+    name='Simple-Signal-Extension-Setup',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

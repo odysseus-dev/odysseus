@@ -34,7 +34,8 @@
                                 "package.json",
                                 "node_modules/**/*"
                             ],
-                  "productName":  "Odysseus",
+                  "productName":  "Simple Signal",
+                  "artifactName":  "Simple-Signal-Standalone-Setup-${version}.${ext}",
                   "extraFiles":  [
                                      "app.py",
                                      "core/**/*",
@@ -56,6 +57,6 @@
                   "win":  {
                               "target":  "nsis"
                           },
-                  "appId":  "com.odysseus.app"
+                  "appId":  "com.odysseus.simplesignal"
               }
 }
