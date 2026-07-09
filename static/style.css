@@ -4289,7 +4289,8 @@ body.bg-pattern-sparkles {
       #compare-toggle-btn { display:none !important; }
       .section[draggable] { -webkit-user-drag:none; }
       .drag-handle, .item-drag-handle, .folder-drag-handle { display:none !important; }
-      /* Sidebar overlays chat on mobile */
+      /* Sidebar overlays chat on mobile (touch devices only — avoids desktop browser zoom past 200% snapping into this layout) */
+      @media (pointer: coarse) {
       .sidebar {
         position: fixed !important;
         top: 0; bottom: 0; left: 0;
@@ -4331,6 +4332,7 @@ body.bg-pattern-sparkles {
         transition: opacity 0.35s ease;
       }
       #sidebar-backdrop.visible { opacity: 1; pointer-events: auto; }
+      }
       /* Elastic overscroll on sidebar */
       .sidebar-inner {
         -webkit-overflow-scrolling: touch;
