@@ -629,8 +629,9 @@ def _raw_openai_tool_call_to_block(value) -> Optional[ToolBlock]:
 
     if tool_type.startswith("mcp__"):
         return ToolBlock(tool_type, json.dumps(args) if args else "{}")
-    if name in BUILTIN_EMAIL_TOOLS:
-        return ToolBlock(f"mcp__email__{name}", json.dumps(args) if args else "{}")
+    name_lower = (name or "").lower()
+    if name_lower in BUILTIN_EMAIL_TOOLS:
+        return ToolBlock(f"mcp__email__{name_lower}", json.dumps(args) if args else "{}")
     if tool_type not in TOOL_TAGS:
         return None
 

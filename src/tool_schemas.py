@@ -1291,7 +1291,8 @@ def _repair_document_function_args(tool_type: str, arguments: str) -> Optional[d
 
 def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock]:
     """Convert a native function call into a ToolBlock for the existing execution pipeline."""
-    tool_type = _TOOL_NAME_MAP.get(name, name)
+    name_lower = (name or "").lower()
+    tool_type = _TOOL_NAME_MAP.get(name, _TOOL_NAME_MAP.get(name_lower, name))
     try:
         if not arguments or (isinstance(arguments, str) and not arguments.strip()):
             args = {}
@@ -1312,7 +1313,7 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
     # Uses the shared BUILTIN_EMAIL_TOOLS (single source of truth) so the
     # fail-closed set can't drift from the dispatch/blocklist sets.
     if not isinstance(args, dict):
-        if tool_type.startswith("mcp__email__") or name in BUILTIN_EMAIL_TOOLS:
+        if tool_type.startswith("mcp__email__") or name_lower in BUILTIN_EMAIL_TOOLS:
             logger.warning(f"Non-object email function call arguments for {name}: {args!r}; rejecting")
             return None
         logger.warning(f"Non-object function call arguments for {name}: {args!r}; treating as empty")
@@ -1328,8 +1329,8 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         content = json.dumps(args) if args else "{}"
         return ToolBlock(tool_type, content)
     # Email tools are implemented as MCP — route them to email
-    if name in BUILTIN_EMAIL_TOOLS:
-        return ToolBlock(f"mcp__email__{name}", json.dumps(args) if args else "{}")
+    if name_lower in BUILTIN_EMAIL_TOOLS:
+        return ToolBlock(f"mcp__email__{name_lower}", json.dumps(args) if args else "{}")
     if tool_type not in TOOL_TAGS:
         logger.warning(f"Unknown function call: {name}")
         return None

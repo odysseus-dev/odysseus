@@ -192,6 +192,24 @@ def plan_mode_disabled_tools() -> Set[str]:
     return (all_names | _PLAN_MODE_KNOWN_MUTATORS) - PLAN_MODE_READONLY_TOOLS
 
 
+def canonical_tool_type(tool_name: str) -> str:
+    """Normalize tool names that local models emit with inconsistent casing.
+
+    Built-in email tools are registered lowercase; uppercase variants such as
+    ``LIST_EMAILS`` must dispatch to the same MCP path as ``list_emails``.
+    """
+    if not isinstance(tool_name, str) or not tool_name:
+        return tool_name
+    bare_lower = tool_name.lower()
+    if bare_lower in BUILTIN_EMAIL_TOOLS:
+        return bare_lower
+    if tool_name.startswith("mcp__email__"):
+        bare = tool_name[len("mcp__email__"):].lower()
+        if bare in BUILTIN_EMAIL_TOOLS:
+            return f"mcp__email__{bare}"
+    return tool_name
+
+
 def email_tool_policy_names(tool_name: str) -> frozenset:
     """All policy-equivalent spellings of a tool name.
 
@@ -205,6 +223,7 @@ def email_tool_policy_names(tool_name: str) -> frozenset:
     """
     if not isinstance(tool_name, str):
         return frozenset((tool_name,))
+    tool_name = canonical_tool_type(tool_name)
     if tool_name in BUILTIN_EMAIL_TOOLS:
         return frozenset((tool_name, f"mcp__email__{tool_name}"))
     if tool_name.startswith("mcp__email__"):

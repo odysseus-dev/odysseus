@@ -23,6 +23,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 from src.tool_security import (
     BUILTIN_EMAIL_TOOLS,
+    canonical_tool_type,
     email_tool_policy_names,
     is_public_blocked_tool,
     owner_is_admin_or_single_user,
@@ -642,7 +643,7 @@ async def _execute_tool_block_impl(
     except ImportError:
         dynamic_handlers = {}
 
-    tool = block.tool_type
+    tool = canonical_tool_type(block.tool_type)
     content = block.content
 
     # The block/disable gates below must match every policy-equivalent
