@@ -226,32 +226,32 @@ function _terminalServeDiagnosis(task, outputText) {
   if (_isPipTask) return null;
   if (_serveTaskLooksAwqOnLocalBackend(task, out)) {
     return {
-      message: 'AWQ/GPTQ/FP8 cannot be served through llama.cpp/Ollama unified-memory mode.',
-      suggestion: 'Suggested action: use vLLM/SGLang on a compatible CUDA/ROCm GPU server, or download a GGUF version for llama.cpp/Ollama/unified-memory serving.',
+      message: window.t('AWQ/GPTQ/FP8 cannot be served through llama.cpp/Ollama unified-memory mode.'),
+      suggestion: window.t('Suggested action: use vLLM/SGLang on a compatible CUDA/ROCm GPU server, or download a GGUF version for llama.cpp/Ollama/unified-memory serving.'),
       fixes: [
-        { label: 'Find GGUF download', action: () => _openDownloadForGgufTask(task) },
-        { label: 'Edit serve', action: (panel) => _openServeEditForTask(task) },
+        { label: window.t('Find GGUF download'), action: () => _openDownloadForGgufTask(task) },
+        { label: window.t('Edit serve'), action: (panel) => _openServeEditForTask(task) },
       ],
     };
   }
   if (_serveTaskLooksAwqWithoutUsableAccelerator(task, out)) {
     return {
-      message: 'AWQ/GPTQ/FP8 needs a working vLLM/SGLang accelerator path; this server did not expose one.',
-      suggestion: 'Suggested action: choose a CUDA/ROCm server where vLLM/SGLang can see the GPU, or download a GGUF version and serve it with llama.cpp/Ollama.',
+      message: window.t('AWQ/GPTQ/FP8 needs a working vLLM/SGLang accelerator path; this server did not expose one.'),
+      suggestion: window.t('Suggested action: choose a CUDA/ROCm server where vLLM/SGLang can see the GPU, or download a GGUF version and serve it with llama.cpp/Ollama.'),
       fixes: [
-        { label: 'Find GGUF download', action: () => _openDownloadForGgufTask(task) },
-        { label: 'Edit serve', action: (panel) => _openServeEditForTask(task) },
+        { label: window.t('Find GGUF download'), action: () => _openDownloadForGgufTask(task) },
+        { label: window.t('Edit serve'), action: (panel) => _openServeEditForTask(task) },
       ],
     };
   }
   return _diagnose(out) || {
     message: /Native llama-server not found|building llama-server|llama\.cpp/i.test(out)
-      ? 'llama.cpp build stopped before the server became reachable.'
-      : 'Serve stopped before the model became reachable.',
+      ? window.t('llama.cpp build stopped before the server became reachable.')
+      : window.t('Serve stopped before the model became reachable.'),
     suggestion: /Native llama-server not found|building llama-server|llama\.cpp/i.test(out)
-      ? 'Suggested action: copy the troubleshooting bundle, then edit serve settings. For the quickest local/CPU path, use Ollama or a prebuilt llama-server; source builds can take several minutes and fail if build dependencies are incomplete.'
-      : 'Suggested action: copy the troubleshooting bundle, then edit serve settings or relaunch with a CPU/backend fallback.',
-    fixes: [{ label: 'Edit serve', action: (panel) => _openServeEditForTask(task) }],
+      ? window.t('Suggested action: copy the troubleshooting bundle, then edit serve settings. For the quickest local/CPU path, use Ollama or a prebuilt llama-server; source builds can take several minutes and fail if build dependencies are incomplete.')
+      : window.t('Suggested action: copy the troubleshooting bundle, then edit serve settings or relaunch with a CPU/backend fallback.'),
+    fixes: [{ label: window.t('Edit serve'), action: (panel) => _openServeEditForTask(task) }],
   };
 }
 
@@ -269,7 +269,7 @@ function _redactCrashReportText(text) {
 
 function _lastLines(text, count = 160) {
   const clean = _redactCrashReportText(text || '').trimEnd();
-  if (!clean) return '(no captured output)';
+  if (!clean) return window.t('(no captured output)');
   return clean.split('\n').slice(-count).join('\n');
 }
 
@@ -292,26 +292,26 @@ function _buildCrashReport(task, outputText) {
   const diag = _diagnose(capturedOutput);
   const started = task?.ts ? new Date(task.ts).toISOString() : '';
   const report = [
-    '## Odysseus Cookbook crash report',
+    `## ${window.t('Odysseus Cookbook crash report')}`,
     '',
-    'Please review this report for secrets before posting it publicly.',
+    window.t('Please review this report for secrets before posting it publicly.'),
     '',
-    '### Task',
+    `### ${window.t('Task')}`,
     `- ID: \`${task?.sessionId || task?.id || 'unknown'}\``,
-    `- Type: \`${task?.type || 'unknown'}\``,
+    `- ${window.t('Type:')} \`${task?.type || 'unknown'}\``,
     `- Status: \`${task?._unreachable ? 'unreachable' : (task?.status || 'unknown')}\``,
-    `- Model/repo: \`${task?.payload?.repo_id || task?.name || 'unknown'}\``,
-    `- Host: \`${_taskHostLabel(task)}\``,
+    `- ${window.t('Model/repo:')} \`${task?.payload?.repo_id || task?.name || 'unknown'}\``,
+    `- ${window.t('Host:')} \`${_taskHostLabel(task)}\``,
   ];
-  if (task?.platform) report.push(`- Platform: \`${task.platform}\``);
-  if (started) report.push(`- Started: \`${started}\``);
+  if (task?.platform) report.push(`- ${window.t('Platform:')} \`${task.platform}\``);
+  if (started) report.push(`- ${window.t('Started:')} \`${started}\``);
   const port = _taskPort(task);
-  if (port) report.push(`- Port: \`${port}\``);
-  if (diag?.message) report.push(`- Diagnosis: ${diag.message}`);
+  if (port) report.push(`- ${window.t('Port:')} \`${port}\``);
+  if (diag?.message) report.push(`- ${window.t('Diagnosis:')} ${diag.message}`);
   if (cmd) {
-    report.push('', '### Command', '```bash', _codeFence(cmd), '```');
+    report.push('', `### ${window.t('Command')}`, '```bash', _codeFence(cmd), '```');
   }
-  report.push('', '### Last captured output', '```text', _codeFence(_lastLines(capturedOutput)), '```');
+  report.push('', `### ${window.t('Last captured output')}`, '```text', _codeFence(_lastLines(capturedOutput)), '```');
   return report.join('\n');
 }
 
