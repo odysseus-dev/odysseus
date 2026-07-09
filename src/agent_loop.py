@@ -3065,9 +3065,12 @@ async def stream_agent_loop(
         _endpoint_supports is False
         or _model_no_tools
         or _is_ollama_native
-        or _ollama_openai_compat
     ):
         _is_api_model = False
+    elif _ollama_openai_compat:
+        # Ollama /v1 can use native tools when the catalog says the model supports
+        # them (issue #5015 — email agent tools were skipped with tools_sent=0).
+        _is_api_model = bool(_model_supports_tools)
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
     _compact_agent_prompt = _is_api_model or _is_ollama_native or _ollama_openai_compat
