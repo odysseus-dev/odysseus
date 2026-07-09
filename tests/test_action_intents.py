@@ -57,6 +57,12 @@ def test_bare_source_paths_promote_to_agent_file_tools():
     assert intent.category == "files"
 
 
+def test_explicit_get_workspace_tool_name_promotes_to_agent_file_tools():
+    intent = classify_tool_intent("use Get_Workspace and return a summary of the project")
+    assert intent.needs_tools
+    assert intent.category == "files"
+
+
 def test_explanatory_calendar_questions_stay_plain_chat():
     assert not message_needs_tools("How do I add an entry to my calendar?")
     assert not message_needs_tools("What about the built-in Odysseus calendar, is that linked to email?")

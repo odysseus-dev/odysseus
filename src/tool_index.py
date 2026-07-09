@@ -351,6 +351,11 @@ class ToolIndex:
         r"sql|rs|go|c|cc|cpp|h|hpp|cs|rb|php|lua)\b)",
         re.I,
     )
+    _EXPLICIT_WORKSPACE_TOOL_RE = re.compile(
+        r"\b(?:get[_\s-]?workspace|read[_\s-]?file|write[_\s-]?file|edit[_\s-]?file|"
+        r"grep|glob|ls)\b",
+        re.I,
+    )
 
     # Keyword hints: if the query mentions these words, force-include the tools.
     _KEYWORD_HINTS = {
@@ -582,7 +587,7 @@ class ToolIndex:
             base.update({"web_search", "web_fetch"})
         # Bare source filenames and relative paths are workspace-file requests
         # even when the user does not literally say "workspace" or "file".
-        if self._FILE_ARTIFACT_RE.search(query):
+        if self._FILE_ARTIFACT_RE.search(query) or self._EXPLICIT_WORKSPACE_TOOL_RE.search(query):
             base.update({"get_workspace", "ls", "glob", "grep", "read_file", "write_file", "edit_file", "ui_control"})
         return base
 

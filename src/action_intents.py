@@ -56,6 +56,10 @@ _FILE_TARGET = (
     r"(?:files?|folders?|director(?:y|ies)|repo|repository|project|workspace|"
     r"codebase|source|tree|path)"
 )
+_FILE_TOOL_NAME = (
+    r"(?:get[_\s-]?workspace|read[_\s-]?file|write[_\s-]?file|edit[_\s-]?file|"
+    r"grep|glob|ls)"
+)
 _FILE_EXT = (
     r"(?:py|pyw|js|mjs|cjs|ts|tsx|jsx|java|kt|kts|xml|json|jsonc|toml|"
     r"ya?ml|txt|md|css|scss|html?|gradle|properties|lock|sh|bash|ps1|"
@@ -137,6 +141,8 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         ("files", "assistant file action request", rf"{_ACTION_QUESTION}{_FILE_ACTION}\b.{{0,120}}\b(?:{_FILE_TARGET}|{_LOCAL_PATH})"),
         ("files", "file/folder imperative request", rf"{_PLEASE}{_FILE_ACTION}\b.{{0,120}}\b(?:{_FILE_TARGET}|{_LOCAL_PATH})"),
         ("files", "workspace project action request", rf"\b(?:look\s+(?:at|in|through)|work\s+on|browse|inspect|edit|fix|update|refactor)\b.{{0,120}}\b(?:{_FILE_TARGET}|{_LOCAL_PATH})"),
+        ("files", "explicit workspace tool request", rf"{_PLEASE}(?:use|call|run|invoke)\s+(?:the\s+)?{_FILE_TOOL_NAME}\b"),
+        ("files", "assistant explicit workspace tool request", rf"{_ACTION_QUESTION}(?:use|call|run|invoke)\s+(?:the\s+)?{_FILE_TOOL_NAME}\b"),
 
         # Shell / remote-host intent.
         ("shell", "ssh request", r"\bssh\s+(?:in)?to\b"),
