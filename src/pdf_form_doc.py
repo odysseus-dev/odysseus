@@ -211,6 +211,7 @@ def create_plain_pdf_document(
     upload_id: str,
     title: str,
     body_text: Optional[str] = None,
+    owner: Optional[str] = None,
 ) -> Optional[str]:
     """Create a markdown Document for a non-form PDF and set it active.
 
@@ -235,7 +236,7 @@ def create_plain_pdf_document(
             current_content=content,
             version_count=1,
             is_active=True,
-            owner=_sess.owner if _sess else None,
+            owner=owner or (_sess.owner if _sess else None),
         )
         ver = DocumentVersion(
             id=ver_id,
@@ -394,6 +395,7 @@ def create_form_markdown_document(
     upload_id: str,
     title: str,
     intro_text: Optional[str] = None,
+    owner: Optional[str] = None,
 ) -> Optional[str]:
     """Create a markdown Document for an editable form and set it active.
 
@@ -418,7 +420,7 @@ def create_form_markdown_document(
             current_content=content,
             version_count=1,
             is_active=True,
-            owner=_sess.owner if _sess else None,
+            owner=owner or (_sess.owner if _sess else None),
         )
         ver = DocumentVersion(
             id=ver_id,

@@ -281,6 +281,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 upload_id=upload_id,
                 title=title,
                 intro_text=body_text,
+                owner=user,
             )
         else:
             doc_id = create_plain_pdf_document(
@@ -288,6 +289,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 upload_id=upload_id,
                 title=title,
                 body_text=body_text,
+                owner=user,
             )
 
         if not doc_id:
