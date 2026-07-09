@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 4L16 22L6 22Z' fill='%23e06c75'/%3E%3Cpath d='M16 8L16 22L24 22Z' fill='%23e06c75' opacity='0.6'/%3E%3Cpath d='M4 24Q10 20 16 24Q22 28 28 24' stroke='%23e06c75' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="manifest" href="/static/manifest.json">
 <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
-<script nonce="{{CSP_NONCE}}">
+<script nonce="{{CSP_NONCE}}" data-cfasync="false">
 (function(){
   // Per-theme bg-effect defaults — mirrors THEME_DEFAULT_* maps in
   // static/js/theme.js so login picks the same default pattern as the
@@ -259,7 +259,7 @@
 
   <div class="error" id="error" role="alert" aria-live="assertive"></div>
 
-  <form id="authForm" autocomplete="on">
+  <form id="authForm" method="post" action="/" autocomplete="on">
     <label for="username">Username</label>
     <div class="pw-wrapper">
       <input id="username" name="username" type="text" required autofocus autocomplete="username">
@@ -298,7 +298,7 @@
 
 <footer class="version-label" id="version-label"></footer>
 
-<script nonce="{{CSP_NONCE}}">
+<script nonce="{{CSP_NONCE}}" data-cfasync="false">
 (async () => {
   // Load version
   try {
