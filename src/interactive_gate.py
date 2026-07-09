@@ -187,7 +187,7 @@ async def wait_for_interactive_quiet(label: str = "") -> bool:
             quiet_remaining = quiet - (now - _LAST_ACTIVITY)
             active_stream = _has_active_chat_stream()
             browser_active = _has_recent_browser_activity(now)
-            if _ACTIVE_REQUESTS <= 0 and quiet_remaining <= 0 and not active_stream and not browser_active:
+            if _ACTIVE_REQUESTS <= 0 and quiet_remaining <= 0 and not active_stream:
                 return waited
 
             waited = True

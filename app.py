@@ -175,6 +175,8 @@ _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/shell/stream",    # SSE
     "/api/research",        # multi-minute jobs
     "/api/model/download",  # tmux setup may run pip installs
+    "/api/cookbook/packages/install",  # pip installs can exceed REQUEST_HARD_TIMEOUT (#2008)
+    "/api/cookbook/install-system-deps",  # apt/pacman on remote hosts (#2008)
     "/api/model/probe",     # SSE; iterates models with up to 8s timeout each
     "/api/model-endpoints", # /probe sub-route also iterates models
     "/api/cookbook/setup",  # remote pacman/apt installs
@@ -630,14 +632,12 @@ app.include_router(auth_router)
 
 @app.post("/api/activity/heartbeat")
 async def activity_heartbeat():
-    from src.interactive_gate import mark_browser_activity
-    await mark_browser_activity()
-    async def _stop_background():
-        try:
-            await task_scheduler.stop_background_tasks_for_foreground(reason="browser heartbeat")
-        except Exception:
-            logging.getLogger("app.foreground_gate").debug("heartbeat task stop failed", exc_info=True)
-    asyncio.create_task(_stop_background())
+    """Browser keepalive.
+
+    Intentionally passive: an open tab must not cancel scheduled work or hold
+    the foreground gate open (#5294). Real UI traffic is tracked via the
+    interactive-request middleware.
+    """
     return {"ok": True}
 
 
