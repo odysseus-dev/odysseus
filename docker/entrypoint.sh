@@ -111,18 +111,53 @@ done
 # FlashInfer JIT sampler — sampler only, no impact on attention path.
 # No-op when vllm isn't installed.
 #
-# Checked layouts (all are real pip-wheel install paths):
-#   nvidia/cu13        — nvidia-nvcc-cu13 (CUDA 13.x wheel style)
-#   nvidia/cu12        — nvidia-nvcc-cu12 (CUDA 12.x wheel style)
-#   nvidia/cuda_nvcc   — nvidia-cuda-nvcc-cu12 (older cu12 sub-package style)
+# Checked layouts include user-site and root/system pip-wheel installs:
+#   nvidia/cu13        - nvidia-nvcc-cu13 (CUDA 13.x wheel style)
+#   nvidia/cu12        - nvidia-nvcc-cu12 (CUDA 12.x wheel style)
+#   nvidia/cuda_nvcc   - nvidia-cuda-nvcc-cu12 (older cu12 sub-package style)
 for cu in \
     /app/.local/lib/python*/site-packages/nvidia/cu13 \
     /app/.local/lib/python*/site-packages/nvidia/cu12 \
-    /app/.local/lib/python*/site-packages/nvidia/cuda_nvcc; do
+    /app/.local/lib/python*/site-packages/nvidia/cuda_nvcc \
+    /usr/local/lib/python*/site-packages/nvidia/cu13 \
+    /usr/local/lib/python*/site-packages/nvidia/cu12 \
+    /usr/local/lib/python*/site-packages/nvidia/cuda_nvcc \
+    /usr/local/lib/python*/dist-packages/nvidia/cu13 \
+    /usr/local/lib/python*/dist-packages/nvidia/cu12 \
+    /usr/local/lib/python*/dist-packages/nvidia/cuda_nvcc \
+    /usr/lib/python*/site-packages/nvidia/cu13 \
+    /usr/lib/python*/site-packages/nvidia/cu12 \
+    /usr/lib/python*/site-packages/nvidia/cuda_nvcc \
+    /usr/lib/python*/dist-packages/nvidia/cu13 \
+    /usr/lib/python*/dist-packages/nvidia/cu12 \
+    /usr/lib/python*/dist-packages/nvidia/cuda_nvcc; do
     if [ -x "$cu/bin/nvcc" ]; then
         export CUDA_HOME="$cu"
         break
     fi
+done
+
+for nvidia_root in \
+    /app/.local/lib/python*/site-packages/nvidia \
+    /usr/local/lib/python*/site-packages/nvidia \
+    /usr/local/lib/python*/dist-packages/nvidia \
+    /usr/lib/python*/site-packages/nvidia \
+    /usr/lib/python*/dist-packages/nvidia; do
+    for cuda_lib in \
+        "$nvidia_root"/cuda_runtime/lib \
+        "$nvidia_root"/cublas/lib; do
+        if [ -d "$cuda_lib" ]; then
+            export LD_LIBRARY_PATH="$cuda_lib:${LD_LIBRARY_PATH:-}"
+            export CMAKE_LIBRARY_PATH="$cuda_lib:${CMAKE_LIBRARY_PATH:-}"
+        fi
+    done
+    for cuda_include in \
+        "$nvidia_root"/cuda_runtime/include \
+        "$nvidia_root"/cublas/include; do
+        if [ -d "$cuda_include" ]; then
+            export CMAKE_INCLUDE_PATH="$cuda_include:${CMAKE_INCLUDE_PATH:-}"
+        fi
+    done
 done
 
 # Disable the FlashInfer JIT sampler unconditionally — it is sampler-only

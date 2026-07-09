@@ -1,15 +1,19 @@
+ARG PYTHON_BASE=python:3.14-slim
 # ---- builder: patch + build wheels for Real-ESRGAN's broken-on-3.14 deps ----
 # basicsr/gfpgan/facexlib read their version via exec()+locals()['__version__'],
 # which raises KeyError on Python 3.13+ (PEP 667). Build patched wheels here so
 # the final image / Cookbook never has to compile the broken sdists. See
 # docker/build-realesrgan-wheels.sh for the full rationale.
-FROM python:3.14-slim AS realesrgan-wheels
+FROM ${PYTHON_BASE} AS realesrgan-wheels
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 COPY docker/build-realesrgan-wheels.sh /usr/local/bin/build-realesrgan-wheels.sh
 RUN bash /usr/local/bin/build-realesrgan-wheels.sh /wheels
 
-FROM python:3.14-slim
+FROM ${PYTHON_BASE}
+
+ARG ODYSSEUS_LLAMA_CPP_CUDA=
+ARG ODYSSEUS_LLAMA_CPP_CUDA_FLAVOR=auto
 
 # System deps. tmux is required by Cookbook for background downloads/serves.
 # openssh-client is required for Cookbook remote server tests, setup, probes,
@@ -19,8 +23,14 @@ FROM python:3.14-slim
 # nodejs/npm provide npx for the optional built-in Browser MCP server.
 # gosu lets the entrypoint drop privileges cleanly so signals still reach
 # uvicorn directly (no extra shell layer like `su`/`sudo` would add).
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN . /etc/os-release \
+    && case "${VERSION_CODENAME:-}" in \
+        bookworm) _glib_runtime=libglib2.0-0 ;; \
+        *) _glib_runtime=libglib2.0-0t64 ;; \
+    esac \
+    && apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    ca-certificates \
     cmake \
     curl \
     git \
@@ -30,12 +40,59 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client \
     gosu \
     libgl1 \
-    libglib2.0-0t64 \
+    "$_glib_runtime" \
     libxcb1 \
     libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
-# libgl1/libglib2.0-0t64/libxcb1 are runtime shared libs (libGL.so.1,
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Optional CUDA build toolchain for Cookbook's native llama.cpp bootstrap.
+# Enabled by the NVIDIA compose overlay when ODYSSEUS_LLAMA_CPP_CUDA=ON is set.
+# auto chooses CUDA 12.4 on Debian 12/bookworm and CUDA 13.3 on Debian 13/trixie.
+RUN _cuda_opt="$(printf '%s' "${ODYSSEUS_LLAMA_CPP_CUDA:-}" | tr '[:lower:]' '[:upper:]')" \
+    && _cuda_flavor="$(printf '%s' "${ODYSSEUS_LLAMA_CPP_CUDA_FLAVOR:-auto}" | tr '[:upper:]' '[:lower:]')" \
+    && if [ "$_cuda_opt" = "ON" ] || [ "$_cuda_opt" = "1" ] || [ "$_cuda_opt" = "TRUE" ]; then \
+        if [ "$(dpkg --print-architecture)" != "amd64" ]; then \
+            echo "ODYSSEUS_LLAMA_CPP_CUDA=ON currently supports amd64 images only." >&2; exit 1; \
+        fi; \
+        . /etc/os-release \
+        && case "$_cuda_flavor" in \
+            ""|auto) \
+                case "${VERSION_CODENAME:-}" in \
+                    bookworm) _cuda_repo=debian12; _cuda_nvcc_pkg=cuda-nvcc-12-4; _cuda_cudart_pkg=cuda-cudart-dev-12-4; _cuda_cublas_pkg=libcublas-dev-12-4; _cuda_cudart_major=12 ;; \
+                    trixie) _cuda_repo=debian13; _cuda_nvcc_pkg=cuda-nvcc-13-3; _cuda_cudart_pkg=cuda-cudart-dev-13-3; _cuda_cublas_pkg=libcublas-dev-13-3; _cuda_cudart_major=13 ;; \
+                    *) echo "ODYSSEUS_LLAMA_CPP_CUDA=ON supports Debian bookworm/trixie bases only (got ${VERSION_CODENAME:-unknown})." >&2; exit 1 ;; \
+                esac ;; \
+            cuda12|cuda12-bookworm|12|12.4|12-4) \
+                if [ "${VERSION_CODENAME:-}" != "bookworm" ]; then \
+                    echo "ODYSSEUS_LLAMA_CPP_CUDA_FLAVOR=$_cuda_flavor requires python:3.14-slim-bookworm." >&2; exit 1; \
+                fi; \
+                _cuda_repo=debian12; _cuda_nvcc_pkg=cuda-nvcc-12-4; _cuda_cudart_pkg=cuda-cudart-dev-12-4; _cuda_cublas_pkg=libcublas-dev-12-4; _cuda_cudart_major=12 ;; \
+            cuda13|cuda13-trixie|13|13.3|13-3) \
+                if [ "${VERSION_CODENAME:-}" != "trixie" ]; then \
+                    echo "ODYSSEUS_LLAMA_CPP_CUDA_FLAVOR=$_cuda_flavor requires python:3.14-slim-trixie." >&2; exit 1; \
+                fi; \
+                _cuda_repo=debian13; _cuda_nvcc_pkg=cuda-nvcc-13-3; _cuda_cudart_pkg=cuda-cudart-dev-13-3; _cuda_cublas_pkg=libcublas-dev-13-3; _cuda_cudart_major=13 ;; \
+            *) echo "Unsupported ODYSSEUS_LLAMA_CPP_CUDA_FLAVOR=$_cuda_flavor. Use auto, cuda12-bookworm, or cuda13-trixie." >&2; exit 1 ;; \
+        esac \
+        && echo "Installing NVIDIA CUDA build packages from $_cuda_repo: $_cuda_nvcc_pkg $_cuda_cudart_pkg $_cuda_cublas_pkg" \
+        && curl -fsSL -o /tmp/cuda-keyring.deb \
+            "https://developer.download.nvidia.com/compute/cuda/repos/${_cuda_repo}/x86_64/cuda-keyring_1.1-1_all.deb" \
+        && dpkg -i /tmp/cuda-keyring.deb \
+        && rm -f /tmp/cuda-keyring.deb \
+        && apt-get update \
+        && apt-get install -y --no-install-recommends "$_cuda_nvcc_pkg" "$_cuda_cudart_pkg" "$_cuda_cublas_pkg" \
+        && rm -rf /var/lib/apt/lists/* \
+        && /usr/local/cuda/bin/nvcc --version \
+        && test -e "/usr/local/cuda/lib64/libcudart.so.${_cuda_cudart_major}"; \
+    fi
+
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=/usr/local/cuda/bin:${PATH}
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64
+
+# libgl1/libglib2.0 runtime/libxcb1 are runtime shared libs (libGL.so.1,
 # libglib-2.0/libgthread, libxcb.so.1) that opencv-python (cv2) loads. The
 # slim base omits them, so the Cookbook "install realesrgan" path imports cv2
 # and dies with `libxcb.so.1: cannot open shared object file` despite a clean

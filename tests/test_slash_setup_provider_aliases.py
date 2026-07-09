@@ -1,8 +1,14 @@
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
 
+_HAS_NODE = shutil.which("node") is not None
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_opencode_setup_provider_aliases_resolve():
     source = Path("static/js/slashCommands.js").read_text()
     match = re.search(

@@ -51,7 +51,8 @@ from routes.cookbook_helpers import (
     _validate_local_dir, _validate_gpus, _shell_path,
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase, OLLAMA_MISSING_HINT,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
-    _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
+    _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines,
+    _append_llama_cpp_source_bootstrap_lines, _cached_model_scan_script,
     load_stored_hf_token,
     _append_vllm_linux_preflight_lines, _ollama_bind_from_cmd, _pip_install_fallback_chain,
     _pip_install_no_cache, _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
@@ -2106,6 +2107,49 @@ def setup_cookbook_routes() -> APIRouter:
                 # ollama is found (otherwise macOS falls back to a slow source build).
                 # /opt/homebrew = Apple Silicon, /usr/local = Intel; harmless on Linux.
                 runner_lines.append('export PATH="$HOME/.local/bin:$HOME/bin:$HOME/llama.cpp/build/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"')
+                runner_lines.append('_odysseus_cuda_requested() { case "${ODYSSEUS_LLAMA_CPP_CUDA:-}" in ON|on|1|true|TRUE|yes|YES) return 0 ;; *) return 1 ;; esac; }')
+                runner_lines.append('ODYSSEUS_LLAMA_CPP_MANAGED_DIR="${ODYSSEUS_LLAMA_CPP_MANAGED_DIR:-$HOME/llama.cpp/.odysseus}"')
+                runner_lines.append('ODYSSEUS_LLAMA_CPP_BACKEND_FILE="${ODYSSEUS_LLAMA_CPP_BACKEND_FILE:-$ODYSSEUS_LLAMA_CPP_MANAGED_DIR/backend}"')
+                runner_lines.append('ODYSSEUS_LLAMA_CPP_RUNTIME_ENV="${ODYSSEUS_LLAMA_CPP_RUNTIME_ENV:-$ODYSSEUS_LLAMA_CPP_MANAGED_DIR/runtime.env}"')
+                runner_lines.append('ODYSSEUS_LLAMA_CPP_PREBUILT_DIR="${ODYSSEUS_LLAMA_CPP_PREBUILT_DIR:-$ODYSSEUS_LLAMA_CPP_MANAGED_DIR/prebuilt}"')
+                runner_lines.append('_odysseus_persist_llama_runtime_env() {')
+                runner_lines.append('  local _lib_path="${1:-${ODYSSEUS_LLAMA_CPP_PIP_CUDA_LIBS:-}}"')
+                runner_lines.append('  [ -n "$_lib_path" ] || return 0')
+                runner_lines.append('  mkdir -p "$ODYSSEUS_LLAMA_CPP_MANAGED_DIR"')
+                runner_lines.append('  printf \'export LD_LIBRARY_PATH="%s:${LD_LIBRARY_PATH:-}"\\n\' "$_lib_path" > "$ODYSSEUS_LLAMA_CPP_RUNTIME_ENV"')
+                runner_lines.append('}')
+                runner_lines.append('_odysseus_export_pip_cuda_runtime() {')
+                runner_lines.append('  ODYSSEUS_LLAMA_CPP_PIP_CUDA_LIBS=""')
+                runner_lines.append('  for _nvroot in ~/.local/lib/python*/site-packages/nvidia /usr/local/lib/python*/site-packages/nvidia /usr/local/lib/python*/dist-packages/nvidia /usr/lib/python*/site-packages/nvidia /usr/lib/python*/dist-packages/nvidia; do')
+                runner_lines.append('    for _culib in "$_nvroot"/cuda_runtime/lib "$_nvroot"/cublas/lib; do')
+                runner_lines.append('      if [ -d "$_culib" ]; then')
+                runner_lines.append('        export LD_LIBRARY_PATH="$_culib:${LD_LIBRARY_PATH:-}"')
+                runner_lines.append('        export CMAKE_LIBRARY_PATH="$_culib:${CMAKE_LIBRARY_PATH:-}"')
+                runner_lines.append('        ODYSSEUS_LLAMA_CPP_PIP_CUDA_LIBS="${ODYSSEUS_LLAMA_CPP_PIP_CUDA_LIBS:+$ODYSSEUS_LLAMA_CPP_PIP_CUDA_LIBS:}$_culib"')
+                runner_lines.append('      fi')
+                runner_lines.append('    done')
+                runner_lines.append('    for _cuinc in "$_nvroot"/cuda_runtime/include "$_nvroot"/cublas/include; do')
+                runner_lines.append('      [ -d "$_cuinc" ] && export CMAKE_INCLUDE_PATH="$_cuinc:${CMAKE_INCLUDE_PATH:-}"')
+                runner_lines.append('    done')
+                runner_lines.append('  done')
+                runner_lines.append('}')
+                runner_lines.append('_odysseus_export_pip_cuda_runtime')
+                runner_lines.append('[ -r "$ODYSSEUS_LLAMA_CPP_RUNTIME_ENV" ] && . "$ODYSSEUS_LLAMA_CPP_RUNTIME_ENV" || { [ -r "$HOME/.config/odysseus-llama-cpp-env" ] && . "$HOME/.config/odysseus-llama-cpp-env"; }')
+                runner_lines.append('if _odysseus_cuda_requested && command -v llama-server >/dev/null 2>&1; then')
+                runner_lines.append('  _odysseus_llama_bin="$(command -v llama-server)"')
+                runner_lines.append('  _odysseus_llama_real="$(readlink -f "$_odysseus_llama_bin" 2>/dev/null || printf "%s" "$_odysseus_llama_bin")"')
+                runner_lines.append('  _odysseus_llama_backend="$(cat "$ODYSSEUS_LLAMA_CPP_BACKEND_FILE" 2>/dev/null || cat "$HOME/.config/odysseus-llama-cpp-backend" 2>/dev/null || true)"')
+                runner_lines.append('  _odysseus_llama_managed=""')
+                runner_lines.append('  case "$_odysseus_llama_bin" in "$HOME/bin/llama-server"|"$HOME/llama.cpp/"*) _odysseus_llama_managed=1 ;; esac')
+                runner_lines.append('  case "$_odysseus_llama_real" in "$HOME/bin/llama-server"|"$HOME/llama.cpp/"*) _odysseus_llama_managed=1 ;; esac')
+                runner_lines.append('  case "$_odysseus_llama_real" in "$ODYSSEUS_LLAMA_CPP_PREBUILT_DIR/"*) _odysseus_llama_backend="prebuilt-${_odysseus_llama_backend:-unknown}" ;; esac')
+                runner_lines.append('  if [ -n "$_odysseus_llama_managed" ] && [ "$_odysseus_llama_backend" != "cuda" ]; then')
+                runner_lines.append('    echo "[odysseus] CUDA llama.cpp build requested, but cached llama-server is ${_odysseus_llama_backend:-unmarked}; rebuilding."')
+                runner_lines.append('    rm -f "$HOME/bin/llama-server" "$ODYSSEUS_LLAMA_CPP_BACKEND_FILE" "$ODYSSEUS_LLAMA_CPP_RUNTIME_ENV" "$HOME/.config/odysseus-llama-cpp-backend" "$HOME/.config/odysseus-llama-cpp-env"')
+                runner_lines.append('    rm -rf "$HOME/llama.cpp/build" "$HOME/llama.cpp/build-vulkan" "$ODYSSEUS_LLAMA_CPP_PREBUILT_DIR"')
+                runner_lines.append('    hash -r')
+                runner_lines.append('  fi')
+                runner_lines.append('fi')
                 runner_lines.append('if [ -d /data/data/com.termux ]; then')
                 runner_lines.append('  # Termux: no native build — use the Python bindings (CPU).')
                 runner_lines.append('  if ! python3 -c "import llama_cpp" 2>/dev/null; then')
@@ -2116,12 +2160,16 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('elif ! command -v llama-server &>/dev/null; then')
                 runner_lines.append('  echo "Native llama-server not found — building from source (one-time, may take a few minutes)..."')
                 runner_lines.append('  mkdir -p ~/bin')
-                runner_lines.append('  cd ~ && [ -d llama.cpp ] || git clone --depth 1 https://github.com/ggml-org/llama.cpp')
+                _append_llama_cpp_source_bootstrap_lines(runner_lines)
+                runner_lines.append('  if ! _odysseus_ensure_llama_cpp_source; then')
+                runner_lines.append('    ODYSSEUS_PREFLIGHT_EXIT=127')
+                runner_lines.append('  fi')
                 # Build with the right accelerator: Metal on macOS (llama.cpp
                 # enables it automatically, no flag), CUDA on Linux when present,
                 # else a plain CPU build. nproc is Linux-only — fall back to
                 # `sysctl hw.ncpu` on macOS. (Tip: `brew install llama.cpp` ships
                 # a prebuilt llama-server and skips this whole source build.)
+                runner_lines.append('  if [ -z "$ODYSSEUS_PREFLIGHT_EXIT" ]; then')
                 runner_lines.append('  NPROC="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"')
                 runner_lines.append('  if [ "$(uname -s)" = "Darwin" ]; then')
                 runner_lines.append('    command -v cmake >/dev/null 2>&1 || echo "WARNING: cmake not found — install it with: brew install cmake (or: brew install llama.cpp for a prebuilt llama-server)."')
@@ -2131,22 +2179,23 @@ def setup_cookbook_routes() -> APIRouter:
                 # explicit so the binary is optimized (Metal auto-enables on macOS).
                 runner_lines.append('    cd ~/llama.cpp && rm -rf build && cmake -B build -DCMAKE_BUILD_TYPE=Release \\')
                 runner_lines.append('      && cmake --build build -j"$NPROC" --target llama-server \\')
-                runner_lines.append('      && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+                runner_lines.append('      && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server \\')
+                runner_lines.append('      && mkdir -p "$ODYSSEUS_LLAMA_CPP_MANAGED_DIR" && printf "metal\\n" > "$ODYSSEUS_LLAMA_CPP_BACKEND_FILE"')
                 runner_lines.append('  else')
                 _append_llama_cpp_linux_accel_build_lines(runner_lines)
                 runner_lines.append('  fi')
-                # Source the env file the prebuilt-download path writes so
+                runner_lines.append('  fi')
+                # Source the env file the prebuilt/source-build path writes so
                 # LD_LIBRARY_PATH includes the directory holding libllama.so
-                # and friends. No-op when prebuilt wasn't used.
-                runner_lines.append('  [ -r ~/.config/odysseus-llama-cpp-env ] && . ~/.config/odysseus-llama-cpp-env')
-                # Auto-upgrade pip llama-cpp-python to the CUDA-enabled
-                # wheel when (a) NVIDIA hardware is present and (b) the
-                # currently-installed wheel is CPU-only. Without this the
-                # user gets the Python server happily running at 3 tok/s
-                # because pip's default index ships CPU-only wheels.
+                # and friends. No-op when the managed runtime does not need it.
+                runner_lines.append('  [ -r "$ODYSSEUS_LLAMA_CPP_RUNTIME_ENV" ] && . "$ODYSSEUS_LLAMA_CPP_RUNTIME_ENV" || { [ -r "$HOME/.config/odysseus-llama-cpp-env" ] && . "$HOME/.config/odysseus-llama-cpp-env"; }')
+                # Auto-upgrade pip llama-cpp-python to the CUDA-enabled wheel
+                # only when native llama-server is still missing and the Python
+                # fallback would be used. A successful managed native CUDA
+                # build must not block on an unrelated wheel reinstall.
                 # Forward-compat: cu124 wheels work on driver/runtime
                 # 12.4+ including the cu13.x line.
-                runner_lines.append('  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L 2>/dev/null | grep -q "GPU " && python3 -c "import llama_cpp" 2>/dev/null; then')
+                runner_lines.append('  if [ -z "$ODYSSEUS_PREFLIGHT_EXIT" ] && ! command -v llama-server >/dev/null 2>&1 && command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L 2>/dev/null | grep -q "GPU " && python3 -c "import llama_cpp" 2>/dev/null; then')
                 runner_lines.append('    if ! python3 -c "import llama_cpp; import sys; sys.exit(0 if llama_cpp.llama_supports_gpu_offload() else 1)" 2>/dev/null; then')
                 runner_lines.append('      echo "[odysseus] NVIDIA detected but installed llama-cpp-python is CPU-only — reinstalling with CUDA wheel index for GPU offload..."')
                 runner_lines.append('      python3 -m pip install --user --break-system-packages --force-reinstall --no-cache-dir "llama-cpp-python[server]" --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124 2>&1 | tail -8 || echo "[odysseus] WARNING: CUDA wheel reinstall failed — Python server will stay CPU-only (slow). Manual fix: pip install --user --force-reinstall \'llama-cpp-python[server]\' --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124"')
@@ -2164,7 +2213,7 @@ def setup_cookbook_routes() -> APIRouter:
                 # no second install. This is the path that unblocks every
                 # remote where pip-installed llama-cpp-python is already
                 # working but Cookbook used to insist on a native binary.
-                runner_lines.append('  if ! command -v llama-server >/dev/null 2>&1 && python3 -c "import llama_cpp" 2>/dev/null; then')
+                runner_lines.append('  if [ -z "$ODYSSEUS_PREFLIGHT_EXIT" ] && ! command -v llama-server >/dev/null 2>&1 && python3 -c "import llama_cpp" 2>/dev/null; then')
                 runner_lines.append('    mkdir -p ~/bin')
                 runner_lines.append('    cat > ~/bin/llama-server <<\'_ODY_LLAMA_SHIM_EOF\'')
                 runner_lines.append('#!/usr/bin/env bash')
@@ -2199,11 +2248,11 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('    echo "[odysseus] Created llama-server shim → python -m llama_cpp.server (no native binary needed)"')
                 runner_lines.append('  fi')
                 runner_lines.append('  # If the native build failed, fall back to the Python bindings.')
-                runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
+                runner_lines.append('  if [ -z "$ODYSSEUS_PREFLIGHT_EXIT" ] && ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
                 runner_lines.append('    echo "llama-server build failed — installing Python bindings as fallback..."')
                 runner_lines.append(f"    {_pip_install_fallback_chain('llama-cpp-python[server]', python_cmd='pip')} || true")
                 runner_lines.append('  fi')
-                runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
+                runner_lines.append('  if [ -z "$ODYSSEUS_PREFLIGHT_EXIT" ] && ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
                 runner_lines.append('    echo "ERROR: llama.cpp serving is not available after install/build attempts."')
                 runner_lines.append('    ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('  fi')

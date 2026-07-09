@@ -11,7 +11,12 @@
 # for setup details.
 services:
   odysseus:
-    build: .
+    build:
+      context: .
+      args:
+        PYTHON_BASE: ${ODYSSEUS_PYTHON_BASE:-python:3.14-slim}
+        ODYSSEUS_LLAMA_CPP_CUDA: ${ODYSSEUS_LLAMA_CPP_CUDA:-}
+        ODYSSEUS_LLAMA_CPP_CUDA_FLAVOR: ${ODYSSEUS_LLAMA_CPP_CUDA_FLAVOR:-auto}
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000"
     volumes:
@@ -27,6 +32,10 @@ services:
       # land under /app/.local for the odysseus user. Persist them so a
       # container recreate does not silently remove installed serve engines.
       - ${APP_DATA_DIR:-./data}/local:/app/.local:z
+      # Cookbook-built native llama.cpp/llama-server paths. These match
+      # ~/llama.cpp and ~/bin inside Docker, so normal down/up keeps the build.
+      - ${APP_DATA_DIR:-./data}/llama.cpp:/app/llama.cpp:z
+      - ${APP_DATA_DIR:-./data}/bin:/app/bin:z
     extra_hosts:
       # Lets the container reach local services on the Docker host, including
       # Ollama at http://host.docker.internal:11434.
@@ -82,6 +91,7 @@ services:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
       # NVIDIA overlay (from docker/gpu.nvidia.yml).
+      - ODYSSEUS_LLAMA_CPP_CUDA=${ODYSSEUS_LLAMA_CPP_CUDA:-}
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     depends_on:
