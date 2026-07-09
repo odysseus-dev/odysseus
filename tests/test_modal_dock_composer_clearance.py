@@ -389,6 +389,17 @@ def test_top_and_bottom_docks_mark_and_reserve_chat_rows():
     assert "margin-top: var(--top-dock-reserve-h, var(--top-dock-h, 0px));" in CSS
     assert "body.bottom-dock-active .chat-container," in CSS
     assert "margin-bottom: var(--bottom-dock-reserve-h, var(--bottom-dock-h, 0px));" in CSS
+    assert "body:is(.top-dock-active, .bottom-dock-active) .chat-container.welcome-active .chat-input-bar" in CSS
+    assert "margin-bottom: 16px;" in CSS
+
+
+def test_desktop_resize_handles_settle_after_scale_and_only_show_on_hover():
+    assert "new MutationObserver(settleAfterRootClassChange).observe(document.documentElement" in MODAL_SNAP_JS
+    assert "requestAnimationFrame(_settleEdgeDockLayout);" in MODAL_SNAP_JS
+    assert "_setStyle(handle, 'background', 'transparent');" in MODAL_SNAP_JS
+    assert "touchSplit ? subtleLine : 'transparent'" in MODAL_SNAP_JS
+    assert ".edge-dock-resize-handle-top:hover" in CSS
+    assert ".edge-dock-resize-handle-bottom:hover" in CSS
 
 
 def test_android_tool_opens_auto_dock_and_replace_existing_dock():

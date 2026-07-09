@@ -16831,6 +16831,11 @@ body.bottom-dock-active .chat-container,
 body.bottom-dock-active .doc-editor-pane {
   margin-bottom: var(--bottom-dock-reserve-h, var(--bottom-dock-h, 0px));
 }
+@media (min-width: 769px) {
+  body:is(.top-dock-active, .bottom-dock-active) .chat-container.welcome-active .chat-input-bar {
+    margin-bottom: 16px;
+  }
+}
 body.top-dock-active .doc-editor-pane {
   height: calc(100% - var(--top-dock-reserve-h, var(--top-dock-h, 0px)));
 }

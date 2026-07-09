@@ -1647,7 +1647,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
         _setStyle(handle, 'width', width + 'px');
         _setStyle(handle, 'height', handleH + 'px');
         _setStyle(handle, 'cursor', 'row-resize');
-        _setStyle(handle, 'background', 'linear-gradient(to bottom, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px)');
+        _setStyle(handle, 'background', 'transparent');
       } else {
         const x = side === 'right' ? r.left : r.right;
         const top = Math.max(0, r.top);
@@ -1665,9 +1665,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
         _setStyle(handle, 'bottom', 'auto');
         _setStyle(handle, 'height', height + 'px');
         _setStyle(handle, 'cursor', 'col-resize');
-        _setStyle(handle, 'background', touchSplit
-          ? subtleLine
-          : 'linear-gradient(to right, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px)');
+        _setStyle(handle, 'background', touchSplit ? subtleLine : 'transparent');
       }
       handle.title = touchSplit ? 'Drag to adjust split' : 'Drag to resize docked window; click to hide';
       _setStyle(handle, 'zIndex', String(_zIndexFor(owner) + 1));
@@ -1737,6 +1735,20 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
 
   new MutationObserver(_positionEdgeDockResizeHandles).observe(document.body, { attributes: true, attributeFilter: ['class'] });
   new MutationObserver(_positionEdgeDockResizeHandles).observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
+  const settleAfterRootClassChange = () => {
+    _settleEdgeDockLayout();
+    // Accessibility scale classes can change a modal's measured box over
+    // more than one layout frame. Re-anchor again after layout settles so a
+    // desktop resize hit target cannot remain across the modal header.
+    requestAnimationFrame(() => {
+      _settleEdgeDockLayout();
+      requestAnimationFrame(_settleEdgeDockLayout);
+    });
+  };
+  new MutationObserver(settleAfterRootClassChange).observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['class'],
+  });
   const settleAfterNavTransition = () => {
     _settleEdgeDockLayout();
     setTimeout(_settleEdgeDockLayout, 80);
