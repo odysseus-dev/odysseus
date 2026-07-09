@@ -360,6 +360,74 @@ def _uid_from_fetch_meta(meta_b: bytes) -> str:
     return m.group(1).decode() if m else ""
 
 
+def _internaldate_epoch_from_meta(meta_b: bytes, raw_header: bytes | None) -> float:
+    """Arrival time for mailbox ordering (#5256 — UID order ≠ date on Proton Bridge)."""
+    meta = meta_b.decode(errors="replace")
+    id_m = re.search(r'INTERNALDATE "([^"]+)"', meta)
+    if id_m:
+        try:
+            from datetime import timezone as _tz
+
+            dt = email.utils.parsedate_to_datetime(id_m.group(1))
+            if dt and dt.tzinfo is None:
+                dt = dt.replace(tzinfo=_tz.utc)
+            if dt:
+                return dt.timestamp()
+        except Exception:
+            pass
+    parsed = _parse_email_list_record(meta_b, raw_header)
+    if parsed:
+        return float(parsed.get("date_epoch") or 0.0)
+    return 0.0
+
+
+def _uids_newest_first(conn, uid_list: list, *, scan_cap: int = 1200) -> list:
+    """Return UIDs ordered newest-first by INTERNALDATE/header date, not numeric UID."""
+    if not uid_list:
+        return []
+    uids: list[bytes] = []
+    for u in uid_list:
+        uids.append(u if isinstance(u, bytes) else str(u).encode())
+    if len(uids) > scan_cap:
+        logger.debug("Sorting %s UIDs by date (scan_cap is batch size only)", len(uids))
+
+    try:
+        st, data = conn.uid("SORT", "(REVERSE ARRIVAL)", "UTF-8", "ALL")
+        if st == "OK" and data and data[0]:
+            want = set(uids)
+            ordered = [u for u in data[0].split() if u in want]
+            seen = set(ordered)
+            tail = [u for u in uids if u not in seen]
+            return ordered + tail
+    except Exception:
+        pass
+
+    epochs: dict[str, float] = {}
+    uid_strs = [u.decode(errors="ignore") for u in uids]
+    for i in range(0, len(uid_strs), 80):
+        batch = uid_strs[i : i + 80]
+        try:
+            st, msg_data = _imap_uid_fetch(
+                conn, ",".join(batch).encode(), "(UID INTERNALDATE RFC822.HEADER)"
+            )
+        except Exception:
+            continue
+        if st != "OK":
+            continue
+        for meta_b, raw_header in _group_uid_fetch_records(msg_data):
+            uid_num = _uid_from_fetch_meta(meta_b)
+            if uid_num:
+                epochs[uid_num] = _internaldate_epoch_from_meta(meta_b, raw_header)
+
+    def _key(u: bytes):
+        uid_s = u.decode(errors="ignore")
+        ep = epochs.get(uid_s, 0.0)
+        uid_i = int(uid_s) if uid_s.isdigit() else 0
+        return (ep, uid_i)
+
+    return sorted(uids, key=_key, reverse=True)
+
+
 _FETCH_SEQ_RE = re.compile(rb"^(\d+)\s+\(")
 
 
@@ -1601,8 +1669,8 @@ def setup_email_routes():
 
             uid_list = data[0].split()
             total = len(uid_list)
-            # Reverse for newest first, apply pagination
-            uid_list = list(reversed(uid_list))
+            # Newest-first by arrival/date — numeric UID order is wrong on Proton (#5256)
+            uid_list = _uids_newest_first(conn, uid_list)
             if has_attachments_only:
                 # Can't filter via IMAP — widen the window so post-filter
                 # still yields enough rows to fill `limit` after dropping
@@ -2200,7 +2268,7 @@ def setup_email_routes():
 
                 uid_list = data[0].split()
                 total = len(uid_list)
-                uid_list = list(reversed(uid_list))[:limit]
+                uid_list = _uids_newest_first(conn, uid_list)[:limit]
 
                 uid_order = [uid.decode(errors="ignore") if isinstance(uid, bytes) else str(uid) for uid in uid_list]
                 cached_rows = _email_index_rows(owner, account_id, effective_folder, uid_order)
