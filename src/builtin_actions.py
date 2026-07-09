@@ -539,6 +539,7 @@ async def action_summarize_emails(owner: str, **kwargs) -> Tuple[str, bool]:
             do_summary=True,
             do_reply=False,
             account_id=_email_task_account_id(kwargs),
+            task_owner=owner,
         )
         if _result_is_config_error(result):
             return result, False
@@ -560,6 +561,7 @@ async def action_draft_email_replies(owner: str, **kwargs) -> Tuple[str, bool]:
             account_id=_email_task_account_id(kwargs),
             days_back=7,
             progress_cb=kwargs.get("progress_cb"),
+            task_owner=owner,
         )
         if _result_is_config_error(result):
             return result, False

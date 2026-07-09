@@ -119,7 +119,8 @@ async def _run_auto_summarize_once(do_summary: bool = True, do_reply: bool = Tru
                                    days_back: int = 1,
                                    account_id: str | None = None,
                                    max_process: int | None = None,
-                                   progress_cb=None) -> str:
+                                   progress_cb=None,
+                                   task_owner: str | None = None) -> str:
     """One iteration of the email scan. Temporarily flips settings flags
     so the existing background-loop logic runs exactly once for the requested ops."""
     settings = _load_settings()
@@ -138,6 +139,7 @@ async def _run_auto_summarize_once(do_summary: bool = True, do_reply: bool = Tru
             account_id=account_id,
             max_process=max_process,
             progress_cb=progress_cb,
+            task_owner=task_owner,
         )
     finally:
         s2 = _load_settings()
@@ -176,7 +178,7 @@ def _latest_inbox_fallback_uids(conn, reconnect):
         return [], reconnect()
 
 
-async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None, max_process: int | None = None, progress_cb=None) -> str:
+async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None, max_process: int | None = None, progress_cb=None, task_owner: str | None = None) -> str:
     """Single pass of the auto-summarize/reply scan.
 
     When account_id is None, iterates over every enabled account in
@@ -208,6 +210,7 @@ async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None
                 account_id=(ids[0] if ids else None),
                 max_process=max_process,
                 progress_cb=progress_cb,
+                task_owner=task_owner,
             )
         outs = []
         for idx, aid in enumerate(ids, start=1):
@@ -218,6 +221,7 @@ async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None
                     account_id=aid,
                     max_process=max_process,
                     progress_cb=progress_cb,
+                    task_owner=task_owner,
                 )
                 outs.append(f"[{names.get(aid, aid[:8])}] {result}")
             except Exception as e:
@@ -229,10 +233,11 @@ async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None
         account_id=account_id,
         max_process=max_process,
         progress_cb=progress_cb,
+        task_owner=task_owner,
     )
 
 
-async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None = None, max_process: int | None = None, progress_cb=None) -> str:
+async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None = None, max_process: int | None = None, progress_cb=None, task_owner: str | None = None) -> str:
     """Single pass of the auto-summarize/reply scan for ONE account.
     Reads current settings flags."""
     import asyncio
@@ -351,7 +356,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         if auto_spam and not spam_folder:
             logger.warning("Auto-spam enabled but no Junk/Spam folder detected — will classify but not move")
 
-        task_candidates = resolve_task_candidates(owner=account_owner)
+        task_candidates = resolve_task_candidates(owner=task_owner or account_owner)
         if not task_candidates:
             return "No model configured"
         url, model, headers = task_candidates[0]
