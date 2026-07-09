@@ -231,7 +231,8 @@ def validate_file_upload(file: UploadFile) -> UploadFile:
 
     allowed_extensions = {'.txt', '.py', '.html', '.md', '.json', '.csv', '.js',
                          '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.pdf',
-                         '.webm', '.wav', '.mp3', '.m4a', '.ogg'}
+                         '.webm', '.wav', '.mp3', '.m4a', '.ogg',
+                         '.mp4', '.mov', '.mkv', '.m4v'}
 
     _, ext = os.path.splitext(file.filename.lower())
 
