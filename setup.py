@@ -135,6 +135,7 @@ def create_default_admin():
         else:
             print(f"  [ok] Initial admin user created ({username})")
             if not os.getenv("ODYSSEUS_ADMIN_PASSWORD"):
+                print(f"        Username: {username}")
                 print(f"        Temporary password: {password}")
                 print(f"        ** Change it after first login. Set ODYSSEUS_ADMIN_PASSWORD to choose your own. **")
         return "created"
