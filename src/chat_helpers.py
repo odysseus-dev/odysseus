@@ -54,6 +54,7 @@ _VISION_MODEL_KEYWORDS = (
     # err-toward-True policy (#124) a rare text-only tag being treated as vision is
     # the safer failure than silently dropping a real image.
     "gemma-3", "gemma3", "gemma-4", "gemma4",
+    "qwen3.5", "qwen3-5", "qwen35",
     "llama-4", "llama4",
     "mistral-small-3.1", "mistral-small3.1", "mistral-small-3.2", "mistral-small3.2",
     # Microsoft Phi-4 ships a dedicated multimodal variant ("phi-4-multimodal-instruct")
