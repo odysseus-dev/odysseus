@@ -16,6 +16,7 @@ from typing import Dict, Optional
 
 from .database import Session as DbSession, ChatMessage as DbChatMessage, Document as DbDocument, SessionLocal, utcnow_naive
 from .models import Session, ChatMessage
+from src.attachment_refs import persistable_message_content
 
 # Re-export singleton accessors from models for convenience
 from .models import set_session_manager_instance, get_session_manager_instance
@@ -235,12 +236,10 @@ class SessionManager:
             if message.metadata is None:
                 message.metadata = {}
             message.metadata.setdefault('timestamp', _message_timestamp_iso(msg_time))
-            # Multimodal content (image/audio attachments) is a list — serialize
-            # to JSON so the Text column can store it.  On reload, _db_to_session
-            # detects the JSON-array prefix and parses it back.
-            _content = message.content
-            if isinstance(_content, list):
-                _content = json.dumps(_content)
+            # Multimodal content may contain provider data URLs for the live
+            # model call. Persist only readable text plus attachment references
+            # so chat_messages/FTS do not duplicate upload bytes.
+            _content = persistable_message_content(message.content, message.metadata)
             db_message = DbChatMessage(
                 id=msg_id,
                 session_id=session_id,
@@ -330,15 +329,9 @@ class SessionManager:
                     id=msg_id,
                     session_id=session_id,
                     role=message.role,
-                    # Multimodal content (image/audio attachments) is a list;
-                    # serialize to JSON so the Text column round-trips via
-                    # _parse_msg_content. Storing the raw list let SQLAlchemy
-                    # bind its single-quoted repr, which _parse_msg_content
-                    # cannot parse (it looks for double-quoted "type"), so the
-                    # attachment was destroyed on reload. Mirrors _persist_message.
-                    content=(json.dumps(message.content)
-                             if isinstance(message.content, list)
-                             else message.content),
+                    # Mirrors _persist_message: keep raw media bytes out of the
+                    # persisted transcript and search index.
+                    content=persistable_message_content(message.content, message.metadata),
                     meta_data=json.dumps(message.metadata) if message.metadata else None,
                     timestamp=now + timedelta(microseconds=i),
                 )
