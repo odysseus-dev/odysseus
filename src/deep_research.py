@@ -205,6 +205,7 @@ class DeepResearcher:
         extraction_concurrency: int = 3,
         min_rounds: int = 2,
         max_empty_rounds: int = 2,
+        classification_timeout: int = 120,
         synthesis_window: int = 10,
         progress_callback: Optional[Callable] = None,
         search_provider: Optional[str] = None,
@@ -226,6 +227,7 @@ class DeepResearcher:
         self.extraction_concurrency = min(12, max(1, int(extraction_concurrency or 3)))
         self.min_rounds = min_rounds
         self.max_empty_rounds = max_empty_rounds
+        self.classification_timeout = min(3600, max(15, int(classification_timeout or 120)))
         self.synthesis_window = synthesis_window
         self._progress = progress_callback
         self._cancelled = False
@@ -436,7 +438,7 @@ class DeepResearcher:
         try:
             result = await self._llm(
                 [{"role": "user", "content": prompt}],
-                temperature=0, max_tokens=20, timeout=15,
+                temperature=0, max_tokens=20, timeout=getattr(self, "classification_timeout", 120),
             )
             cat = (result or "").strip().lower()
             # Clean one-word answer first.

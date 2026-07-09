@@ -813,6 +813,12 @@ class ResearchHandler:
                 minimum=15,
                 maximum=3600,
             )
+            _classification_timeout = _bounded_int(
+                get_setting("research_classification_timeout_seconds", 120),
+                default=120,
+                minimum=15,
+                maximum=3600,
+            )
 
             researcher = DeepResearcher(
                 llm_endpoint=llm_endpoint,
@@ -826,6 +832,7 @@ class ResearchHandler:
                 planning_timeout=_planning_timeout,
                 query_timeout=_query_timeout,
                 extraction_concurrency=_extraction_concurrency,
+                classification_timeout=_classification_timeout,
                 progress_callback=progress_callback,
                 search_provider=search_provider,
                 category=category,
