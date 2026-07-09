@@ -53,10 +53,11 @@ async function loadUsers() {
           <div>
             <span class="admin-user-name">${esc(u.username)}</span>
             ${u.is_admin ? '<span class="admin-badge" style="margin-left:6px;">ADMIN</span>' : '<span style="font-size:10px;opacity:0.4;display:block;">Click to manage privileges</span>'}
+            ${u.auth_source === 'ldap' ? '<span class="admin-badge" style="margin-left:6px;opacity:0.7;">LDAP</span>' : ''}
           </div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;">
-          <button class="admin-btn-sm" data-adm-toggle-admin="${esc(u.username)}" data-make-admin="${u.is_admin ? '0' : '1'}" style="font-size:11px;">${u.is_admin ? 'Revoke admin' : 'Make admin'}</button>
+          ${u.admin_managed_by_ldap ? '<span style="font-size:10px;opacity:0.5;" title="Admin status follows LDAP admin-group membership">Managed by LDAP</span>' : `<button class="admin-btn-sm" data-adm-toggle-admin="${esc(u.username)}" data-make-admin="${u.is_admin ? '0' : '1'}" style="font-size:11px;">${u.is_admin ? 'Revoke admin' : 'Make admin'}</button>`}
           <button class="admin-btn-sm" data-adm-rename-user="${esc(u.username)}" style="font-size:11px;">Rename</button>
           ${u.is_admin ? '' : `<button class="admin-btn-delete" data-adm-del-user="${esc(u.username)}" style="font-size:11px;">Remove</button>`}
           ${u.is_admin ? '' : '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>'}
@@ -363,6 +364,141 @@ function initShareDefaultsToggle() {
       toggle.checked = !toggle.checked;
     }
   });
+}
+
+function initLdapSettings() {
+  const els = {
+    enabled: el('adm-ldapToggle'),
+    config: el('adm-ldapConfig'),
+    domain: el('adm-ldapDomain'),
+    group: el('adm-ldapGroup'),
+    adminGroup: el('adm-ldapAdminGroup'),
+    server: el('adm-ldapServer'),
+    userDnTpl: el('adm-ldapUserDnTpl'),
+    groupDnTpl: el('adm-ldapGroupDnTpl'),
+    useSsl: el('adm-ldapUseSsl'),
+    verifyCert: el('adm-ldapVerifyCert'),
+  };
+  const msg = el('adm-ldapMsg');
+  const saveBtn = el('adm-ldapSaveBtn');
+  if (!els.enabled || !saveBtn) return;
+
+  // Single source of truth for the LDAP field <-> API key mapping, used by
+  // both the settings load/save and the test-login request below.
+  const LDAP_FIELDS = [
+    ['domain', 'domain', 'text'],
+    ['group', 'required_group', 'text'],
+    ['adminGroup', 'admin_group', 'text'],
+    ['server', 'server', 'text'],
+    ['userDnTpl', 'user_dn_template', 'text'],
+    ['groupDnTpl', 'group_dn_template', 'text'],
+    ['useSsl', 'use_ssl', 'bool'],
+    ['verifyCert', 'verify_cert', 'bool'],
+  ];
+  const applyLdapFields = (data) => {
+    for (const [key, apiKey, type] of LDAP_FIELDS) {
+      if (type === 'bool') els[key].checked = data[apiKey] !== false;
+      else els[key].value = data[apiKey] || '';
+    }
+  };
+  const collectLdapFields = () => {
+    const out = {};
+    for (const [key, apiKey, type] of LDAP_FIELDS) {
+      out[apiKey] = type === 'bool' ? els[key].checked : els[key].value.trim();
+    }
+    return out;
+  };
+
+  const syncConfigVisibility = () => {
+    if (els.config) els.config.classList.toggle('hidden', !els.enabled.checked);
+  };
+  els.enabled.addEventListener('change', syncConfigVisibility);
+
+  fetch('/api/auth/ldap-settings', { credentials: 'same-origin' })
+    .then(r => r.ok ? r.json() : null)
+    .then(d => {
+      if (!d) return;
+      els.enabled.checked = !!d.enabled;
+      applyLdapFields(d);
+      syncConfigVisibility();
+    })
+    .catch(e => console.warn('LDAP settings fetch failed:', e));
+
+  saveBtn.addEventListener('click', async () => {
+    msg.textContent = ''; msg.className = '';
+    if (els.enabled.checked && !els.domain.value.trim()) {
+      msg.textContent = 'Domain is required to enable LDAP/FreeIPA login';
+      msg.className = 'admin-error';
+      return;
+    }
+    saveBtn.disabled = true;
+    try {
+      const res = await fetch('/api/auth/ldap-settings', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: els.enabled.checked, ...collectLdapFields() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        els.enabled.checked = !!data.enabled;
+        syncConfigVisibility();
+        msg.textContent = 'Saved'; msg.className = 'admin-success';
+      } else {
+        msg.textContent = data.detail || 'Failed'; msg.className = 'admin-error';
+      }
+    } catch (e) {
+      msg.textContent = 'Request failed'; msg.className = 'admin-error';
+    }
+    saveBtn.disabled = false;
+  });
+
+  const testBtn = el('adm-ldapTestBtn');
+  const testUser = el('adm-ldapTestUser');
+  const testPass = el('adm-ldapTestPass');
+  const testResult = el('adm-ldapTestResult');
+  const setTestResult = (text, status) => {
+    testResult.textContent = text;
+    testResult.className = 'ldap-test-result' + (status ? ' ' + status : '');
+  };
+  if (testBtn && testResult) {
+    testBtn.addEventListener('click', async () => {
+      setTestResult('Testing…', '');
+      const username = (testUser && testUser.value.trim()) || '';
+      const password = (testPass && testPass.value) || '';
+      if (!username || !password) {
+        setTestResult('Enter a username and password to test.', 'admin-error');
+        return;
+      }
+      testBtn.disabled = true;
+      try {
+        const res = await fetch('/api/auth/ldap-settings/test', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password, ...collectLdapFields() }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setTestResult(data.detail || 'Test failed', 'admin-error');
+        } else {
+          const lines = [
+            `stage: ${data.stage}`,
+            `result: ${data.ok ? 'SUCCESS' : 'FAILED'}`,
+            `detail: ${data.detail || ''}`,
+            `host: ${data.host || ''}`,
+            `bind_dn: ${data.bind_dn || ''}`,
+          ];
+          if (data.ok) {
+            lines.push(`in_required_group: ${data.in_required_group}`);
+            lines.push(`is_admin: ${data.is_admin}`);
+          }
+          setTestResult(lines.join('\n'), data.ok ? 'admin-success' : 'admin-error');
+        }
+      } catch (e) {
+        setTestResult('Request failed', 'admin-error');
+      }
+      testBtn.disabled = false;
+    });
+  }
 }
 
 function initAddUser() {
@@ -3073,7 +3209,7 @@ function initLogsView() {
 function initAll() {
   modalEl = el('settings-modal');
   const inits = [
-    initSignupToggle, initShareDefaultsToggle, initAddUser, initEndpointForm, initMcpForm,
+    initSignupToggle, initShareDefaultsToggle, initLdapSettings, initAddUser, initEndpointForm, initMcpForm,
     initCalDAV, initBackup, initDangerZone, initTokenForm, initLogsView,
     () => settingsModule.initIntegrations()
   ];

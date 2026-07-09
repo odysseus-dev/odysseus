@@ -14,6 +14,7 @@ from pathlib import Path
 from core.atomic_io import atomic_write_json, atomic_write_text
 from core.auth import AuthManager, RESERVED_USERNAMES, SetAdminResult, TOKEN_TTL
 from src.constants import DEEP_RESEARCH_DIR, MEMORY_FILE, PASSWORD_MIN_LENGTH, SKILLS_DIR
+from src.ldap_auth import LDAPAccessDenied
 from src.rate_limiter import RateLimiter
 from src.settings_scrub import scrub_settings
 from src.settings import (
@@ -81,6 +82,33 @@ class SetAdminRequest(BaseModel):
 class SetOpenRegistrationRequest(BaseModel):
     enabled: bool
 
+
+class LDAPSettingsRequest(BaseModel):
+    enabled: bool = False
+    domain: str = ""
+    server: str = ""
+    user_dn_template: str = ""
+    use_ssl: bool = True
+    verify_cert: bool = True
+    required_group: str = ""
+    group_dn_template: str = ""
+    admin_group: str = ""
+
+
+class LDAPTestLoginRequest(BaseModel):
+    username: str
+    password: str
+    # Optional overrides so the admin can test unsaved form edits without
+    # hitting Save first — any field left unset falls back to the saved config.
+    domain: Optional[str] = None
+    server: Optional[str] = None
+    user_dn_template: Optional[str] = None
+    use_ssl: Optional[bool] = None
+    verify_cert: Optional[bool] = None
+    required_group: Optional[str] = None
+    group_dn_template: Optional[str] = None
+    admin_group: Optional[str] = None
+
 SESSION_COOKIE = "odysseus_session"
 
 
@@ -90,6 +118,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     _login_limiter = RateLimiter(max_requests=15, window_seconds=60)
     _signup_limiter = RateLimiter(max_requests=3, window_seconds=300)
     _setup_limiter = RateLimiter(max_requests=3, window_seconds=300)
+    _ldap_test_limiter = RateLimiter(max_requests=10, window_seconds=60)
 
     def _get_current_user(request: Request) -> Optional[str]:
         token = request.cookies.get(SESSION_COOKIE)
@@ -137,9 +166,26 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     async def login(body: LoginRequest, request: Request, response: Response):
         if not _login_limiter.check(request.client.host):
             raise HTTPException(429, "Too many requests — try again later")
-        # Verify password first
         username = body.username.strip().lower()
-        if not await asyncio.to_thread(auth_manager.verify_password, username, body.password):
+        # Verify password first (local accounts) …
+        authenticated = await asyncio.to_thread(auth_manager.verify_password, username, body.password)
+        if not authenticated:
+            # … then fall back to LDAP/FreeIPA, but only for accounts that
+            # are unknown locally or were themselves provisioned via LDAP —
+            # a known local account with a wrong local password must not get
+            # a second chance via the directory.
+            if username not in auth_manager.users or auth_manager.is_ldap_user(username):
+                try:
+                    authenticated = await asyncio.to_thread(auth_manager.ldap_authenticate, username, body.password)
+                except LDAPAccessDenied:
+                    raise HTTPException(
+                        403,
+                        "Your account isn't authorized to use this app yet. "
+                        "Please request access from your administrator.",
+                    )
+                if authenticated:
+                    await asyncio.to_thread(auth_manager.provision_ldap_user, username, authenticated.is_admin)
+        if not authenticated:
             raise HTTPException(401, "Invalid credentials")
         # Check 2FA if enabled
         if auth_manager.totp_enabled(username):
@@ -275,6 +321,44 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         if not user or not auth_manager.is_admin(user):
             raise HTTPException(403, "Admin only")
         return {"users": auth_manager.list_users()}
+
+    @router.get("/ldap-settings")
+    async def get_ldap_settings(request: Request):
+        """Admin only: current LDAP/FreeIPA login configuration."""
+        user = _get_current_user(request)
+        if not user or not auth_manager.is_admin(user):
+            raise HTTPException(403, "Admin only")
+        return auth_manager.ldap_settings
+
+    @router.post("/ldap-settings")
+    async def set_ldap_settings_route(body: LDAPSettingsRequest, request: Request):
+        """Admin only: enable/configure LDAP/FreeIPA login."""
+        user = _get_current_user(request)
+        if not user or not auth_manager.is_admin(user):
+            raise HTTPException(403, "Admin only")
+        domain = body.domain.strip()
+        if body.enabled and not domain:
+            raise HTTPException(400, "Domain is required to enable LDAP/FreeIPA login")
+        payload = body.model_dump()
+        payload["domain"] = domain
+        updated = auth_manager.set_ldap_settings(payload)
+        return updated
+
+    @router.post("/ldap-settings/test")
+    async def test_ldap_settings_route(body: LDAPTestLoginRequest, request: Request):
+        """Admin only: attempt a real bind with the given credentials against
+        the (optionally overridden) LDAP config and return a stage-by-stage
+        diagnostic — which step it reached and why it stopped there — so the
+        admin doesn't have to dig through server logs to debug "Invalid
+        credentials"."""
+        user = _get_current_user(request)
+        if not user or not auth_manager.is_admin(user):
+            raise HTTPException(403, "Admin only")
+        if not _ldap_test_limiter.check(request.client.host):
+            raise HTTPException(429, "Too many requests — try again later")
+        overrides = body.model_dump(exclude={"username", "password"}, exclude_none=True)
+        result = await asyncio.to_thread(auth_manager.ldap_test_login, body.username, body.password, overrides)
+        return result
 
     @router.post("/users")
     async def admin_create_user(body: CreateUserRequest, request: Request):
@@ -544,6 +628,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(403, "Admin only")
         if result is SetAdminResult.LAST_ADMIN:
             raise HTTPException(400, "Cannot demote the last admin")
+        if result is SetAdminResult.LDAP_MANAGED:
+            raise HTTPException(400, "Admin status for this account is managed by the LDAP admin group, not manually")
         target = (username or "").strip().lower()
         return {
             "ok": True,

@@ -68,6 +68,41 @@ TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
 # impersonated. (Keep this in sync with that synthetic-owner set.)
 RESERVED_USERNAMES = frozenset({INTERNAL_TOOL_USER, "api", "demo", "system"})
 
+# Defaults for admin-configured LDAP/FreeIPA login (Settings -> Users). Users
+# authenticated this way get a local account auto-provisioned on first login
+# (see AuthManager.provision_ldap_user) so privileges/admin flags can still be
+# managed the normal way; only the password (and group membership) check is
+# delegated to LDAP.
+LDAP_DEFAULTS = {
+    "enabled": False,
+    # Directory domain, e.g. "example.com" — also used to derive the base DN
+    # (dc=example,dc=com) unless overridden.
+    "domain": "",
+    # Optional LDAP host override; defaults to `domain` when blank.
+    "server": "",
+    # Optional bind-DN template override; defaults to the FreeIPA/389-ds
+    # layout (uid={username},cn=users,cn=accounts,{base_dn}).
+    "user_dn_template": "",
+    "use_ssl": True,
+    "verify_cert": True,
+    # Only members of this group may log in. Blank = any valid directory
+    # credential is accepted. Defaults to "odysseus_user" so enabling the
+    # feature doesn't silently open the door to the whole directory — the
+    # admin must create/populate that group (or point this at an existing
+    # one) in their LDAP/FreeIPA server.
+    "required_group": "odysseus_user",
+    # Optional group-DN template override; defaults to the FreeIPA/389-ds
+    # layout (cn={group},cn=groups,cn=accounts,{base_dn}).
+    "group_dn_template": "",
+    # Members of this group are granted admin on login/provisioning; blank =
+    # LDAP membership never grants admin (accounts stay regular users, an
+    # existing local admin can still promote them by hand). Defaults to
+    # "odysseus_admin" so it's ready to use alongside the default
+    # "odysseus_user" required group without the admin needing to invent a
+    # name up front.
+    "admin_group": "odysseus_admin",
+}
+
 
 def normalize_known_username(users: Dict[str, Any], username: str | None) -> Optional[str]:
     """Return a normalized username only when it exists in the auth user map."""
@@ -92,6 +127,7 @@ class SetAdminResult(enum.Enum):
     USER_NOT_FOUND = "user_not_found"
     NOT_AUTHORIZED = "not_authorized"   # requester is not an admin
     LAST_ADMIN = "last_admin"           # would remove the last remaining admin
+    LDAP_MANAGED = "ldap_managed"       # admin status is synced from the LDAP admin group
 
 
 class AuthManager:
@@ -243,6 +279,37 @@ class AuthManager:
             self._save()
 
     @property
+    def ldap_settings(self) -> Dict[str, Any]:
+        """Admin-configured LDAP/FreeIPA login settings (Settings -> Users),
+        merged over defaults so newly added keys always have a value."""
+        return {**LDAP_DEFAULTS, **self._config.get("ldap", {})}
+
+    def set_ldap_settings(self, settings: Dict[str, Any]) -> Dict[str, Any]:
+        """Update LDAP/FreeIPA login settings. Only known keys are accepted;
+        unknown keys are silently ignored so a stray body field can't pollute
+        auth.json. Returns the resulting settings dict."""
+        with self._config_lock:
+            current = {**LDAP_DEFAULTS, **self._config.get("ldap", {})}
+            for key in LDAP_DEFAULTS:
+                if key in settings:
+                    current[key] = settings[key]
+            current["domain"] = str(current.get("domain") or "").strip().lower()
+            current["server"] = str(current.get("server") or "").strip()
+            current["user_dn_template"] = str(current.get("user_dn_template") or "").strip()
+            current["required_group"] = str(current.get("required_group") or "").strip()
+            current["group_dn_template"] = str(current.get("group_dn_template") or "").strip()
+            current["admin_group"] = str(current.get("admin_group") or "").strip()
+            current["use_ssl"] = bool(current.get("use_ssl", True))
+            current["verify_cert"] = bool(current.get("verify_cert", True))
+            # Can't be enabled without a domain — there'd be nothing to bind to.
+            current["enabled"] = bool(current.get("enabled")) and bool(current["domain"])
+            self._config["ldap"] = current
+            self._save()
+        logger.info("Updated LDAP login settings (enabled=%s, domain=%s)",
+                    current["enabled"], current["domain"] or "<unset>")
+        return current
+
+    @property
     def is_configured(self) -> bool:
         return len(self.users) > 0
 
@@ -253,6 +320,7 @@ class AuthManager:
             "reserved_usernames": sorted(RESERVED_USERNAMES),
             "signup_enabled": self.signup_enabled,
             "session_days": TOKEN_TTL // 86400,
+            "ldap_enabled": self.ldap_settings.get("enabled", False),
         }
 
     # ------------------------------------------------------------------
@@ -377,8 +445,19 @@ class AuthManager:
         return self.users.get(username, {}).get("is_admin", False)
 
     def list_users(self) -> List[Dict[str, Any]]:
+        admin_group = self.ldap_settings.get("admin_group")
         return [
-            {"username": u, "is_admin": d.get("is_admin", False), "privileges": self.get_privileges(u)}
+            {
+                "username": u,
+                "is_admin": d.get("is_admin", False),
+                "privileges": self.get_privileges(u),
+                "auth_source": d.get("auth_source", "local"),
+                # True when this account's admin flag is synced from LDAP
+                # admin-group membership on every login (see sync_ldap_admin),
+                # so the UI can hide the manual promote/demote control instead
+                # of offering a toggle that gets silently reverted next login.
+                "admin_managed_by_ldap": d.get("auth_source") == "ldap" and bool(admin_group),
+            }
             for u, d in self.users.items()
         ]
 
@@ -439,6 +518,11 @@ class AuthManager:
             currently_admin = bool(target.get("is_admin"))
             if currently_admin == is_admin:
                 return SetAdminResult.OK  # no-op; leave privileges untouched
+            if target.get("auth_source") == "ldap" and self.ldap_settings.get("admin_group"):
+                # Admin status for this account is synced from LDAP admin-group
+                # membership on every login (see sync_ldap_admin) — a manual
+                # override here would just get reverted on the next login.
+                return SetAdminResult.LDAP_MANAGED
             if currently_admin and not is_admin:
                 admin_count = sum(1 for d in self.users.values() if d.get("is_admin"))
                 if admin_count <= 1:
@@ -577,6 +661,132 @@ class AuthManager:
         if username not in self.users:
             return False
         return _verify_password(password, self.users[username]["password_hash"])
+
+    @staticmethod
+    def _ldap_kwargs(settings: Dict[str, Any]) -> Dict[str, Any]:
+        """Translate saved/merged LDAP settings into `src.ldap_auth` call
+        kwargs. Shared by `ldap_authenticate` and `ldap_test_login` so the
+        field list only has to be maintained in one place."""
+        return {
+            "domain": settings.get("domain") or "",
+            "server": settings.get("server") or "",
+            "user_dn_template": settings.get("user_dn_template") or "",
+            "use_ssl": settings.get("use_ssl", True),
+            "verify_cert": settings.get("verify_cert", True),
+            "required_group": settings.get("required_group") or "",
+            "group_dn_template": settings.get("group_dn_template") or "",
+            "admin_group": settings.get("admin_group") or "",
+        }
+
+    @staticmethod
+    def _ldap_config_error(detail: str) -> Dict[str, Any]:
+        """A `test_login()`-shaped result for failures that never reach
+        `src.ldap_auth` (missing domain, missing `ldap3` dependency)."""
+        return {
+            "stage": "config", "ok": False, "detail": detail,
+            "host": "", "bind_dn": "", "is_admin": False, "in_required_group": None,
+        }
+
+    def is_ldap_user(self, username: str) -> bool:
+        """True if this account was provisioned via LDAP/FreeIPA login (its
+        local password is an unusable random value; auth always goes through
+        the directory)."""
+        username = username.strip().lower()
+        return self.users.get(username, {}).get("auth_source") == "ldap"
+
+    def ldap_authenticate(self, username: str, password: str):
+        """Try LDAP/FreeIPA bind auth for `username`. Returns `False` when
+        the feature is disabled/unconfigured or the bind fails, or an
+        `LDAPAuthResult` (truthy, with `.is_admin`) on success. Propagates
+        `LDAPAccessDenied` (valid credentials, wrong group) so the login
+        route can show a distinct "ask your administrator" message."""
+        settings = self.ldap_settings
+        if not settings.get("enabled") or not settings.get("domain"):
+            return False
+        from src.ldap_auth import authenticate as _ldap_bind
+        try:
+            return _ldap_bind(username, password, **self._ldap_kwargs(settings))
+        except RuntimeError as e:
+            # ldap3 not installed — log once per attempt so the admin notices
+            # instead of every login just silently failing.
+            logger.error(str(e))
+            return False
+
+    def ldap_test_login(self, username: str, password: str, overrides: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Admin-only diagnostic: run a bind attempt using `overrides` merged
+        over the currently saved LDAP settings (so an admin can test tweaks
+        before hitting Save), and return the full stage-by-stage result from
+        `src.ldap_auth.test_login` — which stage it reached, the exact host /
+        bind DN used, and why it stopped there."""
+        settings = {**self.ldap_settings, **(overrides or {})}
+        domain = str(settings.get("domain") or "").strip()
+        if not domain:
+            return self._ldap_config_error("Domain is required")
+        settings["domain"] = domain
+        from src.ldap_auth import test_login as _ldap_test
+        try:
+            return _ldap_test(username, password, **self._ldap_kwargs(settings))
+        except RuntimeError as e:
+            return self._ldap_config_error(str(e))
+
+    def sync_ldap_admin(self, username: str, is_admin: bool) -> None:
+        """Promote/demote an LDAP-provisioned account to match current
+        directory admin-group membership. Called on every successful LDAP
+        login so admin access follows the directory going forward, not just
+        at first login. No-op for local (non-LDAP) accounts, so directory
+        group membership can never reach in and touch a manually-managed
+        account. Refuses to demote the very last remaining admin so a
+        directory-side group change can't lock the instance out of admin
+        access entirely."""
+        username = username.strip().lower()
+        with self._config_lock:
+            user = self._config.get("users", {}).get(username)
+            if not user or user.get("auth_source") != "ldap":
+                return
+            current = bool(user.get("is_admin"))
+            if current == bool(is_admin):
+                return
+            if current and not is_admin:
+                admins = [u for u, d in self._config.get("users", {}).items() if d.get("is_admin")]
+                if len(admins) <= 1:
+                    logger.warning(
+                        "Refusing to demote last remaining admin '%s' via LDAP group sync",
+                        username,
+                    )
+                    return
+            user["is_admin"] = is_admin
+            user["privileges"] = dict(ADMIN_PRIVILEGES if is_admin else DEFAULT_PRIVILEGES)
+            self._save()
+        logger.info("LDAP group sync: '%s' admin=%s", username, is_admin)
+
+    def provision_ldap_user(self, username: str, is_admin: bool = False) -> bool:
+        """Auto-create a local account for an LDAP/FreeIPA-authenticated user
+        on first successful login, so privileges can still be managed the
+        normal way. `is_admin` reflects current admin-group membership from
+        that login; for an already-provisioned account this instead syncs
+        admin status via `sync_ldap_admin` so later group changes take
+        effect on the next login."""
+        username = username.strip().lower()
+        if not username or username in RESERVED_USERNAMES:
+            return False
+        with self._config_lock:
+            already_exists = username in self.users
+            if not already_exists:
+                self._config.setdefault("users", {})[username] = {
+                    # Unusable local password hash — LDAP users always
+                    # authenticate via directory bind, never this hash.
+                    "password_hash": _hash_password(secrets.token_hex(32)),
+                    "created": time.time(),
+                    "is_admin": is_admin,
+                    "privileges": dict(ADMIN_PRIVILEGES if is_admin else DEFAULT_PRIVILEGES),
+                    "auth_source": "ldap",
+                }
+                self._save()
+        if already_exists:
+            self.sync_ldap_admin(username, is_admin)
+        else:
+            logger.info(f"Auto-provisioned LDAP/FreeIPA user '{username}' (admin={is_admin})")
+        return True
 
     def create_session(self, username: str, password: str) -> Optional[str]:
         """Verify credentials and return a session token, or None."""

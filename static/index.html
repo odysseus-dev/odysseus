@@ -2087,6 +2087,82 @@
               <span id="adm-addMsg" style="font-size:11px"></span>
             </div>
           </div>
+          <div class="admin-card ldap-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>LDAP / FreeIPA Login</h2>
+            <div class="admin-toggle-row">
+              <div>
+                <div class="admin-toggle-label">Enable LDAP/FreeIPA login</div>
+                <div class="admin-toggle-sub">Sign in with directory credentials. A local account is auto-created on first login.</div>
+              </div>
+              <label class="admin-switch"><input type="checkbox" id="adm-ldapToggle"><span class="admin-slider"></span></label>
+            </div>
+            <div class="ldap-config hidden" id="adm-ldapConfig">
+              <div class="ldap-config-inner">
+              <div class="ldap-grid ldap-grid-2col">
+                <div class="ldap-field">
+                  <label for="adm-ldapDomain">Domain</label>
+                  <input id="adm-ldapDomain" type="text" placeholder="example.com">
+                </div>
+                <div class="ldap-field">
+                  <label for="adm-ldapServer">Server <span class="ldap-optional">(optional)</span></label>
+                  <input id="adm-ldapServer" type="text" placeholder="Defaults to domain">
+                </div>
+                <div class="ldap-field">
+                  <label for="adm-ldapGroup">Required group</label>
+                  <input id="adm-ldapGroup" type="text" placeholder="odysseus_user">
+                  <div class="ldap-hint">Only members may log in. Blank = any valid credential.</div>
+                </div>
+                <div class="ldap-field">
+                  <label for="adm-ldapAdminGroup">Admin group</label>
+                  <input id="adm-ldapAdminGroup" type="text" placeholder="odysseus_admin">
+                  <div class="ldap-hint">Members are granted admin automatically. Blank = never via LDAP.</div>
+                </div>
+              </div>
+
+              <details class="ldap-details">
+                <summary>Advanced</summary>
+                <div class="ldap-grid" style="margin-top:10px;">
+                  <div class="ldap-field">
+                    <label for="adm-ldapUserDnTpl">User DN template</label>
+                    <input id="adm-ldapUserDnTpl" type="text" placeholder="uid={username},cn=users,cn=accounts,{base_dn}">
+                  </div>
+                  <div class="ldap-field">
+                    <label for="adm-ldapGroupDnTpl">Group DN template</label>
+                    <input id="adm-ldapGroupDnTpl" type="text" placeholder="cn={group},cn=groups,cn=accounts,{base_dn}">
+                  </div>
+                </div>
+                <div class="ldap-toggle-pair">
+                  <label class="ldap-inline-toggle"><input type="checkbox" id="adm-ldapUseSsl"><span>Use TLS (LDAPS)</span></label>
+                  <label class="ldap-inline-toggle"><input type="checkbox" id="adm-ldapVerifyCert"><span>Verify server certificate</span></label>
+                </div>
+              </details>
+
+              <div class="ldap-actions">
+                <button class="admin-btn-add" id="adm-ldapSaveBtn">Save</button>
+                <span id="adm-ldapMsg" class="ldap-msg"></span>
+              </div>
+
+              <details class="ldap-details">
+                <summary>Test login</summary>
+                <div class="ldap-hint" style="margin-top:8px;">Tests the values above (even unsaved) against the directory and shows exactly which stage fails.</div>
+                <div class="ldap-grid ldap-grid-narrow" style="margin-top:8px;">
+                  <div class="ldap-field">
+                    <label for="adm-ldapTestUser">Username</label>
+                    <input id="adm-ldapTestUser" type="text" placeholder="jdoe">
+                  </div>
+                  <div class="ldap-field">
+                    <label for="adm-ldapTestPass">Password</label>
+                    <input id="adm-ldapTestPass" type="password">
+                  </div>
+                </div>
+                <div class="ldap-actions">
+                  <button class="admin-btn-add" id="adm-ldapTestBtn">Test login</button>
+                </div>
+                <div id="adm-ldapTestResult" class="ldap-test-result"></div>
+              </details>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- ═══ SERVICES TAB ═══ -->
