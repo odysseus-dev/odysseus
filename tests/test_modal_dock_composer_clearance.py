@@ -37,6 +37,7 @@ def test_composer_clearance_tracks_input_and_attachment_height():
     assert "const COMPOSER_DOCK_GAP = 4;" in INIT_JS
     assert "const COLLAPSED_OVERLAY_HISTORY_GAP = 4;" in INIT_JS
     assert "const TOUCH_DOCK_HISTORY_RATIO = 0.75;" in INIT_JS
+    assert "const _uiScaleFactor = () => {" in INIT_JS
     assert "const _setRootPxIfChanged = (name, value) => {" in INIT_JS
     assert "if (root.style.getPropertyValue(name) !== next)" in INIT_JS
     assert "const _queueComposerClearanceSync = () => {" in INIT_JS
@@ -47,6 +48,7 @@ def test_composer_clearance_tracks_input_and_attachment_height():
     assert "_setRootPxIfChanged('--collapsed-overlay-space', collapsedOverlaySpace);" in INIT_JS
     assert "_toggleBodyClassIfChanged('has-collapsed-overlays', collapsedOverlaySpace > 0);" in INIT_JS
     assert "new MutationObserver(_queueComposerClearanceSync).observe(dock, {\n        childList: true,\n      });" in INIT_JS
+    assert "if (chatContainer) ro.observe(chatContainer);" in INIT_JS
     assert "subtree: true,\n        attributeFilter: ['class', 'style']," not in INIT_JS
 
 
@@ -81,7 +83,7 @@ def test_desktop_minimized_dock_uses_chatbar_width_and_side_scroll():
     assert "function _desktopChatbarDockRect(bounds = _dockWorkspaceBounds())" in MODAL_MANAGER_JS
     assert "if (_isTouchInput()) return null;" in MODAL_MANAGER_JS
     assert "const rect = _visibleRect(document.querySelector('.chat-input-bar'));" in MODAL_MANAGER_JS
-    assert "return { left: Math.round(left), width };" in MODAL_MANAGER_JS
+    assert "return { left: Math.round(left / scale), width: Math.floor(width / scale) };" in MODAL_MANAGER_JS
     assert "const desktopChatbarDock = !!_desktopChatbarDockRect(bounds);" in MODAL_MANAGER_JS
     assert "dock.classList.toggle('dock-chatbar-row', desktopChatbarDock);" in MODAL_MANAGER_JS
     assert "function _syncDockOverflowState(dock)" in MODAL_MANAGER_JS
@@ -115,6 +117,16 @@ def test_desktop_minimized_dock_uses_chatbar_width_and_side_scroll():
     assert "mask-image: linear-gradient(90deg" in block
     assert "#minimized-dock.dock-chatbar-row .minimized-dock-chip" in block
     assert "flex: 0 0 auto;" in block
+
+
+def test_minimized_dock_repositions_after_vertical_chat_split_transition():
+    marker = "chatContainer.addEventListener('transitionend'"
+    assert marker in MODAL_MANAGER_JS
+    block = MODAL_MANAGER_JS[MODAL_MANAGER_JS.index(marker): MODAL_MANAGER_JS.index(marker) + 500]
+    assert "e.propertyName === 'margin-left'" in block
+    assert "e.propertyName === 'margin-right'" in block
+    assert "e.propertyName === 'margin-top'" in block
+    assert "e.propertyName === 'margin-bottom'" in block
 
 
 def test_touch_landscape_does_not_get_mobile_overlay_sheet_rules():
@@ -279,7 +291,9 @@ def test_full_expand_restores_previous_dock_or_window_state():
     assert "_clearEmailSplitGeometry();" in MODAL_MANAGER_JS
     assert "_releaseWindowDockState(modal, content);" in MODAL_MANAGER_JS
     assert "_scheduleFullExpandGeometrySettle(modal);" in MODAL_MANAGER_JS
-    assert "modal.classList.remove('modal-left-docked', 'modal-right-docked', 'email-snap-left');" in TILE_MANAGER_JS
+    assert "const DOCK_SIDES = ['left', 'right', 'top', 'bottom'];" in TILE_MANAGER_JS
+    assert "modal.classList.remove(...DOCK_SIDES.map(_dockClassForSide), 'email-snap-left');" in TILE_MANAGER_JS
+    assert "dockedSides.forEach((side) => _clearDockSide(side, modal));" in TILE_MANAGER_JS
 
 
 def test_fullscreen_safe_rect_ignores_hidden_or_offscreen_nav_geometry():
@@ -309,36 +323,72 @@ def test_fullscreen_safe_rect_ignores_hidden_or_offscreen_nav_geometry():
     assert "if (zoneName !== 'fullscreen' || !_isTouchLandscape() || !content) return;" in TILE_MANAGER_JS
     assert "_reclampAllThrottled(false);" in TILE_MANAGER_JS
     assert "setTimeout(run, 520);" in TILE_MANAGER_JS
-    marker = "body.hamburger-right:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.modal-right-docked) .modal-content"
+    marker = "body.hamburger-right:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.modal-right-docked):not(.modal-left-docked):not(.modal-top-docked):not(.modal-bottom-docked) .modal-content"
     assert marker in CSS
-    block = CSS[CSS.index(marker): CSS.index(marker) + 260]
+    block = CSS[CSS.index(marker): CSS.index(marker) + 420]
     assert "left: 0 !important;" in block
     assert "right: calc(var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)) !important;" in block
 
 
-def test_edge_docking_clears_the_opposite_side_first():
-    assert "function _clearOppositeDockedWindows(side, owner)" in MODAL_SNAP_JS
-    assert "const oppositeSide = side === 'left' ? 'right' : 'left';" in MODAL_SNAP_JS
-    assert "if (existingSide !== oppositeSide) return;" in MODAL_SNAP_JS
+def test_edge_docking_clears_the_other_three_edges_first():
+    assert "const DOCK_SIDES = ['left', 'right', 'top', 'bottom'];" in MODAL_SNAP_JS
+    assert "function _clearOtherDockedWindows(side, owner)" in MODAL_SNAP_JS
+    assert "if (existingSide === side) return;" in MODAL_SNAP_JS
     assert "detail: { side: existingSide, modal: existing, replacement: owner }" in MODAL_SNAP_JS
     assert "clearRightDock(existing, undefined, undefined, dockClass);" in MODAL_SNAP_JS
     assert "suspendDock(existing);" in MODAL_SNAP_JS
-    assert "_clearOppositeDockedWindows(side, modal);" in MODAL_SNAP_JS
+    assert "_clearOtherDockedWindows(side, modal);" in MODAL_SNAP_JS
     assert "_requestDockReplacement(side, modal);" in MODAL_SNAP_JS
 
 
-def test_right_edge_tile_snap_delegates_to_reserved_edge_dock():
-    assert "import { applyEdgeDock } from './modalSnap.js';" in TILE_MANAGER_JS
-    assert "reserved right dock" in TILE_MANAGER_JS
+def test_all_four_tile_snap_edges_delegate_to_reserved_edge_docks():
+    assert "import { applyEdgeDock, clearRightDock, edgeDockPreviewRect } from './modalSnap.js';" in TILE_MANAGER_JS
+    assert "const DOCK_ZONE_TO_SIDE = {" in TILE_MANAGER_JS
+    assert "'left-half': 'left'," in TILE_MANAGER_JS
+    assert "'right-half': 'right'," in TILE_MANAGER_JS
+    assert "'top-half': 'top'," in TILE_MANAGER_JS
+    assert "'bottom-half': 'bottom'," in TILE_MANAGER_JS
     assert "function _rightDockPreviewRect(safe)" in TILE_MANAGER_JS
     assert "const MAX_DESKTOP_EDGE_DOCK_WIDTH = 720;" in TILE_MANAGER_JS
     assert "const MAX_DESKTOP_EDGE_DOCK_RATIO = 0.44;" in TILE_MANAGER_JS
     assert "return { name: 'right-half', rect: _rightDockPreviewRect(safe) };" in TILE_MANAGER_JS
-    assert "if (zoneName === 'right-half' && _modal) {" in TILE_MANAGER_JS
-    assert "const dockW = applyEdgeDock(_modal, 'right');" in TILE_MANAGER_JS
-    assert "if (dockW) {" in TILE_MANAGER_JS
+    assert "const dockSide = DOCK_ZONE_TO_SIDE[zoneName];" in TILE_MANAGER_JS
+    assert "if (dockSide && _modal) {" in TILE_MANAGER_JS
+    assert "const dockSize = applyEdgeDock(_modal, dockSide);" in TILE_MANAGER_JS
+    assert "if (dockSize) {" in TILE_MANAGER_JS
     assert "return;" in TILE_MANAGER_JS
     assert "case 'right-half':     r = _rightDockPreviewRect(safe); break;" in TILE_MANAGER_JS
+    assert "const previewModal = document.getElementById(chip.dataset.modalId);" in MODAL_MANAGER_JS
+    assert "previewZoneAt(e.clientX, e.clientY, previewModal);" in MODAL_MANAGER_JS
+
+
+def test_edge_dock_preview_paints_the_full_consumed_rectangle():
+    assert "export function edgeDockPreviewRect(modal, side = 'right')" in MODAL_SNAP_JS
+    assert "const rect = edgeDockPreviewRect(modal, side);" in MODAL_SNAP_JS
+    assert "`left:${Math.round(rect.left)}px`" in MODAL_SNAP_JS
+    assert "`top:${Math.round(rect.top)}px`" in MODAL_SNAP_JS
+    assert "`width:${Math.round(rect.width)}px`" in MODAL_SNAP_JS
+    assert "`height:${Math.round(rect.height)}px`" in MODAL_SNAP_JS
+    assert "background:color-mix(in srgb, var(--accent, var(--red)) 16%, transparent)" in MODAL_SNAP_JS
+    assert "border-radius:0" in MODAL_SNAP_JS
+    assert "function _uiScaleFactor()" in MODAL_SNAP_JS
+    assert "window.addEventListener('odysseus:ui-scale-change', settleAfterNavTransition);" in MODAL_SNAP_JS
+
+
+def test_top_and_bottom_docks_mark_and_reserve_chat_rows():
+    assert "function _bodyDockClassForSide(side)" in MODAL_SNAP_JS
+    assert "return `${side}-dock-active`;" in MODAL_SNAP_JS
+    assert "function _dockSizeProperty(side)" in MODAL_SNAP_JS
+    assert "function _dockReserveProperty(side)" in MODAL_SNAP_JS
+    assert "function _setVerticalDockVars(side, height)" in MODAL_SNAP_JS
+    assert "document.documentElement.style.setProperty(_dockSizeProperty(side), height + 'px');" in MODAL_SNAP_JS
+    assert "document.documentElement.style.setProperty(_dockReserveProperty(side), height + 'px');" in MODAL_SNAP_JS
+    assert "content._dockSide = side;" in MODAL_SNAP_JS
+
+    assert "body.top-dock-active .chat-container," in CSS
+    assert "margin-top: var(--top-dock-reserve-h, var(--top-dock-h, 0px));" in CSS
+    assert "body.bottom-dock-active .chat-container," in CSS
+    assert "margin-bottom: var(--bottom-dock-reserve-h, var(--bottom-dock-h, 0px));" in CSS
 
 
 def test_android_tool_opens_auto_dock_and_replace_existing_dock():
@@ -501,7 +551,13 @@ def test_android_touch_docking_is_landscape_only_without_enabling_resize():
     assert "const _dockAllowed = () => enableDock && (!_isTouchInput() || _isTouchLandscape());" in WINDOW_DRAG_JS
     assert "if (_shouldSkipDrag()) return;" in WINDOW_DRAG_JS
     assert "const dockAllowed = _dockAllowed();" in WINDOW_DRAG_JS
-    assert "const activeRightDock = dockAllowed ? rightDock : null;" in WINDOW_DRAG_JS
+    assert "if (enableDock && modal?.dataset) modal.dataset.edgeDockController = '1';" in WINDOW_DRAG_JS
+    assert "const topDock = (enableDock && options.enableVerticalDock !== false) ? makeEdgeDockController(modal, 'top') : null;" in WINDOW_DRAG_JS
+    assert "const bottomDock = (enableDock && options.enableVerticalDock !== false) ? makeEdgeDockController(modal, 'bottom') : null;" in WINDOW_DRAG_JS
+    assert "const _dockControllers = () => [topDock, bottomDock, leftDock, rightDock]" in WINDOW_DRAG_JS
+    assert "const currentDock = dockAllowed ? _currentDockController() : null;" in WINDOW_DRAG_JS
+    assert "const candidate = dockAllowed ? _dockCandidate(cx, cy) : null;" in WINDOW_DRAG_JS
+    assert "if (deferSharedDock && modal?.dataset?.edgeDockController === '1') return null;" in TILE_MANAGER_JS
     assert "if (enableTouch) header.style.touchAction = 'none';" in WINDOW_DRAG_JS
     assert "mostly-vertical downward pulls" in WINDOW_DRAG_JS
     assert "try { window._modalWindowDragging = true; } catch (_) {}" in WINDOW_DRAG_JS
@@ -512,7 +568,7 @@ def test_android_touch_docking_is_landscape_only_without_enabling_resize():
     assert "_swipeTarget = null;" in UI_JS
     assert "export function canUseEdgeDock()" in MODAL_SNAP_JS
     assert "return !_isTouchInput() || _isTouchLandscape();" in MODAL_SNAP_JS
-    assert "if (!canUseEdgeDock()) {\n    _clearDocksForDisabledViewport();\n    return 0;\n  }" in MODAL_SNAP_JS
+    assert "if (!_canUseDockSide(side)) {" in MODAL_SNAP_JS
     assert "const DOCKED_CONTENT_INLINE_PROPS = [" in MODAL_SNAP_JS
     assert "content.style.removeProperty(prop);" in MODAL_SNAP_JS
     assert "function _clearTileSnapResidue(content)" in MODAL_SNAP_JS

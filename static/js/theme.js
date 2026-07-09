@@ -406,16 +406,58 @@ export function applyFontDensity(font, density) {
 
 // UI text-size scale (accessibility). Global and independent of the active
 // theme, so the chosen size persists across theme switches. Stored as a plain
-// percentage string ('100' | '110' | '125' | '150').
+// percentage string ('90' | '100' | '110' | '125' | '140').
 const UI_SCALE_KEY = 'odysseus-ui-scale';
 const DEFAULT_UI_SCALE = '100';
+export const UI_SCALE_STEPS = ['90', '100', '110', '125', '140'];
+const UI_SCALE_CLASSES = UI_SCALE_STEPS
+  .filter(s => s !== DEFAULT_UI_SCALE)
+  .map(s => 'ui-scale-' + s);
+
+export function normalizeUiScale(scale) {
+  const s = String(scale || DEFAULT_UI_SCALE);
+  return UI_SCALE_STEPS.includes(s) ? s : DEFAULT_UI_SCALE;
+}
 
 export function applyUiScale(scale) {
-  const s = scale || DEFAULT_UI_SCALE;
-  // Only one non-default scale ('125'). Remove any legacy classes too so an
-  // older stored value can't leave a stale zoom applied.
-  document.documentElement.classList.remove('ui-scale-110', 'ui-scale-125', 'ui-scale-140');
-  if (s === '125') document.documentElement.classList.add('ui-scale-125');
+  const s = normalizeUiScale(scale);
+  // Remove current and legacy scale classes so an older stored value can't
+  // leave a stale zoom applied.
+  document.documentElement.classList.remove(...UI_SCALE_CLASSES, 'ui-scale-150');
+  if (s !== DEFAULT_UI_SCALE) document.documentElement.classList.add('ui-scale-' + s);
+  return s;
+}
+
+export function getUiScale() {
+  try {
+    return normalizeUiScale(localStorage.getItem(UI_SCALE_KEY) || DEFAULT_UI_SCALE);
+  } catch (e) {
+    return DEFAULT_UI_SCALE;
+  }
+}
+
+export function setUiScale(scale, opts = {}) {
+  const persist = opts.persist !== false;
+  const syncControl = opts.syncControl !== false;
+  const s = applyUiScale(scale);
+  if (persist) {
+    try { localStorage.setItem(UI_SCALE_KEY, s); } catch (e) {}
+  }
+  if (syncControl) {
+    const select = document.getElementById('theme-text-size-select');
+    if (select) select.value = s;
+  }
+  try {
+    window.dispatchEvent(new CustomEvent('odysseus:ui-scale-change', { detail: { scale: s } }));
+  } catch (e) {}
+  return s;
+}
+
+export function adjustUiScale(delta) {
+  const current = getUiScale();
+  const idx = Math.max(0, UI_SCALE_STEPS.indexOf(current));
+  const nextIdx = Math.max(0, Math.min(UI_SCALE_STEPS.length - 1, idx + (delta < 0 ? -1 : 1)));
+  return setUiScale(UI_SCALE_STEPS[nextIdx]);
 }
 
 const _BG_CLASSES = ['bg-pattern-dots',
@@ -1169,11 +1211,11 @@ export function initThemeUI() {
     const nts = textSizeSelect.cloneNode(true); textSizeSelect.parentNode.replaceChild(nts, textSizeSelect);
     let initScale = DEFAULT_UI_SCALE;
     try { initScale = localStorage.getItem(UI_SCALE_KEY) || DEFAULT_UI_SCALE; } catch (e) {}
+    initScale = normalizeUiScale(initScale);
     nts.value = initScale;
     applyUiScale(initScale);
     nts.addEventListener('change', () => {
-      applyUiScale(nts.value);
-      try { localStorage.setItem(UI_SCALE_KEY, nts.value); } catch (e) {}
+      setUiScale(nts.value);
     });
   }
   if (patternSelect) {
@@ -2119,7 +2161,8 @@ function _initEmbers() {
 const themeModule = { initThemeUI, togglePopup, closePopup, makeDraggable,
                        THEMES, applyColors, applyFontDensity, applyBgPattern,
                        applyBgEffectColor, applyBgEffectIntensity, applyBgEffectSize,
-                       applyFrostedGlass,
+                       applyFrostedGlass, applyUiScale, getUiScale, setUiScale,
+                       adjustUiScale,
                        save, getSaved, saveCustomTheme, deleteCustomTheme,
                        getCustomThemes };
 

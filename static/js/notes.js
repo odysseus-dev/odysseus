@@ -216,16 +216,16 @@ function _applyNotesFullscreenRect(pane) {
 
 function _captureNotesFullscreenReturnState(pane) {
   if (!pane?.getBoundingClientRect) return null;
+  const dockSides = ['left', 'right', 'top', 'bottom'];
   const side = pane._dockSide
-    || (pane.classList.contains('modal-left-docked') ? 'left'
-      : pane.classList.contains('modal-right-docked') ? 'right'
-        : null);
-  if (side === 'left' || side === 'right') {
+    || dockSides.find((candidate) => pane.classList.contains(`modal-${candidate}-docked`));
+  if (dockSides.includes(side)) {
     return {
       mode: 'dock',
       side,
       touchLandscapeDockWidth: pane._touchLandscapeDockWidth || null,
       userDockWidth: pane._userDockWidth || null,
+      userDockHeight: pane._userDockHeight || null,
     };
   }
   const rect = pane.getBoundingClientRect();
@@ -246,9 +246,10 @@ function _restoreNotesFullscreenReturnState(pane) {
   if (!pane) return;
   _clearNotesSnapStyles(pane);
   if (!pane.isConnected) return;
-  if (state?.mode === 'dock' && (state.side === 'left' || state.side === 'right')) {
+  if (state?.mode === 'dock' && ['left', 'right', 'top', 'bottom'].includes(state.side)) {
     if (state.touchLandscapeDockWidth) pane._touchLandscapeDockWidth = state.touchLandscapeDockWidth;
     if (state.userDockWidth) pane._userDockWidth = state.userDockWidth;
+    if (state.userDockHeight) pane._userDockHeight = state.userDockHeight;
     try {
       applyEdgeDock(pane, state.side);
       return;
@@ -410,13 +411,12 @@ function _wireNotesWindow(pane) {
 
 function _clearNotesSnapStyles(pane) {
   if (!pane) return;
-  const hadLeft = pane.classList.contains('modal-left-docked');
-  const hadRight = pane.classList.contains('modal-right-docked');
-  pane.classList.remove('notes-window-fullscreen', 'modal-left-docked', 'modal-right-docked');
-  if (hadLeft) clearDockSide('left', pane);
-  if (hadRight) clearDockSide('right', pane);
+  const dockSides = ['left', 'right', 'top', 'bottom'];
+  const activeDockSides = dockSides.filter((side) => pane.classList.contains(`modal-${side}-docked`));
+  pane.classList.remove('notes-window-fullscreen', ...dockSides.map((side) => `modal-${side}-docked`));
+  activeDockSides.forEach((side) => clearDockSide(side, pane));
   ['position', 'left', 'top', 'right', 'bottom', 'width', 'max-width', 'height',
-    'max-height', 'margin', 'transform', 'border-radius', 'overflow', 'border-bottom']
+    'min-height', 'max-height', 'margin', 'transform', 'border-radius', 'overflow', 'border-bottom']
     .forEach((prop) => pane.style.removeProperty(prop));
   delete pane.dataset._tilePreSnap;
   delete pane.dataset._tileZone;

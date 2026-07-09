@@ -249,6 +249,10 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
   const COMPOSER_DOCK_GAP = 4;
   const COLLAPSED_OVERLAY_HISTORY_GAP = 4;
   const TOUCH_DOCK_HISTORY_RATIO = 0.75;
+  const _uiScaleFactor = () => {
+    const n = parseFloat(window.getComputedStyle(root).getPropertyValue('--ui-scale-factor') || '');
+    return Number.isFinite(n) && n > 0 ? n : 1;
+  };
   const _setRootPxIfChanged = (name, value) => {
     const next = value + 'px';
     if (root.style.getPropertyValue(name) !== next) {
@@ -273,7 +277,9 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
     const rect = dock.getBoundingClientRect();
     const touchDock = dock.id === 'minimized-dock' && _isTouchDockViewport();
     const reserveHeight = touchDock ? rect.height * TOUCH_DOCK_HISTORY_RATIO : rect.height;
-    return rect.height > 0 ? Math.ceil(reserveHeight + COLLAPSED_OVERLAY_HISTORY_GAP) : 0;
+    return rect.height > 0
+      ? Math.ceil((reserveHeight + COLLAPSED_OVERLAY_HISTORY_GAP) / _uiScaleFactor())
+      : 0;
   };
   const _watchDock = (dock) => {
     if (!dock || (watchedDocks && watchedDocks.has(dock))) return;
@@ -304,7 +310,10 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
       const rect = el.getBoundingClientRect();
       if (rect.height > 0) top = Math.min(top, rect.top);
     }
-    const clearance = Math.max(8, Math.ceil(window.innerHeight - top + COMPOSER_DOCK_GAP));
+    const clearance = Math.max(
+      8,
+      Math.ceil((window.innerHeight - top + COMPOSER_DOCK_GAP) / _uiScaleFactor()),
+    );
     _setRootPxIfChanged('--composer-clearance', clearance);
     const collapsedOverlaySpace = Math.max(
       _visibleDockHeight(document.getElementById('minimized-dock')),
@@ -318,6 +327,10 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
     const ro = new ResizeObserver(_queueComposerClearanceSync);
     if (chatBar) ro.observe(chatBar);
     if (attachStrip) ro.observe(attachStrip);
+    // Top/bottom modal docking moves the composer by resizing the chat shell;
+    // the bar's own border-box does not change, so observing only the bar left
+    // --composer-clearance stuck at the old split seam after minimize.
+    if (chatContainer) ro.observe(chatContainer);
     dockResizeObserver = new ResizeObserver(_queueComposerClearanceSync);
     _watchCurrentDocks();
   }

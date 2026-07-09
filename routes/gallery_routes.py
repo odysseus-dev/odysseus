@@ -1,4 +1,4 @@
-"""Backward-compat shim - canonical location is routes/gallery/gallery_routes.py.
+"""Backward-compat shim - canonical location is routes/gallery/gallery_routes.py."""
 
 import asyncio
 import json
@@ -404,7 +404,7 @@ def setup_gallery_routes() -> APIRouter:
     # ---- POST /api/gallery/{image_id}/rotate ----
     @router.post("/api/gallery/{image_id}/rotate")
     async def gallery_rotate(request: Request, image_id: str):
-        """Rotate an image by ±90° or 180°. Updates the file on disk and the
+        """Rotate an image by +/-90 degrees or 180 degrees. Updates the file on disk and the
         width/height in the DB. Body: {angle: 90 | -90 | 180}."""
         from pathlib import Path
         from PIL import Image
@@ -1178,9 +1178,7 @@ def setup_gallery_routes() -> APIRouter:
     # ---- POST /api/image/inpaint — proxy to diffusion server OR OpenAI ----
     @router.post("/api/image/inpaint")
     async def inpaint_proxy(request: Request):
-        """Forward inpaint request. If the selected endpoint is OpenAI, re-shape
-        the request for /v1/images/edits (multipart, inverted mask). Otherwise
-        proxy through to a self-hosted diffusion server's /v1/images/inpaint."""
+        """Forward inpaint requests to OpenAI edits or a local diffusion endpoint."""
         import base64, json, re
         import httpx
         user = require_privilege(request, "can_generate_images")

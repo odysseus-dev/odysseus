@@ -714,7 +714,7 @@ function _resetCalendarFreshWindowMode(modal) {
   delete content._fullExpandReturnState;
   [
     'position', 'left', 'top', 'right', 'bottom', 'width', 'max-width',
-    'height', 'max-height', 'margin', 'transform', 'transition',
+    'height', 'min-height', 'max-height', 'margin', 'transform', 'transition',
     'border-radius',
   ].forEach((prop) => content.style.removeProperty(prop));
 
@@ -848,6 +848,8 @@ function _calDetailLayoutKey() {
   const constrained = !!(
     modal?.classList?.contains('modal-left-docked') ||
     modal?.classList?.contains('modal-right-docked') ||
+    modal?.classList?.contains('modal-top-docked') ||
+    modal?.classList?.contains('modal-bottom-docked') ||
     modal?.classList?.contains('modal-full-expanded')
   );
   const orientation = window.matchMedia('(orientation: landscape)').matches ? 'landscape' : 'portrait';

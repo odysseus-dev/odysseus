@@ -30,7 +30,7 @@
 //                        width gate; explicit callsite opt-outs still win.
 //     resizeMobileSkip: resize is disabled below this viewport width.
 //                        Default 768. Set to 0 to allow mobile resize.
-//     enableDock:      bool — enable left + right edge docks.
+//     enableDock:      bool — enable left, right, top, and bottom edge docks.
 //                        Default true.
 //     enableFullscreen: legacy option; fullscreen is controlled separately,
 //                        not as part of the edge-dock gesture.
@@ -45,6 +45,33 @@ function _isTouchInput() {
     window.matchMedia('(hover: none)').matches ||
     navigator.maxTouchPoints > 0 ||
     'ontouchstart' in window;
+}
+
+function _hasFinePointer() {
+  return window.matchMedia('(pointer: fine)').matches
+    || window.matchMedia('(any-pointer: fine)').matches;
+}
+
+function _uiScaleFactor() {
+  try {
+    const n = parseFloat(window.getComputedStyle?.(document.documentElement)
+      ?.getPropertyValue?.('--ui-scale-factor') || '');
+    return Number.isFinite(n) && n > 0 ? n : 1;
+  } catch (_) {
+    return 1;
+  }
+}
+
+function _layoutCoordinate(value) {
+  return value / _uiScaleFactor();
+}
+
+function _layoutRect(rect) {
+  const scale = _uiScaleFactor();
+  return {
+    left: rect.left / scale,
+    top: rect.top / scale,
+  };
 }
 
 function _isTouchLandscape() {
@@ -74,6 +101,7 @@ export function makeWindowDraggable(modal, options = {}) {
     : ((typeof options.mobileSkip === 'number') ? options.mobileSkip : 768);
   const enableTouch = options.enableTouch !== false;
   const enableDock = options.enableDock !== false && !!modal;
+  if (enableDock && modal?.dataset) modal.dataset.edgeDockController = '1';
   const _shouldSkipDrag = () => _isTouchPortraitDockBlocked()
     || (mobileSkip > 0
       && window.innerWidth <= mobileSkip
@@ -90,7 +118,12 @@ export function makeWindowDraggable(modal, options = {}) {
   // window is fullscreen-snapped or docked. Wired here so all ~12 callsites
   // get it without per-file changes.
   if (options.enableResize !== false) {
-    const _dockClasses = ['modal-right-docked', 'modal-left-docked'];
+    const _dockClasses = [
+      'modal-right-docked',
+      'modal-left-docked',
+      'modal-top-docked',
+      'modal-bottom-docked',
+    ];
     makeWindowResizable(content, {
       modal,
       mobileSkip: resizeMobileSkip,
@@ -110,6 +143,26 @@ export function makeWindowDraggable(modal, options = {}) {
   // the navigation. Callers can still pass enableLeftDock:false for a special
   // modal that should only dock right.
   const leftDock = (enableDock && options.enableLeftDock !== false) ? makeEdgeDockController(modal, 'left') : null;
+  const topDock = (enableDock && options.enableVerticalDock !== false) ? makeEdgeDockController(modal, 'top') : null;
+  const bottomDock = (enableDock && options.enableVerticalDock !== false) ? makeEdgeDockController(modal, 'bottom') : null;
+  const _dockControllers = () => [topDock, bottomDock, leftDock, rightDock].filter((controller) => {
+    if (!controller) return false;
+    return (controller.side() === 'top' || controller.side() === 'bottom')
+      ? (_hasFinePointer() && window.innerWidth > 768)
+      : true;
+  });
+  const _releaseDockControllers = (except = null) => {
+    for (const controller of [topDock, bottomDock, leftDock, rightDock]) {
+      if (controller && controller !== except) controller.release();
+    }
+  };
+  const _currentDockController = () => _dockControllers().find((controller) =>
+    modal?.classList?.contains(`modal-${controller.side()}-docked`));
+  const _dockCandidate = (cx, cy) => {
+    const candidates = _dockControllers().filter((controller) => controller.near(cx, cy));
+    candidates.sort((a, b) => Math.max(0, a.distance(cx, cy)) - Math.max(0, b.distance(cx, cy)));
+    return candidates[0] || null;
+  };
 
   // Per-drag state, reset on mousedown.
   let dragging = false;
@@ -134,8 +187,8 @@ export function makeWindowDraggable(modal, options = {}) {
     snapHint.className = 'modal-snap-hint';
     snapHint.style.cssText =
       'position:fixed;left:0;top:0;right:0;bottom:0;' +
-      'background:color-mix(in srgb, var(--accent-primary, #60a5fa) 12%, transparent);' +
-      'border:2px dashed color-mix(in srgb, var(--accent-primary, #60a5fa) 60%, transparent);' +
+      'background:color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);' +
+      'border:2px dashed color-mix(in srgb, var(--accent, var(--red)) 60%, transparent);' +
       'z-index:9998;pointer-events:none;';
     document.body.appendChild(snapHint);
   };
@@ -151,8 +204,8 @@ export function makeWindowDraggable(modal, options = {}) {
     onExitFullscreen(cx, cy);
     // After exit, re-anchor the drag offsets to the new windowed rect so
     // the drag continues smoothly from the cursor's position.
-    const r = content.getBoundingClientRect();
-    startX = cx; startY = cy;
+    const r = _layoutRect(content.getBoundingClientRect());
+    startX = _layoutCoordinate(cx); startY = _layoutCoordinate(cy);
     startLeft = r.left; startTop = r.top;
   };
 
@@ -168,11 +221,12 @@ export function makeWindowDraggable(modal, options = {}) {
         .filter(a => a.playState !== 'finished')
         .forEach(a => a.cancel());
     } catch (_) {}
-    const rect = content.getBoundingClientRect();
+    const rawRect = content.getBoundingClientRect();
+    const rect = _layoutRect(rawRect);
     if (onDragStart) {
-      try { onDragStart({ rect, cx, cy }); } catch (_) {}
+      try { onDragStart({ rect: rawRect, cx, cy }); } catch (_) {}
     }
-    startX = cx; startY = cy;
+    startX = _layoutCoordinate(cx); startY = _layoutCoordinate(cy);
     startLeft = rect.left; startTop = rect.top;
     // Pin position so the drag follows the cursor instead of fighting a
     // centering transform / margin. Inline styles win unless CSS uses
@@ -187,33 +241,24 @@ export function makeWindowDraggable(modal, options = {}) {
   const _onMove = (cx, cy) => {
     if (!dragging) return;
     const dockAllowed = _dockAllowed();
-    const activeRightDock = dockAllowed ? rightDock : null;
-    const activeLeftDock = dockAllowed ? leftDock : null;
     if (!dockAllowed) {
-      if (rightDock) rightDock.release();
-      if (leftDock) leftDock.release();
+      _releaseDockControllers();
     }
     if (_isFullscreen()) {
-      if (activeRightDock) activeRightDock.release();
-      if (activeLeftDock) activeLeftDock.release();
+      _releaseDockControllers();
       if (cy > UNSNAP_PX) {
         _exitFs(cx, cy);
       }
       return;
     }
-    // Right-docked: pulling away from the right edge un-docks. Same for left.
-    if (activeRightDock && modal && modal.classList.contains('modal-right-docked')) {
-      if (activeRightDock.onMove(cx, cy)) {
-        const r = content.getBoundingClientRect();
-        startX = cx; startY = cy;
-        startLeft = r.left; startTop = r.top;
-      }
-      return;
-    }
-    if (activeLeftDock && modal && modal.classList.contains('modal-left-docked')) {
-      if (activeLeftDock.onMove(cx, cy)) {
-        const r = content.getBoundingClientRect();
-        startX = cx; startY = cy;
+    // Pulling away from the edge of any dock returns the window to its saved
+    // floating geometry and continues the drag from the current pointer.
+    const currentDock = dockAllowed ? _currentDockController() : null;
+    if (currentDock) {
+      _releaseDockControllers(currentDock);
+      if (currentDock.onMove(cx, cy)) {
+        const r = _layoutRect(content.getBoundingClientRect());
+        startX = _layoutCoordinate(cx); startY = _layoutCoordinate(cy);
         startLeft = r.left; startTop = r.top;
       }
       return;
@@ -222,47 +267,31 @@ export function makeWindowDraggable(modal, options = {}) {
     if (Math.abs(cx - startX) > MOVE_THRESHOLD || Math.abs(cy - startY) > MOVE_THRESHOLD) {
       movedDuringDrag = true;
     }
-    content.style.left = (startLeft + cx - startX) + 'px';
-    content.style.top = (startTop + cy - startY) + 'px';
-    // Corner guard: in the top fullscreen band the side docks stay OFF, so a
-    // top corner only ever snaps to fullscreen — never the corner hybrid.
-    const inTopBand = cy <= SNAP_PX;
-    _showSnapHint(enableFullscreen && inTopBand);
-    if (inTopBand) {
-      if (activeRightDock) activeRightDock.release();
-      if (activeLeftDock) activeLeftDock.release();
-    } else {
-      if (activeRightDock) activeRightDock.onMove(cx, cy);
-      if (activeLeftDock) activeLeftDock.onMove(cx, cy);
-    }
+    content.style.left = (startLeft + _layoutCoordinate(cx) - startX) + 'px';
+    content.style.top = (startTop + _layoutCoordinate(cy) - startY) + 'px';
+    const candidate = dockAllowed ? _dockCandidate(cx, cy) : null;
+    _releaseDockControllers(candidate);
+    if (candidate) candidate.onMove(cx, cy);
   };
 
   const _onEnd = (cx, cy) => {
     if (!dragging) return;
     dragging = false;
     const dockAllowed = _dockAllowed();
-    const activeRightDock = dockAllowed ? rightDock : null;
-    const activeLeftDock = dockAllowed ? leftDock : null;
     if (modal) modal.classList.remove('modal-dragging');
     _showSnapHint(false);
     if (enableFullscreen && typeof cy === 'number' && cy <= SNAP_PX) {
-      if (activeRightDock) activeRightDock.release();
-      if (activeLeftDock) activeLeftDock.release();
+      _releaseDockControllers();
       _enterFs();
       return;
     }
-    if (activeRightDock && activeRightDock.hovering()) {
-      if (activeLeftDock) activeLeftDock.release();
-      activeRightDock.commit();
+    const hoveredDock = _dockControllers().find((controller) => controller.hovering());
+    if (hoveredDock) {
+      _releaseDockControllers(hoveredDock);
+      hoveredDock.commit();
       return;
     }
-    if (activeLeftDock && activeLeftDock.hovering()) {
-      if (activeRightDock) activeRightDock.release();
-      activeLeftDock.commit();
-      return;
-    }
-    if (rightDock) rightDock.release();
-    if (leftDock) leftDock.release();
+    _releaseDockControllers();
     if (onDragEnd) {
       const r = content.getBoundingClientRect();
       try { onDragEnd({ rect: r }); } catch (_) {}

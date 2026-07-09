@@ -24,7 +24,7 @@
  * the original size.
  */
 
-import { applyEdgeDock } from './modalSnap.js';
+import { applyEdgeDock, clearRightDock, edgeDockPreviewRect } from './modalSnap.js';
 
 const EDGE_THRESHOLD_PX = 24;     // how close to an edge counts as "near"
 const TOP_FULL_STRIP_PX = 8;      // top strip → maximize
@@ -32,6 +32,14 @@ const MIN_CHAT_WIDTH = 380;
 const MIN_EDGE_DOCK_WIDTH = 360;
 const MAX_DESKTOP_EDGE_DOCK_WIDTH = 720;
 const MAX_DESKTOP_EDGE_DOCK_RATIO = 0.44;
+const DOCK_SIDES = ['left', 'right', 'top', 'bottom'];
+const DOCK_ZONE_TO_SIDE = {
+  'left-half': 'left',
+  'right-half': 'right',
+  'top-half': 'top',
+  'bottom-half': 'bottom',
+};
+const SETTINGS_DOCK_ZONES = new Set(['right-half', 'top-half', 'bottom-half']);
 
 let _ghost = null;
 let _activeZone = null;
@@ -76,7 +84,7 @@ function _isDesktop() {
 }
 
 function _dockClassForSide(side) {
-  return side === 'left' ? 'modal-left-docked' : 'modal-right-docked';
+  return `modal-${side}-docked`;
 }
 
 function _hasOtherDockedWindow(side, owner) {
@@ -90,11 +98,12 @@ function _hasOtherDockedWindow(side, owner) {
 }
 
 function _clearDockSide(side, owner = null) {
-  if (side !== 'left' && side !== 'right') return;
+  if (!DOCK_SIDES.includes(side)) return;
   if (_hasOtherDockedWindow(side, owner)) return;
-  document.body.classList.remove(side === 'left' ? 'left-dock-active' : 'right-dock-active');
-  document.documentElement.style.removeProperty(side === 'left' ? '--left-dock-w' : '--right-dock-w');
-  document.documentElement.style.removeProperty(side === 'left' ? '--left-dock-reserve-w' : '--right-dock-reserve-w');
+  const horizontal = side === 'left' || side === 'right';
+  document.body.classList.remove(`${side}-dock-active`);
+  document.documentElement.style.removeProperty(`--${side}-dock-${horizontal ? 'w' : 'h'}`);
+  document.documentElement.style.removeProperty(`--${side}-dock-reserve-${horizontal ? 'w' : 'h'}`);
   if (side === 'left') {
     try { window._restoreSidebarIfRouteCollapsed?.(); } catch (_) {}
   }
@@ -246,10 +255,11 @@ function _zoneForPointer(x, y) {
     return { name: 'maximize', rect: { left: safe.left, top: safe.top, width: W, height: H } };
   }
 
-  // Corner quarter-snaps DISABLED (user request) — only the top strip
-  // (maximize), reserved right dock, and bottom half-snap remain. The
-  // LEFT-half snap is also disabled (the sidebar lives there; docking over
-  // it is awkward).
+  // Edge half-snaps use the safe workspace, so navigation remains visible.
+  if (y <= safe.top + EDGE_THRESHOLD_PX)
+    return { name: 'top-half', rect: { left: safe.left, top: safe.top, width: W, height: H / 2 } };
+  if (x <= safe.left + EDGE_THRESHOLD_PX)
+    return { name: 'left-half', rect: { left: safe.left, top: safe.top, width: W / 2, height: H } };
   if (x >= safe.right - EDGE_THRESHOLD_PX)
     return { name: 'right-half', rect: _rightDockPreviewRect(safe) };
   if (y >= safe.bottom - EDGE_THRESHOLD_PX)
@@ -258,32 +268,39 @@ function _zoneForPointer(x, y) {
   return null;
 }
 
-function _zoneForContent(content, x, y) {
+function _zoneForContent(content, x, y, deferSharedDock = true) {
   const modal = content && content.closest && content.closest('.modal, .research-overlay');
-  const zone = _zoneForPointer(x, y);
+  let zone = _zoneForPointer(x, y);
   if (!zone) return null;
+  // Shared draggable windows use modalSnap for all four edge previews and
+  // commits. The tile manager stays out of that live drag so only one target
+  // is ever painted; public chip-drag previews opt out of this deferral.
+  if (deferSharedDock && modal?.dataset?.edgeDockController === '1') return null;
   // Settings has a dense two-column layout; the full-height sidebar-style dock
   // crushes it. Let it tile only into the normal right half, where the nav can
   // flip to top tabs via CSS when the window gets narrow.
-  if (modal && modal.id === 'settings-modal' && zone.name !== 'right-half') return null;
+  if (modal && modal.id === 'settings-modal' && !SETTINGS_DOCK_ZONES.has(zone.name)) return null;
   if (modal && (modal.id === 'cookbook-modal'
       || modal.id === 'theme-modal')
       && zone.name !== 'fullscreen') return null;
+  const dockSide = DOCK_ZONE_TO_SIDE[zone.name];
+  if (modal && dockSide) {
+    const rect = edgeDockPreviewRect(modal, dockSide);
+    if (rect) zone = { ...zone, rect };
+  }
   return zone;
 }
 
 function _clearEdgeDockResidue(modal, content) {
   const hadDockState = !!(
-    (modal && (modal.classList.contains('modal-left-docked') || modal.classList.contains('modal-right-docked')))
+    (modal && DOCK_SIDES.some((side) => modal.classList.contains(_dockClassForSide(side))))
     || (content && (content._preDockSnapshot || content._dockSide || content._dockSuspended))
   );
   if (modal) {
-    const hadLeft = modal.classList.contains('modal-left-docked');
-    const hadRight = modal.classList.contains('modal-right-docked');
+    const dockedSides = DOCK_SIDES.filter((side) => modal.classList.contains(_dockClassForSide(side)));
     const hadEmailSnapLeft = modal.classList.contains('email-snap-left');
-    modal.classList.remove('modal-left-docked', 'modal-right-docked', 'email-snap-left');
-    if (hadLeft) _clearDockSide('left', modal);
-    if (hadRight) _clearDockSide('right', modal);
+    modal.classList.remove(...DOCK_SIDES.map(_dockClassForSide), 'email-snap-left');
+    dockedSides.forEach((side) => _clearDockSide(side, modal));
     if (hadEmailSnapLeft) {
       _clearDockSide('left', modal);
       _clearEmailSplitGeometry();
@@ -320,16 +337,24 @@ function _applySnap(content, rect, zoneName) {
   // zone, which gets worse each time the sidebar is toggled. Clear the
   // orphaned edge-dock state so only the tile-snap positions the window.
   const _modal = content.closest && content.closest('.modal, .research-overlay');
-  const _fromRect = content.getBoundingClientRect();
-  if (zoneName === 'right-half' && _modal) {
-    const dockW = applyEdgeDock(_modal, 'right');
-    if (dockW) {
+  const dockSide = DOCK_ZONE_TO_SIDE[zoneName];
+  if (dockSide && _modal) {
+    const dockSize = applyEdgeDock(_modal, dockSide);
+    if (dockSize) {
       delete content.dataset._tilePreSnap;
       delete content.dataset._tileZone;
       return;
     }
   }
+  if (_modal) {
+    const activeDockSide = DOCK_SIDES.find((side) =>
+      _modal.classList.contains(_dockClassForSide(side)));
+    if (activeDockSide) {
+      clearRightDock(_modal, undefined, undefined, _dockClassForSide(activeDockSide));
+    }
+  }
   _clearEdgeDockResidue(_modal, content);
+  const _fromRect = content.getBoundingClientRect();
   const snapRect = zoneName === 'fullscreen' ? _fullscreenRect() : rect;
 
   // Stash pre-snap geometry once; if we re-snap, keep the original. Capture a
@@ -549,7 +574,7 @@ export function previewZoneAt(x, y, target = null) {
   const content = target && target.querySelector
     ? (target.querySelector('.modal-content, .research-pane') || target)
     : null;
-  const zone = content ? _zoneForContent(content, x, y) : _zoneForPointer(x, y);
+  const zone = content ? _zoneForContent(content, x, y, false) : _zoneForPointer(x, y);
   if (zone) { _showGhost(zone.rect); _activeZone = zone; }
   else { _hideGhost(); _activeZone = null; }
   return zone;
@@ -573,7 +598,7 @@ export function snapModalToZone(modal, zone) {
   if (!modal || !zone) return;
   const content = modal.querySelector ? (modal.querySelector('.modal-content, .research-pane') || modal) : modal;
   if (!content) return;
-  if (modal.id === 'settings-modal' && zone.name !== 'right-half' && !zone.force) return;
+  if (modal.id === 'settings-modal' && !SETTINGS_DOCK_ZONES.has(zone.name) && !zone.force) return;
   const rect = zone.name === 'fullscreen' ? _fullscreenRect() : zone.rect;
   _applySnap(content, rect, zone.name);
 }

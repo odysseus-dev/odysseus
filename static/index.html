@@ -98,7 +98,8 @@
       // of the active theme) so there's no flash on load.
       try {
         var _us = localStorage.getItem('odysseus-ui-scale');
-        if (_us && _us !== '100') document.documentElement.classList.add('ui-scale-' + _us);
+        var _allowedUiScales = { '90': 1, '100': 1, '110': 1, '125': 1, '140': 1 };
+        if (_allowedUiScales[_us] && _us !== '100') document.documentElement.classList.add('ui-scale-' + _us);
       } catch(e){}
       // Apply background pattern on body once available
       if (t && t.bgPattern && t.bgPattern !== 'none') {
@@ -611,8 +612,11 @@
           <div class="theme-fd-group">
             <label class="theme-fd-label">Text size</label>
             <select id="theme-text-size-select" class="theme-fd-select" aria-label="Text size">
+              <option value="90">Smaller</option>
               <option value="100">Default</option>
+              <option value="110">Large</option>
               <option value="125">Larger</option>
+              <option value="140">Largest</option>
             </select>
           </div>
           <div class="theme-fd-group" id="theme-frosted-group">
@@ -1318,7 +1322,10 @@
       step();
       _scrollTimeout = setTimeout(() => { if (_scrollingToBottom) { container.scrollTop = target; _scrollingToBottom = false; } }, 1500);
     });
-    new ResizeObserver(reposition).observe(chatBar);
+    const layoutObserver = new ResizeObserver(reposition);
+    layoutObserver.observe(chatBar);
+    const chatShell = document.querySelector('.chat-container');
+    if (chatShell) layoutObserver.observe(chatShell);
     new MutationObserver(update).observe(container, {childList:true, subtree:true});
     window.addEventListener('resize', reposition);
     update();

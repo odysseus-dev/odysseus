@@ -45,6 +45,18 @@ import { dismissOrRemove } from './escMenuStack.js';
 import { nextToolWindowZ } from './toolWindowZOrder.js';
 
 const _state = new Map(); // id -> { restoreFn, closeFn, railBtnId, isMinimized, restoreMinHeight }
+const _EDGE_DOCK_SIDES = ['left', 'right', 'top', 'bottom'];
+
+function _edgeDockSide(modal, content = _modalWindowContent(modal)) {
+  if (_EDGE_DOCK_SIDES.includes(content?._dockSide)) return content._dockSide;
+  const classSide = _EDGE_DOCK_SIDES.find((side) => modal?.classList?.contains(`modal-${side}-docked`));
+  if (classSide) return classSide;
+  return modal?.classList?.contains('email-snap-left') ? 'left' : null;
+}
+
+function _isEdgeDocked(modal) {
+  return !!_edgeDockSide(modal);
+}
 
 const _rememberedDockKey = (id) => `odysseus-modal-remembered-dock-${id}`;
 function _rememberDock(id, side) {
@@ -58,7 +70,7 @@ function _forgetDock(id) {
 function _getRememberedDock(id) {
   try {
     const side = localStorage.getItem(_rememberedDockKey(id));
-    return (side === 'left' || side === 'right') ? side : null;
+    return _EDGE_DOCK_SIDES.includes(side) ? side : null;
   } catch (_) {
     return null;
   }
@@ -175,7 +187,7 @@ function _pinContentToCurrentRect(content) {
 
 function _releaseWindowDockState(modal, content) {
   if (!modal || !content) return;
-  if (modal.classList.contains('modal-left-docked') || modal.classList.contains('modal-right-docked')) {
+  if (_isEdgeDocked(modal) && !modal.classList.contains('email-snap-left')) {
     try { clearRightDock(modal); } catch (e) { console.warn('clear dock before full expand failed', e); }
   }
   if (modal.classList.contains('email-snap-left')) {
@@ -185,7 +197,7 @@ function _releaseWindowDockState(modal, content) {
     _clearEmailSplitGeometry();
   }
   const suspendedSide = content._dockSuspended;
-  if (suspendedSide === 'left' || suspendedSide === 'right') {
+  if (_EDGE_DOCK_SIDES.includes(suspendedSide)) {
     try { clearDockSide(suspendedSide, modal); } catch (_) {}
   }
   delete content._dockSide;
@@ -195,17 +207,14 @@ function _releaseWindowDockState(modal, content) {
 
 function _captureFullExpandReturnState(modal, content) {
   if (!modal || !content) return null;
-  const side = content._dockSide
-    || (modal.classList.contains('modal-left-docked') ? 'left'
-      : modal.classList.contains('modal-right-docked') ? 'right'
-        : modal.classList.contains('email-snap-left') ? 'left'
-          : null);
-  if (side !== 'left' && side !== 'right') return null;
+  const side = _edgeDockSide(modal, content);
+  if (!_EDGE_DOCK_SIDES.includes(side)) return null;
   return {
     mode: 'dock',
     side,
     touchLandscapeDockWidth: content._touchLandscapeDockWidth || null,
     userDockWidth: content._userDockWidth || null,
+    userDockHeight: content._userDockHeight || null,
     emailDocSplitUserW: content._emailDocSplitUserW || null,
   };
 }
@@ -218,6 +227,7 @@ function _restoreFullExpandReturnState(modal, content) {
   _clearFullExpandClasses(modal);
   if (state.touchLandscapeDockWidth) content._touchLandscapeDockWidth = state.touchLandscapeDockWidth;
   if (state.userDockWidth) content._userDockWidth = state.userDockWidth;
+  if (state.userDockHeight) content._userDockHeight = state.userDockHeight;
   if (state.emailDocSplitUserW) content._emailDocSplitUserW = state.emailDocSplitUserW;
   try {
     const dockWidth = applyEdgeDock(modal, state.side);
@@ -372,9 +382,7 @@ function _isDesktopWindowBudgetEnabled() {
 
 function _isFloatingBudgetWindow(modal) {
   if (!modal || _isFullExpanded(modal)) return false;
-  return !(modal.classList?.contains('modal-left-docked')
-    || modal.classList?.contains('modal-right-docked')
-    || modal.classList?.contains('email-snap-left'));
+  return !_isEdgeDocked(modal);
 }
 
 function _enforceDesktopWindowBudget(activeId) {
@@ -433,6 +441,10 @@ function _captureRestoreHeight(modal, state) {
   if (!modal || !state) return;
   const content = modal.querySelector('.modal-content');
   if (!content) return;
+  if (_isEdgeDocked(modal)) {
+    delete state.restoreMinHeight;
+    return;
+  }
   if (modal.id === 'email-lib-modal'
       && (modal.classList.contains('modal-left-docked')
           || modal.classList.contains('email-snap-left')
@@ -685,9 +697,7 @@ function _isAndroidAutoDockTarget(id, modal) {
 
 function _isDockedOrExpanded(modal) {
   if (_isFullExpanded(modal)) return true;
-  const docked = !!(modal?.classList?.contains('modal-left-docked')
-    || modal?.classList?.contains('modal-right-docked')
-    || modal?.classList?.contains('email-snap-left'));
+  const docked = _isEdgeDocked(modal);
   if (!docked) return false;
   return !_modalWindowContent(modal)?._dockSuspended;
 }
@@ -738,6 +748,12 @@ function _readRootPx(name) {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+function _uiScaleFactor() {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--ui-scale-factor');
+  const n = parseFloat(raw || '');
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
 function _visibleRect(el) {
   if (!el) return null;
   const cs = window.getComputedStyle(el);
@@ -767,7 +783,8 @@ function _desktopChatbarDockRect(bounds = _dockWorkspaceBounds()) {
   const right = Math.min(bounds.right - 8, rect.right);
   const width = Math.floor(right - left);
   if (width < 120) return null;
-  return { left: Math.round(left), width };
+  const scale = _uiScaleFactor();
+  return { left: Math.round(left / scale), width: Math.floor(width / scale) };
 }
 
 function _defaultDockPosition(dock, width, height) {
@@ -846,10 +863,10 @@ function _dockWorkspaceBounds() {
   let right = window.innerWidth;
   const body = document.body;
   if (body.classList.contains('left-dock-active') && !body.classList.contains('email-doc-split-active')) {
-    left = Math.max(left, _readRootPx('--left-dock-w'));
+    left = Math.max(left, _readRootPx('--left-dock-w') * _uiScaleFactor());
   }
   if (body.classList.contains('right-dock-active')) {
-    right = Math.min(right, window.innerWidth - _readRootPx('--right-dock-w'));
+    right = Math.min(right, window.innerWidth - (_readRootPx('--right-dock-w') * _uiScaleFactor()));
   }
 
   for (const el of [document.getElementById('sidebar'), document.getElementById('icon-rail')]) {
@@ -1123,7 +1140,10 @@ function _wireDockPlacement(dock) {
   const chatContainer = document.querySelector('.chat-container');
   if (chatContainer) {
     chatContainer.addEventListener('transitionend', (e) => {
-      if (e.propertyName === 'margin-left' || e.propertyName === 'margin-right') {
+      if (e.propertyName === 'margin-left'
+          || e.propertyName === 'margin-right'
+          || e.propertyName === 'margin-top'
+          || e.propertyName === 'margin-bottom') {
         schedule();
       }
     });
@@ -1803,7 +1823,8 @@ function _wireChipDrag(chip, dock) {
     // window + snapping it there (top → maximize/fullscreen, right → right
     // dock). Releasing in the zone commits it (see onPointerUp).
     if (e.pointerType !== 'touch' && window.innerWidth > 768) {
-      const z = previewZoneAt(e.clientX, e.clientY, modal);
+      const previewModal = document.getElementById(chip.dataset.modalId);
+      const z = previewZoneAt(e.clientX, e.clientY, previewModal);
       // Ignore the bottom zone — the dock lives at the bottom, so horizontal
       // chip reordering must not get hijacked into a bottom-half snap.
       chipSnapZone = (z && z.name !== 'bottom-half') ? z : null;
@@ -1943,7 +1964,23 @@ function _wireChipDrag(chip, dock) {
       const id = chip.dataset.modalId;
       restore(id);
       const modal = document.getElementById(id);
-      if (modal) requestAnimationFrame(() => requestAnimationFrame(() => snapModalToZone(modal, zone)));
+      if (modal) requestAnimationFrame(() => requestAnimationFrame(() => {
+        const edgeDockZone = zone.name === 'left-half'
+          || zone.name === 'right-half'
+          || zone.name === 'top-half'
+          || zone.name === 'bottom-half';
+        if (edgeDockZone && _isFullExpanded(modal)) {
+          const content = _modalWindowContent(modal);
+          try { restoreModalSnap(modal); } catch (_) {}
+          _clearFullExpandClasses(modal);
+          if (content) {
+            delete content._fullExpandReturnState;
+            _releaseWindowDockState(modal, content);
+          }
+          _syncExpandButton(modal.querySelector?.('.modal-expand-btn'), modal);
+        }
+        snapModalToZone(modal, zone);
+      }));
       return;
     }
     if (dragMode === 'chain' && chainState) {
@@ -2260,9 +2297,7 @@ export function minimize(id) {
     // If this window is edge-docked (right/left), SUSPEND the dock: release
     // the body push so the chat returns to full width while the window is
     // minimized, but keep the dock so restoring the chip snaps it back in.
-    if (modal.classList.contains('modal-right-docked')
-        || modal.classList.contains('modal-left-docked')
-        || modal.classList.contains('email-snap-left')) {
+    if (_isEdgeDocked(modal)) {
       try { suspendDock(modal); } catch (e) { console.warn('suspendDock on minimize failed', e); }
     }
     modal.classList.add('hidden');
@@ -2338,9 +2373,7 @@ export function close(id) {
   const modalBeforeClose = document.getElementById(id);
   const contentBeforeClose = modalBeforeClose?.querySelector?.('.modal-content');
   const suspendedDockSide = contentBeforeClose?._dockSuspended
-    || (modalBeforeClose?.classList?.contains('modal-left-docked') ? 'left'
-        : modalBeforeClose?.classList?.contains('modal-right-docked') ? 'right'
-          : null);
+    || _edgeDockSide(modalBeforeClose, contentBeforeClose);
   const shouldRememberDock = s.isMinimized && !!suspendedDockSide;
   if (shouldRememberDock) _rememberDock(id, suspendedDockSide);
   else _forgetDock(id);
@@ -2356,7 +2389,7 @@ export function close(id) {
     // Tear down the live dock push/classes before hiding. If this close came
     // from a minimized dock chip, the side was persisted above and register()
     // will intentionally re-apply it on the next open.
-    if (modal.classList.contains('modal-right-docked') || modal.classList.contains('modal-left-docked')) {
+    if (_isEdgeDocked(modal) && !modal.classList.contains('email-snap-left')) {
       try { clearRightDock(modal); } catch (e) { console.warn('clearRightDock on close failed', e); }
     }
     modal.classList.add('hidden');
@@ -2685,9 +2718,7 @@ window.addEventListener('modal-dismissed', (e) => {
   const modal = document.getElementById(id);
   if (modal) {
     const isEmailModal = id === 'email-lib-modal' || id.startsWith('email-reader-');
-    if (modal.classList.contains('modal-right-docked')
-        || modal.classList.contains('modal-left-docked')
-        || modal.classList.contains('email-snap-left')) {
+    if (_isEdgeDocked(modal)) {
       try { suspendDock(modal); } catch (err) { console.warn('suspendDock on dismissed failed', err); }
     }
     if (isEmailModal) _clearEmailSplitAfterMinimize();

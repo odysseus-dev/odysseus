@@ -1121,6 +1121,15 @@ function _loadEmailsFresh() {
   return _loadEmails({ force: true, useCache: false });
 }
 
+function _loadEmailsWhenChatIdle() {
+  const run = () => Promise.resolve(_loadEmails({ useCache: true })).catch(() => {});
+  if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(run, { timeout: 900 });
+    return;
+  }
+  setTimeout(run, 0);
+}
+
 export function prewarmEmailLibrary({ delay = 2500, limit = null } = {}) {
   if (_libPrewarmTimer || _libPrewarmPromise) return;
   const elapsed = Date.now() - _libLastPrewarmAt;

@@ -173,34 +173,55 @@ html {
    Density only changes the root font-size, which can't move the many
    hard-coded px sizes. `zoom` scales the whole UI uniformly (px text
    included) while keeping layout intact, unlike `transform: scale`. */
-:root.ui-scale-125 { zoom: 1.25; }
-/* `zoom` makes the 100dvh shell render taller than the real viewport, which
-   pushes the bottom-pinned sidebar account/settings row below the fold (and
-   body's overflow:hidden then clips it). Shrink the shell by the same factor
-   so it fits the viewport exactly. */
-:root.ui-scale-125 body { height: calc(100dvh / 1.25); }
-/* Modals/panels under the 1.25x scale: zoom renders a centred, viewport-sized
-   panel ~1.25x taller, pushing its draggable header + close button off-screen
-   (a catch-22 — you can't reach the control to turn the size back down). Divide
-   each max-height by the same factor to keep the original on-screen footprint.
+:root.ui-scale-90  { --ui-scale-factor: 0.9;  zoom: var(--ui-scale-factor); }
+:root.ui-scale-110 { --ui-scale-factor: 1.1;  zoom: var(--ui-scale-factor); }
+:root.ui-scale-125 { --ui-scale-factor: 1.25; zoom: var(--ui-scale-factor); }
+:root.ui-scale-140 { --ui-scale-factor: 1.4;  zoom: var(--ui-scale-factor); }
+/* `zoom` changes how the 100dvh shell maps into the visible viewport. Divide
+   the shell by the active scale so bottom-pinned controls stay reachable at
+   every supported size. */
+:root.ui-scale-90 body,
+:root.ui-scale-110 body,
+:root.ui-scale-125 body,
+:root.ui-scale-140 body { height: calc(100dvh / var(--ui-scale-factor)); }
+/* Modals/panels under app-level zoom: divide their viewport caps by the same
+   factor so draggable headers and close buttons remain on-screen.
    Desktop only — the mobile `!important` full-sheet rules win on small screens
    and stay top-anchored, so their headers are already visible. */
-:root.ui-scale-125 .modal-content          { max-height: calc(85dvh / 1.25); }
-:root.ui-scale-125 .cal-modal-content      { max-height: calc(88dvh / 1.25); }
-:root.ui-scale-125 .settings-modal-content { max-height: calc(85dvh / 1.25); }
-:root.ui-scale-125 #theme-popup            { max-height: min(calc(85dvh / 1.25), 480px); }
+:root.ui-scale-90 .modal-content,
+:root.ui-scale-110 .modal-content,
+:root.ui-scale-125 .modal-content,
+:root.ui-scale-140 .modal-content          { max-height: calc(85dvh / var(--ui-scale-factor)); }
+:root.ui-scale-90 .cal-modal-content,
+:root.ui-scale-110 .cal-modal-content,
+:root.ui-scale-125 .cal-modal-content,
+:root.ui-scale-140 .cal-modal-content      { max-height: calc(88dvh / var(--ui-scale-factor)); }
+:root.ui-scale-90 .settings-modal-content,
+:root.ui-scale-110 .settings-modal-content,
+:root.ui-scale-125 .settings-modal-content,
+:root.ui-scale-140 .settings-modal-content { max-height: calc(85dvh / var(--ui-scale-factor)); }
+:root.ui-scale-90 #theme-popup,
+:root.ui-scale-110 #theme-popup,
+:root.ui-scale-125 #theme-popup,
+:root.ui-scale-140 #theme-popup            { max-height: min(calc(85dvh / var(--ui-scale-factor)), 480px); }
 /* Cookbook is the one modal that set its height inline (94vh), which beat the
    .modal-content compensation above and overflowed the viewport at 1.25x
    (header + close button pushed off-screen). Own its height here so the same
    zoom compensation applies. */
 #cookbook-modal .modal-content             { height: 94vh; max-height: 94vh; }
-:root.ui-scale-125 #cookbook-modal .modal-content { height: calc(94dvh / 1.25); max-height: calc(94dvh / 1.25); }
+:root.ui-scale-90 #cookbook-modal .modal-content,
+:root.ui-scale-110 #cookbook-modal .modal-content,
+:root.ui-scale-125 #cookbook-modal .modal-content,
+:root.ui-scale-140 #cookbook-modal .modal-content { height: calc(94dvh / var(--ui-scale-factor)); max-height: calc(94dvh / var(--ui-scale-factor)); }
 /* PDF export modal also set its height inline (86vh) at v1.0; that inline cap
    beat the .modal-content compensation above and shifted ~1vh at Default when
    removed. Own its height here so Default is byte-for-byte 86vh and the same
    1.25x compensation applies. */
 .pdf-export-overlay .modal-content { max-height: 86vh; }
-:root.ui-scale-125 .pdf-export-overlay .modal-content { max-height: calc(86dvh / 1.25); }
+:root.ui-scale-90 .pdf-export-overlay .modal-content,
+:root.ui-scale-110 .pdf-export-overlay .modal-content,
+:root.ui-scale-125 .pdf-export-overlay .modal-content,
+:root.ui-scale-140 .pdf-export-overlay .modal-content { max-height: calc(86dvh / var(--ui-scale-factor)); }
 
 /* ── Background Patterns ── */
 
@@ -2140,7 +2161,9 @@ body.bg-pattern-sparkles {
       margin-top:8px;
       margin-bottom: 0;
       transition: margin-left 160ms cubic-bezier(0.22, 0.61, 0.36, 1),
-                  margin-right 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
+                  margin-right 160ms cubic-bezier(0.22, 0.61, 0.36, 1),
+                  margin-top 160ms cubic-bezier(0.22, 0.61, 0.36, 1),
+                  margin-bottom 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
     }
     .chat-meta { font-size:12px; color:color-mix(in srgb, var(--fg) 60%, transparent); margin-bottom:6px; }
     .chat-history {
@@ -16090,6 +16113,12 @@ span[id$="-logo"] svg:not([width]) {
 .edge-dock-resize-handle-right:hover {
   background: linear-gradient(to left, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px) !important;
 }
+.edge-dock-resize-handle-top:hover {
+  background: linear-gradient(to bottom, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px) !important;
+}
+.edge-dock-resize-handle-bottom:hover {
+  background: linear-gradient(to top, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px) !important;
+}
 
 [data-settings-panel="ai"] .admin-card > h2 > svg,
 [data-settings-panel="services"] .admin-card > h2 > svg,
@@ -16627,7 +16656,9 @@ span[id$="-logo"] svg:not([width]) {
 #doclib-modal.doclib-fullscreen .doclib-modal-content,
 #doclib-modal.modal-full-expanded .doclib-modal-content,
 #doclib-modal.modal-right-docked .doclib-modal-content,
-#doclib-modal.modal-left-docked .doclib-modal-content {
+#doclib-modal.modal-left-docked .doclib-modal-content,
+#doclib-modal.modal-top-docked .doclib-modal-content,
+#doclib-modal.modal-bottom-docked .doclib-modal-content {
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -16638,7 +16669,7 @@ span[id$="-logo"] svg:not([width]) {
    zone keeps .doclib-fullscreen on the modal and these !important rules
    override the dock's inline styles, leaving the modal stuck fullscreen
    instead of becoming a side panel. */
-#doclib-modal.doclib-fullscreen:not(.modal-full-expanded):not(.modal-right-docked) .doclib-modal-content {
+#doclib-modal.doclib-fullscreen:not(.modal-full-expanded):not(.modal-right-docked):not(.modal-left-docked):not(.modal-top-docked):not(.modal-bottom-docked) .doclib-modal-content {
   position: fixed !important;
   top: 0 !important;
   left: calc(var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)) !important;
@@ -16658,13 +16689,19 @@ span[id$="-logo"] svg:not([width]) {
 #doclib-modal.modal-right-docked .modal-header,
 #doclib-modal.modal-right-docked .lib-tabs,
 #doclib-modal.modal-left-docked .modal-header,
-#doclib-modal.modal-left-docked .lib-tabs {
+#doclib-modal.modal-left-docked .lib-tabs,
+#doclib-modal.modal-top-docked .modal-header,
+#doclib-modal.modal-top-docked .lib-tabs,
+#doclib-modal.modal-bottom-docked .modal-header,
+#doclib-modal.modal-bottom-docked .lib-tabs {
   flex: 0 0 auto;
 }
 #doclib-modal.doclib-fullscreen .modal-body,
 #doclib-modal.modal-full-expanded .modal-body,
 #doclib-modal.modal-right-docked .modal-body,
-#doclib-modal.modal-left-docked .modal-body {
+#doclib-modal.modal-left-docked .modal-body,
+#doclib-modal.modal-top-docked .modal-body,
+#doclib-modal.modal-bottom-docked .modal-body {
   flex: 1 1 0;
   min-height: 0;
   overflow: hidden;
@@ -16674,7 +16711,9 @@ span[id$="-logo"] svg:not([width]) {
 #doclib-modal.doclib-fullscreen .admin-card,
 #doclib-modal.modal-full-expanded .admin-card,
 #doclib-modal.modal-right-docked .admin-card,
-#doclib-modal.modal-left-docked .admin-card {
+#doclib-modal.modal-left-docked .admin-card,
+#doclib-modal.modal-top-docked .admin-card,
+#doclib-modal.modal-bottom-docked .admin-card {
   flex: 1 1 0;
   min-height: 0;
   display: flex;
@@ -16683,7 +16722,9 @@ span[id$="-logo"] svg:not([width]) {
 #doclib-modal.doclib-fullscreen .doclib-grid:not(:has(.doclib-card-expanded)),
 #doclib-modal.modal-full-expanded .doclib-grid:not(:has(.doclib-card-expanded)),
 #doclib-modal.modal-right-docked .doclib-grid:not(:has(.doclib-card-expanded)),
-#doclib-modal.modal-left-docked .doclib-grid:not(:has(.doclib-card-expanded)) {
+#doclib-modal.modal-left-docked .doclib-grid:not(:has(.doclib-card-expanded)),
+#doclib-modal.modal-top-docked .doclib-grid:not(:has(.doclib-card-expanded)),
+#doclib-modal.modal-bottom-docked .doclib-grid:not(:has(.doclib-card-expanded)) {
   max-height: none;
   height: auto;
   flex: 1 1 auto;
@@ -16782,6 +16823,20 @@ body.right-dock-active .chat-container,
 body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
   margin-right: var(--right-dock-reserve-w, var(--right-dock-w, 0px));
 }
+body.top-dock-active .chat-container,
+body.top-dock-active .doc-editor-pane {
+  margin-top: var(--top-dock-reserve-h, var(--top-dock-h, 0px));
+}
+body.bottom-dock-active .chat-container,
+body.bottom-dock-active .doc-editor-pane {
+  margin-bottom: var(--bottom-dock-reserve-h, var(--bottom-dock-h, 0px));
+}
+body.top-dock-active .doc-editor-pane {
+  height: calc(100% - var(--top-dock-reserve-h, var(--top-dock-h, 0px)));
+}
+body.bottom-dock-active .doc-editor-pane {
+  height: calc(100% - var(--bottom-dock-reserve-h, var(--bottom-dock-h, 0px)));
+}
 .modal.modal-right-docked {
   align-items: stretch;
   justify-content: flex-end;
@@ -16807,7 +16862,31 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
      panels in case future themes add a generic transition. */
   transition: none !important;
 }
+.modal.modal-top-docked {
+  align-items: flex-start;
+  justify-content: stretch;
+}
+.modal.modal-top-docked .modal-content {
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  border-radius: 0;
+  transition: none !important;
+  min-height: 0 !important;
+}
+.modal.modal-bottom-docked {
+  align-items: flex-end;
+  justify-content: stretch;
+}
+.modal.modal-bottom-docked .modal-content {
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -4px 14px rgba(0, 0, 0, 0.18);
+  border-radius: 0;
+  transition: none !important;
+  min-height: 0 !important;
+}
 .modal.modal-right-docked .modal-content,
+.modal.modal-top-docked .modal-content,
+.modal.modal-bottom-docked .modal-content,
 #email-lib-modal.email-lib-fullscreen .modal-content,
 #doclib-modal.doclib-fullscreen .doclib-modal-content,
 #doclib-modal.modal-full-expanded .doclib-modal-content {
@@ -16816,9 +16895,15 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
 @media (max-width: 768px) {
   body.left-dock-active:not(.email-doc-split-active) .chat-container,
   body.right-dock-active .chat-container,
-  body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
+  body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane,
+  body.top-dock-active .chat-container,
+  body.top-dock-active .doc-editor-pane,
+  body.bottom-dock-active .chat-container,
+  body.bottom-dock-active .doc-editor-pane {
     margin-left: 0;
     margin-right: 0;
+    margin-top: 0;
+    margin-bottom: 0;
   }
   .modal.modal-right-docked .modal-content,
   .notes-pane.modal-right-docked {
@@ -17444,7 +17529,7 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
   transition: width 0.22s ease-out, height 0.22s ease-out;
 }
 @media (min-width: 769px) {
-  body:not(.email-doc-split-active) #email-lib-modal:not(.email-lib-fullscreen):not(.modal-left-docked):not(.modal-right-docked) .modal-content {
+  body:not(.email-doc-split-active) #email-lib-modal:not(.email-lib-fullscreen):not(.modal-left-docked):not(.modal-right-docked):not(.modal-top-docked):not(.modal-bottom-docked) .modal-content {
     min-height: min(560px, 85vh);
   }
 }
@@ -17534,7 +17619,7 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
 /* Individual email reader window — fullscreen mode (drag-to-top snap or
    double-click header). Same recipe as the library modal: pin to viewport
    edges and let the inner body absorb the remaining height. */
-body:not(.email-doc-split-active) .email-window-modal.email-window-fullscreen .modal-content {
+body:not(.email-doc-split-active) .email-window-modal.email-window-fullscreen:not(.modal-left-docked):not(.modal-right-docked):not(.modal-top-docked):not(.modal-bottom-docked) .modal-content {
   position: fixed !important;
   inset: 0 !important;
   left: 0 !important;
@@ -17559,7 +17644,7 @@ body:not(.email-doc-split-active) .email-window-modal.email-window-fullscreen .e
    Leaves whichever navigation strip is currently visible on the left
    (the wide sidebar OR the icon rail — they're mutually exclusive, so
    one of the two CSS vars is 0 at any given time, set by init.js). */
-body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.modal-right-docked) .modal-content {
+body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.modal-right-docked):not(.modal-left-docked):not(.modal-top-docked):not(.modal-bottom-docked) .modal-content {
   position: fixed !important;
   top: 0 !important;
   left: calc(var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)) !important;
@@ -17572,7 +17657,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   border-radius: 0 !important;
   transform: none !important;
 }
-#doclib-modal.modal-full-expanded.doclib-fullscreen:not(.modal-right-docked) .doclib-modal-content {
+#doclib-modal.modal-full-expanded.doclib-fullscreen:not(.modal-right-docked):not(.modal-left-docked):not(.modal-top-docked):not(.modal-bottom-docked) .doclib-modal-content {
   position: fixed !important;
   top: 0 !important;
   left: calc(var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)) !important;
@@ -17586,11 +17671,11 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   border-radius: 0 !important;
   transform: none !important;
 }
-body.hamburger-right #doclib-modal.modal-full-expanded.doclib-fullscreen:not(.modal-right-docked) .doclib-modal-content {
+body.hamburger-right #doclib-modal.modal-full-expanded.doclib-fullscreen:not(.modal-right-docked):not(.modal-left-docked):not(.modal-top-docked):not(.modal-bottom-docked) .doclib-modal-content {
   left: 0 !important;
   right: calc(var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)) !important;
 }
-body.hamburger-right:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.modal-right-docked) .modal-content {
+body.hamburger-right:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.modal-right-docked):not(.modal-left-docked):not(.modal-top-docked):not(.modal-bottom-docked) .modal-content {
   left: 0 !important;
   right: calc(var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)) !important;
 }
@@ -24581,6 +24666,13 @@ body.gallery-selecting .gallery-dl-btn,
 .settings-modal-content[style*="height"] .settings-sidebar,
 #settings-modal.modal-right-docked .settings-sidebar {
   min-height: 0;
+}
+
+.settings-modal-content[style*="height"] .settings-sidebar,
+#settings-modal.modal-top-docked .settings-sidebar,
+#settings-modal.modal-bottom-docked .settings-sidebar {
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .settings-sidebar {
@@ -35975,6 +36067,18 @@ body.notes-drag-mode .note-card-pin svg {
   box-shadow: 4px 0 14px rgba(0, 0, 0, 0.18);
   transition: none !important;
 }
+.notes-pane.modal-top-docked {
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  transition: none !important;
+}
+.notes-pane.modal-bottom-docked {
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: 0 -4px 14px rgba(0, 0, 0, 0.18);
+  transition: none !important;
+}
 @keyframes notes-pane-enter {
   from { transform: scale(0.96); opacity: 0; }
   to   { transform: scale(1);    opacity: 1; }
@@ -39667,7 +39771,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 @media (max-width: 768px) and (hover: hover),
        (max-width: 768px) and (pointer: fine),
        (max-width: 768px) and (orientation: landscape) {
-  #calendar-modal:not(.modal-full-expanded):not(.modal-left-docked):not(.modal-right-docked) {
+  #calendar-modal:not(.modal-full-expanded):not(.modal-left-docked):not(.modal-right-docked):not(.modal-top-docked):not(.modal-bottom-docked) {
     align-items: center !important;
     justify-content: center !important;
     background: none !important;
@@ -39675,7 +39779,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
     padding: 0 !important;
     pointer-events: none !important;
   }
-  #calendar-modal:not(.modal-full-expanded):not(.modal-left-docked):not(.modal-right-docked) .cal-modal-content {
+  #calendar-modal:not(.modal-full-expanded):not(.modal-left-docked):not(.modal-right-docked):not(.modal-top-docked):not(.modal-bottom-docked) .cal-modal-content {
     width: min(680px, 94vw) !important;
     max-height: 88vh !important;
     height: auto !important;
@@ -39697,6 +39801,8 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 #cal-body > .cal-grid { flex: 1 1 auto; min-height: 120px; overflow-y: auto; overflow-x: hidden; }
 #calendar-modal.modal-left-docked .cal-modal-content,
 #calendar-modal.modal-right-docked .cal-modal-content,
+#calendar-modal.modal-top-docked .cal-modal-content,
+#calendar-modal.modal-bottom-docked .cal-modal-content,
 #calendar-modal.modal-full-expanded .cal-modal-content {
   display: flex;
   flex-direction: column;
@@ -39704,11 +39810,15 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 }
 #calendar-modal.modal-left-docked .modal-header,
 #calendar-modal.modal-right-docked .modal-header,
+#calendar-modal.modal-top-docked .modal-header,
+#calendar-modal.modal-bottom-docked .modal-header,
 #calendar-modal.modal-full-expanded .modal-header {
   flex: 0 0 auto;
 }
 #calendar-modal.modal-left-docked #cal-body,
 #calendar-modal.modal-right-docked #cal-body,
+#calendar-modal.modal-top-docked #cal-body,
+#calendar-modal.modal-bottom-docked #cal-body,
 #calendar-modal.modal-full-expanded #cal-body {
   flex: 1 1 0;
   min-height: 0;
@@ -39716,6 +39826,8 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 }
 #calendar-modal.modal-left-docked #cal-body.cal-form-mode,
 #calendar-modal.modal-right-docked #cal-body.cal-form-mode,
+#calendar-modal.modal-top-docked #cal-body.cal-form-mode,
+#calendar-modal.modal-bottom-docked #cal-body.cal-form-mode,
 #calendar-modal.modal-full-expanded #cal-body.cal-form-mode {
   overflow-y: auto;
   overflow-x: hidden;

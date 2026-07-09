@@ -33,6 +33,9 @@ const STARTUP_STEPS = [
   { id: 'ready', label: 'Open app', detail: 'Wait for the backend port and switch into Odysseus.' }
 ];
 let startupProgress;
+const WINDOW_ZOOM_MIN = -3;
+const WINDOW_ZOOM_MAX = 4;
+const WINDOW_ZOOM_STEP = 0.5;
 
 ipcMain.handle('startup:copy-text', (_event, text) => {
   const value = String(text || '');
@@ -1240,6 +1243,7 @@ function createWindow(initialUrl) {
 
   // Remove the default menu bar for a cleaner look
   mainWindow.setMenuBarVisibility(false);
+  wireWindowZoomShortcuts(mainWindow);
 
   mainWindow.loadURL(initialUrl || `http://${BACKEND_HOST}:${BACKEND_PORT}`);
   mainWindow.webContents.on('did-finish-load', () => {
@@ -1249,6 +1253,45 @@ function createWindow(initialUrl) {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+  });
+}
+
+function isZoomInShortcut(input) {
+  const key = String(input.key || '').toLowerCase();
+  const code = String(input.code || '');
+  return key === '+' || key === '=' || code === 'Equal' || code === 'NumpadAdd';
+}
+
+function isZoomOutShortcut(input) {
+  const key = String(input.key || '').toLowerCase();
+  const code = String(input.code || '');
+  return key === '-' || key === '_' || key === '−' || code === 'Minus' || code === 'NumpadSubtract';
+}
+
+function isZoomResetShortcut(input) {
+  const key = String(input.key || '').toLowerCase();
+  const code = String(input.code || '');
+  return key === '0' || code === 'Digit0' || code === 'Numpad0';
+}
+
+function wireWindowZoomShortcuts(win) {
+  if (!win || !win.webContents) return;
+  win.webContents.on('before-input-event', (event, input) => {
+    if (!input || input.type !== 'keyDown') return;
+    if (!(input.control || input.meta) || input.alt) return;
+
+    let next = null;
+    if (isZoomInShortcut(input)) {
+      next = Math.min(WINDOW_ZOOM_MAX, win.webContents.getZoomLevel() + WINDOW_ZOOM_STEP);
+    } else if (isZoomOutShortcut(input)) {
+      next = Math.max(WINDOW_ZOOM_MIN, win.webContents.getZoomLevel() - WINDOW_ZOOM_STEP);
+    } else if (isZoomResetShortcut(input)) {
+      next = 0;
+    }
+    if (next === null) return;
+
+    event.preventDefault();
+    win.webContents.setZoomLevel(next);
   });
 }
 
