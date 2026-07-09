@@ -551,7 +551,7 @@ async def audit_memories(
             headers=headers,
             # Bound the call so the Tidy whirlpool can't spin indefinitely on a
             # slow/large generation.
-            timeout=120,
+            timeout=300,
         )
 
         # Parse the JSON list, tolerating reasoning-model noise: <think> blocks,
