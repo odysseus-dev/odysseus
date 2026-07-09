@@ -137,10 +137,18 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     async def login(body: LoginRequest, request: Request, response: Response):
         if not _login_limiter.check(request.client.host):
             raise HTTPException(429, "Too many requests — try again later")
-        # Verify password first
+        # Verify local password first. If that fails, LDAP may be tried only
+        # for unknown usernames or existing LDAP-shadow users; local accounts
+        # deliberately win to prevent directory-name takeover.
         username = body.username.strip().lower()
         if not await asyncio.to_thread(auth_manager.verify_password, username, body.password):
-            raise HTTPException(401, "Invalid credentials")
+            can_attempt_ldap = await asyncio.to_thread(auth_manager.can_attempt_ldap, username)
+            if not can_attempt_ldap:
+                raise HTTPException(401, "Invalid credentials")
+            ldap_username = await asyncio.to_thread(auth_manager.authenticate_ldap, username, body.password)
+            if not ldap_username:
+                raise HTTPException(401, "Invalid credentials")
+            username = ldap_username
         # Check 2FA if enabled
         if auth_manager.totp_enabled(username):
             if not body.totp_code:

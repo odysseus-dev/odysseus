@@ -280,6 +280,7 @@ class AuthManager:
             if "users" not in self._config:
                 self._config["users"] = {}
             self._config["users"][username] = {
+                "auth_source": "local",
                 "password_hash": _hash_password(password),
                 "created": time.time(),
                 "is_admin": is_admin,
@@ -378,9 +379,22 @@ class AuthManager:
 
     def list_users(self) -> List[Dict[str, Any]]:
         return [
-            {"username": u, "is_admin": d.get("is_admin", False), "privileges": self.get_privileges(u)}
+            {
+                "username": u,
+                "is_admin": d.get("is_admin", False),
+                "auth_source": d.get("auth_source", "local"),
+                "privileges": self.get_privileges(u),
+            }
             for u, d in self.users.items()
         ]
+
+    def auth_source(self, username: str) -> Optional[str]:
+        """Return a user's auth source, or None when the user does not exist."""
+        username = (username or "").strip().lower()
+        user = self.users.get(username)
+        if user is None:
+            return None
+        return str(user.get("auth_source") or "local").strip().lower() or "local"
 
     def get_privileges(self, username: str) -> Dict[str, Any]:
         """Get privileges for a user. Admins get all privileges."""
@@ -476,7 +490,10 @@ class AuthManager:
         username = username.strip().lower()
         if username not in self.users:
             return False
-        if not _verify_password(current_password, self.users[username]["password_hash"]):
+        if self.auth_source(username) == "ldap":
+            return False
+        password_hash = self.users[username].get("password_hash")
+        if not password_hash or not _verify_password(current_password, password_hash):
             return False
         with self._config_lock:
             self._config["users"][username]["password_hash"] = _hash_password(new_password)
@@ -576,7 +593,87 @@ class AuthManager:
         username = username.strip().lower()
         if username not in self.users:
             return False
-        return _verify_password(password, self.users[username]["password_hash"])
+        if self.auth_source(username) == "ldap":
+            return False
+        password_hash = self.users[username].get("password_hash")
+        if not password_hash:
+            return False
+        return _verify_password(password, password_hash)
+
+    def can_attempt_ldap(self, username: str) -> bool:
+        """True when LDAP may be tried without overriding a local account."""
+        username = (username or "").strip().lower()
+        user = self.users.get(username)
+        if user is not None and self.auth_source(username) != "ldap":
+            return False
+        try:
+            from core.ldap_auth import ldap_enabled
+
+            return bool(ldap_enabled())
+        except Exception as exc:
+            logger.warning("LDAP availability check failed: %s", exc)
+            return False
+
+    def authenticate_ldap(self, username: str, password: str) -> Optional[str]:
+        """Authenticate via LDAP and sync a local shadow account.
+
+        Returns the normalized username to issue a session for, or None when
+        LDAP auth fails. Existing local accounts always win over matching LDAP
+        names; only missing users or existing LDAP-shadow users are syncable.
+        """
+        username = (username or "").strip().lower()
+        if not username or username in RESERVED_USERNAMES:
+            return None
+        if not self.can_attempt_ldap(username):
+            return None
+        try:
+            from core.ldap_auth import authenticate_ldap
+
+            result = authenticate_ldap(username, password)
+        except Exception as exc:
+            logger.warning("LDAP login failed for '%s': %s", username, exc)
+            return None
+        if result is None:
+            return None
+        if result.username in RESERVED_USERNAMES:
+            logger.warning("LDAP login refused reserved username '%s'", result.username)
+            return None
+        if not self._sync_ldap_user(result):
+            return None
+        return result.username
+
+    def _sync_ldap_user(self, result) -> bool:
+        username = result.username.strip().lower()
+        if not username or username in RESERVED_USERNAMES:
+            return False
+        with self._config_lock:
+            users = self._config.setdefault("users", {})
+            current = users.get(username)
+            if current is not None and str(current.get("auth_source") or "local").lower() != "ldap":
+                logger.warning("LDAP login refused for '%s': local account already exists", username)
+                return False
+            now = time.time()
+            existing_privs = (current or {}).get("privileges")
+            users[username] = {
+                **(current or {}),
+                "auth_source": "ldap",
+                "ldap_dn": result.user_dn,
+                "ldap_groups": list(result.groups),
+                "display_name": result.display_name,
+                "email": result.email,
+                "last_ldap_login": now,
+                "created": (current or {}).get("created", now),
+                "is_admin": bool(result.is_admin),
+                "privileges": dict(
+                    ADMIN_PRIVILEGES
+                    if result.is_admin
+                    else (existing_privs or DEFAULT_PRIVILEGES)
+                ),
+            }
+            if result.is_admin:
+                users[username].pop("privileges_before_admin", None)
+            self._save()
+        return True
 
     def create_session(self, username: str, password: str) -> Optional[str]:
         """Verify credentials and return a session token, or None."""
