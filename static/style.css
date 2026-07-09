@@ -4572,6 +4572,11 @@ body.bg-pattern-sparkles {
         border-radius: 12px !important;
       }
       /* Safe area padding for notched devices */
+      html, body {
+        padding-top: env(safe-area-inset-top, 0px);
+        padding-left: env(safe-area-inset-left, 0px);
+        padding-right: env(safe-area-inset-right, 0px);
+      }
       .chat-input-bar {
         padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
       }
