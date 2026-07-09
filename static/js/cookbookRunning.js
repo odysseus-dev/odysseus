@@ -1633,7 +1633,7 @@ export async function _serveAutoRetryReplace(panel, flag, value) {
   const origHost = _envState.remoteHost;
   if (task.remoteHost) _envState.remoteHost = task.remoteHost;
   try {
-    uiModule.showToast(`Retrying with ${flag} ${value}...`);
+    uiModule.showToast(window.t('Retrying with {flag} {value}...', { flag, value }));
     await _launchServeTask(task.name, task.payload.repo_id, newCmd);
   } finally {
     _envState.remoteHost = origHost;
@@ -1666,7 +1666,7 @@ export async function _serveAutoRetryRemove(panel, flag) {
   const origHost = _envState.remoteHost;
   if (task.remoteHost) _envState.remoteHost = task.remoteHost;
   try {
-    uiModule.showToast(`Retrying without ${flag}...`);
+    uiModule.showToast(window.t('Retrying without {flag}...', { flag }));
     await _launchServeTask(task.name, task.payload.repo_id, newCmd);
   } finally {
     _envState.remoteHost = origHost;
@@ -1700,7 +1700,7 @@ export async function _serveAutoRetry(panel, flag) {
   const origHost = _envState.remoteHost;
   if (task.remoteHost) _envState.remoteHost = task.remoteHost;
   try {
-    uiModule.showToast(`Retrying with ${flag}...`);
+    uiModule.showToast(window.t('Retrying with {flag}...', { flag }));
     await _launchServeTask(task.name, task.payload.repo_id, newCmd);
   } finally {
     _envState.remoteHost = origHost;
@@ -1716,11 +1716,11 @@ function _promptEditServeCmd(currentCmd) {
     overlay.className = 'cookbook-edit-overlay';
     overlay.innerHTML = `
       <div class="cookbook-edit-modal">
-        <div class="cookbook-edit-title">Edit serve command</div>
+        <div class="cookbook-edit-title">${window.t('Edit serve command')}</div>
         <textarea class="cookbook-edit-textarea" spellcheck="false"></textarea>
         <div class="cookbook-edit-actions">
-          <button class="cookbook-edit-cancel memory-toolbar-btn">Cancel</button>
-          <button class="cookbook-edit-save memory-toolbar-btn">Save &amp; relaunch</button>
+          <button class="cookbook-edit-cancel memory-toolbar-btn">${window.t('Cancel')}</button>
+          <button class="cookbook-edit-save memory-toolbar-btn">${window.t('Save &amp; relaunch')}</button>
         </div>
       </div>`;
     const ta = overlay.querySelector('.cookbook-edit-textarea');
@@ -1875,10 +1875,10 @@ async function _confirmGpuPreflight(reqBody, shortName, repo, cmd) {
     if (!issues.length) return true;
     const where = reqBody.remote_host || 'local';
     const list = issues.slice(0, 6).join('; ');
-    const more = issues.length > 6 ? `; +${issues.length - 6} more` : '';
-    const msg = `GPU preflight found existing load on ${where}: ${list}${more}. Launch ${shortName || 'model'} anyway?`;
+    const more = issues.length > 6 ? window.t('; +{n} more', { n: issues.length - 6 }) : '';
+    const msg = window.t('GPU preflight found existing load on {where}: {list}{more}. Launch {name} anyway?', { where, list, more, name: shortName || window.t('model') });
     const confirm = window.styledConfirm || uiModule?.styledConfirm;
-    if (confirm) return await confirm(msg, { confirmText: 'Launch anyway', cancelText: 'Cancel' });
+    if (confirm) return await confirm(msg, { confirmText: window.t('Launch anyway'), cancelText: window.t('Cancel') });
     return window.confirm ? window.confirm(msg) : true;
   } catch (e) {
     console.warn('[cookbook] GPU preflight failed; allowing launch', e);

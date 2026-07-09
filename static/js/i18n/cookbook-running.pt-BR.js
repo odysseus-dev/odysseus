@@ -240,4 +240,13 @@ registerMessages('pt-BR', {
   'Retrying with {envVar}...': 'Tentando novamente com {envVar}...',
   'No model info on this task': 'Sem informação de modelo nesta tarefa',
   'Could not open serve panel': 'Não foi possível abrir o painel de servidor',
+  'Retrying with {flag} {value}...': 'Tentando novamente com {flag} {value}...',
+  'Retrying without {flag}...': 'Tentando novamente sem {flag}...',
+  'Retrying with {flag}...': 'Tentando novamente com {flag}...',
+  'Edit serve command': 'Editar comando do servidor',
+  'Save &amp; relaunch': 'Salvar e reiniciar',
+  '; +{n} more': '; +{n} mais',
+  'GPU preflight found existing load on {where}: {list}{more}. Launch {name} anyway?': 'A verificação prévia de GPU encontrou uso existente em {where}: {list}{more}. Iniciar {name} mesmo assim?',
+  'Launch anyway': 'Iniciar mesmo assim',
+  'model': 'modelo',
 });
