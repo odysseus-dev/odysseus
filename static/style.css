@@ -40448,3 +40448,21 @@ body.theme-frosted .modal {
   .compare-grid[data-cols] { grid-template-columns: 1fr !important; overflow-y: auto; }
   .compare-pane { min-height: 60dvh; }
 }
+
+/* iOS standalone PWA: horizontal safe areas in landscape (notch / Dynamic Island). */
+@media (orientation: landscape) {
+  body {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+  .sidebar:not(.right-side) {
+    padding-left: env(safe-area-inset-left, 0px);
+  }
+  .sidebar.right-side {
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+  #chat-area, .main-area, #message-area {
+    padding-left: max(0px, env(safe-area-inset-left, 0px));
+    padding-right: max(0px, env(safe-area-inset-right, 0px));
+  }
+}
