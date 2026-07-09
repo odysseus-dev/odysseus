@@ -1,0 +1,172 @@
+# Coolify-ready deployment. The regular docker-compose.yml keeps working
+# everywhere else; use this file only when deploying with Coolify.
+#
+# Why a separate file instead of changing docker-compose.yml:
+#   - Coolify's compose parser rewrites bind-mount sources and chokes on
+#     `${APP_DATA_DIR:-./data}/ssh`-style interpolation ("invalid spec:
+#     ... empty section between colons"). This file uses named volumes
+#     only, so there is nothing to mangle and data survives redeploys.
+#   - It runs the pre-built ghcr.io image instead of building on the
+#     server. A full multi-stage build takes 10+ minutes and a lot of
+#     RAM on a small VPS; a pull takes seconds.
+#   - No host port bindings. Coolify's Traefik proxy reaches services
+#     over the compose network (the SERVICE_FQDN_ODYSSEUS_7000 line
+#     tells it to route the domain to port 7000), and dropping the
+#     bindings avoids host port collisions (e.g. searxng's 8080).
+#
+# Step-by-step guide: docs/deploy/coolify.md
+
+services:
+  odysseus:
+    image: ghcr.io/pewdiepie-archdaemon/odysseus:latest
+    volumes:
+      - odysseus-data:/app/data
+      - odysseus-logs:/app/logs
+      # Cookbook remote-server SSH identity. Odysseus can generate a key here;
+      # add the shown public key to each remote server's authorized_keys.
+      - odysseus-ssh:/app/.ssh
+      # Cookbook local model cache (HuggingFace).
+      - odysseus-huggingface:/app/.cache/huggingface
+      # Cookbook-installed Python CLIs/packages (vLLM, llama-cpp-python, etc.).
+      # Persist them so a container recreate does not remove installed engines.
+      - odysseus-local:/app/.local
+    extra_hosts:
+      # Lets the container reach local services on the Docker host, including
+      # Ollama at http://host.docker.internal:11434.
+      - "host.docker.internal:host-gateway"
+    environment:
+      # Coolify magic variable: generates a domain for this service and
+      # routes it to container port 7000. Harmless outside Coolify.
+      - SERVICE_FQDN_ODYSSEUS_7000
+      - LLM_HOST=${LLM_HOST:-localhost}
+      - LLM_HOSTS=${LLM_HOSTS:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
+      - RESEARCH_LLM_ENDPOINT=${RESEARCH_LLM_ENDPOINT:-}
+      - HF_TOKEN=${HF_TOKEN:-}
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+      - SEARXNG_INSTANCE=http://searxng:8080
+      - CHROMADB_HOST=chromadb
+      - CHROMADB_PORT=8000
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
+      - AUTH_ENABLED=${AUTH_ENABLED:-true}
+      - LOCALHOST_BYPASS=${LOCALHOST_BYPASS:-false}
+      - ODYSSEUS_ADMIN_USER=${ODYSSEUS_ADMIN_USER:-admin}
+      # Coolify magic variable: a random password is generated on first
+      # deploy and shown in the service's Environment Variables tab.
+      - ODYSSEUS_ADMIN_PASSWORD=${SERVICE_PASSWORD_ADMIN}
+      # The public URL Coolify assigned to this service (scheme included),
+      # so browser requests from your domain pass the CORS check.
+      - ALLOWED_ORIGINS=${SERVICE_URL_ODYSSEUS}
+      # Coolify terminates TLS at its proxy, so cookies can be Secure.
+      - SECURE_COOKIES=${SECURE_COOKIES:-true}
+      - EMBEDDING_URL=${EMBEDDING_URL:-}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
+      - FASTEMBED_MODEL=${FASTEMBED_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      - FASTEMBED_CACHE_PATH=${FASTEMBED_CACHE_PATH:-}
+      - CLEANUP_INTERVAL_HOURS=${CLEANUP_INTERVAL_HOURS:-24}
+      - ODYSSEUS_INPROCESS_POLLERS=${ODYSSEUS_INPROCESS_POLLERS:-1}
+      - ODYSSEUS_INPROCESS_TASKS=${ODYSSEUS_INPROCESS_TASKS:-1}
+      - ODYSSEUS_SCRIPT_HOST=${ODYSSEUS_SCRIPT_HOST:-localhost}
+      - ODYSSEUS_CHAT_UPLOAD_MAX_BYTES=${ODYSSEUS_CHAT_UPLOAD_MAX_BYTES:-10485760}
+      - ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES=${ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES:-104857600}
+      - ODYSSEUS_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES=${ODYSSEUS_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES:-26214400}
+      - ODYSSEUS_MEMORY_IMPORT_MAX_BYTES=${ODYSSEUS_MEMORY_IMPORT_MAX_BYTES:-10485760}
+      - ODYSSEUS_PERSONAL_UPLOAD_MAX_BYTES=${ODYSSEUS_PERSONAL_UPLOAD_MAX_BYTES:-26214400}
+      - ODYSSEUS_EMAIL_COMPOSE_UPLOAD_MAX_BYTES=${ODYSSEUS_EMAIL_COMPOSE_UPLOAD_MAX_BYTES:-26214400}
+      - ODYSSEUS_STT_MAX_AUDIO_BYTES=${ODYSSEUS_STT_MAX_AUDIO_BYTES:-26214400}
+      - ODYSSEUS_ICS_MAX_BYTES=${ODYSSEUS_ICS_MAX_BYTES:-10485760}
+      - DATA_BRAVE_API_KEY=${DATA_BRAVE_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - GOOGLE_PSE_CX=${GOOGLE_PSE_CX:-}
+      - TAVILY_API_KEY=${TAVILY_API_KEY:-}
+      - SERPER_API_KEY=${SERPER_API_KEY:-}
+      # With named volumes there is no host user to match; the entrypoint
+      # still drops privileges to this UID/GID inside the container.
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:7000/ >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      searxng:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+    restart: unless-stopped
+
+  chromadb:
+    image: docker.io/chromadb/chroma:latest
+    volumes:
+      - chromadb-data:/chroma/chroma
+    environment:
+      - ANONYMIZED_TELEMETRY=FALSE
+    restart: unless-stopped
+
+  searxng:
+    # Pinned, not :latest — odysseus waits on searxng's healthcheck
+    # (depends_on: condition: service_healthy), so a broken upstream `latest`
+    # tag blocks the whole app from starting. Keep this tag in sync with
+    # docker-compose.yml.
+    image: docker.io/searxng/searxng:2026.5.31-7159b8aed
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        if [ ! -s /etc/searxng/settings.yml ] || grep -q 'odysseus-local-searxng-json-2026-05-30\|__SEARXNG_SECRET__' /etc/searxng/settings.yml; then
+          secret="$${SEARXNG_SECRET:-}"
+          if [ -z "$$secret" ]; then
+            secret="$$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+          fi
+          sed "s|__SEARXNG_SECRET__|$$secret|g" /tmp/searxng-settings.yml.template > /etc/searxng/settings.yml
+        fi
+        exec /usr/local/searxng/entrypoint.sh
+    volumes:
+      - searxng-data:/etc/searxng
+      - ./config/searxng/settings.yml:/tmp/searxng-settings.yml.template:ro
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8080/
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-}
+    # Same capability set as docker-compose.yml: the official image's
+    # entrypoint needs to chown /etc/searxng and drop privileges on first
+    # boot; without these it fails its healthcheck with EACCES.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+      - DAC_OVERRIDE
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/', timeout=5).read(1)\""]
+      interval: 5s
+      timeout: 6s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  ntfy:
+    image: docker.io/binwiederhier/ntfy
+    command: serve
+    volumes:
+      - ntfy-cache:/var/cache/ntfy
+    environment:
+      # Only needed if you attach a public domain to this service in
+      # Coolify; set it to that URL so notification links resolve.
+      - NTFY_BASE_URL=${NTFY_BASE_URL:-}
+    restart: unless-stopped
+
+volumes:
+  odysseus-data:
+  odysseus-logs:
+  odysseus-ssh:
+  odysseus-huggingface:
+  odysseus-local:
+  searxng-data:
+  chromadb-data:
+  ntfy-cache:
