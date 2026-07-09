@@ -3766,6 +3766,10 @@ async def stream_agent_loop(
             yield f'data: {json.dumps({"delta": cleaned_round})}\n\n'
 
         if not tool_blocks:
+            _norm_round = lambda t: re.sub(r"\s+", " ", _strip_think_blocks(t or "").strip().lower())
+            if len(round_texts) >= 2 and _norm_round(round_texts[-1]) and _norm_round(round_texts[-1]) == _norm_round(round_texts[-2]):
+                logger.info("[agent] duplicate assistant round — stopping loop (#4361)")
+                break
             # ── Completion verifier (mechanism 3a) ────────────────────
             # The model is finishing. If this was an effectful agentic turn,
             # have a fresh-context verifier independently check the work
