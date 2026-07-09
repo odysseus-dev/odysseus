@@ -60,7 +60,7 @@ from routes.cookbook_helpers import (
     _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     _append_pip_install_runner_lines, _pip_install_command_without_break_system_packages,
     _normalize_llama_cpp_python_cache_types,
-    ModelDownloadRequest, ServeRequest,
+    ModelDownloadRequest, ServeRequest, _serve_gpu_export_line,
 )
 
 _HF_TOKEN_STATUS_SNIPPET = (
@@ -2008,7 +2008,9 @@ def setup_cookbook_routes() -> APIRouter:
             if req.hf_token:
                 ps_lines.append(f"$env:HF_TOKEN = '{_ps_squote(req.hf_token)}'")
             if req.gpus:
-                ps_lines.append(f"$env:CUDA_VISIBLE_DEVICES = '{req.gpus}'")
+                _gpu_line = _serve_gpu_export_line(req.gpus, req.env_prefix, req.cmd, windows=True)
+                if _gpu_line:
+                    ps_lines.append(_gpu_line)
             if req.env_prefix:
                 ps_lines.append(_safe_env_prefix(req.env_prefix))
             # Auto-install ollama if the command uses it
@@ -2082,7 +2084,9 @@ def setup_cookbook_routes() -> APIRouter:
             if req.hf_token:
                 runner_lines.append(f"export HF_TOKEN='{_bash_squote(req.hf_token)}'")
             if req.gpus:
-                runner_lines.append(f"export CUDA_VISIBLE_DEVICES='{req.gpus}'")
+                _gpu_line = _serve_gpu_export_line(req.gpus, req.env_prefix, req.cmd, windows=False)
+                if _gpu_line:
+                    runner_lines.append(_gpu_line)
             if req.env_prefix:
                 runner_lines.append(_safe_env_prefix(req.env_prefix))
             else:

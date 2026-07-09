@@ -1078,6 +1078,30 @@ class ServeRequest(BaseModel):
     platform: str | None = None    # "linux", "termux", or "windows"
 
 
+def _serve_gpu_pin_var(env_prefix: str | None, cmd: str | None) -> str:
+    """ROCm/HIP stacks need HIP_VISIBLE_DEVICES; NVIDIA uses CUDA_VISIBLE_DEVICES."""
+    blob = f"{env_prefix or ''} {cmd or ''}"
+    if re.search(r"HIP_VISIBLE_DEVICES|\brocm\b|hipconfig", blob, re.I):
+        return "HIP_VISIBLE_DEVICES"
+    return "CUDA_VISIBLE_DEVICES"
+
+
+def _serve_gpu_export_line(
+    gpus: str | None,
+    env_prefix: str | None,
+    cmd: str | None,
+    *,
+    windows: bool = False,
+) -> str | None:
+    g = (gpus or "").strip()
+    if not g:
+        return None
+    var = _serve_gpu_pin_var(env_prefix, cmd)
+    if windows:
+        return f"$env:{var} = '{g.replace(chr(39), chr(39)+chr(39))}'"
+    return f"export {var}='{_bash_squote(g)}'"
+
+
 def _parse_serve_phase(snapshot: str, task_type: str = "serve") -> dict:
     """Parse a tmux snapshot of a serve task into structured phase info.
 
