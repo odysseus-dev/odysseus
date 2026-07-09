@@ -667,6 +667,11 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 except (TypeError, ValueError):
                     raise HTTPException(400, f"{key} must be an integer")
                 val = max(lo, min(val, hi))
+            elif key == "share_defaults_with_users":
+                if isinstance(val, str):
+                    val = val.strip().lower() in ("true", "1", "yes", "on")
+                else:
+                    val = bool(val)
             current[key] = val
         _save_settings(current)
         return current
