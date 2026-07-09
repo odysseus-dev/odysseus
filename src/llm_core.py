@@ -735,7 +735,7 @@ def _remember_kimi_code_user_agent(url: str, user_agent: str) -> None:
     _kimi_code_ua_cache[_kimi_code_base_key(url)] = user_agent
 
 
-def apply_kimi_code_headers(headers: Optional[Dict], url: str) -> Dict[str, str]:
+def apply_kimi_code_headers(headers: Optional[Dict], url: str, *, skip_probe: bool = False) -> Dict:
     """Pick a Kimi Code User-Agent (cached probe when possible)."""
     h = dict(headers or {})
     if not _is_kimi_code_url(url):
@@ -744,6 +744,9 @@ def apply_kimi_code_headers(headers: Optional[Dict], url: str) -> Dict[str, str]
     cached = _kimi_code_ua_cache.get(base_key)
     if cached:
         h["User-Agent"] = cached
+        return h
+    if skip_probe:
+        h.setdefault("User-Agent", KIMI_CODE_USER_AGENT)
         return h
     models_url = base_key.rstrip("/") + "/models"
     from src.tls_overrides import llm_verify
@@ -799,7 +802,7 @@ def httpx_post_kimi_aware(url: str, headers: Optional[Dict], **kwargs):
 
 
 async def httpx_post_kimi_aware_async(client, url: str, headers: Optional[Dict], **kwargs):
-    h = apply_kimi_code_headers(headers, url)
+    h = apply_kimi_code_headers(headers, url, skip_probe=True)
     if not _is_kimi_code_url(url):
         return await client.post(url, headers=h, **kwargs)
     last = None
