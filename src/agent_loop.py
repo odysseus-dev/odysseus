@@ -1077,7 +1077,7 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
            r"\b(?:home ?assistant|miniflux|gitea|linkding|jellyfin)\b"):
         domains.add("integrations")
 
-    low_signal = not continuation and not domains
+    low_signal = not continuation and not domains and len(text.split()) <= 2
     return {
         "low_signal": low_signal,
         "continuation": continuation,
