@@ -652,6 +652,13 @@ export function mdToHtml(src, opts) {
         return placeholder;
       } catch (e) { return match; }
     });
+    // Protect currency ranges like "$10 to $50" from inline-math $...$ parsing (#5130).
+    const currencyHolds = [];
+    s = s.replace(/\$(\d+(?:\.\d+)?)\s+to\s+\$(\d+(?:\.\d+)?)/gi, (match) => {
+      const placeholder = `___CURRENCY_${currencyHolds.length}___`;
+      currencyHolds.push(match);
+      return placeholder;
+    });
     // Display math: $$...$$
     s = s.replace(/\$\$([\s\S]*?)\$\$/g, (match, math) => {
       try {
@@ -669,6 +676,9 @@ export function mdToHtml(src, opts) {
         mathBlocks.push(katex.renderToString(raw.trim(), { displayMode: false, throwOnError: false }));
         return placeholder;
       } catch (e) { return match; }
+    });
+    currencyHolds.forEach((block, index) => {
+      s = s.replace(`___CURRENCY_${index}___`, block);
     });
   }
 
