@@ -63,11 +63,10 @@ function initDrag() {
 function resetWindowPlacement() {
   const content = modalEl && modalEl.querySelector('.settings-modal-content');
   if (!content) return;
-  const hadLeft = modalEl.classList.contains('modal-left-docked');
-  const hadRight = modalEl.classList.contains('modal-right-docked');
-  modalEl.classList.remove('modal-left-docked', 'modal-right-docked');
-  if (hadLeft) clearDockSide('left', modalEl);
-  if (hadRight) clearDockSide('right', modalEl);
+  const dockSides = ['left', 'right', 'top', 'bottom'];
+  const activeDockSides = dockSides.filter((side) => modalEl.classList.contains(`modal-${side}-docked`));
+  modalEl.classList.remove(...dockSides.map((side) => `modal-${side}-docked`));
+  activeDockSides.forEach((side) => clearDockSide(side, modalEl));
   if (content._leftDockNavObs) {
     try { content._leftDockNavObs.navObs && content._leftDockNavObs.navObs.disconnect(); } catch (_) {}
     try { window.removeEventListener('resize', content._leftDockNavObs.reanchor); } catch (_) {}
@@ -80,7 +79,7 @@ function resetWindowPlacement() {
   delete content.dataset._tileZone;
   [
     'position', 'left', 'top', 'right', 'bottom', 'margin', 'transform',
-    'width', 'height', 'max-width', 'max-height', 'border-radius', 'transition',
+    'width', 'height', 'min-height', 'max-width', 'max-height', 'border-radius', 'transition',
   ].forEach(prop => content.style.removeProperty(prop));
 }
 

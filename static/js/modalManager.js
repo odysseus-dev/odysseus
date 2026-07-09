@@ -31,6 +31,20 @@ import { dismissOrRemove } from './escMenuStack.js';
 import { nextToolWindowZ } from './toolWindowZOrder.js';
 
 const _state = new Map(); // id -> { restoreFn, closeFn, railBtnId, isMinimized, restoreMinHeight }
+const _EDGE_DOCK_SIDES = ['left', 'right', 'top', 'bottom'];
+
+function _edgeDockSide(modal) {
+  if (!modal) return null;
+  const content = modal.querySelector?.('.modal-content');
+  if (_EDGE_DOCK_SIDES.includes(content?._dockSide)) return content._dockSide;
+  const classSide = _EDGE_DOCK_SIDES.find((side) => modal.classList?.contains(`modal-${side}-docked`));
+  if (classSide) return classSide;
+  return modal.classList?.contains('email-snap-left') ? 'left' : null;
+}
+
+function _isEdgeDocked(modal) {
+  return !!_edgeDockSide(modal);
+}
 
 const _rememberedDockKey = (id) => `odysseus-modal-remembered-dock-${id}`;
 function _rememberDock(id, side) {
@@ -44,7 +58,7 @@ function _forgetDock(id) {
 function _getRememberedDock(id) {
   try {
     const side = localStorage.getItem(_rememberedDockKey(id));
-    return (side === 'left' || side === 'right') ? side : null;
+    return _EDGE_DOCK_SIDES.includes(side) ? side : null;
   } catch (_) {
     return null;
   }
@@ -86,6 +100,10 @@ function _captureRestoreHeight(modal, state) {
   if (!modal || !state) return;
   const content = modal.querySelector('.modal-content');
   if (!content) return;
+  if (_isEdgeDocked(modal)) {
+    delete state.restoreMinHeight;
+    return;
+  }
   if (modal.id === 'email-lib-modal'
       && (modal.classList.contains('modal-left-docked')
           || modal.classList.contains('email-snap-left')
@@ -153,11 +171,15 @@ const _LABELS = {
 
 function _ensureDock() {
   let dock = document.getElementById('minimized-dock');
-  if (dock) return dock;
+  if (dock) {
+    _wireDockPlacement(dock);
+    return dock;
+  }
   dock = document.createElement('div');
   dock.id = 'minimized-dock';
   document.body.appendChild(dock);
   _loadDockState();
+  _wireDockPlacement(dock);
   return dock;
 }
 
@@ -228,16 +250,113 @@ function _loadDockState() {
   } catch {}
 }
 
-// Push the remembered dock position onto the live element. Called on every
-// render because the empty-dock branch wipes inline styles via cssText='',
-// which would otherwise drop the position the moment the dock clears.
+function _uiScaleFactor() {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--ui-scale-factor');
+  const n = parseFloat(raw || '');
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+function _visibleRect(el) {
+  if (!el) return null;
+  const cs = window.getComputedStyle(el);
+  if (cs.display === 'none' || cs.visibility === 'hidden') return null;
+  const rect = el.getBoundingClientRect();
+  return rect && rect.width > 0 && rect.height > 0 ? rect : null;
+}
+
+function _desktopChatbarDockRect() {
+  if (window.innerWidth <= 768 || window.matchMedia?.('(pointer: coarse)').matches) return null;
+  const rect = _visibleRect(document.querySelector('.chat-input-bar'));
+  if (!rect || rect.width < 120) return null;
+  const scale = _uiScaleFactor();
+  return {
+    left: Math.round(rect.left / scale),
+    width: Math.floor(rect.width / scale),
+  };
+}
+
+// Keep the default desktop chip row on the same horizontal track as the live
+// composer. A top/bottom dock changes the chat shell's height without changing
+// the composer's own size, so this is re-applied whenever that shell moves.
+// User-positioned touch docks retain their persisted free position.
 function _applyDockPos(dock) {
-  if (!_dockPos) return;
+  const chatbarDock = _dockPos ? null : _desktopChatbarDockRect();
+  dock.classList.toggle('dock-chatbar-row', !!chatbarDock);
+  if (chatbarDock) {
+    dock.style.left = `${chatbarDock.left}px`;
+    dock.style.width = `${chatbarDock.width}px`;
+    dock.style.maxWidth = `${chatbarDock.width}px`;
+    dock.style.right = 'auto';
+    dock.style.removeProperty('top');
+    dock.style.removeProperty('bottom');
+    dock.style.transform = 'none';
+    return;
+  }
+  dock.style.removeProperty('width');
+  dock.style.removeProperty('max-width');
+  if (!_dockPos) {
+    for (const prop of ['left', 'top', 'right', 'bottom', 'transform']) {
+      dock.style.removeProperty(prop);
+    }
+    return;
+  }
   dock.style.left = `${_dockPos.left}px`;
   dock.style.top = `${_dockPos.top}px`;
   dock.style.right = 'auto';
   dock.style.bottom = 'auto';
   dock.style.transform = 'none';
+}
+
+let _dockPlacementWired = false;
+function _wireDockPlacement(dock) {
+  if (_dockPlacementWired || !dock) return;
+  _dockPlacementWired = true;
+  let raf = 0;
+  const schedule = () => {
+    if (raf) cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+      const current = document.getElementById('minimized-dock');
+      if (!current || current.style.display === 'none') return;
+      _applyDockPos(current);
+    });
+  };
+  window.addEventListener('resize', schedule);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', schedule);
+    window.visualViewport.addEventListener('scroll', schedule);
+  }
+  if (typeof ResizeObserver !== 'undefined') {
+    const ro = new ResizeObserver(schedule);
+    for (const el of [
+      document.getElementById('attach-strip'),
+      document.querySelector('.chat-input-bar'),
+      document.querySelector('.chat-container'),
+    ]) {
+      if (el) ro.observe(el);
+    }
+  }
+  const chatContainer = document.querySelector('.chat-container');
+  if (chatContainer) {
+    chatContainer.addEventListener('transitionend', (e) => {
+      if (e.propertyName === 'margin-left'
+          || e.propertyName === 'margin-right'
+          || e.propertyName === 'margin-top'
+          || e.propertyName === 'margin-bottom') {
+        schedule();
+      }
+    });
+  }
+  if (typeof MutationObserver !== 'undefined') {
+    new MutationObserver(schedule).observe(document.body, {
+      attributes: true,
+      attributeFilter: ['class'],
+    });
+    new MutationObserver(schedule).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class', 'style'],
+    });
+  }
 }
 
 // True when `chipRect` is close enough to the dock's current location that
@@ -1234,12 +1353,10 @@ export function minimize(id) {
   const modal = document.getElementById(id);
   if (modal) {
     _captureRestoreHeight(modal, s);
-    // If this window is edge-docked (right/left), SUSPEND the dock: release
+    // If this window is edge-docked, SUSPEND the dock: release
     // the body push so the chat returns to full width while the window is
     // minimized, but keep the dock so restoring the chip snaps it back in.
-    if (modal.classList.contains('modal-right-docked')
-        || modal.classList.contains('modal-left-docked')
-        || modal.classList.contains('email-snap-left')) {
+    if (_isEdgeDocked(modal)) {
       try { suspendDock(modal); } catch (e) { console.warn('suspendDock on minimize failed', e); }
     }
     modal.classList.add('hidden');
@@ -1310,9 +1427,7 @@ export function close(id) {
   const modalBeforeClose = document.getElementById(id);
   const contentBeforeClose = modalBeforeClose?.querySelector?.('.modal-content');
   const suspendedDockSide = contentBeforeClose?._dockSuspended
-    || (modalBeforeClose?.classList?.contains('modal-left-docked') ? 'left'
-        : modalBeforeClose?.classList?.contains('modal-right-docked') ? 'right'
-          : null);
+    || _edgeDockSide(modalBeforeClose);
   const shouldRememberDock = s.isMinimized && !!suspendedDockSide;
   if (shouldRememberDock) _rememberDock(id, suspendedDockSide);
   else _forgetDock(id);
@@ -1328,7 +1443,7 @@ export function close(id) {
     // Tear down the live dock push/classes before hiding. If this close came
     // from a minimized dock chip, the side was persisted above and register()
     // will intentionally re-apply it on the next open.
-    if (modal.classList.contains('modal-right-docked') || modal.classList.contains('modal-left-docked')) {
+    if (_isEdgeDocked(modal) && !modal.classList.contains('email-snap-left')) {
       try { clearRightDock(modal); } catch (e) { console.warn('clearRightDock on close failed', e); }
     }
     modal.classList.add('hidden');
@@ -1524,9 +1639,7 @@ window.addEventListener('modal-dismissed', (e) => {
   const modal = document.getElementById(id);
   if (modal) {
     const isEmailModal = id === 'email-lib-modal' || id.startsWith('email-reader-');
-    if (modal.classList.contains('modal-right-docked')
-        || modal.classList.contains('modal-left-docked')
-        || modal.classList.contains('email-snap-left')) {
+    if (_isEdgeDocked(modal)) {
       try { suspendDock(modal); } catch (err) { console.warn('suspendDock on dismissed failed', err); }
     }
     if (isEmailModal) _clearEmailSplitAfterMinimize();

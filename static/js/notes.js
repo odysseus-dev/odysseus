@@ -180,13 +180,12 @@ function _wireNotesWindow(pane) {
 
 function _clearNotesSnapStyles(pane) {
   if (!pane) return;
-  const hadLeft = pane.classList.contains('modal-left-docked');
-  const hadRight = pane.classList.contains('modal-right-docked');
-  pane.classList.remove('notes-window-fullscreen', 'modal-left-docked', 'modal-right-docked');
-  if (hadLeft) clearDockSide('left', pane);
-  if (hadRight) clearDockSide('right', pane);
+  const dockSides = ['left', 'right', 'top', 'bottom'];
+  const activeDockSides = dockSides.filter((side) => pane.classList.contains(`modal-${side}-docked`));
+  pane.classList.remove('notes-window-fullscreen', ...dockSides.map((side) => `modal-${side}-docked`));
+  activeDockSides.forEach((side) => clearDockSide(side, pane));
   ['position', 'left', 'top', 'right', 'bottom', 'width', 'max-width', 'height',
-    'max-height', 'margin', 'transform', 'border-radius']
+    'min-height', 'max-height', 'margin', 'transform', 'border-radius']
     .forEach((prop) => pane.style.removeProperty(prop));
   delete pane.dataset._tilePreSnap;
   delete pane.dataset._tileZone;

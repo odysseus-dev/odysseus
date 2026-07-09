@@ -166,7 +166,7 @@ html {
    Density only changes the root font-size, which can't move the many
    hard-coded px sizes. `zoom` scales the whole UI uniformly (px text
    included) while keeping layout intact, unlike `transform: scale`. */
-:root.ui-scale-125 { zoom: 1.25; }
+:root.ui-scale-125 { --ui-scale-factor: 1.25; zoom: var(--ui-scale-factor); }
 /* `zoom` makes the 100dvh shell render taller than the real viewport, which
    pushes the bottom-pinned sidebar account/settings row below the fold (and
    body's overflow:hidden then clips it). Shrink the shell by the same factor
@@ -881,6 +881,19 @@ body.bg-pattern-sparkles {
       padding: 4px;
       z-index: 100;
       pointer-events: none;
+    }
+    #minimized-dock.dock-chatbar-row {
+      flex-wrap: nowrap;
+      align-items: center;
+      justify-content: center;
+      overflow-x: auto;
+      overflow-y: hidden;
+      box-sizing: border-box;
+      scrollbar-width: thin;
+      pointer-events: none;
+    }
+    #minimized-dock.dock-chatbar-row .minimized-dock-chip {
+      flex: 0 0 auto;
     }
     .minimized-dock-chip {
       pointer-events: auto;
@@ -15276,6 +15289,12 @@ span[id$="-logo"] svg:not([width]) {
 .edge-dock-resize-handle-right:hover {
   background: linear-gradient(to left, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px) !important;
 }
+.edge-dock-resize-handle-top:hover {
+  background: linear-gradient(to bottom, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px) !important;
+}
+.edge-dock-resize-handle-bottom:hover {
+  background: linear-gradient(to top, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px) !important;
+}
 
 [data-settings-panel="ai"] .admin-card > h2 > svg,
 [data-settings-panel="services"] .admin-card > h2 > svg,
@@ -15812,7 +15831,9 @@ span[id$="-logo"] svg:not([width]) {
    The CSS variable :is() selector lets both states share one rule. */
 #doclib-modal.doclib-fullscreen .doclib-modal-content,
 #doclib-modal.modal-right-docked .doclib-modal-content,
-#doclib-modal.modal-left-docked .doclib-modal-content {
+#doclib-modal.modal-left-docked .doclib-modal-content,
+#doclib-modal.modal-top-docked .doclib-modal-content,
+#doclib-modal.modal-bottom-docked .doclib-modal-content {
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -15822,7 +15843,7 @@ span[id$="-logo"] svg:not([width]) {
    zone keeps .doclib-fullscreen on the modal and these !important rules
    override the dock's inline styles, leaving the modal stuck fullscreen
    instead of becoming a side panel. */
-#doclib-modal.doclib-fullscreen:not(.modal-right-docked) .doclib-modal-content {
+#doclib-modal.doclib-fullscreen:not(.modal-right-docked):not(.modal-left-docked):not(.modal-top-docked):not(.modal-bottom-docked) .doclib-modal-content {
   position: fixed !important;
   top: 0 !important;
   left: calc(var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)) !important;
@@ -15840,12 +15861,18 @@ span[id$="-logo"] svg:not([width]) {
 #doclib-modal.modal-right-docked .modal-header,
 #doclib-modal.modal-right-docked .lib-tabs,
 #doclib-modal.modal-left-docked .modal-header,
-#doclib-modal.modal-left-docked .lib-tabs {
+#doclib-modal.modal-left-docked .lib-tabs,
+#doclib-modal.modal-top-docked .modal-header,
+#doclib-modal.modal-top-docked .lib-tabs,
+#doclib-modal.modal-bottom-docked .modal-header,
+#doclib-modal.modal-bottom-docked .lib-tabs {
   flex: 0 0 auto;
 }
 #doclib-modal.doclib-fullscreen .modal-body,
 #doclib-modal.modal-right-docked .modal-body,
-#doclib-modal.modal-left-docked .modal-body {
+#doclib-modal.modal-left-docked .modal-body,
+#doclib-modal.modal-top-docked .modal-body,
+#doclib-modal.modal-bottom-docked .modal-body {
   flex: 1 1 0;
   min-height: 0;
   overflow: hidden;
@@ -15854,7 +15881,9 @@ span[id$="-logo"] svg:not([width]) {
 }
 #doclib-modal.doclib-fullscreen .admin-card,
 #doclib-modal.modal-right-docked .admin-card,
-#doclib-modal.modal-left-docked .admin-card {
+#doclib-modal.modal-left-docked .admin-card,
+#doclib-modal.modal-top-docked .admin-card,
+#doclib-modal.modal-bottom-docked .admin-card {
   flex: 1 1 0;
   min-height: 0;
   display: flex;
@@ -15862,7 +15891,9 @@ span[id$="-logo"] svg:not([width]) {
 }
 #doclib-modal.doclib-fullscreen .doclib-grid:not(:has(.doclib-card-expanded)),
 #doclib-modal.modal-right-docked .doclib-grid:not(:has(.doclib-card-expanded)),
-#doclib-modal.modal-left-docked .doclib-grid:not(:has(.doclib-card-expanded)) {
+#doclib-modal.modal-left-docked .doclib-grid:not(:has(.doclib-card-expanded)),
+#doclib-modal.modal-top-docked .doclib-grid:not(:has(.doclib-card-expanded)),
+#doclib-modal.modal-bottom-docked .doclib-grid:not(:has(.doclib-card-expanded)) {
   max-height: none;
   height: auto;
   flex: 1 1 auto;
@@ -15908,13 +15939,13 @@ span[id$="-logo"] svg:not([width]) {
   body.email-doc-split-active .modal[id^="email-reader-"].modal-left-docked:not(.modal-dragging) .modal-content {
     position: absolute !important;
     left: 0 !important;
-    top: 0 !important;
-    bottom: 0 !important;
+    top: var(--top-dock-reserve-h, var(--top-dock-h, 0px)) !important;
+    bottom: var(--bottom-dock-reserve-h, var(--bottom-dock-h, 0px)) !important;
     right: auto !important;
     width: var(--email-doc-split-email-w, 420px) !important;
     max-width: var(--email-doc-split-email-w, 420px) !important;
-    height: 100vh !important;
-    max-height: 100vh !important;
+    height: auto !important;
+    max-height: none !important;
     transform: none !important;
     margin: 0 !important;
   }
@@ -15924,12 +15955,12 @@ span[id$="-logo"] svg:not([width]) {
   body.email-doc-split-active.doc-view .doc-editor-pane {
     position: fixed !important;
     left: var(--email-doc-split-right-x, 420px) !important;
-    right: var(--right-dock-w, 0px) !important;
-    top: 0 !important;
-    bottom: 0 !important;
+    right: var(--right-dock-reserve-w, var(--right-dock-w, 0px)) !important;
+    top: var(--top-dock-reserve-h, var(--top-dock-h, 0px)) !important;
+    bottom: var(--bottom-dock-reserve-h, var(--bottom-dock-h, 0px)) !important;
     width: auto !important;
     max-width: none !important;
-    height: 100vh !important;
+    height: auto !important;
     z-index: 260 !important;
     margin-top: 0 !important;
     transform: none !important;
@@ -15955,11 +15986,35 @@ body.left-dock-active {
   padding-left: 0;
 }
 body.left-dock-active:not(.email-doc-split-active) .chat-container {
-  margin-left: var(--left-dock-w, 0px);
+  margin-left: var(--left-dock-reserve-w, var(--left-dock-w, 0px));
 }
 body.right-dock-active .chat-container,
 body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
-  margin-right: var(--right-dock-w, 0px);
+  margin-right: var(--right-dock-reserve-w, var(--right-dock-w, 0px));
+}
+body.top-dock-active .chat-container,
+body.top-dock-active .doc-editor-pane {
+  margin-top: var(--top-dock-reserve-h, var(--top-dock-h, 0px));
+}
+body.bottom-dock-active .chat-container,
+body.bottom-dock-active .doc-editor-pane {
+  margin-bottom: var(--bottom-dock-reserve-h, var(--bottom-dock-h, 0px));
+}
+/* The empty-chat layout normally uses a viewport-relative 30vh bottom margin
+   to lift the composer toward the center. Inside either vertical split that
+   margin consumes most of the remaining chat pane and strands the composer
+   near its top. Restore the normal bottom-edge placement within that pane. */
+@media (min-width: 769px) {
+  body:is(.top-dock-active, .bottom-dock-active) .chat-container.welcome-active .chat-input-bar {
+    margin-bottom: 16px;
+  }
+}
+body:is(.top-dock-active, .bottom-dock-active) .doc-editor-pane {
+  height: calc(
+    100%
+    - var(--top-dock-reserve-h, var(--top-dock-h, 0px))
+    - var(--bottom-dock-reserve-h, var(--bottom-dock-h, 0px))
+  );
 }
 .modal.modal-right-docked {
   align-items: stretch;
@@ -15986,10 +16041,48 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
      panels in case future themes add a generic transition. */
   transition: none !important;
 }
+.modal.modal-top-docked {
+  align-items: flex-start;
+  justify-content: stretch;
+}
+.modal.modal-top-docked .modal-content {
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  border-radius: 0;
+  transition: none !important;
+  min-height: 0 !important;
+}
+.modal.modal-bottom-docked {
+  align-items: flex-end;
+  justify-content: stretch;
+}
+.modal.modal-bottom-docked .modal-content {
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -4px 14px rgba(0, 0, 0, 0.18);
+  border-radius: 0;
+  transition: none !important;
+  min-height: 0 !important;
+}
 .modal.modal-right-docked .modal-content,
+.modal.modal-top-docked .modal-content,
+.modal.modal-bottom-docked .modal-content,
 #email-lib-modal.email-lib-fullscreen .modal-content,
 #doclib-modal.doclib-fullscreen .doclib-modal-content {
   transition: none !important;
+}
+@media (max-width: 768px) {
+  body.left-dock-active:not(.email-doc-split-active) .chat-container,
+  body.right-dock-active .chat-container,
+  body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane,
+  body.top-dock-active .chat-container,
+  body.top-dock-active .doc-editor-pane,
+  body.bottom-dock-active .chat-container,
+  body.bottom-dock-active .doc-editor-pane {
+    margin-left: 0;
+    margin-right: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+  }
 }
 .modal.modal-right-docked .email-reader-header,
 .modal.modal-left-docked .email-reader-header {
@@ -16268,7 +16361,7 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
   transition: width 0.22s ease-out, height 0.22s ease-out;
 }
 @media (min-width: 769px) {
-  body:not(.email-doc-split-active) #email-lib-modal:not(.email-lib-fullscreen):not(.modal-left-docked):not(.modal-right-docked) .modal-content {
+  body:not(.email-doc-split-active) #email-lib-modal:not(.email-lib-fullscreen):not(.modal-left-docked):not(.modal-right-docked):not(.modal-top-docked):not(.modal-bottom-docked) .modal-content {
     min-height: min(560px, 85vh);
   }
 }
@@ -16358,7 +16451,7 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
 /* Individual email reader window — fullscreen mode (drag-to-top snap or
    double-click header). Same recipe as the library modal: pin to viewport
    edges and let the inner body absorb the remaining height. */
-body:not(.email-doc-split-active) .email-window-modal.email-window-fullscreen .modal-content {
+body:not(.email-doc-split-active) .email-window-modal.email-window-fullscreen:not(.modal-left-docked):not(.modal-right-docked):not(.modal-top-docked):not(.modal-bottom-docked) .modal-content {
   position: fixed !important;
   inset: 0 !important;
   left: 0 !important;
@@ -16383,7 +16476,7 @@ body:not(.email-doc-split-active) .email-window-modal.email-window-fullscreen .e
    Leaves whichever navigation strip is currently visible on the left
    (the wide sidebar OR the icon rail — they're mutually exclusive, so
    one of the two CSS vars is 0 at any given time, set by init.js). */
-body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.modal-right-docked) .modal-content {
+body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.modal-right-docked):not(.modal-left-docked):not(.modal-top-docked):not(.modal-bottom-docked) .modal-content {
   position: fixed !important;
   top: 0 !important;
   left: calc(var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)) !important;
@@ -16402,7 +16495,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
    rounded top corners. Same specificity as the rule above + later in source,
    so it wins on mobile. */
 @media (max-width: 768px) {
-  body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.modal-right-docked) .modal-content {
+  body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.modal-right-docked):not(.modal-left-docked):not(.modal-top-docked):not(.modal-bottom-docked) .modal-content {
     left: 0 !important;
     right: 0 !important;
     width: 100vw !important;
@@ -23181,22 +23274,29 @@ body.gallery-selecting .gallery-dl-btn,
 }
 
 .settings-modal-content[style*="height"],
-#settings-modal.modal-right-docked .settings-modal-content {
+#settings-modal:is(.modal-left-docked, .modal-right-docked, .modal-top-docked, .modal-bottom-docked) .settings-modal-content {
   overflow: hidden;
 }
 
 .settings-modal-content[style*="height"] .settings-layout,
-#settings-modal.modal-right-docked .settings-layout {
+#settings-modal:is(.modal-left-docked, .modal-right-docked, .modal-top-docked, .modal-bottom-docked) .settings-layout {
   flex: 1 1 0;
   min-height: 0;
   max-height: none;
 }
 
 .settings-modal-content[style*="height"] .settings-panels,
-#settings-modal.modal-right-docked .settings-panels,
+#settings-modal:is(.modal-left-docked, .modal-right-docked, .modal-top-docked, .modal-bottom-docked) .settings-panels,
 .settings-modal-content[style*="height"] .settings-sidebar,
-#settings-modal.modal-right-docked .settings-sidebar {
+#settings-modal:is(.modal-left-docked, .modal-right-docked, .modal-top-docked, .modal-bottom-docked) .settings-sidebar {
   min-height: 0;
+}
+
+.settings-modal-content[style*="height"] .settings-sidebar,
+#settings-modal.modal-top-docked .settings-sidebar,
+#settings-modal.modal-bottom-docked .settings-sidebar {
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .settings-sidebar {
@@ -33686,14 +33786,18 @@ body.notes-drag-mode .note-card-pin svg {
   pointer-events: auto;
 }
 .notes-pane-backdrop:has(.notes-pane.modal-right-docked),
-.notes-pane-backdrop:has(.notes-pane.modal-left-docked) {
+.notes-pane-backdrop:has(.notes-pane.modal-left-docked),
+.notes-pane-backdrop:has(.notes-pane.modal-top-docked),
+.notes-pane-backdrop:has(.notes-pane.modal-bottom-docked) {
   background: transparent;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   pointer-events: none;
 }
 .notes-pane-backdrop:has(.notes-pane.modal-right-docked) .notes-pane,
-.notes-pane-backdrop:has(.notes-pane.modal-left-docked) .notes-pane {
+.notes-pane-backdrop:has(.notes-pane.modal-left-docked) .notes-pane,
+.notes-pane-backdrop:has(.notes-pane.modal-top-docked) .notes-pane,
+.notes-pane-backdrop:has(.notes-pane.modal-bottom-docked) .notes-pane {
   pointer-events: auto;
 }
 .notes-pane-backdrop:has(.notes-pane.notes-window-fullscreen) {
@@ -33733,6 +33837,18 @@ body.notes-drag-mode .note-card-pin svg {
   border-right: 1px solid var(--border);
   border-radius: 0;
   box-shadow: 4px 0 14px rgba(0, 0, 0, 0.18);
+  transition: none !important;
+}
+.notes-pane.modal-top-docked {
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  transition: none !important;
+}
+.notes-pane.modal-bottom-docked {
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: 0 -4px 14px rgba(0, 0, 0, 0.18);
   transition: none !important;
 }
 @keyframes notes-pane-enter {
@@ -36714,6 +36830,23 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
    --cal-detail-h) and shrinks the grid visually as it grows. */
 #cal-body { display:flex; flex-direction:column; gap:8px; overflow:hidden; padding:0; min-height:0; }
 #cal-body > .cal-grid { flex: 1 1 auto; min-height: 120px; overflow-y: auto; overflow-x: hidden; }
+#calendar-modal:is(.modal-left-docked, .modal-right-docked, .modal-top-docked, .modal-bottom-docked) .cal-modal-content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#calendar-modal:is(.modal-left-docked, .modal-right-docked, .modal-top-docked, .modal-bottom-docked) .modal-header {
+  flex: 0 0 auto;
+}
+#calendar-modal:is(.modal-left-docked, .modal-right-docked, .modal-top-docked, .modal-bottom-docked) #cal-body {
+  flex: 1 1 0;
+  min-height: 0;
+}
+#calendar-modal:is(.modal-left-docked, .modal-right-docked, .modal-top-docked, .modal-bottom-docked) #cal-body:has(.cal-form) {
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
 @media (max-width: 768px) {
   /* Let the calendar pane shrink to nothing on mobile so the day-detail
      splitter can be dragged all the way to the top, hiding the calendar

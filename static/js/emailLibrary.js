@@ -588,12 +588,12 @@ function _measureEmailDocumentSplit(modal) {
     if (docPane) {
       docPane.style.setProperty('position', 'fixed', 'important');
       docPane.style.setProperty('left', `${Math.ceil(rect.right + splitGap)}px`, 'important');
-      docPane.style.setProperty('right', '0px', 'important');
-      docPane.style.setProperty('top', '0px', 'important');
-      docPane.style.setProperty('bottom', '0px', 'important');
+      docPane.style.setProperty('right', 'var(--right-dock-reserve-w, var(--right-dock-w, 0px))', 'important');
+      docPane.style.setProperty('top', 'var(--top-dock-reserve-h, var(--top-dock-h, 0px))', 'important');
+      docPane.style.setProperty('bottom', 'var(--bottom-dock-reserve-h, var(--bottom-dock-h, 0px))', 'important');
       docPane.style.setProperty('width', 'auto', 'important');
       docPane.style.setProperty('max-width', 'none', 'important');
-      docPane.style.setProperty('height', '100vh', 'important');
+      docPane.style.setProperty('height', 'auto', 'important');
       docPane.style.setProperty('z-index', '260', 'important');
     }
   } catch (_) {}

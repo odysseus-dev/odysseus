@@ -175,6 +175,12 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
   const chatBar = document.querySelector('.chat-input-bar');
   const attachStrip = document.getElementById('attach-strip');
   const chatContainer = document.getElementById('chat-container');
+  const COMPOSER_DOCK_GAP = 4;
+  const _uiScaleFactor = () => {
+    const n = parseFloat(window.getComputedStyle(root).getPropertyValue('--ui-scale-factor') || '');
+    return Number.isFinite(n) && n > 0 ? n : 1;
+  };
+  let composerClearanceRaf = 0;
   const _syncComposerClearance = () => {
     let top = window.innerHeight;
     for (const el of [attachStrip, chatBar]) {
@@ -182,23 +188,38 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
       const rect = el.getBoundingClientRect();
       if (rect.height > 0) top = Math.min(top, rect.top);
     }
-    const clearance = Math.max(12, Math.ceil(window.innerHeight - top + 8));
+    const clearance = Math.max(
+      8,
+      Math.ceil((window.innerHeight - top + COMPOSER_DOCK_GAP) / _uiScaleFactor()),
+    );
     root.style.setProperty('--composer-clearance', clearance + 'px');
   };
-  requestAnimationFrame(_syncComposerClearance);
+  const _queueComposerClearanceSync = () => {
+    if (composerClearanceRaf) cancelAnimationFrame(composerClearanceRaf);
+    composerClearanceRaf = requestAnimationFrame(() => {
+      composerClearanceRaf = 0;
+      _syncComposerClearance();
+    });
+  };
+  _queueComposerClearanceSync();
   if (typeof ResizeObserver !== 'undefined') {
-    const ro = new ResizeObserver(_syncComposerClearance);
+    const ro = new ResizeObserver(_queueComposerClearanceSync);
     if (chatBar) ro.observe(chatBar);
     if (attachStrip) ro.observe(attachStrip);
+    // A top/bottom dock changes the chat shell's height while the composer's
+    // own border box remains the same. Observe the shell so minimized chips
+    // follow the live split seam and return to the full composer afterward.
+    if (chatContainer) ro.observe(chatContainer);
   }
   if (chatContainer && typeof MutationObserver !== 'undefined') {
-    new MutationObserver(_syncComposerClearance).observe(chatContainer, {
+    new MutationObserver(_queueComposerClearanceSync).observe(chatContainer, {
       attributes: true,
       attributeFilter: ['class'],
     });
+    chatContainer.addEventListener('transitionend', _queueComposerClearanceSync);
   }
-  if (chatBar) chatBar.addEventListener('transitionend', _syncComposerClearance);
-  window.addEventListener('resize', _syncComposerClearance);
+  if (chatBar) chatBar.addEventListener('transitionend', _queueComposerClearanceSync);
+  window.addEventListener('resize', _queueComposerClearanceSync);
 }
 
 /* ---- Resizable sidebar — drag edge to resize, collapse if small, drag rail edge to expand ---- */

@@ -20,8 +20,18 @@
  * the original size.
  */
 
+import { applyEdgeDock, clearRightDock, edgeDockPreviewRect } from './modalSnap.js';
+
 const EDGE_THRESHOLD_PX = 24;     // how close to an edge counts as "near"
 const TOP_FULL_STRIP_PX = 8;      // top strip → maximize
+const DOCK_SIDES = ['left', 'right', 'top', 'bottom'];
+const DOCK_ZONE_TO_SIDE = {
+  'left-half': 'left',
+  'right-half': 'right',
+  'top-half': 'top',
+  'bottom-half': 'bottom',
+};
+const SETTINGS_DOCK_ZONES = new Set(['right-half', 'top-half', 'bottom-half']);
 
 let _ghost = null;
 let _activeZone = null;
@@ -30,7 +40,7 @@ let _tracking = null; // { content, startRect }
 function _isDesktop() { return window.innerWidth > 768; }
 
 function _dockClassForSide(side) {
-  return side === 'left' ? 'modal-left-docked' : 'modal-right-docked';
+  return `modal-${side}-docked`;
 }
 
 function _hasOtherDockedWindow(side, owner) {
@@ -44,10 +54,12 @@ function _hasOtherDockedWindow(side, owner) {
 }
 
 function _clearDockSide(side, owner = null) {
-  if (side !== 'left' && side !== 'right') return;
+  if (!DOCK_SIDES.includes(side)) return;
   if (_hasOtherDockedWindow(side, owner)) return;
-  document.body.classList.remove(side === 'left' ? 'left-dock-active' : 'right-dock-active');
-  document.documentElement.style.removeProperty(side === 'left' ? '--left-dock-w' : '--right-dock-w');
+  const horizontal = side === 'left' || side === 'right';
+  document.body.classList.remove(`${side}-dock-active`);
+  document.documentElement.style.removeProperty(`--${side}-dock-${horizontal ? 'w' : 'h'}`);
+  document.documentElement.style.removeProperty(`--${side}-dock-reserve-${horizontal ? 'w' : 'h'}`);
   if (side === 'left') {
     try { window._restoreSidebarIfRouteCollapsed?.(); } catch (_) {}
   }
@@ -122,31 +134,42 @@ function _zoneForPointer(x, y) {
   return null;
 }
 
-function _zoneForContent(content, x, y) {
+function _zoneForContent(content, x, y, deferSharedDock = true) {
   const modal = content && content.closest && content.closest('.modal, .research-overlay');
-  const zone = _zoneForPointer(x, y);
+  let zone = _zoneForPointer(x, y);
   if (!zone) return null;
+  // Shared draggable windows use modalSnap for the four reserved edge docks.
+  // Keep tileManager's existing fullscreen/maximize zones active; only defer
+  // the edge zones that would otherwise paint and commit a duplicate dock.
+  // Public chip-drag previews opt out of this deferral below.
+  if (deferSharedDock && modal?.dataset?.edgeDockController === '1'
+      && DOCK_ZONE_TO_SIDE[zone.name]) return null;
   // Settings has a dense two-column layout; the full-height sidebar-style dock
-  // crushes it. Let it tile only into the normal right half, where the nav can
-  // flip to top tabs via CSS when the window gets narrow.
-  if (modal && modal.id === 'settings-modal' && zone.name !== 'right-half') return null;
+  // crushes it. Keep left docking disabled, but allow the horizontal top and
+  // bottom layouts where the chat receives the other half of the screen.
+  if (modal && modal.id === 'settings-modal' && !SETTINGS_DOCK_ZONES.has(zone.name)) return null;
   if (modal && (modal.id === 'cookbook-modal'
       || modal.id === 'theme-modal')
       && zone.name !== 'fullscreen') return null;
+  const dockSide = DOCK_ZONE_TO_SIDE[zone.name];
+  if (modal && dockSide) {
+    const rect = edgeDockPreviewRect(modal, dockSide);
+    if (!rect) return null;
+    zone = { ...zone, rect };
+  }
   return zone;
 }
 
 function _clearEdgeDockResidue(modal, content) {
   const hadDockState = !!(
-    (modal && (modal.classList.contains('modal-left-docked') || modal.classList.contains('modal-right-docked')))
+    (modal && DOCK_SIDES.some((side) => modal.classList.contains(_dockClassForSide(side))))
     || (content && (content._preDockSnapshot || content._dockSide || content._dockSuspended))
   );
   if (modal) {
-    const hadLeft = modal.classList.contains('modal-left-docked');
-    const hadRight = modal.classList.contains('modal-right-docked');
-    modal.classList.remove('modal-left-docked', 'modal-right-docked');
-    if (hadLeft) _clearDockSide('left', modal);
-    if (hadRight) _clearDockSide('right', modal);
+    const dockedSides = DOCK_SIDES.filter((side) =>
+      modal.classList.contains(_dockClassForSide(side)));
+    modal.classList.remove(...DOCK_SIDES.map(_dockClassForSide));
+    dockedSides.forEach((side) => _clearDockSide(side, modal));
     if (modal._dockCloseWatcher) {
       try { modal._dockCloseWatcher.obs && modal._dockCloseWatcher.obs.disconnect(); } catch (_) {}
       try { modal._dockCloseWatcher.parentObs && modal._dockCloseWatcher.parentObs.disconnect(); } catch (_) {}
@@ -179,8 +202,27 @@ function _applySnap(content, rect, zoneName) {
   // zone, which gets worse each time the sidebar is toggled. Clear the
   // orphaned edge-dock state so only the tile-snap positions the window.
   const _modal = content.closest && content.closest('.modal, .research-overlay');
-  const _fromRect = content.getBoundingClientRect();
+  const dockSide = DOCK_ZONE_TO_SIDE[zoneName];
+  if (dockSide && _modal) {
+    const dockSize = applyEdgeDock(_modal, dockSide);
+    if (dockSize) {
+      delete content.dataset._tilePreSnap;
+      delete content.dataset._tileZone;
+      return;
+    }
+    // Reserved edge zones must not silently fall back to the legacy fixed
+    // half-tile when the dock cannot preserve a usable chat region.
+    return;
+  }
+  if (_modal) {
+    const activeDockSide = DOCK_SIDES.find((side) =>
+      _modal.classList.contains(_dockClassForSide(side)));
+    if (activeDockSide) {
+      clearRightDock(_modal, undefined, undefined, _dockClassForSide(activeDockSide));
+    }
+  }
   _clearEdgeDockResidue(_modal, content);
+  const _fromRect = content.getBoundingClientRect();
 
   // Stash pre-snap geometry once; if we re-snap, keep the original. Capture a
   // CONCRETE fixed position (from the rendered rect when the inline value is
@@ -363,7 +405,7 @@ export function previewZoneAt(x, y, target = null) {
   const content = target && target.querySelector
     ? (target.querySelector('.modal-content, .research-pane') || target)
     : null;
-  const zone = content ? _zoneForContent(content, x, y) : _zoneForPointer(x, y);
+  const zone = content ? _zoneForContent(content, x, y, false) : _zoneForPointer(x, y);
   if (zone) { _showGhost(zone.rect); _activeZone = zone; }
   else { _hideGhost(); _activeZone = null; }
   return zone;
@@ -387,7 +429,7 @@ export function snapModalToZone(modal, zone) {
   if (!modal || !zone) return;
   const content = modal.querySelector ? (modal.querySelector('.modal-content, .research-pane') || modal) : modal;
   if (!content) return;
-  if (modal.id === 'settings-modal' && zone.name !== 'right-half') return;
+  if (modal.id === 'settings-modal' && !SETTINGS_DOCK_ZONES.has(zone.name) && !zone.force) return;
   _applySnap(content, zone.rect, zone.name);
 }
 

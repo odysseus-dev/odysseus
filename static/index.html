@@ -1297,7 +1297,10 @@
       step();
       _scrollTimeout = setTimeout(() => { if (_scrollingToBottom) { container.scrollTop = target; _scrollingToBottom = false; } }, 1500);
     });
-    new ResizeObserver(reposition).observe(chatBar);
+    const layoutObserver = new ResizeObserver(reposition);
+    layoutObserver.observe(chatBar);
+    const chatShell = document.querySelector('.chat-container');
+    if (chatShell) layoutObserver.observe(chatShell);
     new MutationObserver(update).observe(container, {childList:true, subtree:true});
     window.addEventListener('resize', reposition);
     update();
