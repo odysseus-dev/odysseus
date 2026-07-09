@@ -415,6 +415,24 @@ document.addEventListener('keydown', (e) => {
   e.stopImmediatePropagation?.();
 }, true);
 
+// #4856: Space in the email reader must not activate a focused toolbar button.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== ' ' && e.code !== 'Space') return;
+  const t = e.target;
+  if (!t || !t.closest) return;
+  const readerSel = '.email-card-reader, #email-lib-modal .email-card-reader, #email-lib-modal .doclib-card-expanded';
+  const inReader = t.closest(readerSel) || document.activeElement?.closest?.(readerSel);
+  if (!inReader) return;
+  if (_isEmailTypingTarget(t) || _isEmailTypingTarget(document.activeElement)) {
+    e.stopPropagation();
+    return;
+  }
+  if (t.tagName === 'BUTTON' || t.closest('button') || document.activeElement?.tagName === 'BUTTON') {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+}, true);
+
 function _syncEmailReadState(uid, isRead = true) {
   if (uid == null) return;
   const uidStr = String(uid);
