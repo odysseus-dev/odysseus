@@ -1119,20 +1119,23 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
         from routes.email_helpers import _email_cache_owner_clause, _imap_connect, SCHEDULED_DB
         from src.llm_core import llm_call_async_with_fallback
 
+        def _uid_arg(uid):
+            return uid if isinstance(uid, bytes) else str(uid).encode()
+
         # 1. Pull recent UIDs + From headers cheaply (header-only fetch).
         def _pull_headers():
             results = []
             conn = _imap_connect(None, owner=owner)
             try:
                 conn.select("INBOX", readonly=True)
-                status, data = conn.search(None, "ALL")
+                status, data = conn.uid("SEARCH", None, "ALL")
                 if status != "OK" or not data or not data[0]:
                     return results
-                uids = data[0].split()[-300:][::-1]  # newest 300
+                uids = data[0].split()[-300:][::-1]  # newest 300 IMAP UIDs
                 for uid in uids:
                     try:
-                        st, msg_data = conn.fetch(
-                            uid, "(BODY.PEEK[HEADER.FIELDS (FROM)])"
+                        st, msg_data = conn.uid(
+                            "FETCH", _uid_arg(uid), "(BODY.PEEK[HEADER.FIELDS (FROM)])"
                         )
                         if st != "OK" or not msg_data or not msg_data[0]:
                             continue
@@ -1214,7 +1217,9 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
                     conn2.select("INBOX", readonly=True)
                     for mm in _msgs:
                         try:
-                            st, data = conn2.fetch(mm["uid"], "(BODY.PEEK[TEXT])")
+                            st, data = conn2.uid(
+                                "FETCH", _uid_arg(mm["uid"]), "(BODY.PEEK[TEXT])"
+                            )
                             if st != "OK" or not data or not data[0]:
                                 continue
                             raw = data[0][1] if isinstance(data[0], tuple) else None
@@ -1353,16 +1358,20 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
         recent_subjects: list[tuple[str, str]] = []
         try:
             import email as _email
-            conn = _imap_connect(None)
+            conn = _imap_connect(None, owner=owner)
             try:
                 conn.select("INBOX", readonly=True)
-                status, data = conn.search(None, "UNSEEN")
+                status, data = conn.uid("SEARCH", None, "UNSEEN")
                 uids = (data[0].split() if status == "OK" and data and data[0] else [])
                 unread_count = len(uids)
-                # Grab headers for the most recent 5 unread (UIDs increase with arrival)
+                # Grab headers for the most recent 5 unread (UID SEARCH, not sequence #)
                 for uid in uids[-5:][::-1]:
                     try:
-                        _, msg_data = conn.fetch(uid, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)])")
+                        _, msg_data = conn.uid(
+                            "FETCH",
+                            uid if isinstance(uid, bytes) else str(uid).encode(),
+                            "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)])",
+                        )
                         if not msg_data or not msg_data[0]:
                             continue
                         hdr = msg_data[0][1] if isinstance(msg_data[0], tuple) else msg_data[0]
