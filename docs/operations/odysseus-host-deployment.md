@@ -25,7 +25,7 @@ $env:MISUMI_MODEL_HEALTH_URL = 'http://127.0.0.1:11434/api/tags'
 $env:MISUMI_INTERFACE_HEALTH_URL = 'http://192.168.4.37:8770/health'
 ```
 
-Create a narrowly scoped API token for the interface bridge. Keep it in the interface-box process environment as `ODYSSEUS_API_TOKEN`; never put it in `config.json` or Git.
+Create a narrowly scoped API token for the interface bridge with the `misumi_interface` profile. Keep it in the interface-box process environment as `ODYSSEUS_API_TOKEN`; never put it in `config.json` or Git.
 
 ## Lifecycle commands
 

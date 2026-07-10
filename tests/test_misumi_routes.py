@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from routes.api_token_routes import _normalize_scopes
 from routes.misumi_routes import setup_misumi_routes
 from services.memory.skills import SkillsManager
 
@@ -69,3 +70,8 @@ def test_status_is_explicitly_read_only(tmp_path, monkeypatch):
     body = client.get("/misumi/status").json()
     assert body["writes_allowed"] is False
     assert body["household"]["mode"] == "read_only"
+
+
+def test_misumi_interface_token_profile_has_narrow_required_scopes():
+    assert _normalize_scopes(profile="misumi_interface") == ["misumi:read", "misumi:execute"]
+    assert _normalize_scopes("misumi:execute") == ["misumi:read", "misumi:execute"]

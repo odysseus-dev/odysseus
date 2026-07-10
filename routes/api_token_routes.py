@@ -27,11 +27,14 @@ ALLOWED_SCOPES = {
     "memory:write",
     "cookbook:read",
     "cookbook:launch",
+    "misumi:read",
+    "misumi:execute",
 }
 TOKEN_PROFILES = {
     "chat": ["chat"],
     "codex_todos": ["todos:read", "todos:write"],
     "codex_email_drafts": ["email:read", "email:draft", "documents:read", "documents:write"],
+    "misumi_interface": ["misumi:read", "misumi:execute"],
 }
 
 
@@ -68,6 +71,7 @@ def _normalize_scopes(scopes: str | list[str] | None = None, profile: str | None
     ensure_before("memory:write", "memory:read")
     ensure_before("email:draft", "email:read")
     ensure_before("cookbook:launch", "cookbook:read")
+    ensure_before("misumi:execute", "misumi:read")
 
     return normalized or [DEFAULT_SCOPES]
 

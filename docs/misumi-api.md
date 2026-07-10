@@ -2,7 +2,7 @@
 
 Odysseus exposes a Misumi-facing compatibility surface while retaining its generic UI and APIs. Personas select context; Odysseus enforces permissions.
 
-Only `GET /misumi/health` is unauthenticated. Every other route uses normal Odysseus cookie or bearer-token auth. Interface API tokens should carry `misumi:read` and `misumi:execute`; the latter currently permits planning only because Phase A exposes no household write or task-execution path.
+Only `GET /misumi/health` is unauthenticated. Every other route uses normal Odysseus cookie or bearer-token auth. Create interface tokens with the `misumi_interface` profile, which grants only `misumi:read` and `misumi:execute`; the latter currently permits planning only because Phase A exposes no household write or task-execution path.
 
 ## Health
 
