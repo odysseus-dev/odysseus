@@ -115,6 +115,13 @@ async def test_learn_sender_signatures_resolves_llm_for_task_owner(monkeypatch):
         def fetch(self, _uid, _query):
             return "OK", [(None, b"From: Writer <writer@example.com>\r\n\r\n")]
 
+        def uid(self, command, *args):
+            # The scheduled actions now operate on UIDs (#5148); route the
+            # stub back onto the same canned search/fetch results.
+            if command.upper() == "SEARCH":
+                return self.search(*args)
+            return self.fetch(*args)
+
         def logout(self):
             return None
 
@@ -189,6 +196,13 @@ async def test_learn_sender_signatures_writes_owner_scoped_cache(monkeypatch, tm
                     ),
                 )
             ]
+
+        def uid(self, command, *args):
+            # The scheduled actions now operate on UIDs (#5148); route the
+            # stub back onto the same canned search/fetch results.
+            if command.upper() == "SEARCH":
+                return self.search(*args)
+            return self.fetch(*args)
 
         def logout(self):
             return None
