@@ -647,7 +647,8 @@ def _audit_finalize_status(skills_manager, name: str, owner, verdict: str,
     if duplicate_of:
         necessary = False
     c = float(confidence or 0.0)
-    status = "published" if (auto_publish and necessary and verdict == "pass" and c >= min_conf) else "draft"
+    external = bool(current and current.get("source") == "imported")
+    status = "published" if (auto_publish and not external and necessary and verdict == "pass" and c >= min_conf) else "draft"
     try:
         skills_manager.update_skill(name, {"status": status}, owner=owner)
     except Exception:

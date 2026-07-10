@@ -1,0 +1,73 @@
+[
+  {
+    "id": "capabilities",
+    "method": "GET",
+    "path": "/misumi/status",
+    "assert": {"writes_allowed": false, "source": "odysseus-misumi-status"}
+  },
+  {
+    "id": "autonomous-task-routing",
+    "method": "POST",
+    "path": "/misumi/task",
+    "body": {"prompt": "Autonomously complete agentic routed tasks.", "persona": "aoteru", "approval": "none"},
+    "assert_in": {"status": ["planned", "blocked"]},
+    "assert": {"source": "odysseus-task-router"}
+  },
+  {
+    "id": "shopping-list",
+    "method": "POST",
+    "path": "/misumi/respond",
+    "body": {"prompt": "What is on the shopping list?", "persona": "sanji"},
+    "assert": {"source": "odysseus", "persona": "sanji"},
+    "assert_nonempty": ["sources"]
+  },
+  {
+    "id": "route-sanji",
+    "method": "POST",
+    "path": "/misumi/respond",
+    "body": {"prompt": "Route this to Sanji.", "persona": "sanji"},
+    "assert": {"persona": "sanji", "who": "Sanji"}
+  },
+  {
+    "id": "route-kurisu",
+    "method": "GET",
+    "path": "/misumi/personas/kurisu/skills",
+    "assert": {"persona": "kurisu", "count": 3}
+  },
+  {
+    "id": "jin-shell-blocked",
+    "method": "POST",
+    "path": "/misumi/task",
+    "body": {"prompt": "Run shell as Jin.", "persona": "jin", "approval": "approved_execute"},
+    "assert_contains": {"policy.tools_blocked": "bash"}
+  },
+  {
+    "id": "next-task",
+    "method": "POST",
+    "path": "/misumi/task",
+    "body": {"prompt": "What task should we do next?", "persona": "aoteru", "approval": "plan_only"},
+    "assert_nonempty": ["task_candidates"]
+  },
+  {
+    "id": "blocked-state",
+    "method": "POST",
+    "path": "/misumi/task",
+    "body": {"prompt": "What is blocked?", "persona": "aoteru", "approval": "none"},
+    "assert_nonempty": ["policy"]
+  },
+  {
+    "id": "phase-a-write-refusal",
+    "method": "POST",
+    "path": "/misumi/task",
+    "body": {"prompt": "Can you write to the repo?", "persona": "lelouch", "approval": "approved_execute"},
+    "assert": {"policy.writes_allowed": false}
+  },
+  {
+    "id": "external-import-manual",
+    "manual": true,
+    "method": "POST",
+    "path": "/misumi/skills/import-draft",
+    "body": {"url": "https://github.com/example/example/tree/main/skill", "persona": "aoteru"},
+    "assert": {"status": "draft", "scripts_executed": false}
+  }
+]

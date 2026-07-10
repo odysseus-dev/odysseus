@@ -180,6 +180,7 @@ if AUTH_ENABLED:
         "/api/auth/settings",
         "/api/auth/integrations/presets",
         "/api/health",
+        "/misumi/health",
         "/api/version",
         "/login",
     }
@@ -663,6 +664,15 @@ app.include_router(setup_task_routes(task_scheduler))
 from routes.assistant_routes import setup_assistant_routes
 app.include_router(setup_assistant_routes(task_scheduler))
 
+# Misumi compatibility/control-plane surface. All routes except liveness are
+# protected by the normal Odysseus auth middleware.
+from routes.misumi_routes import setup_misumi_routes
+app.include_router(setup_misumi_routes(
+    skills_manager,
+    task_scheduler=task_scheduler,
+    memory_vector=memory_vector,
+))
+
 # Calendar (CalDAV)
 from routes.calendar_routes import setup_calendar_routes
 calendar_router = setup_calendar_routes()
@@ -843,7 +853,11 @@ async def readiness_check() -> JSONResponse:
     subsystem is whole, so an orchestrator can gate traffic on real readiness.
     """
     from src.readiness import check_readiness
-    result = check_readiness()
+    result = check_readiness(
+        skills_manager=skills_manager,
+        task_scheduler=task_scheduler,
+        memory_vector=memory_vector,
+    )
     return JSONResponse(status_code=200 if result.get("ready") else 503, content=result)
 
 @app.get("/api/runtime")
@@ -1049,6 +1063,10 @@ async def _startup_event():
             changed = skills_manager.backfill_owner(primary_owner, set(users.keys()))
             if changed:
                 logger.info("Assigned %s legacy skill file(s) to %s", changed, primary_owner)
+            from src.misumi_skills import seed_first_party_skills
+            seeded = seed_first_party_skills(skills_manager, primary_owner)
+            if seeded:
+                logger.info("Installed %s first-party Misumi skill(s) for %s", seeded, primary_owner)
     except Exception as e:
         logger.debug(f"Skill owner backfill skipped: {e}")
 

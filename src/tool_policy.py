@@ -175,6 +175,8 @@ def build_effective_tool_policy(
     *,
     disabled_tools: Optional[Iterable[str]] = None,
     last_user_message: object = "",
+    persona: object = None,
+    approval: object = "none",
 ) -> ToolPolicy:
     """Compose the effective policy for one agent turn.
 
@@ -184,8 +186,17 @@ def build_effective_tool_policy(
     """
 
     disabled = {str(t) for t in (disabled_tools or []) if t}
+    persona_disabled: Set[str] = set()
+    if persona:
+        from src.misumi_policy import normalize_persona, persona_disabled_tools
+
+        persona_name = normalize_persona(persona)
+        persona_disabled = persona_disabled_tools(persona_name, approval)
+        disabled.update(persona_disabled)
     hidden: Set[str] = set()
     reasons = {tool: "Tool is disabled for this request." for tool in disabled}
+    if persona:
+        reasons.update({tool: f"Tool is blocked for persona {persona_name}." for tool in persona_disabled})
 
     guide_reason = detect_guide_only_turn(last_user_message)
     if guide_reason:

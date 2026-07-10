@@ -1,0 +1,30 @@
+{
+  "phase": "A",
+  "enabled": false,
+  "pilots": {
+    "morning-status": {
+      "enabled": false,
+      "schedule": "manual-first; proposed daily 08:00",
+      "writes_allowed": false,
+      "external_sends_allowed": false
+    },
+    "skill-audit": {
+      "enabled": false,
+      "schedule": "manual-first; proposed weekly Sunday 02:00",
+      "writes_allowed": false,
+      "external_sends_allowed": false
+    },
+    "task-triage": {
+      "enabled": false,
+      "schedule": "manual-first; proposed daily 08:05",
+      "writes_allowed": false,
+      "external_sends_allowed": false
+    },
+    "household-qa": {
+      "enabled": false,
+      "schedule": "manual only",
+      "writes_allowed": false,
+      "external_sends_allowed": false
+    }
+  }
+}
