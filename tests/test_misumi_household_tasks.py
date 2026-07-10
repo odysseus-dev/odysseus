@@ -50,6 +50,18 @@ def test_domain_inference_keeps_food_search_out_of_task_notes(tmp_path):
     assert all(hit["path"].startswith("household/") for hit in adapter.search(query, domain="food"))
 
 
+def test_maintenance_domain_excludes_completed_task_archive(tmp_path):
+    root = _repo(tmp_path)
+    (root / "agent-tasks" / "done").mkdir(parents=True)
+    (root / "agent-tasks" / "done" / "old-loop.md").write_text("urgent open loop\n", encoding="utf-8")
+    (root / "agent-tasks" / "inbox" / "live-loop.md").write_text("urgent open loop\n", encoding="utf-8")
+
+    hits = HouseholdReadOnlyAdapter(root).search("urgent open loops", domain="maintenance")
+
+    assert hits
+    assert all(not hit["path"].startswith("agent-tasks/done/") for hit in hits)
+
+
 def test_household_adapter_rejects_escape_and_unsupported_files(tmp_path):
     adapter = HouseholdReadOnlyAdapter(_repo(tmp_path))
     with pytest.raises(ValueError):

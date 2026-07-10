@@ -20,7 +20,14 @@ DOMAIN_PATHS = {
     "records": ("household/records",),
     "plants": ("household/plants",),
     "finances": ("household/finances",),
-    "maintenance": ("household/maintenance", "agent-tasks"),
+    "maintenance": (
+        "household/maintenance",
+        "agent-tasks/inbox",
+        "agent-tasks/odysseus",
+        "agent-tasks/misumi",
+        "agent-tasks/review",
+        "agent-tasks/blocked-human",
+    ),
 }
 
 DOMAIN_TERMS = {
