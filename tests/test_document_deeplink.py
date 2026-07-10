@@ -31,3 +31,9 @@ def test_failed_document_load_surfaces_user_error():
     js = (_REPO / "static" / "js" / "document.js").read_text(encoding="utf-8")
     assert "uiModule.showError" in js
     assert "Document not found" in js
+
+
+def test_document_relative_time_avoids_deprecated_utcnow():
+    """Document list timestamps should avoid datetime.utcnow()."""
+    src = (_REPO / "src" / "agent_tools" / "document_tools.py").read_text(encoding="utf-8")
+    assert "datetime.utcnow()" not in src
