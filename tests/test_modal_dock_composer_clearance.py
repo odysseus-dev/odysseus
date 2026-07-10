@@ -402,8 +402,13 @@ def test_top_and_bottom_docks_mark_and_reserve_chat_rows():
     assert "margin-top: var(--top-dock-reserve-h, var(--top-dock-h, 0px));" in CSS
     assert "body.bottom-dock-active .chat-container," in CSS
     assert "margin-bottom: var(--bottom-dock-reserve-h, var(--bottom-dock-h, 0px));" in CSS
-    assert "body:is(.top-dock-active, .bottom-dock-active) .chat-container.welcome-active .chat-input-bar" in CSS
+    assert "body.bottom-dock-active .chat-container.welcome-active .chat-input-bar" in CSS
     assert "margin-bottom: 16px;" in CSS
+    assert "body.top-dock-active .chat-container.welcome-active .chat-history" in CSS
+    assert "flex-grow: 0;" in CSS
+    assert "body.top-dock-active .chat-container.welcome-active .chat-input-bar" in CSS
+    assert "margin-top: 16px;" in CSS
+    assert "margin-bottom: auto;" in CSS
 
 
 def test_desktop_resize_handles_settle_after_scale_and_only_show_on_hover():

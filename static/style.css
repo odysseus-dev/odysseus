@@ -16834,8 +16834,15 @@ body.bottom-dock-active .doc-editor-pane {
   margin-bottom: var(--bottom-dock-reserve-h, var(--bottom-dock-h, 0px));
 }
 @media (min-width: 769px) {
-  body:is(.top-dock-active, .bottom-dock-active) .chat-container.welcome-active .chat-input-bar {
+  body.bottom-dock-active .chat-container.welcome-active .chat-input-bar {
     margin-bottom: 16px;
+  }
+  body.top-dock-active .chat-container.welcome-active .chat-history {
+    flex-grow: 0;
+  }
+  body.top-dock-active .chat-container.welcome-active .chat-input-bar {
+    margin-top: 16px;
+    margin-bottom: auto;
   }
 }
 body.top-dock-active .doc-editor-pane {
