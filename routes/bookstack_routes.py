@@ -32,7 +32,23 @@ def _require_admin(request: Request):
 
 
 def _get_bookstack_config():
-    """Get BookStack URL and token from settings."""
+    """Get BookStack URL and token from integrations or settings."""
+    # Try integrations first (stored in data/integrations.json)
+    try:
+        from src.integrations import load_integrations
+        integrations = load_integrations()
+        for integ in integrations:
+            name = (integ.get("name") or "").lower()
+            preset = (integ.get("preset") or "").lower()
+            if preset == "bookstack" or name == "bookstack":
+                url = (integ.get("base_url") or integ.get("url") or "").rstrip("/")
+                token = integ.get("api_key") or integ.get("token") or ""
+                if url:
+                    return url, token
+    except Exception:
+        pass
+
+    # Fallback to settings
     from src.settings import load_settings
     settings = load_settings()
     url = settings.get("bookstack_url", "").rstrip("/")
@@ -45,6 +61,11 @@ def _get_headers():
     url, token = _get_bookstack_config()
     headers = {"Accept": "application/json"}
     if token:
+        # BookStack expects "Token {token_id}:{secret}" format
+        if ":" not in token:
+            # User might have stored just the token_id or secret
+            # Try as-is first, BookStack will reject if wrong
+            pass
         headers["Authorization"] = f"Token {token}"
     return headers
 
@@ -115,6 +136,19 @@ async def test_connection(request: Request):
     if not base_url:
         return {"ok": False, "error": "BookStack URL not configured"}
 
+    if not token:
+        return {"ok": False, "error": "BookStack API token not configured"}
+
+    # Check token format — BookStack expects "Token {token_id}:{secret}"
+    if ":" not in token:
+        return {
+            "ok": False,
+            "error": "Invalid token format. BookStack expects 'Token {token_id}:{secret}'. "
+                     "You provided only part of the token. "
+                     "Go to BookStack → Profile → API Tokens → Create Token, "
+                     "and copy the FULL token string including the colon separator."
+        }
+
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
@@ -124,6 +158,8 @@ async def test_connection(request: Request):
             if resp.status_code == 200:
                 data = resp.json()
                 return {"ok": True, "version": data.get("version", "unknown")}
+            elif resp.status_code == 401:
+                return {"ok": False, "error": "Authentication failed. Check your API token."}
             else:
                 return {"ok": False, "error": f"HTTP {resp.status_code}"}
     except Exception as e:
