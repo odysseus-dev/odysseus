@@ -41,6 +41,16 @@ def test_health_and_grounded_respond(tmp_path, monkeypatch):
     assert "shopping-list.md" in body["sources"][0]["path"]
 
 
+def test_domain_request_reports_absent_data_without_model_fallback(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    body = client.post(
+        "/misumi/respond", json={"prompt": "What plant watering data exists?", "persona": "ginko"}
+    ).json()
+
+    assert body["sources"] == []
+    assert "no plants data surface" in body["text"].lower()
+
+
 def test_task_returns_structured_plan(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
     response = client.post("/misumi/task", json={

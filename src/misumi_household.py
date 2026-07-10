@@ -23,6 +23,31 @@ DOMAIN_PATHS = {
     "maintenance": ("household/maintenance", "agent-tasks"),
 }
 
+DOMAIN_TERMS = {
+    "shopping": {"shopping", "grocery", "groceries", "buy"},
+    "food": {"food", "stock", "inventory", "meal", "meals", "cook", "cooking"},
+    "recipes": {"recipe", "recipes"},
+    "cleaning": {"clean", "cleaning", "chore", "chores", "rota"},
+    "records": {"record", "records", "album", "albums", "music", "play"},
+    "plants": {"plant", "plants", "watering", "watered"},
+    "finances": {"budget", "finance", "finances", "receipt", "subscription"},
+    "maintenance": {"maintenance", "repair", "repairs", "broken", "urgent", "open-loop", "open-loops"},
+    "tasks": {"task", "tasks", "blocked", "backlog"},
+}
+
+
+def infer_household_domain(query: str) -> Optional[str]:
+    """Return the narrow canonical domain most explicitly named by a request."""
+    terms = set(re.findall(r"[A-Za-z0-9_-]{2,}", (query or "").lower()))
+    selected = None
+    selected_score = 0
+    for domain, indicators in DOMAIN_TERMS.items():
+        score = len(terms.intersection(indicators))
+        if score > selected_score:
+            selected = domain
+            selected_score = score
+    return selected
+
 
 def configured_household_root() -> Optional[Path]:
     value = (
@@ -124,7 +149,10 @@ class HouseholdReadOnlyAdapter:
 
     def search(self, query: str, domain: Optional[str] = None, limit: int = 10) -> List[Dict[str, object]]:
         terms = [term.lower() for term in re.findall(r"[A-Za-z0-9_-]{2,}", query or "")]
-        stop = {"what", "which", "where", "when", "from", "that", "this", "with", "have", "does", "there", "currently"}
+        stop = {
+            "and", "are", "current", "currently", "data", "does", "exists", "from", "have", "is",
+            "on", "that", "the", "there", "this", "to", "what", "when", "where", "which", "with",
+        }
         terms = [term for term in terms if term not in stop]
         if not terms:
             return []

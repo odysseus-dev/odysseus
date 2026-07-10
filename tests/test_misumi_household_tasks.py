@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from src.misumi_household import HouseholdReadOnlyAdapter
+from src.misumi_household import HouseholdReadOnlyAdapter, infer_household_domain
 from src.misumi_task_router import MisumiTaskRouter
 
 
@@ -35,6 +35,19 @@ def test_household_adapter_reads_and_cites_without_mutation(tmp_path):
     assert result["line_start"] == 1
     assert "miso" in result["text"]
     assert adapter.content_fingerprint() == before
+
+
+def test_domain_inference_keeps_food_search_out_of_task_notes(tmp_path):
+    root = _repo(tmp_path)
+    (root / "household" / "food" / "stock.yaml").write_text("rice: present\n", encoding="utf-8")
+    (root / "agent-tasks" / "inbox" / "food-note.md").write_text(
+        "food stock recipe data exists\n", encoding="utf-8"
+    )
+    query = "What food stock and recipe data exists?"
+    adapter = HouseholdReadOnlyAdapter(root)
+
+    assert infer_household_domain(query) == "food"
+    assert all(hit["path"].startswith("household/") for hit in adapter.search(query, domain="food"))
 
 
 def test_household_adapter_rejects_escape_and_unsupported_files(tmp_path):

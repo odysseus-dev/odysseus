@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from core.middleware import require_admin
-from src.misumi_household import HouseholdReadOnlyAdapter
+from src.misumi_household import HouseholdReadOnlyAdapter, infer_household_domain
 from src.misumi_observability import MisumiEventLog
 from src.misumi_policy import load_persona_policy, normalize_persona, persona_record, policy_summary
 from src.misumi_skills import installed_skill_files, security_review_files, skills_for_persona
@@ -125,15 +125,23 @@ def setup_misumi_routes(skills_manager, task_scheduler=None, memory_vector=None)
         request_id = events.request_id()
         persona = normalize_persona(body.persona)
         prompt = (body.prompt or body.intent or "status").strip()
-        sources = adapter.search(prompt, limit=4) if adapter.reachable else []
+        domain = infer_household_domain(prompt)
+        sources = adapter.search(prompt, domain=domain, limit=4) if adapter.reachable else []
         backend = model = None
         if sources:
             lead = sources[0]
             text = _short_text(f"From {lead['path']} line {lead['line']}: {lead['snippet']}")
             backend = "household-read-only"
+        elif domain:
+            present = any(item["id"] == domain and item["present"] for item in adapter.domains())
+            if present:
+                text = f"No matching {domain} fact was found in the canonical household repository."
+            else:
+                text = f"The canonical household repository has no {domain} data surface yet."
+            backend = "household-read-only"
         else:
             text, backend, model = await _model_reply(prompt, persona)
-        outcome = "grounded" if sources else "model" if backend else "degraded"
+        outcome = "grounded" if sources else "absent" if domain else "model" if backend else "degraded"
         events.emit({
             "request_id": request_id,
             "persona": persona,
