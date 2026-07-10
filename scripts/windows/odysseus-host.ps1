@@ -14,6 +14,11 @@ param(
     [string]$BindHost = '0.0.0.0',
     [int]$Port = 420,
     [string]$TaskName = 'Odysseus-Misumi',
+    [string]$HouseholdRoot = $env:MISUMI_HOUSEHOLD_ROOT,
+    [string]$ModelHealthUrl = 'http://127.0.0.1:11434/api/tags',
+    [string]$InterfaceHealthUrl = $env:MISUMI_INTERFACE_HEALTH_URL,
+    [string]$ModelUrl = 'http://127.0.0.1:11434/api',
+    [string]$Model = 'qwen3:8b',
     [string]$LanCidr = '192.168.4.0/24',
     [switch]$InstallFirewall,
     [int]$Tail = 120
@@ -91,6 +96,11 @@ switch ($Action) {
         $env:AUTH_ENABLED = 'true'
         $env:LOCALHOST_BYPASS = 'false'
         $env:MISUMI_REQUIRED = 'true'
+        if ($HouseholdRoot) { $env:MISUMI_HOUSEHOLD_ROOT = [IO.Path]::GetFullPath($HouseholdRoot) }
+        if ($ModelHealthUrl) { $env:MISUMI_MODEL_HEALTH_URL = $ModelHealthUrl }
+        if ($InterfaceHealthUrl) { $env:MISUMI_INTERFACE_HEALTH_URL = $InterfaceHealthUrl }
+        if ($ModelUrl) { $env:MISUMI_MODEL_URL = $ModelUrl }
+        if ($Model) { $env:MISUMI_MODEL = $Model }
         Set-Location -LiteralPath $SourceRoot
         & $Python -m uvicorn app:app --host $BindHost --port $Port *>&1 |
             Tee-Object -FilePath $LogPath -Append
@@ -100,13 +110,19 @@ switch ($Action) {
         Assert-Configuration
         New-Item -ItemType Directory -Force -Path $DataRoot,$LogDir | Out-Null
         $scriptPath = $MyInvocation.MyCommand.Path
-        $arguments = @(
+        $argumentParts = @(
             '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden',
             '-File',('"' + $scriptPath + '"'),'-Action','Run',
             '-SourceRoot',('"' + $SourceRoot + '"'),
             '-DataRoot',('"' + $DataRoot + '"'),
             '-BindHost',$BindHost,'-Port',[string]$Port,'-TaskName',('"' + $TaskName + '"')
-        ) -join ' '
+        )
+        if ($HouseholdRoot) { $argumentParts += @('-HouseholdRoot',('"' + $HouseholdRoot + '"')) }
+        if ($ModelHealthUrl) { $argumentParts += @('-ModelHealthUrl',('"' + $ModelHealthUrl + '"')) }
+        if ($InterfaceHealthUrl) { $argumentParts += @('-InterfaceHealthUrl',('"' + $InterfaceHealthUrl + '"')) }
+        if ($ModelUrl) { $argumentParts += @('-ModelUrl',('"' + $ModelUrl + '"')) }
+        if ($Model) { $argumentParts += @('-Model',('"' + $Model + '"')) }
+        $arguments = $argumentParts -join ' '
         $taskAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arguments
         $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
         $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -RestartCount 10 `
