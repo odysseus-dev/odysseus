@@ -41,6 +41,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\windows\odysseus-host.ps1 -Ac
 
 `Health` checks unauthenticated liveness. It checks authenticated readiness when `ODYSSEUS_API_TOKEN` is present. The token is neither printed nor persisted.
 
+The scheduled task requests Windows restart-on-failure and the wrapper also supervises Uvicorn directly, restarting a crashed child after ten seconds. `Stop` terminates the scheduled wrapper before stopping its listener, so an intentional stop does not relaunch the service.
+
 ## Readiness contract
 
 `GET /api/health` proves only that the process can answer. `GET /api/ready` reports database and data-directory integrity, auth versus bind safety, household reachability, skill and scheduler availability, vector state, model health, and optional interface health.

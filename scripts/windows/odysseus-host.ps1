@@ -19,6 +19,8 @@ param(
     [string]$InterfaceHealthUrl = $env:MISUMI_INTERFACE_HEALTH_URL,
     [string]$ModelUrl = 'http://127.0.0.1:11434/api',
     [string]$Model = 'qwen3:8b',
+    [ValidateRange(1,300)]
+    [int]$RestartDelaySeconds = 10,
     [string]$LanCidr = '192.168.4.0/24',
     [switch]$InstallFirewall,
     [int]$Tail = 120
@@ -105,13 +107,15 @@ switch ($Action) {
         # Windows PowerShell 5.1 turns native stderr lines into error records.
         # Uvicorn logs normally on stderr, so a global Stop preference would
         # terminate the service on its first healthy startup log line.
-        $previousErrorAction = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
-        & $Python -m uvicorn app:app --host $BindHost --port $Port *>&1 |
-            Tee-Object -FilePath $LogPath -Append
-        $exitCode = $LASTEXITCODE
-        $ErrorActionPreference = $previousErrorAction
-        exit $exitCode
+        while ($true) {
+            & $Python -m uvicorn app:app --host $BindHost --port $Port *>&1 |
+                Tee-Object -FilePath $LogPath -Append
+            $exitCode = $LASTEXITCODE
+            "Uvicorn exited with code $exitCode; restarting in $RestartDelaySeconds seconds" |
+                Tee-Object -FilePath $LogPath -Append
+            Start-Sleep -Seconds $RestartDelaySeconds
+        }
     }
     'Install' {
         Assert-Configuration
@@ -129,6 +133,7 @@ switch ($Action) {
         if ($InterfaceHealthUrl) { $argumentParts += @('-InterfaceHealthUrl',('"' + $InterfaceHealthUrl + '"')) }
         if ($ModelUrl) { $argumentParts += @('-ModelUrl',('"' + $ModelUrl + '"')) }
         if ($Model) { $argumentParts += @('-Model',('"' + $Model + '"')) }
+        $argumentParts += @('-RestartDelaySeconds',[string]$RestartDelaySeconds)
         $arguments = $argumentParts -join ' '
         $taskAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arguments
         $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
