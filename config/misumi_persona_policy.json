@@ -1,0 +1,68 @@
+{
+  "aoteru": {
+    "role": "head-human-interfacer",
+    "allowed_skill_categories": ["routing", "decision", "system", "task-triage"],
+    "blocked_tools": ["email_send", "calendar_write"],
+    "default_mode": "plan"
+  },
+  "lelouch": {
+    "role": "operator",
+    "allowed_skill_categories": ["workflow", "runbook", "deployment", "task-execution"],
+    "blocked_tools": ["email_send"],
+    "default_mode": "execute_with_approval"
+  },
+  "kurisu": {
+    "role": "archivist",
+    "allowed_skill_categories": ["evidence", "archive", "citation", "document-analysis"],
+    "blocked_tools": ["shell_write", "email_send"],
+    "default_mode": "read_only"
+  },
+  "misato": {
+    "role": "caretaker",
+    "allowed_skill_categories": ["household-ops", "food", "rest", "routines"],
+    "blocked_tools": ["shell", "email_send"],
+    "default_mode": "assist"
+  },
+  "jin": {
+    "role": "selector",
+    "allowed_skill_categories": ["music", "records", "gigs", "collection"],
+    "blocked_tools": ["shell", "email_send"],
+    "default_mode": "read_only"
+  },
+  "sanji": {
+    "role": "chef",
+    "allowed_skill_categories": ["cooking", "shopping", "inventory", "meal-planning"],
+    "blocked_tools": ["shell", "email_send"],
+    "default_mode": "assist"
+  },
+  "l": {
+    "role": "detective-financer",
+    "allowed_skill_categories": ["budget", "anomaly", "receipt", "subscription"],
+    "blocked_tools": ["shell", "email_send", "bank_write"],
+    "default_mode": "read_only"
+  },
+  "ginko": {
+    "role": "naturalist",
+    "allowed_skill_categories": ["plants", "home-sensors", "weather", "damp"],
+    "blocked_tools": ["shell", "email_send"],
+    "default_mode": "read_only"
+  },
+  "ichigo": {
+    "role": "guardian",
+    "allowed_skill_categories": ["urgent-loops", "maintenance", "safety", "repairs"],
+    "blocked_tools": ["shell_write", "email_send"],
+    "default_mode": "assist"
+  },
+  "giorno": {
+    "role": "creative-spawner",
+    "allowed_skill_categories": ["routine-design", "experiments", "rollback", "improvement"],
+    "blocked_tools": ["shell", "email_send"],
+    "default_mode": "propose"
+  },
+  "erwin": {
+    "role": "deputy-general",
+    "allowed_skill_categories": ["priority", "risk", "strategy", "cost-of-delay"],
+    "blocked_tools": ["shell", "email_send"],
+    "default_mode": "plan"
+  }
+}
