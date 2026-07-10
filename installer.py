@@ -12,7 +12,10 @@ EXTENSION_NAME = "Odysseus"
 LOG_FILENAME = "odysseus-installer.log"
 SIMPLE_SIGNAL_EXE = "Simple-Signal-Desktop.exe"
 VENV_DIR_NAME = "venv"
-EXTENSION_PORT = int(os.environ.get("ODYSSEUS_EXTENSION_PORT", "7017"))
+# Simple Signal's Odysseus entry is a launcher for the already-running
+# standalone backend. Keep the default on 7000 so the extension does not
+# create a second Odysseus server with a separate database on another port.
+EXTENSION_PORT = int(os.environ.get("ODYSSEUS_EXTENSION_PORT", "7000"))
 MIN_PYTHON_VERSION = (3, 11)
 WINDOWS_PYTHON_WINGET_ID = "Python.Python.3.12"
 
@@ -154,9 +157,10 @@ def copy_extension_files(source_dir: Path, extension_dir: Path) -> None:
 
         target = extension_dir / filename
         if src.is_dir():
-            if target.exists():
-                shutil.rmtree(target, ignore_errors=True)
-            shutil.copytree(src, target)
+            # Merge application assets into an existing installation.  The
+            # extension directory can contain a working venv, user state, and
+            # host integration files that must survive an update.
+            shutil.copytree(src, target, dirs_exist_ok=True)
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, target)
@@ -173,148 +177,30 @@ def copy_extension_files(source_dir: Path, extension_dir: Path) -> None:
     target_url = f"http://127.0.0.1:{EXTENSION_PORT}/"
     index_path = extension_dir / "index.html"
     index_path.write_text(
-        """<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Opening Odysseus</title>
-  <style>
-    html, body {
-      width: 100%;
-      height: 100%;
-      margin: 0;
-      background: #111;
-      color: #f4f4f5;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-    body {
-      display: grid;
-      place-items: center;
-    }
-    main {
-      width: min(420px, calc(100% - 48px));
-      text-align: center;
-      line-height: 1.5;
-    }
-    a {
-      color: #e06c75;
-    }
-    .hint {
-      opacity: 0.72;
-      font-size: 0.92rem;
-    }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Opening Odysseus...</h1>
-    <p id="status">Starting the local Odysseus server.</p>
-    <p class="hint">This can take a few seconds after Simple Signal starts.</p>
-    <p><a id="open-now" href="__ODYSSEUS_TARGET_URL__">Open manually</a></p>
-  </main>
-  <script>
-    (function () {
-      var target = "__ODYSSEUS_TARGET_URL__";
-      var health = target + "api/health";
-      var status = document.getElementById("status");
-      var attempts = 0;
-      var navigated = false;
-
-      function setStatus(text) {
-        if (status) status.textContent = text;
-      }
-
-      function navigate() {
-        if (navigated) return;
-        navigated = true;
-        setStatus("Opening Odysseus now.");
-        window.location.replace(target);
-      }
-
-      function retry() {
-        if (navigated) return;
-        attempts += 1;
-        setStatus(attempts > 30
-          ? "Still waiting for Odysseus. You can use the manual link once localhost is ready."
-          : "Starting the local Odysseus server.");
-        setTimeout(openWhenReady, 1000);
-      }
-
-      function openWhenReady() {
-        if (navigated) return;
-        fetch(health, { cache: "no-store", mode: "no-cors" })
-          .then(navigate)
-          .catch(retry);
-      }
-
-      var manual = document.getElementById("open-now");
-      if (manual) manual.addEventListener("click", function () { navigated = true; });
-      setTimeout(navigate, 8000);
-      openWhenReady();
-    })();
-  </script>
-</body>
-</html>""".replace("__ODYSSEUS_TARGET_URL__", target_url),
+        (
+            "<!DOCTYPE html><html><head><script>"
+            f'window.top.location.href="{target_url.rstrip("/")}";'
+            "</script></head><body></body></html>"
+        ),
         encoding="utf-8"
     )
 
     router_path = extension_dir / "router.py"
     router_content = """import os
-import socket
 import subprocess
-import time
 from fastapi import APIRouter
 
 router = APIRouter()
 
 install_dir = os.path.dirname(os.path.abspath(__file__))
 ps1_path = os.path.join(install_dir, "launch-windows.ps1")
-lock_path = os.path.join(install_dir, ".odysseus-launch.lock")
-port = "__ODYSSEUS_EXTENSION_PORT__"
 
-def _persistent_data_dir():
-    configured = os.environ.get("ODYSSEUS_DATA_DIR")
-    if configured:
-        return configured
-    appdata = os.environ.get("APPDATA")
-    if appdata:
-        return os.path.join(appdata, "odysseus", "data")
-    return os.path.join(install_dir, "data")
-
-def _is_port_open(value):
-    try:
-        with socket.create_connection(("127.0.0.1", int(value)), timeout=0.35):
-            return True
-    except OSError:
-        return False
-
-def _launch_lock_recent(max_age=45):
-    try:
-        return time.time() - os.path.getmtime(lock_path) < max_age
-    except OSError:
-        return False
-
-if os.path.exists(ps1_path) and not _is_port_open(port) and not _launch_lock_recent():
-    try:
-        with open(lock_path, "w", encoding="utf-8") as f:
-            f.write(str(time.time()))
-    except OSError:
-        pass
-    env = os.environ.copy()
-    data_dir = _persistent_data_dir()
-    os.makedirs(data_dir, exist_ok=True)
-    env["ODYSSEUS_ALLOW_EMBED"] = "1"
-    env["ODYSSEUS_DATA_DIR"] = data_dir
-    env["DATABASE_URL"] = "sqlite:///" + os.path.join(data_dir, "app.db").replace("\\\\", "/")
-    env["APP_PORT"] = port
-    env["ODYSSEUS_INTERNAL_BASE"] = "http://127.0.0.1:" + port
+if os.path.exists(ps1_path):
     subprocess.Popen(
-        ["powershell.exe", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", ps1_path, "-Port", port],
-        cwd=install_dir,
-        env=env
+        ["powershell.exe", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", ps1_path],
+        cwd=install_dir
     )
-""".replace("__ODYSSEUS_EXTENSION_PORT__", str(EXTENSION_PORT))
+"""
     router_path.write_text(router_content, encoding="utf-8")
 
 def python_version_for_command(command: list[str]) -> tuple[int, int, int] | None:

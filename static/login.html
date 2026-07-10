@@ -113,6 +113,10 @@
       linear-gradient(90deg, color-mix(in srgb, var(--bg-effect-color, var(--fg)) calc(3.5% * var(--bg-effect-intensity, 1)), transparent) 1px, transparent 1px);
     background-size: 24px 24px; background-attachment: fixed;
   }
+  /* Some Electron hosts override the user-agent stylesheet for embedded
+     pages. Keep executable/template source out of the flex layout even when
+     the host stops applying Chromium's default `script { display:none }`. */
+  script, style, template { display: none !important; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: 'Fira Code', monospace;
