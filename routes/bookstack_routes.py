@@ -62,10 +62,6 @@ def _get_headers():
     headers = {"Accept": "application/json"}
     if token:
         # BookStack expects "Token {token_id}:{secret}" format
-        if ":" not in token:
-            # User might have stored just the token_id or secret
-            # Try as-is first, BookStack will reject if wrong
-            pass
         headers["Authorization"] = f"Token {token}"
     return headers
 
@@ -139,8 +135,11 @@ async def test_connection(request: Request):
     if not token:
         return {"ok": False, "error": "BookStack API token not configured"}
 
-    # Check token format — BookStack expects "Token {token_id}:{secret}"
     if ":" not in token:
+        return {
+            "ok": False,
+            "error": "Invalid token format. Expected 'token_id:secret'"
+        }
         return {
             "ok": False,
             "error": "Invalid token format. BookStack expects 'Token {token_id}:{secret}'. "

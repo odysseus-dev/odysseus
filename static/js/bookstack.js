@@ -1,7 +1,6 @@
 // static/js/bookstack.js
 // BookStack Modal — browse, search, read pages from BookStack wiki.
 import { makeWindowDraggable } from './windowDrag.js';
-import * as Modals from './modalManager.js';
 
 const _t = (k, v) => (window.__t || (kk => kk))(k, v);
 const API_BASE = '/api/bookstack';
@@ -381,8 +380,25 @@ function _wireEvents() {
 
 // ---- Public API ----
 
-export function openPanel() {
+export async function openPanel() {
   if (_open) return;
+
+  // Check if BookStack is configured
+  try {
+    const res = await fetch(`${API_BASE}/test`, { credentials: 'same-origin' });
+    const data = await res.json();
+    if (!data.ok) {
+      if (window.uiModule && window.uiModule.showToast) {
+        window.uiModule.showToast(data.error || 'BookStack not configured. Add it in Settings → Integrations.');
+      } else {
+        alert(data.error || 'BookStack not configured. Add it in Settings → Integrations.');
+      }
+      return;
+    }
+  } catch (e) {
+    return;
+  }
+
   _open = true;
   _modal = _createModal();
   _wireEvents();
