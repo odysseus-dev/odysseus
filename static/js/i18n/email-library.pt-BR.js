@@ -20,12 +20,29 @@ registerMessages('pt-BR', {
   'Show Odysseus reminder emails': 'Mostrar e-mails de lembrete do Odysseus',
   'Show only emails with attachments': 'Mostrar apenas e-mails com anexos',
   'New email': 'Novo e-mail',
+  'All': 'Todos',
+  'Unread': 'Nao lidos',
+  'Favorites': 'Favoritos',
+  'Reminders': 'Lembretes',
+  'Unanswered': 'Sem resposta',
+  'Tags': 'Tags',
+  'Urgent': 'Urgente',
+  'Action needed': 'Acao necessaria',
+  'Bills': 'Contas',
+  'Receipt': 'Recibo',
+  'Travel': 'Viagem',
+  'Spam': 'Spam',
+  'Show email tags': 'Mostrar tags do e-mail',
+  'Open calendar event': 'Abrir evento do calendario',
+  'Show {tag} emails': 'Mostrar e-mails de {tag}',
+  'Show all tags': 'Mostrar todas as tags',
 
   // --- recipient chip ---
   'Copied': 'Copiado',
   'Email copied': 'E-mail copiado',
   'Copy email': 'Copiar e-mail',
   'Copy failed': 'Falha ao copiar',
+  'Sender details': 'Detalhes do remetente',
 
   // --- dock chip titles ---
   'Open {label}': 'Abrir {label}',
@@ -42,6 +59,7 @@ registerMessages('pt-BR', {
 
   // --- stats/loading ---
   'Loading...': 'Carregando...',
+  'Last updated: {rel}': 'Ultima atualizacao: {rel}',
 
   // --- reminder clear ---
   'Permanently delete all Odysseus reminder emails?': 'Excluir permanentemente todos os e-mails de lembrete do Odysseus?',
@@ -57,6 +75,10 @@ registerMessages('pt-BR', {
   'Searching...': 'Buscando...',
   '{count} match{s} on server': '{count} resultado{s} no servidor',
   'Search failed': 'Falha na busca',
+  '{count} cached match{s}': '{count} resultado{s} em cache',
+  '{count} cached match{s} · searching…': '{count} resultado{s} em cache · buscando…',
+  '{count}{source} match{s}': '{count}{source} resultado{s}',
+  'cached': 'em cache',
 
   // --- grid/loading ---
   'Loading emails': 'Carregando e-mails',

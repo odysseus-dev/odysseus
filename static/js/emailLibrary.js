@@ -107,9 +107,9 @@ function _emailTagPillHtml(tag, em) {
     : '';
   if (normalized === 'calendar') {
     if (!eventUid) return '';
-    return `<button type="button" class="email-tag email-tag-${_esc(normalized)} email-tag-clickable" data-calendar-event-uid="${_esc(eventUid)}" title="Open calendar event">${_esc(normalized)}</button>`;
+    return `<button type="button" class="email-tag email-tag-${_esc(normalized)} email-tag-clickable" data-calendar-event-uid="${_esc(eventUid)}" title="${_esc(window.t('Open calendar event'))}">${_esc(normalized)}</button>`;
   }
-  return `<button type="button" class="email-tag email-tag-${_esc(normalized)} email-tag-clickable" data-email-filter-tag="${_esc(normalized)}" title="Show ${_esc(normalized)} emails">${_esc(normalized)}</button>`;
+  return `<button type="button" class="email-tag email-tag-${_esc(normalized)} email-tag-clickable" data-email-filter-tag="${_esc(normalized)}" title="${_esc(window.t('Show {tag} emails').replace('{tag}', normalized))}">${_esc(normalized)}</button>`;
 }
 
 function _emailTagGroupHtml(tags, em) {
@@ -119,7 +119,7 @@ function _emailTagGroupHtml(tags, em) {
   if (!visible.length) return '';
   if (visible.length === 1) return visible[0];
   const extra = visible.slice(1).map(html => `<span class="email-tag-extra">${html}</span>`).join('');
-  return `${visible[0]}${extra}<button type="button" class="email-tags-more" data-email-tags-more aria-expanded="false" title="Show all tags">+${visible.length - 1}<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg></button>`;
+  return `${visible[0]}${extra}<button type="button" class="email-tags-more" data-email-tags-more aria-expanded="false" title="${_esc(window.t('Show all tags'))}">+${visible.length - 1}<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg></button>`;
 }
 
 const _DONE_RESPONSE_TAGS = new Set(['urgent', 'reply-soon', 'action-needed']);
@@ -295,13 +295,13 @@ function _showRecipientChipPopover(chip) {
   const pop = document.createElement('div');
   pop.className = 'recipient-chip-popover';
   pop.setAttribute('role', 'dialog');
-  pop.setAttribute('aria-label', 'Sender details');
+  pop.setAttribute('aria-label', window.t('Sender details'));
   pop.innerHTML = `
     <div class="recipient-chip-popover-main">
       ${name && detail !== name ? `<div class="recipient-chip-popover-name">${_esc(name)}</div>` : ''}
       <div class="recipient-chip-popover-detail">${_esc(detail)}</div>
     </div>
-    ${email ? `<button type="button" class="recipient-chip-popover-copy" title="Copy email" aria-label="Copy email">${_COPY_EMAIL_ICON}</button>` : ''}
+    ${email ? `<button type="button" class="recipient-chip-popover-copy" title="${_esc(window.t('Copy email'))}" aria-label="${_esc(window.t('Copy email'))}">${_COPY_EMAIL_ICON}</button>` : ''}
   `;
   document.body.appendChild(pop);
 
@@ -325,10 +325,10 @@ function _showRecipientChipPopover(chip) {
       const copied = await _copyTextToClipboard(email);
       if (!copied) throw new Error('copy failed');
       ev.currentTarget.classList.add('copied');
-      showToast?.('Email copied');
+      showToast?.(window.t('Email copied'));
       setTimeout(_closeRecipientChipPopover, 650);
     } catch (_) {
-      showToast?.('Copy failed');
+      showToast?.(window.t('Copy failed'));
     }
   }, { signal: ctl.signal });
   setTimeout(() => {
@@ -719,7 +719,7 @@ function _wireUnreadTabClick() {
 async function _deleteEmailAndAdvance(em, card, opts = {}) {
   if (!em || em.uid == null) return;
   if (opts.confirm !== false) {
-    const subject = em.subject || '(no subject)';
+    const subject = em.subject || window.t('(no subject)');
     const ok = await styledConfirm(window.t('Delete "{subject}"?').replace('{subject}', subject), { confirmText: window.t('Delete'), cancelText: window.t('Cancel'), danger: true });
     if (!ok) return;
   }
@@ -735,7 +735,7 @@ async function _deleteEmailAndAdvance(em, card, opts = {}) {
   } catch (err) {
     console.error('Failed to delete email:', err);
     busy?.remove?.();
-    showToast('Failed to delete email');
+    showToast(window.t('Failed to delete email'));
     return;
   }
   busy?.remove?.();
@@ -880,13 +880,13 @@ function _libRelativeTime(value) {
   const d = _libSyncDateFrom(value);
   if (!d) return '';
   const seconds = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
-  if (seconds < 45) return 'just now';
+  if (seconds < 45) return window.t('just now');
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 60) return window.t('{n}m ago').replace('{n}', minutes);
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return window.t('{n}h ago').replace('{n}', hours);
   const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  return window.t('{n}d ago').replace('{n}', days);
 }
 
 function _renderEmailSyncStatus() {
@@ -899,7 +899,7 @@ function _renderEmailSyncStatus() {
   }
   const parts = [];
   const rel = _libRelativeTime(_libSyncStatus.updatedAt);
-  if (rel) parts.push(`Last updated: ${rel}`);
+  if (rel) parts.push(window.t('Last updated: {rel}').replace('{rel}', rel));
   el.textContent = parts.join(' · ');
   el.style.visibility = parts.length ? 'visible' : 'hidden';
 }
@@ -961,7 +961,7 @@ function _resetEmailListForFreshLoad() {
   const grid = document.getElementById('email-lib-grid');
   if (grid) _renderEmailLoading(grid);
   const stats = document.getElementById('email-lib-stats');
-  if (stats) stats.textContent = 'Loading...';
+  if (stats) stats.textContent = window.t('Loading...');
   _setEmailSyncStatus({ loading: true });
 }
 
@@ -1228,22 +1228,22 @@ export function openEmailLibrary(opts = {}) {
                    existing change handlers still fire via the custom picker
                    dispatching 'change' on it. -->
               <select class="memory-sort-select" id="email-lib-filter" style="display:none;">
-                <option value="all">All</option>
-                <option value="unread">Unread</option>
-                <option value="favorites">Favorites</option>
-                <option value="undone">Undone</option>
-                <option value="reminders">Reminders</option>
-                <option value="unanswered">Unanswered</option>
-                <option value="pending_30d">Pending · 30d</option>
-                <option value="stale_30d">Stale · &gt;30d</option>
-                <optgroup label="Tags">
-                  <option value="tag:urgent">Urgent</option>
-                  <option value="tag:reply-soon">Reply soon</option>
-                  <option value="tag:action-needed">Action needed</option>
-                  <option value="tag:bills">Bills</option>
-                  <option value="tag:receipt">Receipt</option>
-                  <option value="tag:travel">Travel</option>
-                  <option value="tag:spam">Spam</option>
+                <option value="all">${window.t('All')}</option>
+                <option value="unread">${window.t('Unread')}</option>
+                <option value="favorites">${window.t('Favorites')}</option>
+                <option value="undone">${window.t('Undone')}</option>
+                <option value="reminders">${window.t('Reminders')}</option>
+                <option value="unanswered">${window.t('Unanswered')}</option>
+                <option value="pending_30d">${window.t('Pending · 30d')}</option>
+                <option value="stale_30d">${window.t('Stale · >30d')}</option>
+                <optgroup label="${window.t('Tags')}">
+                  <option value="tag:urgent">${window.t('Urgent')}</option>
+                  <option value="tag:reply-soon">${window.t('Reply soon')}</option>
+                  <option value="tag:action-needed">${window.t('Action needed')}</option>
+                  <option value="tag:bills">${window.t('Bills')}</option>
+                  <option value="tag:receipt">${window.t('Receipt')}</option>
+                  <option value="tag:travel">${window.t('Travel')}</option>
+                  <option value="tag:spam">${window.t('Spam')}</option>
                 </optgroup>
               </select>
               <div class="email-filter-picker" id="email-filter-picker" style="flex:1;min-width:0;position:relative;">
@@ -1279,8 +1279,8 @@ export function openEmailLibrary(opts = {}) {
               <button class="memory-toolbar-btn email-attach-toggle email-attach-toggle-inline" id="email-attach-btn" title="${window.t('Show only emails with attachments')}">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
               </button>
-              <button class="memory-toolbar-btn email-tags-toggle-inline" id="email-tags-toggle-btn" title="Show email tags" aria-pressed="true">
-                <span>Tags</span>
+              <button class="memory-toolbar-btn email-tags-toggle-inline" id="email-tags-toggle-btn" title="${window.t('Show email tags')}" aria-pressed="true">
+                <span>${window.t('Tags')}</span>
               </button>
             </div>
             </div>
@@ -1294,7 +1294,7 @@ export function openEmailLibrary(opts = {}) {
           </div>
           <div id="email-lib-grid" class="doclib-grid"></div>
           <div id="email-lib-sync-status" class="email-lib-sync-status" aria-live="polite"></div>
-          <button class="email-lib-fab" id="email-lib-fab" type="button" aria-label="New email">
+          <button class="email-lib-fab" id="email-lib-fab" type="button" aria-label="${window.t('New email')}">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="19" height="15" rx="2.5"/><path d="M3 6.5l9 6 9-6"/></svg>
             <span class="email-lib-fab-label">${window.t('New (email)')}</span>
           </button>
@@ -2262,21 +2262,21 @@ function _formatEmailSuggestionDate(em) {
 // corresponding filter row with its icon; picking it pins a filter
 // pill that drives state._libFilter or the has-attachments toggle.
 const _LIB_FILTER_OPTIONS = [
-  { value: 'filter:has-attachments', label: 'Has attachments', keywords: ['attachment', 'attachments', 'has attachment', 'attach'] },
-  { value: 'filter:unread',          label: 'Unread',          keywords: ['unread', 'new', 'unseen'] },
-  { value: 'filter:favorites',       label: 'Favorites',       keywords: ['favorite', 'favorites', 'starred', 'star', 'flagged'] },
-  { value: 'filter:undone',          label: 'Undone',          keywords: ['undone', 'pending', 'todo'] },
-  { value: 'filter:reminders',       label: 'Reminders',       keywords: ['reminder', 'reminders'] },
-  { value: 'filter:unanswered',      label: 'Unanswered',      keywords: ['unanswered', 'unreplied', 'no reply'] },
-  { value: 'filter:pending_30d',     label: 'Pending · 30d',   keywords: ['pending 30d', 'pending', 'recent pending'] },
-  { value: 'filter:stale_30d',       label: 'Stale · >30d',    keywords: ['stale', 'old', 'stale 30d'] },
-  { value: 'filter:tag:urgent',      label: 'Urgent',          keywords: ['urgent', 'critical'] },
-  { value: 'filter:tag:reply-soon',  label: 'Reply soon',      keywords: ['reply soon', 'reply', 'follow up'] },
-  { value: 'filter:tag:action-needed', label: 'Action needed', keywords: ['action needed', 'action', 'needs action'] },
-  { value: 'filter:tag:bills',       label: 'Bills',           keywords: ['bill', 'bills', 'billing'] },
-  { value: 'filter:tag:receipt',     label: 'Receipt',         keywords: ['receipt', 'receipts', 'purchase'] },
-  { value: 'filter:tag:travel',      label: 'Travel',          keywords: ['travel', 'trip', 'booking'] },
-  { value: 'filter:tag:spam',        label: 'Spam',            keywords: ['spam', 'junk'] },
+  { value: 'filter:has-attachments', label: window.t('Has attachments'), keywords: ['attachment', 'attachments', 'has attachment', 'attach'] },
+  { value: 'filter:unread',          label: window.t('Unread'),          keywords: ['unread', 'new', 'unseen'] },
+  { value: 'filter:favorites',       label: window.t('Favorites'),       keywords: ['favorite', 'favorites', 'starred', 'star', 'flagged'] },
+  { value: 'filter:undone',          label: window.t('Undone'),          keywords: ['undone', 'pending', 'todo'] },
+  { value: 'filter:reminders',       label: window.t('Reminders'),       keywords: ['reminder', 'reminders'] },
+  { value: 'filter:unanswered',      label: window.t('Unanswered'),      keywords: ['unanswered', 'unreplied', 'no reply'] },
+  { value: 'filter:pending_30d',     label: window.t('Pending · 30d'),   keywords: ['pending 30d', 'pending', 'recent pending'] },
+  { value: 'filter:stale_30d',       label: window.t('Stale · >30d'),    keywords: ['stale', 'old', 'stale 30d'] },
+  { value: 'filter:tag:urgent',      label: window.t('Urgent'),          keywords: ['urgent', 'critical'] },
+  { value: 'filter:tag:reply-soon',  label: window.t('Reply soon'),      keywords: ['reply soon', 'reply', 'follow up'] },
+  { value: 'filter:tag:action-needed', label: window.t('Action needed'), keywords: ['action needed', 'action', 'needs action'] },
+  { value: 'filter:tag:bills',       label: window.t('Bills'),           keywords: ['bill', 'bills', 'billing'] },
+  { value: 'filter:tag:receipt',     label: window.t('Receipt'),         keywords: ['receipt', 'receipts', 'purchase'] },
+  { value: 'filter:tag:travel',      label: window.t('Travel'),          keywords: ['travel', 'trip', 'booking'] },
+  { value: 'filter:tag:spam',        label: window.t('Spam'),            keywords: ['spam', 'junk'] },
 ];
 
 function _libFilterIconFor(value) {
@@ -2949,7 +2949,7 @@ async function _doSearch() {
     if (!interim && paintedInterimResults && results.length === 0) {
       if (stats) {
         const count = state._libTotal || (state._libEmails || []).length;
-        stats.textContent = `${count} cached match${count === 1 ? '' : 'es'}`;
+        stats.textContent = window.t('{count} cached match{s}').replace('{count}', count).replace('{s}', count === 1 ? '' : 'es');
       }
       _setEmailSyncStatus({
         updatedAt: data.sync?.updated_at || '',
@@ -2980,10 +2980,10 @@ async function _doSearch() {
     const count = Math.max(Number(data.total || 0), results.length);
     if (stats) {
       if (interim) {
-        stats.textContent = `${count} cached match${count === 1 ? '' : 'es'} · searching…`;
+        stats.textContent = window.t('{count} cached match{s} · searching…').replace('{count}', count).replace('{s}', count === 1 ? '' : 'es');
       } else {
-        const source = data.source === 'index' ? ' cached' : '';
-        stats.textContent = `${count}${source} match${count === 1 ? '' : 'es'}`;
+        const source = data.source === 'index' ? ` ${window.t('cached')}` : '';
+        stats.textContent = window.t('{count}{source} match{s}').replace('{count}', count).replace('{source}', source).replace('{s}', count === 1 ? '' : 'es');
       }
     }
     _setEmailSyncStatus({
@@ -3152,7 +3152,7 @@ function _renderEmailLoading(grid) {
 
 function _emailReaderSkeletonHtml() {
   return `
-    <div class="email-reader-skeleton" aria-label="Loading email">
+    <div class="email-reader-skeleton" aria-label="${window.t('Loading email')}">
       <div class="email-reader-skeleton-header">
         <span class="email-skeleton-line chip"></span>
         <span class="email-skeleton-line chip short"></span>
@@ -3276,7 +3276,7 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
     if (grid2) grid2.classList.remove('email-lib-just-opened');
     _renderGrid();
     const stats = document.getElementById('email-lib-stats');
-    if (stats) stats.textContent = `${state._libTotal} emails`;
+    if (stats) stats.textContent = window.t('{n} emails').replace('{n}', state._libTotal);
     const sync = cached.sync || {};
     _setEmailSyncStatus({
       updatedAt: sync.updated_at || '',
@@ -3319,7 +3319,7 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
         _renderGrid();
       }
       const stats = document.getElementById('email-lib-stats');
-      if (stats) stats.textContent = `${state._libTotal} emails`;
+      if (stats) stats.textContent = window.t('{n} emails').replace('{n}', state._libTotal);
       _setEmailSyncStatus({
         updatedAt: sync.updated_at || '',
         source: sync.source || '',
@@ -3350,7 +3350,7 @@ async function _loadScheduled(grid, sp) {
   const items = data.scheduled || [];
   grid.innerHTML = '';
   const stats = document.getElementById('email-lib-stats');
-  if (stats) stats.textContent = `${items.length} scheduled`;
+  if (stats) stats.textContent = window.t('{n} scheduled').replace('{n}', items.length);
   _setEmailSyncStatus({
     updatedAt: new Date().toISOString(),
     source: 'local',
@@ -3762,11 +3762,11 @@ function _createCard(em) {
   meta.style.cssText = 'font-size:10px;opacity:0.7;margin-top:2px;';
   const showFolderChip = !!(_libSearchHadResults && cardFolder);
   const prettyFolder = folderDisplayName(cardFolder);
-  const sentChip = isSentFolderEarly ? '<span class="email-sent-chip" title="Sent email">Sent</span>' : '';
+  const sentChip = isSentFolderEarly ? `<span class="email-sent-chip" title="${_esc(window.t('Sent email'))}">${_esc(window.t('Sent'))}</span>` : '';
   const folderChip = showFolderChip && !isSentFolderEarly
     ? `<span class="email-folder-chip" title="${_esc(cardFolder)}">${_esc(prettyFolder)}</span>`
     : '';
-  const senderPrefix = isSentFolderEarly ? 'to ' : '';
+  const senderPrefix = isSentFolderEarly ? window.t('to ') : '';
   meta.innerHTML = `${sentChip}${folderChip}<span class="email-meta-sender" data-email="${_esc(senderAddress || '')}" data-name="${_esc(senderName || '')}"><span style="opacity:0.55">${senderPrefix}</span><span style="color:${color};font-weight:600">${_esc(senderName)}</span></span><span class="email-meta-sep"> · </span><span class="email-meta-date">${_esc(dateStr)}</span>`;
   content.appendChild(meta);
 
