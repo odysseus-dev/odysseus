@@ -1,12 +1,11 @@
-"""Issue #3229 — allow_bash / allow_web_search must work for JSON API callers
-and admin users must get bash enabled by default.
+"""Issue #3229 and explicit web-toggle regressions.
 
 Bug: allow_bash and allow_web_search were only read from form_data, so JSON
 API callers (Content-Type: application/json) always had bash disabled.
 
 Fix: (1) Read from JSON body as fallback.
-     (2) Only add bash/web_search to disabled_tools when explicitly set to a
-         falsy value; when unset (None), defer to per-user privilege checks.
+     (2) Keep bash on the privilege fallback when unset.
+     (3) Require an explicit per-turn web setting before exposing web tools.
 """
 
 import ast
@@ -15,6 +14,11 @@ from pathlib import Path
 import pytest
 
 from src.action_intents import classify_tool_intent
+from src.tool_policy import (
+    WEB_TOOL_NAMES,
+    is_web_search_explicitly_denied,
+    web_search_enabled_for_turn,
+)
 
 _CHAT_ROUTES = Path(__file__).resolve().parent.parent / "routes" / "chat_routes.py"
 
@@ -76,8 +80,7 @@ def test_allow_web_search_reads_from_body_as_fallback():
 
 
 def test_disabled_tools_respects_missing_vs_explicit_toggles():
-    """When allow_bash is not set (None), bash must NOT be unconditionally
-    added to disabled_tools.  The per-user privilege check handles it.
+    """Bash still defers to privileges, but web is an explicit per-turn opt-in.
     """
     source = _CHAT_ROUTES.read_text(encoding="utf-8")
 
@@ -88,11 +91,14 @@ def test_disabled_tools_respects_missing_vs_explicit_toggles():
     assert "allow_bash is not None" in source, (
         "disabled_tools check must guard against allow_bash being None"
     )
-    assert "allow_web_search is not None" in source, (
-        "disabled_tools check must guard against allow_web_search being None"
+    assert "web_search_enabled_for_turn(allow_web_search, use_web)" in source, (
+        "web tools must be gated through the explicit per-turn web setting"
     )
-    assert "and not _explicit_web_intent" not in source, (
-        "explicit allow_web_search=false must not be overridden by prompt web intent"
+    assert "disabled_tools.update(WEB_TOOL_NAMES)" in source, (
+        "disabled_tools must add web_search/web_fetch when web is not explicitly enabled"
+    )
+    assert "_forced_tools = set(WEB_TOOL_NAMES)" in source, (
+        "web tools should only be forced visible from the explicit web setting"
     )
 
 
@@ -102,9 +108,11 @@ def test_disabled_tools_respects_missing_vs_explicit_toggles():
 def _build_disabled_tools(
     allow_bash=None,
     allow_web_search=None,
+    use_web=None,
     can_use_bash=True,
     can_use_browser=True,
     explicit_web_intent=False,
+    global_disabled=None,
 ):
     """Replicate the disabled-tools logic from chat_stream for unit testing.
 
@@ -112,21 +120,36 @@ def _build_disabled_tools(
     """
     disabled_tools = set()
 
-    # Issue #3229 fix: only disable when explicitly set to a falsy value.
+    # Issue #3229 fix: only disable bash when explicitly set to a falsy value.
     if allow_bash is not None and str(allow_bash).lower() != "true":
         disabled_tools.add("bash")
-    if (
-        allow_web_search is not None
-        and str(allow_web_search).lower() != "true"
-    ):
-        disabled_tools.add("web_search")
-        disabled_tools.add("web_fetch")
+    search_enabled = web_search_enabled_for_turn(allow_web_search, use_web)
+    if is_web_search_explicitly_denied(allow_web_search) or not search_enabled:
+        disabled_tools.update(WEB_TOOL_NAMES)
+    if explicit_web_intent:
+        disabled_tools.update({
+            "bash", "python",
+            "search_chats", "manage_skills", "manage_memory",
+            "read_file", "write_file", "edit_file",
+            "create_document", "edit_document", "update_document",
+            "send_email", "reply_to_email",
+            "manage_notes", "manage_calendar", "manage_tasks",
+            "api_call", "builtin_browser",
+        })
+        if search_enabled:
+            disabled_tools.difference_update(WEB_TOOL_NAMES)
+        else:
+            disabled_tools.update(WEB_TOOL_NAMES)
+    elif search_enabled:
+        disabled_tools.difference_update(WEB_TOOL_NAMES)
 
     # Enforce per-user privileges
     if not can_use_bash:
         disabled_tools.update({"bash", "python", "read_file", "write_file"})
     if not can_use_browser:
         disabled_tools.add("builtin_browser")
+    if global_disabled and isinstance(global_disabled, list):
+        disabled_tools.update(global_disabled)
 
     return disabled_tools
 
@@ -157,6 +180,20 @@ def test_json_body_allow_web_search_false_disables_web():
     assert "web_fetch" in disabled
 
 
+def test_chat_mode_use_web_true_enables_web():
+    """Chat pre-search sends use_web=true as the explicit web setting."""
+    disabled = _build_disabled_tools(use_web="true")
+    assert "web_search" not in disabled
+    assert "web_fetch" not in disabled
+
+
+def test_allow_web_search_false_wins_over_use_web_true():
+    """The agent web toggle hard-denies web even if another path says use_web=true."""
+    disabled = _build_disabled_tools(allow_web_search="false", use_web="true")
+    assert "web_search" in disabled
+    assert "web_fetch" in disabled
+
+
 @pytest.mark.parametrize(
     "message",
     [
@@ -180,6 +217,21 @@ def test_explicit_false_disables_web_despite_prompt_web_intent(message):
     assert "web_fetch" in disabled
 
 
+def test_prompt_web_intent_does_not_enable_web_without_setting():
+    """Prompt-derived web intent alone must not expose web tools."""
+    intent = classify_tool_intent("look up the latest docs")
+    assert intent is not None
+    assert intent.category == "web"
+
+    disabled = _build_disabled_tools(
+        allow_web_search=None,
+        use_web=None,
+        explicit_web_intent=True,
+    )
+    assert "web_search" in disabled
+    assert "web_fetch" in disabled
+
+
 def test_admin_user_gets_bash_enabled_by_default():
     """When allow_bash is not set and user has can_use_bash privilege,
     bash must NOT be disabled.
@@ -188,13 +240,11 @@ def test_admin_user_gets_bash_enabled_by_default():
     assert "bash" not in disabled
 
 
-def test_admin_user_gets_web_search_enabled_by_default():
-    """When allow_web_search is not set and user has normal privileges,
-    web_search must NOT be disabled.
-    """
+def test_web_search_disabled_by_default_without_explicit_turn_setting():
+    """Missing web settings must not expose web tools by default."""
     disabled = _build_disabled_tools(allow_web_search=None)
-    assert "web_search" not in disabled
-    assert "web_fetch" not in disabled
+    assert "web_search" in disabled
+    assert "web_fetch" in disabled
 
 
 def test_non_privileged_user_without_explicit_flag_still_disabled():
@@ -211,6 +261,16 @@ def test_non_privileged_user_explicit_true_overridden_by_privilege():
     """
     disabled = _build_disabled_tools(allow_bash="true", can_use_bash=False)
     assert "bash" in disabled
+
+
+def test_global_disabled_web_wins_over_explicit_web_enable():
+    """Admin-level disabled tools are still a hard deny."""
+    disabled = _build_disabled_tools(
+        allow_web_search="true",
+        global_disabled=["web_search", "web_fetch"],
+    )
+    assert "web_search" in disabled
+    assert "web_fetch" in disabled
 
 
 def test_form_data_none_body_true_works():
