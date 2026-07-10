@@ -13,6 +13,14 @@ from core.middleware import require_admin
 logger = logging.getLogger(__name__)
 
 
+def _diagnostic_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
 def setup_diagnostics_routes(
     rag_manager,
     rag_available: bool,
@@ -79,13 +87,17 @@ def setup_diagnostics_routes(
                 return {"error": "Invalid YouTube URL"}
 
             data = await extract_transcript_async(url, video_id)
+            transcript = _diagnostic_text(data.get("transcript", ""))
+            transcript_preview = (
+                transcript[:500] + "..."
+                if len(transcript) > 500
+                else transcript
+            )
             return {
                 "video_id": video_id,
                 "transcript_success": data.get("success", False),
-                "transcript_length": len(data.get("transcript", "")) if data.get("success") else 0,
-                "transcript_preview": (data.get("transcript", "")[:500] + "...")
-                    if data.get("success") and len(data.get("transcript", "")) > 500
-                    else data.get("transcript", ""),
+                "transcript_length": len(transcript) if data.get("success") else 0,
+                "transcript_preview": transcript_preview if data.get("success") else transcript,
                 "error": data.get("error") if not data.get("success") else None,
             }
         except Exception as e:
