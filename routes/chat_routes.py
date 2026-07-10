@@ -42,7 +42,12 @@ from routes.chat_helpers import (
     _enforce_chat_privileges,
 )
 from src.action_intents import ToolIntent, classify_tool_intent as _classify_tool_intent
-from src.tool_policy import build_effective_tool_policy
+from src.tool_policy import (
+    WEB_TOOL_NAMES,
+    build_effective_tool_policy,
+    is_web_search_explicitly_denied,
+    web_search_enabled_for_turn,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -583,10 +588,7 @@ def setup_chat_routes(
         # below). Skill extraction should only learn from real agent sessions,
         # not chats we quietly promoted for a notes/calendar intent.
         user_requested_agent = (chat_mode == "agent")
-        _search_enabled = (
-            str(allow_web_search).lower() == "true"
-            or str(use_web).lower() == "true"
-        )
+        _search_enabled = web_search_enabled_for_turn(allow_web_search, use_web)
         # Intent auto-escalation: if the user is clearly asking the assistant
         # to create a todo, reminder, or calendar event, promote chat → agent
         # for this turn so the LLM has access to manage_notes / manage_calendar.
@@ -870,24 +872,20 @@ def setup_chat_routes(
 
         # Build disabled-tools set from frontend toggles + user privileges
         disabled_tools = set()
-        # Only disable bash/web_search when the caller *explicitly* set them
-        # to a falsy value.  When unset (None), defer to per-user privilege
-        # checks below — this lets admins with can_use_bash=True use bash
-        # by default without having to send allow_bash in every request.
+        # Only disable bash when the caller *explicitly* set it to a falsy
+        # value. When unset (None), defer to per-user privilege checks below.
+        # Web search is per-turn opt-in: either the chat pre-search setting
+        # (`use_web=true`) or agent web toggle (`allow_web_search=true`) must
+        # explicitly enable it.
         if allow_bash is not None and str(allow_bash).lower() != "true":
             disabled_tools.add("bash")
         _explicit_web_intent = bool(_tool_intent and _tool_intent.category == "web")
-        if (
-            allow_web_search is not None
-            and str(allow_web_search).lower() != "true"
-        ):
-            disabled_tools.add("web_search")
-            disabled_tools.add("web_fetch")
+        if is_web_search_explicitly_denied(allow_web_search) or not _search_enabled:
+            disabled_tools.update(WEB_TOOL_NAMES)
         if _explicit_web_intent:
             # A direct lookup/search request should not drift into personal
-            # tools or shell fallbacks. We still keep web_search/web_fetch
-            # available even when the frontend toggle is stale/falsy because
-            # the user's words are the stronger signal.
+            # tools or shell fallbacks. It can only use web_search/web_fetch
+            # when the request's explicit web setting enabled them.
             disabled_tools.update({
                 "bash", "python",
                 "search_chats", "manage_skills", "manage_memory",
@@ -897,11 +895,12 @@ def setup_chat_routes(
                 "manage_notes", "manage_calendar", "manage_tasks",
                 "api_call", "builtin_browser",
             })
-            disabled_tools.discard("web_search")
-            disabled_tools.discard("web_fetch")
+            if _search_enabled:
+                disabled_tools.difference_update(WEB_TOOL_NAMES)
+            else:
+                disabled_tools.update(WEB_TOOL_NAMES)
         elif _search_enabled:
-            disabled_tools.discard("web_search")
-            disabled_tools.discard("web_fetch")
+            disabled_tools.difference_update(WEB_TOOL_NAMES)
 
         # Nobody/incognito mode: deny tools that would expose the user's
         # persistent memory, past chats, or other identity-linked data.
@@ -952,14 +951,7 @@ def setup_chat_routes(
         from src.settings import get_setting
         _global_disabled = get_setting("disabled_tools", [])
         if _global_disabled and isinstance(_global_disabled, list):
-            explicit_web_allowed = (
-                _explicit_web_intent
-                or (allow_web_search is not None and str(allow_web_search).lower() == "true")
-            )
-            if explicit_web_allowed:
-                disabled_tools.update(t for t in _global_disabled if t not in {"web_search", "web_fetch"})
-            else:
-                disabled_tools.update(_global_disabled)
+            disabled_tools.update(_global_disabled)
 
         # Light auto-escalation: the user is in chat mode and just expressed a
         # notes/calendar/email intent. Grant the relevant managers but withhold
@@ -1411,10 +1403,8 @@ def setup_chat_routes(
                     _max_rounds = max(1, min(_max_rounds, 200))
 
                     _forced_tools = None
-                    if _explicit_web_intent:
-                        _forced_tools = {"web_search", "web_fetch"}
-                    elif _search_enabled:
-                        _forced_tools = {"web_search", "web_fetch"}
+                    if _search_enabled:
+                        _forced_tools = set(WEB_TOOL_NAMES)
 
                     async for chunk in stream_agent_loop(
                         sess.endpoint_url,
