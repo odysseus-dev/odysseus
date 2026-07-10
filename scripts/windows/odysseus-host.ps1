@@ -102,9 +102,16 @@ switch ($Action) {
         if ($ModelUrl) { $env:MISUMI_MODEL_URL = $ModelUrl }
         if ($Model) { $env:MISUMI_MODEL = $Model }
         Set-Location -LiteralPath $SourceRoot
+        # Windows PowerShell 5.1 turns native stderr lines into error records.
+        # Uvicorn logs normally on stderr, so a global Stop preference would
+        # terminate the service on its first healthy startup log line.
+        $previousErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
         & $Python -m uvicorn app:app --host $BindHost --port $Port *>&1 |
             Tee-Object -FilePath $LogPath -Append
-        exit $LASTEXITCODE
+        $exitCode = $LASTEXITCODE
+        $ErrorActionPreference = $previousErrorAction
+        exit $exitCode
     }
     'Install' {
         Assert-Configuration
