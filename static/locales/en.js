@@ -1321,6 +1321,7 @@ export default {
   "codeEditor.loading": "Loading code-server...",
   "codeEditor.notRunning": "code-server is not running. Start it with: docker compose up -d code-server",
   "bookstack.search": "Search BookStack...",
+  "bookstack.notConfigured": "BookStack not configured. Add it in Settings → Integrations.",
   "bookstack.loading": "Loading...",
   "bookstack.home": "Home",
   "bookstack.back": "Back",

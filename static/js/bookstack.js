@@ -147,8 +147,12 @@ async function _renderSidebar() {
   el.innerHTML = `<div class="bs-loading">${_t('bookstack.loading', 'Loading...')}</div>`;
 
   const data = await _listShelves();
-  if (!data || !data.data) {
-    el.innerHTML = `<div class="bs-empty">${_t('bookstack.noShelves', 'No shelves found')}</div>`;
+  if (!data) {
+    el.innerHTML = `<div class="bs-empty">${_t('bookstack.notConfigured', 'BookStack not configured. Add it in Settings → Integrations.')}</div>`;
+    return;
+  }
+  if (!data.data) {
+    el.innerHTML = `<div class="bs-empty">${_t('bookstack.error', 'Error loading content')}</div>`;
     return;
   }
 
@@ -380,25 +384,8 @@ function _wireEvents() {
 
 // ---- Public API ----
 
-export async function openPanel() {
+export function openPanel() {
   if (_open) return;
-
-  // Check if BookStack is configured
-  try {
-    const res = await fetch(`${API_BASE}/test`, { credentials: 'same-origin' });
-    const data = await res.json();
-    if (!data.ok) {
-      if (window.uiModule && window.uiModule.showToast) {
-        window.uiModule.showToast(data.error || 'BookStack not configured. Add it in Settings → Integrations.');
-      } else {
-        alert(data.error || 'BookStack not configured. Add it in Settings → Integrations.');
-      }
-      return;
-    }
-  } catch (e) {
-    return;
-  }
-
   _open = true;
   _modal = _createModal();
   _wireEvents();
@@ -424,9 +411,9 @@ export function closePanel() {
   _modal = null;
 }
 
-export function togglePanel() {
+export async function togglePanel() {
   if (_open) closePanel();
-  else openPanel();
+  else await openPanel();
 }
 
 export function isPanelOpen() {
