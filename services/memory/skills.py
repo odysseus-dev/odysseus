@@ -421,6 +421,9 @@ class SkillsManager:
         sk.category = cat
         sk.owner = owner
         sk.source = "imported"
+        # External bundles are untrusted. Their frontmatter cannot self-publish.
+        sk.status = "draft"
+        sk.confidence = min(float(sk.confidence or 0.0), 0.5)
         if source_url:
             extra = (sk.body_extra or "").strip()
             note = f"Imported from {source_url}"
