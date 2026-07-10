@@ -151,7 +151,7 @@ def setup_misumi_routes(skills_manager, task_scheduler=None, memory_vector=None)
             "mood": body.mood or "focused",
             "source": "odysseus",
             "persona": persona,
-            "who": persona_record(persona).get("role"),
+            "who": persona_record(persona).get("display_name"),
             "audio_url": None,
             "voice": None,
             "tts_provider": None,

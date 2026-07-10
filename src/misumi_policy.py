@@ -17,6 +17,11 @@ from src.constants import BASE_DIR
 
 POLICY_PATH = Path(BASE_DIR) / "config" / "misumi_persona_policy.json"
 VALID_APPROVALS = {"none", "plan_only", "approved_read_only", "approved_execute"}
+DISPLAY_NAMES = {
+    "aoteru": "Aoteru", "lelouch": "Lelouch", "kurisu": "Kurisu",
+    "misato": "Misato", "jin": "Jin", "sanji": "Sanji", "l": "L",
+    "ginko": "Ginko", "ichigo": "Ichigo", "giorno": "Giorno", "erwin": "Erwin",
+}
 
 TOOL_FAMILIES: Mapping[str, Set[str]] = {
     "shell": {"bash", "python"},
@@ -55,7 +60,7 @@ def normalize_persona(persona: object) -> str:
 
 def persona_record(persona: object) -> Dict[str, object]:
     name = normalize_persona(persona)
-    return {"id": name, **load_persona_policy()[name]}
+    return {"id": name, "display_name": DISPLAY_NAMES.get(name, name.title()), **load_persona_policy()[name]}
 
 
 def expand_tool_labels(labels: Iterable[object]) -> Set[str]:
