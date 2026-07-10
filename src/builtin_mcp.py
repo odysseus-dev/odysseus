@@ -104,6 +104,28 @@ def _spawn_bg(coro) -> asyncio.Task:
     return task
 
 
+def _builtin_python_env(base_dir: str) -> dict:
+    """Build the env passed to a built-in Python MCP subprocess.
+
+    The app root must be importable so the server can `from src... import ...`,
+    but it must not clobber an inherited ``PYTHONPATH``. Source checkouts, Nix
+    builds, and containers often rely on environment-provided import paths; the
+    previous ``{"PYTHONPATH": base_dir}`` replaced that value wholesale, which
+    broke built-in MCP tools in those launches (e.g. "MCP server not connected:
+    email"). Prepend the app root to the inherited entries and de-duplicate
+    while preserving order.
+    """
+    inherited = os.environ.get("PYTHONPATH", "")
+    seen: set[str] = set()
+    entries: list[str] = []
+    for part in [base_dir, *inherited.split(os.pathsep)]:
+        part = part.strip()
+        if part and part not in seen:
+            seen.add(part)
+            entries.append(part)
+    return {"PYTHONPATH": os.pathsep.join(entries)}
+
+
 async def register_builtin_servers(mcp_manager):
     """Connect all built-in MCP servers to the manager."""
     if MCP_DISABLED:
@@ -121,7 +143,7 @@ async def register_builtin_servers(mcp_manager):
                 transport="stdio",
                 command=python,
                 args=[script_path],
-                env={"PYTHONPATH": base_dir},
+                env=_builtin_python_env(base_dir),
             )
             if ok:
                 logger.info(f"Built-in MCP server registered: {name}")
