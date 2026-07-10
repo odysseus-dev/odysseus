@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Dict, Optional
@@ -17,7 +18,8 @@ CONFIG_PATH = Path(BASE_DIR) / "config" / "misumi_autonomy.json"
 
 
 def load_pilot_config(path: Optional[Path | str] = None) -> Dict[str, object]:
-    return json.loads(Path(path or CONFIG_PATH).read_text(encoding="utf-8"))
+    selected = path or os.getenv("MISUMI_AUTONOMY_CONFIG") or CONFIG_PATH
+    return json.loads(Path(selected).read_text(encoding="utf-8-sig"))
 
 
 def run_pilot(

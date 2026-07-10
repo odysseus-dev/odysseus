@@ -15,7 +15,14 @@ Each output includes `household_unchanged`. A false value is a hard failure.
 
 ## Scheduling gate
 
-Do not register a Windows scheduled task until the corresponding manual output is useful. To enable one pilot, set both the top-level `enabled` value and that pilot's `enabled` value to true in host-local reviewed configuration. Keep the versioned defaults disabled.
+Do not enable a Windows scheduled task until the corresponding manual output is useful. The host installer registers the three schedulable definitions disabled and copies the disabled versioned config to the external data directory:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\windows\misumi-pilots.ps1 -Action Install
+powershell -ExecutionPolicy Bypass -File scripts\windows\misumi-pilots.ps1 -Action Status
+```
+
+To enable one pilot, set both the top-level `enabled` value and that pilot's `enabled` value to true in `%LOCALAPPDATA%\Odysseus\Misumi\misumi\autonomy.json`, then enable only its scheduled task. Keep the versioned defaults disabled.
 
 Suggested order:
 
@@ -26,4 +33,4 @@ Suggested order:
 
 ## Rollback
 
-Disable the pilot config or remove its scheduled-task registration. Preserve logged output for diagnosis. No household rollback is required because the adapter has no write operation.
+Disable the scheduled task and its host-local config entry, or run `misumi-pilots.ps1 -Action Uninstall`. Preserve logged output for diagnosis. No household rollback is required because the adapter has no write operation.

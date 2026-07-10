@@ -21,6 +21,14 @@ def test_versioned_pilots_are_disabled_by_default():
     assert all(pilot["enabled"] is False for pilot in config["pilots"].values())
 
 
+def test_host_local_pilot_config_can_override_versioned_defaults(tmp_path, monkeypatch):
+    config = tmp_path / "autonomy.json"
+    config.write_text('{"enabled": true, "pilots": {}}', encoding="utf-8")
+    monkeypatch.setenv("MISUMI_AUTONOMY_CONFIG", str(config))
+
+    assert load_pilot_config()["enabled"] is True
+
+
 def test_each_pilot_preserves_household_content(tmp_path):
     adapter = HouseholdReadOnlyAdapter(_repo(tmp_path))
     for name in ("morning-status", "skill-audit", "task-triage", "household-qa"):
