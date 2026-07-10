@@ -574,4 +574,19 @@ registerMessages('pt-BR', {
   "● Select": "● Selecionar",
   "⤒ Import": "⤒ Importar",
   "⤓ Export": "⤓ Exportar",
+
+  // --- Appearance: font family + text size (system fonts feature) ---
+  "Font": "Fonte",
+  "Density": "Densidade",
+  "Text size": "Tamanho da fonte",
+  "Detect": "Detectar",
+  "Detect fonts installed on this device": "Detectar fontes instaladas neste dispositivo",
+  "Installed fonts": "Fontes instaladas",
+  "Detected {n} installed fonts": "Detectadas {n} fontes instaladas",
+  "Font detection was blocked": "A detecção de fontes foi bloqueada",
+  "80% (Smallest)": "80% (Mínimo)",
+  "90% (Smaller)": "90% (Menor)",
+  "100% (Default)": "100% (Padrão)",
+  "125% (Larger)": "125% (Maior)",
+  "200% (Largest)": "200% (Máximo)",
 });

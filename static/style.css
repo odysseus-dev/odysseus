@@ -166,34 +166,34 @@ html {
    Density only changes the root font-size, which can't move the many
    hard-coded px sizes. `zoom` scales the whole UI uniformly (px text
    included) while keeping layout intact, unlike `transform: scale`. */
-:root.ui-scale-125 { zoom: 1.25; }
+:root.ui-scaled { zoom: var(--ui-zoom, 1); }
 /* `zoom` makes the 100dvh shell render taller than the real viewport, which
    pushes the bottom-pinned sidebar account/settings row below the fold (and
    body's overflow:hidden then clips it). Shrink the shell by the same factor
    so it fits the viewport exactly. */
-:root.ui-scale-125 body { height: calc(100dvh / 1.25); }
+:root.ui-scaled body { height: calc(100dvh / var(--ui-zoom, 1)); }
 /* Modals/panels under the 1.25x scale: zoom renders a centred, viewport-sized
    panel ~1.25x taller, pushing its draggable header + close button off-screen
    (a catch-22 — you can't reach the control to turn the size back down). Divide
    each max-height by the same factor to keep the original on-screen footprint.
    Desktop only — the mobile `!important` full-sheet rules win on small screens
    and stay top-anchored, so their headers are already visible. */
-:root.ui-scale-125 .modal-content          { max-height: calc(85dvh / 1.25); }
-:root.ui-scale-125 .cal-modal-content      { max-height: calc(88dvh / 1.25); }
-:root.ui-scale-125 .settings-modal-content { max-height: calc(85dvh / 1.25); }
-:root.ui-scale-125 #theme-popup            { max-height: min(calc(85dvh / 1.25), 480px); }
+:root.ui-scaled .modal-content          { max-height: calc(85dvh / var(--ui-zoom, 1)); }
+:root.ui-scaled .cal-modal-content      { max-height: calc(88dvh / var(--ui-zoom, 1)); }
+:root.ui-scaled .settings-modal-content { max-height: calc(85dvh / var(--ui-zoom, 1)); }
+:root.ui-scaled #theme-popup            { max-height: min(calc(85dvh / var(--ui-zoom, 1)), 480px); }
 /* Cookbook is the one modal that set its height inline (94vh), which beat the
    .modal-content compensation above and overflowed the viewport at 1.25x
    (header + close button pushed off-screen). Own its height here so the same
    zoom compensation applies. */
 #cookbook-modal .modal-content             { height: 94vh; max-height: 94vh; }
-:root.ui-scale-125 #cookbook-modal .modal-content { height: calc(94dvh / 1.25); max-height: calc(94dvh / 1.25); }
+:root.ui-scaled #cookbook-modal .modal-content { height: calc(94dvh / var(--ui-zoom, 1)); max-height: calc(94dvh / var(--ui-zoom, 1)); }
 /* PDF export modal also set its height inline (86vh) at v1.0; that inline cap
    beat the .modal-content compensation above and shifted ~1vh at Default when
    removed. Own its height here so Default is byte-for-byte 86vh and the same
    1.25x compensation applies. */
 .pdf-export-overlay .modal-content { max-height: 86vh; }
-:root.ui-scale-125 .pdf-export-overlay .modal-content { max-height: calc(86dvh / 1.25); }
+:root.ui-scaled .pdf-export-overlay .modal-content { max-height: calc(86dvh / var(--ui-zoom, 1)); }
 
 /* ── Background Patterns ── */
 

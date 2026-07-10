@@ -88,7 +88,13 @@
       // of the active theme) so there's no flash on load.
       try {
         var _us = localStorage.getItem('odysseus-ui-scale');
-        if (_us && _us !== '100') document.documentElement.classList.add('ui-scale-' + _us);
+        if (_us && _us !== '100') {
+          var _uf = Math.max(0.8, Math.min(2, (parseInt(_us, 10) || 100) / 100));
+          if (_uf !== 1) {
+            document.documentElement.style.setProperty('--ui-zoom', String(_uf));
+            document.documentElement.classList.add('ui-scaled');
+          }
+        }
       } catch(e){}
       // Apply background pattern on body once available
       if (t && t.bgPattern && t.bgPattern !== 'none') {
@@ -597,12 +603,32 @@
         <div class="theme-fd-row">
           <div class="theme-fd-group">
             <label class="theme-fd-label">Font</label>
-            <select id="theme-font-select" class="theme-fd-select" aria-label="Font">
-              <option value="mono">Monospace</option>
-              <option value="sans">Sans-serif</option>
-              <option value="serif">Serif</option>
-              <option value="opendyslexic">OpenDyslexic (dyslexia-friendly)</option>
-            </select>
+            <div style="display:flex;gap:6px;align-items:center;">
+              <select id="theme-font-select" class="theme-fd-select" aria-label="Font" style="flex:1 1 auto;min-width:0;">
+                <optgroup label="Built-in">
+                  <option value="mono">Monospace</option>
+                  <option value="sans">Sans-serif</option>
+                  <option value="serif">Serif</option>
+                  <option value="opendyslexic">OpenDyslexic (dyslexia-friendly)</option>
+                </optgroup>
+                <optgroup label="System" data-i18n-skip>
+                  <option value="Arial" style="font-family:Arial">Arial</option>
+                  <option value="Calibri" style="font-family:Calibri">Calibri</option>
+                  <option value="Cambria" style="font-family:Cambria">Cambria</option>
+                  <option value="Comic Sans MS" style="font-family:'Comic Sans MS'">Comic Sans MS</option>
+                  <option value="Consolas" style="font-family:Consolas">Consolas</option>
+                  <option value="Courier New" style="font-family:'Courier New'">Courier New</option>
+                  <option value="Georgia" style="font-family:Georgia">Georgia</option>
+                  <option value="Impact" style="font-family:Impact">Impact</option>
+                  <option value="Segoe UI" style="font-family:'Segoe UI'">Segoe UI</option>
+                  <option value="Tahoma" style="font-family:Tahoma">Tahoma</option>
+                  <option value="Times New Roman" style="font-family:'Times New Roman'">Times New Roman</option>
+                  <option value="Trebuchet MS" style="font-family:'Trebuchet MS'">Trebuchet MS</option>
+                  <option value="Verdana" style="font-family:Verdana">Verdana</option>
+                </optgroup>
+              </select>
+              <button type="button" id="theme-detect-fonts" class="theme-io-btn" title="Detect fonts installed on this device" style="flex:none;height:28px;padding:0 8px;font-size:11px;white-space:nowrap;">Detect</button>
+            </div>
           </div>
           <div class="theme-fd-group">
             <label class="theme-fd-label">Density</label>
@@ -615,8 +641,14 @@
           <div class="theme-fd-group">
             <label class="theme-fd-label">Text size</label>
             <select id="theme-text-size-select" class="theme-fd-select" aria-label="Text size">
-              <option value="100">Default</option>
-              <option value="125">Larger</option>
+              <option value="80">80% (Smallest)</option>
+              <option value="90">90% (Smaller)</option>
+              <option value="100">100% (Default)</option>
+              <option value="110">110%</option>
+              <option value="125">125% (Larger)</option>
+              <option value="150">150%</option>
+              <option value="175">175%</option>
+              <option value="200">200% (Largest)</option>
             </select>
           </div>
           <div class="theme-fd-group" id="theme-frosted-group">

@@ -382,24 +382,81 @@ export function applyFontDensity(font, density) {
     _injectFontFace(f, _customFonts[f]);
     family = "'" + f + "', sans-serif";
   }
+  if (!family && f && f !== DEFAULT_FONT) {
+    // A system-installed font picked by family name (curated list or detected
+    // via queryLocalFonts). The OS provides the glyphs, so no @font-face is
+    // needed — just apply the family with a graceful fallback chain.
+    family = "'" + f.replace(/'/g, '') + "', system-ui, sans-serif";
+  }
   if (!family) family = FONT_MAP[DEFAULT_FONT];
   document.documentElement.style.setProperty('--font-family', family);
   document.documentElement.classList.remove('density-compact', 'density-spacious');
   if (d !== 'comfortable') document.documentElement.classList.add('density-' + d);
 }
 
+// Populate the Font dropdown with the fonts actually installed on this machine,
+// using the Local Font Access API (Chromium 103+, secure/localhost contexts).
+// Shows a permission prompt the first time. Returns the number of families
+// added, or -1 when the API is unavailable so the caller can inform the user.
+export async function detectSystemFonts(selectEl) {
+  if (!selectEl || typeof window.queryLocalFonts !== 'function') return -1;
+  const fonts = await window.queryLocalFonts();
+  const seen = new Set();
+  const families = [];
+  for (const f of fonts) {
+    const fam = f.family;
+    if (fam && !seen.has(fam)) { seen.add(fam); families.push(fam); }
+  }
+  families.sort((a, b) => a.localeCompare(b));
+  // Drop any previously detected list, then (re)build a dedicated group.
+  selectEl.querySelectorAll('option[data-detected-font]').forEach(o => o.remove());
+  const prevGroup = selectEl.querySelector('optgroup[data-detected-group]');
+  if (prevGroup) prevGroup.remove();
+  const group = document.createElement('optgroup');
+  group.label = (window.t ? window.t('Installed fonts') : 'Installed fonts');
+  group.dataset.detectedGroup = '1';
+  for (const fam of families) {
+    const opt = document.createElement('option');
+    opt.value = fam;
+    opt.textContent = fam;
+    opt.dataset.detectedFont = '1';
+    opt.style.fontFamily = "'" + fam.replace(/'/g, '') + "'";
+    group.appendChild(opt);
+  }
+  selectEl.appendChild(group);
+  return families.length;
+}
+
 // UI text-size scale (accessibility). Global and independent of the active
 // theme, so the chosen size persists across theme switches. Stored as a plain
-// percentage string ('100' | '110' | '125' | '150').
+// percentage string ('80' | '90' | '100' | '110' | '125' | '150' | '175' | '200').
 const UI_SCALE_KEY = 'odysseus-ui-scale';
 const DEFAULT_UI_SCALE = '100';
 
+// Turn a stored percentage into a clamped zoom factor. Any size in [0.8, 2] is
+// supported now — the CSS drives `zoom` from the `--ui-zoom` variable, and the
+// modal-height compensations divide by that same variable, so we no longer need
+// a hard-coded class per step.
+function _uiScaleFactor(scale) {
+  const pct = parseInt(scale, 10);
+  if (isNaN(pct)) return 1;
+  return Math.max(0.8, Math.min(2, pct / 100));
+}
+
 export function applyUiScale(scale) {
   const s = scale || DEFAULT_UI_SCALE;
-  // Only one non-default scale ('125'). Remove any legacy classes too so an
-  // older stored value can't leave a stale zoom applied.
-  document.documentElement.classList.remove('ui-scale-110', 'ui-scale-125', 'ui-scale-140');
-  if (s === '125') document.documentElement.classList.add('ui-scale-125');
+  const factor = _uiScaleFactor(s);
+  const root = document.documentElement;
+  // Drop legacy per-step classes so an older stored value can't leave a stale
+  // zoom applied alongside the variable-driven one.
+  root.classList.remove('ui-scale-110', 'ui-scale-125', 'ui-scale-140');
+  if (factor === 1) {
+    root.classList.remove('ui-scaled');
+    root.style.removeProperty('--ui-zoom');
+  } else {
+    root.style.setProperty('--ui-zoom', String(factor));
+    root.classList.add('ui-scaled');
+  }
 }
 
 const _BG_CLASSES = ['bg-pattern-dots',
@@ -1139,6 +1196,31 @@ export function initThemeUI() {
         nf.value = _initFont;
       })
       .catch(e => console.warn('Custom fonts fetch failed:', e));
+
+    // "Detect installed fonts" — pulls the real system font list on demand.
+    const detectBtn = document.getElementById('theme-detect-fonts');
+    if (detectBtn) {
+      if (typeof window.queryLocalFonts !== 'function') {
+        // API unavailable (non-Chromium or insecure context): hide the button;
+        // the curated System group in the dropdown still works.
+        detectBtn.style.display = 'none';
+      } else {
+        detectBtn.addEventListener('click', async () => {
+          detectBtn.disabled = true;
+          try {
+            const n = await detectSystemFonts(nf);
+            if (n > 0) {
+              uiModule.showToast?.(window.t('Detected {n} installed fonts').replace('{n}', n));
+            }
+            nf.value = _initFont;
+          } catch (e) {
+            uiModule.showToast?.(window.t('Font detection was blocked'));
+          } finally {
+            detectBtn.disabled = false;
+          }
+        });
+      }
+    }
   }
   if (densitySelect) {
     const nd = densitySelect.cloneNode(true); densitySelect.parentNode.replaceChild(nd, densitySelect);
