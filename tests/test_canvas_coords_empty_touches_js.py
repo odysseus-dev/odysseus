@@ -23,7 +23,7 @@ _CANVAS = "{width:800,height:600,getBoundingClientRect:()=>({width:400,height:30
 
 def _coords(event_js):
     js = f"""
-    import {{ canvasCoords }} from '{_MOD.as_posix()}';
+    import {{ canvasCoords }} from '{_MOD.as_uri()}';
     const canvas = {_CANVAS};
     console.log(JSON.stringify(canvasCoords({event_js}, canvas)));
     """

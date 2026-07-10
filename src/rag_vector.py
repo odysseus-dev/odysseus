@@ -551,15 +551,26 @@ class VectorRAG:
         metadata operator selects a scalar string by path prefix (``$contains``
         targets document content / list membership, not a ``source`` substring),
         and a plain substring would over-delete siblings — removing ``/docs``
-        must not touch ``/docs2`` or ``/docs_personal``. We therefore match
-        ``source == directory`` or ``source`` startswith ``directory + os.sep``,
-        the same boundary rule add_directory uses for exclusions. ``directory``
-        is abspath-normalized so it matches the absolute ``source`` that indexing
-        always stores, regardless of how the caller passed it in.
+        must not touch ``/docs2`` or ``/docs_personal``. We therefore normalize
+        the source and target through ``realpath``/``normcase`` and use
+        ``commonpath`` for a true path-boundary comparison.  Normalizing both
+        sides also keeps persisted POSIX-style paths usable on Windows.
         """
         if not self.healthy:
             return {"success": False, "message": "Collection not initialized"}
-        directory = os.path.abspath(directory)
+        directory = os.path.normcase(os.path.realpath(os.path.abspath(directory)))
+
+        def _source_is_within_directory(source: Any) -> bool:
+            if not isinstance(source, str) or not source:
+                return False
+            source_path = os.path.normcase(os.path.realpath(os.path.abspath(source)))
+            try:
+                return os.path.commonpath([source_path, directory]) == directory
+            except ValueError:
+                # Different Windows drives (or otherwise incompatible path
+                # forms) cannot be descendants of one another.
+                return False
+
         try:
             removed_ids = set()
             for _lane_name, collection in self._collections_for_delete():
@@ -568,8 +579,7 @@ class VectorRAG:
                     results["ids"][i]
                     for i, m in enumerate(results["metadatas"])
                     if isinstance(m, dict)
-                    and isinstance(m.get("source"), str)
-                    and (m["source"] == directory or m["source"].startswith(directory + os.sep))
+                    and _source_is_within_directory(m.get("source"))
                 ]
                 if ids:
                     collection.delete(ids=ids)

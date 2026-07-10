@@ -2,12 +2,13 @@ from pathlib import Path
 
 from routes import search_routes
 from routes.research_routes import _research_failure_summary
+from tests.helpers.css_loader import read_css_with_imports
 
 
 ROOT = Path(__file__).resolve().parents[1]
 PANEL_JS = (ROOT / "static" / "js" / "research" / "panel.js").read_text(encoding="utf-8")
 JOBS_JS = (ROOT / "static" / "js" / "research" / "jobs.js").read_text(encoding="utf-8")
-STYLE_CSS = (ROOT / "static" / "style.css").read_text(encoding="utf-8")
+STYLE_CSS = read_css_with_imports(ROOT / "static" / "style.css")
 
 
 def test_google_pse_provider_status_requires_key_and_cx(monkeypatch):

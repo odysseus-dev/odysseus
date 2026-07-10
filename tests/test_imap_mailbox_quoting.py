@@ -10,7 +10,7 @@ import pytest
 
 pytest.importorskip("mcp")
 
-import mcp_servers.email_server as es
+from mcp_servers.email_server import _utils as es
 
 
 class FakeListConn:
@@ -74,7 +74,7 @@ def test_mcp_quote_helper_handles_spaced_and_quoted_mailboxes():
 
 
 def test_known_imap_mailbox_call_sites_are_quoted():
-    mcp = Path("mcp_servers/email_server.py").read_text()
+    mcp = Path("mcp_servers/email_server/_utils.py").read_text(encoding="utf-8")
     assert "conn.select(folder" not in mcp
     assert "conn.select(source_folder" not in mcp
     assert "imap.append(sent_folder" not in mcp
@@ -83,11 +83,11 @@ def test_known_imap_mailbox_call_sites_are_quoted():
     assert 'conn.uid("MOVE", _b(uid), dest_folder)' not in mcp
     assert 'conn.uid("COPY", _b(uid), dest_folder)' not in mcp
 
-    pollers = Path("routes/email_pollers.py").read_text()
+    pollers = Path("routes/email_pollers.py").read_text(encoding="utf-8")
     assert "conn.select(sent_name" not in pollers
     assert "imap.append(sent_folder" not in pollers
 
-    document_routes = Path("routes/document_routes.py").read_text()
+    document_routes = Path("routes/document_routes.py").read_text(encoding="utf-8")
     assert "conn.select(doc.source_email_folder" not in document_routes
 
 

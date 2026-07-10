@@ -24,7 +24,7 @@ assertions) end-to-end with a mocked LLM stream, and assert on whether
 import asyncio
 import json
 
-import src.agent_loop as al
+from src.agent_loop import _loop as al
 
 
 def _collect(gen):

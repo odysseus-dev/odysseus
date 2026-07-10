@@ -7,6 +7,7 @@ import bcrypt
 from fastapi import APIRouter, HTTPException, Request, Form
 
 from core.database import get_db_session, ApiToken
+from src.security_audit import log_security_event, TOKEN_CREATED, TOKEN_REVOKED
 from core.middleware import require_admin
 from src.auth_helpers import get_current_user
 
@@ -143,6 +144,13 @@ def setup_api_token_routes() -> APIRouter:
             ))
         _invalidate_cache(request)
 
+        log_security_event(
+            TOKEN_CREATED,
+            actor=owner,
+            target=name,
+            detail=f"scopes={','.join(scope_list)}",
+            request=request,
+        )
         return {
             "id": token_id,
             "name": name,
@@ -202,8 +210,15 @@ def setup_api_token_routes() -> APIRouter:
                 raise HTTPException(404, "Token not found")
             if current_user and token.owner != current_user:
                 raise HTTPException(403, "Not your token")
+            target = token.name
             db.delete(token)
         _invalidate_cache(request)
+        log_security_event(
+            TOKEN_REVOKED,
+            actor=current_user,
+            target=target,
+            request=request,
+        )
         return {"status": "deleted"}
 
     return router

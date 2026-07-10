@@ -1,0 +1,1562 @@
+/* _extras.css — chunked from style.css */
+/* ── In-house color picker ── */
+/* A color-picker swatch input shows the chosen colour as its background; hide
+   the underlying hex text/caret so it doesn't read as "#a1b2c3" in the box.
+   (The themed/gallery variants set this too; this is the generic fallback for
+   swatches outside those scopes, e.g. the calendar-settings color dots.) */
+input.cp-swatch-input {
+  color: transparent;
+  font-size: 0;
+  text-shadow: none;
+  caret-color: transparent;
+  user-select: none;
+}
+input.cp-swatch-input::selection { background: transparent; }
+.cp-popover {
+  position: fixed; z-index: 10000;
+  display: none;
+  width: 240px;
+  background: var(--panel, #1a1a1a);
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  padding: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  font-family: inherit; color: var(--fg, #eee); font-size: 12px;
+  user-select: none;
+}
+.cp-sl {
+  position: relative;
+  width: 100%; height: 160px;
+  border-radius: 6px;
+  cursor: crosshair;
+  overflow: hidden;
+  touch-action: none;
+}
+.cp-sl-white {
+  position: absolute; inset: 0;
+  background: linear-gradient(to right, #fff, rgba(255,255,255,0));
+  pointer-events: none;
+}
+.cp-sl-black {
+  position: absolute; inset: 0;
+  background: linear-gradient(to top, #000, rgba(0,0,0,0));
+  pointer-events: none;
+}
+.cp-sl-handle {
+  position: absolute;
+  width: 12px; height: 12px;
+  margin: -6px 0 0 -6px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.6), 0 1px 3px rgba(0,0,0,0.5);
+  pointer-events: none;
+}
+.cp-hue {
+  position: relative;
+  margin-top: 10px;
+  height: 14px;
+  border-radius: 7px;
+  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+  cursor: pointer;
+  touch-action: none;
+}
+.cp-hue-handle {
+  position: absolute; top: 50%;
+  width: 10px; height: 18px;
+  margin: -9px 0 0 -5px;
+  border: 2px solid #fff;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.6), 0 1px 3px rgba(0,0,0,0.5);
+  pointer-events: none;
+}
+.cp-row {
+  display: flex; align-items: center; gap: 6px; margin-top: 10px;
+}
+.cp-preview {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--border, #333);
+  flex-shrink: 0;
+}
+.cp-hex {
+  flex: 1; min-width: 0;
+  padding: 4px 6px;
+  background: var(--bg, #000); color: var(--fg, #eee);
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  font-family: ui-monospace, 'Fira Code', monospace;
+  font-size: 12px; text-transform: lowercase;
+}
+.cp-hex:focus { outline: none; border-color: var(--red, #e06c75); }
+.cp-eyedropper {
+  width: 26px; height: 26px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  color: var(--fg, #eee);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.1s;
+}
+.cp-eyedropper:hover:not(:disabled) { background: rgba(255,255,255,0.08); }
+.cp-section-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px;
+  opacity: 0.5; margin-top: 10px; margin-bottom: 4px;
+}
+.cp-swatches {
+  display: flex; flex-wrap: wrap; gap: 4px;
+}
+.cp-swatch {
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--border, #333);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.08s;
+}
+.cp-swatch:hover { transform: scale(1.15); }
+.cp-recent-empty {
+  font-size: 11px; opacity: 0.4; padding: 2px 0;
+}
+
+/* PDF form export modal + signature modals — match the app theme via the
+   existing modal/confirm-btn classes. Only a few atom-level styles below. */
+.pdf-export-overlay .modal-content { padding: 12px 14px; }
+.pdf-export-overlay #pdf-export-body { padding-right: 4px; }
+.pdf-export-overlay .pdf-export-section {
+  margin-bottom: 14px;
+}
+.pdf-export-overlay .pdf-export-section-title {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--red);
+  opacity: 0.85;
+  margin-bottom: 6px;
+}
+.pdf-export-overlay .pdf-export-row {
+  display: grid;
+  grid-template-columns: 38% 62%;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 0;
+}
+.pdf-export-overlay .pdf-export-row label {
+  font-size: 0.78rem;
+  color: var(--fg);
+  opacity: 0.85;
+}
+.pdf-export-input,
+.pdf-export-overlay select.pdf-export-input,
+.pdf-export-overlay input.pdf-export-input {
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 4px;
+  font-size: 0.78rem;
+  font-family: inherit;
+}
+.pdf-export-input:focus {
+  outline: none;
+  border-color: var(--fg);
+}
+.sig-modal-overlay .modal-content { padding: 12px 14px; }
+.sig-modal-overlay .sig-canvas {
+  display: block;
+  width: 100%;
+  height: 240px;
+  background: #fff;
+  cursor: crosshair;
+  border: 1px dashed var(--border);
+  border-radius: 5px;
+  /* Drawing uses pointer events; without this, a touch-drag on the canvas pans
+     the page / sheet instead of drawing ("the whole window moves"). */
+  touch-action: none;
+}
+.sig-modal-overlay .sig-name,
+.sig-modal-overlay .sig-smoothness {
+  font-family: inherit;
+}
+.sig-modal-overlay .sig-name {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+.sig-modal-overlay .sig-tile {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  cursor: pointer;
+  background: var(--bg);
+}
+.sig-modal-overlay .sig-tile:hover { border-color: var(--fg); }
+.sig-modal-overlay .sig-tile img {
+  display: block;
+  width: 100%;
+  height: 80px;
+  object-fit: contain;
+  background: #fff;
+  border-radius: 3px;
+}
+.sig-modal-overlay .sig-tile-del {
+  position: absolute;
+  top: 1px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  /* Center the × glyph inside the round bg — without this the button's default
+     text metrics push it past the right edge of the circle. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0 0 1px;
+  box-sizing: border-box;
+  font-size: 0.85rem;
+  line-height: 1;
+  border: 1px solid var(--accent, var(--red));
+  background: #fff;
+  color: var(--accent, var(--red));
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 1;
+}
+.sig-modal-overlay .sig-tile-del:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, #fff);
+}
+.sig-modal-overlay .sig-new-tile {
+  border: 2px dashed var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  cursor: pointer;
+  background: var(--bg);
+  color: var(--fg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 106px;
+  font-weight: 600;
+  opacity: 0.85;
+}
+.sig-modal-overlay .sig-new-tile:hover {
+  opacity: 1;
+  border-color: var(--fg);
+}
+
+/* Form checkboxes — render as a circular dot, theme-aware. Used in the
+   Export PDF modal and the inline PDF view overlay. */
+.pdf-export-overlay input[type="checkbox"],
+#doc-pdf-view input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+  cursor: pointer;
+  border-radius: 50%;
+  background: #fff;
+  position: relative;
+}
+.pdf-export-overlay input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--border);
+  background: var(--bg);
+}
+.pdf-export-overlay input[type="checkbox"]:checked {
+  background: var(--fg);
+  border-color: var(--fg);
+}
+/* PDF view overlays on a white page render — keep colors theme-independent
+   so the dot is always visible against the rendered PDF. */
+#doc-pdf-view input[type="checkbox"] {
+  border: 1.5px solid #444;
+}
+#doc-pdf-view input[type="checkbox"]:checked {
+  background: #111;
+  border-color: #111;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Frosted glass theme — applied when the user enables the "Glass" toggle
+   in theme settings (writes `body.theme-frosted`). Layers a semi-translucent
+   tint over every panel/modal/sidebar/dropdown and blurs whatever is
+   behind it, so the UI reads like layered glass.
+   ───────────────────────────────────────────────────────────────────────── */
+body.theme-frosted #sidebar,
+body.theme-frosted .modal-content,
+body.theme-frosted .doclib-modal-content,
+body.theme-frosted .gallery-modal-content,
+body.theme-frosted .notes-pane,
+body.theme-frosted .research-pane,
+body.theme-frosted .calendar-pane,
+body.theme-frosted .cookbook-pane,
+body.theme-frosted .doc-pane,
+body.theme-frosted .doc-pane-floating,
+body.theme-frosted .cp-popover,
+body.theme-frosted .dropdown,
+body.theme-frosted .overflow-menu,
+body.theme-frosted .doc-tab-dropdown,
+body.theme-frosted .email-reader,
+body.theme-frosted .admin-card,
+body.theme-frosted .gallery-detail-menu,
+body.theme-frosted #theme-popup .modal-content {
+  /* Tinted base color (set separately so the shorthand can't swallow it);
+     much more transparent than before so what's behind actually shows
+     through. The blur catches whatever pixels are below. */
+  background-color: color-mix(in srgb, var(--panel, var(--bg)) 32%, transparent) !important;
+  background-image: linear-gradient(180deg,
+    color-mix(in srgb, var(--fg, #fff) 14%, transparent) 0%,
+    color-mix(in srgb, var(--fg, #fff)  4%, transparent) 26%,
+    transparent 55%) !important;
+  backdrop-filter: blur(24px) saturate(170%) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(170%) !important;
+  border-color: color-mix(in srgb, var(--fg) 22%, transparent) !important;
+}
+/* The sidebar header + user bar paint their own opaque --sidebar-bg/--panel.
+   Under the frosted theme the sidebar is translucent glass, so those solid
+   bands stood out as a dark (near-black) strip over the title/avatar area.
+   Make them transparent so they blend into the frosted sidebar. */
+body.theme-frosted .sidebar-header,
+body.theme-frosted .sidebar-user-bar {
+  background: transparent !important;
+}
+/* Same problem on tool modals: the sticky .modal-header paints a solid
+   var(--panel) bar (so scrolled content doesn't bleed through). Over a
+   frosted-glass modal body that solid bar reads as a dark band across the
+   title area (Calendar, Tasks, Cookbook, Memory, Email…). Give the header
+   its own matching frosted glass — translucent tint + blur — so it stays
+   readable while scrolling but blends into the panel instead of a black band. */
+body.theme-frosted .modal-header {
+  /* Transparent — NOT another panel tint. The header sits on top of the
+     already-frosted modal body, so any added tint stacks and the band
+     reads darker than its surroundings. Keep just the blur (which doesn't
+     darken) so scrolled content stays legible under the sticky header. */
+  background-color: transparent !important;
+  background-image: none !important;
+  backdrop-filter: blur(24px) !important;
+  -webkit-backdrop-filter: blur(24px) !important;
+}
+/* Deep Research's header isn't sticky (content doesn't scroll under it) and
+   its pane carries extra frosting — saturate + a top gradient highlight +
+   the synapse glow. The generic header blur above adds its OWN glass layer,
+   which renders a different shade than the pane behind it. Drop the header's
+   blur so the pane's frosted background shows through the header uniformly. */
+body.theme-frosted .research-pane-header {
+  background-color: transparent !important;
+  background-image: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+body.theme-frosted .notes-mobile-grabber {
+  background-color: transparent !important;
+  background-image: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+/* Inner admin-cards inside frosted modals stack their transparency on top
+   of the modal's, which kills the see-through. Make the inner card nearly
+   fully transparent so the outer modal's blur dominates. */
+body.theme-frosted .modal-content .admin-card,
+body.theme-frosted .doclib-modal-content .admin-card,
+body.theme-frosted .gallery-modal-content .admin-card,
+body.theme-frosted #theme-popup .admin-card {
+  background-color: color-mix(in srgb, var(--panel, var(--bg)) 10%, transparent) !important;
+  background-image: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+/* Subtle inner light highlight + softer shadow on the heavier surfaces */
+body.theme-frosted .modal-content,
+body.theme-frosted .doclib-modal-content,
+body.theme-frosted .gallery-modal-content,
+body.theme-frosted .notes-pane,
+body.theme-frosted .research-pane,
+body.theme-frosted .calendar-pane,
+body.theme-frosted .cookbook-pane,
+body.theme-frosted .doc-pane,
+body.theme-frosted .doc-pane-floating {
+  box-shadow:
+    0 14px 36px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 color-mix(in srgb, var(--fg, #fff) 14%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, #000 14%, transparent) !important;
+}
+/* Backdrops should be MUCH less opaque so the blur effect reads through to
+   the actual page content behind the modal. */
+body.theme-frosted .modal {
+  background: color-mix(in srgb, #000 12%, transparent) !important;
+}
+
+/* Mobile only: lift the Dependencies "Server" dropdown's selected text up ~2px. */
+@media (max-width: 768px) {
+  #hwfit-deps-server { padding-bottom: 4px; line-height: 1; }
+}
+
+/* Emoji rendered as monochrome line icons (OpenMoji-black via /api/emoji proxy)
+   instead of colorful system glyphs — project rule: never colorful emoji. The
+   SVG is used as a mask filled with the current text color, so it tints to the
+   theme. Sized to sit on the text baseline. */
+.emoji {
+  height: 1.15em;
+  width: 1.15em;
+  vertical-align: -0.18em;
+  margin: 0 0.05em;
+  display: inline-block;
+  background-color: currentColor;
+  -webkit-mask: var(--em) center / contain no-repeat;
+          mask: var(--em) center / contain no-repeat;
+}
+
+/* Nudge the X icon in the "Clear all" button down 2px. */
+#research-clear-all svg { position: relative; top: 2px; }
+
+/* RESEARCH SCROLL FORCE — guarantee the jobs list scrolls inside the bounded
+   pane (the pane is height-capped: 85vh desktop, 100dvh mobile). Each ancestor
+   needs min-height:0 for a nested flex scroll to engage. */
+#research-pane { min-height: 0; }
+/* The BODY is the single scroller — the list flows into it and the whole body
+   scrolls. (A nested list-scroller kept clipping instead of scrolling.) */
+#research-pane .research-pane-body {
+  flex: 1 1 auto !important; min-height: 0 !important;
+  display: flex !important; flex-direction: column !important;
+  overflow-y: auto !important; -webkit-overflow-scrolling: touch;
+}
+#research-pane .research-jobs-list {
+  flex: 0 0 auto !important; min-height: 0 !important;
+  overflow: visible !important; max-height: none !important;
+}
+
+/* RESEARCH FULLSCREEN MOBILE — the pane wasn't opening to full height on mobile,
+   so its content overflowed with nowhere to scroll. Pin it to the full viewport
+   (id selector + !important beats the inherited modal-content sizing). */
+@media (max-width: 768px) {
+  /* Full-height mobile sheet, matching Cookbook and the other tool overlays. */
+  #research-overlay { align-items: stretch !important; justify-content: stretch !important; }
+  #research-pane {
+    height: 100dvh !important;
+    height: 100vh !important;
+    max-height: 100dvh !important;
+    max-height: 100vh !important;
+    width: 100vw !important;
+    max-width: 100vw !important;
+    border-radius: 14px 14px 0 0 !important;
+  }
+  /* Bottom breathing room so the expanded Settings + Start button clear the
+     browser's bottom toolbar / safe area and can always be scrolled into view
+     (otherwise the form fits the viewport and there's no room to reach them). */
+  #research-pane .research-pane-body {
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 40px) !important;
+    touch-action: pan-y;
+    overscroll-behavior: contain;
+  }
+}
+
+/* Quick fade + up-nudge. */
+.research-start-btn { position: relative; top: -6px; transition: opacity 0.16s ease; }
+
+/* Right-side group of the section header: clear button (past), status dot, chevron. */
+.research-section-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+/* "Clear all" in the Past header — styled like the cookbook-running clear btn. */
+.research-section-clear {
+  font-size: 10px; padding: 0 8px; height: 22px;
+  border-radius: 6px; border: 1px solid var(--border);
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+  background: none; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;
+  font-family: inherit; white-space: nowrap; transition: all 0.15s;
+  position: relative; top: -2px;
+}
+.research-section-clear:hover { color: var(--red); border-color: var(--red); background: color-mix(in srgb, var(--red) 8%, transparent); }
+.research-section-clear svg { width: 11px; height: 11px; }
+
+/* Visual Report button tinted with the research type colour (--cat-color),
+   falling back to the accent for "standard" (uncategorized) research. */
+.research-job-action.research-job-action-report {
+  color: var(--cat-color, var(--accent, var(--red)));
+  border-color: color-mix(in srgb, var(--cat-color, var(--accent, var(--red))) 45%, var(--border));
+}
+.research-job-action.research-job-action-report:hover {
+  color: var(--cat-color, var(--accent, var(--red)));
+  border-color: var(--cat-color, var(--accent, var(--red)));
+  background: color-mix(in srgb, var(--cat-color, var(--accent, var(--red))) 10%, transparent);
+}
+
+/* Nudge the "+ Queue" button up 5px. */
+#research-add-btn { position: relative; top: -5px; }
+/* Nudge the Start play-icon and Queue plus-sign up 1px so they sit visually
+   centered with the button label text (their glyph baselines drop low). */
+.research-start-btn svg { position: relative; top: -1px; }
+.research-add-plus { position: relative; top: -1px; display: inline-block; }
+
+/* Footer hint under Past research linking to the Library's Research tab. */
+.research-library-hint {
+  /* full-width line in the header, pulled up with negative MARGIN (collapses
+     the gap so it moves up without making the header taller). */
+  width: 100%; flex-basis: 100%; margin: -26px 0 0; line-height: 1.2;
+  font-size: calc(1em - 2px); opacity: 0.55;
+}
+.research-library-link {
+  background: none; border: none; padding: 0; cursor: pointer;
+  font: inherit; color: var(--accent, var(--red)); text-decoration: underline;
+}
+.research-library-link:hover { opacity: 0.8; }
+
+/* Nudge the Delete button 4px left. */
+.research-job-action[data-action="delete"] { position: relative; right: 2px; }
+
+@media (max-width: 768px) {
+  /* Mobile: the "Delete" label is too wide in Deep Research job rows; keep the
+     familiar trash action but make it icon-only. */
+  .research-job-action[data-action="delete"] {
+    width: 28px;
+    min-width: 28px;
+    padding-left: 0;
+    padding-right: 0;
+    gap: 0;
+    justify-content: center;
+    font-size: 0;
+  }
+  .research-job-action[data-action="delete"] svg {
+    width: 13px;
+    height: 13px;
+    margin: 0;
+    flex-shrink: 0;
+  }
+}
+
+/* "Standard" (uncategorized) research uses green everywhere — set its --cat-color
+   to the success green so the Visual Report button matches the green badge. */
+.research-job-card.done:not([data-category]) { --cat-color: var(--color-success); }
+
+/* Failed research (0 sources) — red flag + actionable note. */
+.research-job-card.research-job-failed { border-color: color-mix(in srgb, #f44336 40%, var(--border)); }
+.research-cat-badge.research-cat-failed { color: #f44336; display: inline-flex; align-items: center; gap: 3px; }
+.research-cat-badge.research-cat-failed svg { width: 10px; height: 10px; }
+.research-job-failnote { font-size: 11px; color: #f44336; opacity: 0.9; margin: 4px 0 6px; line-height: 1.35; }
+.research-provider-warning {
+  margin: -6px 0 12px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, #f44336 42%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, #f44336 10%, transparent);
+  color: color-mix(in srgb, #f44336 80%, var(--fg));
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+/* Shared popup-menu row feedback. Many small menus use their own item class;
+   keep the hover light and consistent instead of giving one action a special
+   glow. */
+:is(
+  .overflow-menu-item,
+  .dropdown-item,
+  .dropdown-item-compact,
+  .export-dropdown-item,
+  .sort-dropdown-item,
+  .note-reminder-menu-item,
+  .research-run-mode-popover .research-run-mode-row,
+  .ge-fx-menu-item
+) {
+  transition:
+    background-color 0.14s ease,
+    color 0.14s ease,
+    opacity 0.14s ease,
+    transform 0.14s ease;
+}
+:is(
+  .overflow-menu-item,
+  .dropdown-item,
+  .dropdown-item-compact,
+  .export-dropdown-item,
+  .sort-dropdown-item,
+  .note-reminder-menu-item,
+  .research-run-mode-popover .research-run-mode-row,
+  .ge-fx-menu-item
+):hover:not(:disabled) {
+  opacity: 1;
+  color: var(--fg);
+  background-color: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+  transform: translateX(1px);
+}
+
+/* Slash command autocomplete popup, anchored to the message composer */
+.slash-autocomplete-popup {
+  position: fixed;
+  z-index: 9000;
+  background: var(--panel, var(--bg));
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  font-size: 13px;
+  color: var(--fg, #e6e6e6);
+  overflow-y: auto;
+  padding: 4px 0;
+  display: none;
+}
+.slash-ac-cat {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-muted, #888);
+  padding: 6px 10px 2px;
+  opacity: 0.7;
+}
+.slash-ac-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.slash-ac-row:hover { background-color: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent); }
+.slash-ac-row-sel  { background-color: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent); }
+.slash-ac-token {
+  font-family: 'Fira Code', ui-monospace, monospace;
+  color: var(--accent, var(--red));
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.slash-ac-help {
+  color: var(--fg);
+  opacity: 0.85;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.slash-ac-usage {
+  color: var(--fg-muted, #888);
+  font-family: 'Fira Code', ui-monospace, monospace;
+  font-size: 11px;
+  opacity: 0.55;
+  flex-shrink: 0;
+}
+.slash-ac-empty {
+  padding: 10px;
+  color: var(--fg-muted, #888);
+  font-style: italic;
+}
+.slash-ac-empty code {
+  font-family: 'Fira Code', ui-monospace, monospace;
+  color: var(--accent, var(--red));
+}
+
+/* ══ iOS focus-zoom fix — touch devices only; desktop sizes untouched ══
+   16px is the threshold below which iOS Safari auto-zooms on focus.
+   Selects and date/time inputs are excluded on purpose — they open native
+   pickers and never zoom. */
+@media (hover: none) and (pointer: coarse) {
+
+  /* 1 ── Catch-all: every text-entry control NOT pinned with its own
+     !important. !important here beats any non-important rule regardless of
+     specificity, so this clears the long tail (settings, admin, memory,
+     notes, calendar, email, gallery, tasks, model picker, etc.). */
+  input[type="text"],
+  input[type="search"],
+  input[type="email"],
+  input[type="url"],
+  input[type="tel"],
+  input[type="password"],
+  input[type="number"],
+  input:not([type]),
+  textarea {
+    font-size: 16px !important;
+  }
+
+  /* 2 ── Fields that pin their own !important at specificity our catch-all
+     can't beat. Each is matched at equal-or-higher specificity and, being
+     later in the file, wins the tie. */
+  #message { font-size: 16px !important; }                                  /* chat composer (was 13px !important) */
+  .cookbook-dl-repo,
+  .hwfit-search { font-size: 16px !important; }                             /* cookbook repo path + hardware search */
+  .ge-topbar input { font-size: 16px !important; }                          /* image-editor topbar input */
+  .ge-transform-field > input.ge-transform-popup-input {                    /* image-editor transform values */
+    font-size: 16px !important;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  /* Only the sub-16px tiers need bumping; large lands ABOVE 16 so it
+     stays zoom-safe AND visibly larger than medium (otherwise L collapses
+     onto M on touch). All three editor layers move together so the
+     highlight/line-number overlay stays metrically aligned with the textarea. */
+  .doc-font-m .doc-editor-textarea, .doc-font-m .doc-editor-highlight, .doc-font-m .doc-line-numbers {
+    font-size: 16px !important;   /* was 13px */
+  }
+  .doc-font-l .doc-editor-textarea, .doc-font-l .doc-editor-highlight, .doc-font-l .doc-line-numbers {
+    font-size: 18px !important;   /* was 15px — keep L > M */
+  }
+  /* Email compose rich-body. Medium (15px) zooms, so bump it; large (17px)
+     is already ≥16px and never zoomed — leave it so we don't shrink it. */
+  .doc-email-richbody.doc-font-m { font-size: 16px !important; }
+}
+
+/* GitHub Copilot device-flow connect block (model endpoints → API) */
+.adm-copilot-connect {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.adm-copilot-connect #adm-copilotStatus { flex-basis: 100%; margin-top: 0; }
+.adm-copilot-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.adm-copilot-wait {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+}
+.adm-copilot-coderow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.adm-copilot-code-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+.adm-copilot-code {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  padding: 4px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  user-select: all;
+}
+.adm-copilot-copy { margin-left: auto; }
+.adm-copilot-auth {
+  text-align: center;
+  text-decoration: none;
+  padding: 7px 12px;
+  font-size: 12px;
+}
+.adm-copilot-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+/* Cookbook serve panel: Launch + ^ split button pair */
+.hwfit-serve-launch-group {
+  display: inline-flex;
+  align-items: stretch;
+  vertical-align: middle;
+}
+.hwfit-serve-launch-group .hwfit-serve-launch {
+  border-top-right-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  margin-right: 0 !important;
+}
+.hwfit-serve-launch-group .hwfit-serve-schedule-arrow {
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  border-left: 1px solid var(--border) !important;
+  padding: 0 8px !important;
+  min-width: 26px;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Mobile: drop the inline icons on Launch + Cancel in the serve panel so
+   the buttons are text-only and don't wrap on narrow screens. Icons stay
+   on desktop where horizontal space isn't tight. */
+@media (max-width: 600px) {
+  .hwfit-serve-launch > svg,
+  .hwfit-serve-cancel > svg {
+    display: none !important;
+  }
+}
+
+/* Schedule form — mounted inside the cookbook serve panel. Uses the
+   theme tokens (--bg, --panel, --border, --accent, --red) so it
+   matches the rest of the cookbook chrome instead of inline whites. */
+.hwfit-schedule-form {
+  margin: 10px 0 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hwfit-schedule-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.95;
+  flex-wrap: wrap;
+}
+.hwfit-schedule-title svg { opacity: 0.7; flex-shrink: 0; }
+.hwfit-schedule-title-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hwfit-schedule-title-spacer { flex: 1; min-width: 8px; }
+.hwfit-schedule-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.hwfit-schedule-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+.hwfit-schedule-field input[type="time"] {
+  font: inherit;
+  min-width: 90px;
+}
+.hwfit-schedule-label {
+  font-size: 11px;
+  opacity: 0.75;
+}
+.hwfit-sched-days {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+/* Days field inline with From / Until — push it + the action buttons to
+   the right end of the row so the row reads: From | Until | …gap… | Days | Cancel | Save. */
+.hwfit-schedule-days-field {
+  margin-left: auto;
+}
+.hwfit-schedule-actions-inline {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 6px;
+  align-self: flex-end;
+  padding-bottom: 1px;
+}
+.hwfit-sched-day-chip {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.hwfit-sched-day-chip:hover { border-color: var(--accent, var(--red)); }
+.hwfit-sched-day-chip.is-on {
+  background: var(--accent, var(--red));
+  color: var(--panel, #fff);
+  border-color: var(--accent, var(--red));
+}
+.hwfit-schedule-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.hwfit-schedule-actions-spacer { flex: 1; }
+
+/* Days row hosts the day-chip strip on the left and the Cancel / Save
+   action buttons on the right. The spacer between them pushes the
+   actions to the right edge. */
+.hwfit-schedule-days-row {
+  align-items: center;
+}
+/* Cancel + Save sit on the right side of the days row with matching
+   icon-plus-label chrome. */
+.hwfit-sched-cancel,
+.hwfit-sched-save {
+  display: inline-flex !important;
+  align-items: center;
+}
+.hwfit-schedule-mirror-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  opacity: 0.9;
+  cursor: pointer;
+  user-select: none;
+}
+.hwfit-schedule-mirror-label { white-space: nowrap; }
+.hwfit-schedule-mirror-switch { transform: scale(0.85); transform-origin: left center; }
+.hwfit-sched-err {
+  font-size: 12px;
+  color: var(--red, #ff6b6b);
+  display: none;
+}
+.hwfit-sched-err.is-visible { display: block; }
+@media (max-width: 600px) {
+  .hwfit-schedule-row { gap: 8px; }
+  .hwfit-sched-day-chip { width: 36px; height: 36px; font-size: 11px; }
+}
+
+/* Brief outline flash on a note card when it's the target of a
+   #note-<id> link click from chat — same pattern as the cookbook
+   task flash, just scoped to .note-card. */
+.note-card-flash {
+  animation: note-card-flash-anim 1.6s ease-out;
+}
+@keyframes note-card-flash-anim {
+  0%   { box-shadow: 0 0 0 2px var(--accent, var(--red)); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}
+/* ── ask_user: multiple-choice question card ─────────────────────────────
+   The agent posed a question and ended its turn. The user clicks an option,
+   types a free-text "Other" answer, or dismisses (×) to just type in the
+   composer. Reuses theme vars (and .modal-close for the ×) so it reads as
+   part of the conversation, not a modal. */
+.ask-user-card {
+  /* Left-align like an assistant message (.msg-ai), not centered. */
+  align-self: flex-start;
+  margin: 10px auto 10px 8px;
+  width: 85%;
+  max-width: 680px;
+  padding: 12px 16px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--fg) 4%, var(--panel));
+}
+/* Focused only programmatically (tabIndex -1) to move SR/keyboard position; no
+   visible outline on the whole card box. */
+.ask-user-card:focus { outline: none; }
+.ask-user-head {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+.ask-user-close { font-size: 15px; }
+.ask-user-question {
+  margin: -2px 0 10px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--fg);
+}
+.ask-user-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ask-user-option {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  /* Match the height of the free-text input below (.styled-prompt-input). */
+  min-height: 39px;
+  text-align: left;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--fg);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.ask-user-option:hover:not(:disabled) {
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, var(--panel));
+}
+.ask-user-option:disabled { cursor: default; }
+.ask-user-option-label { font-weight: 500; }
+.ask-user-option-desc { opacity: 0.65; font-size: 12px; }
+/* Free-text "Other" row: input + send, on one line. */
+.ask-user-other {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+/* Reuses .styled-prompt-input; override its full-width + top margin so it
+   sits inline in the flex row next to the send button. */
+.ask-user-other-input { flex: 1; min-width: 0; width: auto; margin-top: 0; }
+/* Reuses .confirm-btn .confirm-btn-primary; flex-row deltas + height match to
+   the input beside it (.confirm-btn won't stretch on its own). */
+.ask-user-other-send { flex-shrink: 0; white-space: nowrap; min-height: 39px; }
+.ask-user-other-send:disabled { opacity: 0.5; cursor: default; }
+
+/* ── Workspace picker ───────────────────────────────────────────── */
+/* Layout (width/flex column/max-height) inherited from base .modal-content. */
+/* Editable path/address bar: reuses .styled-prompt-input for border/bg/radius/
+   focus ring (set in the element's class list). Overrides only the deltas:
+   mono font, and full-bleed via flex stretch with no horizontal margin (the
+   modal-content's 10px padding is the gutter) instead of the base width:100%,
+   which overflowed against the overflow:auto scrollbar. */
+.workspace-cur {
+  align-self: stretch;
+  width: auto;
+  min-width: 0;
+  margin: 4px 0 6px;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+}
+.workspace-shortcuts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0 0 8px;
+}
+.workspace-shortcut-btn {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg) 88%, var(--fg) 12%);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.workspace-shortcut-btn:hover,
+.workspace-shortcut-btn.active {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 62%, var(--border));
+  color: var(--accent, var(--red));
+}
+.workspace-shortcut-btn span {
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* flex/overflow inherited from base .modal-body; only the padding differs. */
+.workspace-body { padding: 6px 0; }
+.workspace-row {
+  padding: 7px 18px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.workspace-row > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.workspace-row-icon { flex-shrink: 0; opacity: 0.75; }
+.workspace-row:hover {
+  background: color-mix(in srgb, var(--border) 20%, transparent);
+}
+.workspace-up { opacity: 0.7; }
+.workspace-empty { padding: 14px 18px; opacity: 0.5; font-size: 13px; }
+.workspace-status {
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.workspace-status-error {
+  color: color-mix(in srgb, var(--color-error, var(--red)) 78%, var(--fg));
+}
+.workspace-status-message {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.workspace-retry-btn {
+  min-height: 30px;
+  padding: 5px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 58%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg) 88%, var(--accent, var(--red)) 12%);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+.workspace-retry-btn:hover {
+  border-color: var(--accent, var(--red));
+  color: var(--accent, var(--red));
+}
+.workspace-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 18px;
+  border-top: 1px solid var(--border);
+}
+.workspace-footer .confirm-btn {
+  min-width: 0;
+}
+.workspace-note { margin: 0 0 8px; font-size: 11px; line-height: 1.4; }
+
+@media (max-width: 520px) {
+  .workspace-footer {
+    justify-content: stretch;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .workspace-footer .confirm-btn {
+    flex: 1 1 0;
+    padding-left: 8px;
+    padding-right: 8px;
+    white-space: normal;
+  }
+}
+
+/* Workspace file editor */
+.workspace-editor-content {
+  width: min(1120px, 96vw);
+  height: min(760px, 86vh);
+  max-height: 86vh;
+  overflow: hidden;
+  padding: 10px;
+}
+.workspace-editor-content .modal-header h4 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.workspace-editor-content .modal-header h4 svg { flex-shrink: 0; }
+.workspace-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 0 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+}
+.workspace-editor-toolbar .memory-toolbar-btn,
+.workspace-editor-actions .memory-toolbar-btn,
+.workspace-editor-file-actions .memory-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+}
+.workspace-editor-toolbar .memory-toolbar-btn svg,
+.workspace-editor-actions .memory-toolbar-btn svg,
+.workspace-editor-file-actions .memory-toolbar-btn svg {
+  flex-shrink: 0;
+}
+.workspace-editor-root {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+.workspace-editor-root code {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 5px;
+  padding: 3px 7px;
+  background: color-mix(in srgb, var(--bg) 88%, var(--fg) 12%);
+}
+.workspace-editor-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 310px) minmax(0, 1fr);
+  gap: 10px;
+  padding-top: 10px;
+}
+.workspace-editor-tree,
+.workspace-editor-panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 92%, var(--fg) 8%);
+  overflow: hidden;
+}
+.workspace-editor-tree {
+  gap: 8px;
+  padding: 9px;
+}
+.workspace-editor-pathbar {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 6px;
+  min-width: 0;
+}
+.workspace-editor-pathbar input {
+  min-width: 0;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  padding: 0 8px;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+}
+.workspace-editor-pathbar input:focus,
+.workspace-editor-filter:focus,
+.workspace-editor-textarea:focus {
+  outline: 1px solid color-mix(in srgb, var(--accent, var(--red)) 62%, transparent);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 72%, var(--border));
+}
+.workspace-editor-icon-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.workspace-editor-icon-btn:hover {
+  border-color: var(--fg);
+  color: var(--fg);
+}
+.workspace-editor-icon-btn.danger {
+  color: var(--color-error);
+  border-color: color-mix(in srgb, var(--color-error) 62%, var(--border));
+}
+.workspace-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.workspace-editor-actions .memory-toolbar-btn { flex: 1; }
+.workspace-editor-filter {
+  flex-shrink: 0;
+  width: 100%;
+  min-width: 0;
+}
+.workspace-editor-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 2px;
+}
+.workspace-file-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 4px 5px 4px 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--fg);
+  cursor: pointer;
+}
+.workspace-file-row:hover,
+.workspace-file-row.active {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 38%, var(--border));
+  background: color-mix(in srgb, var(--accent, var(--red)) 9%, transparent);
+}
+.workspace-file-row.is-dir {
+  color: color-mix(in srgb, var(--fg) 90%, var(--accent, var(--red)) 10%);
+}
+.workspace-file-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.78;
+}
+.workspace-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.workspace-file-meta {
+  color: var(--fg-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.workspace-file-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  opacity: 0.65;
+}
+.workspace-file-row:hover .workspace-file-row-actions,
+.workspace-file-row.active .workspace-file-row-actions {
+  opacity: 1;
+}
+.workspace-file-row-actions .workspace-editor-icon-btn {
+  width: 24px;
+  height: 24px;
+  border-color: color-mix(in srgb, var(--border) 70%, transparent);
+}
+.workspace-editor-empty {
+  padding: 18px 8px;
+  color: var(--fg-muted);
+  font-size: 12px;
+  font-style: italic;
+}
+.workspace-editor-filebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 9px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+}
+.workspace-editor-filetitle {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, auto) auto auto;
+  align-items: baseline;
+  gap: 8px;
+}
+.workspace-editor-filetitle strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.workspace-editor-filetitle span {
+  color: var(--fg-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+#workspace-editor-dirty {
+  color: var(--red);
+  border: 1px solid color-mix(in srgb, var(--red) 45%, transparent);
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 10px;
+}
+.workspace-editor-file-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.workspace-editor-textarea {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  resize: none;
+  border: 0;
+  background: var(--bg);
+  color: var(--fg);
+  padding: 12px;
+  font-family: var(--mono, 'Consolas', monospace);
+  font-size: 12px;
+  line-height: 1.55;
+  tab-size: 2;
+}
+.workspace-editor-textarea:disabled {
+  color: var(--fg-muted);
+  background: color-mix(in srgb, var(--bg) 94%, var(--fg) 6%);
+}
+.workspace-editor-footer {
+  flex-shrink: 0;
+  min-height: 22px;
+  display: flex;
+  align-items: center;
+  padding-top: 7px;
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+#workspace-editor-status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#workspace-editor-status.error { color: var(--color-error); }
+
+.android-connect-modal-content {
+  width: min(520px, calc(100vw - 28px));
+  max-height: min(640px, calc(100vh - 32px));
+}
+.android-connect-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.android-connect-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.android-connect-option {
+  min-height: 78px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 88%, var(--bg));
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+.android-connect-option:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+}
+.android-connect-option.primary {
+  border-color: color-mix(in srgb, var(--accent) 68%, var(--border));
+}
+.android-connect-option:disabled {
+  opacity: 0.58;
+  cursor: wait;
+}
+.android-connect-option-title {
+  font-size: 13px;
+  font-weight: 650;
+}
+.android-connect-option-sub {
+  color: var(--fg-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.android-connect-actions {
+  display: flex;
+  justify-content: center;
+  margin: 10px 0 6px;
+}
+.android-disconnect-btn {
+  padding: 6px 16px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel) 80%, var(--bg));
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.android-disconnect-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+}
+.android-disconnect-btn:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.android-connect-status {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 6px;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.android-connect-status[data-kind="running"] { color: var(--accent); }
+.android-connect-status[data-kind="ok"] { color: var(--color-success, #7bd88f); }
+.android-connect-status[data-kind="error"] { color: var(--color-error, #ff6b6b); }
+.android-connect-output {
+  min-height: 118px;
+  max-height: 210px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono, 'Consolas', monospace);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 760px) {
+  .android-connect-options {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .workspace-editor-content {
+    width: 96vw;
+    height: 92vh;
+    max-height: 92vh;
+  }
+  .workspace-editor-toolbar {
+    flex-wrap: wrap;
+  }
+  .workspace-editor-root {
+    flex-basis: 100%;
+  }
+  .workspace-editor-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(180px, 34vh) minmax(0, 1fr);
+  }
+  .workspace-editor-filebar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .workspace-editor-filetitle {
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .workspace-editor-filetitle #workspace-editor-file-meta {
+    grid-column: 1 / -1;
+  }
+  .workspace-editor-file-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .workspace-file-row {
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+  }
+  .workspace-file-meta {
+    display: none;
+  }
+  .workspace-file-row-actions {
+    opacity: 1;
+  }
+}

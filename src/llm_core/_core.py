@@ -1,0 +1,1732 @@
+# src/llm_core.py
+import httpx
+import asyncio
+import time
+import json
+import logging
+import hashlib
+import threading
+import re
+import os
+from contextlib import asynccontextmanager
+from fastapi import HTTPException
+from typing import Optional, Dict, List, Tuple
+from src.model_context import get_context_length, DEFAULT_CONTEXT, is_local_endpoint
+from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
+
+_LOCAL_MODEL_LOCK = asyncio.Lock()
+_LOCAL_MODEL_WAITING_FOREGROUND = 0
+_LOCAL_MODEL_CURRENT: Dict[str, object] = {}
+
+
+def _local_model_gate_enabled() -> bool:
+    return os.getenv("ODYSSEUS_LOCAL_MODEL_GATE", "true").lower() not in {"0", "false", "no", "off"}
+
+
+def _gate_workload(workload: Optional[str]) -> str:
+    return "background" if str(workload or "").lower() == "background" else "foreground"
+
+
+@asynccontextmanager
+async def _local_model_slot(target_url: str, model: str, workload: Optional[str] = None):
+    """Serialize local model traffic, with foreground chat taking priority.
+
+    Most local servers expose one GPU/CPU generation pipe even when their HTTP
+    API accepts multiple requests. Letting scheduled email/tasks and foreground
+    chat hit that pipe together creates the user-visible "streams crossed" and
+    "prompt waited behind a task" failure mode. Cloud providers are left alone.
+    """
+    if not _local_model_gate_enabled() or not is_local_endpoint(target_url):
+        yield
+        return
+
+    global _LOCAL_MODEL_WAITING_FOREGROUND
+    kind = _gate_workload(workload)
+    current_task = asyncio.current_task()
+    if kind == "foreground":
+        _LOCAL_MODEL_WAITING_FOREGROUND += 1
+        current = dict(_LOCAL_MODEL_CURRENT)
+        if current.get("workload") == "background":
+            task = current.get("task")
+            if isinstance(task, asyncio.Task) and not task.done():
+                logger.info(
+                    "[model-gate] cancelling background local model call for foreground request model=%s",
+                    model,
+                )
+                task.cancel()
+    else:
+        # Background work should not jump in while the browser/chat is active
+        # or while a foreground request is waiting to acquire the local model.
+        try:
+            from src.interactive_gate import has_foreground_activity
+        except Exception:
+            has_foreground_activity = lambda: False  # type: ignore
+        while _LOCAL_MODEL_WAITING_FOREGROUND > 0 or has_foreground_activity():
+            await asyncio.sleep(0.25)
+
+    acquired = False
+    try:
+        await _LOCAL_MODEL_LOCK.acquire()
+        acquired = True
+        if kind == "foreground":
+            _LOCAL_MODEL_WAITING_FOREGROUND = max(0, _LOCAL_MODEL_WAITING_FOREGROUND - 1)
+        _LOCAL_MODEL_CURRENT.clear()
+        _LOCAL_MODEL_CURRENT.update({
+            "task": current_task,
+            "workload": kind,
+            "url": target_url,
+            "model": model,
+            "started": time.time(),
+        })
+        yield
+    finally:
+        if kind == "foreground":
+            _LOCAL_MODEL_WAITING_FOREGROUND = max(0, _LOCAL_MODEL_WAITING_FOREGROUND - 1)
+        if acquired and _LOCAL_MODEL_LOCK.locked():
+            owner = _LOCAL_MODEL_CURRENT.get("task")
+            if owner is current_task:
+                _LOCAL_MODEL_CURRENT.clear()
+            _LOCAL_MODEL_LOCK.release()
+
+class LLMConfig:
+    """Configuration constants for LLM operations."""
+    DEFAULT_TIMEOUT = 30
+    DEFAULT_TEMPERATURE = 1.0
+    DEFAULT_MAX_TOKENS = 0
+    MAX_RETRIES = 3
+    RETRY_DELAY = 0.5
+    STREAM_TIMEOUT = 300
+    # TCP+TLS connect budget for a SINGLE attempt. The old hard-coded 3.0s
+    # assumed LAN/Tailscale peers ('SYN in <100ms'); it is too tight for public
+    # cloud endpoints (offshore APIs take ~0.5-1.5s cold, with jitter), so a
+    # brief blip on the first connect of an idle chat surfaced as a 503 on the
+    # streaming path (which, unlike llm_call, does not retry the connect). A
+    # genuinely dead upstream stays bounded by the dead-host cooldown. Override
+    # with env LLM_CONNECT_TIMEOUT (seconds).
+    CONNECT_TIMEOUT = float(os.getenv('LLM_CONNECT_TIMEOUT', '10') or '10')
+
+
+def _call_timeout(read_timeout) -> httpx.Timeout:
+    """Per-request timeout for non-streaming LLM calls (connect from config)."""
+    return httpx.Timeout(connect=LLMConfig.CONNECT_TIMEOUT, read=float(read_timeout), write=10.0, pool=5.0)
+
+
+def _stream_timeout(read_timeout) -> httpx.Timeout:
+    """Per-request timeout for streaming LLM calls (connect from config)."""
+    return httpx.Timeout(connect=LLMConfig.CONNECT_TIMEOUT, read=float(read_timeout), write=30.0, pool=5.0)
+
+
+# Cache for LLM responses
+def _get_cache_key(url: str, model: str, messages: List[Dict],
+                   temperature: float, max_tokens: int) -> str:
+    """Generate cache key for LLM requests."""
+    hashable_messages = []
+    for msg in messages:
+        sorted_items = tuple(sorted(msg.items()))
+        hashable_messages.append(sorted_items)
+
+    content = json.dumps({
+        'url': url,
+        'model': model,
+        'messages': hashable_messages,
+        'temp': temperature,
+        'max_tokens': max_tokens
+    }, sort_keys=True)
+    return hashlib.sha256(content.encode()).hexdigest()
+
+_response_cache = {}
+
+# Dead-host cooldown: maps host (scheme://host:port) -> unix ts when cooldown expires.
+# When a connect to a host fails, we mark it dead for DEAD_HOST_COOLDOWN seconds so
+# subsequent calls fail instantly instead of waiting on the connect timeout. Keeps
+# one unreachable upstream from jamming chat across the rest of the app.
+#
+# But a SINGLE transient blip (local model briefly busy, a momentary
+# Tailscale hiccup) used to trip a full 60s lockout — the user saw a
+# 503 and thought the model died when it was fine a second later. So:
+#   - require FAIL_THRESHOLD consecutive failures before cooling
+#   - shorter cooldown so recovery is quick
+#   - any success resets the failure counter immediately
+DEAD_HOST_COOLDOWN = 20.0
+_HOST_FAIL_THRESHOLD = 2
+_dead_hosts: Dict[str, float] = {}
+_host_fails: Dict[str, int] = {}
+# Guards the two maps above. The synchronous llm_call() runs inside FastAPI's
+# threadpool (sync routes such as /sessions/auto-sort) while llm_call_async()
+# runs on the event loop, so these maps are mutated from multiple OS threads.
+# Without the lock the get()+1+set on _host_fails is a read-modify-write that
+# loses failure counts under concurrent connect errors (issue #659).
+_host_health_lock = threading.Lock()
+_model_activity: Dict[str, float] = {}
+
+_HARMONY_MARKER_RE = re.compile(
+    r"<\|channel\|>(analysis|commentary|final)"
+    r"|<\|start\|>(?:assistant|system|user|tool)?"
+    r"|<\|message\|>"
+    r"|<\|end\|>"
+    r"|<\|return\|>"
+    r"|<\|call\|>"
+)
+_HARMONY_MARKERS = (
+    "<|channel|>analysis",
+    "<|channel|>commentary",
+    "<|channel|>final",
+    "<|start|>assistant",
+    "<|start|>system",
+    "<|start|>user",
+    "<|start|>tool",
+    "<|start|>",
+    "<|message|>",
+    "<|end|>",
+    "<|return|>",
+    "<|call|>",
+)
+_HARMONY_MAX_MARKER_LEN = max(len(marker) for marker in _HARMONY_MARKERS)
+
+_VISIBLE_CHAT_TEMPLATE_ARTIFACT_RE = re.compile(
+    r"(?:\|end\|)+\|?assistan(?:t)?\|?"
+    r"|\|assistan(?:t)?\|"
+    r"|<\|im_start\|>\s*assistant"
+    r"|<\|im_end\|>",
+    re.IGNORECASE,
+)
+
+
+def _strip_visible_chat_template_artifacts(text: str) -> str:
+    return _VISIBLE_CHAT_TEMPLATE_ARTIFACT_RE.sub("", text or "")
+
+
+def _harmony_suffix_hold_len(text: str) -> int:
+    """Return how many trailing chars could be the start of a harmony marker."""
+    limit = min(len(text), _HARMONY_MAX_MARKER_LEN - 1)
+    for n in range(limit, 0, -1):
+        suffix = text[-n:]
+        if any(marker.startswith(suffix) for marker in _HARMONY_MARKERS):
+            return n
+    return 0
+
+
+class _HarmonyStreamRouter:
+    """Route OpenAI harmony analysis/final channels without leaking markers."""
+
+    def __init__(self) -> None:
+        self._buf = ""
+        self._seen_harmony = False
+        self._channel: Optional[str] = None
+        self._in_message = False
+
+    def feed(self, text: str) -> List[Tuple[str, bool]]:
+        if not text:
+            return []
+        self._buf += text
+        return self._drain(final=False)
+
+    def flush(self) -> List[Tuple[str, bool]]:
+        return self._drain(final=True)
+
+    def _append_text(self, out: List[Tuple[str, bool]], text: str) -> None:
+        if not text:
+            return
+        if not self._seen_harmony:
+            out.append((text, False))
+            return
+        if self._in_message:
+            # analysis + commentary (tool-call preambles / function-arg bodies)
+            # are internal, not user-facing — route them to thinking so they
+            # don't leak into the visible answer; only `final` is visible.
+            out.append((text, self._channel in ("analysis", "commentary")))
+
+    def _handle_marker(self, match: re.Match[str]) -> None:
+        marker = match.group(0)
+        self._seen_harmony = True
+        if marker.startswith("<|channel|>"):
+            self._channel = match.group(1)
+            self._in_message = False
+        elif marker == "<|message|>":
+            self._in_message = True
+        else:
+            self._in_message = False
+            if marker in {"<|end|>", "<|return|>", "<|call|>"}:
+                self._channel = None
+
+    def _drain(self, *, final: bool) -> List[Tuple[str, bool]]:
+        out: List[Tuple[str, bool]] = []
+        while True:
+            match = _HARMONY_MARKER_RE.search(self._buf)
+            if not match:
+                break
+            self._append_text(out, self._buf[:match.start()])
+            self._handle_marker(match)
+            self._buf = self._buf[match.end():]
+
+        hold = 0 if final else _harmony_suffix_hold_len(self._buf)
+        emit = self._buf if hold == 0 else self._buf[:-hold]
+        self._buf = "" if hold == 0 else self._buf[-hold:]
+        self._append_text(out, emit)
+        return out
+
+
+def _stream_delta_event(text: str, *, thinking: bool = False) -> str:
+    payload = {"delta": text}
+    if thinking:
+        payload["thinking"] = True
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+_DEGENERATE_WORD_RE = re.compile(r"[A-Za-z0-9_\u0370-\u03ff\u0400-\u04ff]+")
+
+
+class _DegenerateStreamGuard:
+    """Detect local-model token collapse before it floods the UI.
+
+    Some self-hosted models fail by repeating one token forever ("Var Var Var",
+    "Summer Summer ..."). This is not a useful response and can burn context,
+    browser memory, and GPU time. Keep the guard conservative: only fire on long
+    same-token runs or a very dominant repeated token in the recent window.
+    """
+
+    def __init__(self, model: str):
+        self.model = model or "model"
+        self.last_token = ""
+        self.same_run = 0
+        self.recent_tokens: List[str] = []
+        self.total_chars = 0
+
+    def check(self, text: str) -> Optional[str]:
+        if not text:
+            return None
+        self.total_chars += len(text)
+        tokens = [t.lower() for t in _DEGENERATE_WORD_RE.findall(text) if len(t) >= 2]
+        if not tokens:
+            return None
+        for token in tokens:
+            if token == self.last_token:
+                self.same_run += 1
+            else:
+                self.last_token = token
+                self.same_run = 1
+            self.recent_tokens.append(token)
+        if len(self.recent_tokens) > 96:
+            self.recent_tokens = self.recent_tokens[-96:]
+
+        reason = None
+        if self.same_run >= 28 and self.total_chars >= 100:
+            reason = f"repeated '{self.last_token}' {self.same_run} times"
+        elif len(self.recent_tokens) >= 72:
+            top = max(set(self.recent_tokens), key=self.recent_tokens.count)
+            count = self.recent_tokens.count(top)
+            if count >= 60 and count / max(len(self.recent_tokens), 1) >= 0.78:
+                reason = f"repeated '{top}' {count}/{len(self.recent_tokens)} recent tokens"
+        if not reason and len(self.recent_tokens) >= 80:
+            # Phrase loops are common on some local quantized MLX/MoE models:
+            # "Also be a software developer mode?" repeated forever will not
+            # trip the single-token guard above, but it is still a wedged
+            # generation. Require many repeats of the same 4-gram so normal
+            # prose/list formatting is not interrupted.
+            grams = [tuple(self.recent_tokens[i:i + 4]) for i in range(0, len(self.recent_tokens) - 3)]
+            if grams:
+                top_gram = max(set(grams), key=grams.count)
+                gram_count = grams.count(top_gram)
+                if gram_count >= 10:
+                    reason = f"repeated phrase '{' '.join(top_gram)}' {gram_count} times"
+
+        if not reason:
+            return None
+
+        logger.warning("[degenerate-stream] aborting model=%s reason=%s", self.model, reason)
+        message = (
+            f"Stopped generation: {self.model} started repeating tokens "
+            f"({reason}). Try a different model or lower temperature."
+        )
+        return f'event: error\ndata: {json.dumps({"status": 502, "text": message, "error": message})}\n\n'
+
+
+def _model_activity_key(url: str, model: str) -> str:
+    return f"{(url or '').strip()}|{(model or '').strip()}"
+
+def _same_model_identity(left: str, right: str) -> bool:
+    return (left or "").strip().lower() == (right or "").strip().lower()
+
+def note_model_activity(url: str, model: str):
+    """Record that a real upstream request used this endpoint/model."""
+    if not url or not model:
+        return
+    _model_activity[_model_activity_key(url, model)] = time.time()
+
+def seconds_since_model_activity(url: str, model: str) -> Optional[float]:
+    """Seconds since the endpoint/model was last used in this process."""
+    ts = _model_activity.get(_model_activity_key(url, model))
+    if not ts:
+        return None
+    return max(0.0, time.time() - ts)
+
+def _host_key(url: str) -> str:
+    from urllib.parse import urlsplit
+    s = urlsplit(url)
+    return f"{s.scheme}://{s.netloc}" if s.scheme and s.netloc else url
+
+def _is_host_dead(url: str) -> bool:
+    key = _host_key(url)
+    with _host_health_lock:
+        exp = _dead_hosts.get(key)
+        if exp is None:
+            return False
+        if time.time() >= exp:
+            _dead_hosts.pop(key, None)
+            return False
+        return True
+
+def _mark_host_dead(url: str) -> bool:
+    """Record a connect failure. Only actually cools the host after
+    _HOST_FAIL_THRESHOLD consecutive failures. Returns True if the host
+    is now cooled (so callers can log accurately), False if it's still
+    within its allowed-failure grace."""
+    key = _host_key(url)
+    with _host_health_lock:
+        n = _host_fails.get(key, 0) + 1
+        _host_fails[key] = n
+        if n >= _HOST_FAIL_THRESHOLD:
+            _dead_hosts[key] = time.time() + DEAD_HOST_COOLDOWN
+            return True
+        return False
+
+def _clear_host_dead(url: str) -> None:
+    key = _host_key(url)
+    with _host_health_lock:
+        _dead_hosts.pop(key, None)
+        _host_fails.pop(key, None)
+
+
+# Shared async HTTP client. Reusing one client keeps connections warm:
+# repeat calls to api.anthropic.com / api.openai.com / openrouter skip the
+# 100-500ms TCP+TLS handshake. Lazy init so we bind to the running event loop.
+_http_client: Optional[httpx.AsyncClient] = None
+_http_limits = httpx.Limits(max_connections=100, max_keepalive_connections=30, keepalive_expiry=30.0)
+
+def _get_http_client() -> httpx.AsyncClient:
+    """Return process-wide AsyncClient. Per-request timeout is passed at call time."""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        from src.tls_overrides import llm_verify
+        _http_client = httpx.AsyncClient(
+            limits=_http_limits, http2=False, verify=llm_verify(),
+        )
+    return _http_client
+
+def _get_cached_response(cache_key: str) -> Optional[str]:
+    """Get cached response if it exists."""
+    return _response_cache.get(cache_key)
+
+def _set_cached_response(cache_key: str, response: str) -> None:
+    """Store response in cache."""
+    if len(_response_cache) > 128:
+        keys_to_remove = list(_response_cache.keys())[:64]
+        for key in keys_to_remove:
+            # pop(), not del: another thread (sync llm_call runs in FastAPI's
+            # threadpool) may have already evicted the same snapshotted key,
+            # and del would raise KeyError mid-eviction (issue #659).
+            _response_cache.pop(key, None)
+    _response_cache[cache_key] = response
+
+# ── Anthropic native API adapter ──
+
+ANTHROPIC_MODELS = [
+    "claude-opus-4-20250514", "claude-opus-4",
+    "claude-sonnet-4-20250514", "claude-sonnet-4", "claude-sonnet-4-5-20250929", "claude-sonnet-4-5",
+    "claude-haiku-4-20250514", "claude-haiku-4", "claude-haiku-3-5-20241022", "claude-haiku-3-5",
+]
+
+
+def _is_ollama_native_url(url: str) -> bool:
+    """Return True for native Ollama API URLs, including Ollama Cloud."""
+    try:
+        parsed = urlparse(url or "")
+    except Exception as e:
+        logger.warning("Failed to parse URL for Ollama detection", exc_info=e)
+        return False
+    host = parsed.hostname or ""
+    path = (parsed.path or "").rstrip("/")
+    if _host_match(url, "ollama.com"):
+        return True
+    if path.startswith("/v1"):
+        return False
+    local_ollama_host = host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or parsed.port == 11434
+    return local_ollama_host and (path == "" or path == "/api" or path.startswith("/api/"))
+
+
+def _is_ollama_openai_compat_url(url: str) -> bool:
+    """Return True for local Ollama's OpenAI-compatible /v1 surface.
+
+    Mirrors the host detection used by ``_is_ollama_native_url`` so that the
+    two helpers stay in lockstep: a localhost Ollama on a non-default port
+    (custom ``OLLAMA_HOST``, reverse proxy, container port remap) is treated
+    the same way here as it is on the native ``/api`` path.
+    """
+    try:
+        parsed = urlparse(url or "")
+    except Exception:
+        return False
+    host = parsed.hostname or ""
+    path = (parsed.path or "").rstrip("/")
+    local_ollama_host = host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or parsed.port == 11434
+    return local_ollama_host and (path == "/v1" or path.startswith("/v1/"))
+
+
+def _ollama_api_root(url: str) -> str:
+    """Return a native Ollama API root such as https://ollama.com/api."""
+    url = (url or "").strip().rstrip("/")
+    parsed = urlparse(url)
+    path = (parsed.path or "").rstrip("/")
+    if path.endswith("/api/chat"):
+        return url[: -len("/chat")]
+    if path.endswith("/api/tags"):
+        return url[: -len("/tags")]
+    if path.endswith("/api/generate"):
+        return url[: -len("/generate")]
+    if path.endswith("/api"):
+        return url
+    if path == "":
+        return url + "/api"
+    if _host_match(url, "ollama.com"):
+        root = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else "https://ollama.com"
+        return root.rstrip("/") + "/api"
+    return url
+
+
+def _normalize_ollama_url(url: str) -> str:
+    """Ensure a native Ollama URL points at /api/chat."""
+    base = _ollama_api_root(url)
+    return base.rstrip("/") + "/chat"
+
+
+def _normalize_openai_chat_url(url: str) -> str:
+    """Ensure an OpenAI-compatible base URL points at /chat/completions."""
+    base = (url or "").strip().rstrip("/")
+    if not base:
+        return base
+    if base.endswith("/chat/completions") or base.endswith("/completions"):
+        return base
+    if base.endswith("/models"):
+        base = base[: -len("/models")].rstrip("/")
+    return base + "/chat/completions"
+
+
+def _ollama_normalize_messages(messages: List[Dict]) -> List[Dict]:
+    """Adapt Odysseus' canonical OpenAI-style messages to native Ollama /api/chat.
+
+    Two shape mismatches silently break requests:
+
+    1. Tool calls: Odysseus carries `function.arguments` as a JSON *string*.
+       Native Ollama expects a JSON *object* and rejects the string form with
+       HTTP 400 ("Value looks like object, but can't find closing '}' symbol"),
+       aborting every follow-up (tool-result) round. Parse the arguments back
+       into an object here, on a shallow copy, leaving non-tool messages
+       untouched. The opaque Gemini `extra_content` (thought_signature) is
+       dropped — it is meaningless to Ollama and only matters when the
+       conversation is replayed to Gemini.
+
+    2. Images (issue #4723): Odysseus carries multimodal user content as an
+       OpenAI-style list ``[{type: "text", ...}, {type: "image_url",
+       image_url: {url: "data:image/...;base64,XXX"}}, ...]``. Native Ollama
+       does not accept a list for ``content`` — it wants ``content`` as a
+       string plus a separate ``images`` array of raw base64 strings (no
+       ``data:`` prefix). Without this conversion the image blocks pass
+       through untouched, the vision-capable model never sees the picture,
+       and the user gets "I can't see any image" even though the request
+       succeeded.
+    """
+    out: List[Dict] = []
+    for m in messages or []:
+        if not isinstance(m, dict):
+            out.append(m)
+            continue
+
+        nm = dict(m)
+
+        # 1. Tool-call argument strings -> objects.
+        tcs = nm.get("tool_calls")
+        if tcs:
+            new_calls = []
+            for tc in tcs:
+                fn = tc.get("function") or {}
+                args = fn.get("arguments")
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args) if args.strip() else {}
+                    except (json.JSONDecodeError, TypeError):
+                        args = {}
+                call: Dict = {"function": {"name": fn.get("name", ""), "arguments": args or {}}}
+                if tc.get("id"):
+                    call["id"] = tc["id"]
+                new_calls.append(call)
+            nm["tool_calls"] = new_calls
+
+        # 2. Multimodal content list -> native content string + images array.
+        content = nm.get("content")
+        if isinstance(content, list):
+            text_parts: List[str] = []
+            images: List[str] = list(nm.get("images") or [])
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type")
+                if btype == "text":
+                    t = block.get("text")
+                    if t:
+                        text_parts.append(str(t))
+                elif btype == "image_url":
+                    url = (block.get("image_url") or {}).get("url", "")
+                    if not url:
+                        continue
+                    if url.startswith("data:"):
+                        # Strip the ``data:[...];base64,`` prefix — native
+                        # Ollama wants only the base64 bytes.
+                        _, _, b64 = url.partition(",")
+                        if b64:
+                            images.append(b64)
+                    else:
+                        # Native Ollama images[] is base64-only; it does
+                        # not fetch HTTP URLs.  Skip unsupported schemes
+                        # rather than sending a non-base64 string that the
+                        # model silently ignores.
+                        logger.warning(
+                            "Skipping non-data image_url (Ollama images[] "
+                            "requires base64): %s",
+                            url[:80],
+                        )
+            nm["content"] = "\n".join(text_parts).strip()
+            if images:
+                nm["images"] = images
+
+        out.append(nm)
+    return out
+
+
+# Backward-compatible alias for callers/tests that imported the older name
+# (it only handled tool messages originally — issue #4723 broadened scope).
+_ollama_normalize_tool_messages = _ollama_normalize_messages
+
+
+def _build_ollama_payload(
+    model: str,
+    messages: List[Dict],
+    temperature: float,
+    max_tokens: int,
+    stream: bool = False,
+    tools: Optional[List[Dict]] = None,
+    num_ctx: Optional[int] = None,
+) -> Dict:
+    """Build the JSON payload for Ollama's /api/chat endpoint.
+
+    ``num_ctx`` sets the input context window. Ollama defaults to 2048
+    when the option is omitted, so a model with a larger advertised
+    window is silently truncated there, and a model with a smaller one
+    gets an oversized window it can't service. Pass the discovered
+    context length through ``num_ctx``; this builder only emits it when
+    the value is trusted (not the ``DEFAULT_CONTEXT`` fallback), so we
+    don't guess for unknown models but do tell Ollama the real window
+    when we know it — even if it's smaller than 2048.
+    """
+    payload: Dict = {
+        "model": model,
+        "messages": _ollama_normalize_messages(messages),
+        "stream": stream,
+    }
+    options: Dict = {}
+    if temperature is not None:
+        options["temperature"] = temperature
+    if max_tokens and max_tokens > 0:
+        options["num_predict"] = max_tokens
+    if num_ctx is not None and num_ctx > 0 and num_ctx != DEFAULT_CONTEXT:
+        options["num_ctx"] = num_ctx
+    if options:
+        payload["options"] = options
+    if tools:
+        payload["tools"] = tools
+    return payload
+
+
+def _parse_ollama_response(data: dict) -> str:
+    message = data.get("message") or {}
+    return message.get("content") or data.get("response") or ""
+
+
+def _host_match(url: str, *domains: str) -> bool:
+    """Return True if url's hostname equals any of `domains` or is a subdomain of one.
+
+    Used by helpers that want "is this Anthropic?" / "is this OpenRouter?"
+    style checks. Prefer this over substring matching on the URL: the
+    substring form gives wrong answers for unrelated paths or query strings
+    that happen to contain the domain text.
+    """
+    if not url:
+        return False
+    try:
+        # rstrip(".") so a fully-qualified host with a trailing dot
+        # ("api.anthropic.com.") still matches "anthropic.com".
+        host = (urlparse(url).hostname or "").lower().rstrip(".")
+    except Exception:
+        return False
+    if not host:
+        return False
+    return any(host == d or host.endswith("." + d) for d in domains)
+
+
+# Kimi Code subscription keys (api.kimi.com/coding/v1) require a whitelisted
+# coding-agent User-Agent; otherwise the API returns 403 access_terminated_error.
+# Tried in order; first success is cached per base URL for later requests.
+KIMI_CODE_USER_AGENTS: tuple[str, ...] = (
+    "claude-code/0.1.0",
+    "claude-code/1.0.0",
+    "KimiCLI/1.0",
+    "Kilo-Code/1.0",
+    "Roo-Code/1.0",
+    "Cursor/1.0",
+)
+KIMI_CODE_USER_AGENT = KIMI_CODE_USER_AGENTS[0]
+_kimi_code_ua_cache: dict[str, str] = {}
+
+
+def _is_kimi_code_url(url: str) -> bool:
+    if not url or not _host_match(url, "kimi.com"):
+        return False
+    try:
+        return "/coding" in (urlparse(url).path or "")
+    except Exception:
+        return False
+
+
+def _kimi_code_base_key(url: str) -> str:
+    """Normalize a Kimi Code chat/models URL to its OpenAI base (.../coding/v1)."""
+    parsed = urlparse(url)
+    path = (parsed.path or "").rstrip("/")
+    for suffix in ("/chat/completions", "/models", "/completions"):
+        if path.endswith(suffix):
+            path = path[: -len(suffix)]
+    path = path.rstrip("/") or "/coding/v1"
+    return f"{parsed.scheme}://{parsed.netloc}{path}"
+
+
+def _is_kimi_code_access_denied(status: int, body: bytes | str) -> bool:
+    if status != 403:
+        return False
+    text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else (body or "")
+    lower = text.lower()
+    return (
+        "access_terminated_error" in lower
+        or "coding agents" in lower
+        or "only available for coding" in lower
+    )
+
+
+def _kimi_code_ua_candidates(url: str) -> list[str]:
+    if not _is_kimi_code_url(url):
+        return []
+    base_key = _kimi_code_base_key(url)
+    cached = _kimi_code_ua_cache.get(base_key)
+    if cached:
+        return [cached] + [ua for ua in KIMI_CODE_USER_AGENTS if ua != cached]
+    return list(KIMI_CODE_USER_AGENTS)
+
+
+def _remember_kimi_code_user_agent(url: str, user_agent: str) -> None:
+    _kimi_code_ua_cache[_kimi_code_base_key(url)] = user_agent
+
+
+def apply_kimi_code_headers(headers: Optional[Dict], url: str) -> Dict[str, str]:
+    """Pick a Kimi Code User-Agent (cached probe when possible)."""
+    h = dict(headers or {})
+    if not _is_kimi_code_url(url):
+        return h
+    base_key = _kimi_code_base_key(url)
+    cached = _kimi_code_ua_cache.get(base_key)
+    if cached:
+        h["User-Agent"] = cached
+        return h
+    models_url = base_key.rstrip("/") + "/models"
+    from src.tls_overrides import llm_verify
+    for ua in KIMI_CODE_USER_AGENTS:
+        trial = dict(h)
+        trial["User-Agent"] = ua
+        try:
+            r = httpx.get(models_url, headers=trial, timeout=8, verify=llm_verify())
+        except Exception:
+            continue
+        if _is_kimi_code_access_denied(r.status_code, r.content):
+            logger.debug("Kimi Code rejected User-Agent %s (403), trying next", ua)
+            continue
+        if r.status_code < 400:
+            _remember_kimi_code_user_agent(url, ua)
+            h["User-Agent"] = ua
+            return h
+        break
+    h.setdefault("User-Agent", KIMI_CODE_USER_AGENT)
+    return h
+
+
+def httpx_get_kimi_aware(url: str, headers: Optional[Dict], **kwargs):
+    h = apply_kimi_code_headers(headers, url)
+    if not _is_kimi_code_url(url):
+        return httpx.get(url, headers=h, **kwargs)
+    last = None
+    for ua in _kimi_code_ua_candidates(url):
+        trial = dict(h)
+        trial["User-Agent"] = ua
+        last = httpx.get(url, headers=trial, **kwargs)
+        if not _is_kimi_code_access_denied(last.status_code, last.content):
+            if last.status_code < 400:
+                _remember_kimi_code_user_agent(url, ua)
+            return last
+    return last
+
+
+def httpx_post_kimi_aware(url: str, headers: Optional[Dict], **kwargs):
+    h = apply_kimi_code_headers(headers, url)
+    if not _is_kimi_code_url(url):
+        return httpx.post(url, headers=h, **kwargs)
+    last = None
+    for ua in _kimi_code_ua_candidates(url):
+        trial = dict(h)
+        trial["User-Agent"] = ua
+        last = httpx.post(url, headers=trial, **kwargs)
+        if not _is_kimi_code_access_denied(last.status_code, last.content):
+            if last.status_code < 400:
+                _remember_kimi_code_user_agent(url, ua)
+            return last
+    return last
+
+
+async def httpx_post_kimi_aware_async(client, url: str, headers: Optional[Dict], **kwargs):
+    h = apply_kimi_code_headers(headers, url)
+    if not _is_kimi_code_url(url):
+        return await client.post(url, headers=h, **kwargs)
+    last = None
+    for ua in _kimi_code_ua_candidates(url):
+        trial = dict(h)
+        trial["User-Agent"] = ua
+        last = await client.post(url, headers=trial, **kwargs)
+        if not _is_kimi_code_access_denied(last.status_code, last.content):
+            if last.status_code < 400:
+                _remember_kimi_code_user_agent(url, ua)
+            return last
+    return last
+
+
+def _detect_provider(url: str) -> str:
+    """Detect the API provider from a configured endpoint URL.
+
+    Matches on hostname (exact or subdomain) rather than substring, so a URL
+    that merely contains a provider's domain in its path or query — or a
+    look-alike host such as ``anthropic.com.example`` — is not misclassified.
+    Unknown hosts fall back to the OpenAI-compatible default, which the
+    majority of providers implement.
+    """
+    if _is_ollama_native_url(url):
+        return "ollama"
+    if _host_match(url, "anthropic.com"):
+        return "anthropic"
+    if _host_match(url, "opencode.ai/zen/go"):
+        return "opencode-go"
+    if _host_match(url, "opencode.ai/zen"):
+        return "opencode-zen"
+    if _host_match(url, "openrouter.ai"):
+        return "openrouter"
+    if _host_match(url, "groq.com"):
+        return "groq"
+    if _host_match(url, "nvidia.com"):
+        return "nvidia"
+    if _host_match(url, "moonshot.ai") or _host_match(url, "moonshot.cn"):
+        return "moonshot"
+    from src.chatgpt_subscription import is_chatgpt_subscription_base
+    if is_chatgpt_subscription_base(url):
+        return "chatgpt-subscription"
+    from src.copilot import is_copilot_base
+    if is_copilot_base(url):
+        return "copilot"
+    if _host_match(url, "cerebras.ai"):
+        return "cerebras"
+    if _host_match(url, "mistral.ai"):
+        return "mistral"
+    return "openai"
+
+
+def _is_self_hosted_openai_compatible(url: str) -> bool:
+    """True for custom/local OpenAI-compatible servers (llama.cpp, LM Studio,
+    vLLM, text-generation-webui, etc.) as opposed to cloud APIs.
+
+    Used to gate llama.cpp-server-specific payload extras (``session_id``,
+    ``cache_prompt``) used for KV-cache slot affinity (issue #2927). Strict
+    cloud providers reject unrecognized top-level fields (api.openai.com
+    returns 400, Mistral returns 422 "extra_forbidden", issue #3793), and any
+    unknown OpenAI-compatible host used to be treated as self-hosted, so those
+    fields leaked to every strict provider added as a custom endpoint.
+
+    A server only counts as self-hosted when it also resolves as local:
+    loopback/private/tailscale host, or the endpoint explicitly configured
+    with kind "local". A self-hosted server exposed via a public hostname
+    loses the affinity hint unless its endpoint kind is set to "local" -
+    a lost perf hint, versus a hard 4xx on every request the other way.
+    """
+    if _detect_provider(url) != "openai" or _host_match(url, "openai.com"):
+        return False
+    from src.model_context import is_local_endpoint
+    return is_local_endpoint(url)
+
+
+def _apply_local_cache_affinity(payload: Dict, url: str, session_id: Optional[str]) -> None:
+    """Add llama.cpp-server slot-affinity hints to an outgoing payload, in place.
+
+    As diagnosed in issue #2927, llama.cpp assigns requests to processing
+    slots via LRU when no stable identifier is present ("session_id=<empty>
+    server-selected (LCP/LRU)"), which means consecutive turns of the same
+    chat can land on different slots and lose their cached prefix entirely.
+    Sending a stable ``session_id`` (derived from the Odysseus session) lets
+    the server keep routing the same conversation to the same slot, and
+    ``cache_prompt: true`` asks it to retain/reuse the prefix it already has.
+
+    Both fields are llama.cpp / LM Studio extensions to the OpenAI schema; we
+    only set them for self-hosted OpenAI-compatible endpoints (never
+    api.openai.com or other cloud providers, which reject unrecognized
+    top-level request fields).
+    """
+    if not session_id:
+        return
+    if not _is_self_hosted_openai_compatible(url):
+        return
+    payload.setdefault("session_id", str(session_id))
+    payload.setdefault("cache_prompt", True)
+
+
+def _is_local_minimax_mlx_request(url: str, model: str) -> bool:
+    """Local MLX MiniMax-family endpoints need conservative sampling defaults.
+
+    The OpenAI-compatible MLX server accepts repetition/frequency penalties.
+    Some large quantized MiniMax/MoE ports otherwise fall into visible reasoning
+    loops ("Also be...", "No.", etc.) even for trivial prompts.
+    """
+    if not model:
+        return False
+    m = model.lower()
+    if "minimax" not in m and "mini-max" not in m:
+        return False
+    try:
+        from src.model_context import is_local_endpoint
+        return is_local_endpoint(url)
+    except Exception:
+        return False
+
+
+def _apply_local_generation_stability(payload: Dict, url: str, model: str) -> None:
+    if not _is_local_minimax_mlx_request(url, model):
+        return
+    if "temperature" in payload:
+        try:
+            # MiniMax MLX quantized ports are very sensitive to chat/agent
+            # harness size. Character presets can ask for a warmer voice, but
+            # local MiniMax needs a final compatibility clamp or trivial
+            # prompts can fall into visible reasoning/repetition loops.
+            payload["temperature"] = min(float(payload.get("temperature") or 0.2), 0.2)
+        except (TypeError, ValueError):
+            payload["temperature"] = 0.2
+    payload.setdefault("top_p", 0.9)
+    payload.setdefault("top_k", 20)
+    payload.setdefault("repetition_penalty", 1.12)
+    payload.setdefault("repetition_context_size", 256)
+    payload.setdefault("frequency_penalty", 0.08)
+    payload.setdefault("frequency_context_size", 256)
+    payload.setdefault("presence_penalty", 0.02)
+    payload.setdefault("presence_context_size", 256)
+    payload.setdefault("stop", ["<|im_end|>", "<|endoftext|>", "</s>"])
+    # A max_tokens of 0 means "server default/unbounded" for many local
+    # endpoints. Keep simple chats from running forever when the model loops.
+    if not payload.get("max_tokens") and not payload.get("max_completion_tokens"):
+        payload["max_tokens"] = 2048
+
+
+def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str, str]:
+    h = {"Content-Type": "application/json"}
+    if isinstance(headers, dict):
+        h.update(headers)
+    if provider == "openrouter":
+        h.setdefault("HTTP-Referer", "https://github.com/pewdiepie-archdaemon/odysseus")
+        h.setdefault("X-OpenRouter-Title", "Odysseus")
+    if provider == "copilot":
+        # Ensure the Copilot-required headers are present even when the caller
+        # didn't pass pre-built headers (e.g. model listing). build_headers()
+        # already injects these for the live chat path; setdefault keeps any
+        # request-specific values (x-initiator/vision) the caller set.
+        from src.copilot import copilot_headers
+        for k, v in copilot_headers(None).items():
+            h.setdefault(k, v)
+    return h
+
+
+def _provider_label(url: str) -> str:
+    """Human-friendly provider name for error messages."""
+    if not url:
+        return "provider"
+    if _host_match(url, "anthropic.com"): return "Anthropic"
+    if _host_match(url, "ollama.com"): return "Ollama Cloud"
+    if _host_match(url, "x.ai"): return "xAI"
+    if _host_match(url, "openai.com"): return "OpenAI"
+    if _host_match(url, "openrouter.ai"): return "OpenRouter"
+    if _host_match(url, "opencode.ai/zen/go"): return "OpenCode Go"
+    if _host_match(url, "opencode.ai/zen"): return "OpenCode Zen"
+    if _host_match(url, "groq.com"): return "Groq"
+    from src.chatgpt_subscription import CHATGPT_SUBSCRIPTION_LABEL, is_chatgpt_subscription_base
+    if is_chatgpt_subscription_base(url): return CHATGPT_SUBSCRIPTION_LABEL
+    from src.copilot import is_copilot_base
+    if is_copilot_base(url): return "GitHub Copilot"
+    if _host_match(url, "cerebras.ai"):
+        return "cerebras"
+    if _host_match(url, "mistral.ai"): return "Mistral"
+    if _host_match(url, "deepseek.com"): return "DeepSeek"
+    if _host_match(url, "nvidia.com"): return "NVIDIA"
+    if _host_match(url, "googleapis.com"): return "Google"
+    if _host_match(url, "dashscope.aliyuncs.com"): return "DashScope"
+    if _host_match(url, "aliyuncs.com"): return "Alibaba Model Studio"
+    if _host_match(url, "together.xyz", "together.ai"): return "Together"
+    if _host_match(url, "fireworks.ai"): return "Fireworks"
+    if _host_match(url, "kimi.com"):
+        try:
+            if "/coding" in (urlparse(url).path or ""):
+                return "Kimi Code"
+        except Exception:
+            pass
+    if _is_ollama_native_url(url): return "Ollama"
+    try:
+        _parsed_local = urlparse(url)
+        host = (_parsed_local.hostname or "").lower()
+        port = _parsed_local.port
+    except Exception:
+        return "provider"
+    if host in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
+        # A port alone is not authoritative: vLLM, SGLang, llama.cpp and plain
+        # OpenAI-compatible servers all routinely share 8000/8080, so naming the
+        # serving tool from the port here would mislabel real setups. The tool is
+        # identified by probing llama-server's native /props endpoint during
+        # discovery (see ModelDiscovery._fingerprint_provider); this stays neutral.
+        return "local endpoint"
+    return host or "provider"
+
+
+def _normalize_chatgpt_subscription_url(url: str) -> str:
+    base = (url or "").strip().rstrip("/")
+    if base.endswith("/responses"):
+        return base
+    return base + "/responses"
+
+
+def _message_content_as_text(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if not isinstance(part, dict):
+                if part:
+                    parts.append(str(part))
+                continue
+            if isinstance(part.get("text"), str):
+                parts.append(part["text"])
+                continue
+            if isinstance(part.get("content"), str):
+                parts.append(part["content"])
+        return "\n".join(parts)
+    return "" if content is None else str(content)
+
+
+def _chatgpt_subscription_instructions(messages: List[Dict]) -> str:
+    instructions = [
+        _message_content_as_text(msg.get("content")).strip()
+        for msg in messages or []
+        if (msg.get("role") or "") == "system"
+    ]
+    instructions = [part for part in instructions if part]
+    if instructions:
+        return "\n\n".join(instructions)
+    return "You are a helpful AI assistant."
+
+
+def _build_chatgpt_responses_payload(
+    model: str,
+    messages: List[Dict],
+    temperature: float,
+    max_tokens: int,
+    *,
+    stream: bool = False,
+) -> Dict:
+    from src.chatgpt_subscription import build_responses_input
+
+    conversation = [msg for msg in (messages or []) if (msg.get("role") or "") != "system"]
+    payload: Dict = {
+        "model": model,
+        "instructions": _chatgpt_subscription_instructions(messages),
+        "input": build_responses_input(conversation),
+        "stream": stream,
+        "store": False,
+    }
+    if not _restricts_temperature(model):
+        payload["temperature"] = temperature
+    # Codex Subscription API does not support max_output_tokens —
+    # passing it returns HTTP 400 "Unsupported parameter: max_output_tokens".
+    # Do not include it in the payload.
+    return payload
+
+
+def _format_chatgpt_subscription_error(status_code: int, text: str) -> str:
+    if status_code in (401, 403):
+        return "Codex Subscription credentials expired or were rejected. Reconnect the provider."
+    if status_code == 429:
+        return "Codex Subscription quota or rate limit was reached. Retry after the upstream limit resets."
+    return _format_upstream_error(status_code, text, "https://chatgpt.com/backend-api/codex")
+
+
+def _format_upstream_error(status: int, body: bytes | str, url: str) -> str:
+    """Turn an upstream HTTP error into a user-readable sentence.
+
+    Auth failures (401/403) become 'xAI rejected the API key' etc., so the UI
+    stops showing raw JSON like '{"error":{"message":"User not found."}}'.
+    """
+    if isinstance(body, bytes):
+        try:
+            body = body.decode("utf-8", errors="replace")
+        except Exception:
+            body = str(body)
+    provider = _provider_label(url)
+    # Try to pull a message out of the body
+    detail = ""
+    try:
+        j = json.loads(body) if body else {}
+        if isinstance(j, dict):
+            err = j.get("error") or j
+            if isinstance(err, dict):
+                detail = (err.get("message") or err.get("detail") or "").strip()
+            elif isinstance(err, str):
+                detail = err.strip()
+    except Exception:
+        detail = (body or "").strip()[:240]
+
+    if status in (401, 403):
+        msg = f"{provider} rejected the API key"
+        if status == 403:
+            msg = f"{provider} denied access (403)"
+        if detail:
+            msg += f" — {detail}"
+        msg += ". Check Model Endpoints → {} and re-paste the key.".format(provider)
+        return msg
+    if status == 404:
+        return f"{provider} returned 404 — check the base URL and model name." + (f" ({detail})" if detail else "")
+    if status == 429:
+        return f"{provider} rate-limited the request (429)." + (f" {detail}" if detail else "")
+    if status >= 500:
+        return f"{provider} is having an outage (HTTP {status})." + (f" {detail}" if detail else "")
+    return f"{provider} returned HTTP {status}" + (f": {detail}" if detail else "")
+
+# Models that require max_completion_tokens instead of max_tokens
+_MAX_COMPLETION_TOKENS_MODELS = {"o1", "o3", "o4", "gpt-4.5", "gpt-5"}
+
+def _uses_max_completion_tokens(model: str) -> bool:
+    """Check if a model requires max_completion_tokens instead of max_tokens."""
+    if not model:
+        return False
+    m = model.lower()
+    return any(m.startswith(p) or f"/{p}" in m for p in _MAX_COMPLETION_TOKENS_MODELS)
+
+# OpenAI reasoning models (o1, o3, o4, gpt-5 families) only accept the default
+# temperature. Sending any explicit value — even 0.0 — returns HTTP 400
+# ("Only the default (1) value is supported"). That otherwise breaks chat when a
+# preset sets a non-default temperature, and makes endpoint probing report a
+# perfectly good model as failing. For these models we omit the field and let
+# the API use its required default. (gpt-4.5 is intentionally excluded — it is
+# not a reasoning model and accepts temperature normally.)
+_FIXED_TEMPERATURE_MODELS = ("o1", "o3", "o4", "gpt-5", "kimi-for-coding")
+
+def _restricts_temperature(model: str) -> bool:
+    """Check if a model rejects any non-default temperature."""
+    if not model:
+        return False
+    m = model.lower()
+    return any(m.startswith(p) or f"/{p}" in m for p in _FIXED_TEMPERATURE_MODELS)
+
+
+# The official Moonshot API fixes temperature at 1.0 in thinking mode and 0.6
+# when thinking is explicitly disabled for Kimi K2.5/K2.6. Any other explicit
+# value returns HTTP 400. Odysseus does not currently send the `thinking` mode
+# control, so omit temperature and let Moonshot use its default thinking mode.
+# Keep the gate provider-specific: self-hosted Kimi deployments may accept
+# custom sampling values, and older Moonshot models have different defaults.
+def _moonshot_rejects_custom_temperature(provider: str, model: str) -> bool:
+    """Check if the official Moonshot API fixes temperature for this model."""
+    if provider != "moonshot" or not isinstance(model, str):
+        return False
+    model_id = model.lower().rsplit("/", 1)[-1]
+    return bool(re.match(r"^kimi-k2\.(?:5|6)(?:$|[-_:])", model_id))
+
+
+def _omit_temperature(provider: str, model: str) -> bool:
+    """Check if a request should use the provider's default temperature."""
+    return _restricts_temperature(model) or _moonshot_rejects_custom_temperature(
+        provider, model
+    )
+
+
+# Anthropic removed the sampling parameters (temperature, top_p, top_k) starting
+# with Claude Opus 4.7. On Opus 4.7 and later, sending `temperature` at all —
+# even 0.0 — returns HTTP 400. Earlier Claude models (Opus 4.6 and below, every
+# Sonnet/Haiku) still accept temperature in [0.0, 1.0], so the omission must be
+# version-gated rather than applied to all `claude-*` models.
+def _anthropic_rejects_temperature(model: str) -> bool:
+    """Check if a native-Anthropic model rejects the temperature field (Opus 4.7+)."""
+    if not isinstance(model, str) or not model:
+        return False
+    # `(?<![a-z])` anchors "opus" to a word boundary so a substring match like
+    # `oct-opus`/`octopus-4-8` can't be read as Opus (it would otherwise strip
+    # temperature). Cap the minor at 1-2 digits and forbid a trailing digit so a
+    # dated id like `claude-opus-4-20250514` (Opus 4.0) parses as major-only (no
+    # minor match, kept) instead of reading the date `20250514` as a giant minor
+    # that would falsely test >= 4.7. Dated 4.7+ snapshots (`claude-opus-4-7-
+    # 20260201`) keep their explicit minor and are still matched.
+    match = re.search(r"(?<![a-z])opus[-_]?(\d+)[-_.](\d{1,2})(?!\d)", model.lower())
+    if not match:
+        return False
+    return (int(match.group(1)), int(match.group(2))) >= (4, 7)
+
+# Reasoning effort level sent to Mistral thinking-capable models. Mistral's
+# API accepts "high", "medium", "low", "none" — see
+# https://docs.mistral.ai/capabilities/reasoning/. Override via env var
+# ODYSSEUS_MISTRAL_REASONING_EFFORT (e.g. set to "medium" for cheaper chat).
+_MISTRAL_REASONING_EFFORT = os.getenv("ODYSSEUS_MISTRAL_REASONING_EFFORT", "high")
+
+# Models that support structured thinking — may output </think> without opening tag
+_THINKING_MODEL_PATTERNS = (
+    "qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "minimax",
+    "m2-reap", "gemma", "stepfun", "step-3", "step3",
+    "magistral", "mistral-small", "mistral-medium",
+)
+
+def _supports_thinking(model: str) -> bool:
+    """Check if model supports structured thinking output."""
+    if not model:
+        return False
+    m = model.lower()
+    return any(p in m for p in _THINKING_MODEL_PATTERNS)
+
+def _normalize_mistral_content(content):
+    """Mistral returns content as a structured array when reasoning is on:
+        [{"type": "thinking", "thinking": [{"type": "text", "text": "..."}], "closed": true},
+         {"type": "text", "text": "...final answer..."}]
+    Convert to (text, thinking) tuple of plain strings. Pass through strings
+    unchanged so non-Mistral OpenAI-compat endpoints are unaffected.
+    """
+    if isinstance(content, str):
+        return content, ""
+    if not isinstance(content, list):
+        return "", ""
+    text_parts = []
+    thinking_parts = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type")
+        if btype == "text":
+            t = block.get("text", "")
+            if t:
+                text_parts.append(t)
+        elif btype == "thinking":
+            inner = block.get("thinking", [])
+            if isinstance(inner, list):
+                for tb in inner:
+                    if isinstance(tb, dict) and tb.get("text"):
+                        thinking_parts.append(tb["text"])
+            elif isinstance(inner, str):
+                thinking_parts.append(inner)
+    return "".join(text_parts), "".join(thinking_parts)
+
+
+def _convert_openai_content_to_anthropic(content):
+    """Convert OpenAI multimodal content blocks to Anthropic format.
+
+    Converts image_url blocks (data URI) → Anthropic image blocks.
+    Passes text blocks through unchanged.
+    """
+    if not isinstance(content, list):
+        return content
+    converted = []
+    for block in content:
+        if not isinstance(block, dict):
+            converted.append(block)
+            continue
+        if block.get("type") == "image_url":
+            url = (block.get("image_url") or {}).get("url", "")
+            # Parse data URI: data:image/<fmt>;base64,<data>
+            if url.startswith("data:"):
+                try:
+                    header, b64_data = url.split(",", 1)
+                    media_type = header.split(";")[0].replace("data:", "")
+                except (ValueError, IndexError):
+                    continue
+                converted.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": b64_data,
+                    },
+                })
+            else:
+                # External URL — use Anthropic's URL source
+                converted.append({
+                    "type": "image",
+                    "source": {"type": "url", "url": url},
+                })
+        elif block.get("type") == "text":
+            converted.append(block)
+        else:
+            converted.append(block)
+    return converted
+
+
+def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=False, tools=None):
+    """Convert OpenAI-style messages to Anthropic format."""
+    system_parts = []
+    chat_messages = []
+    for m in messages:
+        if m.get("role") == "system":
+            system_parts.append(m.get("content") or "")
+        elif m.get("role") == "tool":
+            # Convert OpenAI tool result to Anthropic format
+            chat_messages.append({
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": m.get("tool_call_id", ""),
+                    "content": m.get("content", ""),
+                }],
+            })
+        elif m.get("role") == "assistant" and isinstance(m.get("tool_calls"), list):
+            # Convert OpenAI assistant tool_calls to Anthropic format
+            content = []
+            if m.get("content"):
+                content.append({"type": "text", "text": m["content"]})
+            for tc in m["tool_calls"]:
+                fn = tc.get("function") or {}
+                args_str = fn.get("arguments") or "{}"
+                try:
+                    args = json.loads(args_str) if isinstance(args_str, str) else args_str
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+                content.append({
+                    "type": "tool_use",
+                    "id": tc.get("id", ""),
+                    "name": fn.get("name", ""),
+                    "input": args,
+                })
+            chat_messages.append({"role": "assistant", "content": content})
+        else:
+            # Convert multimodal content (image_url → image) for Anthropic
+            content = _convert_openai_content_to_anthropic(m["content"])
+            chat_messages.append({"role": m["role"], "content": content})
+    # Anthropic only accepts temperature in [0.0, 1.0] and 400s on anything above
+    # 1.0. Clamp here (in the Anthropic builder only) so presets/sliders that use
+    # the wider OpenAI 0.0-2.0 range — e.g. the shipped "Nietzsche" preset at 1.2
+    # — don't hard-break every Claude request. OpenAI's own path is left untouched.
+    if temperature is not None:
+        temperature = max(0.0, min(temperature, 1.0))
+    payload = {
+        "model": model,
+        "messages": chat_messages,
+        "max_tokens": max_tokens if max_tokens and max_tokens > 0 else 4096,
+    }
+    # Opus 4.7+ removed the sampling parameters — sending `temperature` (even 0.0)
+    # returns HTTP 400. Omit it for those models; older Claude models still take it.
+    if not _anthropic_rejects_temperature(model):
+        payload["temperature"] = temperature
+    if system_parts:
+        system_text = "\n\n".join(system_parts)
+        # Send `system` as a structured text block so we can attach a prompt-cache
+        # breakpoint. The agent loop re-sends this same large prefix every round;
+        # caching it makes Anthropic re-read it from cache (~90% cheaper, lower TTFB)
+        # instead of re-billing it. Skip caching tiny one-off prompts, where the
+        # cache-WRITE premium wouldn't pay back (no reuse). Presence of `tools`
+        # means an agentic/multi-round call, where the prefix is always reused.
+        system_block = {"type": "text", "text": system_text}
+        if tools or len(system_text) > 4000:
+            system_block["cache_control"] = {"type": "ephemeral"}
+        payload["system"] = [system_block]
+    if stream:
+        payload["stream"] = True
+    # Convert OpenAI-format tools to Anthropic format
+    if tools:
+        anthropic_tools = []
+        for t in tools:
+            if t.get("type") == "function":
+                fn = t["function"]
+                anthropic_tools.append({
+                    "name": fn["name"],
+                    "description": fn.get("description", ""),
+                    "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
+                })
+        if anthropic_tools:
+            # Cache the tool schemas too — they're stable for the whole agent run.
+            # The breakpoint caches all tool defs preceding it in the request.
+            anthropic_tools[-1]["cache_control"] = {"type": "ephemeral"}
+            payload["tools"] = anthropic_tools
+    return payload
+
+def _build_anthropic_headers(headers):
+    """Convert Bearer auth to x-api-key for Anthropic."""
+    h = {"Content-Type": "application/json", "anthropic-version": "2023-06-01"}
+    if headers:
+        for k, v in headers.items():
+            if k.lower() == "authorization" and isinstance(v, str) and v.startswith("Bearer "):
+                h["x-api-key"] = v[7:]
+            else:
+                h[k] = v
+    return h
+
+def _parse_anthropic_response(data: dict) -> str:
+    """Extract text from an Anthropic response.
+
+    The Messages API `content` is an array that can hold more than one text
+    block (e.g. text split around a tool_use block, or citation-segmented
+    text). Concatenate them all instead of returning only the first, which
+    silently dropped the rest of the reply.
+    """
+    return "".join(
+        block.get("text", "")
+        for block in data.get("content", [])
+        if isinstance(block, dict) and block.get("type") == "text"
+    )
+
+
+def _as_content_blocks(content) -> List[Dict]:
+    """Coerce a message `content` into a list of content blocks.
+
+    A list (multimodal: text + image parts) passes through; a non-empty string
+    becomes a single text block; None/empty yields no blocks. Used when merging
+    consecutive user messages so multimodal content isn't str()-ed away.
+    """
+    if isinstance(content, list):
+        return content
+    if content:
+        return [{"type": "text", "text": str(content)}]
+    return []
+
+
+def _is_untrusted_context_content(content) -> bool:
+    if isinstance(content, str):
+        return (
+            content.startswith("UNTRUSTED SOURCE DATA\n")
+            or "<<<UNTRUSTED_SOURCE_DATA>>>" in content
+        )
+    if isinstance(content, list):
+        return any(
+            isinstance(block, dict)
+            and block.get("type") == "text"
+            and _is_untrusted_context_content(block.get("text") or "")
+            for block in content
+        )
+    return False
+
+
+_REFERENCE_CONTEXT_BOUNDARY = "Reference context received."
+
+
+def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
+    """Strip Odysseus-only metadata before sending messages to providers.
+
+    Per the OpenAI chat format: user/system messages must have content; a tool
+    message needs content + tool_call_id; an assistant message may carry content,
+    tool_calls, or both. The old guard required content on every message, which
+    dropped a valid assistant message that has only tool_calls — e.g. the
+    follow-up message _append_tool_results builds for a no-prose native tool call
+    (content=None, since Gemini/Ollama reject tool_calls alongside ""). Dropping
+    it leaves the tool result dangling and breaks the next round.
+    """
+    allowed = {"role", "content", "name", "tool_call_id", "tool_calls", "function_call", "reasoning_content"}
+    cleaned = []
+    for msg in messages or []:
+        if not isinstance(msg, dict):
+            continue
+        item = {k: v for k, v in msg.items() if k in allowed and v is not None}
+        role = item.get("role")
+        if not role:
+            continue
+        if role == "assistant":
+            # Re-add an explicit content=None when the message is tool-calls-only
+            # (the None was stripped above) so the provider gets the spec-correct
+            # `content: null`, not an omitted key.
+            if "content" not in item and item.get("tool_calls"):
+                item["content"] = None
+            if "content" in item or item.get("tool_calls"):
+                cleaned.append(item)
+        elif role == "tool":
+            if "content" in item and "tool_call_id" in item:
+                cleaned.append(item)
+        elif "content" in item:
+            cleaned.append(item)
+
+    # Repair tool-call adjacency before sending to any OpenAI-compatible
+    # provider. Trimming/compaction/retries can leave `role:"tool"` messages
+    # without their immediately-preceding assistant `tool_calls` parent, which
+    # DeepSeek rejects with:
+    # "Messages with role 'tool' must be a response to a preceding message with
+    # 'tool_calls'". Also strip unanswered assistant tool_calls; some providers
+    # reject those as incomplete conversations.
+    repaired: List[Dict] = []
+    i = 0
+    while i < len(cleaned):
+        msg = cleaned[i]
+        role = msg.get("role")
+
+        if role == "tool":
+            # Orphan tool result. There is no valid assistant tool_calls parent
+            # immediately before this batch, so it cannot be sent.
+            logger.debug("Dropping orphan tool message before provider request")
+            i += 1
+            continue
+
+        tool_calls = msg.get("tool_calls") if role == "assistant" else None
+        if not tool_calls:
+            repaired.append(msg)
+            i += 1
+            continue
+
+        call_ids = [
+            str(tc.get("id"))
+            for tc in tool_calls
+            if isinstance(tc, dict) and tc.get("id")
+        ]
+        expected = set(call_ids)
+        answered_ids = []
+        tool_batch = []
+        j = i + 1
+        while j < len(cleaned) and cleaned[j].get("role") == "tool":
+            tid = str(cleaned[j].get("tool_call_id") or "")
+            if tid in expected and tid not in answered_ids:
+                answered_ids.append(tid)
+                tool_batch.append(cleaned[j])
+            else:
+                logger.debug("Dropping unmatched/duplicate tool message before provider request")
+            j += 1
+
+        if not tool_batch:
+            plain = {k: v for k, v in msg.items() if k != "tool_calls"}
+            if (plain.get("content") or "").strip():
+                repaired.append(plain)
+            else:
+                logger.debug("Dropping unanswered assistant tool_calls before provider request")
+            i = j
+            continue
+
+        answered = set(answered_ids)
+        pruned_calls = [
+            tc for tc in tool_calls
+            if isinstance(tc, dict) and str(tc.get("id")) in answered
+        ]
+        fixed = dict(msg)
+        fixed["tool_calls"] = pruned_calls
+        if "content" not in fixed:
+            fixed["content"] = None
+        repaired.append(fixed)
+        repaired.extend(tool_batch)
+        if len(pruned_calls) != len(tool_calls):
+            logger.debug("Pruned unanswered assistant tool_calls before provider request")
+        i = j
+
+    # Merge consecutive user messages to satisfy strict role alternation
+    # requirements after invalid tool-call fragments have been removed.
+    merged: List[Dict] = []
+    for item in repaired:
+        if not merged:
+            merged.append(item)
+            continue
+
+        last = merged[-1]
+        if last.get("role") == "user" and item.get("role") == "user":
+            if _is_untrusted_context_content(last.get("content")):
+                merged.append({"role": "assistant", "content": _REFERENCE_CONTEXT_BOUNDARY})
+                merged.append(item)
+                continue
+            last_copy = dict(last)
+            lc = last_copy.get("content")
+            ic = item.get("content")
+            if isinstance(lc, list) or isinstance(ic, list):
+                # Preserve multimodal content blocks (e.g. an image part) by
+                # concatenating the block lists. str()-ing a list turned an
+                # image message into its Python repr and dropped the image.
+                merged_blocks = _as_content_blocks(lc) + _as_content_blocks(ic)
+                if merged_blocks:
+                    last_copy["content"] = merged_blocks
+                else:
+                    last_copy.pop("content", None)
+            else:
+                last_str = str(lc) if lc is not None else ""
+                item_str = str(ic) if ic is not None else ""
+                new_content = "\n\n".join(part for part in (last_str, item_str) if part)
+                if new_content:
+                    last_copy["content"] = new_content
+                else:
+                    last_copy.pop("content", None)
+            merged[-1] = last_copy
+        else:
+            merged.append(item)
+
+    return merged
+
+
+def _normalize_anthropic_url(url: str) -> str:
+    """Ensure Anthropic URL points to /v1/messages."""
+    url = url.rstrip("/")
+    if url.endswith("/v1/messages"):
+        return url
+    if url.endswith("/v1"):
+        return url + "/messages"
+    return url + "/v1/messages"
+
+
+def _model_list_base(url: str) -> str:
+    """Normalize model/chat URLs to the configured endpoint base."""
+    base = (url or "").strip().rstrip("/")
+    for suffix in ("/models", "/chat/completions", "/completions", "/v1/messages", "/responses"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)].rstrip("/")
+    for suffix in ("/chat", "/tags", "/generate"):
+        if base.endswith("/api" + suffix):
+            base = base[: -len(suffix)].rstrip("/")
+    return base
+
+
+def _parse_model_cache(raw) -> List[str]:
+    if not raw:
+        return []
+    try:
+        models = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return []
+    if not isinstance(models, list):
+        return []
+    out = []
+    seen = set()
+    for item in models:
+        mid = str(item or "").strip()
+        if not mid or mid in seen:
+            continue
+        out.append(mid)
+        seen.add(mid)
+    return out
+
+
+def _configured_cached_model_ids(
+    endpoint_url: str,
+    *,
+    owner: Optional[str] = None,
+    endpoint_id: Optional[str] = None,
+) -> List[str]:
+    """Return cached models for a configured endpoint matching endpoint_url."""
+    target = _model_list_base(endpoint_url)
+    if not target:
+        return []
+    try:
+        from src.database import SessionLocal, ModelEndpoint
+    except Exception:
+        return []
+    db = SessionLocal()
+    try:
+        q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+        if endpoint_id:
+            q = q.filter(ModelEndpoint.id == endpoint_id)
+        if owner:
+            from src.auth_helpers import owner_filter
+            q = owner_filter(q, ModelEndpoint, owner)
+        rows = q.all()
+        for ep in rows:
+            if _model_list_base(getattr(ep, "base_url", "")) != target:
+                continue
+            models = _parse_model_cache(getattr(ep, "cached_models", None) or getattr(ep, "models", None))
+            if not models:
+                continue
+            hidden = set(_parse_model_cache(getattr(ep, "hidden_models", None)))
+            return [m for m in models if m not in hidden]
+    except Exception:
+        return []
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+    return []
+
+
+def list_model_ids(
+    base_chat_url: str,
+    timeout: int = LLMConfig.DEFAULT_TIMEOUT,
+    headers: Optional[Dict] = None,
+    *,
+    owner: Optional[str] = None,
+    endpoint_id: Optional[str] = None,
+) -> List[str]:
+    """List available model IDs from an endpoint."""
+    cached = _configured_cached_model_ids(base_chat_url, owner=owner, endpoint_id=endpoint_id)
+    if cached:
+        return cached
+    provider = _detect_provider(base_chat_url)
+    if provider == "anthropic":
+        return list(ANTHROPIC_MODELS)
+    try:
+        h = {}
+        if headers:
+            h.update(headers)
+        if provider == "ollama":
+            models_url = _ollama_api_root(base_chat_url) + "/tags"
+        else:
+            from src.endpoint_resolver import build_models_url
+
+            models_url = build_models_url(base_chat_url)
+        r = httpx_get_kimi_aware(models_url, h, timeout=timeout)
+        r.raise_for_status()
+        data = r.json()
+        # Some OpenAI-compatible APIs (e.g. Together) return a bare list here.
+        items = data if isinstance(data, list) else (data.get("data") or [])
+        model_ids = [m.get("id") for m in items if isinstance(m, dict) and m.get("id")]
+        if not model_ids and isinstance(data, dict):
+            model_ids = [
+                m.get("name") or m.get("model")
+                for m in (data.get("models") or [])
+                if m.get("name") or m.get("model")
+            ]
+        return model_ids
+    except Exception:
+        try:
+            if ":11434" in base_chat_url or "ollama" in base_chat_url.lower():
+                root = base_chat_url.replace("/v1/chat/completions", "").replace("/chat/completions", "").rstrip("/")
+                r = httpx.get(root + "/api/tags", timeout=timeout)
+                r.raise_for_status()
+                return [m.get("name") or m.get("model") for m in (r.json().get("models") or []) if m.get("name") or m.get("model")]
+        except Exception as e:
+            logger.warning("Failed to fetch model list from configured endpoint", exc_info=e)
+        return []
+
+def normalize_model_id(
+    endpoint_url: str,
+    requested: str,
+    timeout: int = LLMConfig.DEFAULT_TIMEOUT,
+    *,
+    owner: Optional[str] = None,
+    endpoint_id: Optional[str] = None,
+) -> Optional[str]:
+    """Normalize a model ID to match available models."""
+    avail = list_model_ids(endpoint_url, timeout, owner=owner, endpoint_id=endpoint_id)
+    if not avail:
+        return None
+    if requested in avail:
+        return requested
+    import os as _os
+    req_base = _os.path.basename(requested.rstrip("/"))
+    for a in avail:
+        if _os.path.basename(a.rstrip("/")) == req_base:
+            return a
+    return None

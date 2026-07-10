@@ -3,6 +3,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = ROOT / "scripts" / "agent_migration_manifest.py"
@@ -83,7 +85,10 @@ def test_collect_skill_dir_skips_symlinked_skill_markdown(tmp_path):
     outside.write_text("private skill content", encoding="utf-8")
     skill_path = tmp_path / "skills" / "bad" / "SKILL.md"
     skill_path.parent.mkdir(parents=True)
-    skill_path.symlink_to(outside)
+    try:
+        skill_path.symlink_to(outside)
+    except (AttributeError, NotImplementedError, OSError) as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
 
     items, warnings = migration.collect_skill_dir(tmp_path / "skills", "example-agent")
 
@@ -96,7 +101,10 @@ def test_collect_skill_dir_skips_symlinked_root(tmp_path):
     real_skills = tmp_path / "real-skills"
     real_skills.mkdir()
     linked_skills = tmp_path / "skills"
-    linked_skills.symlink_to(real_skills, target_is_directory=True)
+    try:
+        linked_skills.symlink_to(real_skills, target_is_directory=True)
+    except (AttributeError, NotImplementedError, OSError) as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
 
     items, warnings = migration.collect_skill_dir(linked_skills, "example-agent")
 
@@ -124,7 +132,10 @@ def test_archive_skips_symlinked_file(tmp_path):
     archive_dir = tmp_path / "archive"
     archive_dir.mkdir()
     linked_file = archive_dir / "leak.md"
-    linked_file.symlink_to(outside)
+    try:
+        linked_file.symlink_to(outside)
+    except (AttributeError, NotImplementedError, OSError) as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
 
     items, warnings = migration.collect_archive_paths([archive_dir], "example-agent", include_content=True)
 
@@ -137,7 +148,10 @@ def test_archive_skips_symlinked_root(tmp_path):
     archive = tmp_path / "notes.md"
     archive.write_text("# Notes\n\nUseful context.", encoding="utf-8")
     linked_archive = tmp_path / "linked-notes.md"
-    linked_archive.symlink_to(archive)
+    try:
+        linked_archive.symlink_to(archive)
+    except (AttributeError, NotImplementedError, OSError) as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
 
     items, warnings = migration.collect_archive_paths([linked_archive], "example-agent", include_content=True)
 

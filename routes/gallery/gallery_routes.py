@@ -1,18 +1,22 @@
 """Gallery routes — browsable library for photos and AI-generated images."""
 
+import asyncio
+import json
 import os
 import hashlib
 import logging
 import re
+import time
 import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 
 from core.database import SessionLocal, GalleryImage, GalleryAlbum, ModelEndpoint
 from core.database import Session as DbSession
-from src.auth_helpers import get_current_user, owner_filter, require_privilege
+from src.auth_helpers import get_current_user, owner_filter, require_privilege, require_user
 from src.upload_limits import (
     read_upload_limited,
     GALLERY_UPLOAD_MAX_BYTES,
@@ -27,6 +31,69 @@ from routes.gallery.gallery_helpers import (
 
 logger = logging.getLogger(__name__)
 
+_INPAINT_PROGRESS: Dict[str, Dict[str, Any]] = {}
+_INPAINT_PROGRESS_MAX_AGE_SECONDS = 8 * 60
+
+
+def _normalize_inpaint_progress_id(value: Any) -> str:
+    progress_id = str(value or "").strip()
+    if not progress_id:
+        return ""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{12,80}", progress_id):
+        return ""
+    return progress_id
+
+
+def _prune_inpaint_progress(now: float | None = None) -> None:
+    now = now or time.time()
+    stale = [
+        progress_id for progress_id, record in _INPAINT_PROGRESS.items()
+        if now - float(record.get("updated_at") or 0) > _INPAINT_PROGRESS_MAX_AGE_SECONDS
+    ]
+    for progress_id in stale:
+        _INPAINT_PROGRESS.pop(progress_id, None)
+
+
+def _push_inpaint_progress(
+    progress_id: str,
+    owner: str | None,
+    phase: str,
+    message: str = "",
+    *,
+    percent: int | None = None,
+    done: bool = False,
+    error: bool = False,
+) -> None:
+    progress_id = _normalize_inpaint_progress_id(progress_id)
+    if not progress_id:
+        return
+    now = time.time()
+    _prune_inpaint_progress(now)
+    record = _INPAINT_PROGRESS.setdefault(
+        progress_id,
+        {"owner": owner or "", "events": [], "updated_at": now, "done": False},
+    )
+    if record.get("owner") and owner and record.get("owner") != owner:
+        return
+    if owner and not record.get("owner"):
+        record["owner"] = owner
+    event: Dict[str, Any] = {
+        "phase": str(phase or "working"),
+        "message": str(message or ""),
+        "at": now,
+    }
+    if percent is not None:
+        event["percent"] = max(0, min(100, int(percent)))
+    if done:
+        event["done"] = True
+        record["done"] = True
+    if error:
+        event["error"] = True
+    events = record.setdefault("events", [])
+    events.append(event)
+    del events[:-80]
+    record["updated_at"] = now
+
 
 def _current_user_is_admin(request: Request, user: str | None) -> bool:
     if not user:
@@ -39,6 +106,18 @@ def _current_user_is_admin(request: Request, user: str | None) -> bool:
         return bool(is_admin(user))
     except Exception:
         return False
+
+
+def _image_endpoint_lookup_owner(request: Request, user: str | None) -> str | None:
+    """Let admins use registered endpoints globally; scope other users."""
+    return None if _current_user_is_admin(request, user) else user
+
+
+def _gallery_owner_matches(owner: str | None, user: str | None) -> bool:
+    """Return whether an authenticated or single-user request owns a row."""
+    if user:
+        return owner == user
+    return owner in (None, "")
 
 
 def _sanitize_gallery_filename(filename: str) -> str:
@@ -88,11 +167,17 @@ def _is_openai_api_base(url: str) -> bool:
 
 
 _GALLERY_ENDPOINT_PATHS = frozenset({
+    "/api/image/inpaint",
+    "/chat/completions",
+    "/images/background-remove",
+    "/images/edit",
     "/images/edits",
     "/images/generations",
     "/images/harmonize",
     "/images/img2img",
     "/images/inpaint",
+    "/images/rembg",
+    "/images/remove-bg",
     "/images/upscale",
     "/images/variations",
     "/sdapi/v1/img2img",
@@ -119,6 +204,13 @@ def _visible_image_endpoint_query(db, owner: str | None):
     return owner_filter(q, ModelEndpoint, owner)
 
 
+def _visible_enabled_endpoint_query(db, owner: str | None):
+    q = db.query(ModelEndpoint).filter(
+        ModelEndpoint.is_enabled == True,  # noqa: E712
+    )
+    return owner_filter(q, ModelEndpoint, owner)
+
+
 def _first_visible_image_endpoint(db, owner: str | None):
     endpoints = _visible_image_endpoint_query(db, owner).all()
     if owner:
@@ -140,6 +232,51 @@ def _visible_image_endpoint_for_base(db, base: str, owner: str | None):
             if fallback is None:
                 fallback = ep
     return fallback
+
+
+def _visible_enabled_endpoint_for_base(db, base: str, owner: str | None):
+    target = _normalize_image_endpoint_base(base)
+    if not target:
+        return None
+    fallback = None
+    for ep in _visible_enabled_endpoint_query(db, owner).all():
+        if _normalize_image_endpoint_base(getattr(ep, "base_url", "")) == target:
+            if owner and getattr(ep, "owner", None) == owner:
+                return ep
+            if fallback is None:
+                fallback = ep
+    return fallback
+
+
+def _visible_image_endpoint_for_id(db, endpoint_id: str, owner: str | None):
+    endpoint_id = str(endpoint_id or "").strip()
+    if not endpoint_id:
+        return None
+    return _visible_image_endpoint_query(db, owner).filter(ModelEndpoint.id == endpoint_id).first()
+
+
+def _visible_enabled_endpoint_for_id(db, endpoint_id: str, owner: str | None):
+    endpoint_id = str(endpoint_id or "").strip()
+    if not endpoint_id:
+        return None
+    return _visible_enabled_endpoint_query(db, owner).filter(ModelEndpoint.id == endpoint_id).first()
+
+
+def _model_name_prefers_image_edit_endpoint(model_name: str) -> bool:
+    model = str(model_name or "").lower()
+    if "dall-e-3" in model:
+        return False
+    return (
+        "gpt-image" in model
+        or "chatgpt-image" in model
+        or "dall-e-2" in model
+        or ("qwen" in model and "image" in model and any(token in model for token in ("edit", "inpaint", "fill")))
+        or ("seedream" in model and any(token in model for token in ("edit", "inpaint", "fill")))
+        or "kontext" in model
+        or "inpaint" in model
+        or "edit" in model
+        or "fill" in model
+    )
 
 
 async def _fetch_result_image_b64(url: str) -> Optional[str]:
@@ -397,7 +534,7 @@ def setup_gallery_routes() -> APIRouter:
         # Find image endpoint
         db = SessionLocal()
         try:
-            ep = _first_visible_image_endpoint(db, user)
+            ep = _first_visible_image_endpoint(db, _image_endpoint_lookup_owner(request, user))
         finally:
             db.close()
 
@@ -441,7 +578,7 @@ def setup_gallery_routes() -> APIRouter:
 
         db = SessionLocal()
         try:
-            ep = _first_visible_image_endpoint(db, user)
+            ep = _first_visible_image_endpoint(db, _image_endpoint_lookup_owner(request, user))
         finally:
             db.close()
 
@@ -1076,71 +1213,338 @@ def setup_gallery_routes() -> APIRouter:
         finally:
             db.close()
 
+    # ---- GET /api/image/inpaint/progress/{id} — live progress for an active run ----
+    @router.get("/api/image/inpaint/progress/{progress_id}")
+    async def inpaint_progress_stream(progress_id: str, request: Request):
+        user = require_privilege(request, "can_generate_images")
+        progress_id = _normalize_inpaint_progress_id(progress_id)
+        if not progress_id:
+            raise HTTPException(404, "Unknown inpaint progress stream")
+
+        async def event_stream():
+            cursor = 0
+            started = time.time()
+            while True:
+                record = _INPAINT_PROGRESS.get(progress_id)
+                if record and record.get("owner") and user and record.get("owner") != user:
+                    yield f"data: {json.dumps({'phase': 'forbidden', 'message': 'Progress stream is not available', 'done': True, 'error': True})}\n\n"
+                    break
+                events = list(record.get("events") or []) if record else []
+                while cursor < len(events):
+                    yield f"data: {json.dumps(events[cursor])}\n\n"
+                    cursor += 1
+                if record and record.get("done") and cursor >= len(events):
+                    _INPAINT_PROGRESS.pop(progress_id, None)
+                    break
+                if await request.is_disconnected():
+                    break
+                if not record and time.time() - started > 300:
+                    break
+                await asyncio.sleep(0.35)
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     # ---- POST /api/image/inpaint — proxy to diffusion server OR OpenAI ----
     @router.post("/api/image/inpaint")
     async def inpaint_proxy(request: Request):
-        """Forward inpaint request. If the selected endpoint is OpenAI, re-shape
-        the request for /v1/images/edits (multipart, inverted mask). Otherwise
-        proxy through to a self-hosted diffusion server's /v1/images/inpaint."""
+        """Forward inpaint requests to OpenAI edits or a local diffusion endpoint."""
+        import base64, json, re
         import httpx
         user = require_privilege(request, "can_generate_images")
-        body = await request.json()
-        # Use endpoint from request body (editor dropdown) or fall back to DB lookup.
-        # Store as requested_base to avoid carrying user input into the outbound request.
+        try:
+            content_length = int(request.headers.get("content-length") or 0)
+        except Exception:
+            content_length = 0
+        if content_length > 32 * 1024 * 1024:
+            raise HTTPException(413, "Inpaint request is too large. Try a smaller mask area or resize the canvas.")
+        try:
+            body = await request.json()
+        except MemoryError:
+            raise HTTPException(413, "Inpaint request is too large. Try a smaller mask area or resize the canvas.")
+        progress_id = _normalize_inpaint_progress_id(body.pop("_progress_id", ""))
+
+        def progress(
+            phase: str,
+            message: str = "",
+            *,
+            percent: int | None = None,
+            done: bool = False,
+            error: bool = False,
+        ) -> None:
+            _push_inpaint_progress(
+                progress_id,
+                user,
+                phase,
+                message,
+                percent=percent,
+                done=done,
+                error=error,
+            )
+
+        progress("accepted", "Backend received the inpaint request.", percent=52)
+        # Use endpoint from request body (editor dropdown) or fall back to DB lookup
+        endpoint_id = (body.pop("_endpoint_id", "") or "").strip()
         requested_base = (body.pop("_endpoint", "") or "").rstrip("/")
         # SSRF hardening: validate a client-supplied endpoint before any
         # outbound request (mirrors routes/embedding_routes.py).
-        if requested_base:
+        if requested_base and not endpoint_id:
             from src.url_safety import check_outbound_url
             ok, reason = check_outbound_url(
                 requested_base,
                 block_private=os.getenv("IMAGE_BLOCK_PRIVATE_IPS", "false").lower() == "true",
             )
             if not ok:
+                progress("failed", f"Rejected endpoint URL: {reason}", percent=100, done=True, error=True)
                 raise HTTPException(400, f"Rejected endpoint URL: {reason}")
         chosen_model = (body.pop("_model", "") or "").strip()
         api_key = None
-        if not requested_base:
+        if endpoint_id:
             db = SessionLocal()
             try:
-                ep = _first_visible_image_endpoint(db, user)
+                ep = _visible_image_endpoint_for_id(db, endpoint_id, _image_endpoint_lookup_owner(request, user))
+                if not ep and _model_name_prefers_image_edit_endpoint(chosen_model):
+                    ep = _visible_enabled_endpoint_for_id(db, endpoint_id, _image_endpoint_lookup_owner(request, user))
                 if not ep:
+                    progress("failed", "The selected image endpoint is not registered for this user.", percent=100, done=True, error=True)
+                    raise HTTPException(403, "Choose a registered image endpoint")
+                base = ep.base_url.rstrip("/")
+                api_key = ep.api_key
+            finally:
+                db.close()
+        elif not requested_base:
+            db = SessionLocal()
+            try:
+                ep = _first_visible_image_endpoint(db, _image_endpoint_lookup_owner(request, user))
+                if not ep:
+                    progress("failed", "No image generation endpoint is configured.", percent=100, done=True, error=True)
                     raise HTTPException(400, "No image generation endpoint configured. Serve a diffusion model via Cookbook first.")
                 base = ep.base_url.rstrip("/")
                 api_key = ep.api_key
             finally:
                 db.close()
         else:
-            # Resolve the client-supplied base to a registered visible endpoint.
-            # Admins are not exempted — gallery proxy routes must use a DB row
-            # so the outbound URL never depends directly on request-body input.
+            # Pull api_key from the matching DB row so OpenAI auth works.
+            # Users may have stored base_url with/without /v1 suffix and with/without
+            # trailing slash, so compare normalized forms.
+            def _norm_url(u: str) -> str:
+                if not u:
+                    return u
+                u = u.rstrip("/")
+                if u.endswith("/v1"):
+                    u = u[:-3]
+                return u
+            _target = _norm_url(requested_base)
             db = SessionLocal()
             try:
-                ep = _visible_image_endpoint_for_base(db, requested_base, user)
-                if not ep:
+                ep = _visible_image_endpoint_for_base(db, _target, _image_endpoint_lookup_owner(request, user))
+                if not ep and _model_name_prefers_image_edit_endpoint(chosen_model):
+                    ep = _visible_enabled_endpoint_for_base(db, _target, _image_endpoint_lookup_owner(request, user))
+                if ep:
+                    base = (ep.base_url or "").rstrip("/")
+                    api_key = ep.api_key
+                else:
+                    progress("failed", "The selected image endpoint is not registered for this user.", percent=100, done=True, error=True)
                     raise HTTPException(403, "Choose a registered image endpoint")
-                base = ep.base_url.rstrip("/")
-                api_key = ep.api_key
             finally:
                 db.close()
 
         if not base.endswith("/v1"):
             base += "/v1"
 
+        base_root = base[:-3].rstrip("/") if base.endswith("/v1") else base.rstrip("/")
         is_openai = _is_openai_api_base(base)
 
-        if is_openai:
+        def _is_openai_compatible_image_edit_base(value: str) -> bool:
+            lower = str(value or "").lower()
+            return (
+                _is_openai_api_base(value)
+                or "compatible-mode" in lower
+                or "dashscope" in lower
+                or "aliyuncs.com" in lower
+            )
+
+        is_openai_style_edit = _is_openai_compatible_image_edit_base(base)
+        endpoint_label = chosen_model or base_root or base
+        progress("endpoint", f"Selected {endpoint_label}.", percent=56)
+
+        def _strip_data_url(value: str) -> str:
+            value = str(value or "").strip()
+            if "," in value and value.lower().startswith("data:"):
+                return value.split(",", 1)[1]
+            return value
+
+        def _looks_like_provider_image_value(value) -> bool:
+            text = str(value or "").strip()
+            if not text:
+                return False
+            lower = text.lower()
+            if lower.startswith(("data:image/", "http://", "https://")):
+                return True
+            clean = re.sub(r"\s+", "", _strip_data_url(text))
+            if clean.startswith(("iVBOR", "/9j/", "UklGR")):
+                return True
+            if len(clean) < 128:
+                return False
+            try:
+                raw = base64.b64decode(clean, validate=True)
+                return raw.startswith(b"\x89PNG") or raw.startswith(b"\xff\xd8") or raw.startswith(b"RIFF")
+            except Exception:
+                return False
+
+        def _image_value_from_text(value: str) -> str:
+            text = str(value or "").strip()
+            match = re.search(r"data:image/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=\s]+", text, re.I)
+            if match:
+                return match.group(0)
+            match = re.search(r'"(?:b64_json|image|base64|image_base64|imageBase64|url|image_url|imageUrl)"\s*:\s*"([^"]{128,})"', text, re.I)
+            if match:
+                candidate = match.group(1).replace("\\/", "/").replace("\\n", "").replace("\\r", "")
+                return candidate if _looks_like_provider_image_value(candidate) else ""
+            return ""
+
+        def _first_provider_image_value(node, depth=0) -> str:
+            if node is None or depth > 5:
+                return ""
+            if isinstance(node, str):
+                value = node.strip()
+                if _looks_like_provider_image_value(value):
+                    return value
+                embedded = _image_value_from_text(value)
+                if embedded:
+                    return embedded
+                if (value.startswith("{") and value.endswith("}")) or (value.startswith("[") and value.endswith("]")):
+                    try:
+                        return _first_provider_image_value(json.loads(value), depth + 1)
+                    except Exception:
+                        return ""
+                return ""
+            if isinstance(node, list):
+                for item in node:
+                    found = _first_provider_image_value(item, depth + 1)
+                    if found:
+                        return found
+                return ""
+            if not isinstance(node, dict):
+                return ""
+            preferred = [
+                "image", "b64_json", "base64", "image_base64", "imageBase64",
+                "url", "image_url", "imageUrl", "data", "images",
+                "content", "message", "choices", "output", "outputs", "result", "results", "artifact", "artifacts",
+            ]
+            for key in preferred:
+                if key in node:
+                    found = _first_provider_image_value(node.get(key), depth + 1)
+                    if found:
+                        return found
+            for value in node.values():
+                found = _first_provider_image_value(value, depth + 1)
+                if found:
+                    return found
+            return ""
+
+        def _provider_error_text(node, depth=0) -> str:
+            if node is None or depth > 4:
+                return ""
+            if isinstance(node, str):
+                text = node.replace("\n", " ").strip()
+                return "" if _looks_like_provider_image_value(text) else text[:220]
+            if isinstance(node, list):
+                for item in node:
+                    found = _provider_error_text(item, depth + 1)
+                    if found:
+                        return found
+                return ""
+            if not isinstance(node, dict):
+                return ""
+            for key in ("error", "detail", "message", "reason", "status_message"):
+                if key in node:
+                    found = _provider_error_text(node.get(key), depth + 1)
+                    if found:
+                        return found
+            return ""
+
+        def _provider_no_image_detail(node) -> str:
+            err = _provider_error_text(node)
+            if err:
+                return err
+            if isinstance(node, dict):
+                keys = ", ".join(str(k) for k in list(node.keys())[:10])
+                return f"server returned no image (keys: {keys})" if keys else "server returned no image"
+            text = str(node or "").strip()
+            return f"server returned no image: {text[:180]}" if text else "server returned no image"
+
+        async def _provider_image_value_to_b64(value: str, client) -> str:
+            value = str(value or "").strip()
+            lower = value.lower()
+            if lower.startswith(("http://", "https://")):
+                downloaded = await _fetch_result_image_b64(value)
+                if not downloaded:
+                    raise HTTPException(502, "Image endpoint URL could not be downloaded")
+                return downloaded
+            return re.sub(r"\s+", "", _strip_data_url(value))
+
+        async def _normalized_provider_image_response(text: str, client):
+            try:
+                parsed = json.loads(text or "{}")
+            except Exception:
+                parsed = text or ""
+            image = _first_provider_image_value(parsed)
+            if not image:
+                return None, _provider_no_image_detail(parsed)
+            return await _provider_image_value_to_b64(image, client), ""
+
+        def _is_qwen_dashscope_image_edit(model_name: str, endpoint_base: str) -> bool:
+            model_l = str(model_name or "").lower()
+            base_l = str(endpoint_base or "").lower()
+            return (
+                "qwen" in model_l
+                and "image" in model_l
+                and ("edit" in model_l or "2.0" in model_l)
+                and ("aliyuncs.com" in base_l or "dashscope" in base_l)
+            )
+
+        def _qwen_dashscope_generation_url(endpoint_base: str) -> str:
+            from urllib.parse import urlsplit, urlunsplit
+
+            parsed = urlsplit(str(endpoint_base or "").rstrip("/"))
+            path = parsed.path.rstrip("/")
+            lower_path = path.lower()
+            if "/compatible-mode/v1" in lower_path:
+                path = f"{path[:lower_path.index('/compatible-mode/v1')]}/api/v1"
+            elif "/api/v1" in lower_path:
+                path = path[:lower_path.index("/api/v1") + len("/api/v1")]
+            elif lower_path.endswith("/v1"):
+                path = f"{path[:-3].rstrip('/')}/api/v1"
+            else:
+                path = f"{path}/api/v1" if path else "/api/v1"
+            return urlunsplit((
+                parsed.scheme,
+                parsed.netloc,
+                f"{path}/services/aigc/multimodal-generation/generation",
+                "",
+                "",
+            ))
+
+        if is_openai_style_edit:
             # OpenAI path: /v1/images/edits with gpt-image-1.
             # Mask convention differs from Stable Diffusion:
             #   SD:     white pixels = regenerate, black = keep
             #   OpenAI: transparent alpha = regenerate, opaque = keep
             # So we convert the incoming PNG mask into an alpha-channel PNG.
+            provider_label = "OpenAI" if is_openai else "OpenAI-compatible image endpoint"
+            progress("openai_prepare", f"Preparing {provider_label} edit request.", percent=60)
             if not api_key:
-                raise HTTPException(400, "OpenAI endpoint has no api_key stored — edit it in Endpoints settings.")
+                progress("failed", f"{provider_label} has no stored API key.", percent=100, done=True, error=True)
+                raise HTTPException(400, f"{provider_label} has no api_key stored - edit it in Endpoints settings.")
             import base64, io
             try:
                 from PIL import Image
             except ImportError:
+                progress("failed", "Pillow is not installed on the server.", percent=100, done=True, error=True)
                 raise HTTPException(500, "Pillow not installed on server")
 
             try:
@@ -1165,8 +1569,8 @@ def setup_gallery_routes() -> APIRouter:
             except HTTPException:
                 raise
             except Exception:
-                logger.exception("inpaint_proxy: failed to prepare OpenAI request")
-                raise HTTPException(400, "Failed to prepare inpaint request")
+                logger.exception("inpaint_proxy: failed to prepare provider request")
+                raise HTTPException(400, "Failed to prepare image edit request")
 
             width = int(body.get("width") or 1024)
             height = int(body.get("height") or 1024)
@@ -1183,10 +1587,15 @@ def setup_gallery_routes() -> APIRouter:
                 "image": ("source.png", src_buf.getvalue(), "image/png"),
                 "mask": ("mask.png", mask_buf.getvalue(), "image/png"),
             }
-            # Honor explicit model selection from the editor; fall back to gpt-image-1.
-            # dall-e-3 has no edit endpoint — refuse it loudly so the user picks again.
-            oa_model = chosen_model or "gpt-image-1"
-            if "dall-e-3" in oa_model:
+            # Honor explicit model selection from the editor. Only native OpenAI
+            # should silently fall back to gpt-image-1; compatible providers need
+            # their own edit-capable model name.
+            oa_model = chosen_model or ("gpt-image-1" if is_openai else "")
+            if not oa_model:
+                progress("failed", "No image-edit model is selected for this endpoint.", percent=100, done=True, error=True)
+                raise HTTPException(400, "Select an image-edit model for this endpoint.")
+            if "dall-e-3" in oa_model.lower():
+                progress("failed", "dall-e-3 does not support image edits.", percent=100, done=True, error=True)
                 raise HTTPException(400, "dall-e-3 doesn't support image edits — pick gpt-image-1 or dall-e-2")
             data = {
                 "model": oa_model,
@@ -1194,24 +1603,174 @@ def setup_gallery_routes() -> APIRouter:
                 "size": size,
                 "n": "1",
             }
-            headers = {"Authorization": f"Bearer {api_key}"}
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+            def _blend_provider_result(raw_b64: str, detail: str = "Backend response is ready."):
+                try:
+                    progress("composite", "Compositing edited pixels into the masked region.", percent=84)
+                    generated = Image.open(io.BytesIO(base64.b64decode(raw_b64))).convert("RGBA")
+                    # Match the generated image to the source dims.
+                    if generated.size != source_png.size:
+                        generated = generated.resize(source_png.size, Image.LANCZOS)
+                    # mask_png: white = regenerate (use generated),
+                    #           black = keep (use source).
+                    # Composite: result = source * (1 - mask_norm) + generated * mask_norm
+                    # Image.composite does exactly that with `mask`.
+                    blended = Image.composite(generated, source_png, mask_png)
+                    out_buf = io.BytesIO()
+                    blended.save(out_buf, format="PNG")
+                    progress("backend_complete", detail, percent=88, done=True)
+                    return {"image": base64.b64encode(out_buf.getvalue()).decode()}
+                except Exception as comp_err:
+                    # If compositing fails for any reason, fall back
+                    # to the raw provider output rather than blocking.
+                    logger.warning(f"Inpaint compose failed, returning raw: {comp_err}")
+                    progress("backend_complete", "Backend response is ready; returning raw provider image.", percent=88, done=True)
+                    return {"image": raw_b64}
+
             try:
                 async with httpx.AsyncClient(timeout=120) as client:
-                    r = await client.post(_join_checked_gallery_endpoint(base, "/images/edits"), headers=headers, data=data, files=files)
-                    if r.status_code != 200:
-                        logger.error("inpaint_proxy OpenAI edit: status %s", r.status_code)
-                        raise HTTPException(r.status_code, "OpenAI edit failed")
-                    result = r.json()
-                    raw_b64 = None
-                    if result.get("data"):
-                        item = result["data"][0]
-                        # gpt-image-1 returns b64_json by default; dall-e-2 may return url
-                        if item.get("b64_json"):
-                            raw_b64 = item["b64_json"]
-                        elif item.get("url"):
-                            raw_b64 = await _fetch_result_image_b64(item["url"])
+                    if _is_qwen_dashscope_image_edit(oa_model, base):
+                        qwen_prompt = (body.get("prompt", "") or "Edit the selected area.").strip()
+                        if body.get("mask"):
+                            qwen_prompt = (
+                                f"{qwen_prompt}\n\n"
+                                "The app will apply this result only inside the user's painted mask. "
+                                "Keep all unselected areas visually consistent with the source image."
+                            )
+                        params = {"n": 1, "watermark": False}
+                        model_l = oa_model.lower()
+                        if any(token in model_l for token in ("qwen-image-2.0", "qwen-image-edit-plus", "qwen-image-edit-max")):
+                            params.update({
+                                "size": size.replace("x", "*"),
+                                "prompt_extend": True,
+                            })
+                        qwen_payload = {
+                            "model": oa_model,
+                            "input": {
+                                "messages": [{
+                                    "role": "user",
+                                    "content": [
+                                        {"image": f"data:image/png;base64,{body.get('image', '')}"},
+                                        {"text": qwen_prompt},
+                                    ],
+                                }],
+                            },
+                            "parameters": params,
+                        }
+                        qwen_headers = dict(headers)
+                        qwen_headers["Content-Type"] = "application/json"
+                        qwen_url = _qwen_dashscope_generation_url(base)
+                        progress("model_wait", "Sending Qwen image edit request through DashScope.", percent=66)
+                        qr = await client.post(qwen_url, headers=qwen_headers, json=qwen_payload)
+                        if qr.status_code < 200 or qr.status_code >= 300:
+                            progress("failed", f"Qwen image edit failed with HTTP {qr.status_code}.", percent=100, done=True, error=True)
+                            logger.error("Qwen image edit failed with HTTP %s: %s", qr.status_code, qr.text[:300])
+                            raise HTTPException(qr.status_code, "Qwen image edit failed")
+                        progress("response", "Qwen returned an edited image.", percent=78)
+                        raw_b64, no_image_detail = await _normalized_provider_image_response(qr.text, client)
+                        if not raw_b64:
+                            progress("failed", "Qwen image edit returned no image.", percent=100, done=True, error=True)
+                            logger.error("Qwen image edit returned no image: %s", no_image_detail)
+                            raise HTTPException(502, "Qwen image edit returned no image")
+                        return _blend_provider_result(raw_b64)
+
+                    async def _chat_image_edit(previous_error=""):
+                        chat_prompt = (
+                            f"{body.get('prompt', '')}\n\n"
+                            "Use the first image as the source. The second image is a mask: "
+                            "white pixels mark the area to edit, black pixels should stay unchanged."
+                        ).strip()
+                        chat_payload = {
+                            "messages": [{
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": chat_prompt},
+                                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{body.get('image', '')}"}},
+                                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{body.get('mask', '')}"}},
+                                ],
+                            }],
+                            "stream": False,
+                            "extra_body": {
+                                "num_inference_steps": 50,
+                                "guidance_scale": 1,
+                                "size": size,
+                                "output_format": "png",
+                            },
+                        }
+                        if oa_model:
+                            chat_payload["model"] = oa_model
+                        progress("model_wait", "Trying /v1/chat/completions image edit fallback.", percent=72)
+                        cr = await client.post(
+                            _join_checked_gallery_endpoint(base, "/chat/completions"),
+                            headers=headers,
+                            json=chat_payload,
+                        )
+                        if cr.status_code < 200 or cr.status_code >= 300:
+                            suffix = f" Previous /v1/images/edits error: {previous_error[:180]}" if previous_error else ""
+                            logger.error(
+                                "Image edit chat fallback failed with HTTP %s: %s%s",
+                                cr.status_code,
+                                cr.text[:300],
+                                suffix,
+                            )
+                            raise HTTPException(cr.status_code, "Image edit chat fallback failed")
+                        image_b64, no_image_detail = await _normalized_provider_image_response(cr.text, client)
+                        if not image_b64:
+                            suffix = f" Previous /v1/images/edits error: {previous_error[:180]}" if previous_error else ""
+                            logger.error("Image edit chat fallback returned no image: %s%s", no_image_detail, suffix)
+                            raise HTTPException(502, "Image edit chat fallback returned no image")
+                        return image_b64
+
+                    async def _json_or_chat_image_edit(previous_error=""):
+                        mask_b64 = base64.b64encode(mask_buf.getvalue()).decode()
+                        json_payload = {
+                            "model": oa_model,
+                            "prompt": body.get("prompt", ""),
+                            "image": body.get("image", ""),
+                            "mask_image": mask_b64,
+                            "size": size,
+                            "n": 1,
+                            "response_format": "b64_json",
+                            "output_format": "png",
+                        }
+                        progress("model_wait", "Trying /v1/images/edits JSON fallback.", percent=70)
+                        jr = await client.post(
+                            _join_checked_gallery_endpoint(base, "/images/edits"),
+                            headers=headers,
+                            json=json_payload,
+                        )
+                        if jr.status_code >= 200 and jr.status_code < 300:
+                            image_b64, no_image_detail = await _normalized_provider_image_response(jr.text, client)
+                            if image_b64:
+                                return image_b64
+                            previous_error = f"/images/edits JSON: {no_image_detail}"
+                        else:
+                            previous_error = f"/images/edits JSON: HTTP {jr.status_code}: {jr.text[:300]}"
+                        return await _chat_image_edit(previous_error)
+
+                    progress("model_wait", f"Sending edit request to {oa_model}.", percent=66)
+                    r = await client.post(
+                        _join_checked_gallery_endpoint(base, "/images/edits"),
+                        headers=headers,
+                        data=data,
+                        files=files,
+                    )
+                    if r.status_code < 200 or r.status_code >= 300:
+                        last_err = f"/images/edits: HTTP {r.status_code}: {r.text[:300]}"
+                        if is_openai:
+                            progress("failed", f"OpenAI edit failed with HTTP {r.status_code}.", percent=100, done=True, error=True)
+                            logger.error("OpenAI edit failed with HTTP %s: %s", r.status_code, r.text[:300])
+                            raise HTTPException(r.status_code, "OpenAI edit failed")
+                        raw_b64 = await _json_or_chat_image_edit(last_err)
+                    else:
+                        progress("response", f"{provider_label} returned an edited image.", percent=78)
+                        raw_b64, no_image_detail = await _normalized_provider_image_response(r.text, client)
+                        if not raw_b64 and not is_openai:
+                            raw_b64 = await _chat_image_edit(f"/images/edits: {no_image_detail}")
                     if not raw_b64:
-                        raise HTTPException(502, "OpenAI returned no image")
+                        progress("failed", f"{provider_label} returned no image.", percent=100, done=True, error=True)
+                        raise HTTPException(502, f"{provider_label} returned no image")
 
                     # OpenAI's edits API doesn't truly preserve unmasked
                     # pixels — gpt-image-1 regenerates the whole image,
@@ -1219,25 +1778,9 @@ def setup_gallery_routes() -> APIRouter:
                     # slightly different. Composite the model output onto
                     # the ORIGINAL source using the user's mask, so only
                     # the masked region actually changes.
-                    try:
-                        generated = Image.open(io.BytesIO(base64.b64decode(raw_b64))).convert("RGBA")
-                        # Match the generated image to the source dims.
-                        if generated.size != source_png.size:
-                            generated = generated.resize(source_png.size, Image.LANCZOS)
-                        # mask_png: white = regenerate (use generated),
-                        #           black = keep (use source).
-                        # Composite: result = source * (1 - mask_norm) + generated * mask_norm
-                        # Image.composite does exactly that with `mask`.
-                        blended = Image.composite(generated, source_png, mask_png)
-                        out_buf = io.BytesIO()
-                        blended.save(out_buf, format="PNG")
-                        return {"image": base64.b64encode(out_buf.getvalue()).decode()}
-                    except Exception as comp_err:
-                        # If compositing fails for any reason, fall back
-                        # to the raw OpenAI output rather than blocking.
-                        logger.warning(f"Inpaint compose failed, returning raw: {comp_err}")
-                        return {"image": raw_b64}
+                    return _blend_provider_result(raw_b64)
             except httpx.TimeoutException:
+                progress("failed", "OpenAI inpaint timed out.", percent=100, done=True, error=True)
                 raise HTTPException(504, "OpenAI inpaint timed out (120s)")
 
         # Self-hosted diffusion server path
@@ -1246,18 +1789,62 @@ def setup_gallery_routes() -> APIRouter:
             # supports multiple models per process. Harmless if ignored.
             if chosen_model:
                 body["model"] = chosen_model
-            async with httpx.AsyncClient(timeout=120) as client:
-                r = await client.post(_join_checked_gallery_endpoint(base, "/images/inpaint"), json=body)
-                if r.status_code != 200:
-                    logger.error("inpaint_proxy diffusion: status %s", r.status_code)
-                    raise HTTPException(r.status_code, "Inpaint request failed")
-                return r.json()
+            progress("diffusion_prepare", "Preparing request for the local image endpoint.", percent=60)
+            async with httpx.AsyncClient(timeout=240) as client:
+                last_error = ""
+                paths = ("/images/inpaint", "/images/edits", "/images/edit", "/api/image/inpaint")
+                route_targets = {
+                    "/images/inpaint": _join_checked_gallery_endpoint(base, "/images/inpaint"),
+                    "/images/edits": _join_checked_gallery_endpoint(base, "/images/edits"),
+                    "/images/edit": _join_checked_gallery_endpoint(base, "/images/edit"),
+                    "/api/image/inpaint": _join_checked_gallery_endpoint(base_root, "/api/image/inpaint"),
+                }
+                for idx, path in enumerate(paths):
+                    target = route_targets[path]
+                    payload = dict(body)
+                    if chosen_model:
+                        payload["model"] = chosen_model
+                    if path in {"/images/edits", "/images/edit"}:
+                        if payload.get("mask") and not payload.get("mask_image"):
+                            payload["mask_image"] = payload["mask"]
+                        payload.setdefault("response_format", "b64_json")
+                        payload.setdefault("output_format", "png")
+                        payload.setdefault("n", 1)
+                    try:
+                        progress("model_wait", f"Trying {path} on the image endpoint.", percent=64 + idx * 3)
+                        r = await client.post(target, json=payload)
+                    except httpx.TimeoutException:
+                        raise
+                    except Exception as exc:
+                        last_error = f"{path}: {exc}"
+                        progress("route_retry", f"{path} did not connect; trying next route.", percent=66 + idx * 3)
+                        continue
+                    if r.status_code < 200 or r.status_code >= 300:
+                        last_error = f"{path}: HTTP {r.status_code}: {r.text[:300]}"
+                        progress("route_retry", f"{path} returned HTTP {r.status_code}; trying next route.", percent=66 + idx * 3)
+                        continue
+                    progress("normalize_response", f"{path} returned a response; extracting image data.", percent=78)
+                    image_b64, no_image_detail = await _normalized_provider_image_response(r.text, client)
+                    if image_b64:
+                        progress("backend_complete", "Backend response is ready.", percent=88, done=True)
+                        return {"image": image_b64}
+                    last_error = f"{path}: {no_image_detail}"
+                    progress("route_retry", f"{path} returned no image; trying next route.", percent=76)
+                logger.error(
+                    "No compatible inpaint route worked on %s. Last error: %s",
+                    base,
+                    last_error[:300] if last_error else "none",
+                )
+                raise HTTPException(502, "No compatible inpaint route worked")
         except httpx.TimeoutException:
-            raise HTTPException(504, "Inpaint request timed out (120s)")
-        except HTTPException:
+            progress("failed", "Inpaint request timed out.", percent=100, done=True, error=True)
+            raise HTTPException(504, "Inpaint request timed out (240s)")
+        except HTTPException as exc:
+            progress("failed", str(exc.detail), percent=100, done=True, error=True)
             raise
         except Exception:
             logger.exception("inpaint_proxy: request failed")
+            progress("failed", "Inpaint request failed.", percent=100, done=True, error=True)
             raise HTTPException(502, "Inpaint request failed")
 
     # ---- POST /api/image/harmonize — proper img2img call ----
@@ -1299,7 +1886,7 @@ def setup_gallery_routes() -> APIRouter:
         if not requested_base:
             db = SessionLocal()
             try:
-                ep = _first_visible_image_endpoint(db, user)
+                ep = _first_visible_image_endpoint(db, _image_endpoint_lookup_owner(request, user))
                 if not ep:
                     raise HTTPException(400, "No image generation endpoint configured.")
                 base = ep.base_url.rstrip("/")
@@ -1312,7 +1899,7 @@ def setup_gallery_routes() -> APIRouter:
             # so the outbound URL never depends directly on request-body input.
             db = SessionLocal()
             try:
-                ep = _visible_image_endpoint_for_base(db, requested_base, user)
+                ep = _visible_image_endpoint_for_base(db, requested_base, _image_endpoint_lookup_owner(request, user))
                 if not ep:
                     raise HTTPException(403, "Choose a registered image endpoint")
                 base = ep.base_url.rstrip("/")
@@ -1602,10 +2189,47 @@ def setup_gallery_routes() -> APIRouter:
              outside the hint becomes transparent regardless of what the
              model thought was foreground.
         """
-        require_privilege(request, "can_generate_images")
+        user = require_privilege(request, "can_generate_images")
         body = await request.json()
         image_b64 = body.get("image")
         hint_b64 = body.get("hint_mask")
+        background_b64 = (
+            body.get("background_mask")
+            or body.get("bg_hint_mask")
+            or body.get("background_hint_mask")
+        )
+        try:
+            bg_strength = float(body.get("strength", body.get("bg_strength", 0.7)))
+        except Exception:
+            bg_strength = 0.7
+        if bg_strength > 1:
+            bg_strength = bg_strength / 100.0
+        bg_strength = max(0.1, min(1.0, bg_strength))
+        known_rembg_models = {"u2netp", "silueta", "isnet-general-use"}
+        selected_endpoint_id = str(body.get("_endpoint_id") or "").strip()
+        selected_endpoint = str(body.get("_endpoint") or "").strip()
+        selected_model = str(body.get("_model") or "").strip()
+        requested_rembg_model = str(
+            body.get("_rembg_model")
+            or body.get("rembg_model")
+            or (selected_model if selected_model in known_rembg_models else "")
+            or ""
+        ).strip()
+        raw_pipeline = str(
+            body.get("bg_remove_pipeline")
+            or body.get("bgremove_pipeline")
+            or body.get("pipeline")
+            or body.get("_pipeline")
+            or "auto"
+        ).strip().lower().replace("_", "-")
+        if raw_pipeline in {"provider", "api", "local", "local-model", "local-models", "image-model", "image-models", "model"}:
+            bg_remove_pipeline = "model"
+        elif raw_pipeline in {"natural", "native", "ml", "rembg", "rembg-natural"}:
+            bg_remove_pipeline = "rembg"
+        elif raw_pipeline in {"heuristic", "sample", "sampled", "sampled-background", "color", "colour", "color-match", "colour-match"}:
+            bg_remove_pipeline = "heuristic"
+        else:
+            bg_remove_pipeline = "auto"
 
         from PIL import Image
         import base64, io
@@ -1635,6 +2259,884 @@ def setup_gallery_routes() -> APIRouter:
                 hint = None
                 bbox = None
 
+        background_hint = None
+        if background_b64:
+            try:
+                background_bytes = base64.b64decode(background_b64)
+                background_hint = Image.open(io.BytesIO(background_bytes)).convert("L")
+                if background_hint.size != img.size:
+                    background_hint = background_hint.resize(img.size, Image.NEAREST)
+            except Exception:
+                background_hint = None
+
+        def _installed_rembg_model(model_name):
+            if model_name == "u2netp":
+                return True
+            try:
+                from routes.shell_routes import _rembg_model_path
+                path = _rembg_model_path(model_name)
+                return bool(path and path.exists() and path.is_file() and path.stat().st_size > 0)
+            except Exception:
+                return False
+
+        def _preferred_rembg_models():
+            if requested_rembg_model in {"u2netp", "silueta", "isnet-general-use"}:
+                return [requested_rembg_model]
+            preferred = [
+                model_name
+                for model_name in ("isnet-general-use", "silueta")
+                if _installed_rembg_model(model_name)
+            ]
+            preferred.append("u2netp")
+            return preferred
+
+        _rembg_sessions = {}
+
+        def _remove_with_preferred_rembg(src_img):
+            from rembg import new_session, remove
+            last_error = None
+            for model_name in _preferred_rembg_models():
+                try:
+                    session = _rembg_sessions.get(model_name)
+                    if session is None:
+                        session = new_session(model_name)
+                        _rembg_sessions[model_name] = session
+                    return remove(src_img, session=session)
+                except Exception as exc:
+                    last_error = exc
+            if last_error:
+                raise last_error
+            return remove(src_img)
+
+        def _strip_data_url(value):
+            value = str(value or "").strip()
+            if "," in value and value.lower().startswith("data:"):
+                return value.split(",", 1)[1]
+            return value
+
+        def _image_value_from_text(value):
+            import json as _json
+            import re as _re
+            text = str(value or "").strip()
+            match = _re.search(r"data:image/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=\s]+", text, _re.I)
+            if match:
+                return match.group(0)
+            match = _re.search(r'"(?:b64_json|image|base64|image_base64|url)"\s*:\s*"([^"]{128,})"', text, _re.I)
+            if match:
+                candidate = match.group(1).replace("\\/", "/").replace("\\n", "").replace("\\r", "")
+                if candidate.lower().startswith(("data:image/", "http://", "https://")):
+                    return candidate
+                clean = _strip_data_url(candidate)
+                if clean.startswith(("iVBOR", "/9j/", "UklGR")) or len(clean) > 128:
+                    return candidate
+            if (text.startswith("{") and text.endswith("}")) or (text.startswith("[") and text.endswith("]")):
+                try:
+                    return _first_provider_image_value(_json.loads(text), 1)
+                except Exception:
+                    return ""
+            return ""
+
+        def _first_provider_image_value(node, depth=0):
+            if node is None or depth > 5:
+                return ""
+            if isinstance(node, str):
+                value = node.strip()
+                lower = value.lower()
+                if lower.startswith(("data:image/", "http://", "https://")):
+                    return value
+                b64 = _strip_data_url(value)
+                if b64.startswith(("iVBOR", "/9j/", "UklGR")) or len(b64) > 128:
+                    return value
+                embedded = _image_value_from_text(value)
+                if embedded:
+                    return embedded
+                return ""
+            if isinstance(node, list):
+                for item in node:
+                    found = _first_provider_image_value(item, depth + 1)
+                    if found:
+                        return found
+                return ""
+            if not isinstance(node, dict):
+                return ""
+            preferred = [
+                "image", "b64_json", "base64", "image_base64", "imageBase64",
+                "url", "image_url", "imageUrl", "data", "images",
+                "content", "message", "choices", "output", "outputs", "result", "results", "artifact", "artifacts",
+            ]
+            for key in preferred:
+                if key in node:
+                    found = _first_provider_image_value(node.get(key), depth + 1)
+                    if found:
+                        return found
+            for value in node.values():
+                found = _first_provider_image_value(value, depth + 1)
+                if found:
+                    return found
+            return ""
+
+        def _provider_error_text(node, depth=0):
+            if node is None or depth > 4:
+                return ""
+            if isinstance(node, str):
+                text = node.replace("\n", " ").strip()
+                return "" if _first_provider_image_value(text) else text[:220]
+            if isinstance(node, list):
+                for item in node:
+                    found = _provider_error_text(item, depth + 1)
+                    if found:
+                        return found
+                return ""
+            if not isinstance(node, dict):
+                return ""
+            for key in ("error", "detail", "message", "reason", "status_message"):
+                if key in node:
+                    found = _provider_error_text(node.get(key), depth + 1)
+                    if found:
+                        return found
+            return ""
+
+        def _provider_no_image_detail(node):
+            err = _provider_error_text(node)
+            if err:
+                return err
+            if isinstance(node, dict):
+                keys = ", ".join(str(k) for k in list(node.keys())[:10])
+                return f"server returned no image (keys: {keys})" if keys else "server returned no image"
+            return "server returned no image"
+
+        def _openai_edit_size(width, height):
+            if width > height * 1.15:
+                return "1536x1024"
+            if height > width * 1.15:
+                return "1024x1536"
+            return "1024x1024"
+
+        def _wants_json_image_edit(status_code, text):
+            lower = str(text or "").lower()
+            return (
+                status_code == 415
+                or ("unsupported media type" in lower and "application/json" in lower)
+                or "post requests must use 'application/json'" in lower
+                or "post requests must use application/json" in lower
+            )
+
+        def _apply_hint_to_provider_result(result_b64):
+            clean = _strip_data_url(result_b64)
+            if hint is None:
+                return clean
+            try:
+                from PIL import ImageChops
+                out = Image.open(io.BytesIO(base64.b64decode(clean))).convert("RGBA")
+                if out.size != img.size:
+                    out = out.resize(img.size, Image.LANCZOS)
+                r, g, b, a = out.split()
+                a = ImageChops.multiply(a, hint)
+                out = Image.merge("RGBA", (r, g, b, a))
+                buf = io.BytesIO()
+                out.save(buf, format="PNG")
+                return base64.b64encode(buf.getvalue()).decode()
+            except Exception:
+                return clean
+
+        def _provider_result_has_transparency(result_b64):
+            try:
+                out = Image.open(io.BytesIO(base64.b64decode(_strip_data_url(result_b64)))).convert("RGBA")
+                alpha = out.split()[3]
+                values = alpha.getdata()
+                transparentish = 0
+                min_alpha = 255
+                for value in values:
+                    if value < min_alpha:
+                        min_alpha = value
+                    if value < 245:
+                        transparentish += 1
+                count = max(1, out.width * out.height)
+                return min_alpha < 245 and transparentish >= max(16, count // 1000)
+            except Exception:
+                return False
+
+        def _model_prefers_openai_edit(model_name):
+            return _model_name_prefers_image_edit_endpoint(model_name)
+
+        async def _provider_image_value_to_b64(value, client):
+            value = str(value or "").strip()
+            lower = value.lower()
+            if lower.startswith(("http://", "https://")):
+                downloaded = await _fetch_result_image_b64(value)
+                if not downloaded:
+                    raise HTTPException(502, "Image model URL could not be downloaded")
+                return downloaded
+            return _strip_data_url(value)
+
+        async def _remove_with_provider():
+            import httpx
+
+            requested_base = selected_endpoint.rstrip("/")
+            base = ""
+            model = "" if selected_model in known_rembg_models else selected_model
+            api_key = None
+            if selected_endpoint_id:
+                db = SessionLocal()
+                try:
+                    ep = _visible_image_endpoint_for_id(db, selected_endpoint_id, _image_endpoint_lookup_owner(request, user))
+                    if not ep and _model_name_prefers_image_edit_endpoint(model):
+                        ep = _visible_enabled_endpoint_for_id(db, selected_endpoint_id, _image_endpoint_lookup_owner(request, user))
+                    if not ep:
+                        raise HTTPException(403, "Choose a registered image endpoint")
+                    base = ep.base_url.rstrip("/")
+                    api_key = ep.api_key
+                finally:
+                    db.close()
+            elif requested_base:
+                from src.url_safety import check_outbound_url
+                ok, reason = check_outbound_url(
+                    requested_base,
+                    block_private=os.getenv("IMAGE_BLOCK_PRIVATE_IPS", "false").lower() == "true",
+                )
+                if not ok:
+                    raise HTTPException(400, f"Rejected endpoint URL: {reason}")
+                db = SessionLocal()
+                try:
+                    ep = _visible_image_endpoint_for_base(db, requested_base, _image_endpoint_lookup_owner(request, user))
+                    if not ep and _model_name_prefers_image_edit_endpoint(model):
+                        ep = _visible_enabled_endpoint_for_base(db, requested_base, _image_endpoint_lookup_owner(request, user))
+                    if ep:
+                        base = (ep.base_url or "").rstrip("/")
+                        api_key = ep.api_key
+                    else:
+                        raise HTTPException(403, "Choose a registered image endpoint")
+                finally:
+                    db.close()
+            else:
+                db = SessionLocal()
+                try:
+                    ep = _first_visible_image_endpoint(db, _image_endpoint_lookup_owner(request, user))
+                    if not ep:
+                        raise HTTPException(400, "No image endpoint configured for background removal.")
+                    base = ep.base_url.rstrip("/")
+                    api_key = ep.api_key
+                    if not model:
+                        models = getattr(ep, "models", None) or []
+                        if isinstance(models, str):
+                            try:
+                                import json as _json
+                                models = _json.loads(models)
+                            except Exception:
+                                models = []
+                        model = next((str(m) for m in models if m), "")
+                finally:
+                    db.close()
+
+            if not base.endswith("/v1"):
+                base += "/v1"
+            base_root = base[:-3].rstrip("/") if base.endswith("/v1") else base.rstrip("/")
+            headers = {}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            prompt = (
+                "Remove the background and return a transparent PNG. Preserve the foreground subject exactly, "
+                "including faces, fur, hair strands, whiskers, clothing edges, and fine detail."
+            )
+            if background_hint is not None:
+                prompt += (
+                    " A separate background_mask marks user-painted background samples. Treat those pixels as "
+                    "background guidance, but do not remove matching foreground detail unless it is directly marked."
+                )
+            payload = {
+                "image": image_b64,
+                "prompt": prompt,
+                "response_format": "b64_json",
+                "strength": bg_strength,
+            }
+            if model:
+                payload["model"] = model
+            if hint_b64:
+                payload["hint_mask"] = hint_b64
+            if background_b64:
+                payload["background_mask"] = background_b64
+
+            timeout = httpx.Timeout(connect=20.0, read=240.0, write=30.0, pool=20.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                last_err = None
+                openai_style_edit = _is_openai_api_base(base) or _model_prefers_openai_edit(model)
+                async def _chat_image_edit(previous_error=""):
+                    chat_payload = {
+                        "messages": [{
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
+                            ],
+                        }],
+                        "stream": False,
+                        "extra_body": {
+                            "num_inference_steps": 50,
+                            "guidance_scale": 1,
+                            "size": _openai_edit_size(W, H),
+                            "output_format": "png",
+                        },
+                    }
+                    if model:
+                        chat_payload["model"] = model
+                    cr = await client.post(
+                        _join_checked_gallery_endpoint(base, "/chat/completions"),
+                        headers=headers,
+                        json=chat_payload,
+                    )
+                    if cr.status_code < 200 or cr.status_code >= 300:
+                        suffix = f" Previous /v1/images/edits error: {previous_error[:180]}" if previous_error else ""
+                        logger.error(
+                            "Background-remove chat fallback failed with HTTP %s: %s%s",
+                            cr.status_code,
+                            cr.text[:300],
+                            suffix,
+                        )
+                        raise HTTPException(cr.status_code, "Image edit chat fallback failed")
+                    try:
+                        data_json = cr.json()
+                    except Exception:
+                        suffix = f" Previous /v1/images/edits error: {previous_error[:180]}" if previous_error else ""
+                        logger.error("Background-remove chat fallback returned invalid JSON: %s%s", cr.text[:220], suffix)
+                        raise HTTPException(502, "Image edit chat fallback returned invalid JSON")
+                    found = _first_provider_image_value(data_json)
+                    if not found:
+                        suffix = f" Previous /v1/images/edits error: {previous_error[:180]}" if previous_error else ""
+                        logger.error(
+                            "Background-remove chat fallback returned no image: %s%s",
+                            _provider_no_image_detail(data_json),
+                            suffix,
+                        )
+                        raise HTTPException(502, "Image edit chat fallback returned no image")
+                    return _apply_hint_to_provider_result(await _provider_image_value_to_b64(found, client))
+
+                if openai_style_edit:
+                    if not api_key:
+                        if _is_openai_api_base(base):
+                            raise HTTPException(400, "OpenAI endpoint has no api_key stored - edit it in Endpoints settings.")
+                    mask = Image.new("RGBA", (W, H), (255, 255, 255, 0))
+                    mask_buf = io.BytesIO()
+                    mask.save(mask_buf, format="PNG")
+                    data = {
+                        "model": model or "gpt-image-1",
+                        "prompt": prompt,
+                        "size": _openai_edit_size(W, H),
+                        "n": "1",
+                    }
+                    files = {
+                        "image": ("source.png", img_bytes, "image/png"),
+                        "mask": ("mask.png", mask_buf.getvalue(), "image/png"),
+                    }
+                    r = await client.post(
+                        _join_checked_gallery_endpoint(base, "/images/edits"),
+                        headers=headers,
+                        data=data,
+                        files=files,
+                    )
+                    if r.status_code < 200 or r.status_code >= 300:
+                        last_err = f"/images/edits: HTTP {r.status_code}: {r.text[:300]}"
+                        if _is_openai_api_base(base):
+                            logger.error("OpenAI background remove failed with HTTP %s: %s", r.status_code, r.text[:300])
+                            raise HTTPException(r.status_code, "OpenAI background remove failed")
+                        if _wants_json_image_edit(r.status_code, r.text):
+                            mask_b64 = base64.b64encode(mask_buf.getvalue()).decode()
+                            json_payload = {
+                                "model": model or "gpt-image-1",
+                                "prompt": prompt,
+                                "image": image_b64,
+                                "mask_image": mask_b64,
+                                "size": _openai_edit_size(W, H),
+                                "n": 1,
+                                "response_format": "b64_json",
+                                "output_format": "png",
+                            }
+                            jr = await client.post(
+                                _join_checked_gallery_endpoint(base, "/images/edits"),
+                                headers=headers,
+                                json=json_payload,
+                            )
+                            if jr.status_code < 200 or jr.status_code >= 300:
+                                last_err = f"/images/edits JSON: HTTP {jr.status_code}: {jr.text[:300]}"
+                                return await _chat_image_edit(last_err)
+                            data_json = jr.json()
+                            found = _first_provider_image_value(data_json)
+                            if not found:
+                                last_err = f"/images/edits JSON: {_provider_no_image_detail(data_json)}"
+                                return await _chat_image_edit(last_err)
+                            return _apply_hint_to_provider_result(await _provider_image_value_to_b64(found, client))
+                        return await _chat_image_edit(last_err)
+                    else:
+                        data_json = r.json()
+                        found = _first_provider_image_value(data_json)
+                        if not found:
+                            last_err = f"/images/edits: {_provider_no_image_detail(data_json)}"
+                            if _is_openai_api_base(base):
+                                raise HTTPException(502, "OpenAI returned no image")
+                            return await _chat_image_edit(last_err)
+                        else:
+                            return _apply_hint_to_provider_result(await _provider_image_value_to_b64(found, client))
+
+                for path in ("/images/remove-bg", "/images/background-remove", "/images/rembg"):
+                    target = _join_checked_gallery_endpoint(base, path)
+                    try:
+                        r = await client.post(target, json=payload, headers=headers)
+                    except httpx.TimeoutException:
+                        raise HTTPException(504, "Image model background removal timed out")
+                    except httpx.ConnectError:
+                        logger.exception("Background-remove endpoint connection failed")
+                        raise HTTPException(502, "Can't reach image endpoint")
+                    if r.status_code == 404:
+                        last_err = f"{path}: 404"
+                        continue
+                    if r.status_code < 200 or r.status_code >= 300:
+                        try:
+                            err_json = r.json()
+                            err_text = _provider_error_text(err_json)
+                        except Exception:
+
+                            err_text = r.text[:220]
+                        last_err = f"{path}: HTTP {r.status_code}{': ' + err_text if err_text else ''}"
+                        continue
+                    try:
+                        data_json = r.json()
+                    except Exception:
+                        last_err = f"{path}: response was not JSON"
+                        continue
+                    if isinstance(data_json, dict) and data_json.get("error") and not _first_provider_image_value(data_json):
+                        last_err = f"{path}: {_provider_error_text(data_json) or data_json.get('error')}"
+                        continue
+                    found = _first_provider_image_value(data_json)
+                    if not found:
+                        last_err = f"{path}: server returned no image"
+                        continue
+                    return _apply_hint_to_provider_result(await _provider_image_value_to_b64(found, client))
+                logger.error("Background-remove routes failed; last response: %s", last_err or "unknown")
+                raise HTTPException(502, "Selected image endpoint does not expose a background-remove route")
+
+        def _subject_keep_mask(src_img, sample_mask, allow_model=True):
+            if sample_mask is None:
+                return None
+            try:
+                from PIL import ImageChops, ImageFilter
+                keep = None
+                if allow_model:
+                    try:
+                        cut = _remove_with_preferred_rembg(src_img)
+                        keep = cut.convert("RGBA").split()[3]
+                    except Exception:
+                        try:
+                            from transformers import pipeline
+                            pipe = pipeline("image-segmentation", model="briaai/RMBG-1.4", trust_remote_code=True)
+                            keep = pipe(src_img, return_mask=True).convert("L")
+                        except Exception:
+                            keep = None
+                if keep is None:
+                    keep = _portrait_heuristic_keep_mask(src_img)
+                if keep is None:
+                    return None
+                if keep.size != src_img.size:
+                    keep = keep.resize(src_img.size, Image.NEAREST)
+                sample_override = sample_mask.filter(ImageFilter.MaxFilter(9))
+                keep = keep.point(lambda v: 255 if v > 18 else 0).filter(ImageFilter.MaxFilter(3))
+                keep = ImageChops.subtract(keep, sample_override)
+                return keep if keep.getbbox() else None
+            except Exception:
+                return None
+
+        def _portrait_heuristic_keep_mask(src_img):
+            try:
+                import numpy as np
+                from PIL import ImageFilter
+            except Exception:
+                return None
+            arr = np.array(src_img.convert("RGBA"))
+            r = arr[:, :, 0].astype(np.int16)
+            g = arr[:, :, 1].astype(np.int16)
+            b = arr[:, :, 2].astype(np.int16)
+            a = arr[:, :, 3]
+            maxc = np.maximum.reduce([r, g, b])
+            minc = np.minimum.reduce([r, g, b])
+            skin = (
+                (a > 8) &
+                (r > 55) & (g > 35) & (b > 18) &
+                ((maxc - minc) > 12) &
+                (r > b) &
+                ((r - g) > -8)
+            )
+            if int(skin.sum()) < 24:
+                return None
+            from collections import deque
+            visited = np.zeros_like(skin, dtype=bool)
+            best = None
+            best_score = 0.0
+            height, width = skin.shape
+            for start in np.flatnonzero(skin):
+                sy, sx = divmod(int(start), width)
+                if visited[sy, sx]:
+                    continue
+                q = deque([int(start)])
+                visited[sy, sx] = True
+                points = []
+                min_x = max_x = sx
+                min_y = max_y = sy
+                while q:
+                    idx = q.popleft()
+                    y, x = divmod(idx, width)
+                    points.append(idx)
+                    min_x = min(min_x, x)
+                    max_x = max(max_x, x)
+                    min_y = min(min_y, y)
+                    max_y = max(max_y, y)
+                    for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)):
+                        ny, nx = y + dy, x + dx
+                        if ny < 0 or ny >= height or nx < 0 or nx >= width:
+                            continue
+                        if visited[ny, nx] or not skin[ny, nx]:
+                            continue
+                        visited[ny, nx] = True
+                        q.append(ny * width + nx)
+                area = len(points)
+                if area < 24:
+                    continue
+                comp_w = max(1, max_x - min_x + 1)
+                comp_h = max(1, max_y - min_y + 1)
+                touches_edge = min_x <= 1 or max_x >= width - 2 or min_y <= 1 or max_y >= height - 2
+                score = float(area)
+                if touches_edge:
+                    score *= 0.08
+                if comp_w > width * 0.58 or comp_h > height * 0.72:
+                    score *= 0.18
+                if comp_w * comp_h > width * height * 0.32:
+                    score *= 0.15
+                center_favor = 1.0 - min(1.0, abs(((min_x + max_x) / 2.0) - width / 2.0) / max(1.0, width / 2.0))
+                score *= 0.55 + center_favor * 0.45
+                if score > best_score:
+                    best_score = score
+                    best = points
+            if not best:
+                return None
+            skin = np.zeros_like(skin, dtype=bool)
+            for idx in best:
+                y, x = divmod(idx, width)
+                skin[y, x] = True
+            ys, xs = np.nonzero(skin)
+            y1, y2 = int(ys.min()), int(ys.max())
+            x1, x2 = int(xs.min()), int(xs.max())
+            pad_x = max(10, int((x2 - x1 + 1) * 0.55))
+            pad_top = max(14, int((y2 - y1 + 1) * 0.95))
+            pad_bot = max(8, int((y2 - y1 + 1) * 0.45))
+            rx1 = max(0, x1 - pad_x)
+            rx2 = min(width - 1, x2 + pad_x)
+            ry1 = max(0, y1 - pad_top)
+            ry2 = min(height - 1, y2 + pad_bot)
+            roi = np.zeros_like(skin)
+            roi[ry1:ry2 + 1, rx1:rx2 + 1] = True
+            brightness = (r + g + b) / 3.0
+            dark_hair = (brightness < 95) & ((maxc - minc) < 70)
+            brown_hair = (r >= g - 12) & (g >= b - 18) & (brightness >= 45) & (brightness < 150) & ((maxc - minc) > 12)
+            blond_hair = (r > 115) & (g > 90) & (b < 125) & (r >= g - 20)
+            hair = roi & (a > 8) & (dark_hair | brown_hair | blond_hair)
+            keep = skin.copy()
+            q = deque(int(i) for i in np.flatnonzero(skin))
+            max_keep = int(skin.sum()) + max(96, int(skin.sum() * 1.6))
+            while q:
+                if int(keep.sum()) >= max_keep:
+                    break
+                idx = q.popleft()
+                y, x = divmod(idx, width)
+                for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)):
+                    if int(keep.sum()) >= max_keep:
+                        break
+                    ny, nx = y + dy, x + dx
+                    if ny < 0 or ny >= keep.shape[0] or nx < 0 or nx >= width:
+                        continue
+                    if keep[ny, nx] or not hair[ny, nx]:
+                        continue
+                    keep[ny, nx] = True
+                    q.append(ny * width + nx)
+            if int(keep.sum()) < 24:
+                return None
+            return Image.fromarray((keep.astype("uint8") * 255), "L").filter(ImageFilter.MaxFilter(5))
+
+        def _combine_keep_masks(*masks):
+            from PIL import ImageChops
+            out = None
+            for m in masks:
+                if m is None:
+                    continue
+                out = m if out is None else ImageChops.lighter(out, m)
+            return out
+
+        def _remove_from_background_sample(src_img, sample_mask, keep_mask=None, strength=0.7, hard_keep_mask=None):
+            if sample_mask is None:
+                return None
+            try:
+                import numpy as np
+                from collections import deque
+                from PIL import ImageChops, ImageFilter
+            except Exception:
+                return None
+            arr = np.array(src_img.convert("RGBA"))
+            alpha = arr[:, :, 3]
+            sample_seed = (np.array(sample_mask, dtype=np.uint8) > 8) & (alpha > 8)
+            if int(sample_seed.sum()) == 0:
+                return None
+
+            strength = max(0.1, min(1.0, float(strength or 0.7)))
+            height, width = sample_seed.shape
+            rgb = arr[:, :, :3].astype(np.float32)
+            samples = rgb[sample_seed]
+            mean = samples.mean(axis=0)
+            sample_dist = np.sqrt(((samples - mean) ** 2).sum(axis=1))
+            spread = float(np.percentile(sample_dist, 90)) if samples.size else 0.0
+            mean_threshold = float(np.clip(spread * (1.35 + strength * 1.65) + 26.0 + 92.0 * strength, 28.0, 220.0))
+            local_threshold = float(18.0 + 70.0 * strength)
+            range_margin = float(np.clip(spread * 0.55 + 18.0 + 82.0 * strength, 22.0, 150.0))
+            lo = np.maximum(0.0, np.percentile(samples, 5, axis=0) - range_margin)
+            hi = np.minimum(255.0, np.percentile(samples, 95, axis=0) + range_margin)
+            broad_similar = (
+                (np.sqrt(((rgb - mean) ** 2).sum(axis=2)) <= mean_threshold)
+                | np.all((rgb >= lo) & (rgb <= hi), axis=2)
+                | (alpha <= 8)
+            )
+            tight_margin = float(np.clip(spread * 0.28 + 10.0 + 32.0 * strength, 12.0, 70.0))
+            tight_lo = np.maximum(0.0, np.percentile(samples, 10, axis=0) - tight_margin)
+            tight_hi = np.minimum(255.0, np.percentile(samples, 90, axis=0) + tight_margin)
+            strict_similar = (
+                (np.sqrt(((rgb - mean) ** 2).sum(axis=2)) <= max(32.0, mean_threshold * 0.72))
+                | np.all((rgb >= tight_lo) & (rgb <= tight_hi), axis=2)
+                | (alpha <= 8)
+            )
+            seed = np.array(
+                Image.fromarray((sample_seed.astype("uint8") * 255), "L").filter(ImageFilter.MaxFilter(7)),
+                dtype=np.uint8,
+            ) > 8
+            seed &= broad_similar & (alpha > 8)
+            seed |= sample_seed
+
+            def _enclosed_stroke_region(mask_img):
+                stroke = np.array(mask_img, dtype=np.uint8) > 8
+                if int(stroke.sum()) < 16:
+                    return None
+                barrier_img = Image.fromarray((stroke.astype("uint8") * 255), "L").filter(ImageFilter.MaxFilter(9))
+                barrier = np.array(barrier_img, dtype=np.uint8) > 8
+                outside = np.zeros(stroke.shape, dtype=bool)
+                fill = deque()
+                for x in range(width):
+                    if not barrier[0, x]:
+                        outside[0, x] = True
+                        fill.append(x)
+                    if not barrier[height - 1, x] and not outside[height - 1, x]:
+                        outside[height - 1, x] = True
+                        fill.append((height - 1) * width + x)
+                for y in range(height):
+                    if not barrier[y, 0] and not outside[y, 0]:
+                        outside[y, 0] = True
+                        fill.append(y * width)
+                    if not barrier[y, width - 1] and not outside[y, width - 1]:
+                        outside[y, width - 1] = True
+                        fill.append(y * width + width - 1)
+                while fill:
+                    idx = fill.popleft()
+                    y, x = divmod(idx, width)
+                    if x > 0 and not barrier[y, x - 1] and not outside[y, x - 1]:
+                        outside[y, x - 1] = True
+                        fill.append(idx - 1)
+                    if x < width - 1 and not barrier[y, x + 1] and not outside[y, x + 1]:
+                        outside[y, x + 1] = True
+                        fill.append(idx + 1)
+                    if y > 0 and not barrier[y - 1, x] and not outside[y - 1, x]:
+                        outside[y - 1, x] = True
+                        fill.append(idx - width)
+                    if y < height - 1 and not barrier[y + 1, x] and not outside[y + 1, x]:
+                        outside[y + 1, x] = True
+                        fill.append(idx + width)
+                enclosed = ~(outside | barrier)
+                enclosed_count = int(enclosed.sum())
+                if enclosed_count < max(64, int(stroke.sum() * 2)):
+                    return None
+                if enclosed_count > int(width * height * 0.96):
+                    return None
+                return enclosed | seed
+
+            work_area = _enclosed_stroke_region(sample_mask)
+            wall_threshold = float(44.0 + 36.0 * strength)
+            edge_wall = np.zeros(seed.shape, dtype=bool)
+            if width > 1:
+                diff_x = np.sqrt(((rgb[:, 1:] - rgb[:, :-1]) ** 2).sum(axis=2))
+                wall_x = diff_x > wall_threshold
+                edge_wall[:, 1:] |= wall_x
+                edge_wall[:, :-1] |= wall_x
+            if height > 1:
+                diff_y = np.sqrt(((rgb[1:, :] - rgb[:-1, :]) ** 2).sum(axis=2))
+                wall_y = diff_y > wall_threshold
+                edge_wall[1:, :] |= wall_y
+                edge_wall[:-1, :] |= wall_y
+            edge_wall &= ~broad_similar
+            edge_wall &= alpha > 8
+            edge_wall = np.array(
+                Image.fromarray((edge_wall.astype("uint8") * 255), "L").filter(ImageFilter.MaxFilter(3)),
+                dtype=np.uint8,
+            ) > 8
+            edge_wall[seed] = False
+
+            hard_protected = np.zeros(seed.shape, dtype=bool)
+            if hard_keep_mask is not None:
+                hard_protected = np.array(hard_keep_mask, dtype=np.uint8) > 8
+                hard_protected[seed] = False
+            soft_protected = np.zeros(seed.shape, dtype=bool)
+            if keep_mask is not None:
+                soft_protected = np.array(keep_mask, dtype=np.uint8) > 8
+                soft_protected[seed] = False
+            # A closed cyan stroke is only a search boundary. Subject pixels
+            # inside it still need protection unless they strongly match the
+            # sampled background.
+            protected = hard_protected | (soft_protected & ~strict_similar)
+
+            bg = np.zeros(seed.shape, dtype=bool)
+            q = deque(int(i) for i in np.flatnonzero(seed))
+            flat_rgb = rgb.reshape((-1, 3))
+
+            def _accept(neighbor_idx, parent_idx):
+                y, x = divmod(neighbor_idx, width)
+                if protected[y, x]:
+                    return False
+                if edge_wall[y, x] and not seed[y, x]:
+                    return False
+                if work_area is not None:
+                    if not work_area[y, x] and not seed[y, x]:
+                        return False
+                if broad_similar[y, x]:
+                    return True
+                parent_rgb = flat_rgb[parent_idx]
+                candidate_rgb = flat_rgb[neighbor_idx]
+                return float(np.sqrt(((candidate_rgb - parent_rgb) ** 2).sum())) <= local_threshold
+
+            while q:
+                idx = q.popleft()
+                y, x = divmod(idx, width)
+                if bg[y, x]:
+                    continue
+                bg[y, x] = True
+                if x > 0 and not bg[y, x - 1] and _accept(idx - 1, idx):
+                    q.append(idx - 1)
+                if x < width - 1 and not bg[y, x + 1] and _accept(idx + 1, idx):
+                    q.append(idx + 1)
+                if y > 0 and not bg[y - 1, x] and _accept(idx - width, idx):
+                    q.append(idx - width)
+                if y < height - 1 and not bg[y + 1, x] and _accept(idx + width, idx):
+                    q.append(idx + width)
+
+            def _recover_sampled_background_islands(background):
+                eligible = broad_similar & ~background & ~protected & ~edge_wall
+                if work_area is not None:
+                    eligible &= work_area
+                if int(eligible.sum()) == 0:
+                    return background
+
+                recovered = background.copy()
+                visited = np.zeros(seed.shape, dtype=bool)
+                min_island_area = max(64, int(width * height * 0.0012))
+                for start in np.flatnonzero(eligible):
+                    start = int(start)
+                    sy, sx = divmod(start, width)
+                    if visited[sy, sx] or not eligible[sy, sx]:
+                        continue
+
+                    component = []
+                    touches_background = False
+                    touches_edge = False
+                    strict_count = 0
+                    fill = deque([start])
+                    visited[sy, sx] = True
+                    while fill:
+                        idx = fill.popleft()
+                        y, x = divmod(idx, width)
+                        component.append(idx)
+                        if x == 0 or y == 0 or x == width - 1 or y == height - 1:
+                            touches_edge = True
+                        if strict_similar[y, x]:
+                            strict_count += 1
+                        for ny, nx in ((y, x - 1), (y, x + 1), (y - 1, x), (y + 1, x)):
+                            if ny < 0 or ny >= height or nx < 0 or nx >= width:
+                                continue
+                            if recovered[ny, nx]:
+                                touches_background = True
+                                continue
+                            if not eligible[ny, nx] or visited[ny, nx]:
+                                continue
+                            visited[ny, nx] = True
+                            fill.append(ny * width + nx)
+
+                    strict_ratio = strict_count / max(1, len(component))
+                    if touches_background or touches_edge or (len(component) >= min_island_area and strict_ratio >= 0.82):
+                        for idx in component:
+                            y, x = divmod(idx, width)
+                            recovered[y, x] = True
+
+                return recovered
+
+            bg = _recover_sampled_background_islands(bg)
+
+            if int(bg.sum()) == 0:
+                return None
+            grow_size = 3 if strength < 0.55 else (5 if strength < 0.85 else 7)
+            remove_mask = Image.fromarray((bg.astype("uint8") * 255), "L").filter(ImageFilter.MaxFilter(grow_size))
+            if keep_mask is not None or hard_keep_mask is not None:
+                keep_out = Image.fromarray((protected.astype("uint8") * 255), "L")
+                remove_mask = ImageChops.subtract(remove_mask, keep_out)
+            out = src_img.copy()
+            r, g, b, a = out.split()
+            a = ImageChops.subtract(a, remove_mask)
+            out = Image.merge("RGBA", (r, g, b, a))
+            return out
+
+        provider_error = None
+        has_provider_selection = bool(selected_endpoint_id) or bool(selected_endpoint) or bool(selected_model and selected_model not in known_rembg_models)
+        if bg_remove_pipeline == "model" or (bg_remove_pipeline == "auto" and has_provider_selection):
+            try:
+                provider_image = await _remove_with_provider()
+                if _provider_result_has_transparency(provider_image):
+                    return {"image": provider_image, "source": "provider"}
+                provider_error = "Selected image model returned no transparent background."
+            except HTTPException as exc:
+                provider_error = str(exc.detail)
+            except Exception as exc:
+                provider_error = str(exc)
+        if bg_remove_pipeline == "model" and provider_error:
+            logger.error("Selected image model failed during background removal: %s", str(provider_error)[:260])
+            return {"error": "Selected image model failed during background removal"}
+
+        protected_keep = None
+        sampled_result = None
+        if bg_remove_pipeline in {"auto", "heuristic", "rembg"} and background_hint is not None:
+            protected_keep = _subject_keep_mask(
+                img,
+                background_hint,
+                allow_model=bg_remove_pipeline == "rembg",
+            )
+            sampled_result = _remove_from_background_sample(
+                img,
+                background_hint,
+                protected_keep,
+                bg_strength,
+                hint,
+            )
+        if sampled_result is not None:
+            result = sampled_result
+            if hint is not None:
+                r, g, b, a = result.split()
+                from PIL import ImageChops
+                a = ImageChops.multiply(a, hint)
+                result = Image.merge("RGBA", (r, g, b, a))
+            buf = io.BytesIO()
+            result.save(buf, format="PNG")
+            source = "rembg+heuristic" if bg_remove_pipeline == "rembg" else "heuristic"
+            return {"image": base64.b64encode(buf.getvalue()).decode(), "source": source}
+
+        if bg_remove_pipeline == "heuristic":
+            return {"error": "Heuristic sample mode needs background sample strokes that match the background."}
+
         # Crop to the bbox if a hint was supplied so rembg sees just the
         # user's region of interest. Otherwise process the whole image.
         if bbox:
@@ -1643,8 +3145,7 @@ def setup_gallery_routes() -> APIRouter:
             crop = img
 
         try:
-            from rembg import remove
-            cut = remove(crop)
+            cut = _remove_with_preferred_rembg(crop)
         except ImportError:
             try:
                 from transformers import pipeline
@@ -1678,7 +3179,7 @@ def setup_gallery_routes() -> APIRouter:
 
         buf = io.BytesIO()
         result.save(buf, format="PNG")
-        return {"image": base64.b64encode(buf.getvalue()).decode()}
+        return {"image": base64.b64encode(buf.getvalue()).decode(), "source": "rembg"}
 
     # ---- POST /api/image/enhance-face ----
     @router.post("/api/image/enhance-face")

@@ -11,6 +11,7 @@ const BACKEND_PORT = 7000;
 const BACKEND_STARTUP_TIMEOUT_MS = 15 * 60 * 1000;
 const STARTUP_LOG_MAX_LINES = 120;
 const STARTUP_THEME_FILE = 'startup-theme.json';
+const WINDOWS_APP_USER_MODEL_ID = 'com.odysseus.simplesignal';
 const STARTUP_THEME_DEFAULT_COLORS = {
   bg: '#282c34',
   fg: '#9cdef2',
@@ -21,6 +22,12 @@ const STARTUP_THEME_DEFAULT_COLORS = {
   warm: '#d19a66'
 };
 const STARTUP_THEME_COLOR_KEYS = Object.keys(STARTUP_THEME_DEFAULT_COLORS);
+
+// Match electron-builder's appId so taskbar pins, desktop shortcuts, and the
+// searchable Start Menu launcher all resolve to the same Windows application.
+if (process.platform === 'win32') {
+  app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
+}
 const STARTUP_STEPS = [
   { id: 'prepare', label: 'Prepare runtime', detail: 'Resolve packaged files and startup paths.' },
   { id: 'data', label: 'Prepare data', detail: 'Use persistent app data and migrate bundled data if needed.' },

@@ -1,8 +1,8 @@
-version: 1.0.8
+version: 1.0.10
 files:
-  - url: Simple-Signal-Standalone-Setup-1.0.8.exe
-    sha512: LVfF3IBrj2e8meUSnhjNLlB1o0Ytp+B2nkGwnMGbzLbZAZyJhh3R/e40QpUaqv64lwTt8CM8NJzCL6lM0e/JLA==
-    size: 101456711
-path: Simple-Signal-Standalone-Setup-1.0.8.exe
-sha512: LVfF3IBrj2e8meUSnhjNLlB1o0Ytp+B2nkGwnMGbzLbZAZyJhh3R/e40QpUaqv64lwTt8CM8NJzCL6lM0e/JLA==
-releaseDate: '2026-07-10T01:45:59.085Z'
+  - url: Simple-Signal-Standalone-Setup-1.0.10.exe
+    sha512: 0Sno/NeNcuE2VMvcu+pEB6ku1sYGzALpYrT+AAvf3yZUyKD4QsgdMmKWQP3kSxiLkIgVdwqrm2lnbyYT5pUrSQ==
+    size: 99269294
+path: Simple-Signal-Standalone-Setup-1.0.10.exe
+sha512: 0Sno/NeNcuE2VMvcu+pEB6ku1sYGzALpYrT+AAvf3yZUyKD4QsgdMmKWQP3kSxiLkIgVdwqrm2lnbyYT5pUrSQ==
+releaseDate: '2026-07-10T20:17:09.474Z'

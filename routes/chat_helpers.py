@@ -1208,8 +1208,8 @@ def _is_session_stream_active(session_id: str) -> bool:
     (issue #2927). Lazily imports the route module's live registry to avoid
     a circular import (chat_routes imports this module at load time)."""
     try:
-        from routes import chat_routes as _cr
-        return session_id in getattr(_cr, "_active_streams", {})
+        from routes.chat import _active_streams
+        return session_id in _active_streams
     except Exception:
         return False
 

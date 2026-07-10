@@ -1820,7 +1820,7 @@ class TaskScheduler:
             explicit = target
 
         try:
-            from routes.email_routes import _resolve_send_config
+            from routes.email import _resolve_send_config
             from routes.email_helpers import _send_smtp_message
 
             cfg = _resolve_send_config(account_id=account_id or None, owner=task.owner or "")

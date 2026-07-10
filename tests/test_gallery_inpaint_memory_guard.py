@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 AI_INPAINT_JS = (ROOT / "static/js/editor/ai-inpaint.js").read_text(encoding="utf-8")
 MASK_UTILS_JS = (ROOT / "static/js/editor/mask-utils.js").read_text(encoding="utf-8")
-GALLERY_ROUTES = (ROOT / "routes/gallery_routes.py").read_text(encoding="utf-8")
+GALLERY_ROUTES = (ROOT / "routes/gallery/gallery_routes.py").read_text(encoding="utf-8")
 
 
 def test_inpaint_posts_bounded_work_canvas_instead_of_full_photo():

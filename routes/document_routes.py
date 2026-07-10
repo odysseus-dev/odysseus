@@ -1740,7 +1740,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             # 3) Fetch the source email's headers so we can build a clean reply
             #    context (To/Subject/In-Reply-To/References).
             try:
-                from routes.email_routes import _imap, _decode_header
+                from routes.email import _imap, _decode_header
                 from routes.email_helpers import _q
             except Exception:
                 _imap = None

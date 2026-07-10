@@ -18,7 +18,7 @@ network.
 
 import asyncio
 import logging
-from datetime import timezone
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 

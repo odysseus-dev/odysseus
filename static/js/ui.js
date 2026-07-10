@@ -17,7 +17,6 @@ let hoveredToggleWindow = null;
 let hoveredDockChip = null;
 let _lastPointerClientX = null;
 let _lastPointerClientY = null;
-
 // Smooth scroll state
 let _scrollRafId = null;
 let _scrollBox = null;
@@ -234,6 +233,17 @@ export async function copyToClipboard(text) {
   }
 }
 
+function _finishToast(el) {
+  if (!el) return;
+  clearTimeout(el._hideTimer);
+  el._hideTimer = null;
+  el.classList.add('exiting');
+  el.classList.remove('show');
+  el.style.pointerEvents = '';
+  el.querySelector('.toast-progress-bar')
+    ?.classList.remove('toast-progress-bar--running');
+}
+
 // Wire swipe-to-dismiss on the shared toast element. Runs once, the first
 // time a toast is shown. Tracks horizontal touch drag; if the user drags
 // more than DISMISS_PX, the toast slides off in the drag direction and
@@ -279,8 +289,7 @@ function _wireToastSwipe(el) {
       el.style.opacity = '0';
       clearTimeout(el._hideTimer);
       setTimeout(() => {
-        el.classList.remove('show');
-        el.classList.add('exiting');
+        _finishToast(el);
         el.style.transform = '';
         el.style.opacity = '';
       }, 180);
@@ -357,7 +366,7 @@ export function showToast(msg, durationOrOpts) {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       e.preventDefault();
-      toastEl.classList.remove('show');
+      _finishToast(toastEl);
       onAction();
     });
     stack.appendChild(btn);
@@ -373,30 +382,43 @@ export function showToast(msg, durationOrOpts) {
 
     toastEl.appendChild(stack);
 
-    // Small × to dismiss the toast without taking the action. Useful when
-    // the user already acted (or just doesn't want the banner sitting there).
-    const closeBtn = document.createElement('button');
-    closeBtn.type = 'button';
-    closeBtn.setAttribute('aria-label', 'Dismiss');
-    closeBtn.title = 'Dismiss';
-    closeBtn.textContent = '×';
-    closeBtn.style.cssText = 'margin-left:8px;padding:0;width:20px;height:20px;line-height:1;border:none;background:none;color:var(--fg);opacity:0.55;cursor:pointer;font-size:18px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;pointer-events:auto;';
-    closeBtn.addEventListener('mouseenter', () => { closeBtn.style.opacity = '1'; });
-    closeBtn.addEventListener('mouseleave', () => { closeBtn.style.opacity = '0.55'; });
-    closeBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      clearTimeout(toastEl._hideTimer);
-      toastEl.classList.add('exiting');
-      toastEl.classList.remove('show');
-    });
-    toastEl.appendChild(closeBtn);
-
     toastEl.style.pointerEvents = 'auto';
   } else {
     // No action — restore the default non-blocking behavior.
     toastEl.style.pointerEvents = '';
   }
+
+  // Every toast is explicitly dismissible, including short plain notices.
+  // The button remains independently hit-testable while the surrounding
+  // toast stays non-blocking for clicks on content underneath it.
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'toast-close-btn';
+  closeBtn.setAttribute('aria-label', 'Dismiss');
+  closeBtn.title = 'Dismiss';
+  closeBtn.textContent = '×';
+  closeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    _finishToast(toastEl);
+  });
+  toastEl.appendChild(closeBtn);
+
+  // ── Toast progress bar ──
+  // Animate a thin bar that shrinks over the toast lifetime, giving a
+  // clear visual countdown. We set a CSS custom property so the bar
+  // animates from 100%→0% over `duration`ms via a single transition.
+  let progressBar = toastEl.querySelector('.toast-progress-bar');
+  if (!progressBar) {
+    progressBar = document.createElement('div');
+    progressBar.className = 'toast-progress-bar';
+    toastEl.appendChild(progressBar);
+  }
+  // Reset animation: remove, force reflow, re-add the running class
+  progressBar.classList.remove('toast-progress-bar--running');
+  void progressBar.offsetWidth; // force reflow
+  progressBar.style.setProperty('--toast-duration', duration + 'ms');
+  progressBar.classList.add('toast-progress-bar--running');
 
   // Pin to top-right via CSS — clear any legacy inline overrides so the
   // slide-in-from-right / slide-out-to-left transition can run cleanly.
@@ -406,17 +428,8 @@ export function showToast(msg, durationOrOpts) {
   toastEl.classList.add('show');
   clearTimeout(toastEl._hideTimer);
   toastEl._hideTimer = setTimeout(() => {
-    // Add `exiting` so the CSS rule slides it off to the LEFT instead of
-    // back to the right (where it came from). We piggyback on the same
-    // .toast base; .exiting overrides the resting transform.
-    toastEl.classList.add('exiting');
-    toastEl.classList.remove('show');
-    // Reset pointer-events so an action-toast (which sets it to 'auto'
-    // for its clickable button) doesn't leave the toast intercepting
-    // clicks after it's slid away. Was previously only cleared on the
-    // NEXT plain toast, so a lingering action-toast could appear to
-    // "lock" interaction near the top-right.
-    toastEl.style.pointerEvents = '';
+    // .exiting makes the toast leave to the opposite side from its entrance.
+    _finishToast(toastEl);
   }, duration);
 }
 
@@ -429,15 +442,28 @@ export function showError(msg) {
   }
   _wireToastSwipe(toastEl);
   toastEl.textContent = msg;
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'toast-close-btn';
+  closeBtn.setAttribute('aria-label', 'Dismiss');
+  closeBtn.title = 'Dismiss';
+  closeBtn.textContent = '×';
+  closeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    _finishToast(toastEl);
+  });
+  toastEl.appendChild(closeBtn);
   toastEl.classList.add('error');
+  // A previous action toast may have enabled hit testing inline.
+  toastEl.style.pointerEvents = '';
   toastEl.style.left = '';
   toastEl.style.transform = '';
   toastEl.classList.remove('exiting');
   toastEl.classList.add('show');
   clearTimeout(toastEl._hideTimer);
   toastEl._hideTimer = setTimeout(() => {
-    toastEl.classList.add('exiting');
-    toastEl.classList.remove('show');
+    _finishToast(toastEl);
   }, 3000);
 }
 
@@ -941,7 +967,8 @@ const uiModule = {
   esc,
   isTouchInsideModal,
   emptyStateIcon,
-  registerMenuDismiss
+  registerMenuDismiss,
+  particleBurst
 };
 
 export default uiModule;
@@ -1416,4 +1443,45 @@ if (!window._odyEscExpandGuard) {
     if (closeBtn) { try { closeBtn.click(); } catch {} }
     else { try { topModal.classList.add('hidden'); } catch {} }
   }, true);
+}
+
+// ── Send button particle burst ──
+// Spawns a brief shower of colored dots from a source element,
+// typically the send button, as a satisfying micro-interaction.
+export function particleBurst(sourceEl) {
+  if (!sourceEl) return;
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+  const rect = sourceEl.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  const colors = [
+    'var(--accent)', 'var(--brand-color, #ff6b6b)', '#ffd93d',
+    '#6bcb77', '#4d96ff', '#ff922b', '#cc5de8', '#20c997'
+  ];
+  const fragment = document.createDocumentFragment();
+  const count = 14;
+
+  for (let i = 0; i < count; i++) {
+    const dot = document.createElement('span');
+    const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.5;
+    const distance = 28 + Math.random() * 44;
+    const size = 3 + Math.random() * 4;
+    const tx = Math.cos(angle) * distance;
+    const ty = Math.sin(angle) * distance;
+    const color = colors[Math.floor(Math.random() * colors.length)];
+    const duration = 400 + Math.random() * 300;
+
+    dot.style.cssText = `
+      position:fixed; left:${cx}px; top:${cy}px;
+      width:${size}px; height:${size}px; border-radius:50%;
+      background:${color}; pointer-events:none; z-index:99999;
+      opacity:1; margin-left:-${size / 2}px; margin-top:-${size / 2}px;
+      animation: particle-burst ${duration}ms cubic-bezier(0, 0.7, 0.3, 1) forwards;
+      --tx:${tx}px; --ty:${ty}px;
+    `;
+    fragment.appendChild(dot);
+
+    dot.addEventListener('animationend', () => dot.remove());
+  }
+  document.body.appendChild(fragment);
 }

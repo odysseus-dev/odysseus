@@ -9,7 +9,11 @@ import asyncio
 import base64
 import json
 import logging
+import os
+import re
 from typing import Any, Dict, List, Optional
+
+from fastapi import HTTPException
 
 from src.constants import MAX_READ_CHARS, DEEP_RESEARCH_DIR, VAULT_FILE, GENERATED_IMAGES_DIR
 from src.tools._common import _parse_tool_args
@@ -551,60 +555,23 @@ async def do_manage_webhooks(content: str, owner: Optional[str] = None) -> Dict:
 # ---------------------------------------------------------------------------
 
 async def do_manage_tokens(content: str, owner: Optional[str] = None) -> Dict:
-    """Manage API tokens: list, create, delete."""
-    from core.database import SessionLocal, ApiToken
-    try:
-        args = _parse_tool_args(content)
-    except ValueError:
-        return {"error": "Invalid JSON arguments", "exit_code": 1}
+    """Compatibility facade for the registry-owned implementation."""
+    from src.agent_tools.admin_tools import do_manage_tokens as _impl
 
-    action = args.get("action", "list")
-    db = SessionLocal()
-    try:
-        if action == "list":
-            tokens = db.query(ApiToken).all()
-            items = [{"id": t.id, "name": t.name, "token_prefix": t.token_prefix + "...",
-                       "is_active": t.is_active} for t in tokens]
-            return {"response": f"{len(items)} API tokens", "tokens": items, "exit_code": 0}
-
-        elif action == "create":
-            import uuid as _uuid, secrets, bcrypt
-            from datetime import datetime
-            name = args.get("name", "API Token")
-            raw_token = secrets.token_urlsafe(32)
-            token_hash = bcrypt.hashpw(raw_token.encode(), bcrypt.gensalt()).decode()
-            tid = str(_uuid.uuid4())[:8]
-            t = ApiToken(id=tid, name=name, token_hash=token_hash,
-                         token_prefix=raw_token[:8], is_active=True,
-                         created_at=datetime.utcnow(), updated_at=datetime.utcnow())
-            db.add(t)
-            db.commit()
-            return {"response": f"Created token '{name}'", "token": raw_token, "exit_code": 0}
-
-        elif action == "delete":
-            tid = args.get("token_id", "")
-            t = db.query(ApiToken).filter(ApiToken.id == tid).first()
-            if not t:
-                return {"error": f"Token {tid} not found", "exit_code": 1}
-            name = t.name
-            db.delete(t)
-            db.commit()
-            return {"response": f"Deleted token '{name}'", "exit_code": 0}
-
-        else:
-            return {"error": f"Unknown action: {action}", "exit_code": 1}
-    except Exception as e:
-        logger.error(f"manage_tokens error: {e}")
-        return {"error": str(e), "exit_code": 1}
-    finally:
-        db.close()
+    return await _impl(content, owner)
 
 # ---------------------------------------------------------------------------
 # Settings/preferences management tool
 # ---------------------------------------------------------------------------
 
 async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
-    """Manage user settings and preferences."""
+    """Compatibility facade for the registry-owned settings implementation."""
+    from src.agent_tools.admin_tools import do_manage_settings as _impl
+
+    return await _impl(content, owner)
+
+    # Legacy implementation retained temporarily below for source-history
+    # compatibility. The active implementation is the registry-owned function.
     try:
         args = _parse_tool_args(content)
     except ValueError:
@@ -1160,7 +1127,13 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
 # ---------------------------------------------------------------------------
 
 async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
-    """Handle manage_calendar tool calls: list/create/update/delete calendar events (local SQLite)."""
+    """Compatibility facade for the calendar-domain implementation."""
+    from src.tools.calendar import do_manage_calendar as _impl
+
+    return await _impl(content, owner)
+
+    # Legacy inline implementation retained temporarily for source-history
+    # context while the domain split settles. Runtime calls use ``_impl``.
     from datetime import datetime, timedelta
     from core.database import SessionLocal, CalendarCal, CalendarEvent, Note
     from routes.calendar_routes import _ensure_default_calendar, _parse_dt, _parse_dt_pair, parse_due_for_user, _resolve_base_uid
@@ -1982,6 +1955,13 @@ _APP_API_BLOCKLIST_METHOD_PATH = (
 
 
 async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
+    """Compatibility facade for the active system-tool implementation."""
+    from src.tools.system import do_app_api as _impl
+
+    return await _impl(content, owner=owner)
+
+    # Legacy implementation retained temporarily below for source-history
+    # compatibility. The active implementation is the domain-owned function.
     """Generic loopback to allowed internal Odysseus API endpoints. Lets the
     agent reach the full UI-button surface (cookbook, email, notes,
     calendar, skills, sessions, gallery, research, etc.) without us
@@ -2548,6 +2528,10 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
             break
 
     if remote:
+        try:
+            remote, sport = _validate_cookbook_ssh_target(remote, sport)
+        except HTTPException as e:
+            return {"error": str(getattr(e, "detail", e)), "exit_code": 1}
         _pf = f"-p {shlex.quote(str(sport))} " if sport and str(sport) != "22" else ""
         cmd = (
             f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "
@@ -2636,8 +2620,8 @@ async def do_tail_serve_output(content: str, owner: Optional[str] = None) -> Dic
         tail = 400
     tail = max(20, min(tail, 4000))
     headers = _internal_headers()
-    remote = (args.get("remote_host") or args.get("host") or "").strip()
-    sport = (args.get("ssh_port") or "").strip()
+    remote = _string_arg(args.get("remote_host") or args.get("host"))
+    sport = _string_arg(args.get("ssh_port"))
     # Resolve host from cookbook state if caller didn't pass one — same
     # lookup _cookbook_kill_session uses.
     if not remote:
@@ -2655,6 +2639,11 @@ async def do_tail_serve_output(content: str, owner: Optional[str] = None) -> Dic
                     if not sport:
                         sport = t.get("sshPort") or ""
                     break
+    if remote:
+        try:
+            remote, sport = _validate_cookbook_ssh_target(remote, sport)
+        except HTTPException as e:
+            return {"error": str(getattr(e, "detail", e)), "exit_code": 1}
     # Prefer the persisted /tmp/odysseus-tmux/SESSION.log file over the
     # live tmux pane. The pane is what the user would see scrolling on
     # their screen — including the post-crash neofetch banner and the
@@ -2832,7 +2821,7 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
 
-    host = (args.get("host") or args.get("remote_host") or "").strip()
+    host = _string_arg(args.get("host") or args.get("remote_host"))
     sess = (args.get("tmux_session") or args.get("session_id") or "").strip()
     model = (args.get("model") or args.get("repo_id") or "").strip()
     port = args.get("port") or 8000
@@ -2843,6 +2832,12 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
         return {"error": "tmux_session and model are required", "exit_code": 1}
 
     # Verify tmux session exists on the target host
+    if host:
+        try:
+            host, _ = _validate_cookbook_ssh_target(host)
+        except HTTPException as e:
+            return {"error": str(getattr(e, "detail", e)), "exit_code": 1}
+
     headers = _internal_headers()
     if host:
         check = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no {shlex.quote(host)} 'tmux has-session -t {shlex.quote(sess)} 2>&1'"

@@ -2,7 +2,8 @@
 
 import httpx
 
-from src import endpoint_resolver, llm_core, model_context
+from src import endpoint_resolver, model_context
+from src.llm_core import _core as llm_core
 
 
 def test_build_models_url_accepts_v1_base_and_chat_url(monkeypatch):

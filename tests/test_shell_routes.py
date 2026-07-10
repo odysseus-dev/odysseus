@@ -14,6 +14,7 @@ import pytest
 
 from routes.shell_routes import (
     _find_line_break,
+    _host_docker_access_enabled,
     _require_admin,
     _running_in_container,
     _docker_row_status,
@@ -306,6 +307,9 @@ class TestHostDockerAccess:
         assert _host_docker_access_enabled(str(socket_path)) is False
 
     @pytest.mark.parametrize("flag", [None, "false"])
+    @pytest.mark.skipif(
+        not hasattr(socket, "AF_UNIX"), reason="Unix-domain sockets unavailable"
+    )
     def test_socket_without_explicit_opt_in_is_disabled(
         self,
         monkeypatch,
@@ -322,6 +326,9 @@ class TestHostDockerAccess:
 
             assert _host_docker_access_enabled(str(socket_path)) is False
 
+    @pytest.mark.skipif(
+        not hasattr(socket, "AF_UNIX"), reason="Unix-domain sockets unavailable"
+    )
     def test_explicit_opt_in_with_unix_socket_is_enabled(
         self,
         monkeypatch,

@@ -66,6 +66,41 @@ $dataArgs = @(
 & $pyExe -m PyInstaller --noconfirm --clean --onedir --noconsole --icon=static/icon.ico --name Odysseus @dataArgs launcher.py
 if ($LASTEXITCODE -ne 0) { Fail "PyInstaller build failed." }
 
+# PyInstaller copies --add-data directories wholesale. Remove source backups,
+# bytecode caches, and the local one-off patcher from the verified build root.
+$distRoot = (Resolve-Path (Join-Path $PSScriptRoot "dist\Odysseus")).Path
+$distPrefix = $distRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+$localPatchCopies = @(
+    (Join-Path $distRoot "scripts\patch_fix.py"),
+    (Join-Path $distRoot "_internal\scripts\patch_fix.py")
+)
+$packagingJunkFiles = @($localPatchCopies)
+$packagingJunkFiles += Get-ChildItem -LiteralPath $distRoot -Recurse -Force -File |
+    Where-Object { $_.Extension -in @(".bak", ".pyc") } |
+    ForEach-Object { $_.FullName }
+
+foreach ($candidate in ($packagingJunkFiles | Select-Object -Unique)) {
+    if (Test-Path -LiteralPath $candidate) {
+        $resolved = (Resolve-Path -LiteralPath $candidate).Path
+        if (-not $resolved.StartsWith($distPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            Fail "Refusing to remove packaging junk outside the build output."
+        }
+        Remove-Item -LiteralPath $resolved -Force
+    }
+}
+
+$cacheDirs = Get-ChildItem -LiteralPath $distRoot -Recurse -Force -Directory -Filter "__pycache__" |
+    Sort-Object { $_.FullName.Length } -Descending
+foreach ($cacheDir in $cacheDirs) {
+    if (Test-Path -LiteralPath $cacheDir.FullName) {
+        $resolved = (Resolve-Path -LiteralPath $cacheDir.FullName).Path
+        if (-not $resolved.StartsWith($distPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            Fail "Refusing to remove a bytecode cache outside the build output."
+        }
+        Remove-Item -LiteralPath $resolved -Recurse -Force
+    }
+}
+
 Write-Host ""
 Write-Host "Build complete." -ForegroundColor Green
 Write-Host "Portable app folder: $PSScriptRoot\dist\Odysseus" -ForegroundColor Green

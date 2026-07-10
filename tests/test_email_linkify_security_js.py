@@ -45,7 +45,7 @@ def test_plain_text_linkify_escapes_href_attribute_without_double_escaping():
             }};
           }}
         }};
-        const {{ _escLinkify }} = await import('{_HELPER.as_posix()}');
+        const {{ _escLinkify }} = await import('{_HELPER.as_uri()}');
         const out = _escLinkify('See https://example.test/path?a=1&b=2 and www.example.test/a`b');
         console.log(JSON.stringify(out));
         """

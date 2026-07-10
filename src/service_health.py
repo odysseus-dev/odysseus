@@ -356,7 +356,7 @@ def providers_health(endpoints: List[Dict[str, Any]],
     if not endpoints:
         return _svc("providers", DISABLED, "No model endpoints configured.")
     if probe is None:
-        from routes.model_routes import _probe_endpoint as probe
+        from routes.model import _probe_endpoint as probe
 
     def _label(ep: Dict[str, Any]) -> str:
         return ep.get("name") or _safe_url(ep.get("base_url")) or "endpoint"

@@ -23,7 +23,11 @@ _RESOLVER_NAMES = (
     "src",
     "src.endpoint_resolver",
     "routes",
+    "routes.model",
+    "routes.model._utils",
     "routes.model_routes",
+    "routes.chat",
+    "routes.chat._utils",
     "routes.chat_routes",
 )
 
@@ -312,9 +316,8 @@ def test_clear_fake_resolver_evicts_empty_file_resolver():
         assert "routes.model_routes" not in sys.modules
 
 
-def test_clear_fake_resolver_removes_model_routes_when_resolver_fake():
-    """model_routes is dropped, and its parent `routes` attr is cleared too —
-    the behavior delta over the old bare sys.modules.pop() guards."""
+def test_clear_fake_resolver_removes_model_modules_when_resolver_fake():
+    """Both the legacy module and chunked model package are evicted."""
     with preserve_import_state(*_RESOLVER_NAMES):
         fake_src = types.ModuleType("src")
         fake_resolver = types.ModuleType("src.endpoint_resolver")
@@ -324,14 +327,47 @@ def test_clear_fake_resolver_removes_model_routes_when_resolver_fake():
 
         fake_routes = types.ModuleType("routes")
         model_routes = types.ModuleType("routes.model_routes")
+        model_package = types.ModuleType("routes.model")
+        model_utils = types.ModuleType("routes.model._utils")
         fake_routes.model_routes = model_routes
+        fake_routes.model = model_package
+        model_package._utils = model_utils
         sys.modules["routes"] = fake_routes
         sys.modules["routes.model_routes"] = model_routes
+        sys.modules["routes.model"] = model_package
+        sys.modules["routes.model._utils"] = model_utils
 
         clear_fake_endpoint_resolver_modules()
 
         assert "routes.model_routes" not in sys.modules
+        assert "routes.model" not in sys.modules
+        assert "routes.model._utils" not in sys.modules
         assert not hasattr(fake_routes, "model_routes")
+        assert not hasattr(fake_routes, "model")
+
+
+def test_clear_fake_resolver_removes_chunked_chat_extra_modules():
+    with preserve_import_state(*_RESOLVER_NAMES):
+        fake_src = types.ModuleType("src")
+        fake_resolver = types.ModuleType("src.endpoint_resolver")
+        fake_src.endpoint_resolver = fake_resolver
+        sys.modules["src"] = fake_src
+        sys.modules["src.endpoint_resolver"] = fake_resolver
+
+        fake_routes = types.ModuleType("routes")
+        chat_package = types.ModuleType("routes.chat")
+        chat_utils = types.ModuleType("routes.chat._utils")
+        fake_routes.chat = chat_package
+        chat_package._utils = chat_utils
+        sys.modules["routes"] = fake_routes
+        sys.modules["routes.chat"] = chat_package
+        sys.modules["routes.chat._utils"] = chat_utils
+
+        clear_fake_endpoint_resolver_modules("routes.chat._utils", "routes.chat")
+
+        assert "routes.chat" not in sys.modules
+        assert "routes.chat._utils" not in sys.modules
+        assert not hasattr(fake_routes, "chat")
 
 
 def test_clear_fake_resolver_removes_extra_modules_when_resolver_fake():

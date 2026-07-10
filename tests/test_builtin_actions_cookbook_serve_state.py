@@ -3,7 +3,7 @@ import json
 import httpx
 import pytest
 
-from src import builtin_actions
+from src.builtin_actions import _misc as builtin_actions
 
 
 class _FakeServeResponse:

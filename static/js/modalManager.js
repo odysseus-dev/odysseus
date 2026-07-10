@@ -656,11 +656,19 @@ function _isTouchInput() {
     navigator.maxTouchPoints > 0;
 }
 
+function _isMobileDevice() {
+  const ua = navigator.userAgent || '';
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua)
+    || (/Macintosh/i.test(ua) && (navigator.maxTouchPoints || 0) > 1);
+}
+
 function _isTouchLandscape() {
+  if (!_isMobileDevice()) return false;
   return window.matchMedia('(orientation: landscape)').matches && _isTouchInput();
 }
 
 function _isTouchPortrait() {
+  if (!_isMobileDevice()) return false;
   return window.matchMedia('(orientation: portrait)').matches && _isTouchInput();
 }
 
@@ -775,7 +783,7 @@ function _aboveComposerTop(height) {
 }
 
 function _desktopChatbarDockRect(bounds = _dockWorkspaceBounds(), dock = null) {
-  if (_isTouchInput()) return null;
+  if (_isMobileDevice()) return null;
   const rect = _visibleRect(document.querySelector('.chat-input-bar'));
   if (!rect) return null;
   const left = Math.max(bounds.left + 8, rect.left);
@@ -1356,7 +1364,9 @@ function _renderDock() {
       chip.style.setProperty('position', 'fixed', 'important');
       chip.style.setProperty('left', `${pos.left}px`, 'important');
       chip.style.setProperty('top', `${pos.top}px`, 'important');
-      chip.style.setProperty('z-index', '10020', 'important');
+      // Rest with the dock below composer popups and tool windows. Dragging
+      // temporarily raises the chip via the existing drag-only z-index.
+      chip.style.setProperty('z-index', '100', 'important');
       document.body.appendChild(chip);
     } else {
       appendDockChip(chip);

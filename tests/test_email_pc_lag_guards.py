@@ -51,4 +51,4 @@ def test_email_inbox_refresh_and_header_binding_are_idempotent():
 
 
 def test_email_lag_guard_cache_bumped():
-    assert "const CACHE_NAME = 'odysseus-v407';" in SW_JS
+    assert "const CACHE_NAME = 'odysseus-v429';" in SW_JS

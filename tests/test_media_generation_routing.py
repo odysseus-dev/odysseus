@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from src import ai_interaction
-from routes.chat_routes import (
+from routes.chat import (
     _direct_media_request_for_session,
     _generate_direct_media,
 )
@@ -171,6 +171,15 @@ def test_generate_image_prefers_current_session_image_model_over_default(monkeyp
             pass
 
     monkeypatch.setattr(database, "SessionLocal", lambda: FakeGalleryDb())
+
+    class FakeGalleryImage:
+        def __init__(self, **values):
+            self.__dict__.update(values)
+
+    # tests/conftest.py supplies a lightweight src.database compatibility
+    # stub; make the row constructor explicit so this test covers the saved
+    # model value rather than whichever import-order stub happened to win.
+    monkeypatch.setattr(database, "GalleryImage", FakeGalleryImage, raising=False)
 
     class FakeResponse:
         status_code = 200

@@ -224,21 +224,21 @@ def test_android_bgremove_plain_fallback_protects_portraits():
 
 
 def test_pc_bgremove_sample_strokes_bound_search_without_flooding_subject():
-    pc_route = (ROOT / "routes" / "gallery_routes.py").read_text(encoding="utf-8")
+    pc_route = (ROOT / "routes" / "gallery" / "gallery_routes.py").read_text(encoding="utf-8")
     assert "requested_rembg_model = str(" in pc_route
     assert "bg_remove_pipeline = \"model\"" in pc_route
     assert "bg_remove_pipeline = \"rembg\"" in pc_route
     assert "bg_remove_pipeline = \"heuristic\"" in pc_route
     assert "await _remove_with_provider()" in pc_route
     assert "def _model_prefers_openai_edit(model_name):" in pc_route
-    assert 'openai_style_edit = "api.openai.com" in base or _model_prefers_openai_edit(model)' in pc_route
-    assert 'r = await client.post(f"{base}/images/edits", headers=headers, data=data, files=files)' in pc_route
+    assert 'openai_style_edit = _is_openai_api_base(base) or _model_prefers_openai_edit(model)' in pc_route
+    assert '_join_checked_gallery_endpoint(base, "/images/edits")' in pc_route
     assert "def _wants_json_image_edit(status_code, text):" in pc_route
-    assert 'jr = await client.post(f"{base}/images/edits", headers=headers, json=json_payload)' in pc_route
+    assert "json=json_payload" in pc_route
     assert "async def _chat_image_edit(previous_error=\"\"):" in pc_route
-    assert 'cr = await client.post(f"{base}/chat/completions", headers=headers, json=chat_payload)' in pc_route
+    assert '_join_checked_gallery_endpoint(base, "/chat/completions")' in pc_route
     assert '"content", "message", "choices"' in pc_route
-    assert 'return {"error": f"Selected image model failed: {str(provider_error)[:260]}"}' in pc_route
+    assert 'return {"error": "Selected image model failed during background removal"}' in pc_route
     assert "used local background removal fallback" not in pc_route
     provider_block = pc_route.split("async def _remove_with_provider():", 1)[1].split(
         "def _subject_keep_mask", 1
@@ -274,7 +274,7 @@ def test_pc_bgremove_sample_strokes_bound_search_without_flooding_subject():
 
 
 def test_pc_inpaint_routes_openai_compatible_endpoints_through_image_edit():
-    pc_route = (ROOT / "routes" / "gallery_routes.py").read_text(encoding="utf-8")
+    pc_route = (ROOT / "routes" / "gallery" / "gallery_routes.py").read_text(encoding="utf-8")
     inpaint_block = pc_route.split('@router.post("/api/image/inpaint")', 1)[1].split(
         "# ---- POST /api/image/harmonize", 1
     )[0]
@@ -285,8 +285,9 @@ def test_pc_inpaint_routes_openai_compatible_endpoints_through_image_edit():
     assert "if is_openai_style_edit:" in inpaint_block
     assert "_model_name_prefers_image_edit_endpoint(chosen_model)" in inpaint_block
     assert "_visible_enabled_endpoint_for_id(db, endpoint_id" in inpaint_block
-    assert 'jr = await client.post(f"{base}/images/edits", headers=headers, json=json_payload)' in inpaint_block
-    assert 'cr = await client.post(f"{base}/chat/completions", headers=headers, json=chat_payload)' in inpaint_block
+    assert '_join_checked_gallery_endpoint(base, "/images/edits")' in inpaint_block
+    assert "json=json_payload" in inpaint_block
+    assert '_join_checked_gallery_endpoint(base, "/chat/completions")' in inpaint_block
     assert "The second image is a mask" in inpaint_block
 
 
@@ -312,7 +313,7 @@ def test_editor_bgremove_exposes_pipeline_selector():
 
 
 def test_android_inpaint_keeps_edit_capable_image_models():
-    assert "isChatModel(id) || isImageEditModel(id) || isImageGenerationModel(id)" in ANDROID_SERVER
+    assert "isImageEditModel(model) || isImageGenerationModel(model)" in ANDROID_SERVER
     assert "m.contains(\"dall-e-2\")" in ANDROID_SERVER
     assert "m.contains(\"dall-e-3\")" in ANDROID_SERVER
     assert "m.contains(\"img2img\")" in ANDROID_SERVER
@@ -388,7 +389,8 @@ def test_android_standalone_image_generation_supports_gemini_openai_and_gallery_
     assert 'retryPayload.remove("quality");' in openai_generation
     assert 'boolean gptImageModel = modelLower.startsWith("gpt-image") || modelLower.contains("chatgpt-image");' in openai_generation
     assert 'boolean localDiffusionModel = !gptImageModel && !dalleModel;' in openai_generation
-    assert 'if (gptImageModel || localDiffusionModel) {' in openai_generation
+    # Z-Image endpoints use image_size and reject OpenAI's quality option.
+    assert 'if (!zImageModel && (gptImageModel || localDiffusionModel)) {' in openai_generation
     assert 'payload.put("response_format", "b64_json");' not in openai_generation
     assert "&& isImageGenerationModel(model)" not in gemini_dispatch
 
@@ -484,13 +486,15 @@ def test_android_inpaint_accepts_common_provider_response_shapes():
 
 
 def test_pc_inpaint_accepts_common_provider_routes_and_response_shapes():
-    pc_route = (ROOT / "routes" / "gallery_routes.py").read_text(encoding="utf-8")
+    pc_route = (ROOT / "routes" / "gallery" / "gallery_routes.py").read_text(encoding="utf-8")
     inpaint_block = pc_route.split("async def inpaint_proxy(request: Request):", 1)[1].split(
         "# ---- POST /api/image/harmonize", 1
     )[0]
     assert 'paths = ("/images/inpaint", "/images/edits", "/images/edit", "/api/image/inpaint")' in inpaint_block
     assert "for idx, path in enumerate(paths):" in inpaint_block
-    assert 'target = f"{base_root}{path}" if path.startswith("/api/") else f"{base}{path}"' in inpaint_block
+    assert '"/images/inpaint": _join_checked_gallery_endpoint(base, "/images/inpaint")' in inpaint_block
+    assert '"/api/image/inpaint": _join_checked_gallery_endpoint(base_root, "/api/image/inpaint")' in inpaint_block
+    assert "target = route_targets[path]" in inpaint_block
     assert "def _first_provider_image_value" in inpaint_block
     assert '"image_base64", "imageBase64"' in inpaint_block
     assert '"artifact", "artifacts"' in inpaint_block

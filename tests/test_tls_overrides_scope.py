@@ -37,8 +37,9 @@ REPO = Path(__file__).resolve().parents[1]
 # is a discrete LLM HTTP entry point and intentional. Any addition must
 # come with its own justification in code review.
 ALLOWED_CALLERS = frozenset({
-    "src/llm_core.py",          # shared AsyncClient used by stream_llm
-    "routes/model_routes.py",   # _probe_endpoint + _ping_endpoint
+    "src/llm_core/_core.py",    # shared AsyncClient used by stream_llm
+    "routes/model/_utils.py",   # active package: endpoint probes
+    "routes/model/_utils.py",  # canonical model endpoint probe helpers
 })
 
 
@@ -51,6 +52,17 @@ def _grep_files(pattern: str) -> set[str]:
     for path in REPO.rglob("*.py"):
         rel = path.relative_to(REPO).as_posix()
         if rel.startswith("tests/"):
+            continue
+        if rel.startswith((
+            "electron-dist/",
+            "electron-dist-",
+            "release-assets/",
+            "backups/",
+            "venv/",
+            "tmp-",
+        )):
+            continue
+        if rel.endswith(".bak"):
             continue
         if rel == "src/tls_overrides.py":  # definition site, not a caller
             continue

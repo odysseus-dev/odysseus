@@ -1,0 +1,3118 @@
+/* _calendar.css — chunked from style.css */
+/* ── Calendar ── */
+.cal-modal-content { width:min(680px, 94vw); max-height:88vh; overflow-x:hidden; }
+/* Keep Calendar as a movable window on narrow desktop and touch landscape.
+   Portrait phones still use the shared full-height bottom sheet rules. */
+@media (max-width: 768px) and (hover: hover),
+       (max-width: 768px) and (pointer: fine),
+       (max-width: 768px) and (orientation: landscape) {
+  #calendar-modal:not(.modal-full-expanded):not(.modal-left-docked):not(.modal-right-docked):not(.modal-top-docked):not(.modal-bottom-docked) {
+    align-items: center !important;
+    justify-content: center !important;
+    background: none !important;
+    height: 100% !important;
+    padding: 0 !important;
+    pointer-events: none !important;
+  }
+  #calendar-modal:not(.modal-full-expanded):not(.modal-left-docked):not(.modal-right-docked):not(.modal-top-docked):not(.modal-bottom-docked) .cal-modal-content {
+    width: min(680px, 94vw) !important;
+    max-height: 88vh !important;
+    height: auto !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 10px !important;
+    padding: 10px !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.45) !important;
+    pointer-events: auto !important;
+  }
+}
+/* Was overflow-y:auto with grid + day-detail flowing naturally. Now uses a
+   true splitter layout: the body is a flex column that doesn't scroll
+   itself; the grid takes the remaining space and scrolls if needed; the
+   day-detail has an explicit height (driven by the splitter drag via
+   --cal-detail-h) and shrinks the grid visually as it grows. */
+#cal-body { display:flex; flex-direction:column; gap:8px; overflow:hidden; padding:0; min-height:0; }
+#cal-body > .cal-grid { flex: 1 1 auto; min-height: 120px; overflow-y: auto; overflow-x: hidden; }
+#calendar-modal.modal-left-docked .cal-modal-content,
+#calendar-modal.modal-right-docked .cal-modal-content,
+#calendar-modal.modal-top-docked .cal-modal-content,
+#calendar-modal.modal-bottom-docked .cal-modal-content,
+#calendar-modal.modal-full-expanded .cal-modal-content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#calendar-modal.modal-left-docked .modal-header,
+#calendar-modal.modal-right-docked .modal-header,
+#calendar-modal.modal-top-docked .modal-header,
+#calendar-modal.modal-bottom-docked .modal-header,
+#calendar-modal.modal-full-expanded .modal-header {
+  flex: 0 0 auto;
+}
+#calendar-modal.modal-left-docked #cal-body,
+#calendar-modal.modal-right-docked #cal-body,
+#calendar-modal.modal-top-docked #cal-body,
+#calendar-modal.modal-bottom-docked #cal-body,
+#calendar-modal.modal-full-expanded #cal-body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+#calendar-modal.modal-left-docked #cal-body.cal-form-mode,
+#calendar-modal.modal-right-docked #cal-body.cal-form-mode,
+#calendar-modal.modal-top-docked #cal-body.cal-form-mode,
+#calendar-modal.modal-bottom-docked #cal-body.cal-form-mode,
+#calendar-modal.modal-full-expanded #cal-body.cal-form-mode {
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+#calendar-modal #cal-body.cal-form-mode > .cal-form {
+  flex: 0 0 auto;
+}
+@media (orientation: landscape) {
+  #calendar-modal.modal-left-docked #cal-body,
+  #calendar-modal.modal-right-docked #cal-body,
+  #calendar-modal.modal-full-expanded #cal-body {
+    gap: 4px;
+  }
+  #calendar-modal.modal-left-docked #cal-body > .cal-grid,
+  #calendar-modal.modal-right-docked #cal-body > .cal-grid,
+  #calendar-modal.modal-full-expanded #cal-body > .cal-grid,
+  #calendar-modal.modal-left-docked #cal-body > .cal-wk-wrap,
+  #calendar-modal.modal-right-docked #cal-body > .cal-wk-wrap,
+  #calendar-modal.modal-full-expanded #cal-body > .cal-wk-wrap {
+    min-height: 0;
+    max-height: none;
+  }
+  #calendar-modal.modal-left-docked .cal-toolbar,
+  #calendar-modal.modal-right-docked .cal-toolbar,
+  #calendar-modal.modal-full-expanded .cal-toolbar {
+    gap: 4px;
+    margin-bottom: 0;
+    row-gap: 4px;
+    flex-wrap: nowrap;
+  }
+  #calendar-modal.modal-left-docked .cal-toolbar-nav,
+  #calendar-modal.modal-right-docked .cal-toolbar-nav,
+  #calendar-modal.modal-full-expanded .cal-toolbar-nav {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    gap: 3px;
+    min-width: 0;
+  }
+  #calendar-modal.modal-left-docked .cal-toolbar-right,
+  #calendar-modal.modal-right-docked .cal-toolbar-right,
+  #calendar-modal.modal-full-expanded .cal-toolbar-right {
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    gap: 4px;
+    margin-left: 0;
+    margin-top: 0;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  #calendar-modal.modal-left-docked .cal-toolbar-right::-webkit-scrollbar,
+  #calendar-modal.modal-right-docked .cal-toolbar-right::-webkit-scrollbar,
+  #calendar-modal.modal-full-expanded .cal-toolbar-right::-webkit-scrollbar {
+    display: none;
+  }
+  #calendar-modal.modal-left-docked .cal-title,
+  #calendar-modal.modal-right-docked .cal-title,
+  #calendar-modal.modal-full-expanded .cal-title {
+    max-width: 116px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    height: 22px;
+    line-height: 24px;
+    padding: 0 4px;
+    font-size: 12px;
+  }
+  #calendar-modal.modal-left-docked button.cal-nav,
+  #calendar-modal.modal-right-docked button.cal-nav,
+  #calendar-modal.modal-full-expanded button.cal-nav,
+  #calendar-modal.modal-left-docked .cal-filter-toggle,
+  #calendar-modal.modal-right-docked .cal-filter-toggle,
+  #calendar-modal.modal-full-expanded .cal-filter-toggle {
+    height: 22px;
+    line-height: 20px;
+    padding: 0 6px;
+    font-size: 10px;
+  }
+  #calendar-modal.modal-left-docked button.cal-view-btn,
+  #calendar-modal.modal-right-docked button.cal-view-btn,
+  #calendar-modal.modal-full-expanded button.cal-view-btn {
+    height: 22px;
+    padding: 1px 7px;
+    font-size: 10px;
+  }
+  #calendar-modal.modal-left-docked .cal-quickadd-row,
+  #calendar-modal.modal-right-docked .cal-quickadd-row,
+  #calendar-modal.modal-full-expanded .cal-quickadd-row {
+    gap: 6px;
+    margin-bottom: 0;
+    padding: 0 8px;
+    border-radius: 6px;
+  }
+  #calendar-modal.modal-left-docked .cal-quickadd-input,
+  #calendar-modal.modal-right-docked .cal-quickadd-input,
+  #calendar-modal.modal-full-expanded .cal-quickadd-input {
+    height: 20px;
+    font-size: 11px;
+  }
+  #calendar-modal.modal-left-docked .cal-quickadd-hint,
+  #calendar-modal.modal-right-docked .cal-quickadd-hint,
+  #calendar-modal.modal-full-expanded .cal-quickadd-hint {
+    font-size: 11px;
+  }
+  #calendar-modal.modal-left-docked .cal-splitter,
+  #calendar-modal.modal-right-docked .cal-splitter,
+  #calendar-modal.modal-full-expanded .cal-splitter {
+    height: 10px;
+    margin-top: 0;
+  }
+  #calendar-modal.modal-left-docked .cal-splitter-grip,
+  #calendar-modal.modal-right-docked .cal-splitter-grip,
+  #calendar-modal.modal-full-expanded .cal-splitter-grip {
+    height: 2px;
+  }
+  #calendar-modal.modal-left-docked .cal-day-detail,
+  #calendar-modal.modal-right-docked .cal-day-detail,
+  #calendar-modal.modal-full-expanded .cal-day-detail {
+    margin-top: 0;
+    padding-top: 6px;
+  }
+}
+@media (max-width: 768px) {
+  /* Let the calendar pane shrink to nothing on mobile so the day-detail
+     splitter can be dragged all the way to the top, hiding the calendar
+     entirely. Without min-height:0 the grid (or the week-wrap below)
+     refuses to shrink past its built-in floor. */
+  #cal-body > .cal-grid,
+  #cal-body > .cal-wk-wrap {
+    min-height: 0;
+    max-height: none;
+  }
+  /* Let the week grid fill the calendar pane and scroll its hours internally
+     instead of overflowing #cal-body (which clips it and feels cramped). */
+  #cal-body > .cal-wk-wrap {
+    flex: 1 1 auto;
+    overflow: auto;
+  }
+}
+.cal-toolbar { display:flex; align-items:center; gap:6px; margin-bottom:8px; flex-wrap:wrap; line-height:1; max-width:100%; row-gap:6px; }
+
+/* Quick-add bar: natural-language event creation. Sits directly under
+   the toolbar; focused with `Q`; opens the bespoke form pre-filled. */
+.cal-quickadd-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 1px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+  transition: border-color 0.15s, background 0.15s;
+  position: relative;
+}
+/* Two-tone placeholder hint: "Quick add" in accent, the example in grey, both
+   at one low opacity. Overlays the (empty) input; hidden once the user types. */
+.cal-quickadd-hint {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12px;
+  color: var(--fg);
+  opacity: 0.5;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: calc(100% - 20px);
+}
+.cal-quickadd-hint .qa-hint-accent { color: var(--accent, var(--red)); }
+/* ↵ enter glyph in the hint — makes it obvious the field submits on Enter. */
+.cal-quickadd-hint .qa-hint-enter { vertical-align: -2px; color: var(--accent, var(--red)); opacity: 0.8; }
+/* Cycling example text fades out before swap, then fades back in. */
+.cal-quickadd-hint .qa-hint-example {
+  display: inline-block;
+  transition: opacity 0.18s ease;
+}
+.cal-quickadd-hint .qa-hint-example.qa-hint-fade { opacity: 0; }
+/* Matching ↵ hint at the right of the event title while it's empty; hidden once
+   editing (the ✓ Done button takes over then). */
+/* Title placeholder overlay: the prompt text with a ↵ enter glyph right after
+   it (accent), so it's clear the field submits on Enter. Shown only while the
+   title is empty; the native placeholder is hidden in favour of this. */
+.cal-hero-title::placeholder { color: transparent; }
+.cal-title-hint {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(calc(-50% - 2px));
+  display: none;
+  align-items: center;
+  gap: 7px;
+  font-size: 18px;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+  color: color-mix(in srgb, var(--fg) 42%, transparent);
+}
+.cal-hero-title:placeholder-shown ~ .cal-title-hint { display: inline-flex; }
+.cal-title-hint .cal-title-enter-ico { color: var(--accent, var(--red)); flex-shrink: 0; }
+/* Pure-CSS toggle: hide the hint as soon as the field has real text (no
+   per-keystroke JS, so typing never triggers a re-render / focus loss). */
+.cal-quickadd-input:not(:placeholder-shown) ~ .cal-quickadd-hint { display: none; }
+.cal-quickadd-row:focus-within {
+  border-color: color-mix(in srgb, var(--accent, var(--fg)) 55%, var(--border));
+  background: color-mix(in srgb, var(--fg) 5%, var(--bg));
+}
+.cal-quickadd-icon {
+  color: color-mix(in srgb, var(--accent, var(--fg)) 80%, transparent);
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+.cal-quickadd-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+  height: 22px;
+  padding: 0;
+}
+.cal-quickadd-input::placeholder { color: transparent; }
+.cal-quickadd-status {
+  font-size: 10px;
+  opacity: 0.55;
+  font-variant-numeric: tabular-nums;
+}
+.cal-toolbar > *, .cal-toolbar-nav > *, .cal-toolbar-right > * { vertical-align:middle; }
+.cal-toolbar-nav { display:inline-flex; align-items:center; gap:4px; flex-wrap:wrap; }
+.cal-toolbar-right { display:inline-flex; align-items:center; gap:6px; margin-left:auto; flex-wrap:wrap; margin-top:6px; }
+.cal-title { font-size:13px; font-weight:600; white-space:nowrap; height:24px; line-height:30px; padding:0 6px; display:inline-block; vertical-align:middle; box-sizing:border-box; }
+button.cal-nav { background:color-mix(in srgb, var(--fg) 6%, transparent); border:1px solid var(--border); color:var(--fg); border-radius:5px; padding:0 8px; height:24px; line-height:22px; cursor:pointer; font-size:11px; font-family:inherit; box-sizing:border-box; vertical-align:middle; }
+button.cal-nav:hover { background:color-mix(in srgb, var(--fg) 12%, transparent); }
+button.cal-today-btn { font-size:10px; opacity:0.5; }
+button.cal-add-btn { background:var(--accent); color:#fff; border:none; border-radius:50%; width:24px; height:24px; line-height:22px; font-size:18px; cursor:pointer; flex-shrink:0; padding:0; box-sizing:border-box; font-family:inherit; vertical-align:middle; text-align:center; }
+button.cal-add-btn.cal-add-btn-text {
+  width:auto; min-width:0;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0 10px 0 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  line-height: 1;
+  margin-top: 0;
+  transition: background 0.15s, border-color 0.15s;
+}
+/* Settings "+ Add server" matches the model-dir "+ Add" path button (22px). */
+#cookbook-server-add.cal-add-btn-text {
+  height: 28px;
+  min-width: 62px;
+  border-radius: 14px;
+  padding: 0 12px 0 8px;
+  position: relative;
+  top: 1px;
+  font-size: 12px;
+}
+button.cal-add-btn.cal-add-btn-text:hover {
+  background: color-mix(in srgb, var(--fg) 14%, transparent);
+  border-color: var(--accent);
+  opacity: 1;
+}
+.cal-add-plus {
+  font-size: 16px;
+  line-height: 1;
+  color: var(--accent, var(--red));
+  font-weight: 500;
+  display: inline-block;
+  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  padding-bottom: 2px;
+}
+button.cal-add-btn.cal-add-btn-text:hover .cal-add-plus {
+  transform: rotate(180deg);
+}
+/* Mobile tap-spin: a gentle quarter-turn nudge before the form opens.
+   `.cal-add-plus` has a `padding-bottom: 2px` (and a translateY on the
+   small variant) that offsets the glyph for optical centering — those
+   shift the rotation pivot off the visual centre. Force the box to
+   match the glyph and pin the transform-origin during the spin. */
+.cal-add-plus.cal-add-spinning {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  width: 1em;
+  height: 1em;
+  line-height: 1;
+  transform-origin: 50% 50%;
+  animation: cal-add-spin 0.28s ease-out forwards;
+}
+@keyframes cal-add-spin {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(90deg); }
+}
+.cal-add-label { font-size:11px; font-weight:600; line-height:1; opacity:0.85; }
+/* Small variant of the toolbar's +New button. Inherits the .cal-add-btn-text
+   styles (pill with "+" + "New" + spring-rotate on the +), so the
+   animation is identical. Just shrunk a bit. */
+button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm {
+  height: 20px;
+  border-radius: 10px;
+  /* At rest: tight, equal padding around the "+" so it sits centred
+     with no trailing gap. On hover the right pad and the flex gap grow
+     to make room for the revealed "New". */
+  padding: 0 5px;
+  gap: 0;
+  transition: padding 0.25s ease, gap 0.25s ease, background 0.15s, border-color 0.15s;
+}
+button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover {
+  padding: 0 8px 0 5px;
+  gap: 3px;
+}
+/* Don't touch .cal-add-plus on the small variant — the toolbar +New is
+   the reference and we want the same rotation centre / motion. The label
+   is shrunk and hidden until hover so the pill is compact at rest. */
+button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm .cal-add-label {
+  font-size: 10px;
+  max-width: 0;
+  margin-left: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: max-width 0.25s ease, opacity 0.18s ease, margin-left 0.25s ease;
+}
+button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
+  max-width: 40px;
+  margin-left: 3px;
+  opacity: 0.85;
+}
+.cal-add-btn:hover { opacity:0.85; }
+
+/* Mobile: bump the +New pill and the +/- zoom buttons up to a tap-friendly
+   size so they're easy to hit with a thumb. */
+@media (max-width: 768px) {
+  /* Toolbar +New (relocated by JS into the quickadd row on mobile) */
+  button.cal-add-btn.cal-add-btn-text {
+    height: 36px;
+    border-radius: 18px;
+    padding: 0 14px 0 12px;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  /* Day-detail +New: just a "+" on mobile — drop the label entirely. */
+  button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    padding: 0;
+    gap: 0;
+    justify-content: center;
+  }
+  button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm .cal-add-label {
+    display: none;
+  }
+  .cal-add-plus { font-size: 22px; padding-bottom: 1px; }
+  .cal-add-label { font-size: 13px; }
+  .cal-wk-zoom {
+    width: 36px;
+    height: 36px;
+    font-size: 20px;
+    border-radius: 8px;
+    opacity: 0.85;
+  }
+  /* The +New button sits as a sibling of the quickadd row inside a flex
+     wrapper, so it's clearly outside the input's bordered box. The row
+     itself keeps its own styling. */
+  .cal-quickadd-wrap {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    margin: 0 0 8px;
+  }
+  .cal-quickadd-wrap > #cal-quickadd-row {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+  }
+  .cal-quickadd-wrap > .cal-add-btn-text {
+    align-self: stretch;
+    flex-shrink: 0;
+  }
+  /* Nudge the "+" glyph up one pixel on the round day-detail button so it
+     sits visually centred inside the circle. */
+  button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm .cal-add-plus {
+    transform: translateY(-1px);
+  }
+  /* Event form: bigger Create / Cancel buttons so they're easy to tap. */
+  .cal-form-actions button.cal-btn {
+    height: 44px;
+    padding: 0 20px;
+    font-size: 14px;
+    border-radius: 8px;
+    min-width: 96px;
+  }
+  /* Left-align the day/month + tags row in the day-detail panel and
+     the calendar/category chip row so they sit flush against the
+     left edge on a narrow screen. */
+  .cal-detail-header {
+    justify-content: flex-start;
+    gap: 12px;
+  }
+  .cal-filters {
+    justify-content: flex-start;
+  }
+}
+
+/* Refresh button spin — driven by JS toggling .cal-syncing on the button.
+   transform-box + transform-origin keep the rotation pivoted at the SVG's
+   own centre so it spins in place instead of orbiting / drifting up. */
+#cal-sync svg,
+#email-lib-refresh-btn svg { display: block; transform-box: fill-box; transform-origin: 50% 50%; }
+/* Brief checkmark flash after a refresh completes. Lasts ~900ms in JS;
+   the small bounce + accent color give a clear "done" cue. */
+#cal-sync.cal-sync-done svg,
+#email-lib-refresh-btn.email-lib-refresh-done svg {
+  color: var(--accent, #2ea043);
+  animation: refresh-check-pop 0.32s ease-out;
+}
+@keyframes refresh-check-pop {
+  0%   { transform: scale(0.55); opacity: 0.4; }
+  60%  { transform: scale(1.18); opacity: 1; }
+  100% { transform: scale(1);    opacity: 1; }
+}
+#cal-sync.cal-syncing svg,
+#email-lib-refresh-btn.email-lib-refreshing svg { animation: spin 0.6s linear infinite; }
+.email-undone-toggle.active,
+.email-attach-toggle.active {
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 50%, transparent);
+  color: var(--accent, var(--red));
+  font-weight: 600;
+}
+/* Hide the gallery-style reader-btn labels on desktop — only the mobile
+   @media block re-displays them under each icon. Desktop keeps compact
+   icon-only reader buttons. */
+.reader-btn-label {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+/* Inline attachment-filter toggle nested inside the search input. The
+   input has padding-right:34px set inline so its text doesn't slide
+   under the button. */
+.email-search-wrap { display: flex; align-items: center; }
+/* Keep the email search input and the adjacent "Select" button identical in
+   height regardless of base-vs-mobile overrides — pin both explicitly. */
+.email-search-row .memory-search-input {
+  height: 32px;
+  min-height: 32px;
+  box-sizing: border-box;
+}
+.email-search-row .email-search-select-btn {
+  height: 32px;
+  min-height: 32px;
+  box-sizing: border-box;
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+/* Select moved into the dropdown row — dock it to the right and match the
+   selects' vertical nudge (.memory-sort-select has top:3px). */
+.memory-category-filters .email-filter-select-btn,
+.memory-category-filters .email-filter-refresh-btn {
+  position: relative;
+  top: 3px;
+  flex-shrink: 0;
+}
+.memory-category-filters .email-filter-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+}
+.memory-category-filters .email-reminders-clear-btn {
+  position: relative;
+  top: -2px;
+  flex-shrink: 0;
+}
+.email-attach-toggle-inline {
+  position: absolute !important;
+  right: 4px !important;
+  top: 50%;
+  transform: translateY(calc(-50% - 3px));
+  width: 26px !important;
+  height: 26px !important;
+  padding: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  border: none !important;
+  opacity: 0.55;
+}
+.email-attach-toggle-inline:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 10%, transparent) !important;
+}
+.email-attach-toggle-inline.active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, var(--red)) 16%, transparent) !important;
+  color: var(--accent, var(--red)) !important;
+}
+/* Inline undone-toggle nested inside the search input, sits LEFT of the
+   attach toggle. Same visual treatment. */
+.email-undone-toggle-inline {
+  position: absolute !important;
+  right: 34px !important;
+  top: 50%;
+  transform: translateY(calc(-50% - 3px));
+  width: 26px !important;
+  height: 26px !important;
+  padding: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  border: none !important;
+  opacity: 0.55;
+}
+.email-reminder-toggle-inline {
+  position: absolute !important;
+  right: 64px !important;
+  top: 50%;
+  transform: translateY(calc(-50% - 3px));
+  width: 26px !important;
+  height: 26px !important;
+  padding: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  border: none !important;
+  opacity: 0.55;
+}
+.email-search-wrap.email-reminder-bell-hidden .memory-search-input {
+  padding-right: 66px !important;
+}
+.email-reminder-toggle-inline:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 10%, transparent) !important;
+}
+.email-reminder-toggle-inline:hover svg {
+  animation: none !important;
+  transform: none !important;
+}
+.email-reminder-toggle-inline.active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, var(--red)) 16%, transparent) !important;
+  color: var(--accent, var(--red)) !important;
+}
+.email-undone-toggle-inline:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 10%, transparent) !important;
+}
+.email-undone-toggle-inline.active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, var(--red)) 16%, transparent) !important;
+  color: var(--accent, var(--red)) !important;
+}
+/* Round (circular) toggles in the search bar, matching the app's default icon
+   buttons. Always fully visible (not dimmed until hover). */
+.email-attach-toggle-inline,
+.email-undone-toggle-inline,
+.email-reminder-toggle-inline { border-radius: 50% !important; opacity: 1 !important; }
+/* Mobile: enlarge the icons inside the inline search-bar toggles
+   (done / attachment / reminders) — buttons themselves stay the same,
+   only the SVG glyph scales up so it's tappable + visible. */
+@media (max-width: 768px) {
+  .email-filter-btn {
+    height: 30px;
+    min-height: 30px;
+    font-size: 12px;
+    top: -6px;
+    padding: 0 9px;
+  }
+
+  #email-lib-folder,
+  .memory-category-filters .email-filter-select-btn,
+  .memory-category-filters .email-filter-refresh-btn {
+    height: 30px !important;
+    min-height: 30px !important;
+    box-sizing: border-box;
+  }
+
+  .memory-category-filters .email-filter-refresh-btn {
+    width: 30px;
+    padding: 0 !important;
+  }
+
+  .email-search-row .memory-search-input {
+    height: 38px;
+    min-height: 38px;
+  }
+
+  #email-lib-chip-bar {
+    padding-right: 164px !important;
+    padding-left: 30px !important;
+    gap: 5px !important;
+  }
+
+  .email-lib-chip-bar-icon {
+    width: 14px !important;
+    height: 14px !important;
+    left: 9px !important;
+  }
+
+  #email-lib-search {
+    font-size: 14px !important;
+    min-width: 88px !important;
+    top: 0 !important;
+  }
+
+  #email-lib-search::placeholder {
+    font-size: 14px !important;
+  }
+
+  .email-lib-pill {
+    min-height: 24px !important;
+    height: 24px !important;
+    line-height: 24px !important;
+    font-size: 12px !important;
+    padding: 0 6px 0 8px !important;
+    max-width: 180px !important;
+  }
+
+  .email-lib-pill svg {
+    width: 14px !important;
+    height: 14px !important;
+  }
+
+  .email-lib-pill-x {
+    font-size: 13px !important;
+    top: -4.5px !important;
+  }
+
+  .email-lib-filter-pill {
+    min-height: 24px !important;
+    height: 24px !important;
+    line-height: 24px !important;
+    gap: 4px !important;
+    padding: 0 6px 0 8px !important;
+  }
+
+  .email-lib-filter-pill .email-lib-pill-icon {
+    width: 17px !important;
+    height: 17px !important;
+  }
+
+  .email-lib-filter-pill svg {
+    width: 18px !important;
+    height: 18px !important;
+  }
+
+  .email-lib-filter-pill .email-lib-pill-x {
+    font-size: 13px !important;
+    top: -4.5px !important;
+  }
+
+  .email-search-wrap.email-reminder-bell-hidden .memory-search-input {
+    padding-right: 132px !important;
+  }
+
+  .email-tags-toggle-inline {
+    right: 6px;
+    height: 28px !important;
+    min-width: 42px;
+    padding: 0 8px !important;
+    font-size: 11px !important;
+    transform: translateY(calc(-50% - 3px));
+  }
+
+  .email-attach-toggle-inline {
+    right: 56px !important;
+    width: 32px !important;
+    height: 32px !important;
+    transform: translateY(calc(-50% - 3px));
+  }
+
+  .email-undone-toggle-inline {
+    right: 92px !important;
+    width: 32px !important;
+    height: 32px !important;
+    transform: translateY(calc(-50% - 3px));
+  }
+
+  .email-reminder-toggle-inline {
+    right: 128px !important;
+    width: 32px !important;
+    height: 32px !important;
+    transform: translateY(calc(-50% - 3px));
+  }
+
+  .email-attach-toggle-inline svg,
+  .email-undone-toggle-inline svg,
+  .email-reminder-toggle-inline svg,
+  .email-filter-refresh-btn svg {
+    width: 16px !important;
+    height: 16px !important;
+  }
+}
+.email-attach-toggle:not(.email-attach-toggle-inline):hover svg {
+  animation: email-undone-jiggle 0.45s ease-in-out;
+  transform-origin: 50% 50%;
+}
+@keyframes email-undone-jiggle {
+  0%   { transform: rotate(0deg); }
+  20%  { transform: rotate(-14deg); }
+  40%  { transform: rotate(10deg); }
+  60%  { transform: rotate(-6deg); }
+  80%  { transform: rotate(3deg); }
+  100% { transform: rotate(0deg); }
+}
+.email-undone-toggle:not(.email-undone-toggle-inline):hover svg,
+.email-compose-jiggle:hover svg {
+  animation: email-undone-jiggle 0.45s ease-in-out;
+  transform-origin: 50% 50%;
+}
+.email-accounts-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 0 6px;
+}
+.email-accounts-row .doclib-desc { flex-shrink: 0; }
+/* Only the direct-child compose button gets pushed right; nested chips
+   inside #email-lib-accounts pack to the left as normal flex items. */
+.email-accounts-row > .memory-toolbar-btn { flex-shrink: 0; margin-left: auto; }
+/* Account chips collapse to a single horizontally-scrollable strip
+   at every breakpoint, instead of stacking onto multiple rows when
+   there are several accounts. The compose "New" button stays outside
+   the scroller (it's a sibling of #email-lib-accounts inside
+   .email-accounts-row) so it remains pinned on the right. */
+#email-lib-accounts {
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+}
+#email-lib-accounts::-webkit-scrollbar { display: none; height: 0; }
+#email-lib-accounts > * { flex-shrink: 0; scroll-snap-align: start; }
+.email-accounts-loading-whirlpool {
+  width: 14px;
+  height: 14px;
+  margin: 3px 4px 0 1px;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+.email-accounts-loading-label {
+  font-size: 10px;
+  opacity: 0.55;
+  position: relative;
+  top: 2px;
+  white-space: nowrap;
+}
+.email-loading-with-label {
+  /* Fill the email list grid so the spinner lands in the middle of the
+     email window rather than the top of the empty list section. */
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+  pointer-events: none;
+}
+#email-lib-grid { position: relative; }
+.date-section-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 9px 4px;
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-transform: uppercase;
+  user-select: none;
+}
+.date-section-header::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: color-mix(in srgb, var(--border) 72%, transparent);
+}
+#session-list .date-section-header {
+  padding-left: 10px;
+  padding-right: 8px;
+}
+#email-lib-grid .date-section-header {
+  padding: 10px 5px 3px;
+}
+#email-lib-modal .email-lib-sync-status {
+  flex: 0 0 auto;
+  min-height: 14px;
+  padding: 1px 4px 0;
+  font-size: 10.5px;
+  line-height: 1.2;
+  text-align: center;
+  opacity: 0.58;
+  color: var(--muted-text, currentColor);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  position: relative;
+  top: 4px;
+}
+#email-lib-modal.email-reading .email-lib-sync-status {
+  display: none;
+}
+@media (max-width: 768px) {
+  #email-lib-modal .email-lib-sync-status {
+    min-height: 13px;
+    padding-right: 5px;
+    font-size: 10px;
+  }
+}
+/* Nudge the subject + sender/date meta line 4px right inside each
+   email card so they don't sit flush against the read/unread/done
+   markers on the left. Includes #email-lib-modal selector to
+   override the expanded card's `padding: 4px 0 6px` shorthand
+   which was zeroing out the title's padding-left. */
+#email-lib-grid .email-card-titlerow,
+#email-lib-grid .memory-item-meta,
+#email-lib-modal .doclib-card-expanded .email-card-titlerow {
+  padding-left: 4px;
+}
+.email-loading-label {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+/* Refresh button now lives top-right in the modal header next to the close X.
+   Borderless (matches the close X), and a fixed square box so the spin and the
+   refresh→checkmark icon swap never change its size or nudge neighbours. */
+.email-lib-header-actions #email-lib-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+}
+/* Bump the icon up on mobile for a bigger visual — but keep the button BOX at
+   24px so it never exceeds the header's natural height (the title/close set
+   that). A taller box would grow the sticky header and push the list down. */
+@media (max-width: 768px) {
+  .email-lib-header-actions #email-lib-refresh-btn svg {
+    width: 17px;
+    height: 17px;
+  }
+}
+.cal-view-toggle {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+  vertical-align: middle;
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+  line-height: 1;
+}
+button.cal-view-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 500;
+  padding: 2px 12px 2px 12px;
+  margin: 0;
+  cursor: pointer;
+  opacity: 0.45;
+  line-height: 1;
+  height: 24px;
+  box-sizing: border-box;
+}
+.cal-view-btn + .cal-view-btn { border-left: 1px solid var(--border); }
+.cal-view-btn:hover { opacity: 0.75; }
+.cal-view-btn.active {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  opacity: 1;
+  font-weight: 600;
+}
+/* Toolbar holds only the toggle button; the chip row renders below the
+   toolbar on its own line and wraps freely. */
+.cal-filters { display:flex; gap:6px; margin:6px 0 8px; flex-wrap:wrap; }
+/* Round the native color-input swatch in calendar settings. The outer
+   <input> wraps a colored fill drawn by the browser; we need to round both
+   the wrapper and the fill so it actually appears circular. */
+.cal-s-color { border-radius: 50%; overflow: hidden; }
+.cal-s-color::-webkit-color-swatch-wrapper { padding: 0; border-radius: 50%; }
+.cal-s-color::-webkit-color-swatch { border: none; border-radius: 50%; }
+.cal-s-color::-moz-color-swatch { border: none; border-radius: 50%; }
+.cal-filter-item { display:inline-flex; align-items:center; gap:4px; cursor:pointer; font-size:10px; padding:1px 8px; line-height:1.4; border-radius:10px; background:color-mix(in srgb, var(--fg) 5%, transparent); border:1px solid var(--border); transition:opacity 0.15s; }
+.cal-filter-item:hover { background:color-mix(in srgb, var(--fg) 10%, transparent); }
+.cal-filter-item.cal-filter-off { opacity:0.25; text-decoration:line-through; }
+.cal-filter-item.cal-filter-important { font-weight:700; color:#e5a33a; border-color:color-mix(in srgb, #e5a33a 40%, transparent); }
+.cal-filter-item.cal-filter-important.cal-filter-active { background:color-mix(in srgb, #e5a33a 18%, transparent); border-color:#e5a33a; }
+/* Match the toolbar's other buttons (cal-nav, cal-view-btn, cal-add-btn-text):
+   24px tall, 11px font, 5px corners. */
+.cal-filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 500;
+  padding: 0 10px;
+  height: 24px;
+  line-height: 1;
+  border-radius: 5px;
+  box-sizing: border-box;
+  vertical-align: middle;
+  opacity: 0.65;
+  position: relative;
+  top: -3px;
+}
+.cal-filter-toggle:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 12%, transparent); }
+.cal-filter-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+/* The grid is now a flex column: one row of weekday headers + six
+   .cal-week-row rows. Each row holds the 7 day cells in its own
+   internal grid plus the absolute-positioned multi-day overlays.
+   --bars on a week-row is the number of multi-day events overlapping
+   it; cells in that row use it to reserve top padding so the bar
+   overlays don't cover the day numbers or single-event rows. */
+.cal-grid { display:flex; flex-direction:column; gap:1px; background:color-mix(in srgb, var(--fg) 8%, transparent); border-radius:6px; overflow:hidden; }
+.cal-week-headers { display:grid; grid-template-columns:repeat(7,1fr); gap:1px; }
+.cal-week-row { position:relative; display:grid; grid-template-columns:repeat(7,1fr); gap:1px; }
+.cal-week-row > .cal-day { padding-top: calc(4px + var(--bars, 0) * 12px); }
+@keyframes cal-slide-from-right {
+  from { opacity:0; transform:translateX(20px); }
+  to { opacity:1; transform:translateX(0); }
+}
+@keyframes cal-slide-from-left {
+  from { opacity:0; transform:translateX(-20px); }
+  to { opacity:1; transform:translateX(0); }
+}
+.cal-slide-in-right { animation: cal-slide-from-right 0.22s cubic-bezier(0.25, 0.8, 0.25, 1); }
+.cal-slide-in-left { animation: cal-slide-from-left 0.22s cubic-bezier(0.25, 0.8, 0.25, 1); }
+.cal-weekday { background:color-mix(in srgb, var(--fg) 5%, var(--bg)); text-align:center; font-size:10px; font-weight:600; opacity:0.4; padding:5px 0; }
+.cal-day { background:var(--bg); min-height:78px; padding:3px; cursor:pointer; position:relative; transition:background 0.12s; overflow:hidden; }
+.cal-day:hover { background:color-mix(in srgb, var(--fg) 5%, var(--bg)); }
+.cal-day.cal-today { box-shadow:inset 0 0 0 2px var(--accent, var(--red)); background:color-mix(in srgb, var(--accent, var(--red)) 15%, var(--bg)); border-radius:8px; }
+.cal-day.cal-today .cal-day-num { color:var(--bg); font-weight:800; background:var(--accent, var(--red)); border-radius:10px; padding:1px 6px; display:inline-block; opacity:1; line-height:1.3; }
+/* Selected day — same square geometry as `.cal-today` so the two read as
+   peers, but rendered as an outline + softer fill instead of a solid
+   accent block. Today wins when both classes are on the same cell. */
+.cal-day.cal-selected:not(.cal-today) {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent, var(--fg)) 65%, transparent);
+  background: color-mix(in srgb, var(--accent, var(--fg)) 12%, var(--bg));
+  border-radius: 8px;
+}
+.cal-day.cal-selected:not(.cal-today) .cal-day-num {
+  color: var(--accent, var(--fg));
+  opacity: 1;
+  font-weight: 700;
+}
+.cal-day.cal-other { opacity:0.25; }
+.cal-day.cal-drag-over { background:color-mix(in srgb, var(--accent) 18%, var(--bg)); }
+.cal-day.cal-range-select { background:color-mix(in srgb, var(--accent, var(--red)) 25%, var(--bg)); box-shadow:inset 0 0 0 1px var(--accent, var(--red)); }
+.cal-day-num { font-size:10px; font-weight:600; display:block; margin-bottom:1px; opacity:0.7; line-height:1.2; }
+.cal-dots { display:flex; flex-direction:row; align-items:center; gap:2px; flex-wrap:nowrap; margin-bottom:1px; height:6px; }
+.cal-dot { width:5px; height:5px; border-radius:50%; display:inline-block; cursor:grab; flex-shrink:0; }
+.cal-dot-more { font-size:7px; opacity:0.4; }
+.cal-event-row {
+  display:flex;
+  align-items:center;
+  gap:4px;
+  padding:2px 4px;
+  border-radius:4px;
+  cursor:grab;
+  line-height:1.2;
+  margin-bottom:2px;
+  min-height:17px;
+  background:color-mix(in srgb, var(--fg) 5%, transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--fg) 7%, transparent);
+}
+.cal-event-row:hover { background:color-mix(in srgb, var(--fg) 10%, transparent); box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--fg) 14%, transparent); }
+.cal-event-row-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; box-shadow:0 0 0 1px color-mix(in srgb, var(--bg) 80%, transparent); }
+.cal-event-row-time { font-size:10px; opacity:0.72; font-variant-numeric:tabular-nums; flex-shrink:0; font-weight:600; }
+.cal-event-row-name { font-size:10px; opacity:0.96; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; min-width:0; font-weight:600; }
+.cal-event-more { font-size:9px; opacity:0.55; padding-left:6px; }
+/* Multi-day bar — positioned as an absolute overlay inside its
+   .cal-week-row so it spans uninterrupted across every column it
+   covers. --col is the starting column (0–6), --span is the number
+   of days it covers within the row, --slot stacks parallel bars. */
+.cal-multiday {
+  position: absolute;
+  /* Fractional offsets let timed events that cross midnight render at
+     true proportional width. start-frac shifts the left edge into the
+     first day; end-frac trims the right edge inside the last day.
+     All-day events default to (0, 1) and still fill whole columns. */
+  left: calc((var(--col, 0) + var(--start-frac, 0)) * (100% / 7));
+  width: calc(
+    (var(--span, 1) - var(--start-frac, 0) - (1 - var(--end-frac, 1)))
+    * (100% / 7)
+  );
+  top: calc(2px + var(--slot, 0) * 12px);
+  height: 12px;
+  font-size: 9px;
+  line-height: 12px;
+  padding: 0 5px;
+  border-radius: 4px;
+  color: var(--cal-event-fg, #fff);
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: grab;
+  opacity: 0.98;
+  z-index: 2;
+  pointer-events: auto;
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 18%, transparent);
+}
+.cal-dragging { opacity:0.3; }
+/* Splitter between the month/week grid and the day-tasks panel — drag
+   vertically to give the day panel more room. Height clamped by the
+   `--cal-detail-h` variable set on #cal-body by the splitter drag JS. */
+.cal-splitter {
+  height: 8px;
+  margin: 6px -10px 0;
+  cursor: row-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  user-select: none;
+  touch-action: none;
+}
+/* Mobile: fat hitbox so the splitter is easy to grab with a thumb,
+   without changing how the grip itself looks. */
+@media (max-width: 768px) {
+  .cal-splitter {
+    height: 28px;
+    margin-top: 0;
+    margin-bottom: 0;
+  }
+  .cal-splitter-grip {
+    width: 56px;
+    height: 4px;
+  }
+}
+.cal-splitter-grip {
+  width: 42px;
+  height: 3px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--fg) 25%, transparent);
+  transition: background 0.12s;
+}
+.cal-splitter:hover .cal-splitter-grip,
+.cal-splitter-dragging .cal-splitter-grip {
+  background: var(--accent, var(--red));
+}
+.cal-day-detail {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  height: var(--cal-detail-h, 240px);
+  box-sizing: border-box;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  flex-shrink: 0;
+}
+.cal-detail-header { display:flex; justify-content:space-between; align-items:center; font-size:12px; font-weight:600; margin-bottom:6px; padding-right:8px; }
+.cal-empty { font-size:11px; opacity:0.3; padding:4px 0; }
+.cal-event-item { display:flex; gap:9px; padding:8px 9px; border-radius:6px; cursor:pointer; align-items:flex-start; background:color-mix(in srgb, var(--fg) 3.5%, transparent); box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--fg) 6%, transparent); margin-bottom:4px; }
+.cal-event-item:hover { background:color-mix(in srgb, var(--fg) 8%, transparent); box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--fg) 12%, transparent); }
+.cal-event-dot { width:9px; height:9px; border-radius:50%; flex-shrink:0; margin-top:4px; box-shadow:0 0 0 1px color-mix(in srgb, var(--bg) 80%, transparent); }
+.cal-event-info { flex:1; min-width:0; }
+.cal-event-name { font-size:13px; font-weight:700; line-height:1.25; color:color-mix(in srgb, var(--fg) 96%, transparent); overflow-wrap:anywhere; }
+.cal-event-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid;
+  margin-left: 6px;
+  vertical-align: 1px;
+  opacity: 0.85;
+  white-space: nowrap;
+}
+.cal-event-time { font-size:11px; opacity:0.68; line-height:1.35; margin-top:2px; font-weight:500; }
+.cal-event-loc { font-size:11px; opacity:0.58; line-height:1.35; margin-top:1px; }
+.cal-event-loc a, .cal-event-time a { color:inherit; text-decoration:underline; text-decoration-color:color-mix(in srgb, currentColor 40%, transparent); }
+.cal-event-loc a:hover, .cal-event-time a:hover { opacity:1; text-decoration-color:currentColor; }
+/* ── Week view: hour grid ──────────────────────────────────────────
+   Vertical hour rail on the left, 7 day columns on the right with their
+   own all-day strip and an absolute-positioned hour grid below it. */
+.cal-wk-wrap {
+  display: flex;
+  flex-direction: row;
+  gap: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  /* The wrap itself scrolls so the hour rail and day columns move
+     together; column headers and the rail spacer are sticky-pinned. */
+  overflow: auto;
+  max-height: calc(100vh - 220px);
+  min-height: 360px;
+  position: relative;
+}
+.cal-wk-rail {
+  flex: 0 0 56px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--fg) 2%, var(--bg));
+  position: sticky;
+  left: 0;
+  z-index: 5;
+}
+.cal-wk-rail-spacer {
+  /* Lines up the rail's first hour cell with the column's grid origin
+     (column header + all-day strip). 32 + 24 = 56 px. Doubles as the
+     zoom-control corner since the toolbar is crowded. */
+  height: 56px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  background: color-mix(in srgb, var(--fg) 2%, var(--bg));
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 4px;
+}
+.cal-wk-zoom {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  opacity: 0.55;
+  transition: opacity 0.15s, background 0.15s, border-color 0.15s;
+}
+.cal-wk-zoom:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 8%, var(--bg));
+  border-color: color-mix(in srgb, var(--accent, var(--fg)) 50%, var(--border));
+}
+.cal-wk-rail-cell {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+  padding: 4px 8px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 5%, transparent);
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  font-variant-numeric: tabular-nums;
+}
+.cal-wk-cols {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  position: relative;
+}
+.cal-wk-col {
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.cal-wk-col:first-child { border-left: none; }
+.cal-wk-col-head {
+  height: 32px;
+  padding: 0 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 5%, transparent);
+  position: sticky;
+  top: 0;
+  z-index: 4;
+}
+.cal-wk-col.cal-wk-today .cal-wk-col-head { background: color-mix(in srgb, var(--accent, var(--red)) 12%, var(--bg)); }
+.cal-wk-col.cal-wk-today .cal-wk-dn,
+.cal-wk-col.cal-wk-today .cal-wk-dt { color: var(--accent, var(--red)); font-weight: 700; }
+/* Sunday: a softer rest-day tint so the week edge reads visually, even
+   when today is mid-week. Falls back gracefully under the .cal-wk-today
+   rules above (today on a Sunday still gets the accent treatment). */
+.cal-wk-col.cal-wk-sun .cal-wk-col-head { background: color-mix(in srgb, var(--fg) 7%, var(--bg)); }
+.cal-wk-col.cal-wk-sun .cal-wk-grid { background: color-mix(in srgb, var(--fg) 2.5%, var(--bg)); }
+.cal-wk-col.cal-wk-sun .cal-wk-allday { background: color-mix(in srgb, var(--fg) 3%, var(--bg)); }
+.cal-wk-col.cal-wk-sun .cal-wk-dn,
+.cal-wk-col.cal-wk-sun .cal-wk-dt { color: color-mix(in srgb, var(--fg) 60%, transparent); }
+/* Today on a Sunday still wins the accent treatment. */
+.cal-wk-col.cal-wk-today.cal-wk-sun .cal-wk-col-head { background: color-mix(in srgb, var(--accent, var(--fg)) 12%, var(--bg)); }
+.cal-wk-col.cal-wk-today.cal-wk-sun .cal-wk-dn,
+.cal-wk-col.cal-wk-today.cal-wk-sun .cal-wk-dt { color: var(--accent, var(--fg)); }
+.cal-wk-dn { font-weight: 600; opacity: 0.6; }
+.cal-wk-dt { font-variant-numeric: tabular-nums; opacity: 0.5; }
+.cal-wk-allday {
+  height: 24px;
+  padding: 2px 4px;
+  display: flex;
+  flex-direction: row;
+  gap: 2px;
+  align-items: center;
+  background: color-mix(in srgb, var(--fg) 1.5%, var(--bg));
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  position: sticky;
+  top: 32px;
+  z-index: 3;
+}
+.cal-wk-allday::-webkit-scrollbar { display: none; }
+.cal-wk-allday-event {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 3px 6px;
+  border-radius: 4px;
+  color: var(--cal-event-fg, var(--fg));
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Hour grid body */
+.cal-wk-grid {
+  position: relative;
+  flex: 0 0 auto;
+  cursor: cell;
+  user-select: none;
+}
+.cal-wk-cell {
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 6%, transparent);
+  box-sizing: border-box;
+}
+.cal-wk-cell:hover { background: color-mix(in srgb, var(--fg) 3%, transparent); }
+/* "Now" line */
+.cal-wk-now {
+  position: absolute;
+  left: 0; right: 0;
+  height: 0;
+  border-top: 2px solid color-mix(in srgb, var(--accent, var(--red, #f87171)) 90%, transparent);
+  pointer-events: none;
+  z-index: 4;
+}
+.cal-wk-now::before {
+  content: '';
+  position: absolute;
+  left: -3px;
+  top: -4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent, var(--red, #f87171));
+}
+/* Event blocks */
+.cal-wk-block {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  border-left: 4px solid var(--fg);
+  border-radius: 5px;
+  padding: 5px 7px;
+  font-size: 12px;
+  line-height: 1.3;
+  cursor: pointer;
+  overflow: hidden;
+  z-index: 2;
+  box-shadow: 0 2px 6px color-mix(in srgb, #000 14%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--fg) 7%, transparent);
+  transition: filter 0.12s, transform 0.12s;
+  box-sizing: border-box;
+}
+.cal-wk-block:hover { filter: brightness(1.05); transform: translateY(-0.5px); }
+.cal-wk-block-name { font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color:color-mix(in srgb, var(--fg) 96%, transparent); }
+.cal-wk-block-time { font-size: 10.5px; opacity: 0.82; font-variant-numeric: tabular-nums; margin-top: 2px; font-weight:600; }
+@media (max-width: 768px) {
+  /* Mobile week view: the hour rail already shows the time, so drop it from the
+     card and let the title wrap to fill the freed space (more readable text). */
+  .cal-wk-block-time { display: none; }
+  .cal-wk-block-name {
+    white-space: normal;
+    line-height: 1.15;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+  }
+}
+/* Resize handle: a 6 px hit zone along the block's bottom edge. The
+   visible 2-px stripe only shows on hover so blocks at rest stay clean. */
+.cal-wk-block-resize {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 0;
+  height: 6px;
+  cursor: ns-resize;
+  z-index: 3;
+}
+.cal-wk-block:hover .cal-wk-block-resize::after {
+  content: '';
+  position: absolute;
+  left: 30%;
+  right: 30%;
+  bottom: 1px;
+  height: 2px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--fg) 35%, transparent);
+}
+.cal-wk-block-resize:hover::after {
+  background: color-mix(in srgb, var(--fg) 65%, transparent);
+}
+/* Body of a block while it's being repositioned: lifted shadow + above
+   siblings so the drop target reads clearly. */
+.cal-wk-block-ghost {
+  z-index: 6 !important;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--fg) 24%, transparent) !important;
+  cursor: grabbing;
+}
+.cal-wk-block { cursor: grab; }
+.cal-wk-block:active { cursor: grabbing; }
+/* Drag-to-create ghost */
+.cal-wk-ghost {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  background: color-mix(in srgb, var(--accent, var(--fg)) 28%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--accent, var(--fg)) 70%, transparent);
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 3;
+  font-size: 10px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent, var(--fg));
+  font-variant-numeric: tabular-nums;
+}
+.cal-year { display:grid; grid-template-columns:repeat(4, 1fr); gap:10px; }
+.cal-year-month { background:color-mix(in srgb, var(--fg) 3%, var(--bg)); border:1px solid var(--border); border-radius:6px; padding:6px; cursor:pointer; transition:background 0.15s, border-color 0.15s, transform 0.15s; }
+.cal-year-month:hover { background:color-mix(in srgb, var(--fg) 8%, var(--bg)); border-color:var(--accent); transform:translateY(-1px); }
+.cal-year-month-title { font-size:11px; font-weight:600; text-align:center; margin-bottom:4px; opacity:0.7; }
+.cal-year-month:hover .cal-year-month-title { opacity:1; color:var(--accent); }
+.cal-year-grid { display:grid; grid-template-columns:repeat(7, 1fr); gap:1px; }
+.cal-year-wd { font-size:7px; text-align:center; opacity:0.3; padding:1px 0; }
+.cal-year-cell { font-size:8px; text-align:center; padding:2px 0; min-height:14px; border-radius:2px; transition:transform 0.12s, background 0.12s; }
+.cal-year-day { cursor:pointer; opacity:0.5; }
+.cal-year-day:hover { background:var(--accent, var(--red)); color:#fff; opacity:1; transform:scale(1.15); font-weight:700; z-index:2; position:relative; }
+.cal-year-today { color:var(--accent, var(--red)); font-weight:700; opacity:1; }
+.cal-year-has { opacity:1; background:color-mix(in srgb, var(--accent) 15%, transparent); }
+.cal-year-has.cal-year-today { background:color-mix(in srgb, var(--accent, var(--red)) 25%, transparent); }
+.cal-loading { display:flex; justify-content:center; padding:40px 0; }
+.cal-badge { background:var(--accent); border-radius:50%; width:6px; height:6px; margin-left:auto; display:inline-block; flex-shrink:0; }
+/* Search input — in-panel variant lives inside the day-detail panel and
+   spans its width; no width animation since growing/shrinking on every
+   keystroke would jitter beside the events list. */
+.cal-search-input { background:color-mix(in srgb, var(--fg) 5%, var(--bg)); border:1px solid var(--border); border-radius:5px; padding:0 8px; height:24px; color:var(--fg); font-size:11px; font-family:inherit; width:120px; box-sizing:border-box; transition:width 0.15s; }
+.cal-search-input:focus { outline:none; border-color:var(--accent); width:180px; }
+.cal-search-input.cal-day-search { width:100%; margin-bottom:0; transition:none; padding-left: 28px; }
+.cal-search-input.cal-day-search:focus { width:100%; }
+/* Wrap for the search input so the magnifying-glass icon can be absolute-
+   positioned inside the field. */
+.cal-search-wrap {
+  position: relative;
+  display: block;
+  margin-bottom: 6px;
+}
+.cal-search-wrap .cal-search-icon {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--accent, var(--red));
+}
+.cal-day-search-meta { font-size:10px; opacity:0.5; margin:0 2px 6px; }
+.cal-search-results { display:flex; flex-direction:column; gap:4px; }
+.cal-search-count { font-size:10px; opacity:0.5; padding:4px 2px 8px; }
+/* Agenda view */
+.cal-agenda { display:flex; flex-direction:column; gap:12px; flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; }
+.cal-agenda-day { display:flex; flex-direction:column; gap:5px; }
+.cal-agenda-date { font-size:12px; font-weight:800; opacity:0.72; padding:5px 2px 3px; border-bottom:1px solid var(--border); }
+.cal-agenda-day.is-today .cal-agenda-date { opacity: 1; color: var(--accent, var(--red)); border-bottom-color: color-mix(in srgb, var(--accent, var(--red)) 35%, var(--border)); }
+.cal-agenda-today-badge {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  color: var(--accent, var(--red));
+  vertical-align: 1px;
+}
+.cal-agenda-empty { font-size:11px; opacity:0.4; padding:8px; font-style:italic; }
+.cal-agenda-event {
+  display:flex;
+  gap:9px;
+  padding:9px 10px;
+  border-radius:6px;
+  cursor:pointer;
+  align-items:center;
+  position:relative;
+  background:color-mix(in srgb, var(--fg) 3.5%, transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.cal-agenda-event:hover {
+  background:color-mix(in srgb, var(--fg) 8%, transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.cal-agenda-event .cal-event-more,
+.cal-event-item .cal-event-more { opacity:0; transition:opacity 0.15s; }
+.cal-agenda-event:hover .cal-event-more,
+.cal-event-item:hover .cal-event-more { opacity:0.6; }
+.cal-event-item { position:relative; }
+
+/* ── Personal Assistant ── */
+.sidebar-assistant-entry { gap: 6px; min-height: 29px; box-sizing: border-box; align-items: center; }
+.sidebar-assistant-entry .sidebar-action-icon { position: relative; left: -2px; }
+#sidebar-assistant-gear:hover { opacity: 0.8 !important; }
+.assistant-settings-form { display: flex; flex-direction: column; gap: 12px; padding: 4px 2px 2px; }
+.assistant-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: color-mix(in srgb, var(--fg) 70%, transparent); }
+.assistant-field > span { font-size: 11px; opacity: 0.6; }
+.assistant-field input[type="text"],
+.assistant-field input[type="time"],
+.assistant-field select,
+.assistant-field textarea {
+  background: color-mix(in srgb, var(--fg) 5%, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 7px 10px;
+  color: var(--fg);
+  font-size: 12px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+.assistant-field textarea { resize: vertical; min-height: 60px; }
+.assistant-field input:focus,
+.assistant-field select:focus,
+.assistant-field textarea:focus { outline: none; border-color: var(--accent, var(--red)); }
+.assistant-field-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.assistant-field-row > .assistant-field { flex: 1 1 180px; }
+.assistant-field-check { flex-direction: row !important; align-items: center; gap: 6px; padding-bottom: 7px; }
+.assistant-checkins { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--border); }
+.assistant-checkins h5 { margin: 0 0 2px; font-size: 12px; font-weight: 600; opacity: 0.8; }
+.assistant-checkin-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.assistant-checkin-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.assistant-checkin-head input[type="text"],
+.assistant-checkin-head input[type="time"] {
+  background: color-mix(in srgb, var(--fg) 5%, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: var(--fg);
+  font-size: 12px;
+  font-family: inherit;
+}
+.assistant-checkin-head input[type="text"] { flex: 1; min-width: 120px; }
+.assistant-checkin-head input[type="time"] { width: 90px; }
+.assistant-checkin-run {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+.assistant-checkin-run:hover { opacity: 1; }
+.assistant-checkin-prompt {
+  background: color-mix(in srgb, var(--fg) 5%, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: var(--fg);
+  font-size: 12px;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 48px;
+}
+.assistant-checkin-prompt:focus { outline: none; border-color: var(--accent, var(--red)); }
+.assistant-checkin-meta { font-size: 10px; opacity: 0.45; }
+.assistant-settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.assistant-tools-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-top: 4px;
+}
+.assistant-tool-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+.assistant-tool-group-label {
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.5;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  width: 100%;
+  margin-bottom: 1px;
+}
+.assistant-tool-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+  user-select: none;
+}
+.assistant-tool-item:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.assistant-tool-item:has(input:checked) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.assistant-tool-item input[type="checkbox"] {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+}
+
+button.cal-event-more {
+  background:transparent;
+  border:none;
+  color:var(--fg);
+  width:20px; height:20px;
+  cursor:pointer;
+  padding:0;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  font-family:inherit;
+  flex-shrink:0;
+  margin-left:auto;
+  align-self:center;
+  transform:translateY(-4px);
+  transition:opacity 0.15s;
+}
+button.cal-event-more:hover { opacity:1 !important; }
+/* Empty state */
+.cal-empty-state { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:60px 20px; text-align:center; gap:10px; }
+.cal-empty-title { font-size:14px; font-weight:600; opacity:0.8; }
+.cal-empty-msg { font-size:12px; opacity:0.5; max-width:320px; line-height:1.5; margin-bottom:8px; }
+.cal-allday-switch { margin:0; flex-shrink:0; }
+/* Stack the "All day" label above its toggle so it doesn't get squeezed /
+   truncated next to the date inputs in the row. */
+.cal-allday-ctrl { display:flex; flex-direction:column; align-items:center; gap:3px; flex-shrink:0; }
+.cal-allday-label { font-size:10px; opacity:0.5; white-space:nowrap; line-height:1; }
+.cal-form { display:flex; flex-direction:column; gap:8px; }
+.cal-form-title { font-size:13px; font-weight:600; margin-bottom:2px; }
+.cal-title-wrap { position: relative; }
+/* Calendar-picker select sits 2px higher; its border-left/background tint is
+   set in JS to the chosen calendar's colour. */
+.cal-f-cal-select { position: relative; top: -4px; }
+/* Day-detail "+ New" button nudged down 2px. */
+#cal-add-day { position: relative; top: 2px; }
+/* Accent the native date/time picker glyphs. We recolor the webkit indicator
+   by masking an accent fill through a calendar/clock SVG (same technique as the
+   mono icon picker). accent-color covers the spinner parts where supported. */
+.cal-form-bespoke input[type="date"],
+.cal-form-bespoke input[type="time"],
+.cal-form-bespoke input[type="datetime-local"] { accent-color: var(--accent, var(--red)); }
+.cal-form-bespoke input[type="date"]::-webkit-calendar-picker-indicator,
+.cal-form-bespoke input[type="time"]::-webkit-calendar-picker-indicator,
+.cal-form-bespoke input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  background-color: var(--accent, var(--red));
+  background-image: none;
+  cursor: pointer;
+  width: 14px; height: 14px;
+}
+.cal-form-bespoke input[type="date"]::-webkit-calendar-picker-indicator,
+.cal-form-bespoke input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='2'/%3E%3Cline x1='16' y1='2' x2='16' y2='6'/%3E%3Cline x1='8' y1='2' x2='8' y2='6'/%3E%3Cline x1='3' y1='10' x2='21' y2='10'/%3E%3C/svg%3E") center/contain no-repeat;
+          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='2'/%3E%3Cline x1='16' y1='2' x2='16' y2='6'/%3E%3Cline x1='8' y1='2' x2='8' y2='6'/%3E%3Cline x1='3' y1='10' x2='21' y2='10'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+.cal-form-bespoke input[type="time"]::-webkit-calendar-picker-indicator {
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpolyline points='12 6 12 12 16 14'/%3E%3C/svg%3E") center/contain no-repeat;
+          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpolyline points='12 6 12 12 16 14'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+
+/* ── Bespoke event form ────────────────────────────────────────────
+   Big clock-face date/time hero with the title under it. Details panel
+   stays collapsed until the title gets focus or "Add details" is clicked.
+*/
+.cal-form-bespoke {
+  position: relative;
+  width: min(720px, calc(100% - 24px));
+  max-width: none;
+  margin: 12px auto;
+  padding: 18px 28px 14px;
+  box-sizing: border-box;
+  background: var(--bg);
+  /* Optional per-event tint set by JS via --ev-color. When unset, falls
+     back to the theme's neutral border so the card looks like normal. */
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--fg) 6%, transparent);
+  transition: border-color 0.18s, box-shadow 0.18s;
+}
+/* When a colour is picked, lift the card with a soft tinted border + glow
+   so the choice is unmistakable. */
+.cal-form-bespoke[style*="--ev-color"] {
+  border-color: color-mix(in srgb, var(--ev-color) 55%, var(--border));
+  box-shadow: 0 8px 28px color-mix(in srgb, var(--ev-color) 22%, transparent);
+}
+/* Title underline + clock focus ring + primary button track --ev-color
+   when set; default to --accent / --fg otherwise. */
+.cal-form-bespoke .cal-input.cal-hero-title:focus { border-bottom-color: var(--ev-color, var(--accent, color-mix(in srgb, var(--fg) 60%, transparent))); }
+.cal-form-bespoke[style*="--ev-color"] .cal-input.cal-hero-title { border-bottom-color: color-mix(in srgb, var(--ev-color) 35%, var(--border)); }
+.cal-form-bespoke .cal-hero-time:focus-visible,
+.cal-form-bespoke .cal-hero-date:focus-visible { outline-color: var(--ev-color, var(--accent, color-mix(in srgb, var(--fg) 50%, transparent))); }
+.cal-form-bespoke[style*="--ev-color"] .cal-btn-primary {
+  background: var(--ev-color);
+  border-color: var(--ev-color);
+}
+/* Custom-BG events paint the form card with the uploaded image. Make sure
+   the action row + buttons stay clearly readable on top of it. */
+.cal-form-bespoke.cal-form-bg-image .cal-form-actions {
+  position: relative;
+  z-index: 2;
+  /* Solid backing strip so the Save/Cancel/Delete buttons don't fade into
+     the photo behind them. */
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  margin: 8px -14px -14px;
+  padding: 10px 14px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 0 0 8px 8px;
+}
+.cal-form-bespoke.cal-form-bg-image .cal-btn-primary {
+  background: var(--accent, var(--red));
+  border-color: var(--accent, var(--red));
+  color: var(--bg);
+}
+.cal-form-close {
+  position: absolute; top: 10px; right: 12px;
+  background: none; border: none; color: var(--fg);
+  opacity: 0.35; cursor: pointer; font-size: 20px; line-height: 1;
+  padding: 4px 8px; border-radius: 6px;
+}
+.cal-form-close:hover { opacity: 0.9; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.cal-form-mobile-cancel { display: none; }
+
+/* "Today is …" header pinned at the top of the form. Keeps you oriented
+   even when the event date you're picking is way off in the future. */
+.cal-form-today {
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.45;
+  margin-bottom: 0;
+}
+.cal-form-today span { letter-spacing: 0.04em; text-transform: none; opacity: 0.85; font-weight: 500; }
+
+/* Hero — clock face + date label. Spacing between the two lives entirely
+   on the clock's bottom margin so it's predictable. */
+.cal-hero {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 0; margin-bottom: 12px;
+}
+.cal-hero-time {
+  display: inline-flex; align-items: baseline; gap: 8px;
+  font-family: ui-monospace, SFMono-Regular, "Menlo", "Consolas", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 56px;
+  letter-spacing: 0.02em;
+  font-weight: 200;
+  color: var(--fg);
+  line-height: 1;
+  /* Behaves like a button — strip native chrome but keep it tappable. */
+  background: none;
+  border: none;
+  /* Pill that reads as a real hit target for a 56-px clock face.
+     Top padding kept tight so the clock sits close to the "Today is" line. */
+  padding: 6px 38px 18px;
+  margin: 0 0 24px;
+  border-radius: 18px;
+  cursor: pointer;
+  line-height: 1;
+  transition: background 0.15s, color 0.15s;
+}
+.cal-hero-time .cal-hero-clock,
+.cal-hero-time .cal-hero-ampm { line-height: 1; }
+/* The clock is a `<button>` and a global `button:hover` rule paints
+   every button's background on hover. Suppress it explicitly. */
+.cal-hero-time:hover { background: transparent; border-color: transparent; }
+.cal-hero-time:focus-visible { outline: 2px solid var(--accent, color-mix(in srgb, var(--fg) 50%, transparent)); outline-offset: 2px; }
+.cal-hero-clock { font-feature-settings: "tnum"; display: inline-flex; align-items: baseline; }
+/* Per-segment hover so it's clear hh vs mm are individually clickable. */
+.cal-hero-clock-hh, .cal-hero-clock-mm {
+  display: inline-block;
+  border-radius: 6px;
+  padding: 0 2px;
+  transition: background 0.12s;
+}
+.cal-hero-clock-hh:hover, .cal-hero-clock-mm:hover {
+  background: color-mix(in srgb, var(--fg) 9%, transparent);
+}
+.cal-hero-sep { padding: 0 2px; opacity: 0.55; pointer-events: none; }
+.cal-hero-ampm {
+  font-size: 14px;
+  letter-spacing: 0.12em;
+  opacity: 0.55;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+.cal-hero-date {
+  font-size: 16px;
+  opacity: 0.6;
+  letter-spacing: 0.04em;
+  background: none;
+  border: none;
+  color: inherit;
+  font-family: inherit;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  margin: 7px 0 0;          /* extra nudge below the clock */
+  transition: background 0.15s, opacity 0.15s;
+}
+.cal-hero-date:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); opacity: 0.85; }
+.cal-hero-date:focus-visible { outline: 2px solid var(--accent, color-mix(in srgb, var(--fg) 50%, transparent)); outline-offset: 2px; }
+
+/* Title input — flat, large, no chrome until focused */
+.cal-input.cal-hero-title {
+  font-size: 18px;
+  text-align: left;
+  padding: 10px 12px 10px 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
+  border-radius: 0;
+  margin-bottom: 4px;
+}
+.cal-input.cal-hero-title:focus {
+  border-color: transparent;
+  border-bottom-color: var(--accent, color-mix(in srgb, var(--fg) 60%, transparent));
+}
+
+/* Details panel — animated reveal via max-height + opacity. */
+.cal-form-bespoke .cal-form-details {
+  display: block;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-height 240ms ease, opacity 180ms ease, margin 220ms ease;
+  margin-top: 0;
+}
+.cal-form-bespoke.is-expanded .cal-form-details {
+  max-height: 720px;
+  opacity: 1;
+  margin-top: 4px;
+}
+/* The detail children themselves keep the existing flex/gap rules from
+   the regular .cal-form, so we don't restyle inputs/rows here. */
+.cal-form-bespoke .cal-form-details > * + * { margin-top: 8px; }
+
+.cal-form-bespoke .cal-form-actions { margin-top: 8px; justify-content: flex-end; }
+.cal-form-bespoke .cal-form-row { margin-bottom: 8px; }
+
+/* Location row: input + Google-backed map preview. Pin only lights up when the
+   field has content; clicking opens the in-app map sheet. All theme vars. */
+.cal-loc-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.cal-loc-row > input { flex: 1; min-width: 0; }
+.cal-loc-map {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  padding: 0;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--fg) 5%, var(--bg));
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+}
+.cal-loc-map:hover { background: color-mix(in srgb, var(--accent, var(--red)) 14%, var(--bg)); border-color: var(--accent, var(--red)); }
+.cal-loc-map.is-disabled { opacity: 0.3; pointer-events: none; cursor: default; }
+
+.cal-map-sheet-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2200;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 18px;
+  background: color-mix(in srgb, #000 48%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.cal-map-sheet {
+  width: min(720px, 100%);
+  max-height: min(720px, calc(100vh - 36px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 24%, var(--border));
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel) 96%, var(--accent, var(--red)) 4%), var(--panel));
+  color: var(--fg);
+  box-shadow: 0 18px 44px rgba(0,0,0,0.42);
+}
+.cal-map-grabber {
+  width: 44px;
+  height: 4px;
+  margin: 10px auto 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg) 28%, transparent);
+}
+.cal-map-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px 12px;
+}
+.cal-map-body {
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 14px;
+}
+.cal-map-title {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cal-map-kicker {
+  font-size: 10px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  color: var(--accent, var(--red));
+  opacity: 0.9;
+}
+.cal-map-title strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  line-height: 1.25;
+}
+.cal-map-close {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  color: var(--fg);
+  cursor: pointer;
+}
+.cal-map-search {
+  display: grid;
+  grid-template-columns: 1fr 40px;
+  gap: 8px;
+}
+.cal-map-query {
+  min-width: 0;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 5%, var(--bg));
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.cal-map-query:focus {
+  border-color: var(--accent, var(--red));
+}
+.cal-map-icon-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 13%, var(--bg));
+  color: var(--accent, var(--red));
+  cursor: pointer;
+}
+.cal-map-control-row,
+.cal-map-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.cal-map-segment,
+.cal-map-zoom {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  overflow: hidden;
+}
+.cal-map-segment button,
+.cal-map-zoom button {
+  appearance: none;
+  -webkit-appearance: none;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.cal-map-segment button:last-child,
+.cal-map-zoom button:last-child {
+  border-right: 0;
+}
+.cal-map-segment button.is-active {
+  background: color-mix(in srgb, var(--accent, var(--red)) 20%, var(--bg));
+  color: var(--accent, var(--red));
+}
+.cal-map-zoom span {
+  width: 34px;
+  text-align: center;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 76%, transparent);
+}
+.cal-map-frame-wrap {
+  margin: 0;
+  min-height: 270px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 22% 18%, color-mix(in srgb, var(--accent, var(--red)) 16%, transparent), transparent 30%),
+    color-mix(in srgb, var(--fg) 5%, var(--bg));
+}
+.cal-map-frame {
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
+  display: block;
+  border: 0;
+  background: transparent;
+}
+.cal-map-section {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.cal-map-section-title {
+  font-size: 10px;
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+.cal-map-mode-segment {
+  align-self: stretch;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.cal-map-mode-segment button {
+  justify-content: center;
+}
+.cal-map-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.cal-map-chip,
+.cal-map-link-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.cal-map-chip {
+  min-height: 30px;
+  padding: 0 10px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cal-map-link-btn {
+  height: 26px;
+  padding: 0 9px;
+  color: var(--accent, var(--red));
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 35%, var(--border));
+}
+.cal-map-chip:active,
+.cal-map-icon-btn:active,
+.cal-map-link-btn:active {
+  background: color-mix(in srgb, var(--accent, var(--red)) 17%, var(--bg));
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, var(--border));
+}
+.cal-map-recent-section[hidden] {
+  display: none;
+}
+.cal-map-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px 14px 14px;
+}
+.cal-map-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  min-width: 0;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.cal-map-btn span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cal-map-btn-primary {
+  border-color: var(--accent, var(--red));
+  background: var(--accent, var(--red));
+  color: var(--bg);
+}
+.cal-map-btn:not(.cal-map-btn-primary):active,
+.cal-map-close:active,
+.cal-map-segment button:active,
+.cal-map-zoom button:active {
+  background: color-mix(in srgb, var(--accent, var(--red)) 16%, var(--bg));
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, var(--border));
+}
+
+@media (max-width: 520px) {
+  .cal-hero-time { font-size: 44px; }
+  .cal-form-bespoke { margin: 16px 12px; padding: 32px 16px 14px; }
+  .cal-form-mobile-cancel {
+    display: inline-flex;
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 30px;
+    height: 30px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    color: var(--fg);
+    opacity: 0.72;
+    cursor: pointer;
+    z-index: 3;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .cal-form-mobile-cancel:active {
+    opacity: 1;
+    background: color-mix(in srgb, var(--accent, var(--red)) 14%, var(--bg));
+    border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, var(--border));
+  }
+  .cal-map-sheet-overlay {
+    padding: 10px;
+    align-items: flex-end;
+  }
+  .cal-map-sheet {
+    width: 100%;
+    max-height: calc(100vh - 20px);
+    border-radius: 14px 14px 10px 10px;
+  }
+  .cal-map-body {
+    padding: 0 10px;
+  }
+  .cal-map-control-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .cal-map-segment,
+  .cal-map-zoom {
+    width: 100%;
+  }
+  .cal-map-segment button,
+  .cal-map-zoom button {
+    flex: 1 1 0;
+  }
+  .cal-map-frame-wrap {
+    min-height: 38vh;
+  }
+  .cal-map-head {
+    padding-left: 12px;
+    padding-right: 10px;
+  }
+  .cal-map-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding: 10px;
+  }
+  .cal-map-btn {
+    height: 42px;
+    padding: 0 8px;
+    font-size: 11px;
+  }
+}
+.cal-input { background:color-mix(in srgb, var(--fg) 5%, var(--bg)); border:1px solid var(--border); border-radius:5px; padding:7px 10px; color:var(--fg); font-size:12px; width:100%; box-sizing:border-box; }
+.cal-input:focus { outline:none; border-color:var(--accent); }
+.cal-input-time { width:auto; flex:1; }
+select.cal-input { appearance:auto; }
+textarea.cal-input { resize:vertical; font-family:inherit; }
+.cal-form-row { display:flex; gap:8px; align-items:center; }
+.cal-form-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:4px; }
+button.cal-btn { background:color-mix(in srgb, var(--fg) 8%, transparent); border:1px solid var(--border); color:var(--fg); border-radius:5px; padding:0 14px; height:28px; font-size:11px; font-weight:500; cursor:pointer; font-family:inherit; display:inline-flex; align-items:center; justify-content:center; box-sizing:border-box; transition:background 0.15s, border-color 0.15s; }
+button.cal-btn:hover { background:color-mix(in srgb, var(--fg) 14%, transparent); }
+button.cal-btn.cal-btn-primary { background:var(--accent, var(--red)); color:var(--bg); border-color:var(--accent, var(--red)); }
+button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var(--red)); }
+button.cal-btn.cal-btn-danger { color:var(--accent, var(--red)); border-color:var(--accent, var(--red)); background:transparent; }
+button.cal-btn.cal-btn-danger:hover { background:var(--accent, var(--red)); color:var(--bg); }
+@media (max-width: 600px) {
+  .cal-modal-container { max-width:100vw; width:100vw; border-radius:0; max-height:100vh; height:100vh; }
+  .cal-day { min-height:58px; padding:3px; }
+  .cal-day-num { font-size:10px; }
+  .cal-event-preview { display:none; }
+  .cal-multiday { font-size:8.5px; padding:0 4px; }
+  .cal-event-row { min-height:16px; padding:2px 3px; gap:3px; }
+  .cal-event-row-name,
+  .cal-event-row-time { font-size:9.5px; }
+  /* Two-row toolbar on mobile:
+        Row 1 — Title (full width)
+        Row 2 — [← Today →] [view toggle] [settings/sync/filters/+New]
+     Title gets its own row so it isn't squeezed to nothing when the
+     right-side group is wide. The .cal-toolbar-nav (which now only
+     contains the title since JS moved the date-nav to the right) is
+     width:100% so it forces a wrap before .cal-toolbar-right. */
+  .cal-toolbar {
+    gap: 4px;
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .cal-toolbar-nav {
+    flex-wrap: nowrap;
+    flex: 1 1 100%;
+    min-width: 0;
+    justify-content: flex-start;
+  }
+  .cal-toolbar-right {
+    margin-top: 8px;
+    margin-left: 0;
+    flex-wrap: nowrap;
+    flex-shrink: 1;
+    overflow-x: auto;
+    scrollbar-width: none;
+    width: 100%;
+  }
+  .cal-toolbar-right::-webkit-scrollbar { display: none; }
+  .cal-title {
+    font-size: 13px;
+    padding: 0 4px;
+  }
+  .cal-nav { padding: 2px 5px; font-size: 10px; }
+  .cal-view-btn { padding: 2px 5px; font-size: 9px; }
+  .cal-filters { gap: 3px; margin-top: 4px; }
+  .cal-filter-item { font-size: 9px; padding: 1px 5px; }
+  .cal-year { grid-template-columns:repeat(3, 1fr); gap:6px; }
+  .cal-year-cell { font-size:7px; }
+}
+
+/* ═══ Research Panel ═══ */
+body.research-panel-view #research-divider { display:none; }
+/* .research-overlay inherits from .modal — no extra layout needed */
+.research-pane {
+  display:flex; flex-direction:column;
+  padding:10px; box-sizing:border-box;
+  font-size:12px; letter-spacing:-0.015em;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+/* Synapse signal traveling around the outer edge of the pane. The pane keeps a
+   flat background; only this thin border ring remains animated. */
+.research-pane::after {
+  content: '';
+  position: absolute; inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: inherit;
+  padding: 2px;
+  background: conic-gradient(
+    from var(--research-orbit-angle, 0deg),
+    transparent 0deg,
+    transparent 300deg,
+    color-mix(in srgb, var(--accent, var(--red)) 70%, transparent) 335deg,
+    var(--accent, var(--red)) 350deg,
+    color-mix(in srgb, var(--accent, var(--red)) 70%, transparent) 358deg,
+    transparent 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+}
+@media (prefers-reduced-motion: reduce) {
+  .research-pane::after { animation: none; opacity: 0.4; }
+}
+.research-pane-header {
+  display:flex; justify-content:space-between; align-items:center;
+  margin-bottom:6px; cursor:grab; user-select:none;
+}
+.research-pane-header:active { cursor:grabbing; }
+.research-pane-header h4 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: var(--red);
+}
+/* Match Library's inline SVG alignment inside the h4 */
+.research-pane-header h4 svg {
+  vertical-align: -2px;
+  margin-right: 6px;
+}
+.research-pane-header-actions {
+  display: flex; align-items: center; gap: 2px;
+  margin-left: auto;
+}
+.research-pane-body {
+  flex: 1; min-height: 0; overflow: hidden;
+  display: flex; flex-direction: column;
+  /* Flat surface — matches Library's .modal-body (no inset sub-window).
+     The outer .research-pane already provides the 10px padding + border. */
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font-size: 12px;
+  color: var(--fg);
+}
+/* Hide the in-body "Research" subtitle on mobile to save vertical space —
+   the toolbar/header carries enough context already. */
+/* Match the .admin-card h2 styling used in Documents/Library so the
+   "Research" sub-title reads the same as those modals' titles. */
+.research-new-job h2 {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  position: relative;
+  top: 2px;
+}
+.research-new-job > .doclib-desc {
+  position: relative;
+  top: 4px;
+  margin-bottom: 6px;
+}
+@media (max-width: 600px) {
+  /* Keep the "Research" title visible on mobile (matches the Cookbook tab
+     titles, which show on mobile). It used to be hidden here. */
+  .research-new-job h2 {
+    font-size: 14px;
+  }
+}
+/* Match the .admin-card surface used in Cookbook (Download / Serve sections):
+   var(--panel) bg with var(--border) and rounded corners. */
+.research-new-job {
+  /* Match the Cookbook download block (.admin-card) exactly. */
+  padding: 12px;
+  margin-bottom: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.research-query {
+  width:100%; resize:vertical; min-height:80px; max-height:240px;
+  /* Match the rest of the app's inputs (var(--bg) page tone) rather than
+     the darker panel tone — keeps the input readable on the dark sub-window. */
+  background: var(--bg); color: var(--fg);
+  border:1px solid var(--border); border-radius:6px;
+  padding:8px 10px; font-size:12px; font-family:inherit;
+  box-sizing:border-box;
+  margin-top: 2px;
+}
+.research-query:focus { outline:none; border-color:var(--accent-primary, var(--red)); }
+.research-settings-row {
+  display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.research-setting {
+  display:flex; flex-direction:column; flex:1 1 92px; min-width:90px;
+}
+.research-settings-row .research-setting:nth-last-child(-n + 3) {
+  position: relative;
+  top: 3px;
+}
+.research-setting-label {
+  font-size:9px; text-transform:uppercase; letter-spacing:0.5px;
+  opacity:0.5; margin-bottom:2px;
+}
+.research-setting select {
+  width: 100%;
+  min-width: 0;
+  font-size: 11px; padding: 4px 6px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border); border-radius: 4px;
+}
+@media (max-width: 600px) {
+  .research-setting {
+    flex-basis: calc(50% - 6px);
+  }
+}
+.research-controls-row {
+  display:flex; align-items:center; gap:10px; margin-top:10px;
+}
+.research-start-btn {
+  margin-left:auto;
+  display:flex; align-items:center; gap:5px;
+  padding:6px 16px; border:none; border-radius:6px;
+  background:var(--accent-primary, var(--red)); color:#fff;
+  font-size:12px; font-weight:600; cursor:pointer;
+  transition:opacity 0.15s;
+}
+.research-start-btn:hover { opacity:0.85; }
+.research-start-btn:disabled, .research-start-btn.research-start-busy {
+  opacity:0.7; cursor:wait;
+}
+.research-start-spinner {
+  display:inline-block; width:11px; height:11px; vertical-align:-1px; margin-right:4px;
+  border:2px solid currentColor; border-right-color:transparent; border-radius:50%;
+  animation: spin 0.7s linear infinite;
+}
+.research-category-row {
+  display:flex; gap:4px; margin-top:8px; flex-wrap:wrap;
+}
+/* Mobile: keep the category chips on ONE row (scroll horizontally) instead of
+   wrapping to two rows. */
+@media (max-width: 600px) {
+  .research-category-row {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .research-category-row::-webkit-scrollbar { display: none; }
+  .research-cat { flex-shrink: 0; white-space: nowrap;   position: relative; top: -8px;
+}
+}
+/* Match .doclib-chip exactly so categories feel like document filter tags. */
+.research-cat {
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  position: relative;
+  top: -4px;
+}
+.research-cat:hover { border-color: var(--red); }
+.research-cat.active {
+  background: color-mix(in srgb, var(--red) 15%, transparent);
+  border-color: color-mix(in srgb, var(--red) 40%, transparent);
+  color: var(--red);
+}
+/* Match the Cookbook "Trending models" toggle (a left-aligned memory-toolbar-btn
+   with an arrow + label) instead of the old tiny-uppercase borderless text. */
+.research-settings-toggle {
+  display:flex; align-items:center; gap:6px;
+  width:100%; text-align:left;
+  height:26px; padding:0 8px; margin-top:23px;
+  background:none; border:1px solid var(--border); border-radius:4px;
+  color:color-mix(in srgb, var(--fg) 60%, transparent);
+  font-size:11px; font-family:inherit; cursor:pointer;
+  transition:all 0.15s;
+}
+.research-settings-toggle:hover { color:var(--fg); border-color:var(--fg); }
+.research-settings-chevron { display:inline-flex; transition:transform 0.2s; margin-left:auto; }
+.research-settings-toggle.collapsed .research-settings-chevron { transform:rotate(-90deg); }
+/* When settings is EXPANDED, merge the toggle bar visually into the
+   settings body so it's clear the row below is the toggle's content
+   (no gap, no doubled border between them). */
+.research-settings-toggle:not(.collapsed) {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-bottom-color: transparent;
+}
+.research-settings-toggle:not(.collapsed) + .research-settings-row {
+  margin-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border-top-color: color-mix(in srgb, var(--border) 50%, transparent);
+}
+.research-add-btn {
+  padding:6px 14px; border:1px solid var(--border); border-radius:6px;
+  background:transparent; color:var(--fg); font-size:12px; cursor:pointer;
+  transition:background 0.15s;
+}
+.research-add-btn:hover { background:color-mix(in srgb, var(--border) 30%, transparent); }
+
+/* Popover anchored to the Start-All button — pick parallel vs sequential
+   without the heavy "Run N jobs" modal. Drops down by default, flips to
+   drop-up when there's no room below (the .rrm-up modifier is added by
+   the JS that positions it). */
+.research-run-mode-popover {
+  position: fixed;
+  z-index: 12000;
+  min-width: 200px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  padding: 5px;
+  font-size: 13px;
+  animation: rrm-pop-in 0.12s ease-out both;
+  transform-origin: top right;
+}
+.research-run-mode-popover.rrm-up { transform-origin: bottom right; }
+@keyframes rrm-pop-in {
+  from { opacity: 0; transform: scale(0.96) translateY(-2px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+.research-run-mode-popover .research-run-mode-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--fg);
+  font-family: inherit;
+  padding: 10px 13px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.research-run-mode-popover .research-run-mode-row svg { flex-shrink: 0; opacity: 0.8; }
+.research-run-mode-popover .research-run-mode-row:hover {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 14%, transparent);
+}
+.research-run-mode-popover .rrm-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--fg);
+}
+.research-jobs-list {
+  flex:1; min-height:0; overflow-y:auto; padding:6px 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.research-empty {
+  text-align:center; padding:30px 14px;
+  font-size:12px; opacity:0.4;
+}
+/* Cards match Library's .doclib-card: subtle fg 3% tint over var(--bg). */
+.research-job-card {
+  margin: 0;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  transition: background 0.15s, border-color 0.15s;
+}
+.research-job-card:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 16%, transparent);
+}
+.research-job-card.running { border-left:3px solid var(--accent-primary, var(--red)); }
+.research-job-card.queued  { border-left:3px solid var(--fg-dim, #888); }
+/* No colored left-accent bar on done/past research — it read as a generic
+   "AI default" card. The category/standard badge carries the meaning instead. */
+.research-job-card.done    { border-left:1px solid var(--border); cursor:pointer; }
+/* Past (library) research used to be dimmed to 0.65 which read as "greyed out".
+   They now look the same as the rest — folding them under "Past research"
+   handles the de-clutter instead. */
+.research-job-card.done.from-library { opacity:1; }
+.research-job-card.error,
+.research-job-card.cancelled { border-left:3px solid #f44336; }
+/* Per-category theming — picks up a category accent, badge, and soft tint */
+.research-job-card[data-category] { --cat-color: var(--accent, var(--red)); }
+.research-job-card[data-category="product"]    { --cat-color: #5b8abf; }
+.research-job-card[data-category="comparison"] { --cat-color: #e5a33a; }
+.research-job-card[data-category="howto"]      { --cat-color: #82c882; }
+.research-job-card[data-category="landscape"]  { --cat-color: #a07ae0; }
+.research-job-card[data-category="factcheck"]  { --cat-color: var(--red); }
+.research-job-card.done[data-category] {
+  background: color-mix(in srgb, var(--cat-color) 4%, transparent);
+}
+.research-job-card.done[data-category]:hover {
+  background: color-mix(in srgb, var(--cat-color) 7%, transparent);
+}
+/* Inline category label — sits beside the title in low-opacity colored
+   text instead of a separate pill. Picks up the per-card --cat-color. */
+/* Uncategorized (default-format) research = "standard", shown in the same
+   green as its left border so the green reads as a labelled category. */
+.research-cat-badge.research-cat-standard { color: var(--color-success); opacity: 0.75; }
+.research-cat-badge {
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: lowercase;
+  letter-spacing: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--cat-color, var(--accent));
+  opacity: 0.55;
+  flex-shrink: 0;
+  margin-left: 2px;
+  position: relative;
+  top: -1px;
+}
+.research-job-report-body h1, .research-job-report-body h2, .research-job-report-body h3 {
+  color: var(--cat-color, var(--accent, var(--fg)));
+}
+
+/* Category hero banner */
+.research-hero {
+  display: flex; align-items: center; gap: 14px;
+  padding: 16px 18px; margin: 8px 0 14px;
+  border-radius: 10px;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--cat-color, var(--accent)) 18%, transparent) 0%,
+    color-mix(in srgb, var(--cat-color, var(--accent)) 5%, transparent) 100%
+  );
+  border-left: 4px solid var(--cat-color, var(--accent));
+  position: relative; overflow: hidden;
+}
+.research-hero::after {
+  content: ''; position: absolute; right: -40px; top: -40px;
+  width: 160px; height: 160px; border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--cat-color, var(--accent)) 15%, transparent) 0%, transparent 60%);
+  pointer-events: none;
+}
+.research-hero-icon {
+  flex-shrink: 0; width: 32px; height: 32px;
+  color: var(--cat-color, var(--accent));
+  display: flex; align-items: center; justify-content: center;
+  filter: drop-shadow(0 2px 4px color-mix(in srgb, var(--cat-color, var(--accent)) 40%, transparent));
+}
+.research-hero-icon svg { width: 100%; height: 100%; }
+.research-hero-text { flex: 1; min-width: 0; }
+.research-hero-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px;
+  font-weight: 700; opacity: 0.7; margin-bottom: 3px;
+  color: var(--cat-color, var(--accent));
+}
+.research-hero-query {
+  font-size: 15px; font-weight: 600;
+  line-height: 1.3; color: var(--fg);
+}
+
+/* Product: callout-style bullets */
+.research-body-product ul { list-style: none; padding-left: 0; }
+.research-body-product ul li {
+  padding: 6px 10px 6px 28px; margin: 4px 0;
+  border-left: 2px solid color-mix(in srgb, #5b8abf 40%, transparent);
+  background: color-mix(in srgb, #5b8abf 4%, transparent);
+  border-radius: 0 4px 4px 0; position: relative;
+}
+.research-body-product ul li::before {
+  content: '▸'; position: absolute; left: 10px;
+  color: #5b8abf; font-weight: bold;
+}
+
+/* Comparison: styled table */
+.research-body-comparison table {
+  width: 100%; border-collapse: collapse; margin: 12px 0;
+  border: 1px solid color-mix(in srgb, #e5a33a 25%, transparent);
+  border-radius: 6px; overflow: hidden;
+}
+.research-body-comparison th {
+  background: color-mix(in srgb, #e5a33a 18%, transparent);
+  color: #e5a33a; font-weight: 700;
+  padding: 8px 12px; text-align: left;
+  border-bottom: 2px solid color-mix(in srgb, #e5a33a 40%, transparent);
+}
+.research-body-comparison td {
+  padding: 8px 12px;
+  border-bottom: 1px solid color-mix(in srgb, #e5a33a 12%, transparent);
+}
+.research-body-comparison tr:nth-child(even) td {
+  background: color-mix(in srgb, #e5a33a 3%, transparent);
+}
+
+/* How-to: big numbered steps */
+.research-body-howto ol { counter-reset: howto-step; list-style: none; padding-left: 0; }
+.research-body-howto ol > li {
+  counter-increment: howto-step; position: relative;
+  padding: 10px 12px 10px 52px; margin: 8px 0;
+  background: color-mix(in srgb, #82c882 5%, transparent);
+  border-radius: 8px; border-left: 2px solid #82c882;
+}
+.research-body-howto ol > li::before {
+  content: counter(howto-step);
+  position: absolute; left: 10px; top: 14px;
+  width: 30px; height: 30px; border-radius: 50%;
+  background: #82c882; color: white;
+  font-weight: 700; font-size: 13px;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 6px color-mix(in srgb, #82c882 40%, transparent);
+}
+
+/* Landscape: section banners */
+.research-body-landscape h3 {
+  padding: 8px 14px;
+  background: linear-gradient(90deg, color-mix(in srgb, #a07ae0 15%, transparent), transparent);
+  border-left: 3px solid #a07ae0;
+  border-radius: 0 6px 6px 0;
+  margin: 14px 0 8px;
+}
+
+/* Fact-check: verdict emphasis */
+.research-body-factcheck blockquote {
+  border-left: 3px solid var(--red);
+  background: color-mix(in srgb, var(--red) 6%, transparent);
+  padding: 10px 14px; margin: 10px 0;
+  border-radius: 0 6px 6px 0;
+}
+.research-body-factcheck strong {
+  color: var(--red);
+  padding: 1px 6px; border-radius: 4px;
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+}
+
+.research-job-header {
+  display:flex; align-items:center; gap:8px;
+}
+/* Active (running) card: nudge the title + text assets up 4px so they line up
+   with the chevron / Clear button on the right. */
+.research-job-card.running .research-job-query,
+.research-job-card.running .research-cat-badge,
+.research-job-card.running .research-job-model,
+.research-job-card.running .research-job-time {
+  position: relative;
+  top: -4px;
+}
+.research-job-query {
+  flex:1; font-size:11px; font-weight:600;
+  letter-spacing: -0.01em;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  color: var(--fg);
+}
+.research-job-time,
+.research-job-meta {
+  font-size:10px; opacity:0.5; white-space:nowrap; font-family:monospace;
+}
+.research-job-status {
+  font-size:10px; text-transform:uppercase; opacity:0.6;
+}
+.research-job-cancel,
+.research-job-remove,
+.research-job-report-link {
+  background:transparent; border:none; color:var(--fg);
+  opacity:0.4; cursor:pointer; padding:2px; display:flex;
+  transition:opacity 0.15s;
+}
+.research-job-cancel:hover,
+.research-job-remove:hover,
+.research-job-report-link:hover { opacity:1; }
+/* Minimize toggle for the per-job synapse "tree" visual. */
+.research-synapse-toggle {
+  background:transparent; border:none; color:var(--fg);
+  opacity:0.4; cursor:pointer; padding:2px; display:flex;
+  transition:opacity 0.15s;
+}
+.research-synapse-toggle:hover,
+.research-synapse-toggle.active { opacity:1; }
+.research-job-synapse-host.synapse-collapsed { display:none; }
+.research-job-model {
+  font-size:9px; opacity:0.4; white-space:nowrap;
+  max-width:120px; overflow:hidden; text-overflow:ellipsis;
+}
+.research-job-actions {
+  display:flex; gap:4px; margin-top:6px;
+  align-items:center;
+}
+.research-job-thumb {
+  width: 64px;
+  height: 40px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex: 0 0 64px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  background: var(--panel, var(--bg));
+}
+.research-job-thumb-empty {
+  display: inline-block;
+  background:
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--fg) 7%, transparent),
+      color-mix(in srgb, var(--fg) 3%, transparent));
+}
+/* Push the first dim (dismiss/delete) button — and everything after it — to
+   the right edge of the actions row. `:first-of-type` would match the very
+   first <button> in the row regardless of class; this immediate-sibling
+   combinator targets only a dim button that follows a non-dim one. */
+.research-job-actions .research-job-action:not(.research-job-action-dim)
+  + .research-job-action-dim { margin-left: auto; }
+/* Edge case: all buttons in the row are dim — push first dim right. */
+.research-job-actions > .research-job-action-dim:first-child { margin-left: auto; }
+/* Match .doclib-toolbar-btn — same font, padding, hover */
+.research-job-action {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 5px 10px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.research-job-action:hover {
+  color: var(--fg);
+  border-color: var(--fg);
+}
+.research-job-action-dim { opacity: 0.5; border-color: transparent; }
+.research-job-action-dim:hover { opacity: 1; }
+.research-job-action-copied {
+  color: var(--color-success) !important;
+  border-color: color-mix(in srgb, var(--color-success) 45%, var(--border)) !important;
+  opacity: 1 !important;
+}
+.research-job-phase {
+  font-size:11px; opacity:0.6; margin-top:4px;
+}
+.research-job-queued-meta {
+  font-size:10px; opacity:0.4; margin-top:2px;
+}
+.research-section-divider {
+  display:flex; align-items:center; gap:10px;
+  padding:6px 14px; font-size:10px; opacity:0.4;
+  text-transform:uppercase; letter-spacing:0.5px;
+}
+.research-section-divider::before,
+.research-section-divider::after {
+  content:''; flex:1; height:1px;
+  background:var(--border);
+}
+/* Foldable job sections (Active / Past research) */
+/* Collapsible section styled like the Cookbook download sub-blocks (.cookbook-card):
+   clean var(--bg) card, 8px radius, a real 13px/600 title. Chevron on the LEFT,
+   then title, count, and a status-color dot on the right (the dot stays visible
+   when folded so you get status at a glance). Keeps every modal consistent. */
+.research-section {
+  margin-top: 6px;
+  /* Same surface as the research "window" (.research-new-job -> var(--panel)). */
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.research-section-body { display: flex; flex-direction: column; gap: 8px; padding: 12px; }
+.research-section.collapsed .research-section-body { display: none; }
+.research-section-header {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 10px 12px; cursor: pointer; user-select: none;
+  transition: background 0.15s;
+}
+.research-section:not(.collapsed) > .research-section-header { border-bottom: 1px solid var(--border); }
+.research-section-header:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.research-section-header:has(.research-library-hint) { padding-bottom: 4px; }
+.research-section-title { font-size: 14px; font-weight: 600; letter-spacing: -0.03em; }
+.research-section-chevron { flex-shrink: 0; opacity: 0.55; transition: transform 0.2s ease; }
+.research-section.collapsed .research-section-chevron { transform: rotate(-90deg); }
+.research-section-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; opacity: 0.9; }
+/* Active section dot: pulsing accent glow (work in progress). */
+.research-section-dot.pulsing { animation: research-dot-pulse 1.5s ease-in-out infinite; }
+@keyframes research-dot-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, var(--red)) 55%, transparent); }
+  70%      { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent, var(--red)) 0%, transparent); }
+}
+/* The top "Research" heading is a plain card-style title — no bar/chevron/dot. */
+.research-main-header {
+  cursor: default; background: none; border: none;
+  padding: 6px 2px; font-size: 13px; font-weight: 600;
+}
+.research-main-header:hover { background: none; }
+.research-section-count {
+  /* Match the panel header's "N research" chip — small, muted, no weight. */
+  font-size: 10px; opacity: 0.6; font-weight: normal;
+  font-variant-numeric: tabular-nums;
+}
+.research-job-error {
+  font-size:11px; color:#f44336; margin-top:4px; line-height:1.4;
+  word-break:break-word;
+}
+.research-progress-bar {
+  height:3px; background:var(--border); border-radius:2px; margin-top:6px;
+  overflow:hidden;
+}
+.research-progress-fill {
+  height:100%; background:var(--accent-primary, var(--red));
+  border-radius:2px; transition:width 0.4s ease;
+}
+.research-job-result {
+  margin-top:10px; border-top:1px solid var(--border); padding-top:10px;
+}
+.research-job-sources {
+  display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px;
+}
+.research-source-link {
+  font-size:10px; padding:2px 6px;
+  background:color-mix(in srgb, var(--accent-primary, var(--red)) 10%, transparent);
+  border-radius:3px; color:var(--accent-primary, var(--red));
+  text-decoration:none; white-space:nowrap;
+  max-width:200px; overflow:hidden; text-overflow:ellipsis;
+}
+.research-source-link:hover { text-decoration:underline; }
+.research-source-more { font-size:10px; opacity:0.5; padding:2px 4px; }
+.research-job-report-body {
+  font-size:12px; line-height:1.55; max-height:400px; overflow-y:auto;
+}
+.research-job-report-body h1,
+.research-job-report-body h2,
+.research-job-report-body h3 { font-size:13px; margin:12px 0 4px; }
+.research-job-report-body p { margin:4px 0; }
+.research-job-report-body pre { font-size:11px; }
+.research-job-loading { font-size:11px; opacity:0.5; padding:8px 0; }
+.research-library-section {
+  border-top:1px solid var(--border); flex-shrink:0;
+}
+.research-library-toggle {
+  width:100%; background:transparent; border:none; color:var(--fg);
+  padding:8px 14px; font-size:11px; text-align:left;
+  opacity:0.6; cursor:pointer; font-weight:500;
+}
+.research-library-toggle:hover { opacity:1; }
+.research-library-list {
+  max-height:300px; overflow-y:auto;
+}
+.research-library-item {
+  display:flex; align-items:center; gap:6px; flex-wrap:wrap;
+  padding:8px 14px; font-size:11px;
+  border-bottom:1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+.research-library-item:hover { background:color-mix(in srgb, var(--border) 20%, transparent); }
+.research-lib-query {
+  flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:120px;
+}
+.research-lib-actions {
+  display:flex; gap:4px; margin-left:auto;
+}
+.research-lib-meta {
+  font-size:9px; opacity:0.4; white-space:nowrap; font-family:monospace;
+}
+.research-lib-open,
+.research-lib-delete {
+  background:transparent; border:none; color:var(--fg);
+  opacity:0.3; cursor:pointer; padding:2px; display:flex;
+  transition:opacity 0.15s;
+}
+.research-lib-open:hover { opacity:1; }
+.research-lib-delete:hover { opacity:1; color:#f44336; }
+.research-badge {
+  background:var(--accent-primary, var(--red)); border-radius:50%;
+  width:6px; height:6px; margin-left:auto; display:inline-block; flex-shrink:0;
+  position: relative; left: -4px;
+  /* Breathe when research has finished — gentle scale + glow pulse to
+     draw the eye to the unread result without being a hard blink. */
+  animation: research-badge-breathe 2.4s ease-in-out infinite;
+}
+@keyframes research-badge-breathe {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.85;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-primary, var(--red)) 55%, transparent);
+  }
+  50% {
+    transform: scale(1.35);
+    opacity: 1;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-primary, var(--red)) 0%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .research-badge { animation: none; }
+}
+
+/* Sidebar Deep Research running indicator — text then dot, styled the same
+   as Cookbook's running status (no glow). */
+.research-sb-running {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.research-sb-status {
+  font-size: 8px;
+  opacity: 0.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  position: relative;
+  top: 0;
+  left: -12px;
+}
+.research-sb-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--color-success, #4caf50);
+  animation: cookbook-notif-pulse 2s ease-in-out infinite;
+  position: relative;
+  top: -1px;
+  left: -4px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .research-sb-dot { animation: none; }
+}

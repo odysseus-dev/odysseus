@@ -336,6 +336,21 @@ A grab-bag of small gotchas that otherwise turn into long debugging sessions.
 - **Local mail (Dovecot) login fails: "Plaintext authentication disallowed on non-encrypted connections."** Your IMAP/SMTP server is refusing cleartext auth over an unencrypted link. Prefer enabling TLS on the mail server; on a trusted LAN only, you can allow cleartext (Dovecot: `disable_plaintext_auth = no`).
 - **Calendar/contacts (Radicale) won't sync.** Point Odysseus at the **full collection URL** with its trailing slash — e.g. `http://host:5232/<user>/<collection-id>/` — not just the server root. Radicale shows this address for each calendar/address book in its web UI.
 
+### LDAP / FreeIPA authentication
+
+Administrators can configure LDAP or FreeIPA sign-in from **Settings →
+Authentication → LDAP / FreeIPA**. Install the LDAP packages from
+`requirements-optional.txt`, then supply the server URI, user/group search
+bases and filters, service-account bind credentials, and the allowed/admin
+groups. The equivalent `ODYSSEUS_LDAP_*` environment variables are documented
+in `.env.example`; environment values remain useful for immutable deployments.
+
+![LDAP and FreeIPA authentication settings](pr-assets/ldap-freeipa-settings-ui.png)
+
+Use StartTLS or LDAPS outside an isolated trusted network, keep the bind
+password out of source control, and test the connection before enabling LDAP
+for all sign-ins.
+
 ### Optional Dependencies
 `requirements-optional.txt` contains packages that unlock extra features. It is not installed by default.
 

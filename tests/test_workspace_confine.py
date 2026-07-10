@@ -233,7 +233,7 @@ async def test_binding_does_not_leak(ws, admin):
 
 def _sent_tool_names(monkeypatch, *, workspace, text="look at the local project", history=None):
     import asyncio
-    import src.agent_loop as al
+    from src.agent_loop import _loop as al
     import src.tool_index as ti
 
     monkeypatch.setattr(al, "get_setting", lambda key, default=None: default, raising=False)
@@ -490,7 +490,7 @@ def test_browse_marks_root_unselectable_and_vet_endpoint(monkeypatch):
 def test_request_workspace_gate(ws, monkeypatch):
     """Non-admin chat callers must get a uniform drop with no vetting: the
     workspace_rejected signal would otherwise reveal which host paths exist."""
-    import routes.chat_routes as cr
+    from routes.chat import _utils as cr
 
     monkeypatch.setattr(cr, "get_current_user", lambda req: "bob")
     vet_calls = []

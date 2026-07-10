@@ -1,8 +1,15 @@
 import subprocess
+import os
 from pathlib import Path
+
+import pytest
 
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "check-docker-amd-gpu.sh"
+
+pytestmark = pytest.mark.skipif(
+    os.name == "nt", reason="Bash script validation requires a POSIX shell"
+)
 
 
 def test_amd_gpu_check_rejects_unknown_extra_arg_before_diagnostics():

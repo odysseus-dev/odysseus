@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 def test_active_email_reader_blocks_immediate_reply_tools():
-    source = Path("routes/chat_routes.py").read_text(encoding="utf-8")
+    source = Path("routes/chat/__init__.py").read_text(encoding="utf-8")
     guard_start = source.index("if active_email_ctx and active_email_ctx.get(\"uid\"):")
     guard_block = source[guard_start:source.index("# Enforce per-user privileges", guard_start)]
 

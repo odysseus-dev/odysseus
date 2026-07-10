@@ -1,10 +1,12 @@
 from pathlib import Path
 
+from tests.helpers.css_loader import read_css_with_imports
+
 
 ROOT = Path(__file__).resolve().parents[1]
 AI_INPAINT_JS = (ROOT / "static" / "js" / "editor" / "ai-inpaint.js").read_text(encoding="utf-8")
-STYLE_CSS = (ROOT / "static" / "style.css").read_text(encoding="utf-8")
-GALLERY_ROUTES = (ROOT / "routes" / "gallery_routes.py").read_text(encoding="utf-8")
+STYLE_CSS = read_css_with_imports(ROOT / "static" / "style.css")
+GALLERY_ROUTES = (ROOT / "routes" / "gallery" / "gallery_routes.py").read_text(encoding="utf-8")
 
 
 def test_inpaint_backend_exposes_live_progress_stream():

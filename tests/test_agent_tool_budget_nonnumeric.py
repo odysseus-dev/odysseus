@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-_CHAT_ROUTES = Path(__file__).resolve().parent.parent / "routes" / "chat_routes.py"
+_CHAT_ROUTES = Path(__file__).resolve().parent.parent / "routes" / "chat" / "__init__.py"
 
 
 def _tool_budget_read_is_guarded(source: str) -> bool:

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from tests.helpers.css_loader import read_css_with_imports
+
 
 ROOT = Path(__file__).resolve().parents[1]
 AI_MODELS_JS = (ROOT / "static" / "js" / "editor" / "ai-models.js").read_text(encoding="utf-8")
@@ -8,11 +10,11 @@ AI_TOOL_RUNNER_JS = (ROOT / "static" / "js" / "editor" / "ai-tool-runner.js").re
 AI_REMBG_JS = (ROOT / "static" / "js" / "editor" / "ai-rembg.js").read_text(encoding="utf-8")
 CONTROLS_JS = (ROOT / "static" / "js" / "editor" / "build" / "controls.js").read_text(encoding="utf-8")
 GALLERY_EDITOR_JS = (ROOT / "static" / "js" / "galleryEditor.js").read_text(encoding="utf-8")
-GALLERY_ROUTES = (ROOT / "routes" / "gallery_routes.py").read_text(encoding="utf-8")
+GALLERY_ROUTES = (ROOT / "routes" / "gallery" / "gallery_routes.py").read_text(encoding="utf-8")
 CANVAS_EVENTS_JS = (ROOT / "static" / "js" / "editor" / "canvas-events.js").read_text(encoding="utf-8")
 RIGHT_PANEL_JS = (ROOT / "static" / "js" / "editor" / "build" / "right-panel.js").read_text(encoding="utf-8")
 SLIDER_UX_JS = (ROOT / "static" / "js" / "editor" / "slider-ux.js").read_text(encoding="utf-8")
-STYLE_CSS = (ROOT / "static" / "style.css").read_text(encoding="utf-8")
+STYLE_CSS = read_css_with_imports(ROOT / "static" / "style.css")
 SW_JS = (ROOT / "static" / "sw.js").read_text(encoding="utf-8")
 
 
@@ -127,7 +129,7 @@ def test_gallery_tool_sheet_dismiss_restores_layer_peek():
 
 
 def test_gallery_editor_cache_bumped_for_android_assets():
-    assert "const CACHE_NAME = 'odysseus-v419';" in SW_JS
+    assert "const CACHE_NAME = 'odysseus-v429';" in SW_JS
 
 
 def test_gallery_fit_zoom_uses_visible_canvas_above_mobile_layers_sheet():

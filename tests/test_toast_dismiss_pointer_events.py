@@ -6,8 +6,9 @@ The reviewer flagged that action-toasts set ``pointer-events: auto`` on
 was cancelling the auto-hide timer without resetting ``pointer-events``.
 This left an invisible element intercepting mouse/touch events.
 
-These are source-level assertions (no browser, no DOM) that verify the
-close-button handler includes the reset.  They cover:
+These are source-level assertions (no browser, no DOM) that verify every
+dismissal path delegates to the shared lifecycle helper and that the helper
+performs the reset.  They cover:
   • ordinary (plain text) toast  – showToast
   • error toast                  – showError
   • action toast                 – showToast with action opts
@@ -51,12 +52,12 @@ def _extract_function(src: str, func_name: str) -> str:
 def _extract_close_handler(func_body: str) -> str:
     """Return the close-button click-handler body inside *func_body*.
 
-    Looks for the ``toast-close-btn`` class assignment, then finds the
+    Looks for the ``closeBtn`` declaration, then finds the
     ``addEventListener('click'`` call that follows, and extracts the arrow
     function body.
     """
-    idx = func_body.find("toast-close-btn")
-    assert idx != -1, "toast-close-btn not found in function body"
+    idx = func_body.find("const closeBtn")
+    assert idx != -1, "closeBtn not found in function body"
     # Find the addEventListener('click', … that follows
     listen_idx = func_body.find("addEventListener('click'", idx)
     if listen_idx == -1:
@@ -81,34 +82,40 @@ def _extract_close_handler(func_body: str) -> str:
 # Tests
 # ---------------------------------------------------------------------------
 
-def test_showToast_close_handler_resets_pointer_events():
-    """showToast's × handler must clear pointer-events so an action-toast
-    that set them to 'auto' doesn't leave the overlay blocking clicks."""
+def test_finish_toast_resets_pointer_events():
+    """The shared lifecycle helper must always restore non-blocking hit testing."""
+    src = _read_ui()
+    body = _extract_function(src, "_finishToast")
+    assert "pointerEvents = ''" in body or 'pointerEvents = ""' in body, (
+        "_finishToast does not reset pointerEvents – dismissed action toasts "
+        "will leave an invisible click-blocking overlay"
+    )
+
+
+def test_showToast_close_handler_finishes_toast():
+    """showToast's × handler must use the lifecycle helper that resets hit testing."""
     src = _read_ui()
     body = _extract_function(src, "showToast")
     handler = _extract_close_handler(body)
-    assert "pointerEvents" in handler, (
-        "showToast close-button handler does not reset pointerEvents – "
-        "action toasts will leave an invisible click-blocking overlay"
+    assert "_finishToast(toastEl)" in handler, (
+        "showToast close-button handler does not run the shared toast cleanup"
     )
 
 
-def test_showError_close_handler_resets_pointer_events():
-    """showError's × handler must also clear pointer-events defensively,
-    in case a prior action-toast left them as 'auto'."""
+def test_showError_clears_pointer_events_and_finishes_on_timeout():
+    """Error toasts must clear stale hit testing and use shared timer cleanup."""
     src = _read_ui()
     body = _extract_function(src, "showError")
-    handler = _extract_close_handler(body)
-    assert "pointerEvents" in handler, (
-        "showError close-button handler does not reset pointerEvents – "
-        "a prior action toast could leave the overlay blocking clicks"
+    assert "pointerEvents = ''" in body or 'pointerEvents = ""' in body, (
+        "showError does not clear pointerEvents left by an action toast"
+    )
+    assert "_finishToast(toastEl)" in body, (
+        "showError auto-hide timer does not run the shared toast cleanup"
     )
 
 
-def test_showToast_timer_resets_pointer_events():
-    """The auto-hide timer in showToast must also reset pointer-events.
-    This was already in place before the × button was added; make sure
-    it stays."""
+def test_showToast_timer_finishes_toast():
+    """The auto-hide timer must use the lifecycle helper that resets hit testing."""
     src = _read_ui()
     body = _extract_function(src, "showToast")
     # The _hideTimer setTimeout body should contain the reset
@@ -129,8 +136,8 @@ def test_showToast_timer_resets_pointer_events():
             if depth == 0:
                 timer_body = body[brace : i + 1]
                 break
-    assert "pointerEvents" in timer_body, (
-        "showToast auto-hide timer no longer resets pointerEvents"
+    assert "_finishToast(toastEl)" in timer_body, (
+        "showToast auto-hide timer does not run the shared toast cleanup"
     )
 
 

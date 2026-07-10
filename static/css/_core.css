@@ -1,0 +1,271 @@
+/* _core.css — chunked from style.css */
+/* ============================================ */
+/* Odysseus UI — Consolidated Stylesheet        */
+/* ============================================ */
+
+
+/* ── Variables ──
+ *
+ * Theme-public variables (override via theme.js or custom themes):
+ *   Core:     --bg, --fg, --panel, --border, --red
+ *   Syntax:   --hl-keyword, --hl-string, --hl-comment, --hl-function,
+ *             --hl-number, --hl-builtin, --hl-variable, --hl-params,
+ *             --hl-bg, --hl-fg
+ *   Accents:  --accent-primary, --accent-error (set by theme.js)
+ *   Semantic: --color-error, --color-success, --color-warning, --color-danger,
+ *             --color-accent, --color-muted, --color-muted-alt
+ */
+
+:root {
+  /* Core palette */
+  --bg: #282c34;
+  --fg: #9cdef2;
+  --panel: #111;
+  --border: #355a66;
+  --red: #e06c75;
+  /* Compatibility alias for components that still consume --accent directly. */
+  --accent: var(--accent-primary, var(--red));
+  /* Were `var(--green)` / `var(--warn)` — self-referential, so they
+     resolved to invalid and every site fell back to its own literal
+     (or, for sites with no fallback, painted as transparent/inherit).
+     Anchor them to real hex so the token layer actually works. */
+  --green: #50fa7b;
+  --warn: #f0ad4e;
+
+  /* Syntax highlighting */
+  --hl-bg: #1e2228;
+  --hl-fg: #9cdef2;
+  --hl-keyword: #c678dd;
+  --hl-string: #e5c07b;
+  --hl-comment: #828997;
+  --hl-function: #61afef;
+  --hl-number: #d19a66;
+  --hl-builtin: #56b6c2;
+  --hl-variable: #abb2bf;
+  --hl-params: #a8c0d4;
+
+  /* Semantic colors */
+  --color-error: #ff4444;
+  --color-error-light: #ff6666;
+  --color-success: #4caf50;
+  --color-warning: #f0ad4e;
+  --color-danger: #c0392b;
+  --color-recording: #ff3b30;
+  --color-recording-hover: #d63031;
+  --color-muted: #888;
+  --color-muted-alt: #6b7280;
+  --color-accent: #00aaff;
+  --color-agent-active: #00ff00;
+  --color-brand-blue: #3b82f6;
+  --color-blind-orange: #ff9800;
+  --color-save-green: var(--color-success);
+  --color-link-hover: #66c7ff;
+  --color-subheader: #6b8a94;
+  --select-bg: var(--bg);
+  --select-fg: var(--fg);
+  --select-option-bg: color-mix(in srgb, var(--panel) 74%, var(--bg));
+  --select-option-fg: var(--fg);
+  --select-option-active-bg: color-mix(in srgb, var(--accent, var(--red)) 24%, var(--panel));
+  /* Warm accent — used by the Goals/Today UI in Notes. Lives as a token so
+     themes can override without touching the goal CSS. */
+  --accent-warm: #d19a66;
+  --android-keyboard-inset: 0px;
+}
+
+:root.light {
+  --bg: #f5f5f5;
+  --fg: #2b2b2b;
+  --panel: #fff;
+  --border: #bbb;
+  --hl-bg: #f9f9f9;
+  --hl-fg: #2b2b2b;
+  --hl-keyword: #7928a1;
+  --hl-string: #986801;
+  --hl-comment: #6a737d;
+  --hl-function: #005cc5;
+  --hl-number: #986801;
+  --hl-builtin: #0070a0;
+  --hl-variable: #383a42;
+  --hl-params: #4a4f5c;
+  --select-bg: #eaeaea;
+  --select-fg: var(--fg);
+  --select-option-bg: var(--panel);
+  --select-option-fg: var(--fg);
+  --select-option-active-bg: color-mix(in srgb, var(--red) 16%, var(--panel));
+}
+
+/* ── Reset & Base ── */
+
+* { box-sizing: border-box; }
+
+/* ── Global accent-coloured text selection ── */
+::selection {
+  background: color-mix(in srgb, var(--accent, var(--red)) 30%, transparent);
+  color: var(--fg);
+}
+
+/* ── Global button active press micro-interaction ── */
+button:active:not(:disabled),
+.btn:active:not(:disabled),
+[role="button"]:active:not([aria-disabled="true"]) {
+  transform: scale(0.96);
+  transition: transform 0.08s ease;
+}
+
+html, body { overflow-x: hidden; height: 100%; margin: 0; overscroll-behavior: none; }
+body {
+  background-color: var(--bg);
+  color: var(--fg);
+  /* Keep the base padding transition for older layout paths that still adjust
+     the body directly. Edge docks reserve workspace room on the flex panes
+     below so left + right docks can coexist without skewing the whole body. */
+  transition: padding-left 160ms cubic-bezier(0.22, 0.61, 0.36, 1),
+              padding-right 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  font-family: var(--font-family, 'Fira Code', monospace);
+  display: flex;
+  height: 100%;
+  height: 100dvh; /* dynamic viewport height — adapts when mobile keyboard opens */
+  overflow: hidden;
+}
+
+html.android-webview body {
+  height: 100vh;
+  min-height: 100vh;
+}
+
+/* Self-hosted Fira Code font */
+@font-face { font-family: 'Fira Code'; font-weight: 300; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Light.woff2') format('woff2'); }
+@font-face { font-family: 'Fira Code'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Regular.woff2') format('woff2'); }
+@font-face { font-family: 'Fira Code'; font-weight: 600; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-SemiBold.woff2') format('woff2'); }
+@font-face { font-family: 'GohuFont'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/GohuFont.ttf') format('truetype'); }
+
+/* Self-hosted OpenDyslexic — dyslexia-friendly accessibility font option (SIL OFL 1.1) */
+@font-face { font-family: 'OpenDyslexic'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/OpenDyslexic-Regular.woff2') format('woff2'); }
+@font-face { font-family: 'OpenDyslexic'; font-weight: 700; font-style: normal; font-display: swap; src: url('/static/fonts/OpenDyslexic-Bold.woff2') format('woff2'); }
+
+/* Code block baseline */
+pre, code, .hljs {
+  font-size: 0.95em;
+  line-height: 1.5;
+}
+
+/* Scrollbar styling */
+@supports selector(::-webkit-scrollbar) {
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--panel);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, var(--accent, var(--red)), color-mix(in srgb, var(--accent, var(--red)) 40%, var(--panel)));
+    border-radius: 4px;
+    border: 2px solid var(--panel);
+    transition: background 0.3s;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, var(--accent, var(--red)), color-mix(in srgb, var(--accent, var(--red)) 70%, var(--fg)));
+  }
+}
+
+html {
+  scrollbar-color: var(--accent, var(--red)) var(--panel);
+  scrollbar-width: thin;
+}
+
+/* Utility */
+.red-text { color: var(--red); }
+
+/* ── Density Overrides ── */
+
+:root.density-compact { font-size: 13px; }
+:root.density-compact .msg { padding: 6px 10px; margin-bottom: 4px; }
+:root.density-compact .list-item { padding: 4px 8px; }
+:root.density-compact .sidebar .section { padding: 0; }
+:root.density-spacious { font-size: 16px; }
+:root.density-spacious .msg { padding: 14px 18px; margin-bottom: 12px; }
+:root.density-spacious .list-item { padding: 8px 12px; }
+:root.density-spacious .sidebar .section { padding: 0; }
+
+/* ── UI text-size scale (accessibility) ──
+   Density only changes the root font-size, which can't move the many
+   hard-coded px sizes. `zoom` scales the whole UI uniformly (px text
+   included) while keeping layout intact, unlike `transform: scale`. */
+:root.ui-scale-90  { --ui-scale-factor: 0.9;  zoom: var(--ui-scale-factor); }
+:root.ui-scale-110 { --ui-scale-factor: 1.1;  zoom: var(--ui-scale-factor); }
+:root.ui-scale-125 { --ui-scale-factor: 1.25; zoom: var(--ui-scale-factor); }
+:root.ui-scale-140 { --ui-scale-factor: 1.4;  zoom: var(--ui-scale-factor); }
+/* `zoom` changes how the 100dvh shell maps into the visible viewport. Divide
+   the shell by the active scale so bottom-pinned controls stay reachable at
+   every supported size. */
+:root.ui-scale-90 body,
+:root.ui-scale-110 body,
+:root.ui-scale-125 body,
+:root.ui-scale-140 body { height: calc(100dvh / var(--ui-scale-factor)); }
+/* Modals/panels under app-level zoom: divide their viewport caps by the same
+   factor so draggable headers and close buttons remain on-screen.
+   Desktop only — the mobile `!important` full-sheet rules win on small screens
+   and stay top-anchored, so their headers are already visible. */
+:root.ui-scale-90 .modal-content,
+:root.ui-scale-110 .modal-content,
+:root.ui-scale-125 .modal-content,
+:root.ui-scale-140 .modal-content          { max-height: calc(85dvh / var(--ui-scale-factor)); }
+:root.ui-scale-90 .cal-modal-content,
+:root.ui-scale-110 .cal-modal-content,
+:root.ui-scale-125 .cal-modal-content,
+:root.ui-scale-140 .cal-modal-content      { max-height: calc(88dvh / var(--ui-scale-factor)); }
+:root.ui-scale-90 .settings-modal-content,
+:root.ui-scale-110 .settings-modal-content,
+:root.ui-scale-125 .settings-modal-content,
+:root.ui-scale-140 .settings-modal-content { max-height: calc(85dvh / var(--ui-scale-factor)); }
+:root.ui-scale-90 #theme-popup,
+:root.ui-scale-110 #theme-popup,
+:root.ui-scale-125 #theme-popup,
+:root.ui-scale-140 #theme-popup            { max-height: min(calc(85dvh / var(--ui-scale-factor)), 480px); }
+/* Cookbook is the one modal that set its height inline (94vh), which beat the
+   .modal-content compensation above and overflowed the viewport at 1.25x
+   (header + close button pushed off-screen). Own its height here so the same
+   zoom compensation applies. */
+#cookbook-modal .modal-content             { height: 94vh; max-height: 94vh; }
+:root.ui-scale-90 #cookbook-modal .modal-content,
+:root.ui-scale-110 #cookbook-modal .modal-content,
+:root.ui-scale-125 #cookbook-modal .modal-content,
+:root.ui-scale-140 #cookbook-modal .modal-content { height: calc(94dvh / var(--ui-scale-factor)); max-height: calc(94dvh / var(--ui-scale-factor)); }
+/* PDF export modal also set its height inline (86vh) at v1.0; that inline cap
+   beat the .modal-content compensation above and shifted ~1vh at Default when
+   removed. Own its height here so Default is byte-for-byte 86vh and the same
+   1.25x compensation applies. */
+.pdf-export-overlay .modal-content { max-height: 86vh; }
+:root.ui-scale-90 .pdf-export-overlay .modal-content,
+:root.ui-scale-110 .pdf-export-overlay .modal-content,
+:root.ui-scale-125 .pdf-export-overlay .modal-content,
+:root.ui-scale-140 .pdf-export-overlay .modal-content { max-height: calc(86dvh / var(--ui-scale-factor)); }
+
+/* ── Background Patterns ── */
+
+:root { --bg-effect-intensity: 1; }
+
+/* Canvas-based effects — single source of truth for intensity */
+#synapse-canvas, #rain-canvas, #constellations-canvas,
+#perlin-flow-canvas, #petals-canvas, #sparkles-canvas,
+#embers-canvas {
+  opacity: var(--bg-effect-intensity, 1);
+}
+
+body.bg-pattern-dots {
+  background-image: radial-gradient(color-mix(in srgb, var(--bg-effect-color, var(--fg)) calc(5% * var(--bg-effect-intensity, 1)), transparent) 1px, transparent 1px);
+  background-size: 20px 20px; background-attachment: fixed;
+}
+body.bg-pattern-synapse {
+  /* CSS grid as base, canvas pulses overlay */
+  background-image: linear-gradient(color-mix(in srgb, var(--bg-effect-color, var(--fg)) calc(3.5% * var(--bg-effect-intensity, 1)), transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--bg-effect-color, var(--fg)) calc(3.5% * var(--bg-effect-intensity, 1)), transparent) 1px, transparent 1px);
+  background-size: 24px 24px; background-attachment: fixed;
+}
+body.bg-pattern-perlin-flow,
+body.bg-pattern-petals,
+body.bg-pattern-sparkles,
+body.bg-pattern-aurora {
+  /* canvas-only backgrounds */
+}

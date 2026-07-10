@@ -17,7 +17,7 @@ _HAS_NODE = shutil.which("node") is not None
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_layer_union_alpha_returns_null_for_non_array_layers():
     js = f"""
-    import {{ layerUnionAlpha, seamMask, layerBodyMask }} from '{_HELPER.as_posix()}';
+    import {{ layerUnionAlpha, seamMask, layerBodyMask }} from '{_HELPER.as_uri()}';
     console.log(JSON.stringify([
       layerUnionAlpha(10, 10, null),
       seamMask(10, 10, {{"bad": true}}),

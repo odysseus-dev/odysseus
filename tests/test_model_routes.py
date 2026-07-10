@@ -694,7 +694,9 @@ def test_lmstudio_error_for_bare_host_port_probes_v1_models(monkeypatch):
     # (the OpenAI-compatible branch lands on /v1/models for LM Studio).
     # _is_ollama_native_url would otherwise match localhost+empty path and
     # route to /api/tags, masking the LM Studio URL we want to assert on.
-    monkeypatch.setattr("src.llm_core._is_ollama_native_url", lambda url: False)
+    # The package facade re-exports this private helper, but _detect_provider's
+    # globals live in the defining module after the llm_core package split.
+    monkeypatch.setattr("src.llm_core._core._is_ollama_native_url", lambda url: False)
     msg = model_routes._model_endpoint_error_message(
         "http://localhost:1234",
         {"error": "HTTP 200"},

@@ -9,7 +9,7 @@ return, or moves the done-break, could silently flip this. See PR #1999 / #1997.
 import asyncio
 import json
 
-import src.agent_loop as al
+from src.agent_loop import _loop as al
 
 
 def _collect(gen):

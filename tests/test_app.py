@@ -82,10 +82,10 @@ class TestRouteFiles:
         assert os.path.exists(auth_routes), "auth_routes.py should exist"
 
     def test_chat_routes_exist(self):
-        """Test chat_routes.py exists"""
+        """Test the chunked chat routes package exists."""
         routes_path = os.path.dirname(os.path.dirname(__file__))
-        chat_routes = os.path.join(routes_path, "routes", "chat_routes.py")
-        assert os.path.exists(chat_routes), "chat_routes.py should exist"
+        chat_routes = os.path.join(routes_path, "routes", "chat", "__init__.py")
+        assert os.path.exists(chat_routes), "routes.chat package should exist"
 
     def test_memory_routes_exist(self):
         """Test memory_routes.py exists"""

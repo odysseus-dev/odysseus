@@ -48,9 +48,9 @@ def _untrusted_messages(messages):
 
 
 def _bust_prompt_cache():
-    from src import agent_loop
-    agent_loop._cached_base_prompt = None
-    agent_loop._cached_base_prompt_key = None
+    from src.agent_loop import _prompts
+    _prompts._cached_base_prompt = None
+    _prompts._cached_base_prompt_key = None
 
 
 # ── 1. Email writing style ───────────────────────────────────────────────────

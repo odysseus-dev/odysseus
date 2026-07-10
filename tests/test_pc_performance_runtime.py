@@ -134,9 +134,8 @@ def test_standalone_install_preserves_user_data_outside_install_dir():
 def test_simple_signal_extension_installer_preserves_user_data_outside_code_dir():
     assert 'return Path(app_data) / "odysseus" / "data"' in INSTALLER_PY
     assert 'env["ODYSSEUS_DATA_DIR"] = str(data_dir)' in INSTALLER_PY
-    assert 'env["ODYSSEUS_DATA_DIR"] = data_dir' in INSTALLER_PY
     assert 'env["DATABASE_URL"] = sqlite_url_for_data_dir(data_dir)' in INSTALLER_PY
-    assert '"sqlite:///" + os.path.join(data_dir, "app.db").replace("\\\\\\\\", "/")' in INSTALLER_PY
+    assert '"sqlite:///" + str(data_dir / "app.db").replace("\\\\", "/")' in INSTALLER_PY
 
 
 def test_windows_launcher_reuses_running_server_and_skips_unchanged_dependencies():

@@ -1,0 +1,3581 @@
+/* _editor.css — chunked from style.css */
+/* ── Window controls on the doc tab bar (minimize / fullscreen / close) —
+   same as every other modal window, so the document editor panel has its own
+   close/fullscreen/minimize at the top instead of only at the footer. ─ */
+.doc-tab-window-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.doc-tab-win-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  opacity: 0.55;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.doc-tab-win-btn:hover {
+  opacity: 0.85;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.doc-tab-win-btn:active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 15%, transparent);
+}
+.doc-tab-close-btn:hover {
+  background: var(--red, #e06c75) !important;
+  color: #fff !important;
+  opacity: 1 !important;
+}
+.doc-tab-close-btn:active {
+  background: color-mix(in srgb, var(--red, #e06c75) 80%, #000) !important;
+  color: #fff !important;
+}
+
+/* Ghost tab shown in the empty state (new, not-yet-saved document). Muted +
+   italic so it reads as a placeholder, and non-interactive so clicking it
+   can't hit the tab handlers (it has no data-doc-id). */
+.doc-tab.doc-tab-ghost {
+  /* New, not-yet-saved doc tab. It already carries .active, so it shows the
+     accent underline like any active tab — that's all we want. The old dashed
+     border + italic/dim "pending" styling looked weird, so they're gone. */
+  pointer-events: none;
+}
+.doc-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--fg);
+  opacity: 0.4;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.1s, background 0.1s;
+  flex-shrink: 0;
+  border-right: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  position: relative;
+}
+.doc-tab:hover {
+  opacity: 0.7;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.doc-tab.active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border-radius: 7px 7px 0 0;
+}
+.doc-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--red);
+}
+.doc-tab-title {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.doc-tab-title-input {
+  background: transparent;
+  border: 1px solid var(--fg);
+  border-radius: 2px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 0 4px;
+  height: 18px;
+  width: 120px;
+  max-width: 180px;
+  outline: none;
+}
+.doc-tab-lang {
+  font-size: 9px;
+  opacity: 0.5;
+}
+.doc-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.4;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 5px;
+  margin-left: 3px;
+  flex-shrink: 0;
+  align-self: center;
+  transition: opacity 0.12s;
+}
+.doc-tab-close:hover { opacity: 1; }
+/* Mobile-only footer (Close + Copy); hidden on desktop and in email mode. */
+.doc-mobile-footer { display: none; }
+.doc-tab-new {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.25;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 10px;
+  transition: opacity 0.1s;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+.doc-tab-new:hover {
+  opacity: 0.7;
+}
+.doc-tab-play {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.3;
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 10px;
+  line-height: 1;
+  transition: opacity 0.1s, color 0.1s;
+  flex-shrink: 0;
+}
+.doc-tab-play:hover {
+  opacity: 1;
+  color: var(--green, #4ec970);
+}
+.doc-tab-play.active {
+  opacity: 1;
+  color: var(--green, #4ec970);
+}
+.doc-tab.dragging {
+  opacity: 0.3;
+}
+.doc-tab.drag-over {
+  border-left: 2px solid var(--fg);
+}
+
+/* ---- HTML preview iframe ---- */
+.doc-html-preview {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: #fff;
+}
+
+/* ---- Editor header ---- */
+.doc-editor-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  /* Moved to the bottom as a footer: flex order pushes it last in the pane
+     column, and the divider flips to the top edge. */
+  order: 99;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+  min-height: 36px;
+  background: var(--bg);
+}
+/* ── Window control buttons (minimize / maximize / close) in the
+   doc-editor-header. Replaces the old dynamic divider chevron. ── */
+.doc-window-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  opacity: 0.55;
+  cursor: pointer;
+  flex-shrink: 0;
+  order: 0;  /* override legacy .doc-close-btn { order: -1 } */
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.doc-window-btn:hover {
+  opacity: 0.85;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.doc-window-btn:active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 15%, transparent);
+}
+.doc-close-btn:hover {
+  background: var(--red, #e06c75);
+  color: #fff;
+  opacity: 1;
+}
+.doc-close-btn:active {
+  background: color-mix(in srgb, var(--red, #e06c75) 80%, #000);
+  color: #fff;
+}
+/* Version now lives in the document tab, not the footer. */
+#doc-version-badge { display: none !important; }
+/* Language icon chip on doc tabs — sits between the version pill and title.
+   Hidden when empty so docs without a language don't get awkward spacing. */
+.doc-tab-lang {
+  display: inline-flex; align-items: center;
+  flex-shrink: 0;
+  align-self: center;
+}
+.doc-tab-lang:empty { display: none; }
+.doc-tab-lang svg { display: block; }
+
+.doc-tab-version {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  align-self: center;
+  line-height: 1.4;
+  /* Sits to the LEFT of the title now — space it off the title text. */
+  margin-right: 6px;
+  /* Accent pill so it's obvious the version is a clickable control. */
+  color: var(--accent-primary, var(--red));
+  border: 1px solid color-mix(in srgb, var(--accent-primary, var(--red)) 45%, transparent);
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 12%, transparent);
+  border-radius: 9px;
+}
+.doc-tab-version:hover {
+  border-color: var(--accent-primary, var(--red));
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 22%, transparent);
+}
+.doc-close-btn {
+  order: -1;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+.doc-close-btn:hover {
+  opacity: 1;
+}
+
+.doc-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  justify-content: flex-end;
+}
+.doc-left .doc-editor-actions {
+  margin-left: 0;
+}
+
+.doc-version-badge {
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--red) 55%, transparent);
+  color: var(--red);
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s, border-color 0.1s;
+  opacity: 0.9;
+}
+.doc-version-badge:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--red) 20%, transparent);
+  border-color: var(--red);
+}
+
+.doc-stream-indicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--accent);
+  opacity: 0.9;
+  white-space: nowrap;
+  animation: doc-stream-pulse 1.5s ease-in-out infinite;
+}
+.doc-stream-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+@keyframes doc-stream-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+.doc-updated-flash {
+  animation: doc-update-flash 0.6s ease-out;
+}
+@keyframes doc-update-flash {
+  0%   { box-shadow: inset 0 0 0 2px var(--accent); }
+  100% { box-shadow: inset 0 0 0 2px transparent; }
+}
+
+/* In the doc footer the type picker sits next to the accent Copy/Export split —
+   match its 28px height and 6px radius so the right-hand controls line up. */
+.doc-actions-footer #doc-language-select {
+  height: 28px;
+  border-radius: 6px;
+  font-size: 11px;
+  top: 0;
+}
+/* Lang-type icon shown to the LEFT of the language select. Browsers won't
+   render SVG inside <option>, so this surface the current selection's icon
+   externally. */
+#doc-language-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px; height: 18px;
+  color: var(--accent-primary, var(--red));
+  flex-shrink: 0;
+}
+#doc-language-icon:empty { display: none; }
+#doc-language-icon svg { display: block; }
+
+/* Visually hidden but available to assistive tech (screen readers, axe).
+   Use for content that should be announced/structural but not painted —
+   e.g. the persistent page <h1>. */
+.a11y-visually-hidden {
+  position: absolute !important;
+  width: 1px !important; height: 1px !important;
+  padding: 0 !important; margin: -1px !important;
+  overflow: hidden !important; clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important; border: 0 !important;
+}
+
+/* ── Custom language type picker (replaces visible chrome of native <select>
+   — <option>s can't render SVG). Hidden select stays as the source of truth. */
+.doc-langpicker-native-hidden {
+  position: absolute !important;
+  width: 1px !important; height: 1px !important;
+  padding: 0 !important; margin: -1px !important;
+  overflow: hidden !important; clip: rect(0,0,0,0) !important;
+  border: 0 !important;
+}
+.doc-langpicker-trigger {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 8px 0 10px;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px;
+  font-size: 11px; cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.doc-langpicker-trigger:hover {
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 60%, var(--border));
+}
+.doc-langpicker-trigger svg { display: block; flex-shrink: 0; }
+.doc-langpicker-label {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 90px;
+}
+.doc-langpicker-ico-blank {
+  display: inline-block; width: 14px; height: 14px; flex-shrink: 0;
+}
+.doc-langpicker-menu {
+  background: var(--bg);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.32);
+  max-height: 60vh; overflow-y: auto;
+  z-index: 10000;
+  min-width: 160px;
+}
+.doc-langpicker-item {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: none; color: var(--fg);
+  border: none; border-radius: 5px;
+  font-size: 12px; text-align: left;
+  cursor: pointer;
+}
+.doc-langpicker-item:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.doc-langpicker-item.is-selected {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 14%, transparent);
+  color: var(--accent-primary, var(--red));
+}
+.doc-langpicker-item svg { display: block; flex-shrink: 0; }
+.doc-langpicker-item .doc-langpicker-label { max-width: 220px; }
+
+.doc-language-select {
+  background-color: var(--bg);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239cdef2' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 15 12 9 18 15'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 4px center;
+  color: var(--fg);
+  color-scheme: dark;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  position: relative;
+  top: 0;
+  font-family: inherit;
+  font-size: 10px;
+  padding: 2px 20px 2px 8px;
+  height: 22px;
+  /* Fixed width so the right-anchored chevron doesn't shift when the selected
+     option's text width changes. */
+  width: 96px;
+  text-overflow: ellipsis;
+  opacity: 0.8;
+  cursor: pointer;
+  -moz-appearance: none;
+  appearance: none;
+}
+/* Light theme: tint the chevron with the light foreground instead of cyan. */
+:root.light .doc-language-select {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%232b2b2b' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 15 12 9 18 15'/></svg>");
+}
+/* New-tab "+" spins on hover, like the library sidebar "+". */
+.doc-tab-new svg { transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.doc-tab-new:hover svg { transform: rotate(180deg) scale(1.15); }
+
+.doc-action-btn {
+  background: none;
+  color: var(--fg);
+  border: none;
+  font-family: inherit;
+  font-size: 10px;
+  padding: 2px 8px;
+  height: 22px;
+  cursor: pointer;
+  opacity: 0.45;
+  transition: opacity 0.1s;
+}
+.doc-action-btn:hover {
+  opacity: 1;
+}
+.doc-action-icon-btn {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.3;
+  cursor: pointer;
+  padding: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.1s;
+}
+.doc-action-icon-btn:hover {
+  opacity: 1;
+}
+/* The "T" icon stays centered in the fixed-size button so it grows
+   symmetrically (from the center) instead of jumping around as the size
+   changes. The S/M/L letter is pinned to the bottom-right corner, absolutely
+   positioned so it never shifts the icon either. */
+#doc-fontsize-btn { transform: translateY(-1px); }
+#doc-fontsize-btn svg { flex: 0 0 auto; }
+.doc-fontsize-levels {
+  position: absolute;
+  right: 6px;
+  bottom: 3px;
+  display: inline-flex;
+  line-height: 1;
+  pointer-events: none;
+}
+.doc-fontsize-levels i {
+  font-style: normal;
+  font-weight: 700;
+  font-size: 7px;
+  /* Bare --accent is undefined in this codebase, was falling back to the
+     hardcoded blue #4a9eff — use the real theme accent. */
+  color: var(--accent-primary, var(--red));
+  opacity: 1;
+}
+.doc-fontsize-levels i.active { opacity: 1; }
+/* Collapsed buttons hidden in header, shown in overflow menu */
+.doc-collapsible-btn.doc-collapsed { display: none !important; }
+.doc-overflow-wrapper { order: -1; }
+.doc-overflow-toggle { opacity: 0.5; }
+.doc-overflow-toggle:hover { opacity: 1; }
+.doc-overflow-menu {
+  display: none;
+  position: fixed;
+  z-index: 9999;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 0;
+  min-width: 140px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.doc-overflow-menu.open { display: block; }
+.doc-overflow-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 12px;
+  background: none;
+  border: none;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s;
+}
+.doc-overflow-item:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.doc-overflow-item svg { flex-shrink: 0; opacity: 0.5; }
+
+/* Markdown Edit/Preview two-icon switch — segmented, styled to match the Copy
+   split button. The active half gets a static highlight (no sliding). */
+.md-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+  flex-shrink: 0;
+  height: 22px;
+}
+.md-view-toggle .md-view-opt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 26px;
+  width: auto;
+  height: 100%;
+  padding: 0 7px !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: none !important;
+  color: var(--fg);
+  opacity: 0.45;
+  cursor: pointer;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+}
+.md-view-label {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+.md-view-toggle .md-view-opt:hover { opacity: 0.8; }
+.md-view-toggle .md-view-opt.active {
+  opacity: 1;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 8%, transparent) !important;
+  /* "Punch" pop when a side becomes active (only fires on an actual switch —
+     re-applying .active without a change doesn't restart the animation). */
+  animation: md-view-punch 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes md-view-punch {
+  0%   { transform: scale(0.8); }
+  55%  { transform: scale(1.18); }
+  100% { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .md-view-toggle .md-view-opt.active { animation: none; }
+}
+
+.doc-md-toolbar.md-preview-active,
+.doc-md-toolbar.md-write-active {
+  overflow: visible;
+  -webkit-mask-image: none;
+          mask-image: none;
+  z-index: 3;
+}
+.doc-md-toolbar.md-preview-active {
+  border-bottom-color: var(--border);
+}
+.doc-md-toolbar.md-preview-active #doc-md-view-toggle,
+.doc-md-toolbar.md-write-active #doc-md-view-toggle {
+  align-self: flex-end;
+  height: 28px;
+  margin-bottom: -1px;
+  border-radius: 7px 7px 0 0;
+  box-shadow: 0 -1px 0 var(--border), -1px 0 0 var(--border), 1px 0 0 var(--border);
+}
+.doc-md-toolbar.md-preview-active #doc-md-view-toggle {
+  background: var(--bg);
+  border-bottom-color: var(--bg);
+}
+.doc-md-toolbar.md-write-active #doc-md-view-toggle {
+  background: var(--sidebar-bg, var(--panel));
+  border-bottom-color: var(--sidebar-bg, var(--panel));
+}
+.doc-md-toolbar.md-preview-active #doc-md-view-toggle .md-view-opt.active {
+  background: var(--bg) !important;
+}
+.doc-md-toolbar.md-write-active #doc-md-view-toggle .md-view-opt.active {
+  background: var(--sidebar-bg, var(--panel)) !important;
+}
+.doc-md-preview.md-preview-active {
+  border-top: 1px solid var(--border);
+  margin-top: -1px;
+}
+
+/* Mobile: the doc/email footer controls (format toggle, export button, export
+   menu) were slimmer than the Send button, so the row looked ragged. Bump them
+   to match the Send button height (and give the export/overflow menu bigger,
+   touch-friendly rows). */
+@media (max-width: 768px) {
+  .md-view-toggle { height: 28px; }
+  .md-view-toggle .md-view-opt { min-width: 38px; padding: 0 8px !important; }
+  .doc-action-icon-btn { padding: 6px; }
+  .email-send-btn { height: 28px; }
+  /* The type/language picker was the slim one stuck at 22px — match it to the
+     rest of the row. */
+  .doc-language-select { height: 28px; font-size: 13px; padding: 2px 22px 2px 10px; }
+  .doc-overflow-item { font-size: 13px; padding: 9px 14px; }
+  .doc-overflow-item .overflow-icon svg,
+  .doc-overflow-item svg { width: 16px; height: 16px; }
+  .email-more-menu .dropdown-item-compact { padding: 9px 12px; font-size: 13px; }
+
+  /* The doc footer is tight once the run/preview toggle joins it, so on mobile
+     go icon-only for Close, Undo & Copy (their icons are clear).
+     font-size:0 drops the text node next to the SVG (the SVG has fixed w/h, so
+     it's unaffected). Slightly narrower type picker buys a little more room. */
+  #doc-actions-footer #doc-undo-btn span,
+  #doc-actions-footer #doc-footer-close-btn span,
+  #doc-email-actions #doc-email-discard-btn span { display: none; }
+  #doc-actions-footer #doc-undo-btn,
+  #doc-actions-footer #doc-footer-close-btn,
+  #doc-email-actions #doc-email-discard-btn { gap: 0; padding: 0 9px; }
+  #doc-actions-footer #doc-footer-copy-btn { gap: 0; padding: 0 13px; font-size: 0; }
+  /* In reply mode the button carries a "Reply" label that should stay visible
+     (the icon-only treatment above is only for the plain Copy action). */
+  #doc-actions-footer #doc-footer-copy-btn[data-mode="reply"] { gap: 5px; padding: 0 13px; font-size: 12px; }
+  #doc-actions-footer #doc-language-select { width: 80px; }
+}
+
+/* Markdown formatting toolbar */
+/* In code-mode the toolbar only hosts the view toggles + utility buttons
+   (font-size, diff). Hide markdown-only formatting controls — bold,
+   italic, headings, list, link, attach, code-dropdown, emoji, hr, and
+   the PDF-only buttons. The view toggles + fontsize + diff stay. */
+.doc-md-toolbar[data-mode="code"] [data-md],
+.doc-md-toolbar[data-mode="code"] .md-dd-toggle,
+.doc-md-toolbar[data-mode="code"] #md-toolbar-attach-btn,
+.doc-md-toolbar[data-mode="code"] #md-toolbar-emoji-slot,
+.doc-md-toolbar[data-mode="code"] .md-toolbar-pdf-only,
+.doc-md-toolbar[data-mode="code"] .md-toolbar-sep {
+  display: none !important;
+}
+.doc-md-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 1px;
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+  overflow: hidden;
+  height: 36px;
+  position: relative;
+  /* Same edge fade as the tab strip — toolbar buttons dissolve into the bar's
+     background at the edges instead of being hard-cut when they overflow. */
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+          mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+}
+.doc-md-toolbar button {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.85;
+  padding: 4px 7px;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.3;
+  transition: opacity 0.1s;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* Some toolbar buttons baked in svg{opacity:0.7} via inline styles, which
+   compounded with the button's own opacity to look almost invisible.
+   Force the inline svg opacity back to 1 inside the toolbar — the button
+   wrapper's 0.85 is the only fade we need. */
+.doc-md-toolbar button svg[style*="opacity"] { opacity: 1 !important; }
+.doc-md-toolbar button:hover {
+  opacity: 1;
+}
+.doc-md-toolbar button:active {
+  opacity: 0.6;
+}
+/* Active formatting state — set by the email WYSIWYG sync. Mirrors the
+   selection's current marks (B/I/S, heading level, list) so the toolbar
+   acts as an indicator, not just a launcher. */
+.doc-md-toolbar button.is-active {
+  opacity: 1;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+}
+.doc-md-toolbar button.is-active:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 22%, transparent);
+}
+/* No black tap-flash / focus background on the doc toolbar + tab controls —
+   they're icon buttons, the opacity change is the only feedback we want. */
+.doc-md-toolbar button,
+.doc-tab-new,
+.doc-tab-arrow,
+.doc-tab-play {
+  -webkit-tap-highlight-color: transparent;
+}
+.doc-md-toolbar button:focus,
+.doc-md-toolbar button:focus-visible,
+.doc-tab-new:focus,
+.doc-tab-new:focus-visible,
+.doc-tab-arrow:focus,
+.doc-tab-arrow:focus-visible {
+  outline: none;
+  background: none;
+}
+/* Grouped formatting dropdown toggles (heading / code / list) */
+.md-dd-toggle { gap: 1px !important; }
+/* Drop the dropdown chevron lower and tint it accent so it reads as a menu cue. */
+.md-dd-toggle svg { opacity: 1; margin-left: 1px; flex-shrink: 0; transform: translateY(4px); color: var(--accent-primary, var(--red, #4a9eff)); }
+.md-dd-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  flex-shrink: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  opacity: 0.7;
+}
+.md-toolbar-sep {
+  width: 1px;
+  height: 12px;
+  background: color-mix(in srgb, var(--border) 60%, transparent);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+.md-toolbar-items {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  scroll-behavior: smooth;
+}
+.md-toolbar-items::-webkit-scrollbar { display: none; }
+/* On a PDF, the annotation tools (text / checkmark / signature) are the primary
+   actions — pull them to the far left of the toolbar. `order` is visual only
+   (they're display:none on non-PDF docs), so it has no effect elsewhere. */
+.md-toolbar-items #doc-pdf-add-text-btn { order: -3; }
+.md-toolbar-items #doc-pdf-add-check-btn { order: -2; }
+.md-toolbar-items #doc-pdf-add-sign-btn { order: -1; }
+@media (min-width: 769px) {
+  .md-toolbar-items #doc-pdf-add-text-btn {
+    margin-left: 14px;
+  }
+}
+/* Stack the signature icon over a tiny "sign" caption so the tool reads
+   clearly (the icon alone is ambiguous). The JS toggles inline display
+   none/'' for PDF mode, so this flex display only applies when shown. */
+#doc-pdf-add-sign-btn {
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  line-height: 1;
+}
+/* Pull the icon down toward the "sign" label so they read as one unit. */
+#doc-pdf-add-sign-btn svg { transform: translateY(2px); }
+.doc-pdf-sign-label {
+  font-size: 6.5px;
+  letter-spacing: 0.3px;
+  margin-top: 0;
+  opacity: 1;
+  color: var(--accent, var(--red));
+}
+/* Edge scroll arrows — appear when the toolbar has more icons off-screen. */
+.md-scroll-arrow {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  width: 28px;
+  display: flex;
+  align-items: center;
+  border: none;
+  cursor: pointer;
+  color: var(--fg);
+  padding: 0 !important;
+  min-height: 0 !important;
+  opacity: 1 !important;
+  z-index: 6;
+}
+.md-scroll-arrow svg { position: relative; top: 2px; opacity: 0.75; transition: opacity 0.1s; }
+.md-scroll-arrow:hover svg { opacity: 1; }
+@media (min-width: 769px) {
+  /* On desktop the arrow rides 2px lower than the toolbar baseline. */
+  .md-scroll-arrow svg { top: 0; }
+}
+.md-scroll-left {
+  left: 0;
+  justify-content: flex-start;
+  padding-left: 3px;
+  /* Mostly-solid toolbar bg so the icons behind the arrow are hidden, fading
+     to transparent only at the inner edge. */
+  background: linear-gradient(to right, var(--bg) 0%, var(--bg) 80%, transparent 100%);
+}
+.md-scroll-right {
+  right: 0;
+  justify-content: flex-end;
+  padding-right: 3px;
+  background: linear-gradient(to left, var(--bg) 0%, var(--bg) 80%, transparent 100%);
+}
+.md-toolbar-overflow-wrapper {
+  position: relative;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.md-toolbar-overflow-toggle {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--fg);
+  opacity: 0.4;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: opacity 0.1s;
+}
+.md-toolbar-overflow-toggle:hover {
+  opacity: 1;
+}
+.md-toolbar-overflow-menu {
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  min-width: 0;
+  width: max-content;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  backdrop-filter: blur(12px);
+}
+.md-toolbar-overflow-menu.open {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  max-width: 200px;
+}
+.md-toolbar-overflow-item {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--fg);
+  opacity: 0.5;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.3;
+  transition: opacity 0.1s, background 0.1s;
+}
+.md-toolbar-overflow-item:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border-color: var(--border);
+}
+
+/* Find bar */
+.doc-find-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--panel, var(--bg));
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.doc-find-input {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  outline: none;
+}
+.doc-find-input:focus { border-color: var(--accent); }
+.doc-find-count {
+  font-size: 11px;
+  opacity: 0.6;
+  white-space: nowrap;
+  min-width: 50px;
+  text-align: center;
+}
+.doc-find-nav, .doc-find-close {
+  background: none;
+  border: none;
+  color: var(--fg);
+  cursor: pointer;
+  padding: 2px 5px;
+  font-size: 14px;
+  border-radius: 3px;
+  opacity: 0.7;
+}
+.doc-find-nav:hover, .doc-find-close:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 10%, transparent); }
+
+/* Editor — highlighted overlay + transparent textarea.
+   Lock the editor wrap to a fixed text-column width, centered horizontally
+   in the doc pane. This eliminates wrap-related drift bugs as a class:
+   the textarea + overlay always have the same available width regardless
+   of viewport, sidebar state, dock state, or window resize. Whitespace on
+   either side reads like a writing-app column (Bear / iA Writer pattern).
+   container-type: inline-size lets us hide the line-number gutter via a
+   container query when the editor's own width is narrow (rather than
+   viewport-width, which would miss the case of a narrow side-docked
+   editor inside a wide window). */
+.doc-editor-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  /* Cap the column at ~820px outer (~760px content area after the 60px
+     of horizontal padding the textarea+overlay use for the gutter). */
+  max-width: 820px;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  overflow: hidden;
+  background: var(--bg);
+  container-type: inline-size;
+  container-name: doceditor;
+}
+
+/* When the editor itself is narrow, soft-wrap makes one logical line
+   span multiple visual rows but the gutter still shows ONE number per
+   logical line — so the gutter and the visible rows fall out of sync.
+   Hide the gutter (and reclaim the 48px of left padding it reserved)
+   below a threshold where the mismatch reads as a glitch. */
+@container doceditor (max-width: 360px) {
+  .doc-line-numbers { display: none !important; }
+  .doc-editor-textarea,
+  .doc-editor-highlight {
+    padding-left: 12px !important;
+  }
+}
+.doc-line-numbers {
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  width: 36px;
+  padding: 10px 8px 10px 0;
+  margin: 0;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: right;
+  color: var(--fg);
+  opacity: 0.18;
+  background: var(--bg);
+  overflow: hidden;
+  white-space: pre;
+  tab-size: 4;
+  font-variant-ligatures: none !important;
+  font-feature-settings: "kern" 0, "liga" 0, "calt" 0, "dlig" 0 !important;
+  font-kerning: none !important;
+  text-rendering: geometricPrecision !important;
+  z-index: 2;
+  pointer-events: none;
+  user-select: none;
+}
+.doc-line-number-content {
+  display: block;
+  will-change: transform;
+}
+.doc-line-number-row {
+  position: relative;
+  box-sizing: border-box;
+}
+.doc-line-number-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 36px;
+  text-align: right;
+}
+.doc-line-number-measure {
+  position: absolute !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  left: -9999px !important;
+  top: 0 !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow: hidden !important;
+  padding: 0 !important;
+  border: 0 !important;
+  resize: none !important;
+  box-sizing: content-box !important;
+  color: transparent !important;
+  background: transparent !important;
+}
+/* Find marks live in the syntax-highlight overlay, which sits at
+   z-index:0 under a transparent textarea — so they're always visible
+   through the text layer. The previous color-mix variant could
+   compute to near-invisible on themes with dark/desaturated accents;
+   forced solid colors + !important so it ALWAYS pops. */
+mark.doc-find-mark {
+  background: var(--accent) !important;
+  color: var(--bg) !important;
+  border-radius: 2px;
+  padding: 0 1px;
+  box-shadow: 0 0 0 1px var(--accent);
+}
+mark.doc-find-mark.current {
+  background: var(--accent) !important;
+  color: var(--bg) !important;
+  box-shadow: 0 0 0 2px var(--fg);
+  outline: 1px solid var(--fg);
+}
+
+/* Find-match overlay rects — drawn on top of the textarea, work in
+   every doc mode (markdown, email, plain) regardless of whether the
+   syntax-highlight overlay is shown. Translucent band so the underlying
+   text stays readable; current match gets a brighter solid band. */
+.doc-find-rect {
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 65%, transparent);
+}
+.doc-find-rect.current {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.doc-editor-highlight {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  margin: 0;
+  padding: 10px 12px 10px 48px;
+  font-family: inherit;
+  font-size: 11px !important;
+  line-height: 1.45 !important;
+  tab-size: 4;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow: hidden;
+  /* `scrollbar-gutter: stable` reserves scrollbar-track width in the
+     layout even when no scrollbar is shown. The textarea below has the
+     same setting — without this, the textarea would consume scrollbar
+     space the moment its content overflows vertically, shrinking its
+     content width and wrapping lines earlier than the overlay. The
+     visible-text-drift bug user reports as "after ~16 rows it wraps
+     even though there's space" was caused by exactly that. */
+  scrollbar-gutter: stable;
+  scrollbar-width: none;
+  pointer-events: none;
+  z-index: 0;
+  background: var(--sidebar-bg, var(--panel)) !important;
+  color: var(--hl-fg, var(--fg));
+  border: none;
+  /* Disable ligatures + kerning everywhere in the editor. Monospace fonts
+     like Fira Code form ligatures for `=>`, `!=`, `->`, `==` etc., but
+     hljs splits those pairs into separate <span>s in the overlay, which
+     breaks the ligature on this side while the textarea still forms it.
+     Result: visible row drift whenever code contains those pairs. Pin
+     ligatures off in both layers (textarea below) so widths stay equal. */
+  font-variant-ligatures: none !important;
+  font-feature-settings: "kern" 0, "liga" 0, "calt" 0, "dlig" 0 !important;
+  font-kerning: none !important;
+  text-rendering: geometricPrecision !important;
+  box-sizing: border-box;
+}
+.doc-editor-highlight::-webkit-scrollbar { display: none; }
+
+/* Document font size options */
+.doc-font-m .doc-editor-textarea,
+.doc-font-m .doc-editor-highlight,
+.doc-font-m .doc-line-numbers { font-size: 13px !important; }
+.doc-font-l .doc-editor-textarea,
+.doc-font-l .doc-editor-highlight,
+.doc-font-l .doc-line-numbers { font-size: 15px !important; }
+.doc-email-richbody.doc-font-m { font-size: 15px !important; }
+.doc-email-richbody.doc-font-l { font-size: 17px !important; }
+/* Markdown base text should match chat text color, not code color */
+.doc-editor-highlight .language-markdown {
+  color: var(--fg) !important;
+}
+.doc-editor-highlight code,
+.doc-editor-highlight code.hljs,
+.doc-editor-highlight .hljs {
+  font-family: inherit;
+  font-size: inherit !important;
+  line-height: inherit !important;
+  background: transparent !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  overflow: hidden !important;
+  display: block;
+  pointer-events: none;
+}
+.doc-editor-textarea {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  width: 100%;
+  height: 100% !important;
+  max-height: none !important;
+  min-height: 0 !important;
+  z-index: 1;
+  background: transparent !important;
+  color: transparent !important;
+  color-scheme: dark;
+  caret-color: var(--fg);
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: inherit;
+  /* Caret position only matches the underlying highlight if BOTH layers use
+     identical metrics — !important on font-size + line-height defends against
+     anything else in the cascade nudging the textarea but not the overlay. */
+  font-size: 11px !important;
+  line-height: 1.45 !important;
+  padding: 10px 12px 10px 48px;
+  overflow-y: scroll;
+  /* Pair with .doc-editor-highlight's scrollbar-gutter: stable so the
+     textarea's content width DOESN'T shrink the moment its scrollbar
+     appears (overflow-y: scroll keeps scrollbar permanent, gutter
+     reserves the space layout-wise). Without this, line wrap diverges
+     between textarea and overlay whenever content exceeds the visible
+     area — caret stays right, but typed text appears on a different row
+     than the caret. */
+  scrollbar-gutter: stable;
+  /* Show a real scrollbar for long documents. scrollbar-gutter above keeps
+     the text column stable so the gutter, textarea, and find overlay stay
+     metrically aligned while the scrollbar is present. */
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--fg) 28%, transparent) transparent;
+  -webkit-overflow-scrolling: touch;
+  tab-size: 4;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  -moz-appearance: none;
+  appearance: none;
+  box-sizing: border-box;
+  /* Mirror the ligature/kerning lockdown from .doc-editor-highlight above.
+     Without this the textarea forms `=>`/`!=`/`->`/`==` as single-glyph
+     ligatures while the overlay can't (hljs splits the pair into
+     separate spans), so glyph widths diverge and the visible text drifts
+     down relative to the caret as code accumulates. */
+  font-variant-ligatures: none !important;
+  font-feature-settings: "kern" 0, "liga" 0, "calt" 0, "dlig" 0 !important;
+  font-kerning: none !important;
+  text-rendering: geometricPrecision !important;
+}
+.doc-editor-textarea::-webkit-scrollbar { width: 8px; }
+.doc-editor-textarea::-webkit-scrollbar-track { background: transparent; }
+.doc-editor-textarea::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 24%, transparent);
+  border-radius: 999px;
+}
+.doc-editor-textarea::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--fg) 36%, transparent);
+}
+.doc-editor-textarea:hover,
+.doc-editor-textarea:focus,
+.doc-editor-textarea:active {
+  background: transparent !important;
+  /* Used to force `color: transparent` here so the hidden two-layer
+     textarea wouldn't bleed through on hover/focus. Now that the
+     textarea renders its OWN visible text (overlay is hidden), forcing
+     transparent here makes typed text disappear the moment the cursor
+     enters the page. Keep the visible fg color instead. */
+  color: var(--fg) !important;
+  outline: none !important;
+}
+.doc-editor-textarea::placeholder {
+  color: var(--fg);
+  opacity: 0.25;
+}
+/* Show real text when selecting so copy/paste is visible */
+.doc-editor-textarea::selection {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+/* ---- Selection indicator badge ---- */
+.doc-selection-badge {
+  font-size: 10px;
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--red) 30%, transparent);
+  border-radius: 4px;
+  padding: 1px 4px 1px 6px;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.doc-selection-clear {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.5;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.doc-selection-clear:hover {
+  opacity: 1;
+  color: var(--red, var(--color-error));
+}
+.doc-edit-tag {
+  font-size: 0.75em;
+  opacity: 0.5;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-right: 2px;
+  white-space: nowrap;
+}
+/* Attachment cards in user messages */
+.attach-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.attach-card {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  /* Same border as the chat bubbles. */
+  border: 1px solid var(--bubble-border, var(--border));
+  font-size: 12px;
+  transition: background 0.15s;
+}
+.attach-card[style*="cursor: pointer"]:hover,
+.attach-card[data-file-id]:hover {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.attach-card-icon {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+.attach-card-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+.attach-card-size {
+  opacity: 0.45;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.history-attach-card {
+  cursor: default;
+  opacity: 0.82;
+}
+.history-attach-card .attach-card-size {
+  text-transform: lowercase;
+}
+/* Import prompt banner (above chatbar) */
+.import-prompt-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin: 0 auto 6px;
+  max-width: 800px;
+  background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--fg);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  backdrop-filter: blur(12px);
+  animation: modal-enter 0.15s ease-out;
+}
+.import-prompt-banner span { flex: 1; }
+.import-prompt-banner button {
+  padding: 3px 12px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.import-prompt-banner button:hover {
+  border-color: var(--fg);
+}
+.import-prompt-dismiss {
+  border: none !important;
+  background: none !important;
+  opacity: 0.5;
+  font-size: 16px !important;
+  padding: 0 4px !important;
+}
+.import-prompt-dismiss:hover { opacity: 1; background: none !important; }
+.doc-selection-overlay {
+  position: absolute;
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+  border-left: 2px solid color-mix(in srgb, var(--red) 50%, transparent);
+  pointer-events: none;
+  z-index: 0;
+  transition: top 0.05s;
+}
+
+/* ── Suggestion comments (Google Docs style) ── */
+.doc-suggestion-highlight {
+  position: absolute;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-left: 3px solid var(--accent);
+  pointer-events: none;
+  z-index: 1;
+  transition: top 0.1s, opacity 0.15s;
+}
+/* Suggestion card — fixed next to editor, anchored to the change */
+.doc-suggestion-card {
+  position: fixed;
+  width: 250px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 12px 12px 10px;
+  font-size: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+  animation: suggestion-enter 0.25s ease-out;
+  z-index: 250;
+  overflow: visible;
+}
+/* Arrow pointing toward the editor */
+.doc-suggestion-card::before {
+  content: '';
+  position: absolute;
+  top: 16px;
+  left: -10px;
+  width: 18px;
+  height: 18px;
+  background: var(--panel);
+  border-left: 2px solid var(--accent);
+  border-bottom: 2px solid var(--accent);
+  transform: rotate(45deg);
+  z-index: 1;
+}
+.doc-suggestion-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.doc-suggestion-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.doc-suggestion-nav-btn {
+  background: none;
+  border: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 4px;
+  opacity: 0.35;
+  transition: opacity 0.1s;
+}
+.doc-suggestion-nav-btn:hover { opacity: 1; }
+.doc-suggestion-close {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.3;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 6px 8px;
+  margin: -6px -8px;
+  border-radius: 6px;
+  transition: opacity 0.1s, background 0.1s;
+}
+.doc-suggestion-close:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.doc-suggestion-counter {
+  font-size: 10px;
+  opacity: 0.4;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+/* Inline diff markers — injected into the code highlight element */
+.sugg-inline-del {
+  background: color-mix(in srgb, var(--red) 20%, transparent);
+  color: color-mix(in srgb, var(--red) 70%, var(--fg));
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, var(--red) 40%, transparent);
+  border-radius: 2px;
+  padding: 0 2px;
+}
+.sugg-inline-add {
+  background: color-mix(in srgb, var(--green) 25%, transparent);
+  color: var(--green);
+  border-radius: 2px;
+  padding: 0 2px;
+}
+/* ---- Diff mode ---- */
+.diff-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  background: color-mix(in srgb, var(--fg) 4%, var(--bg));
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.diff-toolbar-status {
+  opacity: 0.5;
+  font-size: 10px;
+  margin-right: auto;
+}
+.diff-toolbar-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 10px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s, background 0.15s;
+}
+.diff-toolbar-btn:hover {
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);
+}
+.diff-toolbar-btn-accept { color: #58a6ff; border-color: color-mix(in srgb, #58a6ff 36%, transparent); }
+.diff-toolbar-btn-accept:hover { border-color: #58a6ff; background: color-mix(in srgb, #58a6ff 12%, transparent); }
+.diff-toolbar-btn-reject { color: #f2cc60; border-color: color-mix(in srgb, #f2cc60 36%, transparent); }
+.diff-toolbar-btn-reject:hover { border-color: #f2cc60; background: color-mix(in srgb, #f2cc60 12%, transparent); }
+.diff-line-del {
+  display: block;
+  background: color-mix(in srgb, #f2cc60 24%, transparent);
+  border-left: 3px solid #f2cc60;
+  color: #f2cc60;
+  padding-left: 4px;
+  margin-left: -7px;
+  text-decoration: line-through;
+}
+.diff-line-add {
+  display: block;
+  background: color-mix(in srgb, #58a6ff 24%, transparent);
+  border-left: 3px solid #58a6ff;
+  color: #58a6ff;
+  padding-left: 4px;
+  margin-left: -7px;
+}
+/* Inline diff summary (version history cards) */
+.diff-del {
+  color: #f2cc60;
+  background: color-mix(in srgb, #f2cc60 16%, transparent);
+  text-decoration: line-through;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+.diff-add {
+  color: #58a6ff;
+  background: color-mix(in srgb, #58a6ff 16%, transparent);
+  font-weight: 600;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+.diff-line-equal {
+  display: block;
+}
+.diff-chunk-resolved {
+  opacity: 0.3;
+  transition: opacity 0.3s;
+}
+.diff-chunk-actions {
+  position: absolute;
+  right: 8px;
+  top: 0;
+  display: flex;
+  gap: 4px;
+  z-index: 5;
+  pointer-events: auto;
+}
+/* Diff mode: textarea sits on top of the highlight where chunk buttons live.
+   Disable its pointer events so clicks reach the buttons in the layer below. */
+.doc-editor-wrap.diff-mode .doc-editor-textarea {
+  pointer-events: none;
+  color: transparent !important;
+  caret-color: transparent !important;
+}
+.doc-editor-wrap.diff-mode .doc-editor-highlight {
+  display: block !important;
+  pointer-events: auto;
+  z-index: 3;
+  color: var(--fg) !important;
+  background: var(--sidebar-bg, var(--panel)) !important;
+  overflow: auto;
+}
+.doc-editor-wrap.diff-mode .doc-editor-highlight * {
+  color: inherit;
+}
+.doc-editor-wrap.diff-mode .diff-line-del {
+  color: #f2cc60 !important;
+}
+.doc-editor-wrap.diff-mode .diff-line-add {
+  color: #58a6ff !important;
+}
+.diff-chunk-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  line-height: 1;
+  transition: border-color 0.15s, background 0.15s;
+  opacity: 0.6;
+}
+.diff-chunk-btn:hover { opacity: 1; }
+.diff-chunk-btn-accept { color: #58a6ff; }
+.diff-chunk-btn-accept:hover { border-color: #58a6ff; background: color-mix(in srgb, #58a6ff 15%, transparent); }
+.diff-chunk-btn-reject { color: #f2cc60; }
+.diff-chunk-btn-reject:hover { border-color: #f2cc60; background: color-mix(in srgb, #f2cc60 15%, transparent); }
+
+.doc-suggestion-accept-all {
+  flex: 1;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 10px;
+  font-family: inherit;
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  transition: background 0.1s;
+}
+.doc-suggestion-accept-all:hover {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.doc-suggestion-reason {
+  opacity: 0.6;
+  margin-bottom: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.doc-suggestion-diff {
+  background: var(--bg);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-family: var(--code-font, monospace);
+  font-size: 11px;
+  margin-bottom: 8px;
+  max-height: 100px;
+  overflow-y: auto;
+  word-break: break-word;
+}
+.doc-suggestion-del {
+  color: var(--red);
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+.doc-suggestion-add {
+  color: var(--green);
+}
+.doc-suggestion-actions {
+  display: flex;
+  gap: 6px;
+}
+.doc-suggestion-accept,
+.doc-suggestion-dismiss {
+  flex: 1;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 500;
+  transition: background 0.1s;
+}
+.doc-suggestion-accept {
+  background: var(--accent, var(--red));
+  color: #fff;
+}
+.doc-suggestion-accept:hover {
+  filter: brightness(1.15);
+}
+.doc-suggestion-dismiss {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+}
+.doc-suggestion-dismiss:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+@keyframes suggestion-enter {
+  from { opacity: 0; transform: translateX(10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+/* Mobile: suggestion card overlays top of editor (no room on side) */
+@media (max-width: 768px) {
+  .doc-suggestion-card {
+    right: 8px;
+    right: 8px;
+    width: auto;
+    top: 8px !important;
+  }
+  .doc-suggestion-card::before { display: none; }
+}
+
+/* ---- Streaming animation ---- */
+.doc-editor-textarea[readonly] {
+  caret-color: var(--red);
+}
+.doc-editor-wrap.animating::after {
+  content: '';
+  position: absolute;
+  top: 6px; right: 8px;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--red);
+  animation: doc-pulse 0.8s ease-in-out infinite;
+  z-index: 3;
+  pointer-events: none;
+}
+@keyframes doc-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+/* Diff overlay */
+.doc-diff-overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+  z-index: 5;
+  overflow-y: auto;
+  padding: 8px 12px;
+  font-family: 'Fira Code', monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  border-radius: 6px;
+}
+.doc-diff-overlay.visible { opacity: 1; }
+.doc-diff-overlay.fading { opacity: 0; transition: opacity 0.4s ease; }
+.doc-diff-stats {
+  display: flex;
+  gap: 10px;
+  padding: 4px 0 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.diff-stat-del { color: var(--warn); }
+.diff-stat-add { color: var(--green); }
+.doc-diff-content { }
+.doc-diff-line {
+  padding: 1px 8px;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.doc-diff-line.same {
+  opacity: 0.4;
+}
+.doc-diff-line.del {
+  background: color-mix(in srgb, var(--warn) 15%, transparent);
+  color: var(--warn);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--warn) 40%, transparent);
+}
+.doc-diff-line.add {
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+  color: var(--green);
+}
+.doc-diff-sep {
+  text-align: center;
+  padding: 2px 0;
+  font-size: 0.7rem;
+  opacity: 0.3;
+  color: var(--fg);
+}
+
+/* Version history panel (slide-out) */
+.doc-version-panel {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 300px;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  z-index: 200;
+  box-shadow: 4px 0 16px rgba(0,0,0,0.35);
+  animation: version-slide-in 0.2s ease-out;
+  /* Match the app modal aesthetic so nothing inherits the large body font. */
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 12px;
+  letter-spacing: -0.01em;
+}
+@keyframes version-slide-in {
+  from { opacity: 0; transform: translateX(-30px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.doc-version-panel.hidden {
+  display: none;
+}
+@media (max-width: 768px) {
+  .doc-version-panel {
+    left: 0;
+    right: 0;
+    top: auto;
+    bottom: 0;
+    width: 100%;
+    height: 50vh;
+    border-right: none;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    border-radius: 14px 14px 0 0;
+    box-shadow: 0 -4px 16px rgba(0,0,0,0.3);
+    /* It's a bottom sheet on mobile — slide UP from the bottom, not in from
+       the left (the desktop animation looked like a black box janking in). */
+    animation: version-slide-up 0.2s ease-out;
+  }
+}
+@keyframes version-slide-up {
+  from { opacity: 0; transform: translateY(30px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.doc-version-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.doc-version-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.doc-version-item {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.doc-version-item:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border-color: var(--fg);
+}
+
+.doc-version-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.doc-version-num {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--fg);
+}
+.doc-version-source {
+  font-size: 10px;
+  color: var(--fg);
+  opacity: 0.5;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.doc-version-time {
+  font-size: 10px;
+  color: var(--fg);
+  opacity: 0.4;
+  margin-left: auto;
+}
+.doc-version-summary {
+  font-size: 11px;
+  color: var(--fg);
+  opacity: 0.5;
+  margin-bottom: 4px;
+}
+
+.doc-version-restore {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.doc-version-restore:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border-color: var(--fg);
+}
+/* "latest" badge */
+.doc-version-latest {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+/* Diff preview lines — small and muted so they don't dominate the item. */
+.doc-version-diff {
+  font-size: 10px;
+  line-height: 1.5;
+  opacity: 0.8;
+  margin-top: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-word;
+}
+.doc-version-diff .diff-del {
+  color: #f2cc60;
+  background: color-mix(in srgb, #f2cc60 16%, transparent);
+  opacity: 1;
+}
+.doc-version-diff .diff-add {
+  color: #58a6ff;
+  background: color-mix(in srgb, #58a6ff 16%, transparent);
+}
+
+/* Mobile: doc editor takes over full screen as toggle */
+@media (max-width: 768px) {
+  body.doc-view .doc-editor-pane {
+    /* Force its own full-screen window on mobile. !important on these so an
+       inline width/position left over from desktop drag-resize, or the base
+       desktop split layout (flex: 1; max-width: 70vw; border-left), can never
+       render it as a narrow side pane ("sidebar") on a phone. */
+    position: fixed !important;
+    inset: 0 !important;
+    top: 0 !important; right: 0 !important; bottom: 0 !important; left: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    flex: none !important;
+    z-index: 170;
+    /* Stroke the top edge so the rounded corners read as a curved sheet edge. */
+    border: 1px solid var(--border);
+    border-bottom: none;
+    /* Rounded top corners like the other mobile sheet windows. */
+    border-radius: 14px 14px 0 0;
+    /* Slide up from the bottom (sheet), not in from the side, on mobile. */
+    animation: sheet-enter 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    transform-origin: bottom center;
+  }
+  body.doc-view .doc-divider {
+    display: none;
+  }
+  /* Hide chat behind doc panel on mobile */
+  body.doc-view .chat-container {
+    display: none;
+  }
+  /* Doc + email windows alternate: whichever was opened last is in front.
+     Default (a doc was opened last) → email windows sit BELOW the full-screen
+     doc pane (170) so the draft is on top. When the user re-opens an email
+     window (body.email-front, set by openEmailLibrary / reader open+restore) →
+     the email windows jump ABOVE the doc. Covers the email library AND any open
+     reader window (email-reader-<uid>); both are .modal at z-250 by default. */
+  body.doc-view #email-lib-modal,
+  body.doc-view .modal[id^="email-reader-"] { z-index: 150 !important; }
+  body.doc-view.email-front #email-lib-modal,
+  body.doc-view.email-front .modal[id^="email-reader-"] { z-index: 300 !important; }
+  body.doc-view:not(.email-front) .doc-editor-pane { z-index: 10010 !important; }
+  body.doc-view:not(.email-front) #email-lib-modal,
+  body.doc-view:not(.email-front) .modal[id^="email-reader-"] { z-index: 10000 !important; }
+  /* Hide new-session button and hamburger when doc editor is open on mobile */
+  body.doc-view .mobile-new-chat-btn,
+  /* Hide the global hamburger while Compare Mode is active — the compare
+   header has its own close button in the top-right, and overlapping the
+   two looks like a bug. The .compare-active class lives on the chat
+   container, not body, so use :has(). */
+body:has(.compare-active) .hamburger-btn { display: none !important; }
+/* Mobile: hide the sidebar hamburger when a document panel (or notes pane)
+   is open — those sheets cover the whole screen on mobile, so a floating
+   hamburger sticking out over them is just clutter / mis-tap bait. */
+@media (max-width: 768px) {
+  body.doc-view .hamburger-btn,
+  body:has(#notes-pane) .hamburger-btn { display: none !important; }
+}
+  /* Make room for hamburger button alongside the tab/header bars (fallback if shown) */
+  body.doc-view.sidebar-collapsed.hamburger-left .doc-tab-bar,
+  body.doc-view.sidebar-collapsed.hamburger-left .doc-editor-header,
+  body.doc-view.sidebar-collapsed.hamburger-left .doc-md-toolbar {
+    padding-left: 44px;
+  }
+  body.doc-view.sidebar-collapsed.hamburger-right .doc-tab-bar,
+  body.doc-view.sidebar-collapsed.hamburger-right .doc-editor-header,
+  body.doc-view.sidebar-collapsed.hamburger-right .doc-md-toolbar {
+    padding-right: 44px;
+  }
+  /* ── Tab bar — match header height, bigger touch targets ── */
+  .doc-tab-bar {
+    padding: 0;
+    height: 40px;
+  }
+  .doc-tab {
+    padding: 0 12px;
+    font-size: 13px;
+  }
+  /* Bigger × touch target on mobile. */
+  .doc-tab-close {
+    font-size: 22px;
+    padding: 0 8px;
+    opacity: 0.5;
+  }
+  .doc-tab .doc-tab-menu-btn {
+    opacity: 0.4 !important;
+    padding: 4px 6px !important;
+  }
+  .doc-tab .doc-tab-menu-btn svg {
+    width: 14px !important;
+    height: 14px !important;
+  }
+  /* Footer is identical to desktop now, so the separate mobile Close/Copy
+     footer is dropped and the per-tab × stays (matching desktop). */
+  .doc-mobile-footer { display: none !important; }
+  .doc-tab-new {
+    font-size: 13px !important;
+    padding: 0 14px !important;
+    gap: 4px;
+  }
+  /* No hamburger padding — it's hidden in doc-view */
+  body.doc-view.sidebar-collapsed.hamburger-left .doc-tab-bar,
+  body.doc-view.sidebar-collapsed.hamburger-left .doc-editor-header,
+  body.doc-view.sidebar-collapsed.hamburger-left .doc-md-toolbar {
+    padding-left: 0 !important;
+  }
+  body.doc-view.sidebar-collapsed.hamburger-right .doc-tab-bar,
+  body.doc-view.sidebar-collapsed.hamburger-right .doc-editor-header,
+  body.doc-view.sidebar-collapsed.hamburger-right .doc-md-toolbar {
+    padding-right: 0 !important;
+  }
+  /* ── Header — identical layout to desktop (left-aligned), match tab height ── */
+  .doc-editor-header {
+    padding: 6px 12px 6px 8px;
+    gap: 6px;
+    min-height: 40px;
+  }
+  .doc-import-label,
+  #doc-version-badge {
+    display: none !important;
+  }
+  /* ── Markdown toolbar — same height as tab bar ── */
+  .doc-md-toolbar {
+    height: 40px !important;
+    padding: 4px 8px;
+    gap: 2px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* The toolbar's padding-left is forced to 0 by the hamburger rules, so give
+     the Edit/Preview toggle its own left margin to clear the screen edge +
+     the 18px mask fade. Margin isn't overridden by those !important paddings. */
+  .doc-md-toolbar .md-view-toggle { margin-left: 8px; }
+  .doc-md-toolbar button {
+    font-size: 13px !important;
+    padding: 6px 10px !important;
+    min-width: 34px;
+    min-height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .md-toolbar-sep {
+    height: 18px;
+    margin: 0 4px;
+  }
+}
+
+/* Opacity slider in the theme tabs row — lets the user see the page behind
+   the modal while tweaking colors. JS toggles .hidden based on active tab. */
+.theme-opacity-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  margin-right: 6px;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  opacity: 0.65;
+  transition: opacity 0.15s, border-color 0.15s, background 0.15s, color 0.15s;
+  height: 22px;
+  align-self: center;
+  /* Now a <button> toggle, not a slider wrapper. */
+  cursor: pointer;
+  color: var(--fg);
+  font: inherit;
+  background: transparent;
+}
+.theme-opacity-wrap.hidden { display: none; }
+.theme-opacity-wrap:hover { opacity: 1; }
+/* The title h4 already carries margin-right:auto to group header controls
+   on the right. BOTH the Peek button AND the injected minimize button also
+   have margin-left:auto — and multiple competing auto-margins split the
+   free space, stranding Peek in the middle. Zero their left-autos here so
+   the h4 alone pushes Peek + minimize + close together, flush right. */
+.modal-header .theme-opacity-wrap,
+.modal-header .modal-minimize-btn,
+.modal-header .modal-expand-btn { margin-left: 0 !important; }
+/* On = peeking through; highlight with the accent so the state is obvious. */
+.theme-opacity-wrap.active {
+  opacity: 1;
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+  color: var(--accent, var(--red));
+}
+.theme-opacity-label { font-size: 10px; font-weight: 600; letter-spacing: 0.02em; }
+.theme-opacity-wrap > svg { flex-shrink: 0; opacity: 0.7; }
+.theme-opacity-wrap input[type="range"] {
+  width: 92px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: color-mix(in srgb, var(--fg) 18%, transparent);
+  border-radius: 2px;
+  outline: none;
+  margin: 0;
+}
+.theme-opacity-wrap input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent, var(--red));
+  border: none;
+  cursor: pointer;
+}
+.theme-opacity-wrap input[type="range"]::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent, var(--red));
+  border: none;
+  cursor: pointer;
+}
+
+/* ── Theme editor: hover-to-highlight zone ── */
+.theme-zone-highlight {
+  position: fixed;
+  pointer-events: none;
+  z-index: 9998;
+  border: 2px dashed var(--accent, var(--red));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, var(--red)) 40%, transparent),
+              0 0 18px color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
+  animation: theme-zone-pulse 1.4s ease-in-out infinite;
+}
+@keyframes theme-zone-pulse {
+  0%, 100% { opacity: 0.95; }
+  50%      { opacity: 0.55; }
+}
+/* Highlight the color row itself too so the user has a strong visual link
+   between the input they're hovering and the zone overlay on the page. */
+#theme-tab-customize .color-row {
+  transition: background 0.15s, border-color 0.15s;
+  border-radius: 6px;
+}
+#theme-tab-customize .color-row:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);
+}
+
+/* "Auto-saved" pill that flashes after each color/font change. */
+.theme-autosaved-pill {
+  position: sticky;
+  bottom: 8px;
+  margin: 8px auto 0;
+  width: fit-content;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: color-mix(in srgb, var(--color-success, #4caf50) 18%, var(--bg));
+  color: var(--color-success, #4caf50);
+  border: 1px solid color-mix(in srgb, var(--color-success, #4caf50) 40%, transparent);
+  border-radius: 12px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+  pointer-events: none;
+  z-index: 5;
+}
+.theme-autosaved-pill.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ---- Doc fullscreen ---- */
+.doc-editor-pane.doc-fullscreen {
+  flex: 1;
+  max-width: 100%;
+  width: 100% !important;
+  border-left: none;
+}
+/* Keep the hamburger reachable in fullscreen — version history can still
+   hide it (the panel covers that area). */
+body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
+  display: none !important;
+}
+
+/* ---- Document run output ---- */
+.doc-run-output {
+  border-top: 2px solid var(--hl-function, #61afef);
+  background: var(--bg);
+  padding: 6px 12px 8px;
+  max-height: 200px;
+  overflow: auto;
+  font-family: 'Fira Code', 'Courier New', monospace;
+  font-size: 0.85em;
+  line-height: 1.5;
+  position: relative;
+}
+.doc-run-output .code-runner-pre { background: none !important; border: none !important; margin: 0; padding: 0; }
+.doc-run-output .code-runner-error { color: var(--red); }
+.doc-run-output .code-runner-loading { font-style: italic; color: var(--red); }
+.doc-run-output .code-runner-close { position: absolute; top: 4px; right: 4px; background: none; border: none; color: var(--fg); cursor: pointer; opacity: 0.5; font-size: 14px; padding: 2px 6px; }
+.doc-run-output .code-runner-close:hover { opacity: 1; }
+.doc-run-pre { color: var(--fg); white-space: pre-wrap; word-break: break-word; margin: 0; }
+.doc-run-error { color: var(--red); white-space: pre-wrap; word-break: break-word; margin: 0; }
+
+/* ---- Markdown preview ---- */
+.doc-md-preview {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg);
+  background: var(--bg);
+}
+.doc-md-preview pre {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+.doc-md-preview code {
+  font-size: 0.95em;
+}
+.doc-md-preview p { margin: 0.6em 0; }
+.doc-md-preview h1, .doc-md-preview h2, .doc-md-preview h3 {
+  margin: 0.8em 0 0.4em;
+  color: var(--hl-string);
+}
+.doc-md-preview ul, .doc-md-preview ol {
+  margin-left: 20px;
+  margin-bottom: 0.6em;
+}
+.doc-md-preview blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 12px;
+  margin: 0.6em 0;
+  opacity: 0.8;
+}
+
+/* ---- Active state for doc action icon buttons ---- */
+.doc-action-icon-btn.active {
+  opacity: 1;
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+}
+#doc-run-btn:hover {
+  color: var(--hl-function, #61afef);
+}
+
+/* ===== ADMIN PANEL (inside settings modal) ===== */
+
+/* Cards */
+.admin-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+/* When the integrations editor opens, the inner admin-card should match the
+   listed integration cards (subtle tint, same border) instead of reverting
+   to the solid-panel admin-card surface used elsewhere. */
+#unified-intg-form .admin-card,
+#integrations-form .admin-card {
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.admin-card h2 {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+}
+.admin-danger-card {
+  border-color: color-mix(in srgb, var(--color-error) 27%, transparent);
+}
+
+/* Toggle switch */
+.admin-toggle-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.admin-toggle-label {
+  font-size: 13px;
+  font-weight: 500;
+}
+.admin-toggle-sub {
+  /* 65% mix keeps this helper text above WCAG AA 4.5:1 on the dark panel
+     (50% only reached ~3.9:1). */
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+/* LDAP / FreeIPA settings */
+.ldap-toggle-row {
+  margin-bottom: 10px;
+}
+.ldap-settings-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px 10px;
+}
+.ldap-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.ldap-field > span {
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+  font-size: 11px;
+  font-weight: 600;
+}
+.ldap-field-wide {
+  grid-column: 1 / -1;
+}
+.ldap-field textarea.settings-select {
+  min-height: 72px;
+  resize: vertical;
+}
+.ldap-advanced {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+}
+.ldap-advanced summary {
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.ldap-inline-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-top: 8px;
+}
+.ldap-inline-options label {
+  align-items: center;
+  color: color-mix(in srgb, var(--fg) 75%, transparent);
+  display: inline-flex;
+  font-size: 12px;
+  gap: 6px;
+}
+.ldap-inline-options input {
+  accent-color: var(--accent, var(--red));
+}
+.ldap-test-row {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
+  margin-top: 10px;
+}
+.ldap-settings-msg {
+  font-size: 11px;
+  min-height: 16px;
+}
+.ldap-test-result {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: color-mix(in srgb, var(--fg) 78%, transparent);
+  font-size: 11px;
+  line-height: 1.45;
+  margin-top: 8px;
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px;
+  white-space: pre-wrap;
+}
+@media (max-width: 768px) {
+  .ldap-settings-grid,
+  .ldap-test-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ldap-test-row .admin-btn-sm,
+  .ldap-test-row .admin-btn-add {
+    width: 100%;
+  }
+}
+/* Hide the native up/down spinners on the Max auto-skills number input. */
+#skill-max-input {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+#skill-max-input::-webkit-inner-spin-button,
+#skill-max-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.admin-switch {
+  position: relative;
+  width: 30px;
+  height: 16px;
+  flex-shrink: 0;
+  display: inline-block;
+}
+.admin-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.admin-slider {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--fg) 50%, transparent);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.08s;
+}
+.admin-slider::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 12px;
+  height: 12px;
+  background: var(--panel);
+  border-radius: 50%;
+  transition: transform 0.08s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+}
+.admin-switch input:checked + .admin-slider {
+  background: var(--red);
+}
+.admin-switch input:checked + .admin-slider::before {
+  transform: translateX(14px);
+}
+
+/* User rows */
+.admin-user-row {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 6px;
+  transition: border-color 0.15s;
+}
+.admin-user-row:hover {
+  border-color: color-mix(in srgb, var(--fg) 20%, var(--border));
+}
+.admin-user-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.admin-user-name { font-size: 13px; font-weight: 500; }
+/* Privilege panel */
+.admin-priv-panel {
+  max-height: 600px;
+  transition: max-height 0.3s ease, opacity 0.2s ease, padding 0.2s ease;
+  overflow: hidden;
+}
+.admin-priv-panel.hidden {
+  max-height: 0 !important;
+  opacity: 0;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  margin-top: 0 !important;
+  border-top: none !important;
+}
+/* Privilege toggle rows */
+.admin-priv-panel [data-priv] {
+  accent-color: var(--accent, var(--red));
+}
+/* Section headers */
+.admin-priv-section {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.35;
+  font-weight: 600;
+  margin: 10px 0 4px;
+}
+.admin-priv-section:first-child {
+  margin-top: 0;
+}
+/* Model checkbox list */
+.priv-models-list {
+  max-height: 150px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 6px;
+  background: var(--bg);
+  scrollbar-width: thin;
+}
+.priv-models-list::-webkit-scrollbar {
+  width: 4px;
+}
+.priv-models-list::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 15%, transparent);
+  border-radius: 2px;
+}
+.priv-models-list label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 2px;
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.1s;
+}
+.priv-models-list label:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.priv-models-list input[type="checkbox"] {
+  accent-color: var(--accent, var(--red));
+  margin: 0;
+  flex-shrink: 0;
+}
+/* All/None links */
+.priv-models-all,
+.priv-models-none {
+  font-size: 10px;
+  opacity: 0.5;
+  color: var(--fg);
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity 0.1s;
+}
+.priv-models-all:hover,
+.priv-models-none:hover {
+  opacity: 1;
+}
+
+/* MCP tool toggles panel */
+.mcp-tools-panel {
+  width: 100%;
+  padding: 8px 0 4px;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+  max-height: 600px;
+  transition: max-height 0.3s ease, opacity 0.2s ease, padding 0.2s ease;
+  overflow: hidden;
+}
+.mcp-tools-panel.hidden {
+  max-height: 0 !important;
+  opacity: 0;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  margin-top: 0 !important;
+}
+.mcp-tools-panel .mcp-tools-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.mcp-tools-panel .mcp-tools-header span:first-child {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.35;
+  font-weight: 600;
+}
+.mcp-tools-panel .mcp-tools-header a {
+  font-size: 10px;
+  opacity: 0.5;
+  color: var(--fg);
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity 0.1s;
+}
+.mcp-tools-panel .mcp-tools-header a:hover {
+  opacity: 1;
+}
+.mcp-tools-list {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 6px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.mcp-tools-list::-webkit-scrollbar {
+  width: 4px;
+}
+.mcp-tools-list::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 15%, transparent);
+  border-radius: 2px;
+}
+.mcp-tools-list label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 3px;
+  min-width: 0;
+}
+.mcp-tools-list label > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.mcp-tools-list label:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.mcp-tools-list .adm-model-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  border-radius: 3px;
+}
+.mcp-tools-list .adm-model-row:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.mcp-tools-list .adm-model-toggle {
+  flex: 1;
+  min-width: 0;
+}
+.adm-model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.adm-model-unload {
+  flex: 0 0 auto;
+  margin-right: 2px;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--fg) 20%, transparent);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  opacity: 0.45;
+  transition: opacity 0.12s, color 0.12s, border-color 0.12s, background 0.12s;
+}
+.adm-model-unload:hover {
+  opacity: 1;
+  color: var(--red);
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+}
+.adm-model-unload:disabled {
+  cursor: wait;
+  opacity: 0.45;
+}
+.mcp-tools-list input[type="checkbox"] {
+  accent-color: var(--accent, var(--red));
+  margin: 0;
+  flex-shrink: 0;
+}
+/* Dot-style toggle (mirrors .note-check-dot) for the Add Models row,
+   replacing the native checkbox while keeping it for click handling. */
+.adm-cb-hidden {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.adm-check-dot {
+  /* Lock the dot to a fixed 12×12 box. The parent rule
+     `.mcp-tools-list label > span { flex: 1 }` was stretching this span
+     to fill the row when it didn't have its own flex override. */
+  flex: 0 0 12px !important;
+  width: 12px !important;
+  height: 12px;
+  min-width: 12px;
+  max-width: 12px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--fg) 35%, transparent);
+  position: relative;
+  transition: background 0.2s, border-color 0.2s, transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.adm-check-dot::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  width: 5px;
+  height: 2.5px;
+  border-left: 1.5px solid #fff;
+  border-bottom: 1.5px solid #fff;
+  transform: translate(-50%, -50%) rotate(-45deg) scale(0);
+  transform-origin: center;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.adm-model-row:hover .adm-check-dot {
+  border-color: var(--accent, var(--red));
+  transform: scale(1.15);
+}
+.adm-model-row:active .adm-check-dot {
+  transform: scale(0.9);
+}
+.adm-cb-hidden:checked + .adm-check-dot {
+  background: var(--accent, var(--red));
+  border-color: var(--accent, var(--red));
+}
+.adm-cb-hidden:checked + .adm-check-dot::after {
+  transform: translate(-50%, -50%) rotate(-45deg) scale(1);
+}
+/* Disabled endpoints — dim the row but keep the toggle/delete buttons
+   at full opacity so the user can re-enable or remove without squinting. */
+.admin-user-row.admin-ep-disabled { opacity: 0.55; }
+
+
+/* Most recently added endpoint — brief accent glow so the user can
+   spot the new row immediately after Adding / Find. Fades out cleanly. */
+@keyframes adm-ep-just-added-glow {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, var(--red)) 55%, transparent); background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent); }
+  60%  { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent, var(--red)) 0%, transparent); background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent); }
+  100% { box-shadow: 0 0 0 0 transparent; background: transparent; }
+}
+.admin-user-row.adm-ep-just-added {
+  border-radius: 8px;
+  animation: adm-ep-just-added-glow 2.2s ease-out;
+}
+.admin-user-row.admin-ep-disabled .admin-btn-sm,
+.admin-user-row.admin-ep-disabled .admin-btn-delete,
+.admin-user-row.admin-ep-disabled .admin-badge-off { opacity: 1; }
+/* Local / API subsection labels inside the Endpoints card */
+.adm-ep-section-head {
+  display: flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg);
+  opacity: 0.5;
+  margin-bottom: 4px;
+}
+
+/* Collapsible Add-Models subsections (API / Local) — the whole header row
+   acts as a toggle so a long cloud-API form can be tucked away when you
+   only want to paste a local URL. */
+.adm-section-toggle {
+  cursor: pointer;
+  user-select: none;
+  opacity: 0.8;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 9px;
+  margin-bottom: 6px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  transition: border-color 0.12s, background 0.12s, opacity 0.12s;
+}
+.adm-section-toggle:hover {
+  opacity: 1;
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+}
+.adm-section-toggle .adm-section-caret { opacity: 0.6; }
+.adm-section-toggle:focus-visible { outline: 1px solid var(--red); outline-offset: 1px; }
+/* When expanded, square off the bottom so the header reads as attached to
+   the form it controls. */
+.adm-add-section:not(.collapsed) .adm-section-toggle {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  margin-bottom: 0;
+}
+.adm-section-caret {
+  margin-left: auto;
+  flex-shrink: 0;
+  transition: transform 0.18s ease;
+}
+/* Collapsed: hide the form body and point the caret right. */
+.adm-add-section.collapsed .adm-add-section-body { display: none; }
+.adm-add-section.collapsed .admin-model-form { display: none; }
+.adm-add-section.collapsed .adm-section-caret { transform: rotate(-90deg); }
+.adm-quickstart-section {
+  margin-top: 7px;
+}
+.adm-quickstart-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  opacity: 0.72;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.adm-quickstart-toggle:hover {
+  opacity: 1;
+  border-color: var(--red);
+}
+.adm-quickstart-section:not(.collapsed) .adm-quickstart-toggle {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.adm-quickstart-body {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0 0 6px 6px;
+  padding: 6px 8px;
+}
+.adm-quickstart-section.collapsed .adm-quickstart-body { display: none; }
+.adm-quickstart-section.collapsed .adm-section-caret { transform: rotate(-90deg); }
+
+/* Custom provider picker (logo + name) replacing the native <select> */
+.adm-provider-picker { position: relative; margin-bottom: 6px; }
+.adm-provider-combo {
+  display: flex;
+  align-items: stretch;
+}
+.adm-provider-combo input {
+  flex: 1;
+  min-width: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.adm-provider-btn {
+  width: 100%;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 5px 8px; font-family: inherit; font-size: 12px;
+  cursor: pointer; text-align: left;
+}
+.adm-provider-combo .adm-provider-btn {
+  width: 128px;
+  flex-shrink: 0;
+  border-left: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  justify-content: space-between;
+}
+.adm-provider-btn:hover { border-color: color-mix(in srgb, var(--fg) 30%, var(--border)); }
+.adm-provider-current { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.adm-provider-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.adm-provider-logo {
+  width: 14px; height: 14px;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; color: var(--fg); opacity: 0.85;
+}
+.adm-provider-logo svg { width: 14px; height: 14px; }
+/* Pull the settings-select 4px closer to its logo chip so the row
+   reads as logo+select instead of having an extra gap. */
+.adm-model-logo + .settings-select { margin-left: -4px; }
+/* Fallback rows: stretch the model select so the trash button on
+   the right aligns with the right edge of the Endpoint and Model
+   dropdowns above the fallback list. Without flex:1 the model
+   select shrinks to its content and the trash button rides up
+   tight to it. */
+.settings-fallback-row > .settings-select { flex: 1 1 0; min-width: 0; }
+/* Constrain logo SVGs in settings dropdown chips. Many provider
+   icons in providers.js declare only viewBox (no width/height),
+   so without this rule the browser falls back to 300x150 and
+   blows up the row. */
+.settings-fallback-row > span[style*="width:18px"] svg:not([width]),
+.settings-row > span[style*="width:18px"] svg:not([width]),
+span[id$="-logo"] svg:not([width]) {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.adm-provider-logo:empty {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  border-radius: 50%;
+}
+.adm-provider-caret { flex-shrink: 0; transition: transform 0.15s; }
+.adm-provider-picker:has(.adm-provider-menu:not(.hidden)) .adm-provider-caret {
+  transform: rotate(180deg);
+}
+.adm-provider-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 100;
+  max-height: 280px; overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  padding: 4px;
+}
+.adm-provider-menu.hidden { display: none; }
+.adm-provider-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px; border-radius: 4px;
+  font-size: 12px; cursor: pointer;
+}
+.adm-provider-item:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.adm-provider-item.active { background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent); }
+
+/* When the Appearance tab is open, the #settings-modal-opacity slider (in
+   the header) fades the modal so the user can see the rest of the UI react
+   as toggles flip. The fade is applied as a background color-mix in JS
+   (settings.js) rather than element opacity, so the controls/text stay
+   crisp — mirroring the Theme customizer's opacity slider. */
+
+/* Search provider fallback chain — chips + drag-reorder */
+.search-fallback-chain {
+  flex: 1; display: flex; align-items: center;
+  flex-wrap: wrap; gap: 6px; min-height: 28px;
+}
+.search-fb-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 4px 3px 6px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border: 1px solid var(--border); border-radius: 10px;
+  font-size: 11px; cursor: grab; user-select: none;
+}
+.search-fb-chip.dragging { opacity: 0.4; }
+.search-fb-grip { opacity: 0.35; font-size: 10px; line-height: 1; cursor: grab; }
+.search-fb-logo {
+  width: 12px; height: 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; opacity: 0.85;
+}
+.search-fb-logo svg { width: 12px; height: 12px; }
+.search-fb-remove {
+  background: none; border: none; color: var(--fg);
+  opacity: 0.45; cursor: pointer;
+  font-size: 14px; line-height: 1; padding: 0 2px;
+  transition: opacity 0.15s, color 0.15s;
+}
+.search-fb-remove:hover { opacity: 1; color: var(--red); }
+.search-fb-add {
+  background: var(--bg); color: var(--fg);
+  border: 1px dashed var(--border); border-radius: 10px;
+  padding: 2px 6px; font-family: inherit; font-size: 11px;
+  outline: none; cursor: pointer;
+}
+.search-fb-add:focus,
+.search-fb-add:hover {
+  border-color: var(--accent, var(--red));
+  border-style: solid;
+}
+
+.mcp-tools-search {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 6px;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-family: inherit;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  outline: none;
+}
+.mcp-tools-search:focus {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+}
+.mcp-tools-count {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+/* Badges */
+.admin-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--red) 20%, transparent);
+  color: var(--red);
+  font-weight: 600;
+}
+.admin-badge-off {
+  background: color-mix(in srgb, var(--color-error) 20%, transparent);
+  color: var(--color-error);
+}
+.admin-badge-muted {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+}
+
+/* Buttons */
+.admin-btn-delete {
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--color-error) 27%, transparent);
+  color: var(--color-error);
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.admin-btn-delete:hover {
+  background: var(--color-error);
+  border-color: var(--color-error);
+  color: #fff;
+}
+.admin-btn-add {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
+  background: var(--red);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 11px;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.admin-btn-add:hover {
+  background: color-mix(in srgb, var(--red) 80%, white);
+}
+.admin-btn-add:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.admin-btn-sm {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 11px;
+}
+.admin-btn-sm:hover {
+  background: var(--border);
+  border-color: var(--red);
+}
+.admin-btn-sm:disabled,
+.admin-btn-sm:disabled:hover {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: var(--panel);
+  border-color: var(--border);
+}
+.admin-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--red);
+  border-radius: 50%;
+  animation: admin-spin 0.6s linear infinite;
+  vertical-align: -2px;
+  margin-right: 2px;
+}
+@keyframes admin-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Forms */
+.admin-add-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.admin-add-form input {
+  flex: 1;
+  min-width: 120px;
+  padding: 5px 8px;
+  height: 32px;
+  box-sizing: border-box;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+}
+.admin-add-form input:focus { outline: none; border-color: var(--red); }
+.admin-switch-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  cursor: default;
+}
+
+.admin-model-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.admin-model-form input,
+.admin-model-form select {
+  padding: 5px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 12px;
+}
+.admin-model-form input:focus { outline: none; border-color: var(--red); }
+.admin-model-form-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;       /* let buttons drop to a new row on narrow widths
+                             instead of overflowing the modal */
+  align-items: center;
+}
+.admin-model-form-row input {
+  flex: 1 1 180px;       /* api-key input takes the long axis but allows
+                             dropping below the buttons at small widths */
+  min-width: 0;          /* don't refuse to shrink past content width */
+}
+.admin-model-form-row select {
+  flex: 0 0 auto;
+}
+.admin-model-form-row button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+/* On narrow screens, give buttons their own row + push the Add button
+   to the right so it remains the obvious primary action. */
+@media (max-width: 540px) {
+  .admin-model-form-row input { flex-basis: 100%; }
+  .admin-model-form-row .admin-btn-add { margin-left: auto; }
+}
+.adm-ep-inline-msg {
+  min-height: 16px;
+  margin-top: 5px;
+  font-size: 11px;
+}
+
+/* Endpoint items */
+.admin-ep-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border-radius: 6px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+.admin-ep-info { flex: 1; overflow: hidden; }
+.admin-ep-name { color: var(--fg); font-weight: 500; }
+.admin-ep-detail {
+  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: -4px;
+}
+
+/* Settings panel — tint each card's h2 title icon with the user's accent
+   colour. Direct-child selector (`> h2 > svg`) so SVGs nested inside
+   header buttons (Test, kebab, etc.) are untouched. Each title icon uses
+   stroke="currentColor", so setting color propagates; existing inline
+   opacity:0.6 stays so the tint reads soft. */
+/* Selected integration card — class beats inline borderColor reset */
+.intg-card.intg-card-active { border-color: var(--accent, var(--red)) !important; }
+
+/* Edge-dock resize handle: invisible at rest, accent stripe animates in
+   on hover. Inline background:transparent + transition come from
+   modalSnap.js; this rule paints the accent gradient on hover, beating
+   the inline style with !important. */
+.edge-dock-resize-handle-left:hover {
+  background: linear-gradient(to right, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px) !important;
+}
+.edge-dock-resize-handle-right:hover {
+  background: linear-gradient(to left, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px) !important;
+}
+.edge-dock-resize-handle-top:hover {
+  background: linear-gradient(to bottom, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px) !important;
+}
+.edge-dock-resize-handle-bottom:hover {
+  background: linear-gradient(to top, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px) !important;
+}
+
+[data-settings-panel="ai"] .admin-card > h2 > svg,
+[data-settings-panel="services"] .admin-card > h2 > svg,
+[data-settings-panel="added-models"] .admin-card > h2 > svg,
+[data-settings-panel="search"] .admin-card > h2 > svg,
+[data-settings-panel="integrations"] .admin-card > h2 > svg,
+[data-settings-panel="reminders"] .admin-card > h2 > svg,
+[data-settings-panel="added-models"] .adm-ep-section-head > svg {
+  color: var(--accent, var(--red));
+}
+.admin-ep-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* Status messages */
+.admin-error { color: var(--color-error); font-size: 11px; margin-top: 4px; }
+.admin-success { color: var(--color-success); font-size: 11px; margin-top: 4px; }
+.admin-empty {
+  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  font-size: 12px;
+  padding: 10px 0;
+  text-align: center;
+}
+/* Endpoint-list empty states ("No endpoints configured" / "None") get a
+   left-aligned, accent-colored treatment so they read as "this row is your
+   placeholder, click Add" rather than a centered "nothing here" grey blob. */
+#adm-epList-local .admin-empty,
+#adm-epList-api .admin-empty {
+  text-align: left;
+  padding: 8px 4px;
+  color: var(--accent-primary, var(--accent, var(--red)));
+}
+
+/* RAG upload zone */
+.admin-rag-upload-zone {
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  margin-bottom: 8px;
+}
+.admin-rag-upload-zone:hover,
+.admin-rag-upload-zone.dragover {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 7%, transparent);
+}
+.admin-rag-upload-zone p {
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+  font-size: 11px;
+  margin-top: 4px;
+}
+.admin-rag-icon { font-size: 18px; }
+.admin-rag-dir-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.admin-rag-dir-row input {
+  flex: 1;
+  padding: 5px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 12px;
+}
+.admin-rag-dir-row input:focus { outline: none; border-color: var(--red); }
+.admin-rag-dir-row button {
+  padding: 5px 8px;
+  border: none;
+  border-radius: 6px;
+  background: var(--red);
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.admin-rag-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+.admin-rag-section-label {
+  font-size: 10px;
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 8px 0 4px;
+}
+.admin-rag-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 8px;
+  background: var(--bg);
+  border-radius: 6px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+.admin-rag-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+}
+.admin-rag-item-meta {
+  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  font-size: 10px;
+  margin: 0 6px;
+  flex-shrink: 0;
+}
+.admin-rag-item .admin-btn-delete { font-size: 10px; padding: 2px 6px; }
+.admin-rag-status {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+  margin-top: 6px;
+}
+
+/* Token reveal */
+.admin-token-reveal {
+  margin-top: 8px;
+  padding: 8px;
+  background: color-mix(in srgb, var(--red) 8%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--red) 25%, var(--border));
+  border-radius: 8px;
+}
+
+/* Selects in admin cards */
+.admin-card select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 12px;
+}
+.admin-card input {
+  font-family: inherit;
+  font-size: 12px;
+}
+.admin-card label {
+  font-size: 12px;
+}
+
+/* ---- Document Library ---- */
+
+.doclib-modal-content {
+  width: min(600px, 92vw);
+  max-height: 85vh;
+  font-size: 12px;
+  background: var(--bg);
+}
+/* Anchor doclib modal to top so only the bottom edge moves on resize */
+#doclib-modal {
+  align-items: flex-start;
+  padding-top: 8vh;
+}
+.doclib-modal-content .modal-header h4 {
+  font-size: 1rem;
+}
+/* The "open in new tab" email modal inherited the 1rem doclib header, which
+   read way bigger than the email subject in the regular (inline) reader. Pin
+   it smaller so the two views are consistent. */
+.email-reader-tab-modal .modal-header h4 {
+  font-size: 13px;
+  font-weight: 600;
+}
+/* Match the sticky modal-header to the doclib modal-content body color
+   (var(--bg)) instead of the global var(--panel) default — otherwise the
+   header reads as a darker stripe above the email list. */
+.doclib-modal-content > .modal-header {
+  background: var(--bg);
+}
+.doclib-stats {
+  font-size: 11px;
+  color: var(--fg-muted);
+  margin-bottom: 8px;
+}
+.doclib-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  align-items: center;
+}
+.doclib-search {
+  flex: 1;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+#archive-select-btn { height: auto; padding: 5px 8px; }
+.doclib-search:focus {
+  border-color: var(--red);
+}
+.doclib-sort {
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+}
+.doclib-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.doclib-chip {
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+.doclib-chip:hover {
+  border-color: var(--red);
+}
+.doclib-chip.active {
+  background: color-mix(in srgb, var(--red) 15%, transparent);
+  border-color: color-mix(in srgb, var(--red) 40%, transparent);
+  color: var(--red);
+}
+/* Document library — language chip row */
+.doclib-lang-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 2px 0;
+  max-height: 52px;
+  overflow-y: auto;
+}
+.doclib-lang-chips:empty { display: none; }
+/* Mobile: keep tag chips on ONE row and scroll horizontally instead of wrapping
+   into a tall multi-line block (Serve, library — anywhere .doclib-lang-chips is used). */
+@media (max-width: 768px) {
+  .doclib-lang-chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    max-height: none;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .doclib-lang-chips::-webkit-scrollbar { display: none; }
+  .doclib-lang-chips > * { flex-shrink: 0; }
+}
+#doclib-tidy-btn, #doclib-select-btn, #doclib-chats-tidy-btn {
+  position: relative;
+  top: -3px;
+}
+/* Document library — list layout */
+.doclib-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 400px;
+  overflow-y: auto;
+  padding: 0;
+  position: relative;
+}
+
+/* Gallery grid domino-in cascade on open — same recipe as the document/email
+   libraries. Applied to #gallery-grid in gallery.js on the first render after
+   each open, removed after the longest delay so re-renders feel instant. */
+.gallery-just-opened > .gallery-card {
+  animation: section-domino-in 0.36s cubic-bezier(0.22, 1.61, 0.36, 1) backwards;
+}
+.gallery-just-opened > :nth-child(1)  { animation-delay: 0.02s; }
+.gallery-just-opened > :nth-child(2)  { animation-delay: 0.04s; }
+.gallery-just-opened > :nth-child(3)  { animation-delay: 0.06s; }
+.gallery-just-opened > :nth-child(4)  { animation-delay: 0.08s; }
+.gallery-just-opened > :nth-child(5)  { animation-delay: 0.10s; }
+.gallery-just-opened > :nth-child(6)  { animation-delay: 0.12s; }
+.gallery-just-opened > :nth-child(7)  { animation-delay: 0.14s; }
+.gallery-just-opened > :nth-child(8)  { animation-delay: 0.16s; }
+.gallery-just-opened > :nth-child(9)  { animation-delay: 0.18s; }
+.gallery-just-opened > :nth-child(10) { animation-delay: 0.20s; }
+.gallery-just-opened > :nth-child(11) { animation-delay: 0.22s; }
+.gallery-just-opened > :nth-child(12) { animation-delay: 0.24s; }
+.gallery-just-opened > :nth-child(13) { animation-delay: 0.26s; }
+.gallery-just-opened > :nth-child(14) { animation-delay: 0.28s; }
+.gallery-just-opened > :nth-child(15) { animation-delay: 0.30s; }
+.gallery-just-opened > :nth-child(16) { animation-delay: 0.32s; }
+.gallery-just-opened > :nth-child(17) { animation-delay: 0.34s; }
+.gallery-just-opened > :nth-child(18) { animation-delay: 0.36s; }
+.gallery-just-opened > :nth-child(19) { animation-delay: 0.38s; }
+.gallery-just-opened > :nth-child(20) { animation-delay: 0.40s; }
+.gallery-just-opened > :nth-child(n+21) { animation-delay: 0.42s; }
+
+/* Tasks list domino-in cascade on open — mirrors gallery / doclib. Applied to
+   #tasks-list in tasks.js on the first render after each open, removed after
+   the longest delay so re-renders feel instant. */
+.tasks-just-opened > .task-card {
+  animation: section-domino-in 0.36s cubic-bezier(0.22, 1.61, 0.36, 1) backwards;
+}
+.tasks-just-opened > :nth-child(1)  { animation-delay: 0.02s; }
+.tasks-just-opened > :nth-child(2)  { animation-delay: 0.04s; }
+.tasks-just-opened > :nth-child(3)  { animation-delay: 0.06s; }
+.tasks-just-opened > :nth-child(4)  { animation-delay: 0.08s; }
+.tasks-just-opened > :nth-child(5)  { animation-delay: 0.10s; }
+.tasks-just-opened > :nth-child(6)  { animation-delay: 0.12s; }
+.tasks-just-opened > :nth-child(7)  { animation-delay: 0.14s; }
+.tasks-just-opened > :nth-child(8)  { animation-delay: 0.16s; }
+.tasks-just-opened > :nth-child(9)  { animation-delay: 0.18s; }
+.tasks-just-opened > :nth-child(10) { animation-delay: 0.20s; }
+.tasks-just-opened > :nth-child(11) { animation-delay: 0.22s; }
+.tasks-just-opened > :nth-child(12) { animation-delay: 0.24s; }
+.tasks-just-opened > :nth-child(13) { animation-delay: 0.26s; }
+.tasks-just-opened > :nth-child(14) { animation-delay: 0.28s; }
+.tasks-just-opened > :nth-child(15) { animation-delay: 0.30s; }
+.tasks-just-opened > :nth-child(16) { animation-delay: 0.32s; }
+.tasks-just-opened > :nth-child(17) { animation-delay: 0.34s; }
+.tasks-just-opened > :nth-child(18) { animation-delay: 0.36s; }
+.tasks-just-opened > :nth-child(19) { animation-delay: 0.38s; }
+.tasks-just-opened > :nth-child(20) { animation-delay: 0.40s; }
+.tasks-just-opened > :nth-child(n+21) { animation-delay: 0.42s; }
+
+/* Document library cascade — same recipe as email library, applied per-tab
+   the first time content loads (chats / archive / research / documents).
+   Module-level Set in documentLibrary.js prevents re-firing on tab swaps
+   or filter/sort re-renders within the same page session. */
+.doclib-just-opened > .memory-item,
+.doclib-just-opened > .doclib-card {
+  animation: section-domino-in 0.36s cubic-bezier(0.22, 1.61, 0.36, 1) backwards;
+}
+.doclib-just-opened > :nth-child(1)  { animation-delay: 0.02s; }
+.doclib-just-opened > :nth-child(2)  { animation-delay: 0.04s; }
+.doclib-just-opened > :nth-child(3)  { animation-delay: 0.06s; }
+.doclib-just-opened > :nth-child(4)  { animation-delay: 0.08s; }
+.doclib-just-opened > :nth-child(5)  { animation-delay: 0.10s; }
+.doclib-just-opened > :nth-child(6)  { animation-delay: 0.12s; }
+.doclib-just-opened > :nth-child(7)  { animation-delay: 0.14s; }
+.doclib-just-opened > :nth-child(8)  { animation-delay: 0.16s; }
+.doclib-just-opened > :nth-child(9)  { animation-delay: 0.18s; }
+.doclib-just-opened > :nth-child(10) { animation-delay: 0.20s; }
+.doclib-just-opened > :nth-child(11) { animation-delay: 0.22s; }
+.doclib-just-opened > :nth-child(12) { animation-delay: 0.24s; }
+.doclib-just-opened > :nth-child(13) { animation-delay: 0.26s; }
+.doclib-just-opened > :nth-child(14) { animation-delay: 0.28s; }
+.doclib-just-opened > :nth-child(15) { animation-delay: 0.30s; }
+.doclib-just-opened > :nth-child(16) { animation-delay: 0.32s; }
+.doclib-just-opened > :nth-child(17) { animation-delay: 0.34s; }
+.doclib-just-opened > :nth-child(18) { animation-delay: 0.36s; }
+.doclib-just-opened > :nth-child(19) { animation-delay: 0.38s; }
+.doclib-just-opened > :nth-child(20) { animation-delay: 0.40s; }
+.doclib-just-opened > :nth-child(n+21) { animation-delay: 0.42s; }
+
+/* Domino cascade on first open of the email library — mirrors the sidebar
+   .section-just-expanded recipe so list items spring in staggered. Class
+   is applied to #email-lib-grid in emailLibrary.js on the first render
+   only, then removed after the longest delay so re-renders feel instant. */
+.email-lib-just-opened :is(.doclib-card, .date-section-header) {
+  animation: section-domino-in 0.36s cubic-bezier(0.22, 1.61, 0.36, 1) backwards;
+}
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(1)  { animation-delay: 0.02s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(2)  { animation-delay: 0.04s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(3)  { animation-delay: 0.06s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(4)  { animation-delay: 0.08s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(5)  { animation-delay: 0.10s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(6)  { animation-delay: 0.12s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(7)  { animation-delay: 0.14s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(8)  { animation-delay: 0.16s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(9)  { animation-delay: 0.18s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(10) { animation-delay: 0.20s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(11) { animation-delay: 0.22s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(12) { animation-delay: 0.24s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(13) { animation-delay: 0.26s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(14) { animation-delay: 0.28s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(15) { animation-delay: 0.30s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(16) { animation-delay: 0.32s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(17) { animation-delay: 0.34s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(18) { animation-delay: 0.36s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(19) { animation-delay: 0.38s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(20) { animation-delay: 0.40s; }
+/* Cap the cascade at 20 — beyond that they animate together so opening a
+   long inbox doesn't take forever to settle. */
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(n+21) { animation-delay: 0.42s; }
+
+/* Inside the email library modal, the grid needs to grow with the modal —
+   but `flex: 1 1 0` collapses to 0 when the parent isn't height-constrained
+   (which is the non-fullscreen default). Use `auto` basis + a sensible
+   `min-height` floor so it shows ~400px naturally and absorbs more when
+   the modal is resized / fullscreened. */
+#email-lib-modal .doclib-grid {
+  max-height: none;
+  height: auto;
+  flex: 1 1 auto;
+  min-height: 400px;
+}

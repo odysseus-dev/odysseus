@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_explicit_web_intent_is_defined_before_use():
-    tree = ast.parse((ROOT / "routes" / "chat_routes.py").read_text(encoding="utf-8"))
+    tree = ast.parse((ROOT / "routes" / "chat" / "__init__.py").read_text(encoding="utf-8"))
     chat_stream = next(
         node for node in ast.walk(tree)
         if isinstance(node, ast.AsyncFunctionDef) and node.name == "chat_stream"

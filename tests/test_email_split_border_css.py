@@ -1,7 +1,9 @@
 from pathlib import Path
 
+from tests.helpers.css_loader import read_css_with_imports
 
-CSS = (Path(__file__).parents[1] / "static" / "style.css").read_text(encoding="utf-8")
+
+CSS = read_css_with_imports(Path(__file__).parents[1] / "static" / "style.css")
 
 
 def _rule(selector: str) -> str:

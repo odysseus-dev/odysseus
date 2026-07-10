@@ -1,6 +1,6 @@
 {
     "name":  "odysseus",
-    "version":  "1.0.8",
+    "version":  "1.0.10",
     "main":  "main.js",
     "scripts":  {
                     "start":  "electron .",
@@ -47,7 +47,20 @@
                                      "mcp_servers/**/*",
                                      "integrations/**/*",
                                      "companion/**/*",
-                                     "scripts/**/*",
+                                     "!**/*.bak",
+                                     "!**/*.pyc",
+                                     "!**/__pycache__/**",
+                                     {
+                                         "from": "scripts",
+                                         "to": "scripts",
+                                         "filter": [
+                                             "**/*",
+                                             "!patch_fix.py",
+                                             "!**/*.bak",
+                                             "!**/*.pyc",
+                                             "!**/__pycache__/**"
+                                         ]
+                                     },
                                      "connect-android-pc.bat",
                                      "launch-windows.ps1",
                                      "requirements.txt",
@@ -55,8 +68,18 @@
                                      ".env.example"
                                  ],
                   "win":  {
-                              "target":  "nsis"
+                              "target":  "nsis",
+                              "icon":  "static/icon.ico"
                           },
+                  "nsis":  {
+                               "createDesktopShortcut":  "always",
+                               "createStartMenuShortcut":  true,
+                               "shortcutName":  "Simple Signal",
+                               "installerIcon":  "static/icon.ico",
+                               "uninstallerIcon":  "static/icon.ico",
+                               "installerHeaderIcon":  "static/icon.ico",
+                               "include":  "installer.nsh"
+                           },
                   "appId":  "com.odysseus.simplesignal"
               }
 }

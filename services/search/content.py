@@ -172,6 +172,32 @@ _HTTPCORE_TO_HTTPX_EXC = {
 }
 
 
+class _HttpcoreByteStream(httpx.SyncByteStream):
+    """Expose an httpcore response body to httpx without pre-buffering it.
+
+    The download budget in ``_get_public_url`` is enforced while iterating the
+    response.  Materialising the httpcore stream inside the transport would
+    download an unbounded body before that budget ever ran.
+    """
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def __iter__(self):
+        try:
+            yield from cast(Iterable[bytes], self._stream)
+        except Exception as exc:
+            mapped = _HTTPCORE_TO_HTTPX_EXC.get(type(exc))
+            if mapped is not None:
+                raise mapped(str(exc)) from exc
+            raise
+
+    def close(self) -> None:
+        close = getattr(self._stream, "close", None)
+        if callable(close):
+            close()
+
+
 class _PinnedTransport(httpx.BaseTransport):
     """Transport that pins every TCP connect to a pre-resolved IP.
 
@@ -214,11 +240,6 @@ class _PinnedTransport(httpx.BaseTransport):
         )
         try:
             httpcore_resp = self._pool.handle_request(httpcore_req)
-            # Eager materialisation matches the original
-            # ``response.text`` usage in fetch_webpage_content. The
-            # sync pool's stream is a plain Iterable[bytes] despite
-            # the httpcore type hint unioning the async variant.
-            content = b"".join(cast(Iterable[bytes], httpcore_resp.stream))
         except Exception as exc:
             mapped = _HTTPCORE_TO_HTTPX_EXC.get(type(exc))
             if mapped is not None:
@@ -228,7 +249,7 @@ class _PinnedTransport(httpx.BaseTransport):
         return httpx.Response(
             status_code=httpcore_resp.status,
             headers=httpcore_resp.headers,
-            content=content,
+            stream=_HttpcoreByteStream(httpcore_resp.stream),
             extensions=httpcore_resp.extensions,
         )
 

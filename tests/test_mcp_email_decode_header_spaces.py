@@ -13,7 +13,8 @@ import pytest
 
 pytest.importorskip("mcp")
 
-import mcp_servers.email_server as es
+import mcp_servers.email_server as email_server
+from mcp_servers.email_server import _utils as es
 
 
 @pytest.fixture(autouse=True)
@@ -97,7 +98,7 @@ async def test_mcp_email_accounts_are_filtered_by_hidden_owner(tmp_path, monkeyp
     monkeypatch.setattr(es, "APP_DB", str(db_path))
     es._ACCOUNT_CACHE.clear()
 
-    out = await es.call_tool("list_email_accounts", {"_odysseus_owner": "alice"})
+    out = await email_server.call_tool("list_email_accounts", {"_odysseus_owner": "alice"})
     text = out[0].text
 
     assert "Alice Mail" in text
@@ -111,7 +112,7 @@ async def test_mcp_email_requires_owner_when_multiple_account_owners_exist(tmp_p
     monkeypatch.setattr(es, "APP_DB", str(db_path))
     es._ACCOUNT_CACHE.clear()
 
-    out = await es.call_tool("list_email_accounts", {})
+    out = await email_server.call_tool("list_email_accounts", {})
 
     assert "requires an authenticated owner" in out[0].text
 
@@ -127,7 +128,7 @@ async def test_mcp_email_requires_owner_when_any_account_owner_exists(tmp_path, 
     )
     monkeypatch.setattr(es, "APP_DB", str(db_path))
 
-    out = await es.call_tool("list_email_accounts", {})
+    out = await email_server.call_tool("list_email_accounts", {})
 
     assert "requires an authenticated owner" in out[0].text
     assert "Alice Mail" not in out[0].text
@@ -140,7 +141,7 @@ async def test_mcp_email_configured_owner_filters_accounts(tmp_path, monkeypatch
     monkeypatch.setattr(es, "APP_DB", str(db_path))
     monkeypatch.setenv("ODYSSEUS_MCP_EMAIL_OWNER", "alice")
 
-    out = await es.call_tool("list_email_accounts", {})
+    out = await email_server.call_tool("list_email_accounts", {})
     text = out[0].text
 
     assert "Alice Mail" in text
@@ -207,7 +208,7 @@ async def test_mcp_email_owner_cannot_use_other_owner_account_for_list_read_send
     ]
 
     for tool_name, args in calls:
-        out = await es.call_tool(tool_name, {**args, "_odysseus_owner": "alice"})
+        out = await email_server.call_tool(tool_name, {**args, "_odysseus_owner": "alice"})
         assert "Email account not found for selector" in out[0].text, tool_name
         assert "Bob Mail" not in out[0].text or "Available accounts" in out[0].text
 
@@ -225,7 +226,7 @@ async def test_mcp_send_email_stages_with_visible_owner_account_id(tmp_path, mon
     monkeypatch.setattr(constants, "SCHEDULED_EMAILS_DB", str(scheduled_path))
     monkeypatch.setattr(es, "_read_agent_email_confirm_setting", lambda: True)
 
-    out = await es.call_tool(
+    out = await email_server.call_tool(
         "send_email",
         {
             "to": "recipient@example.com",
@@ -256,7 +257,7 @@ async def test_mcp_send_email_stages_owner_scoped_pending_draft(tmp_path, monkey
     monkeypatch.setattr(constants, "SCHEDULED_EMAILS_DB", str(db_path))
     monkeypatch.setattr(es, "_read_agent_email_confirm_setting", lambda: True)
 
-    out = await es.call_tool(
+    out = await email_server.call_tool(
         "send_email",
         {
             "to": "recipient@example.com",
@@ -311,7 +312,7 @@ async def test_mcp_draft_email_document_uses_hidden_owner(monkeypatch):
         lambda account=None: {"account_name": "Alice Mail", "account_id": "acct-alice"},
     )
 
-    out = await es.call_tool(
+    out = await email_server.call_tool(
         "draft_email",
         {
             "to": "recipient@example.com",

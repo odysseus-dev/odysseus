@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v424';
+const CACHE_NAME = 'odysseus-v429';
 
 // Core shell precached on install so repeat opens are instant without any
 // network wait. Keep this list in sync with the <script type="module"> tags
@@ -15,7 +15,18 @@ const CACHE_NAME = 'odysseus-v424';
 const PRECACHE = [
   '/',
   '/static/style.css',
+  '/static/css/_core.css',
+  '/static/css/_layout.css',
+  '/static/css/_interactions.css',
+  '/static/css/_syntax.css',
+  '/static/css/_chat.css',
+  '/static/css/_editor.css',
+  '/static/css/_email.css',
+  '/static/css/_notes.css',
+  '/static/css/_calendar.css',
+  '/static/css/_extras.css',
   '/static/app.js',
+  '/static/js/effects/cursorTrail.js',
   '/static/js/storage.js',
   '/static/js/ui.js',
   '/static/js/modalManager.js',
@@ -61,6 +72,7 @@ const PRECACHE = [
   '/static/js/calendar/reminders.js',
   '/static/js/group.js',
   '/static/js/keyboard-shortcuts.js',
+  '/static/js/keybindMatcher.js',
   '/static/js/sidebar-layout.js',
   '/static/js/section-management.js',
   '/static/lib/highlight.min.js',

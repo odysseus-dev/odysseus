@@ -30,7 +30,7 @@ from pathlib import Path
 import pytest
 
 _REPO = Path(__file__).resolve().parent.parent
-_HELPER = _REPO / "static" / "js" / "keyboard-shortcuts.js"
+_HELPER = _REPO / "static" / "js" / "keybindMatcher.js"
 _PLATFORM = _REPO / "static" / "js" / "platform.js"
 _HAS_NODE = shutil.which("node") is not None
 

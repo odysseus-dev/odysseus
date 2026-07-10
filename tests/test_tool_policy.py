@@ -3,7 +3,8 @@ import json
 import sys
 from types import SimpleNamespace
 
-import src.agent_loop as al
+from src.agent_loop import _loop as al
+from src.agent_loop import _prompts as agent_prompts
 from src.agent_tools import ToolBlock
 from src.tool_execution import execute_tool_block
 from src.tool_policy import build_effective_tool_policy, detect_guide_only_turn
@@ -299,9 +300,9 @@ def test_guide_only_suppresses_active_document_context(monkeypatch):
 
 def test_document_my_style_does_not_infer_public_persona(monkeypatch):
     _patch_loop_basics(monkeypatch)
-    monkeypatch.setattr(al, "_build_base_prompt", lambda *a, **k: ("BASE", ""), raising=False)
-    monkeypatch.setattr(al, "_cached_base_prompt", None, raising=False)
-    monkeypatch.setattr(al, "_cached_base_prompt_key", None, raising=False)
+    monkeypatch.setattr(agent_prompts, "_build_base_prompt", lambda *a, **k: ("BASE", ""), raising=False)
+    monkeypatch.setattr(agent_prompts, "_cached_base_prompt", None, raising=False)
+    monkeypatch.setattr(agent_prompts, "_cached_base_prompt_key", None, raising=False)
 
     import src.settings as settings
     monkeypatch.setattr(settings, "load_settings", lambda: {"document_writing_style": ""}, raising=False)

@@ -19,7 +19,8 @@ This module pins both behaviors so future refactors don't regress them.
 import httpx
 import pytest
 
-from src import endpoint_resolver, llm_core
+from src import endpoint_resolver
+from src.llm_core import _core as llm_core
 
 
 def _neutralize_provider_detection(monkeypatch):

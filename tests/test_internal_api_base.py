@@ -40,7 +40,7 @@ def test_no_hardcoded_loopback_left_in_call_sites():
     for rel in (
         "src/tools/_common.py",
         "src/cookbook_serve_lifecycle.py",
-        "src/builtin_actions.py",
+        "src/builtin_actions/_misc.py",
         "routes/task_routes.py",
     ):
         text = (root / rel).read_text(encoding="utf-8")

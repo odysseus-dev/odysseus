@@ -5,6 +5,7 @@ import Storage from './storage.js';
 import uiModule from './ui.js';
 import { initColorPickers, attachColorPicker } from './colorPicker.js';
 import { hexToRgb } from './color/hex.js';
+import { setCursorTrailEnabled } from './effects/cursorTrail.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
 
@@ -463,10 +464,10 @@ export function adjustUiScale(delta) {
 const _BG_CLASSES = ['bg-pattern-dots',
   'bg-pattern-synapse', 'bg-pattern-rain', 'bg-pattern-constellations',
   'bg-pattern-perlin-flow',
-  'bg-pattern-petals', 'bg-pattern-sparkles', 'bg-pattern-embers'];
+  'bg-pattern-petals', 'bg-pattern-sparkles', 'bg-pattern-embers', 'bg-pattern-aurora'];
 const _CANVAS_PATTERNS = { synapse: _initSynapse, rain: _initRain, constellations: _initConstellations,
   'perlin-flow': _initPerlinFlow,
-  petals: _initPetals, sparkles: _initSparkles, embers: _initEmbers };
+  petals: _initPetals, sparkles: _initSparkles, embers: _initEmbers, aurora: _initAurora };
 
 export function applyBgEffectColor(color) {
   document.documentElement.style.setProperty('--bg-effect-color', color || '');
@@ -504,7 +505,7 @@ export function applyBgPattern(pattern) {
   const p = pattern || 'none';
   document.body.classList.remove(..._BG_CLASSES);
   // Clean up any canvas backgrounds
-  document.querySelectorAll('#synapse-canvas, #rain-canvas, #constellations-canvas, #perlin-flow-canvas, #petals-canvas, #sparkles-canvas, #embers-canvas').forEach(c => c.remove());
+  document.querySelectorAll('#synapse-canvas, #rain-canvas, #constellations-canvas, #perlin-flow-canvas, #petals-canvas, #sparkles-canvas, #embers-canvas, #aurora-canvas').forEach(c => c.remove());
   if (p !== 'none') document.body.classList.add('bg-pattern-' + p);
   if (_CANVAS_PATTERNS[p]) _CANVAS_PATTERNS[p]();
   // Hide sliders that do nothing on static patterns.
@@ -1261,6 +1262,21 @@ export function initThemeUI() {
       applyFrostedGlass(frostedToggle.checked);
       const s = getSaved(); if (s) _saveFull(s.name, s.colors);
     });
+  }
+
+  // Cursor trail toggle (visual FX)
+  const cursorTrailToggle = document.getElementById('theme-cursor-trail-toggle');
+  if (cursorTrailToggle) {
+    let cursorTrailEnabled = true;
+    try { cursorTrailEnabled = localStorage.getItem('odysseus-cursor-trail') !== 'off'; } catch (_) {}
+    cursorTrailToggle.checked = cursorTrailEnabled;
+    if (cursorTrailToggle.dataset.cursorTrailBound !== '1') {
+      cursorTrailToggle.dataset.cursorTrailBound = '1';
+      cursorTrailToggle.addEventListener('change', () => {
+        try { localStorage.setItem('odysseus-cursor-trail', cursorTrailToggle.checked ? 'on' : 'off'); } catch (_) {}
+        setCursorTrailEnabled(cursorTrailToggle.checked);
+      });
+    }
   }
 
   // --- Color Harmony Generator (inside Advanced section) ---
@@ -2055,6 +2071,91 @@ function _initSparkles() {
 }
 
 // ── Embers — warm particles rising with glow and occasional spark bursts ──
+function _initAurora() {
+  if (document.getElementById('aurora-canvas')) return;
+  const canvas = document.createElement('canvas');
+  canvas.id = 'aurora-canvas';
+  canvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;';
+  canvas.setAttribute('aria-hidden', 'true');
+  document.body.prepend(canvas);
+  const ctx = _getBgCanvasContext(canvas);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  let W, H;
+  const frame = { last: 0 };
+  const waves = [];
+  function makeWaves() {
+    waves.length = 0;
+    const count = 5 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < count; i++) {
+      waves.push({
+        y: Math.random(),
+        amp: 0.04 + Math.random() * 0.08,
+        freq: 1 + Math.random() * 2,
+        speed: 0.0002 + Math.random() * 0.0005,
+        phase: Math.random() * Math.PI * 2,
+        width: 0.08 + Math.random() * 0.12,
+      });
+    }
+  }
+  function resize() {
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (waves.length === 0) makeWaves();
+  }
+  resize();
+  const _onResize = () => resize();
+  window.addEventListener('resize', _onResize);
+  function getColor() {
+    const s = getComputedStyle(document.documentElement);
+    return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#9cdef2';
+  }
+  function hexToRgba(hex, a) {
+    const { r, g, b } = hexToRgb(hex) || { r: 0, g: 0, b: 0 };
+    return `rgba(${r},${g},${b},${a})`;
+  }
+  let t = 0;
+  function draw() {
+    if (!document.body.classList.contains('bg-pattern-aurora')) {
+      window.removeEventListener('resize', _onResize);
+      canvas.remove();
+      return;
+    }
+    _scheduleBgEffectFrame(draw, frame);
+    t += 1;
+    const baseColor = getColor();
+    const rawIntensity = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--bg-effect-intensity'));
+    const intensity = Math.max(0, Math.min(1, Number.isFinite(rawIntensity) ? rawIntensity : 1));
+    const size = Math.max(0.2, Math.min(3, parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--bg-effect-size')) || 1));
+    ctx.clearRect(0, 0, W, H);
+    const gradient = ctx.createLinearGradient(0, 0, 0, H);
+    gradient.addColorStop(0, hexToRgba(baseColor, 0.02 * intensity));
+    gradient.addColorStop(1, hexToRgba(baseColor, 0.0));
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, W, H);
+    waves.forEach((w, idx) => {
+      const yBase = w.y * H;
+      ctx.beginPath();
+      for (let x = 0; x <= W; x += 4) {
+        const phase = w.phase + t * w.speed + (x / W) * w.freq * Math.PI * 2;
+        const y = yBase + Math.sin(phase) * (w.amp * H) + Math.sin(phase * 0.5 + t * 0.003) * (w.amp * H * 0.3);
+        if (x === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.lineTo(W, H);
+      ctx.lineTo(0, H);
+      ctx.closePath();
+      const g = ctx.createLinearGradient(0, yBase - H * w.width * size, 0, yBase + H * w.width * size);
+      g.addColorStop(0, hexToRgba(baseColor, 0));
+      g.addColorStop(0.5, hexToRgba(baseColor, 0.18 * intensity));
+      g.addColorStop(1, hexToRgba(baseColor, 0));
+      ctx.fillStyle = g;
+      ctx.fill();
+    });
+  }
+  _scheduleBgEffectFrame(draw, frame);
+}
+
 function _initEmbers() {
   if (document.getElementById('embers-canvas')) return;
   const canvas = document.createElement('canvas');

@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.css_loader import read_css_with_imports
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CALENDAR_JS = ROOT / "static" / "js" / "calendar.js"
@@ -65,7 +67,7 @@ def test_calendar_readable_text_color_keeps_light_text_for_dark_colors():
 
 def test_calendar_event_surfaces_use_computed_foreground_variable():
     calendar_js = CALENDAR_JS.read_text(encoding="utf-8")
-    style_css = STYLE_CSS.read_text(encoding="utf-8")
+    style_css = read_css_with_imports(STYLE_CSS)
     utils_js = UTILS_JS.read_text(encoding="utf-8")
 
     assert "_calReadableTextColor" in utils_js

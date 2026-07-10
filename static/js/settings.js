@@ -13,6 +13,7 @@ import { bindMenuDismiss } from './escMenuStack.js';
 let initialized = false;
 let modalEl = null;
 let _authPolicy = { password_min_length: 8 };
+let _closeGen = 0;
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
@@ -5805,13 +5806,20 @@ function syncAdminVisibility() {
    ═══════════════════════════════════════════ */
 export function open(tab) {
   if (!initialized) initAll();
+  // Invalidate animation/timer callbacks left by an interrupted close (for
+  // example, closing the Settings minimized chip and reopening immediately).
+  _closeGen++;
   syncAppearanceCheckboxes();
   if (modalEl.classList.contains('hidden')) {
     resetWindowPlacement();
   }
+  // Cancel any pending close animation from a previous close
+  const content = modalEl.querySelector('.modal-content, .settings-modal-content');
+  if (content) {
+    content.classList.remove('modal-closing');
+  }
   modalEl.classList.remove('hidden');
   syncAdminVisibility();
-  const content = modalEl.querySelector('.settings-modal-content');
   if (tab) {
     modalEl.querySelectorAll('[data-settings-tab]').forEach(b => b.classList.toggle('active', b.dataset.settingsTab === tab));
     modalEl.querySelectorAll('[data-settings-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.settingsPanel !== tab));
@@ -5828,6 +5836,7 @@ export function open(tab) {
 
 export function close() {
   if (!modalEl) return;
+  const closeGen = ++_closeGen;
   // Always clear the appearance-tab body class so the rest of the app
   // doesn't keep its dimmed state if the modal got closed mid-tab.
   document.body.classList.remove('settings-appearance-open');
@@ -5835,11 +5844,20 @@ export function close() {
   const content = modalEl.querySelector('.modal-content, .settings-modal-content');
   if (content && !content.classList.contains('modal-closing')) {
     content.classList.add('modal-closing');
-    content.addEventListener('animationend', () => {
+
+    const finishClose = (event) => {
+      // Ignore animations from controls inside Settings. The fallback also
+      // detaches this listener when modalManager cancels the exit animation.
+      if (event && event.target !== content) return;
+      content.removeEventListener('animationend', finishClose);
+      if (closeGen !== _closeGen) return;
+      if (!content.classList.contains('modal-closing')) return;
       modalEl.classList.add('hidden');
       content.classList.remove('modal-closing');
-    }, { once: true });
-    setTimeout(() => { if (!modalEl.classList.contains('hidden')) { modalEl.classList.add('hidden'); content.classList.remove('modal-closing'); } }, 250);
+    };
+
+    content.addEventListener('animationend', finishClose);
+    setTimeout(finishClose, 250);
   } else {
     modalEl.classList.add('hidden');
   }

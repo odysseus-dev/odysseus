@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from tests.helpers.css_loader import read_css_with_imports
+
 
 ROOT = Path(__file__).resolve().parents[1]
 ANDROID_MANIFEST = (ROOT / "android/app/src/main/AndroidManifest.xml").read_text(encoding="utf-8")
@@ -18,7 +20,7 @@ MAIN_ACTIVITY = (
 APP_JS = (ROOT / "static/app.js").read_text(encoding="utf-8")
 INIT_JS = (ROOT / "static/js/init.js").read_text(encoding="utf-8")
 SIDEBAR_LAYOUT_JS = (ROOT / "static/js/sidebar-layout.js").read_text(encoding="utf-8")
-STYLE_CSS = (ROOT / "static/style.css").read_text(encoding="utf-8")
+STYLE_CSS = read_css_with_imports(ROOT / "static/style.css")
 
 
 def test_android_keyboard_does_not_resize_or_pan_whole_webview():

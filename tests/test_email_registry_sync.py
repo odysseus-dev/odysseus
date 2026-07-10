@@ -8,8 +8,7 @@ read-only fix the alias gate requires). The wider advertising/registry
 consolidation (schemas, prompt sections, RAG index, UI selector, assistant
 seed) lives in a follow-up PR with its own sync tests.
 """
-import re
-from pathlib import Path
+import pytest
 
 import src.agent_tools  # noqa: F401 — resolve the circular-import cluster first
 from src.tool_security import (
@@ -18,13 +17,12 @@ from src.tool_security import (
     PLAN_MODE_READONLY_TOOLS,
 )
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-
-
-def test_email_server_tools_match_builtin_set():
+@pytest.mark.asyncio
+async def test_email_server_tools_match_builtin_set():
     """BUILTIN_EMAIL_TOOLS must equal exactly what the email server exposes."""
-    source = (_REPO_ROOT / "mcp_servers" / "email_server.py").read_text()
-    served = set(re.findall(r'Tool\(\s*name="(\w+)"', source))
+    from mcp_servers.email_server import list_tools
+
+    served = {tool.name for tool in await list_tools()}
     assert served == set(BUILTIN_EMAIL_TOOLS), (
         f"email_server tools != BUILTIN_EMAIL_TOOLS; "
         f"server-only: {sorted(served - BUILTIN_EMAIL_TOOLS)}, "

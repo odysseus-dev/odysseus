@@ -445,6 +445,12 @@ async def do_manage_webhooks(content: str, owner: Optional[str] = None) -> Dict:
 async def do_manage_tokens(content: str, owner: Optional[str] = None) -> Dict:
     """Manage API tokens: list, create, delete."""
     from core.database import SessionLocal, ApiToken
+    from src.api_token_cache import invalidate_token_cache
+    from src.security_audit import (
+        TOKEN_CREATED,
+        TOKEN_REVOKED,
+        log_security_event_async,
+    )
     try:
         args = _parse_tool_args(content)
     except ValueError:
@@ -456,31 +462,74 @@ async def do_manage_tokens(content: str, owner: Optional[str] = None) -> Dict:
         if action == "list":
             tokens = db.query(ApiToken).all()
             items = [{"id": t.id, "name": t.name, "token_prefix": t.token_prefix + "...",
+                       "owner": getattr(t, "owner", None),
+                       "scopes": [s.strip() for s in (getattr(t, "scopes", "") or "chat").split(",") if s.strip()],
                        "is_active": t.is_active} for t in tokens]
             return {"response": f"{len(items)} API tokens", "tokens": items, "exit_code": 0}
 
         elif action == "create":
             import uuid as _uuid, secrets, bcrypt
-            from datetime import datetime
-            name = args.get("name", "API Token")
-            raw_token = secrets.token_urlsafe(32)
+            from fastapi import HTTPException
+            from routes.api_token_routes import MAX_NAME_LEN, _normalize_scopes
+
+            owner_key = (owner or "").strip().lower()
+            if not owner_key:
+                return {"error": "An authenticated token owner is required", "exit_code": 1}
+            name = str(args.get("name") or "API Token").strip()[:MAX_NAME_LEN]
+            if not name:
+                return {"error": "Token name is required", "exit_code": 1}
+            try:
+                scope_list = _normalize_scopes(args.get("scopes"), args.get("profile"))
+            except HTTPException as exc:
+                return {"error": str(exc.detail), "exit_code": 1}
+
+            raw_token = "ody_" + secrets.token_urlsafe(32)
             token_hash = bcrypt.hashpw(raw_token.encode(), bcrypt.gensalt()).decode()
             tid = str(_uuid.uuid4())[:8]
-            t = ApiToken(id=tid, name=name, token_hash=token_hash,
-                         token_prefix=raw_token[:8], is_active=True,
-                         created_at=datetime.utcnow(), updated_at=datetime.utcnow())
+            t = ApiToken(
+                id=tid,
+                owner=owner_key,
+                name=name,
+                token_hash=token_hash,
+                token_prefix=raw_token[:8],
+                scopes=",".join(scope_list),
+                is_active=True,
+            )
             db.add(t)
             db.commit()
-            return {"response": f"Created token '{name}'", "token": raw_token, "exit_code": 0}
+            invalidate_token_cache()
+            await log_security_event_async(
+                TOKEN_CREATED,
+                actor=owner_key,
+                target=name,
+                detail=f"scopes={','.join(scope_list)}; source=agent_tool",
+            )
+            return {
+                "response": f"Created token '{name}'",
+                "token": raw_token,
+                "owner": owner_key,
+                "scopes": scope_list,
+                "exit_code": 0,
+            }
 
         elif action == "delete":
             tid = args.get("token_id", "")
             t = db.query(ApiToken).filter(ApiToken.id == tid).first()
             if not t:
                 return {"error": f"Token {tid} not found", "exit_code": 1}
+            owner_key = (owner or "").strip().lower()
+            if owner_key and getattr(t, "owner", None) != owner_key:
+                return {"error": "Not your token", "exit_code": 1}
             name = t.name
             db.delete(t)
             db.commit()
+            invalidate_token_cache()
+            await log_security_event_async(
+                TOKEN_REVOKED,
+                actor=owner_key or None,
+                target=name,
+                detail="source=agent_tool",
+            )
             return {"response": f"Deleted token '{name}'", "exit_code": 0}
 
         else:

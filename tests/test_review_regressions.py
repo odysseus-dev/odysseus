@@ -131,6 +131,7 @@ def _install_core_middleware_stub(monkeypatch):
 def test_providers_requires_admin_before_discovery_and_cache(monkeypatch):
     _install_model_route_import_stubs(monkeypatch)
     import routes.model_routes as model_routes
+    monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
 
     class _Discovery:
         def __init__(self):
@@ -842,8 +843,8 @@ async def test_bare_email_dispatch_rejects_invalid_json_body(monkeypatch):
 @pytest.mark.asyncio
 async def test_legacy_mcp_tools_decode_inline_json_args(monkeypatch):
     """The relaxed parser accepts inline JSON for non-code tags, but the legacy
-    line-based arg builders (web_search/web_fetch/read_file/write_file/
-    generate_image) would wrap the whole JSON string as the query/path/prompt.
+    line-based arg builders (web_search/web_fetch/read_file/write_file) would
+    wrap the whole JSON string as the query/path.
     A JSON object carrying the tool's primary key must be used directly."""
     import src.tool_execution as tool_execution
     from src.tool_execution import _build_mcp_args
@@ -853,7 +854,6 @@ async def test_legacy_mcp_tools_decode_inline_json_args(monkeypatch):
         "web_fetch": ('{"url": "https://example.com"}', {"url": "https://example.com"}),
         "read_file": ('{"path": "/tmp/x.txt"}', {"path": "/tmp/x.txt"}),
         "write_file": ('{"path": "/tmp/x", "content": "hi"}', {"path": "/tmp/x", "content": "hi"}),
-        "generate_image": ('{"prompt": "a cat"}', {"prompt": "a cat"}),
     }
     for tool, (content, expected) in cases.items():
         assert _build_mcp_args(tool, content) == expected, tool

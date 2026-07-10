@@ -300,6 +300,8 @@ if AUTH_ENABLED:
     def _token_cache_invalidate():
         nonlocal_dict = app.state.__dict__
         nonlocal_dict["_token_cache_dirty"] = True
+    from src.api_token_cache import register_token_cache_invalidator
+    register_token_cache_invalidator(_token_cache_invalidate)
     app.state.invalidate_token_cache = _token_cache_invalidate
     app.state._token_cache = _token_cache
     app.state._token_cache_dirty = True
@@ -671,7 +673,7 @@ from routes.skills_routes import setup_skills_routes
 app.include_router(setup_skills_routes(skills_manager))
 
 # Chat
-from routes.chat_routes import setup_chat_routes
+from routes.chat import setup_chat_routes
 app.include_router(setup_chat_routes(
     session_manager, chat_handler, chat_processor,
     memory_manager, research_handler, upload_handler,
@@ -713,7 +715,7 @@ from routes.embedding_routes import setup_embedding_routes
 app.include_router(setup_embedding_routes())
 
 # Models
-from routes.model_routes import setup_model_routes
+from routes.model import setup_model_routes
 app.include_router(setup_model_routes(model_discovery))
 
 # GitHub Copilot device-flow login
@@ -773,7 +775,7 @@ from routes.shell_routes import setup_shell_routes
 app.include_router(setup_shell_routes())
 
 # Cookbook (model download/serve/cache, cookbook state sync)
-from routes.cookbook_routes import setup_cookbook_routes
+from routes.cookbook import setup_cookbook_routes
 app.include_router(setup_cookbook_routes())
 
 from routes.workspace_routes import setup_workspace_routes
@@ -831,7 +833,7 @@ from routes.note_routes import setup_note_routes
 app.include_router(setup_note_routes(task_scheduler))
 
 # Email
-from routes.email_routes import setup_email_routes
+from routes.email import setup_email_routes
 email_router = setup_email_routes()
 app.include_router(email_router)
 

@@ -1,0 +1,941 @@
+/* _interactions.css — chunked from style.css */
+/* ── Drag & Drop ── */
+
+/* ---------- Color palette (dark / light) ---------- */
+
+    /* Drag and drop styling */
+    .section[dnd-active="true"] {
+      background: color-mix(in srgb, var(--red) 10%, transparent) !important;
+      border-color: var(--red) !important;
+    }
+
+    .section[dnd-over="true"] {
+      background: color-mix(in srgb, var(--red) 20%, transparent) !important;
+      border-color: var(--red) !important;
+      transform: scale(1.02);
+    }
+
+    .drag-handle {
+      cursor: grab;
+      opacity: 0.5;
+      padding: 0 6px;
+      user-select: none;
+    }
+
+    .drag-handle:hover {
+      opacity: 0.8;
+    }
+
+    .drag-handle:active {
+      cursor: grabbing;
+    }
+
+/* ── UI Controls (Radio, Presets, Toolbar, Settings) ── */
+
+
+    /* Custom radio button styling */
+    .radio-option {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--fg) 6%, transparent);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .radio-option:hover {
+      background: color-mix(in srgb, var(--fg) 9%, transparent);
+      border-color: var(--fg);
+    }
+
+    .radio-option input[type="radio"] {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 18px;
+      height: 18px;
+      border: 2px solid var(--border);
+      border-radius: 50%;
+      outline: none;
+      margin: 0;
+      background: var(--bg);
+      transition: all 0.2s ease;
+      position: relative;
+      flex-shrink: 0;
+    }
+
+    .radio-option input[type="radio"]:checked {
+      border-color: var(--red);
+      background: var(--red);
+    }
+
+    .radio-option input[type="radio"]:focus {
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 30%, transparent);
+    }
+
+    .radio-label {
+      color: var(--fg);
+      font-size: 14px;
+      user-select: none;
+    }
+
+    /* Preset buttons */
+    .preset-btn {
+      height: 27.2px; /* 15% smaller than 32px */
+      padding: 0 8.5px; /* 15% smaller than 10px */
+      margin-left: 4px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: 'Fira Code', monospace;
+      font-size: 10.2px; /* 15% smaller than 12px */
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .preset-btn:hover {
+      background: var(--panel);
+      border-color: var(--fg);
+    }
+
+    .preset-btn.active {
+      background: var(--panel);
+      border-color: var(--fg);
+      box-shadow: 0 0 0 1px var(--fg), 0 0 8px color-mix(in srgb, var(--fg) 16%, transparent);
+      font-weight: 600;
+    }
+
+    /* All preset buttons use the same blue color */
+    .preset-btn {
+      border-color: var(--red); /* Blue color */
+    }
+
+    .preset-btn.active {
+      border-color: var(--red); /* Blue color when active */
+      box-shadow: 0 0 0 1px var(--red), 0 0 8px color-mix(in srgb, var(--red) 30%, transparent);
+    }
+
+    /* Custom preset modal: the base .preset-modal-content sets overflow:hidden
+       (for desktop rounded-corner clipping), which on the mobile sheet clipped
+       the footer (Start/Cancel) off the bottom with no way to reach it. Let the
+       whole sheet scroll — same as every other mobile modal (.modal-content is
+       overflow-y:auto on mobile) — so the footer is always reachable. No flex
+       changes, so the body can't collapse. */
+    #custom-preset-modal .preset-modal-content {
+      overflow-y: auto !important;
+    }
+    #custom-preset-modal .modal-body label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--fg);
+      margin-top: 8px;
+      margin-bottom: 4px;
+      display: block;
+    }
+
+    #custom-preset-modal .modal-body input,
+    #custom-preset-modal .modal-body textarea {
+      width: 100%;
+      margin-bottom: 8px;
+      box-sizing: border-box;
+    }
+    #custom-preset-modal .modal-body textarea,
+    #custom-preset-modal .modal-body input[type="text"] {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--fg);
+      padding: 8px 10px;
+      font-size: 13px;
+      font-family: inherit;
+      transition: border-color 0.15s;
+    }
+    #custom-preset-modal .modal-body textarea {
+      resize: vertical;
+    }
+    #custom-preset-modal .modal-body textarea:focus,
+    #custom-preset-modal .modal-body input[type="text"]:focus {
+      outline: none;
+      border-color: var(--red);
+    }
+
+    #custom-preset-modal .modal-footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
+    }
+
+    #custom-preset-modal .modal-footer button {
+      padding: 7px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      border: 1px solid var(--border);
+      background: none;
+      color: var(--fg);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    #custom-preset-modal .modal-footer button:hover {
+      background: color-mix(in srgb, var(--fg) 8%, transparent);
+    }
+
+    #custom-preset-modal .modal-footer button#save-custom-preset {
+      /* The theme's accent is stored in --red (theme.js sets --red = accentHex)
+         and --accent is undefined, so the canonical accent expression is
+         var(--accent, var(--red)). The old bare var(--accent) resolved to nothing
+         which, with color:var(--bg), made the button invisible. */
+      background: var(--accent, var(--red));
+      color: var(--bg);
+      border-color: var(--accent, var(--red));
+    }
+    #custom-preset-modal .modal-footer button#save-custom-preset:hover {
+      opacity: 0.85;
+    }
+    /* Toolbar visibility tab */
+    .toolbar-hint {
+      font-size: 12px;
+      color: color-mix(in srgb, var(--fg) 55%, transparent);
+      margin-bottom: 12px;
+    }
+    /* ── Appearance visibility toggles ── */
+    .vis-toggles {
+      display: flex;
+      flex-direction: column;
+    }
+    .vis-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      padding: 5px 6px;
+      border-radius: 4px;
+      transition: background 0.12s;
+    }
+    .vis-row:hover {
+      background: color-mix(in srgb, var(--fg) 5%, transparent);
+    }
+    .vis-row input[type="checkbox"] {
+      display: none;
+    }
+    .vis-icon {
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      color: color-mix(in srgb, var(--fg) 40%, transparent);
+    }
+    .vis-icon-text {
+      font-size: 10px;
+      font-weight: 700;
+      font-family: inherit;
+      letter-spacing: -0.5px;
+    }
+    .vis-label {
+      flex: 1;
+      font-size: 12px;
+      color: var(--fg);
+      user-select: none;
+    }
+    .vis-switch {
+      position: relative;
+      width: 30px;
+      height: 16px;
+      background: color-mix(in srgb, var(--fg) 15%, transparent);
+      border-radius: 8px;
+      transition: background 0.2s;
+      flex-shrink: 0;
+    }
+    .vis-switch::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 12px;
+      height: 12px;
+      background: var(--panel);
+      border-radius: 50%;
+      transition: transform 0.2s;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+    }
+    .vis-row input:checked + .vis-switch {
+      background: var(--red);
+    }
+    .vis-row input:checked + .vis-switch::after {
+      transform: translateX(14px);
+    }
+    .vis-row input:checked ~ .vis-icon,
+    .vis-row:has(input:checked) .vis-icon {
+      color: var(--fg);
+    }
+    /* Compare model selector — match the calendar modal's clean header
+       (no border underline). */
+    #compare-model-overlay .modal-header h4 {
+      pointer-events: none;
+    }
+    /* Compare model selector: keep manually-resized/tiny windows contained.
+       Picker dropdowns are appended to document.body, so the card itself can
+       clip and scroll without cropping the dropdown list. */
+    #compare-model-overlay .modal-content {
+      display: flex;
+      flex-direction: column;
+      max-height: min(720px, calc(100dvh - 48px));
+      overflow: hidden;
+      min-height: 180px;
+    }
+    #compare-model-overlay .modal-body {
+      overflow: auto;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    .vis-hint {
+      font-size: 10px;
+      color: color-mix(in srgb, var(--fg) 30%, transparent);
+      font-weight: 400;
+      margin-left: 2px;
+    }
+    /* Settings toggle — admin-only lock indicator */
+    .ui-vis-lock {
+      display: none;
+    }
+    /* (legacy toolbar-toggle styles removed — now using .vis-* classes) */
+
+    /* Demo highlight pulse */
+    .odysseus-highlight {
+      outline: 2px solid var(--accent, var(--red)) !important;
+      outline-offset: 1px;
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+      animation: ody-pulse 1.5s ease-in-out infinite;
+      z-index: 100;
+      position: relative;
+    }
+    @keyframes ody-pulse {
+      0%, 100% { outline-color: var(--accent, var(--red)); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent, var(--red)) 18%, transparent); }
+      50%       { outline-color: color-mix(in srgb, var(--accent, var(--red)) 40%, transparent); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent, var(--red)) 8%, transparent); }
+    }
+    /* Floating breathing halo. Rendered as a body-level div positioned over
+       the target, so we don't fight the target's own outline / box-shadow /
+       overflow chain. JS keeps it in sync with the target's bounding rect. */
+    .tour-halo {
+      position: fixed;
+      pointer-events: none;
+      border: 3px solid var(--accent, var(--red));
+      border-radius: 10px;
+      z-index: 10000;
+      animation: ody-breathe 1.4s ease-in-out infinite;
+      opacity: 0;
+      transform: scale(0.94);
+      transition: opacity 0.35s ease-out, transform 0.35s ease-out;
+    }
+    .tour-halo.tour-fade-in {
+      opacity: 1;
+      transform: scale(1);
+    }
+    @keyframes ody-breathe {
+      0%, 100% {
+        box-shadow: 0 0 0 3px  color-mix(in srgb, var(--accent, var(--red)) 55%, transparent),
+                    0 0 22px 4px color-mix(in srgb, var(--accent, var(--red)) 40%, transparent);
+        border-color: var(--accent, var(--red));
+      }
+      50% {
+        box-shadow: 0 0 0 6px  color-mix(in srgb, var(--accent, var(--red)) 30%, transparent),
+                    0 0 40px 14px color-mix(in srgb, var(--accent, var(--red)) 70%, transparent);
+        border-color: color-mix(in srgb, var(--accent, var(--red)) 80%, transparent);
+      }
+    }
+    /* While the tour is active, lift overflow:hidden on common clipping
+       ancestors so the halo around a highlighted child isn't cropped. */
+    body.tour-active .sidebar,
+    body.tour-active .sidebar-inner,
+    body.tour-active .chat-input-bar,
+    body.tour-active .chat-input-top,
+    body.tour-active .chat-input-wrap,
+    body.tour-active .chat-input-right,
+    body.tour-active .mode-toggle,
+    body.tour-active .model-picker-wrap {
+      overflow: visible !important;
+    }
+
+    /* ── Secret tour hint (drag-to-snap on first modal open) ── */
+    .tour-hint {
+      position: fixed;
+      z-index: 10002;
+      background: var(--bg);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px 10px;
+      width: 240px;
+      font-size: 0.78rem;
+      line-height: 1.5;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.32);
+      opacity: 0;
+      transform: translateY(-4px);
+      transition: opacity 0.28s ease-out, transform 0.28s ease-out;
+      pointer-events: auto;
+    }
+    .tour-hint.tour-hint-in  { opacity: 1; transform: translateY(0); }
+    .tour-hint.tour-hint-out { opacity: 0; transform: translateY(-4px); }
+    .tour-hint-visual {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 8px;
+      color: var(--accent, var(--red));
+    }
+    .tour-hint-visual svg { display: block; }
+    .tour-hint-text { margin-bottom: 10px; opacity: 0.92; }
+    .tour-hint-text b { color: var(--accent, var(--red)); font-weight: 600; }
+    .tour-hint-dismiss {
+      display: block;
+      margin: 0 0 0 auto;
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--fg);
+      border-radius: 6px;
+      padding: 3px 12px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.72rem;
+      opacity: 0.85;
+      transition: opacity 0.15s, background 0.15s;
+    }
+    .tour-hint-dismiss:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+
+    /* SVG dance: cursor approaches title bar, drags right, modal snaps to a
+       right-half zone, holds, returns. 3.2s loop. */
+    .th-cursor { animation: th-cursor 3.2s ease-in-out infinite; transform-origin: 0 0; }
+    .th-modal-group { animation: th-modal-slide 3.2s ease-in-out infinite; transform-origin: 39px 31px; }
+    .th-zone { animation: th-zone-flash 3.2s ease-in-out infinite; }
+    @keyframes th-cursor {
+      0%, 5%    { transform: translate(35px, 32px); }
+      18%       { transform: translate(35px, 22px); }
+      48%       { transform: translate(80px, 22px); }
+      72%       { transform: translate(80px, 22px); }
+      90%, 100% { transform: translate(35px, 32px); }
+    }
+    @keyframes th-modal-slide {
+      0%, 18%   { transform: translate(0, 0) scale(1, 1); }
+      48%       { transform: translate(45px, 0) scale(1, 1); }
+      58%       { transform: translate(30px, -19px) scale(1.4, 2.4); }
+      72%       { transform: translate(30px, -19px) scale(1.4, 2.4); }
+      90%, 100% { transform: translate(0, 0) scale(1, 1); }
+    }
+    @keyframes th-zone-flash {
+      0%, 38%   { opacity: 0; }
+      48%       { opacity: 0.22; }
+      58%, 72%  { opacity: 0; }
+      100%      { opacity: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .th-cursor, .th-modal-group, .th-zone { animation: none !important; }
+    }
+    .odysseus-hl-label {
+      position: absolute;
+      top: -22px;
+      left: 8px;
+      background: var(--red);
+      color: var(--bg);
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      border-radius: 4px;
+      white-space: nowrap;
+      z-index: 101;
+      pointer-events: none;
+    }
+
+    /* Generated media inside chat bubbles */
+    .msg.generated-image-wrap .body { text-align: center; }
+    .generated-image {
+      max-width: 100%;
+      max-height: 512px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: transform 0.2s;
+      display: inline-block;
+      margin: 0 auto;
+    }
+    .generated-image:hover { transform: scale(1.02); }
+    video.generated-image {
+      width: 100%;
+      max-width: 720px;
+      background: #000;
+    }
+    video.generated-image:hover { transform: none; }
+    .generated-audio {
+      width: min(100%, 560px);
+      display: block;
+      margin: 0 auto;
+    }
+    .generated-image-caption {
+      font-size: 0.8rem;
+      opacity: 0.5;
+      margin-top: 6px;
+      font-style: italic;
+      text-align: center;
+    }
+
+    /* Setup wizard */
+    .setup-wizard { padding: 16px; max-width: 500px; }
+    .setup-wizard .setup-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 12px; color: var(--fg); }
+    .setup-wizard .setup-label { font-size: 0.85rem; color: var(--fg); opacity: 0.7; margin-bottom: 8px; }
+    .setup-wizard .setup-presets { display: flex; flex-wrap: wrap; gap: 8px; }
+    .setup-wizard .setup-preset-btn {
+      padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px;
+      background: var(--panel); color: var(--fg); cursor: pointer;
+      font-size: 0.85rem; transition: all 0.2s;
+    }
+    .setup-wizard .setup-preset-btn:hover { border-color: var(--red); background: color-mix(in srgb, var(--red) 11%, transparent); }
+    .setup-wizard .setup-input {
+      display: block; width: 100%; padding: 8px 12px; margin-bottom: 8px;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 6px; color: var(--fg); font-size: 0.85rem; box-sizing: border-box;
+    }
+    .setup-wizard .setup-input:focus { border-color: var(--red); outline: none; }
+    .setup-wizard .setup-connect-btn {
+      padding: 8px 20px; background: var(--red); color: var(--bg);
+      border: none; border-radius: 6px; cursor: pointer; font-weight: 600; margin-top: 4px;
+    }
+    .setup-wizard .setup-connect-btn:hover { opacity: 0.9; }
+    .setup-wizard .setup-status { font-size: 0.8rem; margin-top: 8px; color: var(--fg); opacity: 0.7; }
+    .setup-wizard .setup-model-list { display: flex; flex-wrap: wrap; gap: 8px; }
+    .setup-wizard .setup-model-btn {
+      padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px;
+      background: var(--panel); color: var(--fg); cursor: pointer;
+      font-size: 0.85rem; transition: all 0.2s;
+    }
+    .setup-wizard .setup-model-btn:hover { border-color: var(--red); background: color-mix(in srgb, var(--red) 11%, transparent); }
+    .setup-wizard .setup-step.hidden { display: none; }
+
+    /* Dropdown menu styles */
+    .dropdown {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), 0 0 0 1px color-mix(in srgb, var(--fg) 5%, transparent);
+      z-index: 1000;
+      display: none;
+      min-width: 220px;
+      padding: 6px;
+      backdrop-filter: blur(12px);
+    }
+
+    .dropdown.show {
+      display: block;
+      animation: dropdown-in 0.15s ease-out;
+    }
+    .dropdown.show .dropdown-item:nth-child(1) { animation: dropdown-item-in 0.2s ease-out 0.02s both; }
+    .dropdown.show .dropdown-item:nth-child(2) { animation: dropdown-item-in 0.2s ease-out 0.05s both; }
+    .dropdown.show .dropdown-item:nth-child(3) { animation: dropdown-item-in 0.2s ease-out 0.08s both; }
+    .dropdown.show .dropdown-item:nth-child(4) { animation: dropdown-item-in 0.2s ease-out 0.11s both; }
+    .dropdown.show .dropdown-item:nth-child(5) { animation: dropdown-item-in 0.2s ease-out 0.14s both; }
+    .dropdown.show .dropdown-item:nth-child(n+6) { animation: dropdown-item-in 0.2s ease-out 0.17s both; }
+    @keyframes dropdown-in {
+      from { opacity:0; transform:translateY(-6px) scale(0.97); }
+      to { opacity:1; transform:translateY(0) scale(1); }
+    }
+    @keyframes dropdown-item-in {
+      from { opacity: 0; transform: translateX(-8px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+
+    .dropdown-item {
+      padding: 8px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.12s ease;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+    }
+
+    .dropdown-item:last-child {
+      border-bottom: none;
+    }
+
+    .dropdown-item .menu-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--fg) 5%, transparent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+
+    .dropdown-item .menu-text h4 {
+      margin: 0;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--fg);
+      line-height: 1.3;
+    }
+
+    .dropdown-item .menu-text p {
+      margin: 0;
+      font-size: 10.5px;
+      color: var(--color-subheader);
+      line-height: 1.3;
+    }
+
+    .dropdown-item:hover {
+      background: color-mix(in srgb, var(--red) 10%, transparent);
+    }
+    .dropdown-item:hover .menu-icon {
+      background: color-mix(in srgb, var(--red) 15%, transparent);
+    }
+
+    /* Compact dropdown items (session/model context menus) */
+    .dropdown-item-compact {
+      cursor: pointer;
+      padding: 6px 8px;
+      font-size: 11px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--fg);
+      transition: background 0.1s;
+    }
+    .dropdown-item-compact:hover {
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+    }
+    .dropdown-item-compact .dropdown-icon {
+      width: 14px;
+      height: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      opacity: 0.5;
+    }
+    .dropdown-item-compact .dropdown-icon svg {
+      width: 14px;
+      height: 14px;
+    }
+    .dropdown-item-compact .dropdown-shortcut {
+      margin-left: auto;
+      font-size: 9.5px;
+      opacity: 0.35;
+      font-weight: 400;
+    }
+    /* Keyboard shortcut hints (⌘+Alt+D etc.) are meaningless on touch —
+       hide them in the per-chat actions menu on mobile. */
+    @media (max-width: 768px) {
+      .session-dropdown .dropdown-shortcut { display: none; }
+    }
+    .dropdown-item-danger {
+      color: var(--red) !important;
+    }
+    .dropdown-item-danger .dropdown-icon {
+      opacity: 0.7;
+    }
+
+    /* Inline rename input for sessions */
+    .session-rename-input {
+      width: 100%;
+      background: var(--bg);
+      color: var(--fg);
+      border: 1px solid var(--accent, var(--accent-primary));
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-family: inherit;
+      font-size: 12px;
+      line-height: 1.3;
+      outline: none;
+    }
+
+    /* Session dropdown container */
+    .session-dropdown-menu {
+      position: fixed;
+      z-index: 1000;
+      display: none;
+      min-width: auto;
+      width: max-content;
+      padding: 4px;
+      animation: dropdown-in 0.15s ease-out;
+    }
+
+    /* Folder move submenu */
+    .session-folder-submenu {
+      position: fixed;
+      z-index: 1001;
+      display: none;
+      min-width: auto;
+      width: max-content;
+      padding: 4px;
+    }
+
+    .dropdown-divider {
+      height: 1px;
+      background: var(--border);
+      margin: 4px 8px;
+    }
+
+    /* Search toggle styles */
+    .search-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 8px;
+    }
+
+    .search-provider-label {
+      font-size: 14px;
+      color: var(--fg);
+    }
+
+/* ── Voice, Search, Themes, Comparison, Censor, Print ── */
+
+    /* Voice recording styles */
+    #mic-btn {
+      color: var(--fg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      transition: all 0.2s ease;
+    }
+
+    #mic-btn:hover {
+      background: color-mix(in srgb, var(--fg) 6%, transparent);
+      border-color: var(--fg);
+    }
+
+    #mic-btn.recording {
+      background: var(--color-recording);
+      border-color: var(--color-recording);
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0% { opacity: 1; }
+      50% { opacity: 0.7; }
+      100% { opacity: 1; }
+    }
+
+    #recording-indicator {
+      position: fixed;
+      top: 10px;
+      left: 0;
+      right: 0;
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(10px);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      margin: 10px;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+
+    #recording-indicator.hidden {
+      display: none !important;
+    }
+
+    .recording-content {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: white;
+    }
+
+    .recording-icon {
+      color: var(--color-recording);
+      font-size: 20px;
+      animation: pulse 1.5s infinite;
+    }
+
+    .recording-text {
+      font-size: 16px;
+      font-weight: 500;
+    }
+
+    #stop-recording {
+      background: var(--color-recording);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+
+    #stop-recording:hover {
+      background: var(--color-recording-hover);
+    }
+
+    /* Error state for recording */
+    #recording-indicator.error {
+      background: rgba(173, 26, 26, 0.9);
+    }
+
+    .recording-error {
+      color: var(--color-recording);
+      font-size: 14px;
+      margin-top: 4px;
+    }
+
+    @media (max-width: 768px) {
+      #recording-indicator {
+        margin: 8px;
+        padding: 10px;
+      }
+
+      .recording-text {
+        font-size: 14px;
+      }
+
+      #stop-recording {
+        padding: 6px 10px;
+        font-size: 12px;
+      }
+    }
+/* ── Keyboard shortcut cheatsheet overlay ── */
+.kb-cheatsheet-overlay {
+  position: fixed;
+  top: 0; left: 0; width: 100%; height: 100%;
+  z-index: 10001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.kb-cheatsheet-overlay.hidden { display: none; }
+.kb-cheatsheet-backdrop {
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.kb-cheatsheet-modal {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+  max-width: 600px;
+  width: calc(100vw - 40px);
+  max-height: 80vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: kb-cheatsheet-in 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes kb-cheatsheet-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.kb-cheatsheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px 6px;
+  flex-shrink: 0;
+}
+.kb-cheatsheet-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--fg);
+}
+.kb-cheatsheet-close {
+  width: 32px; height: 32px;
+  border: none;
+  background: none;
+  color: var(--fg);
+  font-size: 22px;
+  cursor: pointer;
+  border-radius: 50%;
+  opacity: 0.55;
+  transition: opacity 0.15s ease, background 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.kb-cheatsheet-close:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.kb-cheatsheet-body {
+  padding: 10px 22px 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 32px;
+}
+.kb-cheatsheet-group {
+  flex: 1 1 220px;
+  min-width: 200px;
+}
+.kb-cheatsheet-group h3 {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--accent-primary, var(--red));
+  margin: 0 0 8px;
+  opacity: 0.8;
+}
+.kb-cheatsheet-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 0;
+  gap: 16px;
+  font-size: 0.82rem;
+}
+.kb-cheatsheet-label {
+  color: var(--fg);
+  opacity: 0.75;
+  white-space: nowrap;
+}
+.kb-cheatsheet-row kbd {
+  display: inline-block;
+  padding: 2px 7px;
+  font-size: 0.72rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  white-space: nowrap;
+  letter-spacing: 0.3px;
+}
+.kb-cheatsheet-footer {
+  padding: 10px 22px 14px;
+  font-size: 0.72rem;
+  color: var(--fg);
+  opacity: 0.45;
+  text-align: center;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.kb-cheatsheet-footer kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 0.68rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+@media (max-width: 600px) {
+  .kb-cheatsheet-body { flex-direction: column; gap: 12px; }
+  .kb-cheatsheet-group { flex: 1 1 auto; }
+}

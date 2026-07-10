@@ -109,7 +109,7 @@ def test_pre_retrieve_context_logs_out_on_search_failure(monkeypatch):
 # ── email_server ───────────────────────────────────────────────────────────────
 
 def test_mcp_list_emails_logs_out_on_select_failure(monkeypatch):
-    import mcp_servers.email_server as srv
+    from mcp_servers.email_server import _utils as srv
 
     captured = {}
     conn = _make_failing_conn(captured, raises_on="select")
@@ -127,7 +127,7 @@ def test_mcp_list_emails_logs_out_on_select_failure(monkeypatch):
 
 
 def test_mcp_list_emails_logs_out_on_search_failure(monkeypatch):
-    import mcp_servers.email_server as srv
+    from mcp_servers.email_server import _utils as srv
 
     captured = {}
     conn = MagicMock()
@@ -150,7 +150,7 @@ def test_mcp_list_emails_logs_out_on_search_failure(monkeypatch):
 
 
 def test_mcp_read_email_logs_out_on_select_failure(monkeypatch):
-    import mcp_servers.email_server as srv
+    from mcp_servers.email_server import _utils as srv
 
     captured = {}
     conn = _make_failing_conn(captured, raises_on="select")
@@ -171,7 +171,7 @@ def test_mcp_read_email_logs_out_on_select_failure(monkeypatch):
 
 
 def test_mcp_read_email_logs_out_on_fetch_failure(monkeypatch):
-    import mcp_servers.email_server as srv
+    from mcp_servers.email_server import _utils as srv
 
     captured = {}
     conn = MagicMock()
@@ -195,7 +195,7 @@ def test_mcp_read_email_logs_out_on_fetch_failure(monkeypatch):
 
 
 def test_mcp_reply_to_email_logs_out_on_select_failure(monkeypatch):
-    import mcp_servers.email_server as srv
+    from mcp_servers.email_server import _utils as srv
 
     captured = {}
     conn = _make_failing_conn(captured, raises_on="select")
@@ -214,7 +214,7 @@ def test_mcp_reply_to_email_logs_out_on_select_failure(monkeypatch):
 
 
 def test_mcp_download_attachment_logs_out_on_select_failure(monkeypatch):
-    import mcp_servers.email_server as srv
+    from mcp_servers.email_server import _utils as srv
 
     captured = {}
     conn = _make_failing_conn(captured, raises_on="select")
@@ -310,7 +310,7 @@ def _cfg_imap(ssl=True, starttls=False):
 
 
 def test_mcp_imap_connect_shuts_down_on_login_failure(monkeypatch):
-    import mcp_servers.email_server as srv
+    from mcp_servers.email_server import _utils as srv
 
     captured = {}
     conn = MagicMock()
@@ -331,7 +331,7 @@ def test_mcp_imap_connect_shuts_down_on_login_failure(monkeypatch):
 
 
 def test_mcp_imap_connect_shuts_down_on_starttls_failure(monkeypatch):
-    import mcp_servers.email_server as srv
+    from mcp_servers.email_server import _utils as srv
 
     captured = {}
     conn = MagicMock()
@@ -361,7 +361,7 @@ def _cfg_smtp(security):
 
 
 def test_mcp_smtp_connect_closes_on_login_failure(monkeypatch):
-    import mcp_servers.email_server as srv
+    from mcp_servers.email_server import _utils as srv
 
     captured = {}
     conn = MagicMock()
@@ -383,7 +383,7 @@ def test_mcp_smtp_connect_closes_on_login_failure(monkeypatch):
 
 
 def test_mcp_smtp_connect_closes_on_starttls_failure(monkeypatch):
-    import mcp_servers.email_server as srv
+    from mcp_servers.email_server import _utils as srv
 
     captured = {}
     conn = MagicMock()

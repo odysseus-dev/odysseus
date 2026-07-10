@@ -131,8 +131,8 @@ def _has_active_chat_stream() -> bool:
     auto-translate compete with the user's active chat on the same local model.
     """
     try:
-        from routes import chat_routes as _chat_routes
-        active_streams = getattr(_chat_routes, "_active_streams", {}) or {}
+        from routes.chat import _active_streams
+        active_streams = _active_streams or {}
         if active_streams:
             return True
     except Exception:

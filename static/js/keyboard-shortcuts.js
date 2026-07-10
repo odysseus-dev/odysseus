@@ -2,8 +2,11 @@
 // Keyboard Shortcuts — dynamic keybinds
 // ============================================
 
-import { IS_MAC, isAltGrEvent } from './platform.js';
 import { adjustUiScale, setUiScale } from './theme.js';
+import { registerMenuDismiss } from './escMenuStack.js';
+import { _eventShortcutKey, _matchesCombo } from './keybindMatcher.js';
+
+export { _matchesCombo } from './keybindMatcher.js';
 
 const _defaultKeybinds = {
   search: 'ctrl+k', toggle_sidebar: 'ctrl+alt+b', new_session: 'ctrl+alt+n',
@@ -16,54 +19,6 @@ const _defaultKeybinds = {
   open_notes: '', open_tasks: '', open_theme: '',
 };
 
-function _parseCombo(combo) {
-  const raw = String(combo || '').trim().toLowerCase();
-  if (!raw) return [];
-  const parts = [];
-  let token = '';
-  for (const ch of raw) {
-    if (ch === '+') {
-      if (token) {
-        parts.push(token);
-        token = '';
-      } else {
-        parts.push('+');
-      }
-    } else {
-      token += ch;
-    }
-  }
-  if (token) parts.push(token);
-  return parts.map(part => {
-    if (part === 'plus' || part === 'add') return '+';
-    if (part === 'minus' || part === 'dash' || part === 'subtract') return '-';
-    if (part === 'esc') return 'escape';
-    if (part === 'cmd' || part === 'command' || part === 'meta') return 'ctrl';
-    return part;
-  });
-}
-
-function _eventShortcutKey(e) {
-  const key = String(e.key || '').toLowerCase();
-  const code = String(e.code || '');
-  if (code === 'NumpadAdd' || key === '+') return '+';
-  if (code === 'NumpadSubtract' || key === '-' || key === '_' || key === '−') return '-';
-  if (code === 'Equal' && key !== '+') return '=';
-  if (code === 'Comma') return ',';
-  if (code === 'Slash') return '/';
-  if (code === 'Space' || key === ' ') return 'space';
-  if (key === 'esc') return 'escape';
-  return key;
-}
-
-function _eventMatchesShortcutKey(e, key) {
-  const eventKey = _eventShortcutKey(e);
-  const code = String(e.code || '');
-  if (key === '+') return eventKey === '+' || eventKey === '=' || code === 'Equal' || code === 'NumpadAdd';
-  if (key === '-') return eventKey === '-' || code === 'Minus' || code === 'NumpadSubtract';
-  return eventKey === key;
-}
-
 function _uiScaleShortcut(e) {
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
   const key = _eventShortcutKey(e);
@@ -72,23 +27,6 @@ function _uiScaleShortcut(e) {
   if (key === '-' || code === 'Minus' || code === 'NumpadSubtract') return 'out';
   if (key === '0' || code === 'Digit0' || code === 'Numpad0') return 'reset';
   return null;
-}
-
-export function _matchesCombo(e, combo, isMac = IS_MAC) {
-  if (!combo) return false;
-  // Drop AltGr keystrokes so typing characters on non-US layouts can't fire a
-  // Ctrl+Alt shortcut — e.g. the destructive delete_session. See platform.js.
-  if (isAltGrEvent(e, isMac)) return false;
-  const parts = _parseCombo(combo);
-  const needCtrl = parts.includes('ctrl');
-  const needAlt = parts.includes('alt');
-  const needShift = parts.includes('shift');
-  const key = parts.filter(p => p !== 'ctrl' && p !== 'alt' && p !== 'shift')[0] || '';
-  if (needCtrl !== (e.ctrlKey || e.metaKey)) return false;
-  if (needAlt !== e.altKey) return false;
-  const allowShiftForPlus = key === '+' && !needShift && e.shiftKey && _eventMatchesShortcutKey(e, key);
-  if (needShift !== e.shiftKey && !allowShiftForPlus) return false;
-  return _eventMatchesShortcutKey(e, key);
 }
 
 /**
@@ -358,5 +296,148 @@ export function initKeyboardShortcuts(modules) {
       if (inp) inp.focus();
       return;
     }
+    // ── Keyboard shortcut cheatsheet (press ? when no input is focused) ──
+    if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const tag = document.activeElement?.tagName?.toLowerCase();
+      const editable = document.activeElement?.isContentEditable || document.activeElement?.getAttribute?.('contenteditable') === 'true';
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || editable) return; // don't steal from text fields
+      e.preventDefault();
+      _toggleCheatsheet();
+      return;
+    }
   });
+
+  // ── Cheatsheet overlay ──
+  let _cheatsheetUnregister = null;
+  let _cheatsheetPreviousFocus = null;
+
+  function _buildCheatsheetModal() {
+    // Rebuild on every open so changes made in Keyboard Shortcuts settings are
+    // reflected immediately instead of leaving a stale cached cheatsheet.
+    document.getElementById('kb-cheatsheet-overlay')?.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'kb-cheatsheet-overlay';
+    overlay.className = 'kb-cheatsheet-overlay hidden';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Keyboard shortcuts');
+
+    const kb = window._odysseusKeybinds || _defaultKeybinds;
+    const groups = [
+      { title: 'Navigation', items: [
+        ['Search conversations', kb.search],
+        ['Toggle sidebar', kb.toggle_sidebar],
+        ['Focus chat input', kb.focus_input],
+        ['Toggle tool window', kb.settings],
+      ]},
+      { title: 'Sessions', items: [
+        ['New session', kb.new_session],
+        ['Favorite session', kb.fav_session],
+        ['Delete session', kb.delete_session],
+        ['Toggle incognito', kb.incognito],
+      ]},
+      { title: 'Tools', items: [
+        ['Calendar', kb.open_calendar],
+        ['Compare models', kb.open_compare],
+        ['Cookbook', kb.open_cookbook],
+        ['Research', kb.open_research],
+        ['Gallery', kb.open_gallery],
+        ['Library', kb.open_library],
+        ['Memory', kb.open_memory],
+        ['Notes', kb.open_notes],
+        ['Tasks', kb.open_tasks],
+        ['Theme', kb.open_theme],
+      ]},
+      { title: 'Other', items: [
+        ['Cancel / abort', kb.cancel],
+        ['Text-to-speech', kb.tts],
+        ['UI zoom in', 'Ctrl++'],
+        ['UI zoom out', 'Ctrl+−'],
+        ['UI zoom reset', 'Ctrl+0'],
+      ]},
+    ];
+
+    const formatCombo = (combo) => {
+      if (!combo) return '—';
+      return String(combo).replace(/ctrl\+alt\+/gi, 'Ctrl+Alt+')
+        .replace(/ctrl\+/gi, 'Ctrl+')
+        .replace(/alt\+/gi, 'Alt+')
+        .replace(/shift\+/gi, 'Shift+')
+        .replace(/escape/gi, 'Esc')
+        .replace(/\b(\w)/g, (_, c) => c.toUpperCase());
+    };
+    const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    })[char]);
+
+    let html = '<div class="kb-cheatsheet-backdrop"></div>';
+    html += '<div class="kb-cheatsheet-modal">';
+    html += '<div class="kb-cheatsheet-header">';
+    html += '<h2>Keyboard Shortcuts</h2>';
+    html += '<button type="button" class="kb-cheatsheet-close" aria-label="Close">×</button>';
+    html += '</div>';
+    html += '<div class="kb-cheatsheet-body">';
+
+    for (const grp of groups) {
+      const visible = grp.items.filter(([, combo]) => combo);
+      if (!visible.length) continue;
+      html += `<div class="kb-cheatsheet-group"><h3>${escapeHtml(grp.title)}</h3>`;
+      for (const [label, combo] of visible) {
+        html += `<div class="kb-cheatsheet-row"><span class="kb-cheatsheet-label">${escapeHtml(label)}</span><kbd>${escapeHtml(formatCombo(combo))}</kbd></div>`;
+      }
+      html += '</div>';
+    }
+
+    html += '</div>';
+    html += '<div class="kb-cheatsheet-footer">Press <kbd>?</kbd> or <kbd>Esc</kbd> to close</div>';
+    html += '</div>';
+    overlay.innerHTML = html;
+
+    overlay.querySelector('.kb-cheatsheet-backdrop').addEventListener('click', _closeCheatsheet);
+    overlay.querySelector('.kb-cheatsheet-close').addEventListener('click', _closeCheatsheet);
+    overlay.addEventListener('keydown', (event) => {
+      if (event.key !== 'Tab') return;
+      const focusable = Array.from(overlay.querySelectorAll('button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'));
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    });
+
+    document.body.appendChild(overlay);
+    return overlay;
+  }
+
+  function _closeCheatsheet() {
+    const overlay = document.getElementById('kb-cheatsheet-overlay');
+    if (!overlay || overlay.classList.contains('hidden')) return;
+    const unregister = _cheatsheetUnregister;
+    _cheatsheetUnregister = null;
+    unregister?.();
+    overlay.classList.add('hidden');
+    if (_cheatsheetPreviousFocus?.isConnected) {
+      _cheatsheetPreviousFocus.focus();
+    }
+    _cheatsheetPreviousFocus = null;
+  }
+
+  function _toggleCheatsheet() {
+    const existing = document.getElementById('kb-cheatsheet-overlay');
+    if (existing && !existing.classList.contains('hidden')) {
+      _closeCheatsheet();
+      return;
+    }
+    const overlay = _buildCheatsheetModal();
+    _cheatsheetPreviousFocus = document.activeElement;
+    overlay.classList.remove('hidden');
+    _cheatsheetUnregister = registerMenuDismiss(_closeCheatsheet);
+    overlay.querySelector('.kb-cheatsheet-close')?.focus();
+  }
 }

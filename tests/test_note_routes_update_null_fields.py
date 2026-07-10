@@ -69,7 +69,9 @@ def test_update_can_clear_nullable_note_fields(monkeypatch):
     )
     db = _Db(note)
     monkeypatch.setattr(note_routes, "SessionLocal", lambda: db)
-    monkeypatch.setattr(note_routes, "get_current_user", lambda request: None)
+    # Note CRUD now fails closed through require_user; anonymous single-user
+    # mode still resolves to None once that gate admits the request.
+    monkeypatch.setattr(note_routes, "require_user", lambda request: None)
     monkeypatch.setattr(note_routes, "flag_modified", lambda *args, **kwargs: None)
 
     body = note_routes.NoteUpdate(

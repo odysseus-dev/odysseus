@@ -46,12 +46,13 @@ def test_admin_and_registered_endpoint_can_use_endpoint_url():
 
 def test_chat_endpoint_recovery_paths_are_owner_scoped():
     root = Path(__file__).resolve().parents[1]
-    chat_routes = (root / "routes" / "chat_routes.py").read_text(encoding="utf-8")
+    chat_routes = (root / "routes" / "chat" / "__init__.py").read_text(encoding="utf-8")
+    chat_utils = (root / "routes" / "chat" / "_utils.py").read_text(encoding="utf-8")
     chat_helpers = (root / "routes" / "chat_helpers.py").read_text(encoding="utf-8")
 
-    assert "def _clear_orphaned_session_endpoint(sess, owner:" in chat_routes
-    assert "def _recover_empty_session_model(sess, session_id: str, owner:" in chat_routes
-    assert "q = owner_filter(q, ModelEndpoint, owner)" in chat_routes
+    assert "def _clear_orphaned_session_endpoint(sess, owner:" in chat_utils
+    assert "def _recover_empty_session_model(sess, session_id: str, owner:" in chat_utils
+    assert "q = owner_filter(q, ModelEndpoint, owner)" in chat_utils
     assert "resolve_session_auth(sess, session, owner=effective_user(request))" in chat_routes
     assert "def resolve_session_auth(sess, session_id: str, owner:" in chat_helpers
     assert "update_q = update_q.filter(DBSession.owner == owner)" in chat_helpers

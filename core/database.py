@@ -1737,6 +1737,26 @@ class Integration(TimestampMixin, Base):
     enabled = Column(Boolean, default=True)
 
 
+class SecurityEvent(Base):
+    """Immutable security audit log entries for admin review.
+
+    Events are intentionally write-once. Never expose sensitive values
+    (passwords, tokens, keys) in detail_text; store only event type,
+    actor, success/failure, and non-sensitive context.
+    """
+    __tablename__ = "security_events"
+
+    id = Column(String, primary_key=True, index=True)
+    event_type = Column(String, nullable=False, index=True)
+    actor = Column(String, nullable=True, index=True)      # username or api token owner
+    target = Column(String, nullable=True, index=True)       # affected user/resource
+    success = Column(Boolean, nullable=False, default=True)
+    ip = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+    detail_text = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False, index=True)
+
+
 
 
 

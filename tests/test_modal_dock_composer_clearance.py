@@ -1,7 +1,9 @@
 from pathlib import Path
 
+from tests.helpers.css_loader import read_css_with_imports
 
-CSS = Path("static/style.css").read_text(encoding="utf-8")
+
+CSS = read_css_with_imports(Path("static/style.css"))
 INIT_JS = Path("static/js/init.js").read_text(encoding="utf-8")
 MODAL_MANAGER_JS = Path("static/js/modalManager.js").read_text(encoding="utf-8")
 TILE_MANAGER_JS = Path("static/js/tileManager.js").read_text(encoding="utf-8")
@@ -81,7 +83,9 @@ def test_minimized_dock_can_reset_to_default_home_position():
 
 def test_desktop_minimized_dock_uses_chatbar_width_and_side_scroll():
     assert "function _desktopChatbarDockRect(bounds = _dockWorkspaceBounds(), dock = null)" in MODAL_MANAGER_JS
-    assert "if (_isTouchInput()) return null;" in MODAL_MANAGER_JS
+    assert "function _isMobileDevice()" in MODAL_MANAGER_JS
+    assert "/Macintosh/i.test(ua) && (navigator.maxTouchPoints || 0) > 1" in MODAL_MANAGER_JS
+    assert "if (_isMobileDevice()) return null;" in MODAL_MANAGER_JS
     assert "const rect = _visibleRect(document.querySelector('.chat-input-bar'));" in MODAL_MANAGER_JS
     assert "const hasRoomAbove = rect.top >= dockHeightVisual + gap + 4;" in MODAL_MANAGER_JS
     assert "const hasRoomBelow = (window.innerHeight - rect.bottom) >= dockHeightVisual + gap + 4;" in MODAL_MANAGER_JS
@@ -121,12 +125,13 @@ def test_desktop_minimized_dock_uses_chatbar_width_and_side_scroll():
     assert "scrollbar-width: thin;" in block
     assert "touch-action: pan-x;" in block
     assert "box-sizing: border-box;" in block
-    assert "mask-image: linear-gradient(90deg" in block
     assert "#minimized-dock.dock-chatbar-row .minimized-dock-chip" in block
     assert "flex: 0 0 auto;" in block
-    assert "z-index: 10020;" in block
+    assert "z-index: 10020;" not in block
     assert "#minimized-dock.dock-chatbar-row.dock-overflowing" in block
-    assert "pointer-events: auto;" in block
+    assert block.count("pointer-events: none;") >= 2
+    chip_block = block[block.index("#minimized-dock.dock-chatbar-row .minimized-dock-chip"):]
+    assert "pointer-events: auto;" in chip_block
 
 
 def test_top_and_bottom_notes_docks_leave_chat_backdrop_interactive():

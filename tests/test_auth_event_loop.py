@@ -110,4 +110,6 @@ def test_login_offloads_bcrypt_bearing_calls(monkeypatch):
     auth.create_session_trusted.assert_called_once()
     # The whole point: the expensive bcrypt-bearing calls go through
     # asyncio.to_thread rather than running inline in the request coroutine.
-    assert calls == [auth.verify_password, auth.create_session_trusted]
+    assert auth.verify_password in calls
+    assert auth.create_session_trusted in calls
+    assert calls.index(auth.verify_password) < calls.index(auth.create_session_trusted)

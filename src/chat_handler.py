@@ -29,6 +29,38 @@ from src.youtube_handler import (
 logger = logging.getLogger(__name__)
 
 
+def _sync_upload_vision_to_gallery(
+    file_info: Dict[str, Any], owner: Optional[str], text: str
+) -> None:
+    """Persist an upload's OCR/caption on its matching gallery row."""
+    file_hash = (file_info or {}).get("hash")
+    if not file_hash or not text:
+        return
+    try:
+        from core.database import GalleryImage, SessionLocal
+
+        db = SessionLocal()
+        try:
+            query = db.query(GalleryImage).filter(
+                GalleryImage.file_hash == file_hash,
+                GalleryImage.is_active == True,  # noqa: E712
+            )
+            if owner:
+                query = query.filter(GalleryImage.owner == owner)
+            image = query.first()
+            if not image:
+                return
+            image.caption = text.strip()
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.warning("Failed to sync upload vision text to gallery: %s", exc)
+
+
 def _resolve_available_vision_route(owner: str | None = None) -> tuple | None:
     """Return a configured or auto-detected vision route, if available."""
     try:

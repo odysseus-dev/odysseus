@@ -973,7 +973,7 @@ def test_diagnostics_routes_are_admin_gated():
     """db/rag stats + test endpoints must require admin (they relied only on
     the global session check before)."""
     src = Path(__file__).resolve().parents[1] / "routes" / "diagnostics_routes.py"
-    text = src.read_text()
+    text = src.read_text(encoding="utf-8")
     for handler in ("get_database_stats", "get_rag_stats", "test_youtube", "test_research"):
         assert f"def {handler}(request: Request" in text, handler
     assert text.count("require_admin(request)") >= 4
@@ -983,7 +983,7 @@ def test_email_thread_rendering_sanitizes_body_html():
     """Both threaded render paths must run server-parsed body_html through the
     allowlist sanitizer (the flat path already did)."""
     src = Path(__file__).resolve().parents[1] / "static" / "js" / "emailLibrary.js"
-    text = src.read_text()
+    text = src.read_text(encoding="utf-8")
     # every `t.body_html` reference is wrapped by _sanitizeHtml(...)
     assert text.count("t.body_html") == text.count("_sanitizeHtml(t.body_html")
     assert "t.body_html" in text  # guard against the file being refactored away
@@ -1081,7 +1081,7 @@ def test_mcp_oauth_config_sanitizes_paths_and_env(tmp_path, monkeypatch):
 
 def test_gmail_mcp_preset_uses_contained_oauth_paths():
     src = Path(__file__).resolve().parents[1] / "static" / "js" / "admin.js"
-    text = src.read_text()
+    text = src.read_text(encoding="utf-8")
     preset = text.split('{ name: "Gmail"', 1)[1].split('{ name: "Email (IMAP/SMTP)"', 1)[0]
 
     assert "~/.gmail-mcp" not in preset
@@ -1164,8 +1164,8 @@ def test_chat_active_document_lookup_is_owner_scoped():
     state is process-global)."""
     import re
 
-    src = Path(__file__).resolve().parents[1] / "routes" / "chat_routes.py"
-    text = src.read_text()
+    src = Path(__file__).resolve().parents[1] / "routes" / "chat" / "__init__.py"
+    text = src.read_text(encoding="utf-8")
     # The frontend-supplied id is resolved through the shared owner filter.
     assert "_owner_session_filter(_doc_q, ctx.user)" in text
     assert "_owner_session_filter(_session_doc_q, ctx.user)" in text

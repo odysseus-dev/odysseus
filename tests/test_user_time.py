@@ -89,7 +89,7 @@ def test_agent_system_prompt_includes_shared_current_time(monkeypatch):
     Regression guard for a prior version that did
     ``agent_prompt = current_datetime_prompt() + agent_prompt``, which made
     the system message change every single minute."""
-    import src.agent_loop as agent_loop
+    from src.agent_loop import _prompts as agent_loop
 
     clear_user_time_context()
     set_user_tz_offset(600)

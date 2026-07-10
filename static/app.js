@@ -45,6 +45,7 @@ import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
+import './js/effects/cursorTrail.js';
 
 const API_BASE = window.location.origin;
 window.themeModule = themeModule;
@@ -224,6 +225,11 @@ function keyboardDismissSettleDelay() {
 
 function openAndroidConnectionMode() {
   dismissSoftKeyboard();
+  const bridge = window.OdysseusAndroid;
+  if (isOdysseusAndroidWebView() && bridge && typeof bridge.showConnectionMode === 'function') {
+    bridge.showConnectionMode();
+    return true;
+  }
   return openPcAndroidConnectModal();
 }
 
@@ -517,6 +523,17 @@ async function _syncWelcomeModelHint() {
   const sub = document.getElementById('welcome-sub');
   if (!tip && !sub) return;
   const hasModel = await _hasUsableChatModel();
+  // Model discovery is asynchronous. Nobody or Research may have taken
+  // ownership of the welcome copy while it was in flight, so re-check the
+  // live state after the await before changing any contextual messaging.
+  const contextualWelcomeActive =
+    document.getElementById('incognito-toggle')?.checked ||
+    document.getElementById('research-toggle')?.checked;
+  const contextualCopyOwned = Boolean(
+    (sub && ('originalText' in sub.dataset || 'researchOrigText' in sub.dataset)) ||
+    (tip && ('originalTip' in tip.dataset || 'researchOrigTip' in tip.dataset))
+  );
+  if (contextualWelcomeActive || contextualCopyOwned) return;
   if (hasModel) {
     if (sub && !sub.dataset.researchOrigText) sub.textContent = 'New chat ready.';
     if (tip) tip.textContent = 'Pick a model if you want, or just type.';
@@ -573,6 +590,17 @@ function initializeEventListeners() {
   // welcome screen since it isn't inside chat-history.
   const _metaCountEl = el('current-meta-count');
   const _chatHistEl = el('chat-history');
+  const _scrollProgress = _chatHistEl?.querySelector('.chat-history-scroll-progress') || null;
+  const _typingIndicator = _chatHistEl?.querySelector('.ai-typing-indicator') || null;
+  const _ensureChatDecorations = () => {
+    if (!_chatHistEl) return;
+    if (_scrollProgress && _chatHistEl.firstElementChild !== _scrollProgress) {
+      _chatHistEl.prepend(_scrollProgress);
+    }
+    if (_typingIndicator && _chatHistEl.lastElementChild !== _typingIndicator) {
+      _chatHistEl.append(_typingIndicator);
+    }
+  };
   if (_metaCountEl && _chatHistEl) {
     let _countScheduled = false;
     const _updateMsgCount = () => {
@@ -593,14 +621,50 @@ function initializeEventListeners() {
   const _updateChatAtBottomState = () => {
     const box = el('chat-history');
     if (!box) return false;
-    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
     const hasMessages = !!box.querySelector(':scope > .msg');
-    document.body.classList.toggle('chat-at-bottom', hasMessages && atBottom);
-    return atBottom;
+    box.classList.toggle('has-more-below', !nearBottom);
+    document.body.classList.toggle('chat-at-bottom', hasMessages && nearBottom);
+    return nearBottom;
   };
   _updateChatAtBottomState();
-  new MutationObserver(() => requestAnimationFrame(_updateChatAtBottomState))
-    .observe(el('chat-history'), { childList: true });
+  new MutationObserver((mutations) => {
+    requestAnimationFrame(_updateChatAtBottomState);
+    // Session/new-chat rendering clears chat-history with innerHTML. Keep the
+    // progress bar and typing indicator attached without forcing every caller
+    // that owns message rendering to know about these persistent decorations.
+    const replacingHistory = mutations.some(m => Array.from(m.removedNodes).some(node => (
+      node === _scrollProgress
+      || node === _typingIndicator
+      || node.classList?.contains('msg')
+      || !!node.querySelector?.('.msg')
+    )));
+    _ensureChatDecorations();
+
+    // A history replacement can append hundreds of existing messages in one
+    // batch. Animate only genuinely new messages, and respect reduced motion.
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (replacingHistory || reduceMotion) return;
+
+    const animateMessage = (node) => {
+      if (!node || node.classList.contains('msg-entering')) return;
+      node.classList.add('msg-entering');
+      const clear = () => node.classList.remove('msg-entering');
+      node.addEventListener('animationend', clear, { once: true });
+      // animationend is not guaranteed when styles change mid-render.
+      setTimeout(clear, 750);
+    };
+    // Message entrance animation
+    for (const m of mutations) {
+      for (const node of m.addedNodes) {
+        if (node.nodeType === 1) {
+          if (node.classList?.contains('msg')) animateMessage(node);
+          node.querySelectorAll?.('.msg:not(.msg-entering)').forEach(animateMessage);
+        }
+      }
+    }
+  })
+    .observe(el('chat-history'), { childList: true, subtree: true });
   el('chat-history').addEventListener('scroll', uiModule.debounce(() => {
     uiModule.setAutoScroll(_updateChatAtBottomState());
   }, 100));
@@ -609,6 +673,18 @@ function initializeEventListeners() {
     _updateChatAtBottomState();
     document.querySelectorAll('.ctx-popup, .memory-used-detail, .msg-overflow-menu').forEach(p => p.remove());
     document.querySelectorAll('.memory-used-pill').forEach(p => { p._openDetail = null; });
+    // Scroll progress bar
+    const bar = _scrollProgress;
+    if (bar) {
+      const box = el('chat-history');
+      const max = box.scrollHeight - box.clientHeight;
+      bar.style.width = max > 0 ? ((box.scrollTop / max) * 100).toFixed(1) + '%' : '0%';
+    }
+    // Chat header frosted glass
+    const topBar = document.querySelector('.chat-top-bar');
+    if (topBar) {
+      topBar.classList.toggle('glass-scrolled', el('chat-history').scrollTop > 4);
+    }
   }, { passive: true });
 
   el('chat-history').addEventListener('wheel', (e) => {
@@ -622,6 +698,21 @@ function initializeEventListeners() {
     uiModule.setAutoScroll(false);
     requestAnimationFrame(() => { _touchThrottled = false; });
   }, { passive: true });
+
+  // ── AI typing indicator: observe send-btn data-mode ──
+  if (_typingIndicator) {
+    const _updateTyping = () => {
+      const btn = document.querySelector('.send-btn');
+      const streaming = !!(btn && btn.dataset.mode === 'streaming');
+      _typingIndicator.classList.toggle('active', streaming);
+      if (streaming) uiModule.scrollHistory();
+    };
+    const sendBtn = document.querySelector('.send-btn');
+    if (sendBtn) {
+      new MutationObserver(_updateTyping).observe(sendBtn, { attributes: true, attributeFilter: ['data-mode'] });
+    }
+    _updateTyping();
+  }
 
   // Internal #session-id links from AI search results
   el('chat-history').addEventListener('click', (e) => {
@@ -1147,6 +1238,63 @@ function initializeEventListeners() {
     const s = loadToggleState(); s.research = active; saveToggleState(s);
     updatePlusDot();
     document.dispatchEvent(new CustomEvent('overflow-state-change'));
+
+    // Update welcome screen for research mode
+    const ws = el('welcome-screen');
+    const welcomeName = document.querySelector('.welcome-name');
+    const welcomeSub = el('welcome-sub');
+    const tipEl = el('welcome-tip');
+    const _resIco = '<svg class="welcome-boat" style="position:relative;top:0.5px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>';
+    if (active) {
+      if (welcomeName) {
+        if (!welcomeName.dataset.researchOrigHtml) welcomeName.dataset.researchOrigHtml = welcomeName.innerHTML;
+        if (!welcomeName.dataset.researchOrigDataText) {
+          welcomeName.dataset.researchOrigDataText = welcomeName.dataset.text || 'Odysseus';
+        }
+        welcomeName.innerHTML = _resIco + 'Deep Research';
+        welcomeName.dataset.text = 'Deep Research';
+      }
+      if (welcomeSub) {
+        if (!welcomeSub.dataset.researchOrigText) welcomeSub.dataset.researchOrigText = welcomeSub.textContent;
+        welcomeSub.textContent = 'Deep multi-step research with source gathering and synthesis.';
+      }
+      if (tipEl) {
+        if (!tipEl.dataset.researchOrigTip) tipEl.dataset.researchOrigTip = tipEl.textContent;
+        tipEl.textContent = '';
+        tipEl.style.display = 'none';
+      }
+      // Hide Nobody toggle during research mode
+      const _incBtn = el('incognito-btn');
+      if (_incBtn) { _incBtn.dataset.researchOrigDisplay = _incBtn.style.display; _incBtn.style.display = 'none'; }
+      // Close document panel if open
+      if (window.documentModule && window.documentModule.isPanelOpen()) {
+        window.documentModule.closePanel();
+      }
+    } else {
+      if (welcomeName && welcomeName.dataset.researchOrigHtml) {
+        welcomeName.innerHTML = welcomeName.dataset.researchOrigHtml;
+        delete welcomeName.dataset.researchOrigHtml;
+        welcomeName.dataset.text = welcomeName.dataset.researchOrigDataText || 'Odysseus';
+        delete welcomeName.dataset.researchOrigDataText;
+      }
+      if (welcomeSub && welcomeSub.dataset.researchOrigText) {
+        welcomeSub.textContent = welcomeSub.dataset.researchOrigText;
+        delete welcomeSub.dataset.researchOrigText;
+      }
+      if (tipEl && tipEl.dataset.researchOrigTip) {
+        tipEl.textContent = tipEl.dataset.researchOrigTip;
+        tipEl.style.opacity = '';
+        tipEl.style.display = '';
+        delete tipEl.dataset.researchOrigTip;
+      }
+      // Restore Nobody toggle
+      const _incBtn2 = el('incognito-btn');
+      if (_incBtn2 && _incBtn2.dataset.researchOrigDisplay !== undefined) {
+        _incBtn2.style.display = _incBtn2.dataset.researchOrigDisplay;
+        delete _incBtn2.dataset.researchOrigDisplay;
+      }
+    }
+    if (ws) { ws.style.animation = 'none'; ws.offsetHeight; ws.style.animation = 'welcome-enter 0.3s ease-out both'; }
   }
 
   /** Sync Group Chat indicator button + overflow. */
@@ -1178,57 +1326,6 @@ function initializeEventListeners() {
     const s = loadToggleState(); s.group = active; saveToggleState(s);
     updatePlusDot();
     document.dispatchEvent(new CustomEvent('overflow-state-change'));
-
-    // Update welcome screen for research mode
-    const ws = el('welcome-screen');
-    const welcomeName = document.querySelector('.welcome-name');
-    const welcomeSub = el('welcome-sub');
-    const tipEl = el('welcome-tip');
-    const _resIco = '<svg class="welcome-boat" style="position:relative;top:0.5px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>';
-    if (active) {
-      if (welcomeName) {
-        if (!welcomeName.dataset.researchOrigHtml) welcomeName.dataset.researchOrigHtml = welcomeName.innerHTML;
-        welcomeName.innerHTML = _resIco + 'Deep Research';
-      }
-      if (welcomeSub) {
-        if (!welcomeSub.dataset.researchOrigText) welcomeSub.dataset.researchOrigText = welcomeSub.textContent;
-        welcomeSub.textContent = 'Deep multi-step research with source gathering and synthesis.';
-      }
-      if (tipEl) {
-        if (!tipEl.dataset.researchOrigTip) tipEl.dataset.researchOrigTip = tipEl.textContent;
-        tipEl.textContent = '';
-        tipEl.style.display = 'none';
-      }
-      // Hide Nobody toggle during research mode
-      const _incBtn = el('incognito-btn');
-      if (_incBtn) { _incBtn.dataset.researchOrigDisplay = _incBtn.style.display; _incBtn.style.display = 'none'; }
-      // Close document panel if open
-      if (window.documentModule && window.documentModule.isPanelOpen()) {
-        window.documentModule.closePanel();
-      }
-    } else {
-      if (welcomeName && welcomeName.dataset.researchOrigHtml) {
-        welcomeName.innerHTML = welcomeName.dataset.researchOrigHtml;
-        delete welcomeName.dataset.researchOrigHtml;
-      }
-      if (welcomeSub && welcomeSub.dataset.researchOrigText) {
-        welcomeSub.textContent = welcomeSub.dataset.researchOrigText;
-        delete welcomeSub.dataset.researchOrigText;
-      }
-      if (tipEl && tipEl.dataset.researchOrigTip) {
-        tipEl.textContent = tipEl.dataset.researchOrigTip;
-        tipEl.style.opacity = '';
-        tipEl.style.display = '';
-        delete tipEl.dataset.researchOrigTip;
-      }
-      // Restore Nobody toggle
-      const _incBtn2 = el('incognito-btn');
-      if (_incBtn2 && _incBtn2.dataset.researchOrigDisplay !== undefined) {
-        _incBtn2.style.display = _incBtn2.dataset.researchOrigDisplay;
-        delete _incBtn2.dataset.researchOrigDisplay;
-      }
-    }
-    if (ws) { ws.style.animation = 'none'; ws.offsetHeight; ws.style.animation = 'welcome-enter 0.3s ease-out both'; }
   }
 
   // ── Close compare if active (used by all tool/sidebar activations) ──
@@ -2758,7 +2855,9 @@ function initializeEventListeners() {
         incognitoBtn.innerHTML = INCOGNITO_EYE_CLOSED + '<span class="incognito-label">Nobody</span>';
         if (welcomeName) {
           welcomeName.dataset.originalHtml = welcomeName.innerHTML;
+          welcomeName.dataset.originalDataText = welcomeName.dataset.text || 'Odysseus';
           welcomeName.innerHTML = '<svg class="welcome-boat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>Nobody';
+          welcomeName.dataset.text = 'Nobody';
           // Restart the L→R clip-wipe reveal on the new label
           welcomeName.style.animation = 'none';
           welcomeName.offsetHeight;
@@ -2807,6 +2906,9 @@ function initializeEventListeners() {
         incognitoBtn.innerHTML = INCOGNITO_EYE_OPEN + '<span class="incognito-label">Nobody</span>';
         if (welcomeName && welcomeName.dataset.originalHtml) {
           welcomeName.innerHTML = welcomeName.dataset.originalHtml;
+          welcomeName.dataset.text = welcomeName.dataset.originalDataText || 'Odysseus';
+          delete welcomeName.dataset.originalHtml;
+          delete welcomeName.dataset.originalDataText;
           // Restart the L→R clip-wipe reveal on the restored label
           welcomeName.style.animation = 'none';
           welcomeName.offsetHeight;
@@ -3609,9 +3711,18 @@ function initializeEventListeners() {
   // Textarea auto-resize
   const textarea = el('message');
   if (textarea) {
+    const CHAR_LIMIT = 50000;
+    const charCountBadge = el('char-count-badge');
+    const updateCharCount = () => {
+      if (!charCountBadge) return;
+      const count = (textarea.value || '').length;
+      charCountBadge.textContent = `${count.toLocaleString()} / ${CHAR_LIMIT.toLocaleString()}`;
+      charCountBadge.classList.toggle('visible', count >= CHAR_LIMIT * 0.8);
+    };
     _syncMobileEnterKeyHint(textarea);
     window.addEventListener('odysseus:chat-busy-change', () => _syncMobileEnterKeyHint(textarea));
     uiModule.autoResize(textarea);
+    updateCharCount();
     let previousTextareaValue = textarea.value || '';
     textarea.addEventListener('beforeinput', (e) => {
       if (_isLineBreakInputEvent(e) && _shouldQueueFromMobileLineBreak(textarea)) {
@@ -3633,6 +3744,7 @@ function initializeEventListeners() {
       previousTextareaValue = currentValue;
       uiModule.autoResize(textarea);
       _syncMobileEnterKeyHint(textarea);
+      updateCharCount();
     });
     textarea.addEventListener('paste', () => {
       setTimeout(() => uiModule.autoResize(textarea), 1);
@@ -4050,6 +4162,11 @@ function startOdysseusApp() {
     // Release after a short delay (stream start sets its own isStreaming guard)
     setTimeout(() => { _submitting = false; }, 300);
 
+    // ── Particle burst from send button ──
+    const sendBtn = document.querySelector('.send-btn');
+    const hasSubmitContent = !!(_messageInput?.value.trim() || _hasAttachments());
+    if (sendBtn && hasSubmitContent) uiModule.particleBurst(sendBtn);
+
     // Compare mode: route submit to compare handler (same message to all panes)
     if (compareModule && compareModule.isActive()) {
       return compareModule.handleCompareSubmit(e);
@@ -4065,6 +4182,7 @@ function startOdysseusApp() {
       chatRenderer.hideWelcomeScreen();
       chatRenderer.addMessage('user', msg);
       msgInput.value = '';
+      msgInput.dispatchEvent(new Event('input', { bubbles: true }));
       groupModule.sendMessage(msg);
       return;
     }
@@ -4666,8 +4784,22 @@ function startOdysseusApp() {
   }
 }
 
+// ── Live sidebar clock ──
+function _initSidebarClock() {
+  const clockEl = document.getElementById('sidebar-clock');
+  if (!clockEl) return;
+  const tick = () => {
+    const now = new Date();
+    clockEl.textContent = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  };
+  tick();
+  setInterval(tick, 60000);
+}
+
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', startOdysseusApp, { once: true });
+  document.addEventListener('DOMContentLoaded', _initSidebarClock, { once: true });
 } else {
   startOdysseusApp();
+  _initSidebarClock();
 }

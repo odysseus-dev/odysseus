@@ -9,7 +9,7 @@ import asyncio
 import json
 from pathlib import Path
 
-import src.agent_loop as agent_loop
+from src.agent_loop import _loop as agent_loop
 
 
 ROOT = Path(__file__).resolve().parents[1]

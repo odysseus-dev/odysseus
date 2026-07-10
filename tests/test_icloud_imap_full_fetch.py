@@ -16,7 +16,7 @@ working.
 import re
 from pathlib import Path
 
-SRC = (Path(__file__).resolve().parent.parent / "mcp_servers/email_server.py").read_text(encoding="utf-8")
+SRC = (Path(__file__).resolve().parent.parent / "mcp_servers/email_server/_utils.py").read_text(encoding="utf-8")
 
 
 def _full_fetches():

@@ -25,7 +25,7 @@ import re
 from pathlib import Path
 
 _SRC = Path("static/js/chatRenderer.js")
-_ROUTES_SRC = Path("routes/model_routes.py")
+_ROUTES_SRC = Path("routes/model/__init__.py")
 
 # Deliberately NOT stripped: legitimate code-example languages, not tool
 # invocations. Must match the carve-out in chatRenderer.js.

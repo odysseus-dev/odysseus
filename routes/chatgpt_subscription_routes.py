@@ -98,7 +98,7 @@ def _provision_endpoint(tokens: Dict, owner: Optional[str]) -> Dict:
         db.close()
 
     try:
-        from routes.model_routes import _invalidate_models_cache
+        from routes.model import _invalidate_models_cache
 
         _invalidate_models_cache()
     except Exception:

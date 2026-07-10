@@ -92,7 +92,7 @@ def _provision_endpoint(token: str, base: str, owner: Optional[str]) -> Dict:
 
     # Best-effort: refresh the model cache so the new endpoint shows up.
     try:
-        from routes.model_routes import _invalidate_models_cache
+        from routes.model import _invalidate_models_cache
         _invalidate_models_cache()
     except Exception:
         pass

@@ -10,9 +10,9 @@ from types import SimpleNamespace
 
 from tests.helpers.import_state import clear_fake_endpoint_resolver_modules
 
-clear_fake_endpoint_resolver_modules("routes.chat_routes")
+clear_fake_endpoint_resolver_modules("routes.chat", "routes.chat._utils")
 
-from routes import chat_routes
+from routes.chat import _utils as chat_routes
 
 
 class _FakeQuery:

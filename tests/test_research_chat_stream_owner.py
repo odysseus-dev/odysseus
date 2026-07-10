@@ -4,7 +4,7 @@ import ast
 import textwrap
 from pathlib import Path
 
-_CHAT_ROUTES = Path(__file__).resolve().parent.parent / "routes" / "chat_routes.py"
+_CHAT_ROUTES = Path(__file__).resolve().parent.parent / "routes" / "chat" / "__init__.py"
 
 
 def test_chat_stream_start_research_passes_owner():
@@ -26,7 +26,7 @@ def test_chat_stream_start_research_passes_owner():
         if name == "start_research":
             calls.append(node)
 
-    assert calls, "No start_research calls found in chat_routes.py"
+    assert calls, "No start_research calls found in routes.chat"
 
     for call in calls:
         kwarg_names = [kw.arg for kw in call.keywords]

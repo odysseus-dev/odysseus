@@ -16,7 +16,7 @@ import pytest
 
 from src.action_intents import classify_tool_intent
 
-_CHAT_ROUTES = Path(__file__).resolve().parent.parent / "routes" / "chat_routes.py"
+_CHAT_ROUTES = Path(__file__).resolve().parent.parent / "routes" / "chat" / "__init__.py"
 
 
 # ── Source-level guards ─────────────────────────────────────────

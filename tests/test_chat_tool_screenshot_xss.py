@@ -39,9 +39,9 @@ def test_generated_image_urls_are_vetted_before_assignment_or_open():
     group = (_REPO / "static" / "js" / "group.js").read_text(encoding="utf-8")
 
     assert "export function safeDisplayImageSrc(raw)" in renderer
-    assert "safeDisplayImageSrc(imageUrl)" in renderer
-    assert "img.src = safeImageUrl" in renderer
-    assert "window.open(safeImageUrl, '_blank', 'noopener,noreferrer')" in renderer
+    assert "safeDisplayImageSrc(mediaUrl)" in renderer
+    assert "img.src = safeMediaUrl" in renderer
+    assert "window.open(safeMediaUrl, '_blank', 'noopener,noreferrer')" in renderer
     assert "safeDisplayImageSrc," in renderer
     assert "safeDisplayImageSrc(json.image_url)" in compare
     assert "img.src = json.image_url" not in compare

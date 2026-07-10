@@ -6,6 +6,7 @@ notice, per-call override clamped to the hard cap, and a pre-buffer refusal
 when Content-Length already exceeds the hard ceiling.
 """
 import json
+import ipaddress
 from contextlib import contextmanager
 
 import pytest
@@ -91,6 +92,14 @@ def no_cache(monkeypatch, tmp_path):
     monkeypatch.setattr(content_mod, "CONTENT_CACHE_DIR", tmp_path)
     monkeypatch.setattr(content_mod, "_cache_result", lambda *a, **k: None)
     monkeypatch.setattr(content_mod, "_public_http_url", lambda u: True)
+    # Keep size-cap tests hermetic.  The production fetcher now validates and
+    # pins the resolved address before opening its stream; DNS availability (or
+    # a resolver's treatment of example.com) is unrelated to these assertions.
+    monkeypatch.setattr(
+        content_mod,
+        "_resolve_public_ips",
+        lambda u: [ipaddress.ip_address("93.184.216.34")],
+    )
 
 
 def _patch_stream(monkeypatch, fake):
@@ -99,6 +108,39 @@ def _patch_stream(monkeypatch, fake):
         yield fake
     monkeypatch.setattr(content_mod.httpx, "stream", fake_stream)
     return fake
+
+
+def test_pinned_transport_does_not_prebuffer_response_body():
+    """The cap layer must see chunks before an entire response is buffered."""
+    reads = {"count": 0}
+
+    class _LazyBody:
+        def __iter__(self):
+            reads["count"] += 1
+            yield b"hello"
+
+        def close(self):
+            pass
+
+    class _Pool:
+        def handle_request(self, request):
+            class _Response:
+                status = 200
+                headers = []
+                stream = _LazyBody()
+                extensions = {}
+
+            return _Response()
+
+    transport = object.__new__(content_mod._PinnedTransport)
+    transport._pool = _Pool()
+    response = transport.handle_request(
+        content_mod.httpx.Request("GET", "https://example.com/a.txt")
+    )
+
+    assert reads["count"] == 0
+    assert response.read() == b"hello"
+    assert reads["count"] == 1
 
 
 def test_body_under_cap_is_untouched(monkeypatch, no_cache):

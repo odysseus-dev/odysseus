@@ -14,12 +14,14 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.css_loader import read_css_with_imports
+
 
 ROOT = Path(__file__).resolve().parents[1]
 NOTES_PATH = ROOT / "static" / "js" / "notes.js"
 CSS_PATH = ROOT / "static" / "style.css"
 NOTES_JS = NOTES_PATH.read_text(encoding="utf-8")
-CSS = CSS_PATH.read_text(encoding="utf-8")
+CSS = read_css_with_imports(CSS_PATH)
 
 
 def _dock_helper_source() -> str:

@@ -344,9 +344,10 @@ class TestProbeSingleModel:
     ])
     def test_completion_probe_uses_llm_verify(self, monkeypatch, base, api_key, model_id):
         _patch_resolve(monkeypatch)
+        from routes.model import _utils as model_utils
         marker = object()
         captured = {}
-        monkeypatch.setattr(model_routes, "llm_verify", lambda: marker)
+        monkeypatch.setattr(model_utils, "llm_verify", lambda: marker)
 
         def fake_post(url, headers=None, json=None, timeout=None, verify=None):
             captured["verify"] = verify

@@ -14,6 +14,8 @@ import ast
 import os
 from pathlib import Path
 
+import pytest
+
 SRC = Path(__file__).resolve().parent.parent / "routes" / "personal_routes.py"
 
 
@@ -45,7 +47,12 @@ def test_realpath_catches_symlink_escape(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
     link = base / "escape"
-    os.symlink(outside, link)
+    try:
+        os.symlink(outside, link)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows symlink privilege is unavailable")
+        raise
 
     base_abs = os.path.realpath(base)  # base itself may live under a symlinked tmp
     # abspath: the symlink still looks inside base -> escape not detected

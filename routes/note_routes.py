@@ -307,7 +307,7 @@ async def dispatch_reminder(
     email_error = ""
     if channel == "email":
         try:
-            from routes.email_routes import _get_email_config
+            from routes.email import _get_email_config
             from email.mime.text import MIMEText
             from email.mime.multipart import MIMEMultipart
             from datetime import datetime as _dt

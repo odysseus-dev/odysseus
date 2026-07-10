@@ -365,7 +365,7 @@ def setup_codex_routes(
         owner = _scope_owner(request, EMAIL_DRAFT_SCOPES)
         if email_draft_endpoint is None:
             raise HTTPException(503, "Email integration is not available")
-        from routes.email_routes import SendEmailRequest
+        from routes.email import SendEmailRequest
 
         try:
             req = SendEmailRequest(**body)
@@ -378,7 +378,7 @@ def setup_codex_routes(
         owner = _scope_owner(request, EMAIL_SEND_SCOPES)
         if email_send_endpoint is None:
             raise HTTPException(503, "Email integration is not available")
-        from routes.email_routes import SendEmailRequest
+        from routes.email import SendEmailRequest
 
         try:
             req = SendEmailRequest(**body)

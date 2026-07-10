@@ -73,7 +73,7 @@ _BUILTIN_SERVERS = {
     "image_gen":  ("mcp_servers/image_gen_server.py",  "Built-in: Image Generation"),
     "memory":     ("mcp_servers/memory_server.py",     "Built-in: Memory"),
     "rag":        ("mcp_servers/rag_server.py",        "Built-in: RAG"),
-    "email":      ("mcp_servers/email_server.py",      "Built-in: Email"),
+    "email":      ("mcp_servers/email_server/__main__.py", "Built-in: Email"),
 }
 
 # NPX-based built-in servers (run via npx, not Python)
@@ -290,7 +290,11 @@ def _npm_cache_roots():
     configured = os.environ.get("npm_config_cache")
     if configured:
         roots.append(os.path.expanduser(configured))
-    roots.append(os.path.join(os.path.expanduser("~"), ".npm"))
+    # ``expanduser('~')`` ignores HOME on Windows and prefers USERPROFILE.
+    # Honour an explicit HOME so portable/test environments use their own npm
+    # cache instead of silently probing the interactive user's profile.
+    home = os.environ.get("HOME") or os.path.expanduser("~")
+    roots.append(os.path.join(home, ".npm"))
     local_app_data = os.environ.get("LOCALAPPDATA")
     if local_app_data:
         roots.append(os.path.join(local_app_data, "npm-cache"))

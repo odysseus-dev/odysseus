@@ -1549,7 +1549,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         const _thinkBody = document.createElement('div');
         _thinkBody.className = 'body';
         const _ts = spinnerModule.create(label || 'Thinking', 'right', 'wave');
-        _thinkBody.appendChild(_ts.createElement());
+        const _spinnerEl = _ts.createElement();
+        _spinnerEl.setAttribute('aria-label', label || 'Thinking');
+        _thinkBody.appendChild(_spinnerEl);
         _ts.start(120);
         _thinkMsg._spinner = _ts;
         _thinkMsg.appendChild(_thinkBody);

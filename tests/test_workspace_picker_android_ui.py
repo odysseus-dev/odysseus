@@ -1,12 +1,14 @@
 from pathlib import Path
 
+from tests.helpers.css_loader import read_css_with_imports
+
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_JS = (ROOT / "static/js/workspace.js").read_text(encoding="utf-8")
 WORKSPACE_EDITOR_JS = (ROOT / "static/js/workspaceEditor.js").read_text(encoding="utf-8")
 APP_JS = (ROOT / "static/app.js").read_text(encoding="utf-8")
 INDEX_HTML = (ROOT / "static/index.html").read_text(encoding="utf-8")
-STYLE_CSS = (ROOT / "static/style.css").read_text(encoding="utf-8")
+STYLE_CSS = read_css_with_imports(ROOT / "static/style.css")
 MOBILE_BACKEND = (ROOT / "android/app/src/main/java/com/odysseus/simplesignal/MobileBackendServer.java").read_text(encoding="utf-8")
 MAIN_ACTIVITY = (ROOT / "android/app/src/main/java/com/odysseus/simplesignal/MainActivity.java").read_text(encoding="utf-8")
 ANDROID_MANIFEST = (ROOT / "android/app/src/main/AndroidManifest.xml").read_text(encoding="utf-8")

@@ -2,6 +2,8 @@ import asyncio
 import os
 from pathlib import Path
 
+import pytest
+
 from routes import personal_routes
 
 
@@ -37,7 +39,12 @@ def test_delete_file_refuses_symlink_directory_escape(tmp_path, monkeypatch):
     outside.mkdir()
     victim = outside / "victim.txt"
     victim.write_text("keep me", encoding="utf-8")
-    os.symlink(outside, uploads / "linked")
+    try:
+        os.symlink(outside, uploads / "linked")
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows symlink privilege is unavailable")
+        raise
 
     docs = _FakePersonalDocs()
     rag = _FakeRAG()

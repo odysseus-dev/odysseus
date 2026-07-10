@@ -52,8 +52,8 @@ def test_diffusers_is_available_only_on_local_windows_serve_panel():
 def test_windows_diffusers_uses_python_not_python3():
     text = SRC.read_text(encoding="utf-8")
 
-    assert "const diffusersPy = _isWindows() ? 'python' : _py3Bin;" in text
-    assert "cmd += `${diffusersPy} scripts/diffusion_server.py" in text
+    assert "const py = _isWindows() ? 'python' : 'python3';" in text
+    assert "cmd += `${py} scripts/diffusion_server.py" in text
     assert "cmd += `python3 scripts/diffusion_server.py" not in text
 
 
@@ -92,7 +92,8 @@ def test_local_windows_platform_comes_from_backend_host_state():
     running = (SRC.parent / "cookbookRunning.js").read_text(encoding="utf-8")
 
     assert "hostPlatform" in text
-    assert "navigator.platform" not in text
+    assert "if (platform) return platform === 'windows';" in text
+    assert "return /Windows/i.test(navigator.userAgent || navigator.platform || '');" in text
     assert "hostOrTask === 'local'" in text
     assert "if (hostOrTask === 'local') return _envState.hostPlatform || '';" in text
     assert "return _envState.hostPlatform || _envState.platform || ''" not in text
