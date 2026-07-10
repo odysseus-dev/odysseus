@@ -2288,7 +2288,7 @@ function _rerenderCachedModels() {
           await window.styledConfirm(`This config is already saved as "${_existing.label || 'Unnamed'}".`, { confirmText: 'OK', cancelText: 'Close' });
           return false;
         }
-        if (modelSlots.length >= 5) { uiModule.showToast('Max 5 saves per model'); return false; }
+        if (modelSlots.length >= 5) { uiModule.showToast(window.t('Max 5 saves per model')); return false; }
         const label = await uiModule.styledPrompt('Name this config so you can recall it later.', {
           title: 'Save Config', placeholder: 'e.g. LoRA, 8-bit, fast', confirmText: 'Save',
         });
@@ -2470,7 +2470,7 @@ function _rerenderCachedModels() {
               .map(g => g.name));
             if (names.size > 1 && !panel._mixedGpuWarned) {
               panel._mixedGpuWarned = true;   // once per panel, don't nag
-              uiModule.showToast('Mixed GPU types selected — tensor-parallel needs identical GPUs. Pick one pool (e.g. all the same card).', 7000);
+              uiModule.showToast(window.t('Mixed GPU types selected — tensor-parallel needs identical GPUs. Pick one pool (e.g. all the same card).'), 7000);
             } else if (names.size <= 1) {
               panel._mixedGpuWarned = false;  // reset once they're back to one pool
             }
@@ -2512,7 +2512,7 @@ function _rerenderCachedModels() {
             const cmd = (_cmdManuallyEdited && cmdBox)
               ? cmdBox.value
               : _formatServeCmdPreview(panel._cmd || cmdBox?.value || '');
-            _copyText(cmd).then(() => uiModule.showToast('Launch command copied'));
+            _copyText(cmd).then(() => uiModule.showToast(window.t('Launch command copied')));
           }));
           menu.appendChild(mk('Schedule', '', () => {
             const direct = new MouseEvent('click', { bubbles: true, cancelable: true });
@@ -2737,11 +2737,11 @@ function _rerenderCachedModels() {
           if (!res.ok) {
             const err = data.detail || data.error || res.statusText || `HTTP ${res.status}`;
             const hint = res.status === 404 ? ' — server may need a restart to pick up new endpoint' : '';
-            if (!silent) uiModule.showToast('GPU probe failed: ' + err + hint, 8000);
+            if (!silent) uiModule.showToast(window.t('GPU probe failed: ') + err + hint, 8000);
             return null;
           }
           if (!data.ok) {
-            if (!silent) uiModule.showToast('GPU probe failed: ' + (data.error || 'unknown'), 6000);
+            if (!silent) uiModule.showToast(window.t('GPU probe failed: ') + (data.error || 'unknown'), 6000);
             return null;
           }
           panel._gpuProbe.byIdx = new Map(data.gpus.map(g => [g.index, g]));
@@ -2805,7 +2805,7 @@ function _rerenderCachedModels() {
           });
           if (!silent) {
             if (data.gpus.length === 0) {
-              uiModule.showToast('No GPU memory probe data available', 4000);
+              uiModule.showToast(window.t('No GPU memory probe data available'), 4000);
             } else {
               const summary = data.gpus.map(g => {
                 const procs = (g.processes && g.processes.length) || 0;
@@ -2819,7 +2819,7 @@ function _rerenderCachedModels() {
 
         _probeBtn.addEventListener('click', async () => {
           try { await _withSpinner(_probeBtn, () => _runProbe(false)); }
-          catch (e) { uiModule.showToast('GPU probe error: ' + e.message, 6000); }
+          catch (e) { uiModule.showToast(window.t('GPU probe error: ') + e.message, 6000); }
         });
 
         // Auto-probe (silent) on open so the GPU buttons reflect the real count
@@ -2839,7 +2839,7 @@ function _rerenderCachedModels() {
                   for (const p of (g.processes || [])) pids.push({ pid: p.pid, name: p.name });
                 }
                 if (pids.length === 0) {
-                  uiModule.showToast('No GPU processes to clear', 3000);
+                  uiModule.showToast(window.t('No GPU processes to clear'), 3000);
                   return;
                 }
                 const summary = pids.map(p => `${p.pid} (${p.name})`).join(', ');
@@ -2883,7 +2883,7 @@ function _rerenderCachedModels() {
                 await _runProbe();
               });
             } catch (e) {
-              uiModule.showToast('Clear Server error: ' + e.message, 6000);
+              uiModule.showToast(window.t('Clear Server error: ') + e.message, 6000);
             }
           });
         }
@@ -3098,12 +3098,12 @@ function _rerenderCachedModels() {
         const launchTarget = _selectedServeTarget(panel);
         if (serveState.backend === 'llamacpp' && serveState.vision && !/(?:^|\s)(?:--mmproj|--clip_model_path)\b/.test(launchCmd)) {
           _restoreLaunchBtn();
-          uiModule.showToast('Vision is checked, but no mmproj projector is in the launch command. Refresh cached models after downloading mmproj, or add --mmproj manually.', 8000);
+          uiModule.showToast(window.t('Vision is checked, but no mmproj projector is in the launch command. Refresh cached models after downloading mmproj, or add --mmproj manually.'), 8000);
           return;
         }
         if (serveState.backend === 'diffusers' && _remoteWindowsDiffusersUnsupported(launchTarget)) {
           _restoreLaunchBtn();
-          uiModule.showToast('Diffusers serving is not supported on remote Windows servers yet. Use local Windows or a Linux server.', 9000);
+          uiModule.showToast(window.t('Diffusers serving is not supported on remote Windows servers yet. Use local Windows or a Linux server.'), 9000);
           return;
         }
         // Pre-launch: check our own task list for a serve already running
@@ -3625,7 +3625,7 @@ async function _deleteCachedModel(repo, itemEl, skipConfirm = false, model = nul
       _cachedAllModels = _cachedAllModels.filter(x => x.repo_id !== repo);
     }
   } catch (e) {
-    uiModule.showError('Delete failed: ' + (e && e.message ? e.message : e));
+    uiModule.showError(window.t('Delete failed: ') + (e && e.message ? e.message : e));
   } finally {
     // Tear down the spinner. On success the row is already gone; on error the
     // row survives, so restore it (remove overlay, re-enable interaction).
@@ -3728,7 +3728,7 @@ export async function openServePanelForRepo(repo, fields) {
     }
     await new Promise(r => setTimeout(r, 100));
   }
-  uiModule.showToast('Model not found in cache — switch to the Serve tab manually');
+  uiModule.showToast(window.t('Model not found in cache — switch to the Serve tab manually'));
   return false;
 }
 

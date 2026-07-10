@@ -382,4 +382,18 @@ registerMessages('pt-BR', {
   'llama.cpp parallel slots. Blank = default; 1 matches single-lane presets.': 'Slots paralelos do llama.cpp. Em branco = padrão; 1 corresponde a predefinições de faixa única.',
   'GPU memory:': 'Memória da GPU:',
   'checking…': 'verificando…',
+
+  // ── cookbookServe.js — toasts (post-upstream repair) ──
+  'Max 5 saves per model': 'Máx. 5 salvamentos por modelo',
+  'Mixed GPU types selected — tensor-parallel needs identical GPUs. Pick one pool (e.g. all the same card).': 'Tipos de GPU misturados selecionados — tensor-parallel exige GPUs idênticas. Escolha um único grupo (ex.: todas a mesma placa).',
+  'Launch command copied': 'Comando de inicialização copiado',
+  'GPU probe failed: ': 'Falha ao sondar a GPU: ',
+  'No GPU memory probe data available': 'Nenhum dado de sondagem de memória de GPU disponível',
+  'GPU probe error: ': 'Erro ao sondar a GPU: ',
+  'No GPU processes to clear': 'Nenhum processo de GPU para limpar',
+  'Clear Server error: ': 'Erro ao limpar o servidor: ',
+  'Vision is checked, but no mmproj projector is in the launch command. Refresh cached models after downloading mmproj, or add --mmproj manually.': 'A visão está marcada, mas não há projetor mmproj no comando de inicialização. Atualize os modelos em cache após baixar o mmproj, ou adicione --mmproj manualmente.',
+  'Diffusers serving is not supported on remote Windows servers yet. Use local Windows or a Linux server.': 'O serviço com Diffusers ainda não é suportado em servidores Windows remotos. Use Windows local ou um servidor Linux.',
+  'Delete failed: ': 'Falha ao excluir: ',
+  'Model not found in cache — switch to the Serve tab manually': 'Modelo não encontrado no cache — mude para a aba Servir manualmente',
 });
