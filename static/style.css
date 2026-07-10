@@ -956,7 +956,8 @@ body.bg-pattern-sparkles {
       scrollbar-color:
         color-mix(in srgb, var(--accent, var(--red)) 42%, transparent)
         transparent;
-      pointer-events: none;
+      z-index: 10020;
+      pointer-events: auto;
       touch-action: pan-x;
       box-sizing: border-box;
       min-height: 48px;

@@ -80,20 +80,27 @@ def test_minimized_dock_can_reset_to_default_home_position():
 
 
 def test_desktop_minimized_dock_uses_chatbar_width_and_side_scroll():
-    assert "function _desktopChatbarDockRect(bounds = _dockWorkspaceBounds())" in MODAL_MANAGER_JS
+    assert "function _desktopChatbarDockRect(bounds = _dockWorkspaceBounds(), dock = null)" in MODAL_MANAGER_JS
     assert "if (_isTouchInput()) return null;" in MODAL_MANAGER_JS
     assert "const rect = _visibleRect(document.querySelector('.chat-input-bar'));" in MODAL_MANAGER_JS
-    assert "return { left: Math.round(left / scale), width: Math.floor(width / scale) };" in MODAL_MANAGER_JS
+    assert "const hasRoomAbove = rect.top >= dockHeightVisual + gap + 4;" in MODAL_MANAGER_JS
+    assert "const hasRoomBelow = (window.innerHeight - rect.bottom) >= dockHeightVisual + gap + 4;" in MODAL_MANAGER_JS
+    assert "if (!hasRoomAbove && !hasRoomBelow) return null;" in MODAL_MANAGER_JS
+    assert "? rect.top - dockHeightVisual - gap" in MODAL_MANAGER_JS
+    assert ": rect.bottom + gap;" in MODAL_MANAGER_JS
+    assert "top: Math.round(top / scale)," in MODAL_MANAGER_JS
     assert "const desktopChatbarDock = !!_desktopChatbarDockRect(bounds);" in MODAL_MANAGER_JS
     assert "dock.classList.toggle('dock-chatbar-row', desktopChatbarDock);" in MODAL_MANAGER_JS
     assert "function _syncDockOverflowState(dock)" in MODAL_MANAGER_JS
     assert "dock.classList.toggle('dock-overflowing', overflowing);" in MODAL_MANAGER_JS
     assert "dock.scrollWidth > dock.clientWidth + 1" in MODAL_MANAGER_JS
     assert "if (!overflowing && dock.scrollLeft) dock.scrollLeft = 0;" in MODAL_MANAGER_JS
-    assert "const chatbarDock = _desktopChatbarDockRect(bounds);" in MODAL_MANAGER_JS
+    assert "const chatbarDock = _desktopChatbarDockRect(bounds, dock);" in MODAL_MANAGER_JS
     assert "if (chatbarDock) {\n    if (_dockPos) {" in MODAL_MANAGER_JS
     assert "_dockPos = null;\n      delete _dockPosByLayout[_dockLayout];\n      _saveDockState();" in MODAL_MANAGER_JS
     assert "dock.style.left = `${chatbarDock.left}px`;" in MODAL_MANAGER_JS
+    assert "dock.style.top = `${chatbarDock.top}px`;" in MODAL_MANAGER_JS
+    assert "dock.style.bottom = 'auto';" in MODAL_MANAGER_JS
     assert "dock.style.width = `${chatbarDock.width}px`;" in MODAL_MANAGER_JS
     assert "dock.style.maxWidth = `${chatbarDock.width}px`;" in MODAL_MANAGER_JS
     assert "dock.style.removeProperty('width');" in MODAL_MANAGER_JS
@@ -117,7 +124,7 @@ def test_desktop_minimized_dock_uses_chatbar_width_and_side_scroll():
     assert "mask-image: linear-gradient(90deg" in block
     assert "#minimized-dock.dock-chatbar-row .minimized-dock-chip" in block
     assert "flex: 0 0 auto;" in block
-    assert "pointer-events: none;" in block
+    assert "z-index: 10020;" in block
     assert "#minimized-dock.dock-chatbar-row.dock-overflowing" in block
     assert "pointer-events: auto;" in block
 

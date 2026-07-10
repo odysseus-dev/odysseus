@@ -774,7 +774,7 @@ function _aboveComposerTop(height) {
   return Math.max(8, _composerTop() - height - 8);
 }
 
-function _desktopChatbarDockRect(bounds = _dockWorkspaceBounds()) {
+function _desktopChatbarDockRect(bounds = _dockWorkspaceBounds(), dock = null) {
   if (_isTouchInput()) return null;
   const rect = _visibleRect(document.querySelector('.chat-input-bar'));
   if (!rect) return null;
@@ -783,7 +783,20 @@ function _desktopChatbarDockRect(bounds = _dockWorkspaceBounds()) {
   const width = Math.floor(right - left);
   if (width < 120) return null;
   const scale = _uiScaleFactor();
-  return { left: Math.round(left / scale), width: Math.floor(width / scale) };
+  const dockHeight = Math.max(36, dock?.offsetHeight || 36);
+  const gap = 8 * scale;
+  const dockHeightVisual = dockHeight * scale;
+  const hasRoomAbove = rect.top >= dockHeightVisual + gap + 4;
+  const hasRoomBelow = (window.innerHeight - rect.bottom) >= dockHeightVisual + gap + 4;
+  if (!hasRoomAbove && !hasRoomBelow) return null;
+  const top = hasRoomAbove
+    ? rect.top - dockHeightVisual - gap
+    : rect.bottom + gap;
+  return {
+    left: Math.round(left / scale),
+    top: Math.round(top / scale),
+    width: Math.floor(width / scale),
+  };
 }
 
 function _defaultDockPosition(dock, width, height) {
@@ -1064,7 +1077,7 @@ function _applyDockPos(dock) {
   _syncDockLayout();
   const bounds = _dockWorkspaceBounds();
   _syncDockRowMode(dock, bounds);
-  const chatbarDock = _desktopChatbarDockRect(bounds);
+  const chatbarDock = _desktopChatbarDockRect(bounds, dock);
   if (chatbarDock) {
     if (_dockPos) {
       _dockPos = null;
@@ -1076,8 +1089,8 @@ function _applyDockPos(dock) {
     dock.style.maxWidth = `${chatbarDock.width}px`;
     dock.style.transform = 'none';
     dock.style.right = 'auto';
-    dock.style.removeProperty('top');
-    dock.style.bottom = '';
+    dock.style.top = `${chatbarDock.top}px`;
+    dock.style.bottom = 'auto';
     _syncDockOverflowState(dock);
     return;
   }
