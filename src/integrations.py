@@ -152,6 +152,24 @@ INTEGRATION_PRESETS: Dict[str, Dict[str, Any]] = {
             "  GET /api/greader.php/reader/api/0/unread-count?output=json — unread counts"
         ),
     },
+    "bookstack": {
+        "name": "BookStack",
+        "auth_type": "header",
+        "auth_header": "Authorization",
+        "description": (
+            "BookStack wiki platform API. Auth header value format: 'Token {token_id}:{secret}'. Key endpoints:\n"
+            "  GET /api/shelves — list shelves\n"
+            "  GET /api/books — list books (params: filter[shelf_id:eq]=N)\n"
+            "  GET /api/books/{id} — get book with contents tree\n"
+            "  GET /api/pages — list pages (params: filter[book_id:eq]=N)\n"
+            "  GET /api/pages/{id} — get page (returns html + markdown)\n"
+            "  POST /api/pages — create page {\"book_id\": N, \"name\": \"...\", \"markdown\": \"...\"}\n"
+            "  PUT /api/pages/{id} — update page\n"
+            "  DELETE /api/pages/{id} — delete page\n"
+            "  GET /api/pages/{id}/export/markdown — export as markdown\n"
+            "  GET /api/search?query=... — search across all content"
+        ),
+    },
 }
 
 # ---------------------------------------------------------------------------
