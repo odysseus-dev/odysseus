@@ -935,6 +935,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
             try:
                 from src.database import SessionLocal, ModelEndpoint
                 from src.auth_helpers import owner_filter
+                from src.tls_overrides import llm_verify
                 import httpx as _req
                 _idb = SessionLocal()
                 try:
@@ -950,7 +951,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                         if not _ibase.endswith("/v1"):
                             _ibase += "/v1"
                         try:
-                            _r = _req.get(_ibase + "/models", timeout=3)
+                            _r = _req.get(_ibase + "/models", timeout=3, verify=llm_verify())
                             _r.raise_for_status()
                             _data = _r.json()
                             _ditems = _data if isinstance(_data, list) else (_data.get("data") or [])

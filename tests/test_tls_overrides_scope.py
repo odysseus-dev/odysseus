@@ -39,6 +39,8 @@ REPO = Path(__file__).resolve().parents[1]
 ALLOWED_CALLERS = frozenset({
     "src/llm_core.py",          # shared AsyncClient used by stream_llm
     "routes/model_routes.py",   # _probe_endpoint + _ping_endpoint
+    "routes/chat_helpers.py",   # try_fallback_endpoint pings candidate LLM endpoints' /models
+    "src/ai_interaction.py",    # image-model auto-detect pings local LLM endpoints' /models
 })
 
 

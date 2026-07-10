@@ -4120,9 +4120,12 @@ def setup_email_routes():
     async def summarize_email(data: dict, owner: str = Depends(require_owner)):
         """Generate a quick AI summary of an email body."""
         try:
-            from src.endpoint_resolver import resolve_endpoint
-            from src.llm_core import _uses_max_completion_tokens, _restricts_temperature
-            import requests as _req
+            from src.endpoint_resolver import (
+                resolve_endpoint,
+                resolve_utility_fallback_candidates,
+                resolve_chat_fallback_candidates,
+            )
+            from src.llm_core import llm_call_async_with_fallback
 
             body = data.get("body", "")
             subject = data.get("subject", "")
@@ -4158,54 +4161,43 @@ def setup_email_routes():
             if att_text:
                 body_for_llm = body + "\n\n--- ATTACHMENTS ---\n\n" + att_text
 
-            url, model, headers = resolve_endpoint("utility", owner=owner)
-            if not url:
-                url, model, headers = resolve_endpoint("default", owner=owner)
-            if not url or not model:
+            candidates = []
+            seen = set()
+
+            def _add(url, model, headers):
+                key = (url or "", model or "")
+                if not url or not model or key in seen:
+                    return
+                seen.add(key)
+                candidates.append((url, model, headers))
+
+            try:
+                _add(*resolve_endpoint("utility", owner=owner))
+            except Exception:
+                pass
+            try:
+                _add(*resolve_endpoint("default", owner=owner))
+            except Exception:
+                pass
+            for cand in resolve_utility_fallback_candidates(owner=owner) or []:
+                _add(*cand)
+            for cand in resolve_chat_fallback_candidates(owner=owner) or []:
+                _add(*cand)
+            if not candidates:
                 return {"success": False, "error": "No LLM endpoint configured"}
 
-            req_headers = {"Content-Type": "application/json"}
-            if headers:
-                req_headers.update(headers)
-            tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
-            payload = {
-                "model": model,
-                "messages": [
+            content = await llm_call_async_with_fallback(
+                candidates,
+                messages=[
                     {"role": "system", "content": "You are an email summarizer. Format: 1-3 short bullet points (use '- '). Cover: main point, action items, deadlines. If the email has attachments (marked '--- ATTACHMENTS ---'), USE THEIR CONTENTS — pull invoice totals, deadlines, key clauses, concrete numbers/dates from PDFs/docs into the bullets. Be terse.\n\nOUTPUT FORMAT: Put ONLY the bullet points between these exact markers, each on its own line:\n<<<SUMMARY>>>\n- ...\n<<<END>>>\nAny reasoning must come BEFORE <<<SUMMARY>>> (ideally inside <think>...</think>). Only the text between the markers is kept."},
                     {"role": "user", "content": f"From: {sender}\nSubject: {subject}\n\n{body_for_llm[:12000]}\n\n---\n\nSummarize the email. Output the bullets between <<<SUMMARY>>> and <<<END>>>."},
                 ],
-                tok_key: 8192,
-                "temperature": 0.3,
-                "stream": False,
-            }
-            # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature.
-            if _restricts_temperature(model):
-                payload.pop("temperature", None)
-            resp = await asyncio.to_thread(
-                _req.post, url, json=payload, headers=req_headers, timeout=180
+                temperature=0.3,
+                max_tokens=8192,
+                timeout=180,
             )
-            if not resp.ok:
-                return {"success": False, "error": f"LLM HTTP {resp.status_code}"}
-            rdata = resp.json()
-            msg = (rdata.get("choices") or [{}])[0].get("message", {})
-            content = (msg.get("content") or "").strip()
-            content = _extract_reply(content)
-
-            if not content:
-                # Model put everything in reasoning_content — extract bullet points
-                rc = (msg.get("reasoning_content") or "").strip()
-                # Find bullet-point style output (lines starting with -, •, *, or numbered)
-                bullet_lines = []
-                for line in rc.split("\n"):
-                    stripped = line.strip()
-                    if re.match(r"^[-•*]\s+|^\d+[.)]\s+", stripped):
-                        bullet_lines.append(stripped)
-                if bullet_lines:
-                    content = "\n".join(bullet_lines)
-                else:
-                    # Last resort: take the last paragraph
-                    paragraphs = [p.strip() for p in rc.split("\n\n") if p.strip()]
-                    content = paragraphs[-1] if paragraphs else rc[:500]
+            model = candidates[0][1] if candidates else ""
+            content = _extract_reply((content or "").strip())
 
             if not content:
                 return {"success": False, "error": "Empty response from model"}

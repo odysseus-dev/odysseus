@@ -253,7 +253,7 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
 
     Returns {"model": ..., "endpoint_url": ..., "endpoint_name": ...} or None.
     """
-    import requests as _req
+    import httpx as _req
     from src.endpoint_resolver import (
         build_chat_url,
         build_headers,
@@ -262,6 +262,7 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
         resolve_endpoint_runtime,
     )
     from src.chatgpt_subscription import is_chatgpt_subscription_base
+    from src.tls_overrides import llm_verify
 
     current_url = sess.endpoint_url or ""
     owner = getattr(sess, "owner", None)
@@ -290,7 +291,7 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
         headers = build_headers(api_key, base)
         try:
             if ping_url:
-                r = _req.get(ping_url, headers=headers, timeout=5)
+                r = _req.get(ping_url, headers=headers, timeout=5, verify=llm_verify())
                 r.raise_for_status()
                 data = r.json()
                 models = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
