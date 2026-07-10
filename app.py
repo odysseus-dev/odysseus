@@ -843,7 +843,11 @@ async def readiness_check() -> JSONResponse:
     subsystem is whole, so an orchestrator can gate traffic on real readiness.
     """
     from src.readiness import check_readiness
-    result = check_readiness()
+    result = check_readiness(
+        skills_manager=skills_manager,
+        task_scheduler=task_scheduler,
+        memory_vector=memory_vector,
+    )
     return JSONResponse(status_code=200 if result.get("ready") else 503, content=result)
 
 @app.get("/api/runtime")
