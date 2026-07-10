@@ -5527,7 +5527,7 @@ function _wireAttachmentHandlers(reader, folder) {
         try { uiModule.showToast && uiModule.showToast(`Downloading ${count || 'all'} attachments`); } catch (_) {}
       } catch (e) {
         console.error('attachments zip download error', e);
-        try { const { showError } = await import('./ui.js'); showError('Could not download attachments'); } catch (_) {}
+        try { const { showError } = await import('./ui.js'); showError(window.t('Could not download attachments')); } catch (_) {}
       } finally {
         delete btn.dataset.downloading;
         btn.classList.remove('is-loading');
@@ -6840,7 +6840,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
         } catch (e) {
           console.error(e);
           busy?.remove?.();
-          showToast('Failed to delete email');
+          showToast(window.t('Failed to delete email'));
           return;
         }
         busy?.remove?.();
@@ -6865,7 +6865,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
         } catch (e) {
           console.error(e);
           busy?.remove?.();
-          showToast('Failed to delete email');
+          showToast(window.t('Failed to delete email'));
           return;
         }
         busy?.remove?.();
@@ -7080,7 +7080,7 @@ function _showCardMenu(em, anchor) {
         await fetch(`${API_BASE}/api/email/delete/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'DELETE' });
       } catch (e) {
         busy?.remove?.();
-        showToast('Failed to delete email');
+        showToast(window.t('Failed to delete email'));
         throw e;
       }
       busy?.remove?.();

@@ -277,4 +277,12 @@ registerMessages('pt-BR', {
   'Dir: {path}': 'Dir.: {path}',
   'Could not open Serve: {msg}': 'Não foi possível abrir Servir: {msg}',
   'uptime': 'tempo ativo',
+
+  // ── cookbookRunning.js — toasts (post-upstream repair) ──
+  'Already saved': 'Já salvo',
+  'Saved to presets': 'Salvo nas predefinições',
+  'Copied crash report': 'Relatório de falha copiado',
+  'No log content available yet': 'Nenhum conteúdo de log disponível ainda',
+  'Copied last 50 lines': 'Últimas 50 linhas copiadas',
+  'Kill failed — session may still be running. Check `tmux ls` on the server.': 'Falha ao encerrar — a sessão pode ainda estar em execução. Verifique `tmux ls` no servidor.',
 });

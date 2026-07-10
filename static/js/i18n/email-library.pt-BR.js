@@ -230,4 +230,5 @@ registerMessages('pt-BR', {
   'Todo reminder set for {date}': 'Lembrete de tarefa definido para {date}',
   'Reply note saved': 'Nota de resposta salva',
   'Failed to create reminder': 'Falha ao criar lembrete',
+  'Could not download attachments': 'Não foi possível baixar os anexos',
 });

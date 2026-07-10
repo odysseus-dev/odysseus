@@ -2611,8 +2611,8 @@ export function _renderRunningTab() {
         }
         if (task.type === 'serve' && task.payload?._cmd) {
           items.push({ group: 'edit', label: 'Save serve', action: 'save', custom: () => {
-            if (!_saveTaskAsPreset(task)) { uiModule.showToast('Already saved'); return; }
-            uiModule.showToast('Saved to presets');
+            if (!_saveTaskAsPreset(task)) { uiModule.showToast(window.t('Already saved')); return; }
+            uiModule.showToast(window.t('Saved to presets'));
             _renderRunningTab();
           }});
         }
@@ -2687,7 +2687,7 @@ export function _renderRunningTab() {
           items.push({ group: 'copy', label: 'Copy crash report', action: 'copy-crash-report', custom: () => {
             const out = (el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
             _copyText(_buildCrashReport(task, out));
-            uiModule.showToast('Copied crash report');
+            uiModule.showToast(window.t('Copied crash report'));
           }});
         }
         // Copy the last 50 lines of the task's output/log.
@@ -2695,11 +2695,11 @@ export function _renderRunningTab() {
           const out = (el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
           const last = out.split('\n').slice(-50).join('\n');
           if (!last.trim()) {
-            uiModule.showToast('No log content available yet');
+            uiModule.showToast(window.t('No log content available yet'));
             return;
           }
           _copyText(last);
-          uiModule.showToast('Copied last 50 lines');
+          uiModule.showToast(window.t('Copied last 50 lines'));
         }});
         // Label matches behavior — the kill handler ALWAYS first kills
         // the live tmux session and (for serve tasks) deletes the
@@ -2920,7 +2920,7 @@ export function _renderRunningTab() {
         }
       } catch (_) { killOk = false; }
       if (!killOk) {
-        try { uiModule.showToast('Kill failed — session may still be running. Check `tmux ls` on the server.', 'error'); } catch (_) {}
+        try { uiModule.showToast(window.t('Kill failed — session may still be running. Check `tmux ls` on the server.'), 'error'); } catch (_) {}
         return;  // leave the row so the user can retry
       }
       if (task.type === 'serve' && task.payload) {
@@ -2947,7 +2947,7 @@ export function _renderRunningTab() {
       e.stopPropagation();
       const text = el.querySelector('.cookbook-output-pre')?.textContent || '';
       if (!text.trim()) {
-        uiModule.showToast('No log content available yet');
+        uiModule.showToast(window.t('No log content available yet'));
         return;
       }
       _copyText(text).then(() => {
