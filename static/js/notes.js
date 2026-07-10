@@ -8,7 +8,7 @@ import { spawnConfetti } from './compare/vote.js';
 import * as Modals from './modalManager.js';
 import { attachColorPicker } from './colorPicker.js';
 import { makeWindowDraggable } from './windowDrag.js';
-import { applyEdgeDock, clearDockSide, preferredEdgeDockSide } from './modalSnap.js';
+import { applyEdgeDock, clearDockSide, preferredEdgeDockSide, suspendDock } from './modalSnap.js';
 import markdownModule from './markdown.js';
 
 const API_BASE = window.location.origin;
@@ -38,6 +38,8 @@ let _notesHeaderResizeObserver = null;
 let _notesFullscreenGeometryCleanup = null;
 let _notesFullscreenSettleTimers = [];
 let _expandedNoteDetailIds = new Set();
+const NOTES_DOCK_SIDES = ['left', 'right', 'top', 'bottom'];
+let _notesMinimizedDockState = null;
 const REMINDER_FIRED_KEY = 'odysseus-notes-reminder-fired';
 // Note IDs already shown with the entry-glow once. Re-set when the user
 // reschedules the reminder so the new firing glows again on next open.
@@ -51,8 +53,62 @@ const REMINDER_ACTIVE_HIGHLIGHT_KEY = 'odysseus-notes-reminder-active-highlight'
 const REMINDER_DISMISSED_AT_KEY = 'odysseus-notes-reminder-dismissed-at';
 const NOTES_FIRST_OPEN_HINT_KEY = 'odysseus-notes-first-open-hint-v1';
 
+function _positiveNotesDockSize(value) {
+  const size = Number(value);
+  return Number.isFinite(size) && size > 0 ? size : null;
+}
+
+function _captureNotesMinimizedDockState(pane) {
+  if (!pane) return null;
+  const liveSide = NOTES_DOCK_SIDES.find((side) =>
+    pane._dockSide === side || pane.classList?.contains(`modal-${side}-docked`));
+  const fullscreenReturn = pane._notesFullscreenReturnState;
+  const returnSide = fullscreenReturn?.mode === 'dock'
+    && NOTES_DOCK_SIDES.includes(fullscreenReturn.side)
+    ? fullscreenReturn.side
+    : null;
+  const side = liveSide || returnSide;
+  if (!side) return null;
+  const dimensions = liveSide ? pane : fullscreenReturn;
+  return {
+    side,
+    touchLandscapeDockWidth: _positiveNotesDockSize(dimensions?.touchLandscapeDockWidth
+      ?? dimensions?._touchLandscapeDockWidth),
+    userDockWidth: _positiveNotesDockSize(dimensions?.userDockWidth
+      ?? dimensions?._userDockWidth),
+    userDockHeight: _positiveNotesDockSize(dimensions?.userDockHeight
+      ?? dimensions?._userDockHeight),
+  };
+}
+
+function _rememberNotesMinimizedDockState(pane) {
+  _notesMinimizedDockState = _captureNotesMinimizedDockState(pane);
+  return _notesMinimizedDockState;
+}
+
+function _restoreNotesMinimizedDockState(pane) {
+  const state = _notesMinimizedDockState;
+  _notesMinimizedDockState = null;
+  if (!pane || !state || !NOTES_DOCK_SIDES.includes(state.side)) return false;
+  // Android landscape chooses the side dynamically so a new tool can replace
+  // the current dock without overlap. Its existing auto-dock remains the
+  // authority instead of replaying a desktop/touch state captured earlier.
+  if (_isNotesAndroidDockMode() || _isNotesMobileLayout()) return false;
+  if (state.touchLandscapeDockWidth != null) {
+    pane._touchLandscapeDockWidth = state.touchLandscapeDockWidth;
+  }
+  if (state.userDockWidth != null) pane._userDockWidth = state.userDockWidth;
+  if (state.userDockHeight != null) pane._userDockHeight = state.userDockHeight;
+  try { return !!applyEdgeDock(pane, state.side); }
+  catch (err) {
+    console.warn('restore minimized Notes dock failed', err);
+    return false;
+  }
+}
+
 function _forceCloseNotesPanel() {
   _open = false;
+  _notesMinimizedDockState = null;
   _editingId = null;
   try { _commitOpenInPlaceEditor(); } catch {}
   try { _closeMobileFullscreenEdit({ save: true }); } catch {}
@@ -216,10 +272,9 @@ function _applyNotesFullscreenRect(pane) {
 
 function _captureNotesFullscreenReturnState(pane) {
   if (!pane?.getBoundingClientRect) return null;
-  const dockSides = ['left', 'right', 'top', 'bottom'];
   const side = pane._dockSide
-    || dockSides.find((candidate) => pane.classList.contains(`modal-${candidate}-docked`));
-  if (dockSides.includes(side)) {
+    || NOTES_DOCK_SIDES.find((candidate) => pane.classList.contains(`modal-${candidate}-docked`));
+  if (NOTES_DOCK_SIDES.includes(side)) {
     return {
       mode: 'dock',
       side,
@@ -246,7 +301,7 @@ function _restoreNotesFullscreenReturnState(pane) {
   if (!pane) return;
   _clearNotesSnapStyles(pane);
   if (!pane.isConnected) return;
-  if (state?.mode === 'dock' && ['left', 'right', 'top', 'bottom'].includes(state.side)) {
+  if (state?.mode === 'dock' && NOTES_DOCK_SIDES.includes(state.side)) {
     if (state.touchLandscapeDockWidth) pane._touchLandscapeDockWidth = state.touchLandscapeDockWidth;
     if (state.userDockWidth) pane._userDockWidth = state.userDockWidth;
     if (state.userDockHeight) pane._userDockHeight = state.userDockHeight;
@@ -411,9 +466,8 @@ function _wireNotesWindow(pane) {
 
 function _clearNotesSnapStyles(pane) {
   if (!pane) return;
-  const dockSides = ['left', 'right', 'top', 'bottom'];
-  const activeDockSides = dockSides.filter((side) => pane.classList.contains(`modal-${side}-docked`));
-  pane.classList.remove('notes-window-fullscreen', ...dockSides.map((side) => `modal-${side}-docked`));
+  const activeDockSides = NOTES_DOCK_SIDES.filter((side) => pane.classList.contains(`modal-${side}-docked`));
+  pane.classList.remove('notes-window-fullscreen', ...NOTES_DOCK_SIDES.map((side) => `modal-${side}-docked`));
   activeDockSides.forEach((side) => clearDockSide(side, pane));
   ['position', 'left', 'top', 'right', 'bottom', 'width', 'max-width', 'height',
     'min-height', 'max-height', 'margin', 'transform', 'border-radius', 'overflow', 'border-bottom']
@@ -2250,15 +2304,17 @@ export function openPanel() {
   const backdrop = document.createElement('div');
   backdrop.className = 'notes-pane-backdrop';
   backdrop.id = 'notes-pane-backdrop';
-  backdrop.addEventListener('click', (ev) => {
-    if (ev.target === backdrop) closePanel('down');
-  });
+  // The backdrop is intentionally pointer-transparent so the remaining chat
+  // stays interactive beside a docked Notes pane. Minimize is handled by the
+  // explicit window control and swipe gesture; a backdrop click handler here
+  // would be unreachable and risks blocking chat if CSS ever changes.
   backdrop.appendChild(pane);
   document.body.appendChild(backdrop);
   _wireNotesWindow(pane);
   _wireNotesHeaderDynamics(pane);
   _wireNotesFullscreenGeometry(pane);
   _syncNotesViewportMode(pane);
+  _restoreNotesMinimizedDockState(pane);
   _syncNotesFullscreenButton(pane);
 
   // Events
@@ -2665,10 +2721,21 @@ export function closePanel(direction) {
   _editingId = null;
   _clearViewedReminderGlows();
   const _minimize = direction === 'down';
+  const pane = document.getElementById('notes-pane');
   if (_minimize) {
+    const dockState = _rememberNotesMinimizedDockState(pane);
+    // Notes owns a virtual modalManager id, so modalManager cannot suspend the
+    // real pane itself. Release the live chat reservation now while retaining
+    // the captured side and user-adjusted size for the newly created pane.
+    if (dockState && pane && !pane._dockSuspended) {
+      try { suspendDock(pane); } catch (err) { console.warn('suspend Notes dock on minimize failed', err); }
+    }
     _ensureNotesChipRegistered();
   } else if (Modals.isRegistered('notes-panel')) {
+    _notesMinimizedDockState = null;
     Modals.unregister('notes-panel');
+  } else {
+    _notesMinimizedDockState = null;
   }
 
   // Drop the document keydown listener and the 30s reminder interval —
@@ -2702,7 +2769,6 @@ export function closePanel(direction) {
   const btn = document.getElementById('tool-notes-btn');
   if (btn) btn.classList.remove('active');
 
-  const pane = document.getElementById('notes-pane');
   const backdrop = document.getElementById('notes-pane-backdrop');
   if (pane) {
     // Scale-out + fade. Match the enter animation duration so close feels

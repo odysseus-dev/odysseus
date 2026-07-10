@@ -380,22 +380,35 @@ function _setLeftDockVars(width, left = _leftNavRight()) {
   document.documentElement.style.setProperty('--left-dock-reserve-w', _leftDockReserveWidth(width, left) + 'px');
 }
 
-function _verticalDockBounds() {
+function _verticalDockBounds(allowCompact = false) {
   const available = Math.max(0, _viewportHeight());
-  const half = Math.floor(available / 2);
-  const minDock = Math.min(MIN_EDGE_DOCK_HEIGHT, half);
-  const minChat = Math.min(MIN_CHAT_HEIGHT, half);
+  if (available < MIN_EDGE_DOCK_HEIGHT + MIN_CHAT_HEIGHT) {
+    if (!allowCompact || available <= 0) {
+      return { min: 0, max: 0, available };
+    }
+    const compactChat = available > MIN_CHAT_HEIGHT
+      ? MIN_CHAT_HEIGHT
+      : Math.floor(available / 2);
+    const maxDock = Math.max(1, available - compactChat);
+    return {
+      min: Math.min(MIN_EDGE_DOCK_HEIGHT, maxDock),
+      max: maxDock,
+      available,
+    };
+  }
   return {
-    min: minDock,
-    max: Math.max(minDock, available - minChat),
+    min: MIN_EDGE_DOCK_HEIGHT,
+    max: available - MIN_CHAT_HEIGHT,
+    available,
   };
 }
 
-function _clampVerticalDockHeight(height) {
-  const bounds = _verticalDockBounds();
+function _clampVerticalDockHeight(height, allowCompact = false) {
+  const bounds = _verticalDockBounds(allowCompact);
+  if (bounds.max <= 0) return 0;
   const requested = Number.isFinite(height) && height > 0
     ? height
-    : Math.round(_viewportHeight() / 2);
+    : Math.round(bounds.available / 2);
   return _clampDockWidthToSpace(requested, bounds.min, bounds.max);
 }
 
@@ -407,8 +420,8 @@ function _preferredVerticalDockHeight(content, side) {
   return content?._userDockHeight || _storedDockHeight(side) || _defaultDockHeight();
 }
 
-function _resolveVerticalDockHeight(content, side) {
-  return _clampVerticalDockHeight(_preferredVerticalDockHeight(content, side));
+function _resolveVerticalDockHeight(content, side, allowCompact = false) {
+  return _clampVerticalDockHeight(_preferredVerticalDockHeight(content, side), allowCompact);
 }
 
 function _setVerticalDockVars(side, height) {
@@ -422,16 +435,28 @@ function _clampDockWidthToSpace(width, min, max) {
   return Math.min(ceiling, Math.max(floor, Math.round(width)));
 }
 
-function _clampRightDockWidthToWorkspace(width, space) {
-  const available = Math.max(0, space.right);
+function _clampDockWidthInWorkspace(width, available, allowCompact = false) {
+  available = Math.max(0, available);
+  if (available <= 0) return 0;
   const min = _minEdgeDockWidth(available);
   if (_compactDockViewport()) return _clampDockWidthToSpace(width, min, available);
+  if (available < min + MIN_CHAT_WIDTH) {
+    if (!allowCompact || available <= 0) return 0;
+    const compactChat = available > MIN_CHAT_WIDTH
+      ? MIN_CHAT_WIDTH
+      : Math.floor(available / 2);
+    const maxDock = Math.max(1, available - compactChat);
+    return _clampDockWidthToSpace(width, Math.min(min, maxDock), maxDock);
+  }
   const desktopMax = Math.max(
     min,
     Math.min(MAX_DESKTOP_EDGE_DOCK_WIDTH, Math.round(available * MAX_DESKTOP_EDGE_DOCK_RATIO)),
   );
-  const max = Math.min(desktopMax, space.width - MIN_CHAT_WIDTH);
-  return _clampDockWidthToSpace(width, min, max);
+  return _clampDockWidthToSpace(width, min, Math.min(desktopMax, available - MIN_CHAT_WIDTH));
+}
+
+function _clampRightDockWidthToWorkspace(width, space, allowCompact = false) {
+  return _clampDockWidthInWorkspace(width, space.width, allowCompact);
 }
 
 function _clampRightDockWidth(width) {
@@ -441,18 +466,11 @@ function _clampRightDockWidth(width) {
   return _clampRightDockWidthToWorkspace(width, {
     ...space,
     width: Math.max(0, space.width - activeLeft),
-  });
+  }, true);
 }
 
-function _clampLeftDockWidthToWorkspace(width, space) {
-  const available = Math.max(0, space.width);
-  const min = _minEdgeDockWidth(available);
-  if (_compactDockViewport()) return _clampDockWidthToSpace(width, min, available);
-  const desktopMax = Math.max(
-    min,
-    Math.min(MAX_DESKTOP_EDGE_DOCK_WIDTH, Math.round(available * MAX_DESKTOP_EDGE_DOCK_RATIO)),
-  );
-  return _clampDockWidthToSpace(width, min, Math.min(desktopMax, available - MIN_CHAT_WIDTH));
+function _clampLeftDockWidthToWorkspace(width, space, allowCompact = false) {
+  return _clampDockWidthInWorkspace(width, space.width, allowCompact);
 }
 
 function _clampLeftDockWidth(width, left = _leftNavRight()) {
@@ -463,7 +481,7 @@ function _clampLeftDockWidth(width, left = _leftNavRight()) {
     right: _viewportWidth() - _rightNavWidth(),
     width: Math.max(0, _viewportWidth() - _rightNavWidth() - left - rightDockW),
   };
-  return _clampLeftDockWidthToWorkspace(width, space);
+  return _clampLeftDockWidthToWorkspace(width, space, true);
 }
 
 function _preferredRightDockWidth(modal, content) {
@@ -527,7 +545,7 @@ function _anchorRightDock(content) {
 function _anchorVerticalDock(content, side) {
   if (!content || content._dockSide !== side || (side !== 'top' && side !== 'bottom')) return;
   const space = _dockWorkspaceEdges();
-  const height = _resolveVerticalDockHeight(content, side);
+  const height = _resolveVerticalDockHeight(content, side, true);
   content.style.left = space.left + 'px';
   content.style.right = (_viewportWidth() - space.right) + 'px';
   content.style.top = side === 'top' ? '0' : 'auto';
@@ -598,8 +616,9 @@ function _isEmailDockOwner(owner) {
 }
 
 export function edgeDockPreviewRect(modal, side = 'right') {
-  if (!DOCK_SIDES.includes(side)) return null;
+  if (!DOCK_SIDES.includes(side) || !_canUseDockSide(side) || _edgeDockDisabledForModal(modal)) return null;
   const content = _resolveDockNodes(modal)?.content || null;
+  const allowCompact = !!modal?.classList?.contains(_dockClassForSide(side));
   let space = _dockWorkspaceEdges();
 
   if (side === 'left') {
@@ -607,7 +626,8 @@ export function edgeDockPreviewRect(modal, side = 'right') {
     const requested = _preferredLeftDockWidth(content, space.left);
     const width = _isTouchLandscape()
       ? _clampTouchLandscapeDockWidth(requested)
-      : _clampLeftDockWidthToWorkspace(requested, space);
+      : _clampLeftDockWidthToWorkspace(requested, space, allowCompact);
+    if (width <= 0) return null;
     return { left: space.left, top: 0, width, height: _viewportHeight() };
   }
 
@@ -619,11 +639,13 @@ export function edgeDockPreviewRect(modal, side = 'right') {
     }
     const width = _isTouchLandscape()
       ? _clampTouchLandscapeDockWidth(requested)
-      : _clampRightDockWidthToWorkspace(requested, space);
+      : _clampRightDockWidthToWorkspace(requested, space, allowCompact);
+    if (width <= 0) return null;
     return { left: space.right - width, top: 0, width, height: _viewportHeight() };
   }
 
-  const height = _resolveVerticalDockHeight(content, side);
+  const height = _resolveVerticalDockHeight(content, side, allowCompact);
+  if (height <= 0) return null;
   return {
     left: space.left,
     top: side === 'top' ? 0 : _viewportHeight() - height,
@@ -954,6 +976,10 @@ function _applyDockInternal(modal, side, dockClass) {
     _clearDisabledEdgeDock(modal, dockClass);
     return 0;
   }
+  // A reserved edge dock must preserve a usable chat pane. Validate before
+  // replacing the currently active dock so an unavailable drop is a no-op
+  // instead of minimizing the existing window and falling through to a tile.
+  if (!edgeDockPreviewRect(modal, side)) return 0;
   // If the modal is currently docked on the OTHER side (e.g. the user
   // manually docked it right, then a reply re-docks it left), clear that
   // side's class + body push first. Otherwise both sides' state coexist —
@@ -1422,7 +1448,8 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
         }
         return false;
       }
-      const nearEdge = _distFromEdge(cx, cy) <= SNAP_PX;
+      const nearEdge = _distFromEdge(cx, cy) <= SNAP_PX
+        && !!edgeDockPreviewRect(modal, side);
       if (nearEdge !== _hoveringSnap) {
         _hoveringSnap = nearEdge;
         _showSnapHint(nearEdge, side, modal);
@@ -1430,7 +1457,12 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
       return false;
     },
     distance(cx, cy) { return _distFromEdge(cx, cy); },
-    near(cx, cy) { return _distFromEdge(cx, cy) <= SNAP_PX; },
+    near(cx, cy) {
+      return _canUseDockSide(side)
+        && !_edgeDockDisabledForModal(modal)
+        && _distFromEdge(cx, cy) <= SNAP_PX
+        && !!edgeDockPreviewRect(modal, side);
+    },
     hovering() { return _hoveringSnap; },
     side() { return side; },
     commit() {
@@ -1540,7 +1572,10 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
     const pointerX = _layoutCoordinate(clientX);
     const pointerY = _layoutCoordinate(clientY);
     if (side === 'top' || side === 'bottom') {
-      w = _clampVerticalDockHeight(side === 'top' ? pointerY : _viewportHeight() - pointerY);
+      w = _clampVerticalDockHeight(
+        side === 'top' ? pointerY : _viewportHeight() - pointerY,
+        true,
+      );
       content._userDockHeight = w;
       content.style.top = side === 'top' ? '0' : 'auto';
       content.style.bottom = side === 'bottom' ? '0' : 'auto';

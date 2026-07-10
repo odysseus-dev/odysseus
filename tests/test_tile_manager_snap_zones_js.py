@@ -14,7 +14,7 @@ _HELPER_URI = _HELPER.as_uri()
 _HAS_NODE = shutil.which("node") is not None
 
 
-def _run_tile_case():
+def _run_tile_case(scale=1):
     script = textwrap.dedent(
         f"""
         const makeClassList = () => {{
@@ -50,20 +50,23 @@ def _run_tile_case():
         }});
         const body = makeElement();
         const documentElement = makeElement();
+        documentElement.style.setProperty('--ui-scale-factor', {json.dumps(scale)});
         globalThis.window = {{
           innerWidth: 1200,
           innerHeight: 800,
           addEventListener() {{}},
           removeEventListener() {{}},
           dispatchEvent() {{}},
-          matchMedia() {{ return {{ matches: false }}; }},
-          getComputedStyle() {{
+          matchMedia(query) {{
+            return {{ matches: query.includes('pointer: fine') || query.includes('any-pointer: fine') }};
+          }},
+          getComputedStyle(el) {{
             return {{
               display: 'block',
               visibility: 'visible',
               opacity: '1',
               zIndex: '0',
-              getPropertyValue() {{ return ''; }},
+              getPropertyValue(name) {{ return el?.style?.getPropertyValue?.(name) || ''; }},
             }};
           }},
         }};
@@ -105,6 +108,8 @@ def _run_tile_case():
         const memoryContent = {{ closest() {{ return memoryModal; }} }};
         const settingsModal = {{ id: 'settings-modal', dataset: {{}} }};
         const settingsContent = {{ closest() {{ return settingsModal; }} }};
+        const sharedModal = {{ id: 'shared-modal', dataset: {{ edgeDockController: '1' }} }};
+        const sharedContent = {{ closest() {{ return sharedModal; }} }};
 
         console.log(JSON.stringify({{
           fullscreen: pick(mod._zoneForPointerForTests(500, 0)),
@@ -119,6 +124,12 @@ def _run_tile_case():
           settingsLeft: pick(mod._zoneForContentForTests(settingsContent, 20, 300)),
           settingsRight: pick(mod._zoneForContentForTests(settingsContent, 1190, 300)),
           settingsBottom: pick(mod._zoneForContentForTests(settingsContent, 500, 790)),
+          sharedFullscreen: pick(mod._zoneForContentForTests(sharedContent, 500, 0)),
+          sharedMaximize: pick(mod._zoneForContentForTests(sharedContent, 500, 8)),
+          sharedTop: pick(mod._zoneForContentForTests(sharedContent, 500, 20)),
+          sharedLeft: pick(mod._zoneForContentForTests(sharedContent, 20, 300)),
+          sharedRight: pick(mod._zoneForContentForTests(sharedContent, 1190, 300)),
+          sharedBottom: pick(mod._zoneForContentForTests(sharedContent, 500, 790)),
         }}));
         """
     )
@@ -168,3 +179,37 @@ def test_regular_tool_modals_are_not_limited_to_fullscreen_only():
     assert zones["settingsLeft"] is None
     assert zones["settingsRight"]["name"] == "right-half"
     assert zones["settingsBottom"]["name"] == "bottom-half"
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_shared_edge_controller_preserves_fullscreen_and_maximize_zones():
+    zones = _run_tile_case()
+
+    assert zones["sharedFullscreen"]["name"] == "fullscreen"
+    assert zones["sharedMaximize"]["name"] == "maximize"
+    assert zones["sharedTop"] is None
+    assert zones["sharedLeft"] is None
+    assert zones["sharedRight"] is None
+    assert zones["sharedBottom"] is None
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+@pytest.mark.parametrize("scale", [0.9, 1.25, 1.4])
+def test_fullscreen_and_maximize_rectangles_are_layout_scaled_without_moving_visual_hit_zones(scale):
+    zones = _run_tile_case(scale)
+
+    assert zones["fullscreen"]["name"] == "fullscreen"
+    assert zones["maximize"]["name"] == "maximize"
+    assert zones["sharedFullscreen"]["name"] == "fullscreen"
+    assert zones["sharedMaximize"]["name"] == "maximize"
+
+    fullscreen = zones["fullscreen"]["rect"]
+    maximize = zones["maximize"]["rect"]
+    assert fullscreen["left"] == pytest.approx(0)
+    assert fullscreen["top"] == pytest.approx(0)
+    assert fullscreen["width"] * scale == pytest.approx(1200)
+    assert fullscreen["height"] * scale == pytest.approx(800)
+    assert maximize["left"] * scale == pytest.approx(4)
+    assert maximize["top"] * scale == pytest.approx(4)
+    assert maximize["width"] * scale == pytest.approx(1192)
+    assert maximize["height"] * scale == pytest.approx(792)

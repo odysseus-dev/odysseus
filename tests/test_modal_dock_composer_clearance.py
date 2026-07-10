@@ -117,6 +117,16 @@ def test_desktop_minimized_dock_uses_chatbar_width_and_side_scroll():
     assert "mask-image: linear-gradient(90deg" in block
     assert "#minimized-dock.dock-chatbar-row .minimized-dock-chip" in block
     assert "flex: 0 0 auto;" in block
+    assert "pointer-events: none;" in block
+    assert "#minimized-dock.dock-chatbar-row.dock-overflowing" in block
+    assert "pointer-events: auto;" in block
+
+
+def test_top_and_bottom_notes_docks_leave_chat_backdrop_interactive():
+    assert ".notes-pane-backdrop:has(.notes-pane.modal-top-docked)," in CSS
+    assert ".notes-pane-backdrop:has(.notes-pane.modal-bottom-docked) {" in CSS
+    assert ".notes-pane-backdrop:has(.notes-pane.modal-top-docked) .notes-pane," in CSS
+    assert ".notes-pane-backdrop:has(.notes-pane.modal-bottom-docked) .notes-pane {" in CSS
 
 
 def test_minimized_dock_repositions_after_vertical_chat_split_transition():
@@ -269,7 +279,10 @@ def test_full_expand_restores_previous_dock_or_window_state():
     assert "function _restoreFullExpandReturnState(modal, content)" in MODAL_MANAGER_JS
     assert "function _fullExpandTargetRect(modal)" in MODAL_MANAGER_JS
     assert "if (_isTouchLandscape()) return fullscreenWorkspaceRect();" in MODAL_MANAGER_JS
-    assert "return modal?.getBoundingClientRect ? modal.getBoundingClientRect() : _fullViewportRect();" in MODAL_MANAGER_JS
+    assert "fixedLayoutRect," in MODAL_MANAGER_JS
+    assert "viewportLayoutRect," in MODAL_MANAGER_JS
+    assert "return viewportLayoutRect();" in MODAL_MANAGER_JS
+    assert "? fixedLayoutRect(modal.getBoundingClientRect())" in MODAL_MANAGER_JS
     assert "function _fitFullExpandedContentToModalFrame(modal)" in MODAL_MANAGER_JS
     assert "const rect = _fullExpandTargetRect(modal);" in MODAL_MANAGER_JS
     assert "content.style.setProperty('left', `${Math.round(rect.left)}px`, 'important');" in MODAL_MANAGER_JS
@@ -400,6 +413,19 @@ def test_desktop_resize_handles_settle_after_scale_and_only_show_on_hover():
     assert "touchSplit ? subtleLine : 'transparent'" in MODAL_SNAP_JS
     assert ".edge-dock-resize-handle-top:hover" in CSS
     assert ".edge-dock-resize-handle-bottom:hover" in CSS
+
+
+def test_shared_drag_reserves_top_tile_band_and_failed_docks_fall_back_cleanly():
+    assert "const TOP_TILE_RESERVED_PX = 12;" in WINDOW_DRAG_JS
+    assert "if (cy <= TOP_TILE_RESERVED_PX)" in WINDOW_DRAG_JS
+    assert "? [leftDock, rightDock]" in WINDOW_DRAG_JS
+    assert "if (hoveredDock.commit()) return;" in WINDOW_DRAG_JS
+    assert "if (wasFullscreen && fsClass && modal) modal.classList.add(fsClass);" in WINDOW_DRAG_JS
+    assert "&& DOCK_ZONE_TO_SIDE[zone.name]) return null;" in TILE_MANAGER_JS
+    assert "if (!rect) return null;" in TILE_MANAGER_JS
+    assert "Reserved edge zones must never degrade into the legacy fixed half-tile" in TILE_MANAGER_JS
+    assert "if (!edgeDockPreviewRect(modal, side)) return 0;" in MODAL_SNAP_JS
+    assert "&& !!edgeDockPreviewRect(modal, side);" in MODAL_SNAP_JS
 
 
 def test_android_tool_opens_auto_dock_and_replace_existing_dock():
@@ -568,7 +594,8 @@ def test_android_touch_docking_is_landscape_only_without_enabling_resize():
     assert "const _dockControllers = () => [topDock, bottomDock, leftDock, rightDock]" in WINDOW_DRAG_JS
     assert "const currentDock = dockAllowed ? _currentDockController() : null;" in WINDOW_DRAG_JS
     assert "const candidate = dockAllowed ? _dockCandidate(cx, cy) : null;" in WINDOW_DRAG_JS
-    assert "if (deferSharedDock && modal?.dataset?.edgeDockController === '1') return null;" in TILE_MANAGER_JS
+    assert "if (deferSharedDock && modal?.dataset?.edgeDockController === '1'" in TILE_MANAGER_JS
+    assert "&& DOCK_ZONE_TO_SIDE[zone.name]) return null;" in TILE_MANAGER_JS
     assert "if (enableTouch) header.style.touchAction = 'none';" in WINDOW_DRAG_JS
     assert "mostly-vertical downward pulls" in WINDOW_DRAG_JS
     assert "try { window._modalWindowDragging = true; } catch (_) {}" in WINDOW_DRAG_JS
@@ -617,8 +644,10 @@ def test_android_touch_docking_is_landscape_only_without_enabling_resize():
     assert "@media (orientation: landscape) and (hover: none)" in CSS
     assert "function _fullscreenRect()" in TILE_MANAGER_JS
     assert "function _viewportWorkspaceRect(inset = 4)" in TILE_MANAGER_JS
-    assert "return _viewportWorkspaceRect(4);" in TILE_MANAGER_JS
-    assert "const safe = _viewportWorkspaceRect(0);" in TILE_MANAGER_JS
+    assert "function _viewportSafeRect()" in TILE_MANAGER_JS
+    assert "const visual = _viewportWorkspaceRect(4);" in TILE_MANAGER_JS
+    assert "return fixedLayoutRect({" in TILE_MANAGER_JS
+    assert "const visual = _viewportWorkspaceRect(0);" in TILE_MANAGER_JS
     assert "case 'fullscreen':     r = _fullscreenRect(); break;" in TILE_MANAGER_JS
     assert "const rect = zone.name === 'fullscreen' ? _fullscreenRect() : zone.rect;" in TILE_MANAGER_JS
     assert "function _fullscreenOwnerRect(content)" not in TILE_MANAGER_JS

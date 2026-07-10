@@ -956,7 +956,7 @@ body.bg-pattern-sparkles {
       scrollbar-color:
         color-mix(in srgb, var(--accent, var(--red)) 42%, transparent)
         transparent;
-      pointer-events: auto;
+      pointer-events: none;
       touch-action: pan-x;
       box-sizing: border-box;
       min-height: 48px;
@@ -970,6 +970,7 @@ body.bg-pattern-sparkles {
     }
     #minimized-dock.dock-chatbar-row.dock-overflowing {
       justify-content: flex-start;
+      pointer-events: auto;
     }
     #minimized-dock.dock-chatbar-row::-webkit-scrollbar {
       height: 5px;
@@ -983,6 +984,7 @@ body.bg-pattern-sparkles {
     }
     #minimized-dock.dock-chatbar-row .minimized-dock-chip {
       flex: 0 0 auto;
+      pointer-events: auto;
     }
     #minimized-dock.dock-paged-row {
       flex-wrap: nowrap;
@@ -36023,14 +36025,18 @@ body.notes-drag-mode .note-card-pin svg {
   pointer-events: auto;
 }
 .notes-pane-backdrop:has(.notes-pane.modal-right-docked),
-.notes-pane-backdrop:has(.notes-pane.modal-left-docked) {
+.notes-pane-backdrop:has(.notes-pane.modal-left-docked),
+.notes-pane-backdrop:has(.notes-pane.modal-top-docked),
+.notes-pane-backdrop:has(.notes-pane.modal-bottom-docked) {
   background: transparent;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   pointer-events: none;
 }
 .notes-pane-backdrop:has(.notes-pane.modal-right-docked) .notes-pane,
-.notes-pane-backdrop:has(.notes-pane.modal-left-docked) .notes-pane {
+.notes-pane-backdrop:has(.notes-pane.modal-left-docked) .notes-pane,
+.notes-pane-backdrop:has(.notes-pane.modal-top-docked) .notes-pane,
+.notes-pane-backdrop:has(.notes-pane.modal-bottom-docked) .notes-pane {
   pointer-events: auto;
 }
 .notes-pane-backdrop:has(.notes-pane.notes-window-fullscreen) {

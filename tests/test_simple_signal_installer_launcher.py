@@ -3,6 +3,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = (ROOT / "installer.py").read_text(encoding="utf-8")
+INSTALLER_SPEC = (ROOT / "installer.spec").read_text(encoding="utf-8")
+ODYSSEUS_SPEC = (ROOT / "Odysseus_Setup.spec").read_text(encoding="utf-8")
 
 
 def test_extension_opening_page_has_direct_navigation_fallback():
@@ -21,3 +23,10 @@ def test_extension_router_does_not_spawn_duplicate_server_when_port_is_live():
     assert 'lock_path = os.path.join(install_dir, ".odysseus-launch.lock")' in INSTALLER
     assert 'socket.create_connection(("127.0.0.1", int(value)), timeout=0.35)' in INSTALLER
     assert "if os.path.exists(ps1_path) and not _is_port_open(port) and not _launch_lock_recent():" in INSTALLER
+
+
+def test_extension_manifest_uses_packaged_application_version():
+    assert "def get_extension_version(source_dir: Path) -> str:" in INSTALLER
+    assert '"version": get_extension_version(source_dir)' in INSTALLER
+    assert "('package.json', '.')" in INSTALLER_SPEC
+    assert "('package.json', '.')" in ODYSSEUS_SPEC

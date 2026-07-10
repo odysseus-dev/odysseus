@@ -6,6 +6,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ('.env.example', '.'),
+        ('package.json', '.'),
         ('app.py', '.'),
         ('core', 'core'),
         ('routes', 'routes'),

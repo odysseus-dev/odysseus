@@ -133,6 +133,17 @@ def get_source_dir() -> Path:
         return Path(sys._MEIPASS)
     return Path(__file__).resolve().parent
 
+def get_extension_version(source_dir: Path) -> str:
+    """Use the packaged application version for Simple Signal metadata."""
+    try:
+        package = json.loads((source_dir / "package.json").read_text(encoding="utf-8"))
+        version = str(package.get("version") or "").strip()
+        if version:
+            return version
+    except (OSError, ValueError, TypeError):
+        pass
+    return "1.0.0"
+
 def copy_extension_files(source_dir: Path, extension_dir: Path) -> None:
     extension_dir.mkdir(parents=True, exist_ok=True)
 
@@ -156,7 +167,7 @@ def copy_extension_files(source_dir: Path, extension_dir: Path) -> None:
     manifest_path.write_text(json.dumps({
         "name": EXTENSION_NAME,
         "description": "Comprehensive AI chat with memory, research, and multi-modal capabilities",
-        "version": "1.0.0"
+        "version": get_extension_version(source_dir)
     }, indent=2), encoding="utf-8")
 
     target_url = f"http://127.0.0.1:{EXTENSION_PORT}/"

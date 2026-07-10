@@ -129,6 +129,28 @@ def _research_thumbnail(data: dict) -> str:
     return ""
 
 
+def _research_failure_summary(data: dict) -> str:
+    """Extract a short, non-secret reason from a persisted failed report."""
+    if not isinstance(data, dict):
+        return ""
+    if data.get("sources"):
+        return ""
+    text = str(data.get("raw_report") or data.get("result") or "")
+    if not text:
+        return ""
+    match = re.search(
+        r"\*\*Search unavailable\*\*\s*[—-]\s*(.+?)(?:\n\s*\n|$)",
+        text,
+        flags=re.S,
+    )
+    if match:
+        detail = re.sub(r"\s+", " ", match.group(1)).strip()
+        return f"Search unavailable — {detail}"
+    if "No information could be gathered" in text:
+        return "No information could be gathered for this question."
+    return ""
+
+
 def _first_chat_model(models) -> str:
     """First model that isn't an embedding/tts/etc. — falls back to models[0]."""
     for m in (models or []):
@@ -390,7 +412,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                 if search and search.lower() not in query.lower():
                     continue
                 sources = d.get("sources", [])
-                items.append({
+                item = {
                     "id": p.stem,
                     "query": query,
                     "category": d.get("category") or "",
@@ -402,7 +424,11 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     "completed_at": d.get("completed_at", 0),
                     "archived": bool(d.get("archived")),
                     "thumbnail": _research_thumbnail(d),
-                })
+                }
+                failure_summary = _research_failure_summary(d)
+                if failure_summary:
+                    item["error_summary"] = failure_summary
+                items.append(item)
             except Exception:
                 continue
 
@@ -432,6 +458,9 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         # SECURITY: 404 (not 403) so we don't leak that the report exists.
         if data.get("owner") != user:
             raise HTTPException(404, "Research not found")
+        failure_summary = _research_failure_summary(data)
+        if failure_summary and not data.get("error_summary"):
+            data = {**data, "error_summary": failure_summary}
         return data
 
     @router.post("/api/research/{session_id}/archive")
@@ -621,16 +650,24 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             p = owned_disk_path
             if p is not None:
                 d = json.loads(p.read_text(encoding="utf-8"))
-                return {
+                payload = {
                     "result": d.get("result", ""),
                     "sources": d.get("sources", []),
                     "raw_findings": d.get("raw_findings", []),
                     "category": d.get("category") or "",
                 }
+                failure_summary = _research_failure_summary(d)
+                if failure_summary:
+                    payload["error_summary"] = failure_summary
+                return payload
             raise HTTPException(404, "No research result available")
         sources = research_handler.get_sources(session_id) or []
         raw_findings = research_handler.get_raw_findings(session_id) or []
-        return {"result": result, "sources": sources, "raw_findings": raw_findings, "category": ""}
+        payload = {"result": result, "sources": sources, "raw_findings": raw_findings, "category": ""}
+        failure_summary = _research_failure_summary(payload)
+        if failure_summary:
+            payload["error_summary"] = failure_summary
+        return payload
 
     @router.post("/api/research/spinoff/{session_id}")
     async def research_spinoff(session_id: str, request: Request):

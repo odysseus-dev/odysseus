@@ -87,6 +87,39 @@ function _dockClassForSide(side) {
   return `modal-${side}-docked`;
 }
 
+function _uiScaleFactor() {
+  try {
+    const raw = window.getComputedStyle?.(document.documentElement)
+      ?.getPropertyValue?.('--ui-scale-factor') || '';
+    const scale = parseFloat(raw);
+    return Number.isFinite(scale) && scale > 0 ? scale : 1;
+  } catch (_) {
+    return 1;
+  }
+}
+
+// Pointer hit-testing stays in visual viewport pixels. Fixed-position styles
+// live under root-level CSS `zoom`, so authored rectangles must be converted
+// to the corresponding unzoomed layout coordinate space first.
+export function fixedLayoutRect(rect) {
+  if (!rect) return null;
+  const scale = _uiScaleFactor();
+  const left = (Number(rect.left) || 0) / scale;
+  const top = (Number(rect.top) || 0) / scale;
+  const width = Math.max(0, Number(rect.width) || 0) / scale;
+  const height = Math.max(0, Number(rect.height) || 0) / scale;
+  return { left, top, right: left + width, bottom: top + height, width, height };
+}
+
+export function viewportLayoutRect() {
+  return fixedLayoutRect({
+    left: 0,
+    top: 0,
+    width: window.innerWidth || document.documentElement.clientWidth || 0,
+    height: window.innerHeight || document.documentElement.clientHeight || 0,
+  });
+}
+
 function _hasOtherDockedWindow(side, owner) {
   const cls = _dockClassForSide(side);
   return Array.from(document.querySelectorAll(`.${cls}`)).some((el) => {
@@ -205,7 +238,13 @@ function _viewportWorkspaceRect(inset = 4) {
 }
 
 function _viewportSafeRect() {
-  return _viewportWorkspaceRect(4);
+  const visual = _viewportWorkspaceRect(4);
+  return fixedLayoutRect({
+    left: visual.left,
+    top: visual.top,
+    width: Math.max(0, visual.right - visual.left),
+    height: Math.max(0, visual.bottom - visual.top),
+  });
 }
 
 function _rightDockPreviewRect(safe) {
@@ -228,12 +267,15 @@ function _rightDockPreviewRect(safe) {
 
 function _fullscreenRect() {
   if (_isTouchLandscape()) {
-    const safe = _viewportWorkspaceRect(0);
-    const width = Math.max(0, safe.right - safe.left);
-    const height = Math.max(0, safe.bottom - safe.top);
-    return { left: safe.left, top: safe.top, width, height };
+    const visual = _viewportWorkspaceRect(0);
+    return fixedLayoutRect({
+      left: visual.left,
+      top: visual.top,
+      width: Math.max(0, visual.right - visual.left),
+      height: Math.max(0, visual.bottom - visual.top),
+    });
   }
-  return { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+  return viewportLayoutRect();
 }
 
 export function fullscreenWorkspaceRect() {
@@ -241,7 +283,13 @@ export function fullscreenWorkspaceRect() {
 }
 
 function _zoneForPointer(x, y) {
-  const safe = _viewportSafeRect();
+  const safeVisual = _viewportWorkspaceRect(4);
+  const safe = fixedLayoutRect({
+    left: safeVisual.left,
+    top: safeVisual.top,
+    width: Math.max(0, safeVisual.right - safeVisual.left),
+    height: Math.max(0, safeVisual.bottom - safeVisual.top),
+  });
   const W = safe.right - safe.left;
   const H = safe.bottom - safe.top;
 
@@ -251,18 +299,18 @@ function _zoneForPointer(x, y) {
   }
   // Near the top edge (but not over it) → "maximize": fill the safe area,
   // which sits NEXT TO the sidebar/rail rather than covering it.
-  if (y <= safe.top + TOP_FULL_STRIP_PX) {
+  if (y <= safeVisual.top + TOP_FULL_STRIP_PX) {
     return { name: 'maximize', rect: { left: safe.left, top: safe.top, width: W, height: H } };
   }
 
   // Edge half-snaps use the safe workspace, so navigation remains visible.
-  if (y <= safe.top + EDGE_THRESHOLD_PX)
+  if (y <= safeVisual.top + EDGE_THRESHOLD_PX)
     return { name: 'top-half', rect: { left: safe.left, top: safe.top, width: W, height: H / 2 } };
-  if (x <= safe.left + EDGE_THRESHOLD_PX)
+  if (x <= safeVisual.left + EDGE_THRESHOLD_PX)
     return { name: 'left-half', rect: { left: safe.left, top: safe.top, width: W / 2, height: H } };
-  if (x >= safe.right - EDGE_THRESHOLD_PX)
+  if (x >= safeVisual.right - EDGE_THRESHOLD_PX)
     return { name: 'right-half', rect: _rightDockPreviewRect(safe) };
-  if (y >= safe.bottom - EDGE_THRESHOLD_PX)
+  if (y >= safeVisual.bottom - EDGE_THRESHOLD_PX)
     return { name: 'bottom-half', rect: { left: safe.left, top: safe.top + H / 2, width: W, height: H / 2 } };
 
   return null;
@@ -272,10 +320,12 @@ function _zoneForContent(content, x, y, deferSharedDock = true) {
   const modal = content && content.closest && content.closest('.modal, .research-overlay');
   let zone = _zoneForPointer(x, y);
   if (!zone) return null;
-  // Shared draggable windows use modalSnap for all four edge previews and
-  // commits. The tile manager stays out of that live drag so only one target
-  // is ever painted; public chip-drag previews opt out of this deferral.
-  if (deferSharedDock && modal?.dataset?.edgeDockController === '1') return null;
+  // Shared draggable windows use modalSnap for reserved edge previews and
+  // commits. Keep tileManager's fullscreen/maximize targets available; only
+  // defer the four edge zones that would otherwise paint a duplicate target.
+  // Public chip-drag previews opt out of this deferral.
+  if (deferSharedDock && modal?.dataset?.edgeDockController === '1'
+      && DOCK_ZONE_TO_SIDE[zone.name]) return null;
   // Settings has a dense two-column layout; the full-height sidebar-style dock
   // crushes it. Let it tile only into the normal right half, where the nav can
   // flip to top tabs via CSS when the window gets narrow.
@@ -286,7 +336,8 @@ function _zoneForContent(content, x, y, deferSharedDock = true) {
   const dockSide = DOCK_ZONE_TO_SIDE[zone.name];
   if (modal && dockSide) {
     const rect = edgeDockPreviewRect(modal, dockSide);
-    if (rect) zone = { ...zone, rect };
+    if (!rect) return null;
+    zone = { ...zone, rect };
   }
   return zone;
 }
@@ -345,6 +396,9 @@ function _applySnap(content, rect, zoneName) {
       delete content.dataset._tileZone;
       return;
     }
+    // Reserved edge zones must never degrade into the legacy fixed half-tile
+    // when modalSnap rejects them for insufficient chat space.
+    return;
   }
   if (_modal) {
     const activeDockSide = DOCK_SIDES.find((side) =>

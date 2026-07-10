@@ -39,6 +39,7 @@ import { makeEdgeDockController } from './modalSnap.js';
 import { makeWindowResizable } from './windowResize.js';
 
 const SNAP_PX = 6;        // cursor distance from top edge for fullscreen snap
+const TOP_TILE_RESERVED_PX = 12; // tileManager owns fullscreen/maximize here
 const UNSNAP_PX = 24;     // cursor distance from top before fullscreen exits
 function _isTouchInput() {
   return window.matchMedia('(pointer: coarse)').matches ||
@@ -245,9 +246,26 @@ export function makeWindowDraggable(modal, options = {}) {
       _releaseDockControllers();
     }
     if (_isFullscreen()) {
-      _releaseDockControllers();
+      // Preserve tileManager's fullscreen/maximize strip and allow an already
+      // expanded window to arm a side dock without first jumping to center.
+      const inTopBand = cy <= TOP_TILE_RESERVED_PX;
+      const sideCandidate = dockAllowed && !inTopBand
+        ? [leftDock, rightDock]
+          .filter((controller) => controller && controller.near(cx, cy))
+          .sort((a, b) => Math.max(0, a.distance(cx, cy)) - Math.max(0, b.distance(cx, cy)))[0]
+        : null;
+      if (sideCandidate) {
+        _releaseDockControllers(sideCandidate);
+        sideCandidate.onMove(cx, cy);
+        return;
+      }
       if (cy > UNSNAP_PX) {
         _exitFs(cx, cy);
+        const candidate = dockAllowed ? _dockCandidate(cx, cy) : null;
+        _releaseDockControllers(candidate);
+        if (candidate) candidate.onMove(cx, cy);
+      } else {
+        _releaseDockControllers();
       }
       return;
     }
@@ -264,11 +282,18 @@ export function makeWindowDraggable(modal, options = {}) {
       return;
     }
     // Windowed: just follow the cursor.
-    if (Math.abs(cx - startX) > MOVE_THRESHOLD || Math.abs(cy - startY) > MOVE_THRESHOLD) {
+    if (Math.abs(_layoutCoordinate(cx) - startX) > MOVE_THRESHOLD
+        || Math.abs(_layoutCoordinate(cy) - startY) > MOVE_THRESHOLD) {
       movedDuringDrag = true;
     }
     content.style.left = (startLeft + _layoutCoordinate(cx) - startX) + 'px';
     content.style.top = (startTop + _layoutCoordinate(cy) - startY) + 'px';
+    // The first 12px remain exclusively owned by tileManager's fullscreen and
+    // maximize zones; top docking begins just below that strip.
+    if (cy <= TOP_TILE_RESERVED_PX) {
+      _releaseDockControllers();
+      return;
+    }
     const candidate = dockAllowed ? _dockCandidate(cx, cy) : null;
     _releaseDockControllers(candidate);
     if (candidate) candidate.onMove(cx, cy);
@@ -277,7 +302,6 @@ export function makeWindowDraggable(modal, options = {}) {
   const _onEnd = (cx, cy) => {
     if (!dragging) return;
     dragging = false;
-    const dockAllowed = _dockAllowed();
     if (modal) modal.classList.remove('modal-dragging');
     _showSnapHint(false);
     if (enableFullscreen && typeof cy === 'number' && cy <= SNAP_PX) {
@@ -285,11 +309,23 @@ export function makeWindowDraggable(modal, options = {}) {
       _enterFs();
       return;
     }
-    const hoveredDock = _dockControllers().find((controller) => controller.hovering());
+    // Pointerup is authoritative. A very fast release can cross from the top
+    // dock band into tileManager's fullscreen/maximize strip without another
+    // mousemove; never commit a stale top-dock hover in that reserved strip.
+    const releasedInTopTileBand = typeof cy === 'number' && cy <= TOP_TILE_RESERVED_PX;
+    if (releasedInTopTileBand) _releaseDockControllers();
+    const hoveredDock = releasedInTopTileBand
+      ? null
+      : _dockControllers().find((controller) => controller.hovering());
     if (hoveredDock) {
       _releaseDockControllers(hoveredDock);
-      hoveredDock.commit();
-      return;
+      const wasFullscreen = !!_isFullscreen();
+      if (wasFullscreen && fsClass && modal) modal.classList.remove(fsClass);
+      if (hoveredDock.commit()) return;
+      // Geometry can change between the final move and pointer release. A
+      // rejected commit must fall back to normal drag-end behavior instead of
+      // swallowing the drop; restore fullscreen state when that was the origin.
+      if (wasFullscreen && fsClass && modal) modal.classList.add(fsClass);
     }
     _releaseDockControllers();
     if (onDragEnd) {

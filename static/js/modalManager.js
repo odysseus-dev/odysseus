@@ -31,6 +31,8 @@ import {
   snapModalToZone,
   restoreModalSnap,
   fullscreenWorkspaceRect,
+  fixedLayoutRect,
+  viewportLayoutRect,
 } from './tileManager.js';
 import {
   suspendDock,
@@ -264,17 +266,14 @@ function _syncAllExpandButtons() {
 }
 
 function _fullViewportRect() {
-  return {
-    left: 0,
-    top: 0,
-    width: window.innerWidth || document.documentElement.clientWidth || 0,
-    height: window.innerHeight || document.documentElement.clientHeight || 0,
-  };
+  return viewportLayoutRect();
 }
 
 function _fullExpandTargetRect(modal) {
   if (_isTouchLandscape()) return fullscreenWorkspaceRect();
-  return modal?.getBoundingClientRect ? modal.getBoundingClientRect() : _fullViewportRect();
+  return modal?.getBoundingClientRect
+    ? fixedLayoutRect(modal.getBoundingClientRect())
+    : _fullViewportRect();
 }
 
 function _fitFullExpandedContentToModalFrame(modal) {
