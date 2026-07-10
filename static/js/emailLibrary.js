@@ -2262,21 +2262,21 @@ function _formatEmailSuggestionDate(em) {
 // corresponding filter row with its icon; picking it pins a filter
 // pill that drives state._libFilter or the has-attachments toggle.
 const _LIB_FILTER_OPTIONS = [
-  { value: 'filter:has-attachments', label: 'Has attachments', keywords: ['attachment', 'attachments', 'has attachment', 'attach'] },
-  { value: 'filter:unread',          label: 'Unread',          keywords: ['unread', 'new', 'unseen'] },
-  { value: 'filter:favorites',       label: 'Favorites',       keywords: ['favorite', 'favorites', 'starred', 'star', 'flagged'] },
-  { value: 'filter:undone',          label: 'Undone',          keywords: ['undone', 'pending', 'todo'] },
-  { value: 'filter:reminders',       label: 'Reminders',       keywords: ['reminder', 'reminders'] },
-  { value: 'filter:unanswered',      label: 'Unanswered',      keywords: ['unanswered', 'unreplied', 'no reply'] },
-  { value: 'filter:pending_30d',     label: 'Pending · 30d',   keywords: ['pending 30d', 'pending', 'recent pending'] },
-  { value: 'filter:stale_30d',       label: 'Stale · >30d',    keywords: ['stale', 'old', 'stale 30d'] },
-  { value: 'filter:tag:urgent',      label: 'Urgent',          keywords: ['urgent', 'critical'] },
-  { value: 'filter:tag:reply-soon',  label: 'Reply soon',      keywords: ['reply soon', 'reply', 'follow up'] },
-  { value: 'filter:tag:action-needed', label: 'Action needed', keywords: ['action needed', 'action', 'needs action'] },
-  { value: 'filter:tag:bills',       label: 'Bills',           keywords: ['bill', 'bills', 'billing'] },
-  { value: 'filter:tag:receipt',     label: 'Receipt',         keywords: ['receipt', 'receipts', 'purchase'] },
-  { value: 'filter:tag:travel',      label: 'Travel',          keywords: ['travel', 'trip', 'booking'] },
-  { value: 'filter:tag:spam',        label: 'Spam',            keywords: ['spam', 'junk'] },
+  { value: 'filter:has-attachments', label: window.t('Has attachments'), keywords: ['attachment', 'attachments', 'has attachment', 'attach'] },
+  { value: 'filter:unread',          label: window.t('Unread'),          keywords: ['unread', 'new', 'unseen'] },
+  { value: 'filter:favorites',       label: window.t('Favorites'),       keywords: ['favorite', 'favorites', 'starred', 'star', 'flagged'] },
+  { value: 'filter:undone',          label: window.t('Undone'),          keywords: ['undone', 'pending', 'todo'] },
+  { value: 'filter:reminders',       label: window.t('Reminders'),       keywords: ['reminder', 'reminders'] },
+  { value: 'filter:unanswered',      label: window.t('Unanswered'),      keywords: ['unanswered', 'unreplied', 'no reply'] },
+  { value: 'filter:pending_30d',     label: window.t('Pending · 30d'),   keywords: ['pending 30d', 'pending', 'recent pending'] },
+  { value: 'filter:stale_30d',       label: window.t('Stale · >30d'),    keywords: ['stale', 'old', 'stale 30d'] },
+  { value: 'filter:tag:urgent',      label: window.t('Urgent'),          keywords: ['urgent', 'critical'] },
+  { value: 'filter:tag:reply-soon',  label: window.t('Reply soon'),      keywords: ['reply soon', 'reply', 'follow up'] },
+  { value: 'filter:tag:action-needed', label: window.t('Action needed'), keywords: ['action needed', 'action', 'needs action'] },
+  { value: 'filter:tag:bills',       label: window.t('Bills'),           keywords: ['bill', 'bills', 'billing'] },
+  { value: 'filter:tag:receipt',     label: window.t('Receipt'),         keywords: ['receipt', 'receipts', 'purchase'] },
+  { value: 'filter:tag:travel',      label: window.t('Travel'),          keywords: ['travel', 'trip', 'booking'] },
+  { value: 'filter:tag:spam',        label: window.t('Spam'),            keywords: ['spam', 'junk'] },
 ];
 
 function _libFilterIconFor(value) {
@@ -2949,7 +2949,7 @@ async function _doSearch() {
     if (!interim && paintedInterimResults && results.length === 0) {
       if (stats) {
         const count = state._libTotal || (state._libEmails || []).length;
-        stats.textContent = `${count} cached match${count === 1 ? '' : 'es'}`;
+        stats.textContent = window.t('{count} cached match{s}').replace('{count}', count).replace('{s}', count === 1 ? '' : 'es');
       }
       _setEmailSyncStatus({
         updatedAt: data.sync?.updated_at || '',
@@ -2980,10 +2980,10 @@ async function _doSearch() {
     const count = Math.max(Number(data.total || 0), results.length);
     if (stats) {
       if (interim) {
-        stats.textContent = `${count} cached match${count === 1 ? '' : 'es'} · searching…`;
+        stats.textContent = window.t('{count} cached match{s} · searching…').replace('{count}', count).replace('{s}', count === 1 ? '' : 'es');
       } else {
-        const source = data.source === 'index' ? ' cached' : '';
-        stats.textContent = `${count}${source} match${count === 1 ? '' : 'es'}`;
+        const source = data.source === 'index' ? ` ${window.t('cached')}` : '';
+        stats.textContent = window.t('{count}{source} match{s}').replace('{count}', count).replace('{source}', source).replace('{s}', count === 1 ? '' : 'es');
       }
     }
     _setEmailSyncStatus({
@@ -3152,7 +3152,7 @@ function _renderEmailLoading(grid) {
 
 function _emailReaderSkeletonHtml() {
   return `
-    <div class="email-reader-skeleton" aria-label="Loading email">
+    <div class="email-reader-skeleton" aria-label="${window.t('Loading email')}">
       <div class="email-reader-skeleton-header">
         <span class="email-skeleton-line chip"></span>
         <span class="email-skeleton-line chip short"></span>
@@ -3276,7 +3276,7 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
     if (grid2) grid2.classList.remove('email-lib-just-opened');
     _renderGrid();
     const stats = document.getElementById('email-lib-stats');
-    if (stats) stats.textContent = `${state._libTotal} emails`;
+    if (stats) stats.textContent = window.t('{n} emails').replace('{n}', state._libTotal);
     const sync = cached.sync || {};
     _setEmailSyncStatus({
       updatedAt: sync.updated_at || '',
@@ -3319,7 +3319,7 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
         _renderGrid();
       }
       const stats = document.getElementById('email-lib-stats');
-      if (stats) stats.textContent = `${state._libTotal} emails`;
+      if (stats) stats.textContent = window.t('{n} emails').replace('{n}', state._libTotal);
       _setEmailSyncStatus({
         updatedAt: sync.updated_at || '',
         source: sync.source || '',
@@ -3350,7 +3350,7 @@ async function _loadScheduled(grid, sp) {
   const items = data.scheduled || [];
   grid.innerHTML = '';
   const stats = document.getElementById('email-lib-stats');
-  if (stats) stats.textContent = `${items.length} scheduled`;
+  if (stats) stats.textContent = window.t('{n} scheduled').replace('{n}', items.length);
   _setEmailSyncStatus({
     updatedAt: new Date().toISOString(),
     source: 'local',
@@ -3762,11 +3762,11 @@ function _createCard(em) {
   meta.style.cssText = 'font-size:10px;opacity:0.7;margin-top:2px;';
   const showFolderChip = !!(_libSearchHadResults && cardFolder);
   const prettyFolder = folderDisplayName(cardFolder);
-  const sentChip = isSentFolderEarly ? '<span class="email-sent-chip" title="Sent email">Sent</span>' : '';
+  const sentChip = isSentFolderEarly ? `<span class="email-sent-chip" title="${_esc(window.t('Sent email'))}">${_esc(window.t('Sent'))}</span>` : '';
   const folderChip = showFolderChip && !isSentFolderEarly
     ? `<span class="email-folder-chip" title="${_esc(cardFolder)}">${_esc(prettyFolder)}</span>`
     : '';
-  const senderPrefix = isSentFolderEarly ? 'to ' : '';
+  const senderPrefix = isSentFolderEarly ? window.t('to ') : '';
   meta.innerHTML = `${sentChip}${folderChip}<span class="email-meta-sender" data-email="${_esc(senderAddress || '')}" data-name="${_esc(senderName || '')}"><span style="opacity:0.55">${senderPrefix}</span><span style="color:${color};font-weight:600">${_esc(senderName)}</span></span><span class="email-meta-sep"> · </span><span class="email-meta-date">${_esc(dateStr)}</span>`;
   content.appendChild(meta);
 

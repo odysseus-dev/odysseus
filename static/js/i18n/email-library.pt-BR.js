@@ -75,6 +75,10 @@ registerMessages('pt-BR', {
   'Searching...': 'Buscando...',
   '{count} match{s} on server': '{count} resultado{s} no servidor',
   'Search failed': 'Falha na busca',
+  '{count} cached match{s}': '{count} resultado{s} em cache',
+  '{count} cached match{s} · searching…': '{count} resultado{s} em cache · buscando…',
+  '{count}{source} match{s}': '{count}{source} resultado{s}',
+  'cached': 'em cache',
 
   // --- grid/loading ---
   'Loading emails': 'Carregando e-mails',
