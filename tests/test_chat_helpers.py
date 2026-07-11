@@ -1,6 +1,9 @@
 import asyncio
+import json
 import os
 import shutil
+import threading
+import time
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,6 +25,7 @@ from routes.chat_helpers import (
     PresetInfo,
     save_assistant_response,
 )
+from src.upload_handler import UploadHandler
 
 
 class _AuthManager:
@@ -171,6 +175,27 @@ class _ManifestUploadHandler:
         if isinstance(row, dict) and row.get("owner") and row.get("owner") != owner:
             return None
         return row
+
+    def resolve_uploads(
+        self,
+        upload_ids,
+        owner=None,
+        allow_admin=True,
+        limit=None,
+    ):
+        resolved = []
+        for upload_id in upload_ids:
+            row = self.resolve_upload(
+                upload_id,
+                owner=owner,
+                allow_admin=allow_admin,
+            )
+            if not isinstance(row, dict):
+                continue
+            resolved.append(row)
+            if limit is not None and len(resolved) >= limit:
+                break
+        return resolved
 
 
 def _manifest_test_dir(name):
@@ -336,6 +361,83 @@ def test_build_uploaded_file_manifest_limit_counts_only_authorized_entries(
     )
     assert bounded == []
     assert handler.calls == [("bob-first", "alice", False)]
+
+
+def test_build_uploaded_file_manifest_batches_stale_lifecycle_updates(
+    tmp_path,
+    monkeypatch,
+):
+    upload_dir = tmp_path / "uploads"
+    dated_dir = upload_dir / "2000" / "01" / "01"
+    dated_dir.mkdir(parents=True)
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+    old_timestamp = "2000-01-01T00:00:00"
+    upload_ids = []
+    index = {}
+    for number in range(1, 21):
+        upload_id = f"{number:032x}.txt"
+        checksum = f"{number:064x}"
+        path = dated_dir / upload_id
+        path.write_text(f"historical attachment {number}", encoding="utf-8")
+        upload_ids.append(upload_id)
+        index[f"alice:{checksum}"] = {
+            "id": upload_id,
+            "path": str(path),
+            "name": path.name,
+            "original_name": path.name,
+            "mime": "text/plain",
+            "size": path.stat().st_size,
+            "hash": checksum,
+            "checksum_sha256": checksum,
+            "owner": "alice",
+            "uploaded_at": old_timestamp,
+            "created_at": old_timestamp,
+            "last_accessed": old_timestamp,
+        }
+
+    index_path = upload_dir / "uploads.json"
+    index_path.write_text(json.dumps(index), encoding="utf-8")
+    handler._index_cache = None
+    writes = []
+    real_atomic_write = handler._atomic_write_json
+
+    def record_atomic_write(path, data, *, sync_backup=False):
+        if os.path.normcase(os.path.realpath(path)) == os.path.normcase(
+            os.path.realpath(index_path)
+        ):
+            writes.append(sync_backup)
+        return real_atomic_write(path, data, sync_backup=sync_backup)
+
+    monkeypatch.setattr(handler, "_atomic_write_json", record_atomic_write)
+
+    manifest = build_uploaded_file_manifest(
+        upload_ids,
+        handler,
+        owner="alice",
+        limit=20,
+        attempt_limit=100,
+    )
+
+    assert [item["id"] for item in manifest] == upload_ids
+    assert writes == [True]
+    live_index = json.loads(index_path.read_text(encoding="utf-8"))
+    backup_index = json.loads(
+        (upload_dir / "uploads.json.bak").read_text(encoding="utf-8")
+    )
+    assert live_index == backup_index
+    refreshed_at = {row["last_accessed"] for row in live_index.values()}
+    assert old_timestamp not in refreshed_at
+    assert len(refreshed_at) == 1
+
+    second_manifest = build_uploaded_file_manifest(
+        upload_ids,
+        handler,
+        owner="alice",
+        limit=20,
+        attempt_limit=100,
+    )
+    assert [item["id"] for item in second_manifest] == upload_ids
+    assert writes == [True]
 
 
 @pytest.mark.parametrize("name,expected", [
@@ -763,4 +865,104 @@ async def test_build_chat_context_restores_owner_checked_historical_uploads(
         ("recent-history", "alice", False),
         ("bob-history", "alice", False),
         ("alice-history", "alice", False),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_historical_manifest_resolution_keeps_event_loop_responsive(
+    tmp_path,
+    monkeypatch,
+):
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    readable = upload_dir / "historical.txt"
+    readable.write_text("historical attachment", encoding="utf-8")
+    upload_ids = [f"history-{number}" for number in range(20)]
+    rows = {
+        upload_id: {
+            "id": upload_id,
+            "name": f"{upload_id}.txt",
+            "mime": "text/plain",
+            "size": readable.stat().st_size,
+            "path": str(readable),
+            "owner": "alice",
+        }
+        for upload_id in upload_ids
+    }
+
+    class _BlockingManifestUploadHandler(_ManifestUploadHandler):
+        def __init__(self, upload_dir, rows):
+            super().__init__(upload_dir, rows)
+            self.started = threading.Event()
+            self.release = threading.Event()
+            self.completed = threading.Event()
+            self.released_by_heartbeat = False
+            self.resolver_thread_ids = []
+
+        def resolve_uploads(
+            self,
+            candidates,
+            owner=None,
+            allow_admin=True,
+            limit=None,
+        ):
+            resolved = []
+            try:
+                self.started.set()
+                self.released_by_heartbeat = self.release.wait(1)
+                for upload_id in candidates:
+                    self.resolver_thread_ids.append(threading.get_ident())
+                    time.sleep(0.005)
+                    row = self.resolve_upload(
+                        upload_id,
+                        owner=owner,
+                        allow_admin=allow_admin,
+                    )
+                    if not isinstance(row, dict):
+                        continue
+                    resolved.append(row)
+                    if limit is not None and len(resolved) >= limit:
+                        break
+                return resolved
+            finally:
+                self.completed.set()
+
+    handler = _BlockingManifestUploadHandler(upload_dir, rows)
+    history = [SimpleNamespace(metadata={
+        "attachments": [{"id": upload_id} for upload_id in upload_ids]
+    })]
+    event_loop_thread_id = threading.get_ident()
+    heartbeat_ticks = 0
+
+    async def heartbeat():
+        nonlocal heartbeat_ticks
+        while not handler.started.is_set():
+            await asyncio.sleep(0)
+        heartbeat_ticks += 1
+        handler.release.set()
+        while not handler.completed.is_set():
+            heartbeat_ticks += 1
+            await asyncio.sleep(0.001)
+
+    heartbeat_task = asyncio.create_task(heartbeat())
+    ctx, _captured = await _build_context_owner_probe(
+        monkeypatch,
+        {"api_token": False, "current_user": "alice"},
+        history=history,
+        upload_handler=handler,
+        agent_mode=True,
+    )
+    await heartbeat_task
+
+    assert [item["id"] for item in ctx.uploaded_files] == upload_ids
+    assert handler.released_by_heartbeat is True
+    assert heartbeat_ticks >= 5
+    assert handler.resolver_thread_ids
+    assert all(
+        thread_id != event_loop_thread_id
+        for thread_id in handler.resolver_thread_ids
+    )
+    assert handler.calls == [
+        (upload_id, "alice", False)
+        for upload_id in upload_ids
     ]

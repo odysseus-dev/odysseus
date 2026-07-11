@@ -794,110 +794,168 @@ class UploadHandler:
                 return dict(info)
         return None
 
-    def reserve_upload(
+    def _reserve_upload_from_index(
         self,
         upload_id: str,
+        *,
+        current: Dict[str, Any],
+        owner: Optional[str],
+        auth_manager: Any,
+        allow_admin: bool,
+        now: datetime,
+    ) -> tuple[Optional[Dict[str, Any]], bool]:
+        """Resolve one upload against a caller-owned mutable index snapshot.
+
+        The caller must hold ``_index_lock``. The snapshot is changed in memory
+        when path/access metadata needs refreshing, but this helper never writes
+        it to disk. That lets a batch reserve many uploads with one index commit.
+        """
+        if not self.validate_upload_id(upload_id):
+            return None, False
+
+        auth_configured = bool(auth_manager and getattr(auth_manager, "is_configured", False))
+        if auth_configured and not owner:
+            return None, False
+
+        matching_keys = [
+            key
+            for key, info in current.items()
+            if isinstance(info, dict) and info.get("id") == upload_id
+        ]
+        if not matching_keys:
+            return None, False
+
+        matching_rows = [dict(current[key]) for key in matching_keys]
+        row_owners = {
+            str(row.get("owner")) if row.get("owner") is not None else None
+            for row in matching_rows
+        }
+        row_hashes = {
+            str(row.get("hash") or row.get("checksum_sha256"))
+            for row in matching_rows
+            if row.get("hash") or row.get("checksum_sha256")
+        }
+        if len(row_owners) != 1 or len(row_hashes) > 1:
+            logger.warning(
+                "Cannot reserve ambiguous upload index rows for %s",
+                upload_id,
+            )
+            return None, False
+
+        is_admin = False
+        if allow_admin and owner and auth_manager and hasattr(auth_manager, "is_admin"):
+            try:
+                is_admin = bool(auth_manager.is_admin(owner))
+            except Exception:
+                is_admin = False
+
+        current_info = matching_rows[0]
+        if owner and not is_admin and current_info.get("owner") != owner:
+            return None, False
+        if not owner and current_info.get("owner") is not None:
+            return None, False
+
+        existing_paths: set[str] = set()
+        for row in matching_rows:
+            stored_path = row.get("path")
+            if not stored_path:
+                continue
+            if not self._inside_upload_dir(stored_path):
+                logger.warning(
+                    "Cannot reserve upload %s with an out-of-root index path",
+                    upload_id,
+                )
+                return None, False
+            if os.path.isfile(stored_path):
+                if os.path.basename(stored_path) != upload_id:
+                    return None, False
+                existing_paths.add(os.path.normcase(os.path.realpath(stored_path)))
+        if len(existing_paths) > 1:
+            logger.warning("Cannot reserve upload %s with multiple indexed paths", upload_id)
+            return None, False
+        path = next(iter(existing_paths), None) or self._find_upload_path(upload_id)
+        if not path or not os.path.isfile(path) or not self._inside_upload_dir(path):
+            return None, False
+
+        last_accessed = self._parse_upload_timestamp(current_info.get("last_accessed"))
+        path_changed = current_info.get("path") != path
+        needs_write = (
+            path_changed
+            or last_accessed is None
+            or last_accessed < now - timedelta(minutes=5)
+        )
+        if needs_write:
+            accessed_at = now.isoformat()
+            for key in matching_keys:
+                updated = dict(current[key])
+                updated["path"] = path
+                updated["last_accessed"] = accessed_at
+                current[key] = updated
+            current_info = dict(current[matching_keys[0]])
+
+        resolved = dict(current_info)
+        resolved.setdefault("id", upload_id)
+        resolved["path"] = path
+        resolved.setdefault("name", os.path.basename(path))
+        resolved.setdefault("original_name", resolved["name"])
+        resolved.setdefault("mime", mimetypes.guess_type(path)[0] or "application/octet-stream")
+        if resolved.get("hash") and not resolved.get("checksum_sha256"):
+            resolved["checksum_sha256"] = resolved["hash"]
+        if resolved.get("uploaded_at") and not resolved.get("created_at"):
+            resolved["created_at"] = resolved["uploaded_at"]
+        return resolved, needs_write
+
+    def reserve_uploads(
+        self,
+        upload_ids: list[str],
         *,
         owner: Optional[str],
         auth_manager: Any = None,
         allow_admin: bool = False,
-    ) -> Optional[Dict[str, Any]]:
-        """Owner-check and reserve an indexed upload against cleanup.
-
-        The live index lookup, ownership/path validation, and access touch all
-        occur under the cleanup lock. A durable-reference writer must not
-        commit when this returns ``None``.
-        """
-        if not self.validate_upload_id(upload_id):
-            return None
-
-        auth_configured = bool(auth_manager and getattr(auth_manager, "is_configured", False))
-        if auth_configured and not owner:
-            return None
+        limit: Optional[int] = None,
+    ) -> list[Dict[str, Any]]:
+        """Owner-check and reserve several uploads with at most one index write."""
+        if not upload_ids or (limit is not None and limit <= 0):
+            return []
 
         uploads_db_path = os.path.join(self.upload_dir, "uploads.json")
         with self._index_lock:
             try:
-                current = dict(self._load_upload_index(fail_on_error=True))
+                original_index = dict(self._load_upload_index(fail_on_error=True))
             except Exception:
-                logger.warning("Cannot reserve upload %s without a valid live index", upload_id)
-                return None
-            matching_keys = [
-                key
-                for key, info in current.items()
-                if isinstance(info, dict) and info.get("id") == upload_id
-            ]
-            if not matching_keys:
-                return None
+                logger.warning("Cannot reserve uploads without a valid live index")
+                return []
 
-            matching_rows = [dict(current[key]) for key in matching_keys]
-            row_owners = {
-                str(row.get("owner")) if row.get("owner") is not None else None
-                for row in matching_rows
-            }
-            row_hashes = {
-                str(row.get("hash") or row.get("checksum_sha256"))
-                for row in matching_rows
-                if row.get("hash") or row.get("checksum_sha256")
-            }
-            if len(row_owners) != 1 or len(row_hashes) > 1:
-                logger.warning(
-                    "Cannot reserve ambiguous upload index rows for %s",
-                    upload_id,
-                )
-                return None
-
-            is_admin = False
-            if allow_admin and owner and auth_manager and hasattr(auth_manager, "is_admin"):
-                try:
-                    is_admin = bool(auth_manager.is_admin(owner))
-                except Exception:
-                    is_admin = False
-
+            updated_index = dict(original_index)
+            resolved_uploads: list[Dict[str, Any]] = []
+            index_changed = False
             now = datetime.now()
-            current_info = matching_rows[0]
-            if owner and not is_admin and current_info.get("owner") != owner:
-                return None
-            if not owner and current_info.get("owner") is not None:
-                return None
-
-            existing_paths: set[str] = set()
-            for row in matching_rows:
-                stored_path = row.get("path")
-                if not stored_path:
-                    continue
-                if not self._inside_upload_dir(stored_path):
-                    logger.warning(
-                        "Cannot reserve upload %s with an out-of-root index path",
+            for candidate in upload_ids:
+                upload_id = str(candidate)
+                try:
+                    resolved, changed = self._reserve_upload_from_index(
                         upload_id,
+                        current=updated_index,
+                        owner=owner,
+                        auth_manager=auth_manager,
+                        allow_admin=allow_admin,
+                        now=now,
                     )
-                    return None
-                if os.path.isfile(stored_path):
-                    if os.path.basename(stored_path) != upload_id:
-                        return None
-                    existing_paths.add(os.path.normcase(os.path.realpath(stored_path)))
-            if len(existing_paths) > 1:
-                logger.warning("Cannot reserve upload %s with multiple indexed paths", upload_id)
-                return None
-            path = next(iter(existing_paths), None) or self._find_upload_path(upload_id)
-            if not path or not os.path.isfile(path) or not self._inside_upload_dir(path):
-                return None
+                except Exception:
+                    logger.debug(
+                        "Failed to resolve upload %r while reserving batch",
+                        upload_id,
+                        exc_info=True,
+                    )
+                    continue
+                if resolved is None:
+                    continue
+                resolved_uploads.append(resolved)
+                index_changed = index_changed or changed
+                if limit is not None and len(resolved_uploads) >= limit:
+                    break
 
-            last_accessed = self._parse_upload_timestamp(current_info.get("last_accessed"))
-            path_changed = current_info.get("path") != path
-            needs_write = (
-                path_changed
-                or last_accessed is None
-                or last_accessed < now - timedelta(minutes=5)
-            )
-            if needs_write:
-                accessed_at = now.isoformat()
-                updated_index = dict(current)
-                for key in matching_keys:
-                    updated = dict(updated_index[key])
-                    updated["path"] = path
-                    updated["last_accessed"] = accessed_at
-                    updated_index[key] = updated
+            if index_changed:
                 try:
                     self._atomic_write_json(
                         uploads_db_path,
@@ -908,29 +966,35 @@ class UploadHandler:
                     try:
                         self._atomic_write_json(
                             uploads_db_path,
-                            current,
+                            original_index,
                             sync_backup=True,
                         )
                     except Exception:
                         logger.exception(
-                            "Failed to restore upload indexes after reservation failed for %s",
-                            upload_id,
+                            "Failed to restore upload indexes after batch reservation failed"
                         )
-                    logger.exception("Failed to reserve upload %s against cleanup", upload_id)
-                    return None
-                current_info = dict(updated_index[matching_keys[0]])
+                    logger.exception("Failed to reserve upload batch against cleanup")
+                    return []
 
-            resolved = dict(current_info)
-            resolved.setdefault("id", upload_id)
-            resolved["path"] = path
-            resolved.setdefault("name", os.path.basename(path))
-            resolved.setdefault("original_name", resolved["name"])
-            resolved.setdefault("mime", mimetypes.guess_type(path)[0] or "application/octet-stream")
-            if resolved.get("hash") and not resolved.get("checksum_sha256"):
-                resolved["checksum_sha256"] = resolved["hash"]
-            if resolved.get("uploaded_at") and not resolved.get("created_at"):
-                resolved["created_at"] = resolved["uploaded_at"]
-            return resolved
+            return resolved_uploads
+
+    def reserve_upload(
+        self,
+        upload_id: str,
+        *,
+        owner: Optional[str],
+        auth_manager: Any = None,
+        allow_admin: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Owner-check and reserve one indexed upload against cleanup."""
+        resolved = self.reserve_uploads(
+            [upload_id],
+            owner=owner,
+            auth_manager=auth_manager,
+            allow_admin=allow_admin,
+            limit=1,
+        )
+        return resolved[0] if resolved else None
 
     def _renamed_upload_index_key(self, key: str, info: Dict[str, Any], old_owner: str, new_owner: str) -> str:
         """Return the storage key to use after renaming an owned upload row.
@@ -1073,6 +1137,23 @@ class UploadHandler:
             owner=owner,
             auth_manager=auth_manager,
             allow_admin=allow_admin,
+        )
+
+    def resolve_uploads(
+        self,
+        upload_ids: list[str],
+        owner: Optional[str] = None,
+        auth_manager: Any = None,
+        allow_admin: bool = True,
+        limit: Optional[int] = None,
+    ) -> list[Dict[str, Any]]:
+        """Resolve and reserve several uploads in candidate order."""
+        return self.reserve_uploads(
+            upload_ids,
+            owner=owner,
+            auth_manager=auth_manager,
+            allow_admin=allow_admin,
+            limit=limit,
         )
     
     def cleanup_rate_limits(self):

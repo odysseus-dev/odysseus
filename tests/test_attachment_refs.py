@@ -97,4 +97,3 @@ def test_attachment_ids_from_messages_prefers_recent_and_deduplicates():
         "shared.png",
         "older.png",
     ]
-
